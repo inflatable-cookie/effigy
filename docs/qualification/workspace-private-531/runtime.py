@@ -5,6 +5,7 @@ Every effect belongs to a fresh synthetic checkout. Unknown retains evidence and
 resources. This program never deletes a tree or guesses a process/container ID.
 """
 import argparse
+from contextlib import closing
 import hashlib
 import json
 import os
@@ -225,7 +226,7 @@ class Window:
         return sqlite3.connect('file:' + str(self.root / '.effigy/state/kernel.db') + '?mode=ro', uri=True)
 
     def rows(self, sql, args=()):
-        with self.db() as db:
+        with closing(self.db()) as db:
             return db.execute(sql, args).fetchall()
 
     def task_runs(self, selector):

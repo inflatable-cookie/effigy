@@ -12,6 +12,7 @@ import common
 import linux_native_artifact as producer
 import linux_native_build as build
 import linux_native_storage as storage
+import linux_loop_bound as loop_bound
 import linux_native_writers as writers
 import linux_native_run as native_run
 import linux_native_session as session
@@ -48,6 +49,56 @@ class ArtifactCompatibilityTests(unittest.TestCase):
                 (self.header, self.loader, '')):
             with self.subTest(loader=loader, versions=versions), self.assertRaises(ValueError):
                 producer.validate_elf(header, loader, versions)
+
+
+class PhysicalImageReceiptTests(unittest.TestCase):
+    def image(self):
+        import uuid
+        capacity = 1073741824
+        image = '/var/lib/effigy-829/rows-final.ext4'
+        pin = dict(image=image, image_device=2050, image_inode=2640535, image_bytes=capacity,
+                   filesystem_uuid='8d8707ea-dd3d-48ab-b408-47f66e5475dd', mountpoint='/bounded')
+        def block(ident):
+            raw = bytearray(1024)
+            struct.pack_into('<H', raw, 0x38, 0xef53)
+            struct.pack_into('<I', raw, 4, capacity // 4096)
+            struct.pack_into('<I', raw, 0x18, 2)
+            raw[0x68:0x78] = uuid.UUID(ident).bytes
+            return raw.hex()
+        loop = bytearray(232)
+        struct.pack_into('<QQQQQIIII', loop, 0, 2050, pin['image_inode'], 0, 0, 0, 12, 0, 0, 4)
+        value = {'allocation_map': {'extents': [dict(logical=0, physical=4096, length=capacity, flags=1)]},
+                 'originals': {'image_stat': dict(device=2050, inode=pin['image_inode'], size=capacity,
+                      uid=0, gid=0, mode=0o100600, links=1, blocks=capacity // 512 + 8),
+                  'ancestors': [dict(path=str(parent), uid=0, mode=0o40755) for parent in Path(image).parents],
+                  'mountinfo': '1 0 8:2 / / rw - ext4 /dev/sda2 rw\n2 1 7:12 / /bounded rw,nodev,nosuid - ext4 /dev/loop12 rw\n',
+                  'image_device_number': '8:2', 'root_superblock_hex': block(loop_bound.ROOT_UUID),
+                  'image_superblock_hex': block(pin['filesystem_uuid']), 'loop_status_hex': loop.hex(),
+                  'loop': dict(device='7:12', backing_file=image, capacity_bytes=capacity, discard_max_bytes=0)}}
+        return value, pin
+
+    def test_kernel_association_and_initialized_fixed_allocation_are_required(self):
+        import copy
+        value, pin = self.image()
+        self.assertEqual(loop_bound.verify_image(value, pin)['image_metadata_bytes'], 4096)
+        changes = [lambda v: v['originals']['image_stat'].update(uid=1001),
+                   lambda v: v['originals']['image_stat'].update(links=2),
+                   lambda v: v['originals']['image_stat'].update(blocks=pin['image_bytes'] // 512 + 129),
+                   lambda v: v['originals']['loop'].update(discard_max_bytes=4096),
+                   lambda v: v['originals']['loop'].update(capacity_bytes=pin['image_bytes'] * 2),
+                   lambda v: v['allocation_map']['extents'][0].update(flags=0x801),
+                   lambda v: v['originals'].update(mountinfo=v['originals']['mountinfo'] + '3 1 7:12 / /alias rw - ext4 /dev/loop12 rw\n')]
+        for change in changes:
+            bad = copy.deepcopy(value)
+            change(bad)
+            with self.assertRaises(ValueError):
+                loop_bound.verify_image(bad, pin)
+        bad = copy.deepcopy(value)
+        raw = bytearray.fromhex(bad['originals']['loop_status_hex'])
+        struct.pack_into('<Q', raw, 8, pin['image_inode'] + 1)
+        bad['originals']['loop_status_hex'] = raw.hex()
+        with self.assertRaises(ValueError):
+            loop_bound.verify_image(bad, pin)
 
 
 class RestartInventoryTests(unittest.TestCase):
@@ -87,6 +138,38 @@ class RestartInventoryTests(unittest.TestCase):
             return raced(*args)
         with self.assertRaises(RuntimeError):
             runtime.restarted_inventory(changing, prior)
+
+
+class JournalPollingTests(unittest.TestCase):
+    def test_repeated_reads_close_connections_without_garbage_collection(self):
+        import gc
+        import sqlite3
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            state = Path(directory) / '.effigy/state'
+            state.mkdir(parents=True)
+            db = sqlite3.connect(state / 'kernel.db')
+            db.execute('CREATE TABLE observation(value TEXT)')
+            db.execute("INSERT INTO observation VALUES ('recorded')")
+            db.commit()
+            db.close()
+            window = object.__new__(runtime.Window)
+            window.root = Path(directory)
+            window.verify_root = lambda: None
+            self.assertEqual(window.rows('SELECT * FROM observation'), [('recorded',)])
+            before = len(os.listdir('/dev/fd'))
+            enabled = gc.isenabled()
+            gc.disable()
+            try:
+                for _ in range(1000):
+                    self.assertEqual(window.rows('SELECT * FROM observation'), [('recorded',)])
+                self.assertLessEqual(len(os.listdir('/dev/fd')), before + 1)
+                with self.assertRaises(sqlite3.OperationalError):
+                    window.rows('SELECT * FROM absent')
+                self.assertLessEqual(len(os.listdir('/dev/fd')), before + 1)
+            finally:
+                if enabled:
+                    gc.enable()
+                gc.collect()
 
 
 class RetainedStreamTests(unittest.TestCase):

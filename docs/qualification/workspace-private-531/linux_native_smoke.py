@@ -48,11 +48,11 @@ def ssh_prefix(root, attempt):
                                      build.file_input(control / 'ssh_known_hosts'), control, attempt.root)
 
 
-def root_resume(root, attempt, ssh):
+def root_operation(root, attempt, ssh, entry, files, arguments=()):
     remote = build.BASE + '/metadata/smoke-' + uuid.uuid4().hex
     attempt.command(ssh + ['umask 077; mkdir ' + shlex.quote(remote)])
     pins = {}
-    for name in ('linux_loop_bound.py', 'linux_native_storage.py', 'linux_native_writers.py', 'linux_native_resume.py'):
+    for name in files:
         data = (Path(__file__).parent / name).read_bytes()
         pins[name] = hashlib.sha256(data).hexdigest()
         attempt.command(ssh + ['umask 077; set -C; cat > ' + shlex.quote(remote + '/' + name)], data=data)
@@ -66,7 +66,8 @@ def root_resume(root, attempt, ssh):
             'data={n:(Path(' + repr(remote) + ')/n).read_bytes() for n in pins}; '
             'assert all(hashlib.sha256(b).hexdigest()==pins[n] for n,b in data.items()); '
             '[(d/n).write_bytes(b) for n,b in data.items()]; '
-            'runpy.run_path(str(d/"linux_native_resume.py"),run_name="__main__")')
+            'import sys; sys.argv=[' + repr(entry) + ']+ ' + repr(list(arguments)) + '; '
+            'runpy.run_path(str(d/' + repr(entry) + '),run_name="__main__")')
     payload = code.encode()
     bootstrap = remote + '/root-bootstrap.py'
     attempt.command(ssh + ['umask 077; set -C; cat > ' + shlex.quote(bootstrap)], data=payload)
@@ -84,7 +85,7 @@ def root_resume(root, attempt, ssh):
             '--property=ExitType=cgroup', '--property=KillMode=control-group',
             '--property=RuntimeMaxSec=45', '--property=TimeoutStopSec=5',
             '--property=MemoryMax=256M', '--property=MemorySwapMax=0', '--property=TasksMax=64',
-            '--property=LimitFSIZE=1M', '--property=UMask=0077', '--property=LimitCORE=0',
+            '--property=LimitFSIZE=8M', '--property=UMask=0077', '--property=LimitCORE=0',
             '--property=StandardOutput=append:' + stdout, '--property=StandardError=append:' + stderr,
             '--', '/usr/bin/python3', '-I', '-B', '-c', entry]
     native_run.submit_unit(attempt, argv, unit)
@@ -103,15 +104,28 @@ def root_resume(root, attempt, ssh):
     common.exclusive_bytes(attempt.root / (unit + '.stdout'), output)
     common.exclusive_bytes(attempt.root / (unit + '.stderr'), errors)
     common.require(state['Result'] == 'success' and state['ExecMainStatus'] == '0',
-                   'root resume helper failed; retained unit and streams')
+                   'root helper failed; retained unit and streams')
     # This exact, completed helper is ours. Its daemon is in a distinct named
     # unit and remains available for the next native step.
-    attempt.admin('systemctl stop ' + unit + '.service')
+    common.require(state.get('ControlGroup') == '', 'completed root helper retains a cgroup')
     result = json.loads(output)
     common.exclusive(attempt.root / ('resume-' + uuid.uuid4().hex + '.json'), result)
+    return result
+
+
+def root_resume(root, attempt, ssh):
+    files = ('linux_loop_bound.py', 'linux_native_storage.py', 'linux_native_writers.py', 'linux_native_resume.py')
+    result = root_operation(root, attempt, ssh, 'linux_native_resume.py', files)
     common.require(result['writer_closure']['complete'],
                    'native writer closure refused; inspect the retained actors and findings')
     return result
+
+
+def root_collect(root, attempt, ssh, controller=None):
+    files = ('linux_loop_bound.py', 'linux_native_storage.py', 'linux_native_writers.py',
+             'linux_native_resume.py', 'linux_native_collect.py')
+    arguments = () if controller is None else (controller,)
+    return root_operation(root, attempt, ssh, 'linux_native_collect.py', files, arguments)
 
 
 def verify_engine_stopped(state, pids):
@@ -120,42 +134,8 @@ def verify_engine_stopped(state, pids):
 
 
 def stop_engine(attempt):
-    """One retained systemd name latches a stop despite ambiguous Parallels acknowledgements."""
-    unit = 'effigy-829-quiesce-' + uuid.uuid4().hex
-    streams = {name: '/var/lib/effigy-829/rootful/' + unit + '.' + name for name in ('stdout', 'stderr')}
-    argv = ['systemd-run', '--unit=' + unit, '--no-block', '--service-type=exec',
-            '--property=RemainAfterExit=yes', '--property=CollectMode=inactive',
-            '--property=RuntimeMaxSec=45', '--property=TimeoutStopSec=5',
-            '--property=MemoryMax=64M', '--property=MemorySwapMax=0', '--property=TasksMax=16',
-            '--property=LimitFSIZE=1M', '--property=LimitCORE=0',
-            '--property=StandardOutput=append:' + streams['stdout'],
-            '--property=StandardError=append:' + streams['stderr'],
-            '--', '/usr/bin/systemctl', 'stop', 'effigy-829-rootful.service']
-    native_run.submit_unit(attempt, argv, unit)
-    deadline = time.monotonic() + 65
-    while True:
-        raw = attempt.admin('systemctl show --all ' + unit + '.service '
-                            '--property=MainPID,SubState,Result,ExecMainStatus', read_only=True)
-        state = dict(line.split('=', 1) for line in raw.decode().splitlines())
-        if state.get('MainPID') == '0' and state.get('SubState') in ('exited', 'failed', 'dead'):
-            break
-        common.require(time.monotonic() < deadline, 'latched engine stop has no terminal observation')
-        time.sleep(.2)
-    common.exclusive(attempt.root / (unit + '.terminal.json'), state)
-    for name, path in streams.items():
-        common.exclusive_bytes(attempt.root / (unit + '.' + name),
-                               attempt.admin('cat ' + shlex.quote(path), read_only=True))
-    attempt.admin('systemctl stop ' + unit + '.service')
-    common.require(state['Result'] == 'success' and state['ExecMainStatus'] == '0',
-                   'latched engine stop failed; retained streams and unit identity')
-    raw = attempt.admin('systemctl show --all effigy-829-rootful.service '
-                        '--property=ActiveState,MainPID,ControlGroup', read_only=True)
-    state = dict(line.split('=', 1) for line in raw.decode().splitlines())
-    code = ('import json; from pathlib import Path; '
-            'p=Path("/sys/fs/cgroup/system.slice/effigy-829-rootful.service"); '
-            'print(json.dumps([int(n) for f in p.rglob("cgroup.procs") for n in f.read_text().split()]))')
-    pids = json.loads(attempt.admin('python3 -I -B -c ' + shlex.quote(code), read_only=True))
-    common.exclusive(attempt.root / (unit + '.engine-terminal.json'), {'state': state, 'pids': pids})
+    state, pids = native_run.stop_owned_unit(attempt, 'effigy-829-rootful',
+                                              '/var/lib/effigy-829/rootful')
     verify_engine_stopped(state, pids)
 
 

@@ -35,6 +35,12 @@ def guest_script(pin, remote, bundle_sha, source_ref=SOURCE_REF):
     return '\n'.join([
         'set -eu', 'umask 077',
         'base=' + shlex.quote(BASE), 'remote=' + shlex.quote(remote),
+        'python3 -I -B -c ' + shlex.quote(
+            'import os,stat; from pathlib import Path; p=Path(' + repr(BASE + '/build-tmp') + '); '
+            'p.mkdir(mode=0o700,exist_ok=True); i=p.lstat(); '
+            'assert p.resolve()==p and stat.S_ISDIR(i.st_mode) and i.st_uid==os.geteuid() '
+            'and stat.S_IMODE(i.st_mode)==0o700'),
+        'export TMPDIR="$base/build-tmp" TMP="$base/build-tmp" TEMP="$base/build-tmp"',
         'printf "guest-build-pid=%s\\n" "$$"',
         "printf '%s  %s\\n' " + shlex.quote(bundle_sha) + ' "$remote/source.bundle" | sha256sum -c -',
         'export RUSTUP_HOME="$base/toolchain/rustup" CARGO_HOME="$base/toolchain/cargo"',

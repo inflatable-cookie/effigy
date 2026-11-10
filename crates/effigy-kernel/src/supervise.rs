@@ -1554,6 +1554,13 @@ impl OwningChannel {
         // could miss that detach and mistake it for owner death.
         let (eof, requests) =
             observe_client_requests(&mut self.input, &mut self.buffer, || run.requests())?;
+        // A forwarded command's owning client is its workspace attachment,
+        // while this pipe belongs to the still-live serving relay. Its durable
+        // EOF release names owner loss; the associated stop request must not
+        // turn that cancellation into an ordinary Requested stop.
+        if run.workspace_owner_lost()? {
+            control.stop.get_or_insert(StopCause::OwnerLost);
+        }
         for request in requests {
             match request.action {
                 RequestAction::Detach => self.detached = true,

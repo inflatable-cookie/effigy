@@ -1157,3 +1157,23 @@ stages the complete marker, durably publishes its guard and initial zero extent,
 then exclusively renames the marker into view. A fault before that last boundary
 leaves no selectable partial protocol. This preserves strict missing-extent
 refusal while preventing a healthy new capture from manufacturing that state.
+
+At `c948df777` the native session passed standard streaming, real signal 15
+and invalid-credential refusal. Caller-loss polling exposed two independent
+issues: SQLite transaction context managers left connections open, and the
+engine saw the attachment EOF's durable stop as `Requested` while its serving
+relay pipe remained alive. Polling now explicitly closes connections, including
+failed queries. Engine control reads the real owning attachment's EOF release
+before interpreting the mailbox; that preserves `OwnerLost` without changing
+request schemas or relaxing attachment release fences. Controller cleanup now
+shares the engine's latched stop route and reads empty systemd properties with
+`--all`, followed by independent kernel cgroup closure.
+
+The physical image observer now retains the original `LOOP_GET_STATUS64` bytes
+and checks the kernel's backing inode/device, offset and size limit against the
+opened root-owned image. It also retains raw ext4 superblocks, full mountinfo,
+ancestor ownership, FIEMAP and discard queue readback for pure offline checks.
+The strict initialized-image verifier additionally requires no unwritten extents,
+discard disabled and at most 64 KiB of outer-file extent metadata. Those latter
+activation conditions have not yet been established on the exploratory images;
+this source addition does not register or credit a prepared mechanism.

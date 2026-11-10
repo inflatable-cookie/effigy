@@ -136,16 +136,20 @@ def accounting(root):
 
 
 def observe(image, mountpoint, capacity, *, project_quota):
+    import fcntl
     if os.geteuid() != 0 or sys.platform != 'linux':
         raise RuntimeError('read-only native root observer required')
     for path in (image, mountpoint):
         if not path.is_absolute() or path.resolve(strict=True) != path:
             raise ValueError('canonical image and mount required')
+    ancestors = []
     for parent in image.parents:
         info = parent.stat()
         if info.st_uid != 0 or stat.S_IMODE(info.st_mode) & 0o022:
             raise ValueError('image ancestors are not root-controlled')
-    rows = mount_rows(Path('/proc/self/mountinfo').read_text())
+        ancestors.append({'path': str(parent), 'uid': info.st_uid, 'mode': info.st_mode})
+    mountinfo = Path('/proc/self/mountinfo').read_text()
+    rows = mount_rows(mountinfo)
     native = one_mount(rows, '/')
     mounted = one_mount(rows, str(mountpoint))
     if native['fstype'] != 'ext4' or native['source'] != '/dev/sda2' or native['root'] != '/':
@@ -160,10 +164,12 @@ def observe(image, mountpoint, capacity, *, project_quota):
         extents = allocated_extents(fd, capacity)
         if info.st_blocks * 512 < capacity:
             raise ValueError('image is not fully preallocated')
-        fs = superblock(os.pread(fd, 1024, 1024), project_quota=project_quota)
+        inner_raw = os.pread(fd, 1024, 1024)
+        fs = superblock(inner_raw, project_quota=project_quota)
         with open('/dev/sda2', 'rb', buffering=0) as root:
             root.seek(1024)
-            if superblock(root.read(1024), project_quota=False)['uuid'] != ROOT_UUID:
+            root_raw = root.read(1024)
+            if superblock(root_raw, project_quota=False)['uuid'] != ROOT_UUID:
                 raise ValueError('native root UUID differs')
         device = os.stat(mountpoint).st_dev
         major, minor = os.major(device), os.minor(device)
@@ -172,6 +178,20 @@ def observe(image, mountpoint, capacity, *, project_quota):
                 or (project_quota and 'prjquota' not in mounted['super_options'])):
             raise ValueError('loop mount identity or quota mode differs')
         sysfs = Path('/sys/dev/block/%d:%d/loop' % (major, minor))
+        block = os.open(mounted['source'], os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            block_info = os.fstat(block)
+            if not stat.S_ISBLK(block_info.st_mode) or block_info.st_rdev != device:
+                raise ValueError('opened loop block device differs from the mount')
+            loop_raw = bytearray(232)
+            fcntl.ioctl(block, 0x4c05, loop_raw, True)  # LOOP_GET_STATUS64
+        finally:
+            os.close(block)
+        from linux_loop_bound import loop_status
+        loop = loop_status(loop_raw)
+        if (loop['backing_device'], loop['backing_inode'], loop['offset'], loop['size_limit']) != (
+                info.st_dev, info.st_ino, 0, 0):
+            raise ValueError('kernel loop backing inode differs from the owned image')
         device_bytes = int((sysfs.parent / 'size').read_text()) * 512
         if device_bytes != capacity or fs['capacity_bytes'] != capacity:
             raise ValueError('kernel device or ext4 capacity differs from the image')
@@ -190,6 +210,15 @@ def observe(image, mountpoint, capacity, *, project_quota):
         return {'image': str(image), 'image_device': info.st_dev, 'image_inode': info.st_ino,
                 'image_bytes': info.st_size, 'image_allocated_bytes': info.st_blocks * 512,
                 'inner_capacity_bytes': device_bytes, 'filesystem': fs, 'mount': mounted, 'allocation_map': extents,
+                'originals': {'mountinfo': mountinfo, 'root_superblock_hex': root_raw.hex(),
+                    'image_superblock_hex': inner_raw.hex(), 'loop_status_hex': loop_raw.hex(),
+                    'image_device_number': '%d:%d' % (os.major(info.st_dev), os.minor(info.st_dev)),
+                    'image_stat': {'device': info.st_dev, 'inode': info.st_ino, 'size': info.st_size,
+                        'uid': info.st_uid, 'gid': info.st_gid, 'mode': info.st_mode,
+                        'links': info.st_nlink, 'blocks': info.st_blocks}, 'ancestors': ancestors,
+                    'loop': {'device': mounted['device'], 'backing_file': str(image),
+                        'capacity_bytes': device_bytes,
+                        'discard_max_bytes': int((sysfs.parent / 'queue/discard_max_bytes').read_text())}},
                 'native_root_uuid': ROOT_UUID, 'boot_id': Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
                 'exploratory': True, 'qualification_credit': False}
     finally:

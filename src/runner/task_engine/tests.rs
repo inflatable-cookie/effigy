@@ -1555,7 +1555,12 @@ fn reserved_standard_engine_streams_exits_and_settles_owner_loss() {
         Executable::capture(&Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/effigy"))
             .unwrap();
     let mut failures = Vec::new();
-    for (marker, owner_loss, nested) in [(91, false, false), (92, true, false), (93, true, true)] {
+    for (marker, owner_loss, nested) in [
+        (91, false, false),
+        (92, true, false),
+        (93, true, true),
+        (94, true, false),
+    ] {
         let checkout = fixture.path().join(format!("case-{marker}"));
         std::fs::create_dir(&checkout).unwrap();
         let command = "printf stdout-first; printf stderr-first >&2; touch started; while test ! -f continue; do sleep 0.02; done; printf stdout-last; printf stderr-last >&2; exit 23";
@@ -1674,7 +1679,15 @@ fn reserved_standard_engine_streams_exits_and_settles_owner_loss() {
                     ));
                 }
                 if owner_loss {
-                    started.client.close_input();
+                    if marker == 94 {
+                        let mut owner =
+                            effigy_kernel::run::resume_owner(&cx, &state, session, id).unwrap();
+                        owner
+                            .release(&cx, &state, effigy_kernel::run::Release::Eof)
+                            .unwrap();
+                    } else {
+                        started.client.close_input();
+                    }
                 } else {
                     std::fs::write(checkout.join("continue"), b"go").unwrap();
                 }

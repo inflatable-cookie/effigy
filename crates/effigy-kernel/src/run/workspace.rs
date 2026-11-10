@@ -1594,9 +1594,17 @@ impl Run<'_> {
     }
 
     pub(crate) fn workspace_owner_detached(&self) -> Result<bool, RunError> {
+        self.workspace_owner_released(Release::Detach)
+    }
+
+    pub(crate) fn workspace_owner_lost(&self) -> Result<bool, RunError> {
+        self.workspace_owner_released(Release::Eof)
+    }
+
+    fn workspace_owner_released(&self, cause: Release) -> Result<bool, RunError> {
         Ok(self.store.conn().query_row(
-            "SELECT EXISTS(SELECT 1 FROM run_attachments WHERE run_id=?1 AND lifetime='owner' AND state='released' AND release='detach')",
-            [self.id.to_string()], |row| row.get(0),
+            "SELECT EXISTS(SELECT 1 FROM run_attachments WHERE run_id=?1 AND lifetime='owner' AND state='released' AND release=?2)",
+            params![self.id.to_string(), release_name(cause)], |row| row.get(0),
         )?)
     }
 }

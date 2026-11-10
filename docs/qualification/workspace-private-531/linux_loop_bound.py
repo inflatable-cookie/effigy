@@ -153,3 +153,72 @@ def verify_actor(actor, devices, engine_root, memory_max):
                 raise ValueError('writer holds an unbounded writable file descriptor or mapping')
     return {'pid': actor['pid'], 'birth': actor['birth'], 'writable_mounts': writable}
 
+
+# Fixed outer-file metadata allowance, separate from inner ext4 metadata. Fully
+# initialized extents and disabled discard prevent payload writes from creating
+# more outer extents. This is retained allocation, never cumulative write IO.
+IMAGE_METADATA_MAX = 65536
+
+
+def loop_status(raw):
+    """Linux loop_info64 original (LOOP_GET_STATUS64), no device operation."""
+    if len(raw) != 232:
+        raise ValueError('loop status original has the wrong size')
+    device, inode, rdevice, offset, size, number, crypt, key_size, flags = struct.unpack_from('<QQQQQIIII', raw)
+    if crypt or key_size or flags & ~20:  # only AUTOCLEAR / DIRECT_IO; never READ_ONLY
+        raise ValueError('loop is encrypted, read-only or has unsupported flags')
+    return dict(backing_device=device, backing_inode=inode, backing_rdevice=rdevice,
+                offset=offset, size_limit=size, number=number, flags=flags)
+
+
+def verify_image(value, pin):
+    """Re-derive one initialized image bound against externally frozen pins.
+
+    The authenticated collector retains raw superblocks, mountinfo and ioctl
+    bytes. A caller-provided success flag or reduced observation never suffices.
+    """
+    required = {'image', 'image_device', 'image_inode', 'image_bytes', 'filesystem_uuid', 'mountpoint'}
+    if set(pin) != required or type(pin['image_bytes']) is not int or pin['image_bytes'] <= 0:
+        raise ValueError('exact frozen physical image pins required')
+    image = Path(pin['image'])
+    if not image.is_absolute() or str(image) != pin['image'] or '..' in image.parts:
+        raise ValueError('noncanonical frozen image path')
+    facts = value['originals']
+    info = facts['image_stat']
+    if (info['device'] != pin['image_device'] or info['inode'] != pin['image_inode']
+            or info['size'] != pin['image_bytes'] or info['uid'] != 0 or info['gid'] != 0
+            or info['mode'] != 0o100600 or info['links'] != 1
+            or not pin['image_bytes'] <= info['blocks'] * 512 <= pin['image_bytes'] + IMAGE_METADATA_MAX):
+        raise ValueError('image custody, fixed size or allocation differs')
+    ancestors = facts['ancestors']
+    if ([item['path'] for item in ancestors] != [str(parent) for parent in image.parents]
+            or any(item['uid'] != 0 or item['mode'] & 0o022 or item['mode'] & 0o170000 != 0o040000
+                   for item in ancestors)):
+        raise ValueError('image ancestor custody is incomplete or writable')
+    rows = mount_rows(facts['mountinfo'])
+    native, mounted = one_mount(rows, '/'), one_mount(rows, pin['mountpoint'])
+    if (native['source'] != '/dev/sda2' or native['fstype'] != 'ext4' or native['root'] != '/'
+            or native['device'] != facts['image_device_number']):
+        raise ValueError('native root mount association differs')
+    outer = superblock(bytes.fromhex(facts['root_superblock_hex']), project_quota=False)
+    inner = superblock(bytes.fromhex(facts['image_superblock_hex']), project_quota=False)
+    if (outer['uuid'] != ROOT_UUID or inner['uuid'] != pin['filesystem_uuid']
+            or inner['capacity_bytes'] != pin['image_bytes']):
+        raise ValueError('raw root or image filesystem identity/capacity differs')
+    loop = loop_status(bytes.fromhex(facts['loop_status_hex']))
+    association = facts['loop']
+    if (loop['backing_device'] != pin['image_device'] or loop['backing_inode'] != pin['image_inode']
+            or loop['backing_rdevice'] != 0 or loop['offset'] != 0 or loop['size_limit'] != 0
+            or association['backing_file'] != pin['image'] or association['capacity_bytes'] != pin['image_bytes']
+            or association['discard_max_bytes'] != 0 or association['device'] != mounted['device']):
+        raise ValueError('kernel loop association, capacity or discard policy differs')
+    if (mounted['fstype'] != 'ext4' or mounted['root'] != '/'
+            or not {'rw', 'nodev', 'nosuid'} <= set(mounted['options'])
+            or any(row != mounted and (row['device'] == mounted['device']
+                   or row['target'].startswith(pin['mountpoint'] + '/')) for row in rows)):
+        raise ValueError('image mount is unsafe, aliased or nested')
+    extents = value['allocation_map']['extents']
+    verify_extents(extents, pin['image_bytes'])
+    if any(item['flags'] & ~1 for item in extents):
+        raise ValueError('image contains uninitialized allocated extents')
+    return dict(pin, device=mounted['device'], image_metadata_bytes=info['blocks'] * 512 - pin['image_bytes'])

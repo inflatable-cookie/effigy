@@ -43,6 +43,51 @@ def submit_unit(attempt, argv, unit):
             time.sleep(5)
 
 
+def stop_owned_unit(attempt, target, output_root):
+    """Latch one caller-owned unit stop; independently require empty custody."""
+    import re
+    common.require(re.fullmatch(r'effigy-829-[a-z0-9-]+', target), 'invalid owned unit identifier')
+    unit = 'effigy-829-quiesce-' + uuid.uuid4().hex
+    streams = {name: str(Path(output_root) / (unit + '.' + name)) for name in ('stdout', 'stderr')}
+    argv = ['systemd-run', '--unit=' + unit, '--no-block', '--service-type=exec',
+            '--property=RemainAfterExit=yes', '--property=CollectMode=inactive',
+            '--property=RuntimeMaxSec=45', '--property=TimeoutStopSec=5',
+            '--property=MemoryMax=64M', '--property=MemorySwapMax=0', '--property=TasksMax=16',
+            '--property=LimitFSIZE=1M', '--property=LimitCORE=0',
+            '--property=StandardOutput=append:' + streams['stdout'],
+            '--property=StandardError=append:' + streams['stderr'],
+            '--', '/usr/bin/systemctl', 'stop', target + '.service']
+    submit_unit(attempt, argv, unit)
+    deadline = time.monotonic() + 65
+    while True:
+        raw = attempt.admin('systemctl show --all ' + unit + '.service '
+                            '--property=MainPID,SubState,Result,ExecMainStatus', read_only=True)
+        state = dict(line.split('=', 1) for line in raw.decode().splitlines())
+        if state.get('MainPID') == '0' and state.get('SubState') in ('exited', 'failed', 'dead'):
+            break
+        common.require(time.monotonic() < deadline, 'latched unit stop has no terminal observation')
+        time.sleep(.2)
+    common.exclusive(attempt.root / (unit + '.terminal.json'), state)
+    for name, path in streams.items():
+        common.exclusive_bytes(attempt.root / (unit + '.' + name),
+                               attempt.admin('cat ' + shlex.quote(path), read_only=True))
+    common.require(state['Result'] == 'success' and state['ExecMainStatus'] == '0',
+                   'latched stop failed; retained streams and unit identity')
+    raw = attempt.admin('systemctl show --all ' + target + '.service '
+                        '--property=ActiveState,MainPID,ControlGroup', read_only=True)
+    state = dict(line.split('=', 1) for line in raw.decode().splitlines())
+    code = ('import json; from pathlib import Path; p=Path('
+            + repr('/sys/fs/cgroup/system.slice/' + target + '.service') + '); '
+            'print(json.dumps([int(n) for f in p.rglob("cgroup.procs") for n in f.read_text().split()]))')
+    pids = json.loads(attempt.admin('python3 -I -B -c ' + shlex.quote(code), read_only=True))
+    common.exclusive(attempt.root / (unit + '.owner-terminal.json'), {'target': target, 'state': state, 'pids': pids})
+    common.require(state.get('ActiveState') in ('inactive', 'failed') and state.get('MainPID') == '0'
+                   and state.get('ControlGroup') == '' and pids == [], 'owned unit did not close')
+    # Keep the completed zero-process latch loaded. Its name cannot be replayed
+    # after an ambiguous acknowledgement; no process remains to clean up.
+    return state, pids
+
+
 class Attempt:
     def __init__(self, root, *, label='native-session'):
         diagnostic.private_root(str(root))
@@ -151,7 +196,7 @@ def execute(root, seed, mode):
     properties = 'LoadState,ActiveState,SubState,Result,ExecMainStatus,MainPID,ControlGroup,InvocationID,ExecMainExitTimestampMonotonic'
     terminal = None
     while time.monotonic() < deadline:
-        raw = attempt.admin('systemctl show ' + unit + '.service --property=' + properties, read_only=True)
+        raw = attempt.admin('systemctl show --all ' + unit + '.service --property=' + properties, read_only=True)
         status = dict(line.split('=', 1) for line in raw.decode().splitlines())
         if (status.get('MainPID') == '0' and status.get('ControlGroup')
                 and int(status.get('ExecMainExitTimestampMonotonic', '0')) > 0):
@@ -160,7 +205,7 @@ def execute(root, seed, mode):
             # Preserve the pre-stop state; this is cleanup, not proof that a
             # running session settled naturally. Its journal checks ran first.
             common.exclusive(attempt.root / 'post-main-cgroup.json', status)
-            attempt.admin('systemctl stop ' + unit + '.service')
+            stop_owned_unit(attempt, unit, session.BASE / 'qualification')
             continue
         if (status.get('MainPID') == '0' and status.get('ControlGroup') == ''
                 and status.get('ActiveState') in ('active', 'failed', 'inactive')
@@ -169,7 +214,7 @@ def execute(root, seed, mode):
             break
         time.sleep(5)
     if terminal is None:
-        attempt.admin('systemctl stop ' + unit + '.service')
+        stop_owned_unit(attempt, unit, session.BASE / 'qualification')
         raise RuntimeError('owned native service exceeded deadline; stopped exact unit, no success claim')
     common.exclusive(attempt.root / 'terminal.json', terminal)
     log_data = attempt.command(ssh + ['cat ' + shlex.quote(log)], read_only=True)
