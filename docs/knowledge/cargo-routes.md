@@ -157,6 +157,31 @@ they are the ones to re-check on a host that links `target` to another volume.
   unlisted Cargo profile through, or name it in the refusal) would remove the
   workaround.
 
+### Task 829 interactive guest bootstrap
+
+Planner answer `ee843c6e0dada82e0dcefc89203d23ec1bb648218b702048ee1956df0d3fba42`
+(2026-11-09) confirms the existing guest-without-Oxide route for interactive
+exploration on VM `433c9e5b-c7b9-469f-9633-24b4addcd3b5`. The installed-host
+Oxide source pin `e68c8f3c…` cannot compile natively: its pinned Barge dependency
+emits a compile error because its Linux OS layer is absent. No guest Oxide was
+installed. `build:qualification:linux-native` runs on the installed host Effigy,
+transfers a commit-bound current-main bundle over pinned private SSH, then calls
+that guest source's `scripts/oxide-selector.sh build --locked --bin effigy` with
+`EFFIGY_OXIDE_ESCAPE=cargo`. The exact need is the observed absence of guest
+Oxide. Subsequent guest builds use native Effigy selectors with the same named
+need. Outputs remain on the guest's native filesystem in the Stash-backed VM;
+no host Cargo command or silent fallback is introduced. A newly present Oxide
+refuses this bootstrap until the route is rebound. This grants no native proof
+or release credit and does not alter host placement rules.
+
+The native GNU producer uses the same guest-only route through a native Effigy
+skill selector and `scripts/oxide-selector.sh zigbuild --locked --release --bin
+effigy --target aarch64-unknown-linux-gnu.2.31`. Its tools and linker cache live in
+the owned guest, with a private stable build HOME under its toolchain. The local task overlay
+selects this producer explicitly; it is not a Colima recipe receipt or a host
+Cargo fallback. Native test-input builds likewise use guest Effigy selectors;
+the session selector executes their pinned prebuilt nextest binaries.
+
 ## Hosted binary partitioner
 
 `scripts/ci-shared-process.py` drives Cargo directly on hosted CI, where Oxide

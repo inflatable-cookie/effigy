@@ -528,9 +528,9 @@ def execute_window(request, request_sha, manifest, inputs_hash, *, outer_deadlin
 
 def main(argv):
     import macos_colima_chain as chain
-    if len(argv) == 4 and argv[1] == 'plan-chain':
+    if len(argv) == 4 and argv[1] in ('plan-chain', 'plan-desktop-chain'):
         print(json.dumps(chain.recipe(json.loads(Path(argv[2]).read_text()),
-                                      json.loads(Path(argv[3]).read_text())), indent=2, sort_keys=True))
+                                      json.loads(Path(argv[3]).read_text()), desktop=argv[1] == 'plan-desktop-chain'), indent=2, sort_keys=True))
         return 0
     if len(argv) == 4 and argv[1] == 'plan-ready':
         bindings = json.loads(Path(argv[2]).read_text(), object_pairs_hook=unique_object)
@@ -555,7 +555,7 @@ def main(argv):
     if hashlib.sha256(raw).hexdigest() != argv[2]:
         raise executor.Refusal('proof request hash or size mismatch')
     request = json.loads(raw, object_pairs_hook=unique_object)
-    if isinstance(request, dict) and request.get('schema') == chain.SCHEMA:
+    if isinstance(request, dict) and request.get('schema') in (chain.SCHEMA, chain.DESKTOP_SCHEMA):
         receipt = chain.execute(request, argv[2])
         print(json.dumps(receipt, sort_keys=True))
         return 0 if receipt['closure'] == 'closed' else 1

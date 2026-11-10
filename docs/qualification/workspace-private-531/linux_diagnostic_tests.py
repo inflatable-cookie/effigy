@@ -317,6 +317,37 @@ class MetadataAccountingTests(unittest.TestCase):
         with self.assertRaisesRegex(Refusal, 'unsupported ancillary ownership mode'):
             diagnostic.package_sample(root, None, 'guess')
 
+    def test_unlinked_ancillary_stat_repeats_the_sample_but_never_weakens_bound_custody(self):
+        root,disk,xml=disk_fixture()
+        plain=root/'plain';plain.write_bytes(b'fixture')
+        monitor=observed_package(root,disk,xml)
+        original=diagnostic.lstat
+        first=True
+        def raced(path):
+            nonlocal first
+            info=original(path)
+            if Path(path)==plain and first:
+                first=False
+                return Sampled(info,nlink=0)
+            return info
+        with patch.object(diagnostic,'lstat',side_effect=raced),patch.object(diagnostic.time,'sleep'):
+            monitor.check()
+        self.assertEqual(len(monitor.observation_failures),1)
+        self.assertEqual(monitor.observation_failures[0]['nlink'],0)
+        self.assertEqual(monitor.observation_failures[0]['relative'],'plain')
+        before=len(monitor.observation_failures)
+        with injected_stat('plain',nlink=0),patch.object(diagnostic.time,'sleep'):
+            with self.assertRaises(diagnostic.ObservationRefusal):monitor.check()
+        self.assertEqual(len(monitor.observation_failures)-before,diagnostic.ATTEMPTS)
+        with injected_stat('plain',nlink=0):
+            with self.assertRaises(diagnostic.CustodyRefusal):
+                diagnostic.package_sample(root,None,diagnostic.OBSERVED,{str(plain)})
+        with injected_stat('plain',nlink=0,dev=plain.stat().st_dev+1):
+            with self.assertRaises(diagnostic.CustodyRefusal):
+                diagnostic.package_sample(root,None,diagnostic.OBSERVED)
+        with injected_stat('plain',nlink=0,uid=os.geteuid()+1):
+            with self.assertRaises(diagnostic.CustodyRefusal):diagnostic.package_sample(root)
+
     def test_observed_mode_refuses_a_cross_device_entry(self):
         root, disk, xml = disk_fixture()
         (root / 'other-device').write_bytes(b'x')
@@ -537,6 +568,11 @@ class MetadataAccountingTests(unittest.TestCase):
         changed['unexpected'] = {'current': False}
         with self.assertRaisesRegex(Refusal, 'snapshot inventory differs'):
             proof.check_snapshots(json.dumps(changed).encode())
+        changed_raw = json.dumps(changed).encode()
+        exploration_pin = hashlib.sha256(proof.canonical(changed)).hexdigest()
+        self.assertEqual(proof.check_snapshots(changed_raw, exploration_pin), changed)
+        with self.assertRaisesRegex(Refusal, 'snapshot inventory differs'):
+            proof.check_snapshots(changed_raw)
         duplicate = b'{"item":1,"item":1}'
         with self.assertRaisesRegex(Refusal, 'duplicate JSON key'):
             proof.check_snapshots(duplicate)
@@ -750,6 +786,18 @@ class ProtectedSampleTests(unittest.TestCase):
                           caught.exception.observation['errno']), ('descriptor-verify', 'lstat', errno.ENOENT))
         self.assertIn('No such file', str(caught.exception))
         self.assertEqual(len(monitor.observation_failures), 2)
+
+    def test_descriptor_republication_gap_waits_before_fresh_verification(self):
+        root, disk, xml, monitor = self.monitor()
+        descriptor = disk / 'DiskDescriptor.xml'
+        descriptor.unlink()
+        with patch.object(diagnostic.time, 'sleep', side_effect=lambda _: descriptor.write_bytes(xml)) as pause:
+            result = monitor.check()
+        pause.assert_called_once_with(diagnostic.OBSERVATION_RETRY_DELAY)
+        self.assertEqual(result['attempts'], 2)
+        self.assertEqual(monitor.observation_failures[0]['errno'], errno.ENOENT)
+        self.assertEqual(len(monitor.identity_events), 1)
+        self.assertTrue(monitor.identity_events[0]['content_identical'])
 
     def test_persistent_unreadability_refuses_with_errno(self):
         if os.geteuid() == 0:
@@ -1799,7 +1847,7 @@ class WriterBoundObservationTests(unittest.TestCase):
                                        'findings', 'observation_eligibility'})
         # The setup source admits only the witness-gated quota mechanism; this observation never
         # turns a diagnostic fact into setup, placement or hard-quota credit.
-        self.assertEqual(proof.setup.SUPPORTED_HARD_LIMITS, frozenset({proof.setup.allocation.MECHANISM}))
+        self.assertEqual(proof.setup.SUPPORTED_HARD_LIMITS, frozenset({proof.setup.capacity.MECHANISM}))
         self.assertEqual(proof.setup.SUPPORTED_DISK_MECHANISMS,
                          frozenset({proof.setup.disk_association.MECHANISM}))
         self.assertIsNone(proof.setup.EXTERNAL_ANCHORS)
@@ -1891,6 +1939,10 @@ elif args[0] == 'list':
         vm['ID'] = 'wrong'
     print(json.dumps([vm]))
 elif args[0] == 'exec' and args[2:5] == ['/usr/bin/systemctl', 'is-system-running', '--wait']:
+    if mode == 'readiness_retry' and not (root / 'readiness-retried').exists():
+        (root / 'readiness-retried').write_text('1')
+        print('arbitrary session refusal', file=sys.stderr)
+        sys.exit(255)
     if mode == 'readiness_timeout': time.sleep(2)
     if mode == 'readiness_degraded': print('degraded'); sys.exit(1)
     if mode == 'readiness_starting': print('starting'); sys.exit(1)
@@ -2044,6 +2096,7 @@ class EntryTests(unittest.TestCase):
         ('growth', 0, 1),
         ('never_ready', 1, 1),
         ('transport_retry', 0, 1),
+        ('readiness_retry', 0, 1),
         ('device_retry', 0, 1),
         ('device_after_marker', 1, 1),
         ('device_exhausted', 1, 1),
@@ -2411,7 +2464,7 @@ class EntryTests(unittest.TestCase):
 
             with patch.object(proof.stage, 'run_stage', side_effect=bounded), \
                  patch.object(proof, 'PAUSE', 0.05), patch.object(proof, 'RUN_WAIT', 0.6), \
-                 patch.object(proof, 'READY_WAIT', 1), patch.object(proof, 'STATE_WAIT', 6), \
+                 patch.object(proof, 'READY_WAIT', 2), patch.object(proof, 'STATE_WAIT', 6), \
                  patch.object(proof, 'TRANSPORT_FLOOR', 0.3), \
                  patch.object(proof.disk_association, 'reader_executable', lambda: False), \
                  patch.object(proof, 'STOP_OBSERVE', 1):
@@ -2433,9 +2486,12 @@ class EntryTests(unittest.TestCase):
                                      if mode == 'foreign_metadata' else contextlib.nullcontext())
                         window = (patch.dict(next(r for r in guest_probe.ROUTES if r['id'] == 'device-uuids'),
                                              timeout=1.1) if mode == 'device_window' else contextlib.nullcontext())
-                        with injection, window, contextlib.redirect_stdout(io.StringIO()):
-                            self.assertEqual(proof.main(['proof', str(item_path),
-                                                         hashlib.sha256(item_raw).hexdigest()]), expected)
+                        readiness_window = (patch.object(proof, 'READY_WAIT', 10)
+                                            if mode == 'transport_817' else contextlib.nullcontext())
+                        with injection, window, readiness_window, contextlib.redirect_stdout(io.StringIO()):
+                            actual_exit = proof.main(['proof', str(item_path), hashlib.sha256(item_raw).hexdigest()])
+                        observed_result = json.loads((evidence / ('linux-diagnostic-fixture%02d' % index) / 'outcome.json').read_text())
+                        self.assertEqual(actual_exit, expected, observed_result['findings'])
                         result = json.loads((evidence / ('linux-diagnostic-fixture%02d' % index)
                                              / 'outcome.json').read_text())
                         calls = log.read_text().splitlines()
@@ -2583,7 +2639,7 @@ class EntryTests(unittest.TestCase):
                             # All echoes, systemd and the first boot read use one absolute end.
                             window = readiness_bounds[:len(result['transport']['attempts']) + 2]
                             self.assertEqual(len({end for _, _, end in window}), 1)
-                            self.assertTrue(all(limit <= 1 for argv, limit, _ in window
+                            self.assertTrue(all(limit <= (10 if mode == 'transport_817' else 2) for argv, limit, _ in window
                                                 if '/bin/echo' in argv))
                             self.assertEqual(result['transport']['status'], 'ready')
                             attempts = result['transport']['attempts']
@@ -2651,13 +2707,15 @@ class EntryTests(unittest.TestCase):
                                 self.assertEqual(
                                     [row['classification'] for row in
                                      result['transport']['attempts']], ['refused'])
-                        if mode.startswith('readiness_') or mode == 'never_ready':
+                        if (mode.startswith('readiness_') and mode != 'readiness_retry') or mode == 'never_ready':
                             self.assertFalse(result.get('probe'))
                             self.assertFalse(any('observation-' in path.name
                                                  for path in destination.iterdir()))
                             self.assertEqual(result['stop_count'], 1)
                             # One exact transport sentinel plus the one systemd wait.
-                            self.assertEqual(calls.count('exec'), 2)
+                            # A timed-out child may never reach its own log statement.
+                            self.assertEqual(sum(argv[1:2] == ['exec']
+                                                 for _, argv in step_argv()), 2)
                             reads = [path for path, argv in step_argv()
                                      if '/usr/bin/systemctl' in argv]
                             self.assertEqual(len(reads), 1)

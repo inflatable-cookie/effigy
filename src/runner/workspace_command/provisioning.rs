@@ -1976,7 +1976,10 @@ impl GuestReader for ComposeWorkspaceGuest<'_> {
             "p={}\nif [ -e \"$p\" ]; then printf 'P\\n'; cat \"$p\"; else printf 'A\\n'; fi",
             shell_quote(path)
         );
-        let output = self.run_script(&script, false)?;
+        // These are control-plane reads of the immutable objects that root
+        // stages, including mode-0600 credentials before ownership handoff.
+        // An image's default USER must not determine publication access.
+        let output = self.run_script(&script, true)?;
         if output.status.success() {
             return optional_guest_read(&output.stdout).map(|value| value.map(<[u8]>::to_vec));
         }
@@ -1998,7 +2001,10 @@ impl GuestReader for ComposeWorkspaceGuest<'_> {
              else exit 4\nfi",
             path = shell_quote(path)
         );
-        let output = self.run_script(&script, false)?;
+        // These are control-plane reads of the immutable objects that root
+        // stages, including mode-0600 credentials before ownership handoff.
+        // An image's default USER must not determine publication access.
+        let output = self.run_script(&script, true)?;
         match output.status.code() {
             Some(0) => {}
             Some(4) => {

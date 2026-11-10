@@ -7,6 +7,7 @@ import hashlib
 import os
 from pathlib import Path
 import stat
+import time
 import xml.etree.ElementTree as ET
 
 from preparation_stage import Refusal, exclusive
@@ -17,6 +18,7 @@ COUNTERS = ('logical', 'allocated')
 # One live sample may repeat once when a protected object's listing or identity moved between
 # its observation and the package walk. A persistent failure refuses; both attempts are retained.
 ATTEMPTS = 2
+OBSERVATION_RETRY_DELAY = .25
 _ISSUER = object()
 # Ancillary-metadata ownership modes. STRICT is the default for every other caller: a foreign
 # owner refuses. OBSERVED is the narrow read-only inventory mode the Linux diagnostic uses for
@@ -260,6 +262,14 @@ def package_sample(root, protected=None, ancillary_ownership=STRICT, bound=()):
             if not stat.S_ISREG(info.st_mode):
                 raise CustodyRefusal('package contains a non-regular file', 'package-walk', 'lstat',
                                      path, relative=relative, info=info)
+            if (info.st_nlink == 0 and key not in bound and info.st_dev == device
+                    and (ancillary_ownership == OBSERVED or info.st_uid == owner)):
+                # The directory walk raced an unlink. This is no longer a
+                # linked entry, not an alias (nlink > 1). Retain the exact stat
+                # and repeat the whole observation once; never charge or trust
+                # this inconsistent sample. Bound objects keep strict custody.
+                raise ObservationRefusal('package entry unlinked during observation',
+                                         'package-walk', 'lstat', path, relative=relative, info=info)
             if info.st_nlink != 1:
                 raise CustodyRefusal('package contains an aliased file', 'package-walk', 'lstat',
                                      path, relative=relative, info=info)
@@ -482,6 +492,12 @@ class ExtentMonitor:
                 self.observation_failures.append(dict(exc.observation, attempt=attempt))
                 if attempt == ATTEMPTS:
                     raise
+                # Parallels can unlink then republish its descriptor during
+                # start. A tight immediate re-read observes the same gap.
+                # Pause only after a failed observation; the next complete
+                # sample must independently re-establish every byte/custody
+                # invariant. Changed bytes and custody refusals never retry.
+                time.sleep(OBSERVATION_RETRY_DELAY)
 
     def check(self):
         try:

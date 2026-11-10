@@ -311,13 +311,13 @@ fn finish_gateway_route_registration_with_tls(
         )?;
     }
     on_wait(GatewayPortWait::ResolvingRoutes);
-    let mut routes =
-        resolve_gateway_routes_against_rows(repo_root, policy, rows)?.ok_or_else(|| {
-            gateway_runtime_target_error(format!(
-                "container `{}` published no host port for a declared gateway route",
-                policy.name
-            ))
-        })?;
+    let mut routes = resolve_gateway_routes_against_rows_with_validation(
+        repo_root,
+        policy,
+        rows,
+        RoutePortValidation::Registration,
+    )?
+    .expect("required gateway routes either resolve or return an error");
     let project_alias_routes =
         resolve_gateway_service_alias_routes(repo_root, policy, true, Some(rows))?;
     let shared_alias_routes = resolve_gateway_shared_service_alias_routes(
@@ -559,15 +559,25 @@ pub(in crate::runner) fn gateway_routes_registered_for_container(
         Err(error) if exec_error_means_runtime_not_running(&error) => return Ok(false),
         Err(error) => return Err(gateway_runtime_rows_error(error.to_string())),
     };
-    let mut routes =
-        resolve_gateway_routes_against_rows(repo_root, policy, &rows)?.ok_or_else(|| {
-            gateway_runtime_target_error(format!(
-                "container `{}` published no host port for a declared gateway route",
-                policy.name
-            ))
-        })?;
+    gateway_routes_registered_against_rows(repo_root, policy, &rows)
+}
+
+fn gateway_routes_registered_against_rows(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    rows: &[RunningComposeContainer],
+) -> Result<bool, RunnerError> {
+    let Some(mut routes) = resolve_gateway_routes_against_rows_with_validation(
+        repo_root,
+        policy,
+        rows,
+        RoutePortValidation::Handoff,
+    )?
+    else {
+        return Ok(false);
+    };
     let project_alias_routes =
-        resolve_gateway_service_alias_routes(repo_root, policy, false, Some(&rows))?;
+        resolve_gateway_service_alias_routes(repo_root, policy, false, Some(rows))?;
     if project_alias_routes.len() != expected_project_alias_route_count(policy) {
         return Ok(false);
     }
@@ -752,6 +762,26 @@ fn resolve_gateway_routes_against_rows(
     policy: &EffectiveContainerPolicy,
     rows: &[RunningComposeContainer],
 ) -> Result<Option<Vec<RegisteredGatewayRoute>>, RunnerError> {
+    resolve_gateway_routes_against_rows_with_validation(
+        repo_root,
+        policy,
+        rows,
+        RoutePortValidation::Wait,
+    )
+}
+
+enum RoutePortValidation {
+    Wait,
+    Handoff,
+    Registration,
+}
+
+fn resolve_gateway_routes_against_rows_with_validation(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    rows: &[RunningComposeContainer],
+    validation: RoutePortValidation,
+) -> Result<Option<Vec<RegisteredGatewayRoute>>, RunnerError> {
     let mut routes = Vec::new();
     for dns_route in &policy.dns_routes {
         let target = if let Some(host_target) = dns_route.target_host.as_deref() {
@@ -759,6 +789,24 @@ fn resolve_gateway_routes_against_rows(
         } else {
             let Some(host_port) = runtime_host_port_for_route(repo_root, policy, dns_route, rows)?
             else {
+                let service_is_running = rows.iter().any(|row| {
+                    row_matches_policy_project(row, repo_root, policy)
+                        && gateway_route_container_is_running(row)
+                        && dns_route
+                            .service
+                            .as_deref()
+                            .is_none_or(|service| row.service.as_deref() == Some(service))
+                });
+                if matches!(validation, RoutePortValidation::Registration)
+                    || (matches!(validation, RoutePortValidation::Handoff) && service_is_running)
+                {
+                    return Err(gateway_runtime_target_error(format!(
+                        "gateway route `{}` (service `{}`, selected port {}) published no host port",
+                        dns_route.domain,
+                        dns_route.service.as_deref().unwrap_or(&policy.primary_service),
+                        dns_route.port.map_or_else(|| "automatic".to_owned(), |port| port.to_string()),
+                    )));
+                }
                 return Ok(None);
             };
             format!("127.0.0.1:{host_port}")
@@ -866,6 +914,13 @@ fn resolve_gateway_shared_service_alias_routes(
     Ok(routes)
 }
 
+// Docker's health annotation does not change whether published ports exist.
+// Keep lifecycle transitions (for example Restarting) subject to the usual check.
+fn gateway_route_container_is_running(row: &RunningComposeContainer) -> bool {
+    let status = row.status.split(" (health:").next().unwrap_or(&row.status);
+    effigy_containers::exec::compose_status_is_running(status)
+}
+
 fn runtime_host_port_for_route(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -875,6 +930,7 @@ fn runtime_host_port_for_route(
     let matching_rows: Vec<&RunningComposeContainer> = rows
         .iter()
         .filter(|row| row_matches_policy_project(row, repo_root, policy))
+        .filter(|row| gateway_route_container_is_running(row))
         .filter(|row| {
             dns_route
                 .service

@@ -2019,3 +2019,94 @@ fn container_up_refuses_an_unverified_machine_gateway_before_registering_routes(
         );
     });
 }
+
+// The handoff preflight must allow dev to start an absent or stopped stack,
+// including the workspace service's Zest route on an ephemeral host port.
+#[test]
+fn dev_handoff_gateway_readiness_for_absent_stopped_and_registered_stacks() {
+    with_test_home("handoff-readiness", || {
+        let checkout = tempfile::tempdir().expect("checkout");
+        let mut policy = test_policy();
+        policy.repo_root = checkout.path().to_owned();
+        policy.service_aliases.clear();
+        policy.dns_routes[0].service = Some(policy.primary_service.clone());
+        policy.dns_routes[0].port = Some(80);
+        let mut zest = dns_route("zest.clientname.test");
+        zest.service = Some(policy.primary_service.clone());
+        zest.port = Some(3769);
+        policy.dns_routes.push(zest);
+        let repo = checkout.path();
+        let rows = published_rows(&policy, &[(41001, 80), (41002, 3769)], None);
+        assert!(!gateway_routes_registered_against_rows(repo, &policy, &[]).unwrap());
+        let mut stopped = rows.clone();
+        stopped[0].status = "Exited (0) 2 days ago".to_owned();
+        assert!(!gateway_routes_registered_against_rows(repo, &policy, &stopped).unwrap());
+        assert!(!gateway_routes_registered_against_rows(repo, &policy, &rows).unwrap());
+        finish_gateway_route_registration_with_tls(
+            repo,
+            &policy,
+            None,
+            &rows,
+            &mut |_| {},
+            &mut |_| Ok(()),
+        )
+        .expect("register running workspace and Zest routes");
+        assert!(gateway_routes_registered_against_rows(repo, &policy, &rows).unwrap());
+        // Matching registered routes must not make a stopped stack ready.
+        assert!(!gateway_routes_registered_against_rows(repo, &policy, &stopped).unwrap());
+        assert_eq!(
+            resolve_gateway_routes_against_rows(repo, &policy, &stopped).unwrap(),
+            None,
+            "stopped rows cannot supply the registered route targets"
+        );
+
+        let mut starting = rows.clone();
+        starting[0].status = "Up 10 seconds (health: starting)".to_owned();
+        let routes = resolve_gateway_routes_against_rows(repo, &policy, &starting)
+            .expect("health-starting resolution")
+            .expect("running ports remain published while health starts");
+        assert_eq!(routes[0].target.as_deref(), Some("127.0.0.1:41001"));
+        assert_eq!(routes[1].target.as_deref(), Some("127.0.0.1:41002"));
+        assert_eq!(
+            gateway_routes_readiness_detail(repo, &policy, &starting).unwrap(),
+            None
+        );
+        assert!(gateway_routes_registered_against_rows(repo, &policy, &starting).unwrap());
+    });
+}
+
+#[test]
+fn dev_handoff_and_registration_refuse_running_route_without_published_port() {
+    let checkout = tempfile::tempdir().expect("checkout");
+    let mut policy = test_policy();
+    policy.repo_root = checkout.path().to_owned();
+    policy.service_aliases.clear();
+    let mut zest = dns_route("zest.clientname.test");
+    zest.service = Some(policy.primary_service.clone());
+    zest.port = Some(3769);
+    policy.dns_routes = vec![zest];
+    let mut rows = published_rows(&policy, &[], None);
+    rows[0].status = "Up 10 seconds (health: starting)".to_owned();
+    let handoff = gateway_routes_registered_against_rows(checkout.path(), &policy, &rows)
+        .expect_err("running service has no published route port");
+    let registration = finish_gateway_route_registration_with_tls(
+        checkout.path(),
+        &policy,
+        None,
+        &rows,
+        &mut |_| {},
+        &mut |_| Ok(()),
+    )
+    .expect_err("registration must refuse too");
+    for error in [handoff, registration] {
+        let message = error.to_string();
+        for expected in [
+            "zest.clientname.test",
+            "service `app`",
+            "selected port 3769",
+            "no host port",
+        ] {
+            assert!(message.contains(expected), "{message}");
+        }
+    }
+}

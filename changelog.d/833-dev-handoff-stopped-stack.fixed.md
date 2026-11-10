@@ -1,0 +1,1 @@
+Fixed `effigy dev` handoff failing before it could start a stopped or never-started container stack with gateway routes. Running services with no published route port still fail validation, with the route domain, service and selected port named in the error.
