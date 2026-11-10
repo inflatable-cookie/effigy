@@ -3371,6 +3371,18 @@ fn every_activation_boundary_recovers_without_displacing_the_live_predecessor() 
         (Point::ActivationAttachmentBefore, 0),
         (Point::ActivationCommitAfter, 0),
     ];
+    use effigy_test_support::process::FixtureCommandExt;
+    let mut child = std::process::Command::new("/bin/cat")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn_owned()
+        .unwrap();
+    let dead_owner = crate::ident::process_identity(child.id())
+        .verified()
+        .cloned()
+        .unwrap();
+    child.kill().unwrap();
+    assert!(!child.wait().unwrap().success());
     for (point, nth) in boundaries {
         let cx = context();
         let fixture = home();
@@ -3473,6 +3485,18 @@ fn every_activation_boundary_recovers_without_displacing_the_live_predecessor() 
         arm(None);
         drop(activation_run);
         drop(staged_run);
+        // This is a simulated crash: dropping Run does not kill the test
+        // process. Bind recovery to an actually exited fixture identity.
+        Store::open(&cx, &root)
+            .unwrap()
+            .transaction(&cx, |txn| {
+                txn.conn().execute(
+                    "UPDATE runs SET owner_identity=?2 WHERE run_id=?1",
+                    rusqlite::params![run_id(103).to_string(), serde_json::to_string(&dead_owner)?],
+                )?;
+                Ok::<_, RunError>(())
+            })
+            .unwrap();
         let reader = read_journal(&cx, &root);
         let committed = point == Point::ActivationCommitAfter;
         assert_eq!(
