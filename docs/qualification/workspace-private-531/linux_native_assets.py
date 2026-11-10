@@ -99,13 +99,14 @@ roles={qroles}
 export RUSTUP_HOME="$base/toolchain/rustup" CARGO_HOME="$base/toolchain/cargo"
 export PATH="$base/tools/bin:$base/tools/zig-tools/cargo-zigbuild-aarch64-unknown-linux-gnu:$base/tools/zig-tools/zig-aarch64-linux-0.15.2:$CARGO_HOME/bin:/usr/bin:/bin"
 export EFFIGY_OXIDE_ESCAPE=cargo CARGO_BUILD_JOBS=4 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_DEV_INCREMENTAL=false
+export CARGO_TARGET_DIR="$base/build-cache"
 export ZIG_GLOBAL_CACHE_DIR="$base/toolchain/zig-cache" TMPDIR="$base/artifact-tmp" TMP="$base/artifact-tmp" TEMP="$base/artifact-tmp"
 mkdir -m 700 "$roles"
 install -m 700 "$source/target/debug/effigy" "$roles/effigy-production"
 cd "$source"
 "$roles/effigy-production" build:workspace:private-qualification
-install -m 700 target/debug/effigy "$roles/effigy-candidate"
-install -m 700 target/debug/workspace-qualification-fixture "$roles/workspace-qualification-fixture"
+install -m 700 "$CARGO_TARGET_DIR/debug/effigy" "$roles/effigy-candidate"
+install -m 700 "$CARGO_TARGET_DIR/debug/workspace-qualification-fixture" "$roles/workspace-qualification-fixture"
 mkdir -m 700 "$roles/driver"
 cat > "$roles/driver/effigy.toml" <<'CATALOG'
 {catalog}CATALOG
@@ -113,7 +114,7 @@ cat > "$roles/driver/effigy.toml" <<'CATALOG'
 "$roles/effigy-production" skill run --path "$roles/driver" test-inputs
 "$roles/effigy-production" skill run --path "$roles/driver" cargo-metadata
 "$roles/effigy-production" skill run --path "$roles/driver" runtime-image
-install -m 700 target/debug/kernel-custody-fixture "$roles/kernel-custody-fixture"
+install -m 700 "$CARGO_TARGET_DIR/debug/kernel-custody-fixture" "$roles/kernel-custody-fixture"
 cat > "$roles/native-artifact.sh" <<'WRAPPER'
 {wrapper}WRAPPER
 chmod 700 "$roles/native-artifact.sh"

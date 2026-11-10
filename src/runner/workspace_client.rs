@@ -903,7 +903,7 @@ impl RunningBinary {
             ))
         })?;
         Ok(Self {
-            version: effigy_core::build_info::display_version(),
+            version: effigy_core::build_info::active_version(),
             digest: digest_of_file(&executable)?,
         })
     }

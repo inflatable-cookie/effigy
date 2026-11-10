@@ -337,9 +337,12 @@ targets = ["containers"]
         encoded = json.dumps(identity)
         require(self.container in encoded and self.document['vm_boot_id'] in encoded, 'native identity differs')
         locator = self.document['locator']
-        args = [self.document['binary_path'], '__guest-reach', '--dial', '--endpoint', locator['endpoint'], '--timeout-ms', '5000', '--pin']
-        self.guest(args + [locator['pin']])
-        wrong = self.guest(args + ['sha256:' + '0' * 64], check=False)
+        args = [self.document['binary_path'], '__guest-reach', '--dial', '--endpoint', locator['endpoint'], '--pin']
+        timeout = ['--timeout-ms', '5000']
+        self.guest(args + [locator['pin']] + timeout)
+        wrong_pin = 'sha256:' + hashlib.sha256(b'531-wrong-pinned-peer').hexdigest()
+        require(wrong_pin != locator['pin'], 'wrong-pin control equals the real pin')
+        wrong = self.guest(args + [wrong_pin] + timeout, check=False)
         require(wrong.returncode != 0, 'wrong TLS pin accepted')
         self.record('native-identity-and-tls', boot_id=self.document['vm_boot_id'], wrong_pin_refused=True)
         started = time.monotonic()

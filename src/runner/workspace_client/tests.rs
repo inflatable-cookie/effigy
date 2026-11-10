@@ -37,6 +37,12 @@ fn running_binary() -> RunningBinary {
     RunningBinary::observe().expect("the test binary's own identity")
 }
 
+#[test]
+fn running_binary_observation_uses_the_active_protocol_version() {
+    let binary = RunningBinary::observe().expect("observe this test executable");
+    assert_eq!(binary.version, effigy_core::build_info::active_version());
+}
+
 pub(super) fn session_run() -> RunId {
     RunId::new(1, [SESSION_MARKER; 10]).expect("run id")
 }

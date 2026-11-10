@@ -3353,6 +3353,8 @@ the missing credential named, and local reads keep working.
 - Additive staging creates the fixed selector parent directories before the
   commit and selector CAS. A fresh image need not contain the legacy binary
   directory; staging directories does not select an executable or context.
+- Live guest identity uses the active protocol version, without the CLI display
+  prefix; version, executable digest and protocol still compare exactly.
 - Publication consumes only current bytes. It re-checks the target and the
   install identity of the artifact the host acquired, authenticates the bytes
   against their receipt, and refuses when either changed. It never builds or

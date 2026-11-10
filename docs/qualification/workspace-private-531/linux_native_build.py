@@ -47,10 +47,13 @@ def guest_script(pin, remote, bundle_sha, source_ref=SOURCE_REF):
         'test -z "$(git status --porcelain)"',
         'rustc -vV', 'cargo -vV',
         'export EFFIGY_OXIDE_ESCAPE=cargo',
+        'export CARGO_TARGET_DIR="$base/build-cache"',
         'export CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_DEV_INCREMENTAL=false CARGO_BUILD_JOBS=4',
         # The host Effigy selector owns this bootstrap. Once built, native Effigy
         # dispatches subsequent selectors with the same recorded guest-only need.
         'sh scripts/oxide-selector.sh build --locked --bin effigy',
+        'mkdir -p target/debug',
+        'install -m 700 "$CARGO_TARGET_DIR/debug/effigy" target/debug/effigy',
         './target/debug/effigy --version', 'sha256sum target/debug/effigy',
     ]) + '\n'
 

@@ -1071,3 +1071,20 @@ fixed parents. The strict guest double models mkdir-p ancestors and refuses a
 pointer write without a prepared directory, so the crash/partial-switch controls
 exercise the actual requirement instead of relying on implicit fake directories.
 The complete native re-exercise remains outstanding at this source tranche.
+
+The next native session reached real committed selection, bound workload mounts,
+full v2 context, native identity, correct TLS pin, and a genuine wrong-certificate
+pin refusal. The first task then found a display/protocol version mismatch:
+`RunningBinary` used `v0.14.1` while the published protocol identity used
+`0.14.1`. It now observes the active version, preserving exact digest/protocol
+comparison. The unsealed TLS control follows the CLI's canonical argument order
+and uses a distinct nonzero wrong pin, so it reaches TLS rather than failing
+argument validation.
+
+Native build selectors now reuse a private guest-only Cargo target cache under
+`BASE/build-cache`. Each build still runs its real selector; ordinary, qualified,
+utility and test roles are copied into fresh owned artifact directories and
+hashed, and the GNU producer publishes its real bytes and receipt into the
+source's artifact store. No cache path or symlink is used as a frozen artifact.
+The guest-only missing-Oxide ruling remains the reason for this route. The host
+build/admission route is unchanged.

@@ -19,6 +19,7 @@ TRIPLE = 'aarch64-unknown-linux-gnu'
 TARGET = TRIPLE + '.2.31'
 FLOOR = (2, 31)
 BUILD_HOME = Path('/Volumes/Stash/scratch/effigy/linux-native-829/toolchain/build-home')
+TARGET_HOME = Path('/Volumes/Stash/scratch/effigy/linux-native-829/build-cache')
 
 
 def validate_elf(header, program_headers, versions):
@@ -73,15 +74,16 @@ def produce(source, effigy):
     # cargo-zigbuild puts linker wrappers under HOME's cache. A new fixture
     # HOME otherwise changes rustc's linker path and rebuilds every dependency.
     # Keep it under the owned base: the acquisition service hides /home.
-    BUILD_HOME.mkdir(mode=0o700, exist_ok=True)
-    info = BUILD_HOME.lstat()
-    if (BUILD_HOME.resolve(strict=True) != BUILD_HOME or not BUILD_HOME.is_dir()
-            or info.st_uid != os.geteuid() or info.st_mode & 0o777 != 0o700):
-        raise RuntimeError('private stable build home differs')
-    build_env = dict(os.environ, HOME=str(BUILD_HOME))
+    for directory in (BUILD_HOME, TARGET_HOME):
+        directory.mkdir(mode=0o700, exist_ok=True)
+        info = directory.lstat()
+        if (directory.resolve(strict=True) != directory or not directory.is_dir()
+                or info.st_uid != os.geteuid() or info.st_mode & 0o777 != 0o700):
+            raise RuntimeError('private stable build directory differs')
+    build_env = dict(os.environ, HOME=str(BUILD_HOME), CARGO_TARGET_DIR=str(TARGET_HOME))
     subprocess.run([effigy, 'skill', 'run', '--path', driver, 'compile'], cwd=source,
                    env=build_env, check=True)
-    binary = source / 'target' / TRIPLE / 'release/effigy'
+    binary = TARGET_HOME / TRIPLE / 'release/effigy'
     size = binary.stat().st_size
     if not 0 < size <= 200 * 1024 * 1024:
         raise RuntimeError('artifact exceeds its binary cap')
