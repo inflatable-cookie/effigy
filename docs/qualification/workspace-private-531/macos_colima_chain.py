@@ -1,4 +1,4 @@
-"""One launch request for C2–C6; unchanged stage windows, claims and receipts."""
+"""One launch request per native chain; unchanged stage windows, claims and receipts."""
 import os
 import time
 
@@ -8,24 +8,28 @@ import macos_stage_proof as proof
 
 STAGES = ('C2', 'C3', 'C4', 'C5', 'C6')
 SCHEMA = 'macos-colima-chain-window-v1'
+DESKTOP_SCHEMA = 'macos-desktop-chain-window-v1'
+DESKTOP_STAGES = ('D1', 'D2', 'D3')
 
 
-def recipe(bindings, options):
+def recipe(bindings, options, *, desktop=False):
+    stages = DESKTOP_STAGES if desktop else STAGES
+    first_stage = stages[0]
     if set(options) != {'activation_id', 'evidence_root', 'prior_receipt'}:
         raise executor.Refusal('unsupported chain options')
     ident = options['activation_id']
     if not isinstance(ident, str) or len(ident) > 60:
         raise executor.Refusal('chain activation id must leave room for stage suffixes')
     manifest = executor.load_manifest()
-    first = proof.window_recipe('C2', bindings, dict(options, activation_id=ident + '-c2',
-                                duration_seconds=executor.stage_of(manifest, 'C2')['seconds']))
-    if os.path.lexists(bindings['colima_input_dir']):
+    first = proof.window_recipe(first_stage, bindings, dict(options, activation_id=ident + '-' + first_stage.lower(),
+                                duration_seconds=executor.stage_of(manifest, first_stage)['seconds']))
+    if not desktop and os.path.lexists(bindings['colima_input_dir']):
         raise executor.Refusal('C4 input destination is not absent')
-    budgets = {stage: executor.stage_of(manifest, stage)['seconds'] for stage in STAGES}
-    for stage in STAGES:
+    budgets = {stage: executor.stage_of(manifest, stage)['seconds'] for stage in stages}
+    for stage in stages:
         if executor.resolve_stage(stage, bindings, manifest)['static_admission']:
             raise executor.Refusal('chain stage unadmitted: ' + stage)
-    return dict(schema=SCHEMA, activation_id=ident, first=first, budgets=budgets,
+    return dict(schema=DESKTOP_SCHEMA if desktop else SCHEMA, activation_id=ident, first=first, budgets=budgets,
                 duration_seconds=sum(budgets.values()))
 
 
@@ -34,17 +38,21 @@ def execute(request, request_sha):
             'schema', 'activation_id', 'first', 'budgets', 'duration_seconds'}
             or not isinstance(request['first'], dict)):
         raise executor.Refusal('unsupported chain request')
+    desktop = request['schema'] == DESKTOP_SCHEMA
+    if request['schema'] not in (SCHEMA, DESKTOP_SCHEMA):
+        raise executor.Refusal('unsupported chain schema')
+    stages = DESKTOP_STAGES if desktop else STAGES
     first = request['first']
     options = dict(activation_id=request['activation_id'], evidence_root=first['evidence_root'],
                    prior_receipt=first['prior_receipt'])
-    if request != recipe(first['bindings'], options) or any(v is None for v in first['roots'].values()):
+    if request != recipe(first['bindings'], options, desktop=desktop) or any(v is None for v in first['roots'].values()):
         raise executor.Refusal('chain request, inputs or root identity differs')
     root = first['evidence_root']
     name = 'chain-' + request['activation_id']
     if os.path.lexists(root + '/' + name + '.json'):
         raise executor.Refusal('chain destination already exists')
     pins = executor.Pins()
-    summary = dict(schema='macos-colima-chain-receipt-v1', request_sha256=request_sha,
+    summary = dict(schema='macos-desktop-chain-receipt-v1' if desktop else 'macos-colima-chain-receipt-v1', request_sha256=request_sha,
                    closure='unknown', receipts=[])
     claimed = False
     try:
@@ -56,7 +64,7 @@ def execute(request, request_sha):
         claimed = True
         deadline = time.monotonic() + request['duration_seconds']
         prior = first['prior_receipt']
-        for stage in STAGES:
+        for stage in stages:
             pins.recheck()
             options = dict(activation_id=request['activation_id'] + '-' + stage.lower(),
                            duration_seconds=request['budgets'][stage], evidence_root=root, prior_receipt=prior)

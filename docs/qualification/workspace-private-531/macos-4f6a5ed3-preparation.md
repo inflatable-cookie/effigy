@@ -1204,3 +1204,43 @@ The failed-779 Desktop observation entry runs through
 (`macos_desktop_observation_tests.py`: 35 cases, retained-shape fixture originals and one
 supervised harmless fake Docker child, no native action) and compiles through
 `effigy check:qualification:workspace-private:macos-desktop-observation:compile`.
+
+## Desktop exploration route (effigy#831, in progress)
+
+`qualification:macos:desktop-smoke` creates a fresh token and owned control below
+its fresh TMPDIR child, with private claims, activations and evidence. It runs D0,
+one D1–D3 chain request, then D4 on that chain's own receipts. It records complete
+container, image, volume and network inventories before and after, plus their
+difference. It never adopts the retained D2/D3 resources or the prepared D4 packet.
+A failure retains its exact resources and receipts; it does not guess cleanup IDs.
+The original top-level control paths remain valid for existing sealed requests;
+nested controls derive every child from the canonical, hash-bound control parent.
+
+Prepare the later sealed chain with
+`qualification:macos:proof-only -- plan-desktop-chain BINDINGS OPTIONS`, using
+D0 as the predecessor. Run its frozen request only through an owner-launched
+`qualification:macos:chain-proof-only` occurrence. The D1–D3 budgets add up to
+one outer deadline; every original stage deadline, reserve, cap, exclusive claim,
+receipt check and drift refusal remains in place. Colima uses the same loop.
+
+D4 deliberately remains outside the chain. The full-session driver consumes a
+resident runtime image, while it creates its own workspace state volumes and
+never mounts D1's anonymous volume. Keep the prepared historical D4 packet
+untouched while exploring. After the full session closes, the planner can order
+that packet's exact receipted cleanup; deleting its image before a session using
+that image would fail the driver's resident-image check. Freeze the final
+session against integrated Recipe A–E artifacts and a stable shared-engine
+baseline before any sealed #622 occurrence. Exploratory receipts give no #622
+credit. Full-session Desktop exploration and the final ordering observation
+remain work in progress.
+
+The fresh native preparation chain closed on 2026-11-10 under
+`/Volumes/Stash/scratch/effigy/a9b25b38/desktop-smoke-1es4tm7j` (token
+`ca385b4b`). D0, chained D1–D3 and D4 each closed. All four complete engine
+inventories matched before and after: no container, image, volume or network
+was added or removed at closeout. The historical D2/D3 resources and D4 packet
+were untouched. This is unsealed preparation evidence, not a full-session
+result. An earlier attempt remains at `desktop-smoke-c8iowqdj` under the same
+run root: D0/D1 closed, then an author edit triggered source-hash drift before
+D2 could proceed. Its exact labelled volume remains retained by that D1 receipt;
+its inventory difference contains only that owned volume.

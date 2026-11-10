@@ -1,0 +1,1 @@
+Native Docker Desktop preparation can chain D1–D3 in one request while preserving each stage's limits and receipts, leaving cleanup separate for a later full session. An unsealed Desktop smoke selector records native inventories and uses fresh owned controls beneath the run's scratch root.
