@@ -1990,8 +1990,11 @@ elif args[0] == 'exec' and args[2:4] == ['/bin/echo', %(sentinel)r]:
     print(%(sentinel)r)
 elif args[0] == 'exec':
     script = args[-1] if len(args) > 4 else ''
-    if mode == 'foreign_metadata':
-        (home / 'config.pvs.e13c235b').write_bytes(b'incidental-metadata')
+    if mode == 'foreign_metadata' and not (home / 'config.pvs.e13c235b').exists():
+        # Publish one complete incarnation; repeated execs must not truncate it under the monitor.
+        pending = root / 'foreign-metadata'
+        pending.write_bytes(b'incidental-metadata')
+        pending.rename(home / 'config.pvs.e13c235b')
     for name in routes:
         if ('# effigy-linux-observation: ' + name) in script:
             if name == 'device-uuids' and mode in ('device_retry', 'device_after_marker', 'device_exhausted', 'device_stderr_cap', 'device_window'):
