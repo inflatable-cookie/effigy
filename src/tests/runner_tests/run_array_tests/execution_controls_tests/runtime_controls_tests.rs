@@ -64,7 +64,7 @@ run = 'printf "$SCOPED" >> effects; sleep 20; printf leaf-late >> effects'
             Some(124),
             "parent={parent}, child={child}: {error}"
         );
-        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+        assert!(started.elapsed() < std::time::Duration::from_secs(4));
         assert_eq!(
             std::fs::read_to_string(root.path().join("effects")).unwrap(),
             "inherited"
