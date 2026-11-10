@@ -62,6 +62,12 @@ print('owned-preparation-mounted-discard-disabled')
 def admin_operation(attempt, payload, *, seconds=45, memory='256M', file_limit='8M', unit=None):
     """One retained root operation; no transport exit substitutes for cgroup closure."""
     script = stage_admin_script(attempt, payload)
+    return admin_program(attempt, ['/usr/bin/python3', '-I', '-B', script], seconds=seconds,
+                         memory=memory, file_limit=file_limit, unit=unit)
+
+
+def admin_program(attempt, command, *, seconds=45, memory='256M', file_limit='8M', unit=None):
+    """Run a prepared fixed program and retain its independently closed unit."""
     unit = unit or ('effigy-829-resume-' + uuid.uuid4().hex)
     import re
     common.require(re.fullmatch(r'effigy-829-resume-[0-9a-f]{32}', unit), 'fresh observer unit required')
@@ -74,7 +80,7 @@ def admin_operation(attempt, payload, *, seconds=45, memory='256M', file_limit='
             '--property=LimitFSIZE=' + file_limit, '--property=LimitCORE=0', '--property=UMask=0077',
             '--property=StandardOutput=append:' + output + '.stdout',
             '--property=StandardError=append:' + output + '.stderr',
-            '--', '/usr/bin/python3', '-I', '-B', script]
+            '--', *command]
     submit_unit(attempt, argv, unit)
     deadline = time.monotonic() + seconds + 20
     while True:
@@ -433,46 +439,104 @@ class Attempt:
         return self.command(argv, timeout=45, read_only=read_only)
 
 
-def execute(root, seed, mode):
+class CheckedSSH:
+    def __init__(self, verify):
+        self.verify=verify
+
+    def __add__(self, arguments):
+        return self.verify()+arguments
+
+
+def execute_proof(root, inputs, inputs_hash, go_index, go_hash):
+    """Existing launch authority, one Linux cell, and the same bounded runner.
+
+    Only the Nucleus source-immutable proof entry may invoke this route. This
+    function grants no activation; it rechecks the frozen inputs and scoped GO.
+    """
+    common.require(common.digest(inputs)==inputs_hash and common.digest(go_index)==go_hash,
+                   'proof authority bytes changed')
+    head=common.source_head(Path(__file__).resolve().parents[3])
+    value=common.validate_inputs(common.load(inputs),head)
+    cell=next(cell for cell in value['backends'] if cell['backend']=='linux')
+    go=common.load(common.artifact(common.load(go_index)['linux']))
+    common.validate_go(go,inputs_hash,cell,head)
+    preparation=common.load(common.artifact(cell['linux_preparation']))
+    common.require(preparation['schema']=='effigy.linux-physical-preparation-complete.v1'
+                   and preparation['source_head']==head and preparation['qualification_credit'] is False,
+                   'Linux preparation is not the frozen candidate')
+    for name,item in preparation['cell'].items():
+        common.require(cell.get(name)==item,'Linux full inputs change a prepared field: '+name)
+    common.require(cell['native_writer_gate']==cell['linux_capacity']['plan']['phases']['live']['origin']['nonce'],
+                   'proof writer gate is outside its frozen physical plan')
+    return execute(root,inputs,'full',proof=dict(cell=cell,inputs_sha256=inputs_hash,go_sha256=go_hash,go_index=str(go_index),
+                   deadline=time.monotonic()+cell['budget_seconds']))
+
+
+def execute(root, seed, mode, *, proof=None):
     common.require(mode in ('acquire', 'preflight', 'full'), 'explicit native session mode required')
     attempt = Attempt(root)
     raw = attempt.command([diagnostic.PRLCTL, 'list', '--info', setup.VM_UUID, '--json'], read_only=True)
     diagnostic.check_vm(raw, 'running')
-    control = root / 'control'
-    diagnostic.private_root(str(control))
-    ssh = common.isolated_ssh_prefix('effigy-531-vault', build.file_input(control / 'ssh_config'),
-                                    build.file_input(control / 'ssh_known_hosts'), control, attempt.root)
+    if proof is None:
+        control = root / 'control'
+        diagnostic.private_root(str(control))
+        config,known_item = build.file_input(control/'ssh_config'),build.file_input(control/'ssh_known_hosts')
+        ssh = CheckedSSH(lambda:common.isolated_ssh_prefix('effigy-531-vault',config,known_item,control,attempt.root))
+        value = json.loads(seed.read_bytes())
+        common.require(value.get('schema') == 'effigy.linux-native-session-exploration.v1'
+                       and value.get('task_id') == session.TASK and value.get('exploratory') is True
+                       and value.get('qualification_credit') is False, 'unsealed task-owned asset seed required')
+        value['cell']['native_writer_gate'] = uuid.uuid4().hex if mode == 'full' else None
+    else:
+        common.require(mode == 'full', 'proof execution cannot select a preparation mode')
+        value = {'cell':proof['cell']}
+        ssh = CheckedSSH(lambda:common.ssh_prefix(value['cell']))
+        known_item = value['cell']['ssh_known_hosts']
     key = attempt.command([diagnostic.PRLCTL, 'exec', setup.VM_UUID, '/bin/cat',
                            '/etc/ssh/ssh_host_ed25519_key.pub'], read_only=True).decode().split()
-    known = (control / 'ssh_known_hosts').read_text().split()
+    known = common.artifact(known_item).read_text().split()
     common.require(len(key) >= 2 and len(known) >= 3 and key[:2] == known[1:3], 'fixed VM host key changed')
-    value = json.loads(seed.read_bytes())
-    common.require(value.get('schema') == 'effigy.linux-native-session-exploration.v1'
-                   and value.get('task_id') == session.TASK and value.get('exploratory') is True
-                   and value.get('qualification_credit') is False, 'unsealed task-owned asset seed required')
-    value['cell']['native_writer_gate'] = uuid.uuid4().hex if mode == 'full' else None
     common.exclusive(attempt.root / 'seed.json', value)
-    driver = str(session.BASE / ('driver-' + attempt.root.name))
-    channel_directory(attempt, driver)
-    files = {}
-    for name in FILES:
-        data = (Path(__file__).parent / name).read_bytes()
-        files[name] = hashlib.sha256(data).hexdigest()
-        channel_receive(attempt, ssh, driver + '/' + name, data)
-    fixture = str(session.BASE / 'qualification' / (mode + '-' + uuid.uuid4().hex))
-    made = channel_directory(attempt, fixture)
-    value['cell']['qualification_root'] = dict(path=fixture, device=made['device'], inode=made['inode'], uid=made['uid'])
-    metadata = str(session.BASE / 'metadata' / (attempt.root.name + '.json'))
-    encoded = json.dumps(value, sort_keys=True, indent=2).encode()
-    channel_receive(attempt, ssh, metadata, encoded)
-    binding = dict(path=metadata, sha256=hashlib.sha256(encoded).hexdigest(), fixture=fixture)
-    physical = value['cell'].get('linux_capacity_preparation') if mode == 'full' else None
+    files = {name:common.digest(Path(__file__).parent/name) for name in FILES}
+    if proof is None:
+        driver = str(session.BASE / ('driver-' + attempt.root.name))
+        channel_directory(attempt, driver)
+        for name in FILES:
+            channel_receive(attempt,ssh,driver+'/'+name,(Path(__file__).parent/name).read_bytes())
+        fixture = str(session.BASE / 'qualification' / (mode + '-' + uuid.uuid4().hex))
+        made = channel_directory(attempt, fixture)
+        value['cell']['qualification_root'] = dict(path=fixture, device=made['device'], inode=made['inode'], uid=made['uid'])
+        metadata = str(session.BASE / 'metadata' / (attempt.root.name + '.json'))
+        encoded = json.dumps(value, sort_keys=True, indent=2).encode()
+        channel_receive(attempt, ssh, metadata, encoded)
+        binding = dict(path=metadata, sha256=hashlib.sha256(encoded).hexdigest(), fixture=fixture)
+        main = [driver+'/linux_native_session.py',binding['path'],binding['sha256'],mode]
+        physical = value['cell'].get('linux_capacity_preparation') if mode == 'full' else None
+    else:
+        remote = value['cell']['remote']
+        driver = remote['packet']
+        common.require(Path(driver).is_relative_to(session.BASE), 'prepared driver is outside the native base')
+        for name,digest in files.items():
+            data = channel_read(attempt,ssh,driver+'/'+name,limit=1024**2)
+            common.require(hashlib.sha256(data).hexdigest()==digest,'prepared proof driver differs')
+        transfers=[('inputs',seed.read_bytes()),('go_bindings',Path(proof['go_index']).read_bytes()),
+                   ('selected_go',common.artifact(common.load(proof['go_index'])['linux']).read_bytes())]
+        for role,data in transfers:
+            common.require(Path(remote[role]).is_relative_to(session.BASE/'metadata'),
+                           'proof authority transfer is outside its bounded metadata root')
+            channel_receive(attempt,ssh,remote[role],data)
+        binding = dict(path=remote['inputs'],sha256=proof['inputs_sha256'],fixture=value['cell']['qualification_root']['path'])
+        main = [driver+'/runtime.py','--inputs',remote['inputs'],'--sha256',proof['inputs_sha256'],
+                '--go-bindings',remote['go_bindings'],'--go-sha256',proof['go_sha256'],'--backend','linux',
+                '--selected-go-path',remote['selected_go']]
+        physical = value['cell']['linux_capacity']
+    evidence_kind = 'exploration' if proof is None else 'proof'
     capacity_packet, capacity_originals = None, {}
     if physical:
         import linux_native_contract as contract
         import linux_capacity_contract as capacity
-        capacity_packet = common.load(common.artifact(physical))
-        capacity.verify_preparation(capacity_packet, value['cell']['source_head'], evidence_kind='exploration')
+        capacity_packet = common.load(common.artifact(physical)) if proof is None else physical
+        capacity.verify_preparation(capacity_packet, value['cell']['source_head'], evidence_kind=evidence_kind)
         groups = capacity_packet['plan']['phases']['live']['cgroups']
         unit = next(group for group in groups if group != capacity.ENGINE_GROUP).rsplit('/',1)[-1].removesuffix('.service')
         common.require(__import__('re').fullmatch(r'effigy-829-[0-9a-f]{32}', unit), 'frozen controller identity differs')
@@ -485,13 +549,16 @@ def execute(root, seed, mode):
     writable = str(session.BASE if mode in ('acquire', 'preflight') else Path(binding['fixture']))
     release = str(session.BASE / 'qualification' / ('ssh-release-' + unit))
     token = uuid.uuid4().hex.encode()
-    main = [driver + '/linux_native_session.py', binding['path'], binding['sha256'], mode]
     script = gated_python(release,token,main,{driver+'/'+name:digest for name,digest in files.items()})
+    if mode=='full':
+        writable += ' ' + value['cell']['linux_claim_root']
+    remaining = 1850 if proof is None else int(proof['deadline']-time.monotonic())
+    common.require(remaining > 120, 'insufficient proof time for the bounded session and closure')
     argv = ['/usr/bin/systemd-run', '--unit=' + unit, '--no-block', '--service-type=exec',
             '--uid=effigy531', '--gid=effigy531', '--property=ExitType=cgroup',
             '--property=RemainAfterExit=yes', '--property=KillMode=control-group',
             '--property=CollectMode=inactive',
-            '--property=RuntimeMaxSec=1850', '--property=TimeoutStopSec=15',
+            '--property=RuntimeMaxSec='+str(remaining), '--property=TimeoutStopSec=15',
             '--property=PrivateUsers=identity', '--property=NoNewPrivileges=yes',
             '--property=CapabilityBoundingSet=', '--property=ProtectSystem=strict',
             '--property=ProtectHome=yes', '--property=BindReadOnlyPaths=/dev /sys',
@@ -504,15 +571,15 @@ def execute(root, seed, mode):
             '--setenv=HOME=/home/effigy531', '--', '/usr/bin/python3', '-I', '-B',
             '-c', script]
     binding.update(unit=unit, log=log, driver=driver, files=files, unit_argv=argv,
-                   exploratory=True, qualification_credit=False, mode=mode)
+                   exploratory=proof is None, qualification_credit=False, mode=mode)
     common.exclusive(attempt.root / 'binding.json', binding)
     submit_unit(attempt, argv, unit)
     relay = None
     try:
         identifier, _ = channel_request(attempt, 'run', release, data=token, limit=len(token),
-            run=dict(unit=unit+'.service',deadline_seconds=1850,stdout_path=log+'.stdout',stderr_path=log+'.stderr'))
-        relay = SSHRun(attempt,ssh,identifier,token,timeout=1900)
-        deadline = time.monotonic() + 1900
+            run=dict(unit=unit+'.service',deadline_seconds=remaining,stdout_path=log+'.stdout',stderr_path=log+'.stderr'))
+        relay = SSHRun(attempt,ssh,identifier,token,timeout=remaining+20)
+        deadline = time.monotonic()+1900 if proof is None else proof['deadline']
         properties = 'LoadState,ActiveState,SubState,Result,ExecMainStatus,MainPID,ControlGroup,InvocationID,ExecMainExitTimestampMonotonic'
         terminal = None
         observed_gates = set()
@@ -575,25 +642,44 @@ def execute(root, seed, mode):
             common.exclusive_bytes(attempt.root / ('guest.'+name),data)
             log_data += data
         (attempt.root / 'guest.log').write_bytes(log_data)
-        # Retain the entire exact fixture, including failed command streams. No
-        # deletion or rebaseline is performed by the exploratory runner.
-        archive_path = str(session.BASE / 'metadata' / (attempt.root.name + '.tar'))
-        code = ('import os,subprocess; p=' + repr(archive_path) + '; '
-                'f=os.open(p,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600); '
-                'subprocess.run(["tar","-C",' + repr(binding['fixture']) + ',"-cf","-","."],stdout=f,check=True); '
-                'os.fsync(f); os.fchown(f,1001,1001); os.close(f)')
-        admin_operation(attempt, code.encode(), seconds=120, file_limit='1G')
-        archive = channel_read(attempt, ssh, archive_path)
-        (attempt.root / 'fixture.tar').write_bytes(archive)
         passed = (not transport['transport_timeout'] and transport['local_exit'] == 0
                   and observation_failure is None and terminal.get('Result') == 'success'
                   and terminal.get('ExecMainStatus') == '0')
+        if passed:
+            returned=json.loads((attempt.root/'guest.stdout').read_bytes())
+            archive_item=returned['linux_archive']
+            expected_archive=str(Path(value['cell']['linux_claim_root'])/(binding['sha256']+'.fixture.tar'))
+            common.require(archive_item['path']==expected_archive and type(archive_item['bytes']) is int
+                           and 0<archive_item['bytes']<=1024**3,'native archive escapes its admitted role')
+            archive=channel_read(attempt,ssh,expected_archive,limit=1024**3)
+            common.require(len(archive)==archive_item['bytes'] and hashlib.sha256(archive).hexdigest()==archive_item['sha256'],
+                           'native original archive differs')
+            common.exclusive_bytes(attempt.root/'fixture.tar',archive)
+        elif proof is None:
+            archive_path = str(session.BASE / 'metadata' / (attempt.root.name + '.tar'))
+            code = ('import os,subprocess; p=' + repr(archive_path) + '; '
+                    'f=os.open(p,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600); '
+                    'subprocess.run(["tar","-C",' + repr(binding['fixture']) + ',"-cf","-","."],stdout=f,check=True); '
+                    'os.fsync(f); os.fchown(f,1001,1001); os.close(f)')
+            admin_operation(attempt, code.encode(), seconds=120, file_limit='1G')
+            archive = channel_read(attempt, ssh, archive_path)
+            (attempt.root / 'fixture.tar').write_bytes(archive)
         if passed and capacity_packet is not None:
             capacity_originals['after'] = contract.observe(root, attempt, ssh, capacity_packet['plan'], 'after')
-            capacity.verify_full(capacity_packet, capacity_originals, value['cell']['source_head'], evidence_kind='exploration')
+            capacity.verify_full(capacity_packet, capacity_originals, value['cell']['source_head'], evidence_kind=evidence_kind)
             common.exclusive(attempt.root / 'capacity-originals.json', capacity_originals)
         result = dict(binding, passed=passed, terminal=terminal, observation_failure=observation_failure)
         common.exclusive(attempt.root / 'outcome.json', result)
+        if proof is not None:
+            common.require(passed,'native Linux proof failed; exact unit, streams and originals retained')
+            returned=json.loads((attempt.root/'guest.stdout').read_bytes())
+            expected=str(Path(binding['fixture'])/'complete.json')
+            common.require(returned.get('receipt')==expected,'proof returned another receipt')
+            receipt=channel_read(attempt,ssh,expected,limit=1024**2)
+            common.require(hashlib.sha256(receipt).hexdigest()==returned['receipt_sha256'],'completed receipt changed after its main returned')
+            return dict(receipt=expected,receipt_bytes=receipt,receipt_sha256=returned['receipt_sha256'],linux_allocation=returned['linux_allocation'],
+                        linux_capacity_originals=build.file_input(attempt.root/'capacity-originals.json'),
+                        stdout=(attempt.root/'guest.stdout').read_bytes(),stderr=(attempt.root/'guest.stderr').read_bytes())
         print(json.dumps({'evidence': str(attempt.root), 'passed': passed, 'qualification_credit': False}))
         return 0 if passed else 1
     except BaseException:

@@ -660,7 +660,7 @@ sys.exit(child.wait())
         require(self.container not in remaining, 'container still exists after down')
         self.record('down', session=previous, closed=True)
 
-    def execute(self):
+    def execute(self, *, emit=True):
         self.prepare()
         first = self.up()
         self.tasks()
@@ -687,31 +687,52 @@ sys.exit(child.wait())
         if self.exploratory:
             receipt.update(exploratory=True, proof=False)
         exclusive(name, receipt, dir_fd=self.root_fd)
-        print(json.dumps({'receipt': str(self.base / name)}))
+        result={'receipt':str(self.base/name)}
+        if emit:print(json.dumps(result))
+        return result
 
 
 def main():
     parser = argparse.ArgumentParser()
     for flag in ('inputs', 'sha256', 'backend', 'go-bindings', 'go-sha256'):
         parser.add_argument('--' + flag, required=True)
+    parser.add_argument('--selected-go-path')
     args = parser.parse_args()
     os.umask(0o077)
     require(digest(args.inputs) == args.sha256 and digest(args.go_bindings) == args.go_sha256, 'immutable inputs differ')
     value = load(args.inputs)
     validate_inputs(value, value['source_head'])
     cell = next(cell for cell in value['backends'] if cell['backend'] == args.backend)
-    go = load(artifact(load(args.go_bindings)[args.backend]))
+    go_item=load(args.go_bindings)[args.backend]
+    if args.selected_go_path:
+        require(args.backend=='linux','only Linux may map its bound authority bytes into the guest')
+        go_item=dict(path=args.selected_go_path,sha256=go_item['sha256'])
+    go=load(artifact(go_item))
     validate_go(go, args.sha256, cell, value['source_head'])
     require((sys.platform == 'linux') == (cell['backend'] == 'linux'), 'wrong native operating system')
     # Backend replay is refused even if someone directly invokes this module.
     # A failed/unknown attempt consumes this exact input's one-shot claim too.
     require(SCRATCH.resolve(strict=True) == SCRATCH, 'removable scratch aliases are prohibited')
-    exclusive(SCRATCH / ('531-' + args.sha256 + '-' + args.backend + '.started.json'),
-              {'source_head': value['source_head'], 'inputs_sha256': args.sha256,
-               'go_index_sha256': args.go_sha256, 'backend': args.backend})
-    window = Window(cell, args.sha256, go)
+    peak=None
+    if cell['backend']=='linux':
+        from linux_native_window import Window as LinuxWindow
+        from linux_native_session import claim,Peak,archive_fixture
+        claim(cell,args.sha256,args.go_sha256,exploratory=False)
+        window=LinuxWindow(cell,args.sha256,go)
+        peak=Peak(cell['native_engine_capacity_bytes']);peak.thread.start()
+    else:
+        exclusive(SCRATCH / ('531-' + args.sha256 + '-' + args.backend + '.started.json'),
+                  {'source_head': value['source_head'], 'inputs_sha256': args.sha256,
+                   'go_index_sha256': args.go_sha256, 'backend': args.backend})
+        window=Window(cell,args.sha256,go)
     try:
-        window.execute()
+        returned=window.execute(emit=False) if cell['backend']=='linux' else window.execute()
+        if peak is not None:
+            allocation=peak.finish()
+            require(allocation['engine_has_twice_sampled_peak_headroom'],'native engine lacks twice the sampled peak headroom')
+            exclusive('linux-allocation.json',allocation,dir_fd=window.root_fd)
+            archive=archive_fixture(window,args.sha256)
+            print(json.dumps(dict(returned,receipt_sha256=digest(Path(returned['receipt'])),linux_allocation=allocation,linux_archive=archive)),flush=True)
     except BaseException as error:
         # Preserve prior receipts and exact resources. The error type conveys
         # failure without retaining protected backend or credential diagnostics.
@@ -720,6 +741,7 @@ def main():
         print(json.dumps({'failed_receipt': str(window.base / 'failed.json')}), flush=True)
         sys.exit(1)
     finally:
+        if peak is not None:peak.finish()
         window.close()
 
 

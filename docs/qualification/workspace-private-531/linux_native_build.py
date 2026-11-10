@@ -72,6 +72,7 @@ def run_script(attempt, root, ssh, remote, payload, *, seconds=1800):
     import linux_native_smoke as smoke
     if not 0 < seconds <= 2400 or len(payload) > 1024 * 1024:
         raise ValueError('bounded preparation script required')
+    smoke.collector_identity(attempt,allow_install=True)
     script = remote + '/bounded-script-' + uuid.uuid4().hex
     native.channel_receive(attempt, ssh, script, payload)
     expected = __import__('hashlib').sha256(payload).hexdigest()

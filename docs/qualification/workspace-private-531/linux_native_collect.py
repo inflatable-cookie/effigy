@@ -31,7 +31,7 @@ def collect(controller=None, origin=None):
     for group in groups:
         unit = group.rsplit('/', 1)[-1]
         raw = subprocess.check_output(['systemctl', 'show', '--all', unit,
-            '--property=ActiveState,MainPID,ControlGroup,ExecStart,User,Group,MemoryMax,MemorySwapMax,DevicePolicy,ProtectSystem'], text=True)
+            '--property=ActiveState,MainPID,ControlGroup,InvocationID,ExecStart,User,Group,MemoryMax,MemorySwapMax,DevicePolicy,ProtectSystem'], text=True)
         state = dict(line.split('=', 1) for line in raw.splitlines())
         if state['ActiveState'] != 'active' or state['ControlGroup'] != group or int(state['MainPID']) <= 0:
             raise ValueError('writer unit is not the expected live owner')

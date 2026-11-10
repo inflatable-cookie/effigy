@@ -37,7 +37,7 @@ def script(binding, roles, seed):
                + qsource + ' ' + qroles + '/effigy-production\n')
     overlay = '[tasks."workspace:linux:artifact"]\nrun = ' + json.dumps(
         'exec ' + shlex.quote(roles + '/native-artifact.sh')) + '\ntimeout_ms = 1800000\n'
-    finish = '''import hashlib,json,shutil,sys
+    finish = '''import hashlib,json,shutil,sys,os
 from pathlib import Path
 sys.path.insert(0, str(Path.cwd()/'docs/qualification/workspace-private-531'))
 import common
@@ -47,6 +47,12 @@ roles=Path(ROLES)
 value=json.loads(SEED)
 cell=value['cell']
 cell['native_engine_capacity_bytes']=3221225472
+claims=Path('/Volumes/Stash/scratch/effigy/linux-native-829/proof-claims')
+claims.mkdir(mode=0o700,exist_ok=True)
+i=claims.lstat()
+common.require(claims.resolve()==claims and i.st_uid==os.geteuid()==1001 and i.st_mode==0o40700,
+               'private claim directory differs')
+cell['linux_claim_root']=str(claims)
 metadata=json.loads((roles/'binaries.original.json').read_text())
 def visit(row):
  if isinstance(row,dict):
@@ -69,6 +75,9 @@ for key,name in {'candidate':'effigy-candidate','production':'effigy-production'
  'kernel_tests':'kernel-tests','custody_tests':'custody-tests',
  'binaries_metadata':'binaries.json','cargo_metadata':'cargo.json'}.items():
  cell[key]=bind(roles/name)
+cell['candidate_receipt']={'source_head':cell['source_head'],'features':['workspace-private-qualification'],'sha256':cell['candidate']['sha256']}
+cell['production_receipt']={'source_head':cell['source_head'],'features':[],'sha256':cell['production']['sha256']}
+cell['old_source_receipt']={'source_head':cell['old_source_head'],'sha256':cell['old_binary']['sha256']}
 cell['nextest_config']=bind(source/'tests/config/gateway-nextest.toml')
 artifact=source/'.effigy/linux-release/artifacts/effigy-aarch64-unknown-linux-gnu'
 for key,path in {'guest_artifact':artifact,'guest_producer_receipt':artifact.with_suffix('.receipt'),
@@ -141,6 +150,9 @@ def prepare(root, binding, seed):
     native_run.channel_directory(attempt, roles)
     build.run_script(attempt, root, ssh, roles, payload, seconds=2100)
     data = native_run.channel_read(attempt, ssh, roles + '/seed.json', limit=1024 * 1024)
+    value=json.loads(data)
+    value['cell'].update(ssh_control_root=str(control),ssh_alias='effigy-531-vault',
+                         ssh_config=build.file_input(control/'ssh_config'),ssh_known_hosts=build.file_input(control/'ssh_known_hosts'))
     target = attempt.root / 'assets.json'
-    common.exclusive_bytes(target, data)
+    common.exclusive(target,value)
     return target

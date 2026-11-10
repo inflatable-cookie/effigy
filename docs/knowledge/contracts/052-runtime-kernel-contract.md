@@ -6178,3 +6178,14 @@ follows the commit are one seam; the container engine's `reconcile.rs` calls
 them through the typed handoff and does not re-implement them. No task adds a
 second channel, a guest store, a guest gate, a Docker-socket read, a second
 network creator or an identity the guest cannot observe.
+
+
+Task 829's native Linux preparation uses three initialized physical reservations:
+1 GiB workspace, 3 GiB dedicated rootful engine and 40 GiB preparation. The
+preparation reservation includes controller claims and exported fixture archives
+and remains writable during the full session. Root-owned content-addressed
+observers are installed before the full occurrence. Full execution verifies
+prepared code and exact artifacts, retains independent custody and all three
+live writer cohorts, and exports original allocation evidence for offline
+aggregation. Physical preparation and full execution require separate Nucleus
+activations at the same frozen candidate; exploratory runs grant no proof credit.

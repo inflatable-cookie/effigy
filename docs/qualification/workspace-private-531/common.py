@@ -119,8 +119,10 @@ def open_qualification_root(binding):
 
 
 def ssh_prefix(cell):
+    control=Path(cell.get('ssh_control_root',SSH_CONTROL))
+    require(control.is_absolute() and control.is_relative_to(SCRATCH),'SSH control must remain in private removable scratch')
     return isolated_ssh_prefix(cell['ssh_alias'], cell['ssh_config'], cell['ssh_known_hosts'],
-                               SSH_CONTROL, qualification_path(cell['qualification_root']))
+                               control, qualification_path(cell['qualification_root']))
 
 
 def isolated_ssh_prefix(alias, config_item, known_item, control_root, excluded_root):
@@ -215,7 +217,9 @@ def validate_inputs(value, head):
                     and Path(cell['qualification_root']['path']).is_relative_to(workspace)
                     and cell['native_engine_root'] == pins['engine']['mountpoint']
                     and cell['native_engine_capacity_bytes'] == pins['engine']['image_bytes']
-                    and Path(cell['docker_config']).is_relative_to(Path(cell['native_engine_root'])),
+                    and Path(cell['docker_config']).is_relative_to(Path(cell['native_engine_root']))
+                    and Path(cell['linux_claim_root'])==native_root/'proof-claims'
+                    and cell['native_writer_gate']==cell['linux_capacity']['plan']['phases']['live']['origin']['nonce'],
                     'Linux inputs escape their prepared physical roles')
             require(all(isinstance(cell.get(key), dict) and set(cell[key]) == {'path', 'sha256'}
                         and HEX.fullmatch(cell[key]['sha256']) for key in ('ssh_config', 'ssh_known_hosts')),

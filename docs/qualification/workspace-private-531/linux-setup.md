@@ -905,7 +905,8 @@ the previous and current network observations. Docker recreates its default
 bridge ID on daemon restart; each new unsealed window binds that new observed
 identity, while containers, volumes and network names must still agree with the
 retained baseline. Inventory equality within a window remains exact. The private
-SSH key is an expiring exploratory control, not the sealed E6 forced-command key.
+SSH key is exclusive and expiring. A fresh preparation occurrence must rebind
+its actual policy and forced-command entry; an exploratory key is not proof authority.
 The sealed diagnostic retains its historical snapshot pin; exploration binds
 and verifies the actual current snapshot inventory for each cycle.
 
@@ -921,16 +922,9 @@ only the guest default boot target from graphical to multi-user to avoid startin
 that unrelated desktop session on the dedicated proof VM. The pre-change snapshot
 is its rollback; accounts and user homes were not changed in this batch.
 
-After candidate freeze, the minimal sealed plan is: bind one merged candidate C
-and exact current preparation inputs, including a newly reviewed snapshot-inventory
-pin (the task-owned snapshot changes the historical inventory); produce its Linux binaries and runtime image
-once with retained hashes/tool identities; execute one setup/activation occurrence
-with its prerequisite observations, then one complete #623 full-session occurrence
-against those artifacts. #624 independently judges all receipts. A standalone
-sealed diagnostic is unnecessary if the accepted setup entry includes the same
-boot-bound observations; otherwise it is one additional prerequisite occurrence.
-No occurrence is armed here, and earlier failures are never reused as positive
-receipts. Current-main exploratory binaries cannot stand in for frozen C artifacts.
+After candidate freeze, use the two-occurrence plan below. No occurrence is
+armed here. Earlier failures remain failures; exploratory artifacts cannot stand
+in for frozen candidate artifacts.
 
 The completed unsealed headless diagnostic is retained at
 `native-829/linux-diagnostic-explore-b2298d4f57e14870997eedb1a34d89d4/outcome.json`
@@ -1047,7 +1041,7 @@ The preparation tree now has its own initialized 40 GiB image,
 The original tree remains at `linux-native-829.before-physical-18f16a9f`.
 All 146,497 copied entries matched content and metadata before cutover.
 This bounds sources, toolchains, caches and artifacts separately from the
-1 GiB workspace and 2 GiB engine. Builds run as UID1001 in observed systemd
+1 GiB workspace and 3 GiB final engine. Builds run as UID1001 in observed systemd
 units with 3 GiB memory, no swap, read-only system/kernel mounts and writable
 paths confined to these filesystems. The actual preparation gate passed after
 protecting the observed `binfmt_misc` kernel mount.
@@ -1065,8 +1059,8 @@ expiry, parent device/inode, exact size and SHA-256. Receive uses exclusive,
 no-follow creation; read verifies the independently provisioned identity.
 An actual receive/read round trip passed and an arbitrary `id` request refused
 with exit 3. Root operations retain exact source, unit, streams, exit and
-independent empty kernel-cgroup observations. This exploratory transfer channel
-is not yet the separately activated sealed proof transport.
+independent empty kernel-cgroup observations. The same transport is used by the prepared full-session facade. Neither its
+operation ID nor an environment variable grants proof activation.
 
 
 ### Engine headroom after repeated exploration
@@ -1095,3 +1089,58 @@ focused controls; production limit admission supports the physical mechanism.
 The single native runner freezes setup/activation and before/after originals,
 plus three separate live observer units for the three activation cohorts.
 Missing or replayed live originals refuse offline acceptance.
+
+
+### Frozen preparation and full-session handoff
+
+The shared runner retains separate stdout/stderr, SSH wait status, exact unit
+invocation, and independent empty kernel cgroups. The fixed SSH entry accepts
+only root-provisioned read, receive and run operations. Receive publishes with
+an exclusive hard link after hash verification and fsync. Run releases one
+bound unit, returns its bounded streams and exit, and accepts no shell command.
+A content-addressed root-owned observer cache is installed during preparation;
+the full proof only verifies and executes those prepared observers.
+
+The controller writes its one-use claim and bounded fixture archive under
+`linux-native-829/proof-claims` on the 40 GiB preparation image. This filesystem
+is writable during the full session and belongs to its admitted physical bounds.
+Workspace, engine and preparation images are checked before, during all three
+activation cohorts, and after the session. The engine invocation must stay the
+same as activation. Receipt export happens only after two-times peak headroom,
+archive publication and all session assertions pass. Offline aggregation reads
+originals and never invokes a VM, SSH, Docker or a privileged helper.
+
+One-time image migration/promotion and interrupted-copy recovery sources are
+retained in the exploratory evidence and Git history. Their live entry points
+are removed. The smoke selector adopts the three existing verified images;
+it never creates a replacement reservation or deletes earlier evidence.
+
+### Minimal sealed plan after candidate freeze
+
+1. The owner selects one exact 40-character merged candidate C containing this
+   change, after canonical main QA is green. Freeze the actual VM/snapshot
+   inventory, owned seed, program hashes and fresh activation in a physical
+   preparation request. Separately activate
+   `qualification:linux:physical-preparation-proof-only REQUEST SHA256` through
+   Nucleus. Its 5,400-second window adopts the account/private SSH/tools, checks
+   all three real ENOSPC controls, builds C and its genuine GNU-floor artifact,
+   exercises ordinary acquisition, and exports fresh setup/activation originals.
+   It leaves this VM and dedicated engine running on the recorded boot. Bind
+   its complete artifact as the Linux cell's `linux_preparation` reference.
+2. Assemble hash-bound all-backend inputs for that same C and Recipe E, with the
+   fresh empty Linux fixture, preinstalled driver, exact physical plan and actual
+   artifacts from step 1. Freeze GO, selected GO and GO-index bytes after the
+   preparation artifact exists. Separately activate the existing #623 Linux
+   full-session entry once, within its 1,800-second window. It transfers only
+   the bound JSON inputs and gates the prepared controller; it performs no
+   build, install, source staging or configuration repair. Retain original
+   separate streams, all three live observations, actual allocation samples,
+   receipt bytes and closure. A reboot, engine restart or changed artifact
+   requires fresh preparation and GO rather than refreshing an old packet.
+
+#624 then runs its offline aggregate against matching Linux, Desktop and Colima
+receipts at C. Prior H/K anchors and failed #810/#817/#820 originals retain their
+historical meaning. A separate sealed diagnostic occurrence is unnecessary:
+the first occurrence's actual boot-bound physical and writer observations are
+its prerequisites. A request file alone never authorizes either occurrence.
+No sealed occurrence or #623 credit is claimed by task 829's exploration.

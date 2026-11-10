@@ -13,7 +13,6 @@ import linux_native_artifact as producer
 import linux_native_build as build
 import linux_native_storage as storage
 import linux_native_initialize as initialize
-import linux_native_preparation_storage as preparation_storage
 import linux_loop_bound as loop_bound
 import linux_native_writers as writers
 import linux_native_run as native_run
@@ -83,33 +82,14 @@ class SameByteInitializationTests(unittest.TestCase):
                 os.close(fd)
 
 
-class PreparationStorageTests(unittest.TestCase):
-    def test_no_follow_manifest_detects_content_even_when_size_and_mtime_match(self):
-        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
-            root = Path(directory)
-            file = root / 'payload'
-            file.write_bytes(b'one')
-            (root / 'alias').symlink_to('payload')
-            (root / 'qualification').mkdir()
-            ignored = root / 'qualification' / 'separate-filesystem'
-            ignored.write_bytes(b'first')
-            original = preparation_storage.manifest(root)
-            stamp = file.stat()
-            file.write_bytes(b'two')
-            os.utime(file, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
-            self.assertNotEqual(preparation_storage.manifest(root), original)
-            file.write_bytes(b'one')
-            os.utime(file, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
-            ignored.write_bytes(b'changed workspace, outside this census')
-            self.assertEqual(preparation_storage.manifest(root), original)
-
+class GatedPreparationLauncherTests(unittest.TestCase):
     def test_generated_memory_script_compiles_before_unit_submission(self):
         from unittest.mock import Mock
         attempt = Mock()
         attempt.root = Path(tempfile.mkdtemp(prefix='native-launcher-', dir=os.environ['TMPDIR']))
         class Captured(Exception):
             pass
-        with patch.object(native_run, 'channel_receive'), \
+        with patch.object(smoke, 'collector_identity'), patch.object(native_run, 'channel_receive'), \
              patch.object(native_run, 'submit_unit', side_effect=Captured) as submit:
             with self.assertRaises(Captured):
                 build.run_script(attempt, Path(os.environ['TMPDIR']), ['ssh'],
@@ -207,18 +187,62 @@ class FixedChannelPublicationTests(unittest.TestCase):
         compile(program,'session-preexec','exec')
 
 
-class EnginePromotionCopyTests(unittest.TestCase):
-    def test_copy_preserves_original_and_initializes_only_a_fresh_extension(self):
-        import linux_native_engine_capacity as promotion
+class PhysicalPreparationEntryTests(unittest.TestCase):
+    def test_request_drift_and_wrong_head_refuse_before_native_actions(self):
+        import hashlib,json
+        import linux_native_prepare_proof as preparation
         with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
-            source, new = Path(directory)/'original', Path(directory)/'new'
-            data = bytes(range(251))*64
-            source.write_bytes(data)
-            result = promotion.copy_image(source,new,len(data)+4096)
-            self.assertEqual(source.read_bytes(),data)
-            self.assertEqual(new.read_bytes(),data+bytes(4096))
-            self.assertEqual(result['original_sha256'],result['copied_prefix_sha256'])
-            with self.assertRaises(FileExistsError): promotion.copy_image(source,new,len(data)+4096)
+            root=Path(directory);seed=root/'seed.json';seed.write_text('{}')
+            value=preparation.request(root,seed,'a'*40,'activation-fixture')
+            path=root/'request.json';common.exclusive(path,value)
+            with patch.object(native_run,'Attempt') as attempt:
+                with self.assertRaises(RuntimeError):preparation.execute(path,common.digest(path))
+                attempt.assert_not_called()
+            value['duration_seconds']+=1
+            changed=root/'changed.json';common.exclusive(changed,value)
+            with patch.object(native_run,'Attempt') as attempt:
+                with self.assertRaises(RuntimeError):preparation.execute(changed,common.digest(changed))
+                attempt.assert_not_called()
+
+
+class BoundedEvidenceExportTests(unittest.TestCase):
+    def test_archive_is_published_only_after_a_complete_bounded_stream(self):
+        import tarfile
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            base=Path(directory);fixture=base/'fixture';claims=base/'claims'
+            fixture.mkdir();claims.mkdir();(fixture/'original.stdout').write_bytes(b'actual stream')
+            window=SimpleNamespace(base=fixture,cell={'linux_claim_root':str(claims)},verify_root=lambda:None)
+            item=session.archive_fixture(window,'a'*64,limit=32768)
+            self.assertEqual(common.digest(item['path']),item['sha256'])
+            self.assertEqual(Path(item['path']).stat().st_size,item['bytes'])
+            with tarfile.open(item['path']) as archive:
+                self.assertEqual(archive.extractfile('./original.stdout').read(),b'actual stream')
+            with self.assertRaises(RuntimeError):session.archive_fixture(window,'b'*64,limit=512)
+            self.assertFalse((claims/('b'*64+'.fixture.tar')).exists())
+
+    def test_prepared_observer_probe_and_installer_compile(self):
+        import ast,shlex
+        from unittest.mock import Mock
+        attempt=Mock()
+        attempt.admin.side_effect=[b'{"exists":false}',b'{"exists":true}']
+        captured=[]
+        def install(attempt,payload,**kwargs):
+            captured.append(payload.decode())
+            return b'observer-prepared',b'',{},'unit'
+        with patch.object(native_run,'admin_operation',side_effect=install):
+            smoke.collector_identity(attempt,allow_install=True)
+        captured += [shlex.split(call.args[0])[-1] for call in attempt.admin.call_args_list]
+        for code in captured:
+            tree=ast.parse(code)
+            compile(tree,'prepared-observer','exec')
+            for node in ast.walk(tree):
+                if isinstance(node,ast.Call) and isinstance(node.func,ast.Name) and node.func.id=='exec':
+                    compile(ast.literal_eval(node.args[0]),'prepared-observer-inner','exec')
+        attempt=Mock();attempt.admin.return_value=b'{"exists":false}'
+        with patch.object(native_run,'admin_operation') as install:
+            with self.assertRaises(RuntimeError):smoke.collector_identity(attempt,allow_install=False)
+            install.assert_not_called()
 
 
 class Ext4AllocationUnionTests(unittest.TestCase):
@@ -321,7 +345,7 @@ class CapacityOriginalTests(unittest.TestCase):
             images=[workspace, engine, prep], engine_configs=configs,
             writer_closure=dict(cgroups=members, cgroups_before=members, cgroups_after=members,
                                 actors=[actor], controls={group:{'memory.max':'1024', 'memory.swap.max':'0'}}),
-            units={group.rsplit('/',1)[-1]:dict(ActiveState='active', ControlGroup=group, MainPID='123')},
+            units={group.rsplit('/',1)[-1]:dict(ActiveState='active', ControlGroup=group, MainPID='123',InvocationID='f'*32)},
             accounting={path:dict(used_bytes_before=4096, used_bytes_after=4096, inode_allocated_bytes=4096)
                         for path in ('/bounded', '/engine', '/preparation')})
         for image in observation['images']:
@@ -347,7 +371,7 @@ class CapacityOriginalTests(unittest.TestCase):
         self.assertEqual(contract.verify_observation(witness, expected)['writer_pids'], [123])
         for mutate in (lambda w: w['origin'].update(source_head='f'*40),
                        lambda w: w.update(stdout=w['stdout']+' '),
-                       lambda w: w['unit'].update(MainPID='123'),
+                       lambda w: w['unit'].update(MainPID='123',InvocationID='f'*32),
                        lambda w: w.update(exit=True)):
             bad = copy.deepcopy(witness)
             mutate(bad)
@@ -658,7 +682,7 @@ class SubmissionTests(unittest.TestCase):
         state = {'ActiveState': 'inactive', 'MainPID': '0', 'ControlGroup': ''}
         smoke.verify_engine_stopped(state, [])
         for observed, pids in ((dict(state, ActiveState='active'), []),
-                               (dict(state, MainPID='123'), []), (state, [123]),
+                               (dict(state, MainPID='123',InvocationID='f'*32), []), (state, [123]),
                                (dict(state, ControlGroup='/system.slice/owned'), []), ({}, [])):
             with self.subTest(observed=observed, pids=pids), self.assertRaises(RuntimeError):
                 smoke.verify_engine_stopped(observed, pids)
@@ -728,7 +752,7 @@ def capacity_fixture(head='b'*40, kind='exploration', workspace='/bounded'):
             for key in ('cgroups','cgroups_before','cgroups_after'):
                 data['writer_closure'][key][group] = [124]
             data['writer_closure']['controls'][group] = {'memory.max':'1024', 'memory.swap.max':'0'}
-            data['units']['controller.service'] = dict(ActiveState='active', ControlGroup=group, MainPID='124')
+            data['units']['controller.service'] = dict(ActiveState='active', ControlGroup=group, MainPID='124',InvocationID='1'*32)
         original['stdout'] = json.dumps(data)
         original['stdout_sha256'] = hashlib.sha256(original['stdout'].encode()).hexdigest()
         phases[phase], originals[phase] = frozen, original

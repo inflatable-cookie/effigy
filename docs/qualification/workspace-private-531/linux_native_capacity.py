@@ -43,7 +43,7 @@ def probe(root, capacity):
         allocated = os.fstat(fd)
         if not 0 < allocated.st_size <= capacity or allocated.st_blocks * 512 > capacity:
             raise RuntimeError('probe allocation exceeds the physical ceiling')
-        result = {'exploratory': True, 'qualification_credit': False, 'errno': failure,
+        result = {'qualification_credit': False, 'errno': failure,
                   'uid': os.geteuid(), 'cap_eff': status['CapEff'].strip(),
                   'seccomp': status['Seccomp'].strip(), 'path': str(path),
                   'device': allocated.st_dev, 'inode': allocated.st_ino,

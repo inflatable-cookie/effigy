@@ -60,42 +60,23 @@ def main():
     for cell in selected:
         command = ['python3', '-I', '-B', str(PACKET / 'runtime.py'), '--inputs', str(inputs),
                    '--sha256', args.sha256, '--go-bindings', str(go_bindings), '--go-sha256', args.go_sha256, '--backend', cell['backend']]
-        if cell['driver'] == 'ssh':
-            # Remote source/artifact preparation is separately GO-owned. No copy,
-            # build, VM start or install is hidden inside proof execution.
-            def ssh():
-                return ssh_prefix(cell)  # Recheck pinned bytes/policy before every SSH command.
-            remote = cell['remote']
-            for name in ('common.py', 'runtime.py', 'probe.py'):
-                found = run(ssh() + [
-                             'sha256sum -- ' + shlex.quote(str(Path(remote['packet']) / name))]).stdout.decode().split()[0]
-                require(found == digest(PACKET / name), 'remote reviewed driver differs')
-            found = run(ssh() + [
-                         'sha256sum -- ' + shlex.quote(remote['inputs'])]).stdout.decode().split()[0]
-            require(found == args.sha256, 'remote exact input file differs')
-            found = run(ssh() + [
-                         'sha256sum -- ' + shlex.quote(remote['go_bindings'])]).stdout.decode().split()[0]
-            require(found == args.go_sha256, 'remote GO receipt index differs')
-            command = ssh() + [
-                       shlex.join(['python3', '-I', '-B', str(Path(remote['packet']) / 'runtime.py'),
-                                   '--inputs', remote['inputs'], '--sha256', args.sha256,
-                                   '--go-bindings', remote['go_bindings'], '--go-sha256', args.go_sha256, '--backend', 'linux'])]
-        result = run(command, cwd=root, timeout=cell['budget_seconds'], check=False)
+        linux=None
+        if cell['driver']=='ssh':
+            import linux_native_run
+            from types import SimpleNamespace
+            linux=linux_native_run.execute_proof(evidence,inputs,args.sha256,go_bindings,args.go_sha256)
+            result=SimpleNamespace(returncode=0,stdout=linux['stdout'],stderr=linux['stderr'])
+        else:
+            result=run(command,cwd=root,timeout=cell['budget_seconds'],check=False)
         # Runtime emits only a bounded receipt path, never raw native output.
         returned = json.loads(result.stdout) if result.stdout else {}
         receipt_path = returned.get('receipt') if result.returncode == 0 else returned.get('failed_receipt')
         expected = qualification_path(cell['qualification_root']) / ('complete.json' if result.returncode == 0 else 'failed.json')
         require(receipt_path and Path(receipt_path) == expected,
                 'runtime returned no bounded receipt; native result remains unverified')
-        if cell['driver'] == 'ssh':
-            # The exact original receipt bytes travel only inside this already
-            # authorized proof turn: quoted transport capped at the remote
-            # source with head -c, then hash-bound against the remote original.
-            # No transport or re-read ever happens later.
-            transported = run(ssh() + ['head -c ' + str(MAX_EXPORT_BYTES + 1) + ' -- '
-                                       + shlex.quote(str(expected))], timeout=60).stdout
-            receipt_hash = run(ssh() + [
-                                'sha256sum -- ' + shlex.quote(receipt_path)]).stdout.decode().split()[0]
+        if cell['driver']=='ssh':
+            transported=linux['receipt_bytes']
+            receipt_hash=linux['receipt_sha256']
         else:
             _, fd = open_qualification_root(cell['qualification_root'])
             try:
@@ -129,10 +110,10 @@ def main():
                    'qualification_root': cell['qualification_root'], 'driver': cell['driver'],
                    'engine_kind': cell['engine_kind'], 'engine_identity': cell['engine_identity'],
                    'runtime_image': cell['runtime_image'], 'budget_seconds': cell['budget_seconds'],
-                   'one_shot_marker': str(SCRATCH / ('531-' + args.sha256 + '-' + cell['backend'] + '.started.json'))}
+                   'one_shot_marker': str((Path(cell['linux_claim_root']) if cell['backend']=='linux' else SCRATCH) / ('531-' + args.sha256 + '-' + cell['backend'] + '.started.json'))}
         if cell['driver'] == 'ssh':
             binding.update(ssh_alias=cell['ssh_alias'], ssh_config=cell['ssh_config'],
-                           ssh_known_hosts=cell['ssh_known_hosts'], linux_capacity=cell['linux_capacity'])
+                           ssh_known_hosts=cell['ssh_known_hosts'], linux_capacity=cell['linux_capacity'],linux_preparation=cell['linux_preparation'])
         # The post-run source check gates positivity: a mid-window source edit
         # yields honest, nonqualifying evidence, never a positive receipt.
         unchanged = source_head(root) == head
@@ -145,6 +126,8 @@ def main():
                    'stdout_sha256': __import__('hashlib').sha256(result.stdout).hexdigest(),
                    'stderr_sha256': __import__('hashlib').sha256(result.stderr).hexdigest(),
                    'binding': binding}
+        if linux is not None:
+            receipt.update(linux_capacity_originals=linux['linux_capacity_originals'],linux_allocation=linux['linux_allocation'])
         exclusive(evidence / (cell['backend'] + '.json'), receipt)
         results.append(receipt)
         require(result.returncode == 0, 'native backend failed; no retry or partial qualification credit')

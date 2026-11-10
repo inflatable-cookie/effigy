@@ -87,11 +87,62 @@ def validate(value):
     return cell
 
 
+def claim(cell, inputs_hash, go_hash, *, exploratory):
+    root=Path(cell['linux_claim_root'])
+    info=root.lstat()
+    common.require(root==BASE/'proof-claims' and root.resolve(strict=True)==root
+                   and info.st_uid==os.geteuid()==1001 and info.st_mode==0o40700
+                   and info.st_dev==BASE.stat().st_dev!=os.stat('/').st_dev,
+                   'Linux claim root is not private physically bounded preparation storage')
+    path=root/('531-'+inputs_hash+'-linux.started.json')
+    common.exclusive(path,dict(source_head=cell['source_head'],inputs_sha256=inputs_hash,
+        go_index_sha256=go_hash,backend='linux',exploratory=exploratory,qualification_credit=False))
+    return path
+
+
+def archive_fixture(window, inputs_hash, *, limit=1024**3):
+    """Stream one bounded no-follow tar into the admitted preparation filesystem."""
+    import hashlib,tarfile
+    root=Path(window.cell['linux_claim_root'])
+    target=root/(inputs_hash+'.fixture.tar')
+    pending=root/(inputs_hash+'.fixture.pending')
+    window.verify_root()
+    fd=os.open(pending,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+    digest=hashlib.sha256()
+    class Sink:
+        count=0
+        def write(self,data):
+            common.require(self.count+len(data)<=limit,'native fixture archive exceeds its byte cap')
+            offset=0
+            while offset<len(data):
+                size=os.write(fd,data[offset:])
+                common.require(size>0,'archive write was incomplete')
+                offset+=size
+            self.count+=len(data);digest.update(data)
+            return len(data)
+    sink=Sink()
+    try:
+        with tarfile.open(fileobj=sink,mode='w|',dereference=False) as archive:
+            archive.add(window.base,arcname='.')
+        os.fsync(fd)
+        info=os.fstat(fd)
+        common.require(info.st_size==sink.count and info.st_dev==root.stat().st_dev,'archive allocation identity differs')
+        window.verify_root()
+        os.link(pending,target,follow_symlinks=False)
+        directory=os.open(root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+        try:os.fsync(directory)
+        finally:os.close(directory)
+    finally:
+        os.close(fd)
+    return dict(path=str(target),sha256=digest.hexdigest(),bytes=sink.count)
+
+
 def execute(path, expected, mode):
     common.require(sys.platform == 'linux' and mode in ('acquire', 'preflight', 'full'), 'native exploration only')
     common.require(common.digest(path) == expected, 'exploratory inputs changed')
     cell = validate(common.load(path))
-    window = Window(cell, expected, {'decision_id': 'task-829-exploration'}, exploratory=True)
+    claim(cell,expected,None,exploratory=True)
+    window = Window(cell,expected,None,exploration_authority={'task_id':TASK,'kind':'unsealed-native-linux'})
     peak = Peak(cell['native_engine_capacity_bytes'])
     peak.thread.start()
     try:
@@ -124,7 +175,15 @@ def execute(path, expected, mode):
             common.exclusive('exploratory-preflight.json', {'exploratory': True,
                              'qualification_credit': False, 'cells': window.events}, dir_fd=window.root_fd)
         else:
-            window.execute()
+            returned=window.execute(emit=False)
+        allocation=peak.finish()
+        common.exclusive('exploratory-allocation.json',allocation,dir_fd=window.root_fd)
+        common.require(allocation['engine_has_twice_sampled_peak_headroom'],
+                       'engine capacity has less than twice the sampled peak; revise the final reservation')
+        archive=archive_fixture(window,expected)
+        result=dict(linux_allocation=allocation,linux_archive=archive,qualification_credit=False)
+        if mode=='full':result.update(returned)
+        print(json.dumps(result),flush=True)
     except BaseException as error:
         common.exclusive('exploratory-failed.json', {'error_type': type(error).__name__,
                          'message': str(error), 'cells_completed': len(window.events),
@@ -133,9 +192,8 @@ def execute(path, expected, mode):
     finally:
         try:
             allocation = peak.finish()
-            common.exclusive('exploratory-allocation.json', allocation, dir_fd=window.root_fd)
-            common.require(allocation['engine_has_twice_sampled_peak_headroom'],
-                           'engine capacity has less than twice the sampled peak; resize before freeze')
+            if not (window.base/'exploratory-allocation.json').exists():
+                common.exclusive('exploratory-allocation.json', allocation, dir_fd=window.root_fd)
         finally:
             window.close()
 

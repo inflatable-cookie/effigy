@@ -116,15 +116,15 @@ def _verify_observation(witness, expected):
     allowed = expected['executables']
     require(isinstance(allowed, list) and allowed and all(HEX.fullmatch(item) for item in allowed),
             'frozen writer executable identities required')
-    devices = {bound['device'] for role, bound in bounds.items()
-               if expected['origin']['phase'] in ('setup', 'activation') or role != 'preparation'}
+    devices = {bound['device'] for bound in bounds.values()}
     for group, ceiling in expected['cgroups'].items():
         control = closure['controls'][group]
         require(type(ceiling) is int and ceiling > 0 and control == {
             'memory.max': str(ceiling), 'memory.swap.max': '0'}, 'writer memory/swap ceiling differs')
         unit = data['units'][group.rsplit('/', 1)[-1]]
         require(unit['ActiveState'] == 'active' and unit['ControlGroup'] == group
-                and int(unit['MainPID']) in groups[group], 'writer unit is not its observed owning cohort')
+                and int(unit['MainPID']) in groups[group]
+                and re.fullmatch(r'[0-9a-f]{32}',unit['InvocationID']), 'writer unit is not its observed owning cohort')
     for actor in actors:
         require(actor['executable_sha256'] in allowed, 'writer executable is outside the frozen source/runtime set')
         memberships = [line.split('::', 1)[1] for line in actor['cgroup'].splitlines() if line.startswith('0::')]
@@ -238,9 +238,15 @@ def verify_full(packet, observations, head, *, evidence_kind='proof'):
     require(isinstance(live,list) and len(live) == 3, 'all three native activation cohorts require originals')
     result = {phase: verify_observation(observations[phase], packet['plan']['phases'][phase])
               for phase in ('before','after')}
+    engine=ENGINE_GROUP.rsplit('/',1)[-1]
+    activation=original(packet['originals']['activation'],packet['plan']['phases']['activation'])['units'][engine]['InvocationID']
+    require(all(original(observations[phase],packet['plan']['phases'][phase])['units'][engine]['InvocationID']==activation
+                for phase in ('before','after')), 'engine ownership changed after activation')
     result['live'] = []
     for index, witness in enumerate(live):
         expected = copy.deepcopy(packet['plan']['phases']['live'])
         expected['observer_unit'] = packet['plan']['live_observers'][index]
         result['live'].append(verify_observation(witness,expected))
+        require(original(witness,expected)['units'][engine]['InvocationID']==activation,
+                'live engine ownership changed after activation')
     return result

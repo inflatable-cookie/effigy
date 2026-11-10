@@ -35,8 +35,8 @@ def inputs():
                     ssh_known_hosts=dict(path=str(SCRATCH / 'unarmed-known-hosts'), sha256='e' * 64))
     from linux_native_tests import capacity_fixture
     packet, _ = capacity_fixture(HEAD, 'proof', str(SCRATCH))
-    cells[2].update(linux_capacity=packet, source_root='/preparation/source',
-                    native_engine_root='/engine', native_engine_capacity_bytes=packet['plan']['phases']['activation']['images']['engine']['image_bytes'], docker_config='/engine/client/config')
+    cells[2].update(linux_capacity=packet,linux_preparation={'path':str(SCRATCH/'unarmed-preparation.json'),'sha256':'e'*64}, source_root='/preparation/source',
+                    native_engine_root='/engine', native_writer_gate=packet['plan']['phases']['live']['origin']['nonce'], linux_claim_root='/preparation/proof-claims', native_engine_capacity_bytes=packet['plan']['phases']['activation']['images']['engine']['image_bytes'], docker_config='/engine/client/config')
     return dict(schema='effigy.workspace-private-proof.v1', source_head=HEAD, backends=cells)
 
 
@@ -92,9 +92,23 @@ def invocation_record(backend, cell, base, source_head=HEAD, inputs_sha256='f' *
     cell = copy.deepcopy(cell)
     cell['qualification_root'] = dict(path=str(qual), device=identity.st_dev,
                                      inode=identity.st_ino, uid=identity.st_uid)
+    if backend=='linux':
+        prepared_cell=copy.deepcopy(cell);prepared_cell.pop('linux_preparation',None)
+        preparation_path=base/(label+'-preparation.json')
+        exclusive(preparation_path,dict(schema='effigy.linux-physical-preparation-complete.v1',
+                   source_head=HEAD,cell=prepared_cell,qualification_credit=False))
+        cell['linux_preparation']={'path':str(preparation_path),'sha256':digest(preparation_path)}
     complete_path = qual / 'complete.json'
-    exclusive(complete_path, complete or {'cells': complete_cells(), 'native': True,
-                                          'production_enabled': False})
+    body=copy.deepcopy(complete or {'cells':complete_cells(),'native':True,'production_enabled':False})
+    if backend=='linux':
+        cells=[]
+        for row in body.get('cells',[]):
+            cells.append(row)
+            if row.get('cell')=='positive-session':
+                cells.extend([{'cell':'bounded-native-workload','host_config_sha256':'a'*64,'mounts':[]},
+                              {'cell':'bounded-native-writers','observation':'frozen-gate'}])
+        body['cells']=cells
+    exclusive(complete_path,body)
     export = base / (label + '-receipt-export.json')
     exclusive_bytes(export, complete_path.read_bytes())
     binding = {'schema': 'effigy.workspace-private-backend-invocation.v1', 'backend': backend,
@@ -112,10 +126,10 @@ def invocation_record(backend, cell, base, source_head=HEAD, inputs_sha256='f' *
                'qualification_root': cell['qualification_root'], 'driver': cell['driver'],
                'engine_kind': cell['engine_kind'], 'engine_identity': cell['engine_identity'],
                'runtime_image': cell['runtime_image'], 'budget_seconds': cell['budget_seconds'],
-               'one_shot_marker': str(SCRATCH / ('531-' + inputs_sha256 + '-' + backend + '.started.json'))}
+               'one_shot_marker': str((Path(cell['linux_claim_root']) if backend=='linux' else SCRATCH) / ('531-' + inputs_sha256 + '-' + backend + '.started.json'))}
     if cell['driver'] == 'ssh':
         binding.update(ssh_alias=cell.get('ssh_alias', 'effigy-531-vault'), ssh_config=cell['ssh_config'],
-                       ssh_known_hosts=cell['ssh_known_hosts'], linux_capacity=cell['linux_capacity'])
+                       ssh_known_hosts=cell['ssh_known_hosts'], linux_capacity=cell['linux_capacity'],linux_preparation=cell['linux_preparation'])
     record = {'schema': 'effigy.workspace-private-backend-invocation.v1', 'backend': backend, 'exit_code': 0,
               'source_unchanged': True, 'positive': True,
               'host': binding.get('ssh_alias', 'local'), 'receipt': str(complete_path),
@@ -129,6 +143,9 @@ def invocation_record(backend, cell, base, source_head=HEAD, inputs_sha256='f' *
         original_path = base / (label + '-capacity.json')
         exclusive(original_path, originals)
         record['linux_capacity_originals'] = {'path': str(original_path), 'sha256': digest(original_path)}
+        record['linux_allocation']=dict(sampled_peak_bytes={'/engine':4096,str(SCRATCH):4096},
+            engine_capacity_bytes=cell['native_engine_capacity_bytes'],samples=10,sample_period_seconds=.05,
+            engine_has_twice_sampled_peak_headroom=True)
     path = base / (label + '.invocation.json')
     exclusive(path, record)
     return path, record
@@ -745,95 +762,48 @@ class Boundaries(unittest.TestCase):
             self.assertIs(retained['positive'], False)
             self.assertEqual(digest(Path(retained['receipt_export']['path'])), retained['receipt_sha256'])
 
-    def test_linux_export_transport_is_quoted_bounded_and_hash_bound(self):
+    def test_linux_export_uses_the_prepared_native_facade_and_checks_original_bytes(self):
         import hashlib
-        import launch
-        import shlex
+        import launch,linux_native_run
         from types import SimpleNamespace
-        with tempfile.TemporaryDirectory(prefix='531-export-', dir=os.environ['TMPDIR']) as directory:
-            base = Path(directory)
-            # The remote original lives behind a path that requires quoting; the
-            # local root is never opened for the ssh driver.
-            receipt_root = str(SCRATCH / '531-unarmed linux')
-            receipt_path = receipt_root + '/complete.json'
-            payload = json.dumps({'cells': complete_cells(), 'native': True,
-                                  'production_enabled': False}).encode()
-
+        with tempfile.TemporaryDirectory(prefix='531-export-',dir=os.environ['TMPDIR']) as directory:
+            base=Path(directory)
+            receipt_root=str(SCRATCH/'531-unarmed linux')
+            receipt_path=receipt_root+'/complete.json'
+            payload=json.dumps({'cells':complete_cells(),'native':True,'production_enabled':False}).encode()
             def fixture(evidence_name):
-                value = inputs()
-                value['evidence'] = str(base / evidence_name)
-                cell = copy.deepcopy(value['backends'][2])
-                cell['ssh_alias'] = 'effigy-531-vault'
-                cell['qualification_root'] = dict(path=receipt_root, device=0, inode=0, uid=os.geteuid())
-                remote_inputs = str(base / ('remote-inputs-' + evidence_name + '.json'))
-                remote_go = str(base / ('remote-go-' + evidence_name + '.json'))
-                cell['remote'] = {'packet': str(base / 'remote-packet'), 'inputs': remote_inputs,
-                                  'go_bindings': remote_go}
-                value['backends'][2] = cell
-                inputs_path, approved = write_bound(base, 'inputs-' + evidence_name + '.json', value)
-                go_path, _ = write_bound(base, 'linux-go-' + evidence_name + '.json', entry_go(cell, approved))
-                index_path, index_hash = write_bound(base, 'go-index-' + evidence_name + '.json',
-                                                     {'linux': {'path': str(go_path), 'sha256': digest(go_path)}})
-                argv = ['launch.py', '--inputs', str(inputs_path), '--sha256', approved,
-                        '--go-bindings', str(index_path), '--go-sha256', index_hash, '--backend', 'linux']
-                digests = {str(Path(cell['remote']['packet']) / name): digest(PACKET / name)
-                           for name in ('common.py', 'runtime.py', 'probe.py')}
-                digests[remote_inputs] = approved
-                digests[remote_go] = index_hash
-                return argv, digests, approved
-
-            def drive(argv, digests, transported_payload, receipt_digest, evidence_name):
-                calls = []
-                def transport_double(prefix_argv, **kwargs):
-                    calls.append(list(prefix_argv))
-                    command = prefix_argv[-1]
-                    if command.startswith('sha256sum -- '):
-                        target = shlex.split(command)[-1]
-                        found = receipt_digest if target == receipt_path else digests[target]
-                        return SimpleNamespace(returncode=0, stderr=b'',
-                                               stdout=(found + '  ' + target + '\n').encode())
-                    if command.startswith('head -c '):
-                        return SimpleNamespace(returncode=0, stderr=b'', stdout=transported_payload)
-                    # The reviewed runtime itself, executed over the pinned transport.
-                    return SimpleNamespace(returncode=0, stderr=b'',
-                                           stdout=json.dumps({'receipt': receipt_path}).encode())
-                with patch.object(sys, 'argv', argv), \
-                     patch.object(launch, 'source_head', return_value=HEAD), \
-                     patch.object(launch, 'ssh_prefix', return_value=['ssh-fixture', 'alias']), \
-                     patch.object(launch, 'run', side_effect=transport_double):
+                value=inputs();value['evidence']=str(base/evidence_name)
+                cell=value['backends'][2]
+                cell['ssh_alias']='effigy-531-vault'
+                cell['qualification_root']=dict(path=receipt_root,device=0,inode=0,uid=os.geteuid())
+                inputs_path,approved=write_bound(base,'inputs-'+evidence_name+'.json',value)
+                go_path,_=write_bound(base,'go-'+evidence_name+'.json',entry_go(cell,approved))
+                index_path,index_hash=write_bound(base,'go-index-'+evidence_name+'.json',
+                    {'linux':{'path':str(go_path),'sha256':digest(go_path)}})
+                return ['launch.py','--inputs',str(inputs_path),'--sha256',approved,
+                        '--go-bindings',str(index_path),'--go-sha256',index_hash,'--backend','linux']
+            def drive(argv,transported,original_hash):
+                result=dict(receipt=receipt_path,receipt_bytes=transported,receipt_sha256=original_hash,
+                    stdout=json.dumps({'receipt':receipt_path}).encode(),stderr=b'',linux_allocation={},
+                    linux_capacity_originals={'path':str(base/'originals.json'),'sha256':'a'*64})
+                with patch.object(sys,'argv',argv),patch.object(launch,'source_head',return_value=HEAD), \
+                     patch.object(launch,'ssh_prefix',return_value=['prepared-ssh']), \
+                     patch.object(linux_native_run,'execute_proof',return_value=result) as execute, \
+                     patch.object(launch,'run') as raw:
                     launch.main()
-                return calls
-
-            # Positive: quoted remote read capped at the source, hash-bound
-            # transport, retained export.
-            argv, digests, approved = fixture('evidence')
-            calls = drive(argv, digests, payload, hashlib.sha256(payload).hexdigest(), 'evidence')
-            export_calls = [item for item in calls if item[-1].startswith('head -c ')]
-            self.assertEqual(len(export_calls), 1)
-            self.assertEqual(export_calls[0][-1], 'head -c ' + str(launch.MAX_EXPORT_BYTES + 1)
-                             + ' -- ' + shlex.quote(receipt_path))
-            self.assertIn(' ', receipt_path, 'the exercised remote path requires quoting')
-            record = json.loads((base / 'evidence' / 'linux.json').read_text())
-            self.assertEqual(record['receipt'], receipt_path)
-            self.assertEqual(record['receipt_sha256'], hashlib.sha256(payload).hexdigest())
-            self.assertIs(record['positive'], True)
-            export = record['receipt_export']
-            self.assertEqual(Path(export['path']).read_bytes(), payload)
-            self.assertEqual(export['sha256'], record['receipt_sha256'])
-            self.assertFalse((base / 'evidence' / 'complete.json').exists())
-
-            # A transport delivering bytes other than the recorded original refuses.
-            argv, digests, approved = fixture('evidence-2')
-            with self.assertRaisesRegex(RuntimeError, 'transported original receipt differs'):
-                drive(argv, digests, payload + b' ', hashlib.sha256(payload).hexdigest(), 'evidence-2')
-            self.assertFalse((base / 'evidence-2' / 'linux.json').exists())
-
-            # An oversized transport refuses before retention on either driver.
-            oversize = b'x' * (launch.MAX_EXPORT_BYTES + 1)
-            argv, digests, approved = fixture('evidence-3')
-            with self.assertRaisesRegex(RuntimeError, 'exceeds its retained size bound'):
-                drive(argv, digests, oversize, hashlib.sha256(oversize).hexdigest(), 'evidence-3')
-            self.assertFalse((base / 'evidence-3' / 'linux.json').exists())
+                    execute.assert_called_once()
+                    raw.assert_not_called()
+            drive(fixture('evidence'),payload,hashlib.sha256(payload).hexdigest())
+            record=json.loads((base/'evidence/linux.json').read_text())
+            self.assertTrue(record['positive'])
+            self.assertEqual(Path(record['receipt_export']['path']).read_bytes(),payload)
+            self.assertIn('linux_capacity_originals',record)
+            self.assertFalse((base/'evidence/complete.json').exists())
+            with self.assertRaisesRegex(RuntimeError,'transported original receipt differs'):
+                drive(fixture('evidence-2'),payload+b' ',hashlib.sha256(payload).hexdigest())
+            oversize=b'x'*(launch.MAX_EXPORT_BYTES+1)
+            with self.assertRaisesRegex(RuntimeError,'exceeds its retained size bound'):
+                drive(fixture('evidence-3'),oversize,hashlib.sha256(oversize).hexdigest())
 
             # The local driver's held-descriptor read is size-bounded too.
             value = inputs()

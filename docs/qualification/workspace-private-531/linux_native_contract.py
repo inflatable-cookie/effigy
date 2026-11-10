@@ -15,12 +15,11 @@ import linux_native_run as native
 import linux_native_smoke as smoke
 import linux_native_resume as resources
 
-COLLECTOR_FILES = ('linux_loop_bound.py', 'linux_native_storage.py', 'linux_native_writers.py',
-                   'linux_native_resume.py', 'linux_native_collect.py')
+COLLECTOR_FILES = smoke.COLLECTOR_FILES
 MEMORY = 3 * 1024 ** 3
 
 
-def freeze(root, attempt, ssh, cell):
+def freeze(root, attempt, ssh, cell, *, evidence_kind='exploration'):
     """Freeze all five observation identities before producing their originals."""
     discovered = smoke.root_collect(root, attempt, ssh)
     by_path = {item['image']: item for item in discovered['images']}
@@ -59,7 +58,7 @@ def freeze(root, attempt, ssh, cell):
         if phase == 'live':
             groups['/system.slice/' + controller] = MEMORY
         phases[phase] = dict(origin=dict(vm_uuid=capacity.VM, source_head=cell['source_head'], phase=phase,
-                  nonce=uuid.uuid4().hex, programs=programs, evidence_kind='exploration'),
+                  nonce=uuid.uuid4().hex, programs=programs, evidence_kind=evidence_kind),
              boot_id=discovered['boot_id'], images=copy.deepcopy(pins), cgroups=groups,
              executables=allowed, engine_configs={path: hashlib.sha256(item['text'].encode()).hexdigest()
                   for path, item in discovered['engine_configs'].items()},
@@ -67,7 +66,7 @@ def freeze(root, attempt, ssh, cell):
     plan = dict(schema='effigy.linux-capacity-plan.v1', source_head=cell['source_head'],
                 mechanism=capacity.MECHANISM, phases=phases,
                 live_observers=[phases['live']['observer_unit']]+['effigy-829-resume-'+uuid.uuid4().hex+'.service' for _ in range(2)])
-    capacity.validate_plan(plan, cell['source_head'], evidence_kind='exploration')
+    capacity.validate_plan(plan, cell['source_head'], evidence_kind=evidence_kind)
     common.exclusive(attempt.root / 'capacity-plan.json', plan)
     return plan
 
@@ -85,11 +84,11 @@ def observe(root, attempt, ssh, plan, phase, index=0):
     return common.load(attempt.root / (expected['observer_unit'].removesuffix('.service') + '.original.json'))
 
 
-def prepare(root, attempt, ssh, cell):
-    plan = freeze(root, attempt, ssh, cell)
+def prepare(root, attempt, ssh, cell, *, evidence_kind='exploration'):
+    plan = freeze(root, attempt, ssh, cell, evidence_kind=evidence_kind)
     originals = {phase: observe(root, attempt, ssh, plan, phase) for phase in ('setup', 'activation')}
     packet = dict(plan=plan, originals=originals)
-    capacity.verify_preparation(packet, cell['source_head'], evidence_kind='exploration')
+    capacity.verify_preparation(packet, cell['source_head'], evidence_kind=evidence_kind)
     path = attempt.root / 'capacity-preparation.json'
     common.exclusive(path, packet)
     return path
