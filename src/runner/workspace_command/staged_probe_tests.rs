@@ -603,7 +603,7 @@ fn the_publication_guest_shares_one_deadline_and_refuses_without_spawning() {
 
     // Reads, digests and the identity probe all go through the bounded Compose
     // route the publication stages with.
-    backend.body("printf 'context bytes'");
+    backend.body("printf 'P\\ncontext bytes'");
     let mut guest = DeadlineGuest::new(
         backend.path(),
         &policy,
@@ -620,7 +620,7 @@ fn the_publication_guest_shares_one_deadline_and_refuses_without_spawning() {
     assert_eq!(backend.spawns(), 1);
 
     backend.body(&format!(
-        "printf '{PIN_HEX}  /run/effigy/objects/bin/effigy\\n'"
+        "printf 'P\\n{PIN_HEX}  /run/effigy/objects/bin/effigy\\n'"
     ));
     assert_eq!(
         guest

@@ -468,3 +468,14 @@ format authoritative rather than reconstructing that version in a fixture. Rehas
 same file for each context, live-run record and peer response inflated every
 matrix cell. Production dispatch still calls the real binary observer, and the
 version/digest mismatch controls retain their original assertions.
+
+Planner ruling (2026-11-10, Nucleus question
+`6c7a912f7c11c5b27ef562003add8ffc14d8190764a15a73be32ece9c94ba199`)
+assigns the fixture regressions exposed by integrating task 830 to task 814.
+Guest adapters must model successful optional reads as `P\n` plus bytes or
+`A\n` for absence, including hashes and links, and create selector parents
+inside their private guest tree. The staged-source preflight models an existing
+non-temporary mount without writing there: a sibling under `/tmp` cannot prove
+the positive path. Fake volume inspection must also model Compose's default
+project-scoped names for mask volumes. These fixture repairs retain every
+assertion and deadline; they do not change production behavior.

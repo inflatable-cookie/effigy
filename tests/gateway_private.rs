@@ -9108,7 +9108,7 @@ identity = 'a' * 64
 def guest(name):
     path = pathlib.PurePosixPath(name)
     assert path.is_absolute() and '..' not in path.parts, name
-    assert name.startswith(('/run/effigy/', '/tmp/effigy-host-', '/usr/local/bin/effigy')), name
+    assert name == '/usr/local/bin' or name.startswith(('/run/effigy/', '/tmp/effigy-host-', '/usr/local/bin/effigy')), name
     local = root.joinpath(*path.parts[1:])
     assert local.resolve().is_relative_to(root), name
     return local
@@ -9136,9 +9136,24 @@ elif script.startswith('set -eu\npatch_alias()'):
     pass  # DNS alias preparation, also modeled by the switch fake.
 elif script.startswith('p=') and 'sha256sum' in script:
     path = guest(shlex.split(script.splitlines()[0])[0][2:])
-    print(hashlib.sha256(read(path)).hexdigest())
+    if path.is_file():
+        print('P\n' + hashlib.sha256(read(path)).hexdigest())
+    else:
+        print('A')
+elif script.startswith('p=') and 'cat "$p"' in script:
+    path = guest(shlex.split(script.splitlines()[0])[0][2:])
+    sys.stdout.buffer.write(b'P\n' + path.read_bytes() if path.exists() else b'A\n')
+elif script.startswith('if [ -L '):
+    path = guest(shlex.split(script)[3])
+    if path.is_symlink():
+        print('P\n/' + str(path.resolve().relative_to(root)))
+    else:
+        print('A')
 else:
     words = shlex.split(script)
+    if words[:5] == ['mkdir', '-p', '-m', '0755', '--'] and words[6] == '&&':
+        guest(words[5]).mkdir(parents=True, exist_ok=True)
+        words = words[7:]
     if words[:1] == ['cat'] and words[2:] == ['2>/dev/null', '||', 'exit', '3']:
         sys.stdout.buffer.write(read(guest(words[1])))
     elif words[:2] == ['mkdir', '-p'] and words[3:5] == ['&&', 'chmod']:
