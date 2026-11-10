@@ -2052,6 +2052,26 @@ fn dev_handoff_gateway_readiness_for_absent_stopped_and_registered_stacks() {
         )
         .expect("register running workspace and Zest routes");
         assert!(gateway_routes_registered_against_rows(repo, &policy, &rows).unwrap());
+        // Matching registered routes must not make a stopped stack ready.
+        assert!(!gateway_routes_registered_against_rows(repo, &policy, &stopped).unwrap());
+        assert_eq!(
+            resolve_gateway_routes_against_rows(repo, &policy, &stopped).unwrap(),
+            None,
+            "stopped rows cannot supply the registered route targets"
+        );
+
+        let mut starting = rows.clone();
+        starting[0].status = "Up 10 seconds (health: starting)".to_owned();
+        let routes = resolve_gateway_routes_against_rows(repo, &policy, &starting)
+            .expect("health-starting resolution")
+            .expect("running ports remain published while health starts");
+        assert_eq!(routes[0].target.as_deref(), Some("127.0.0.1:41001"));
+        assert_eq!(routes[1].target.as_deref(), Some("127.0.0.1:41002"));
+        assert_eq!(
+            gateway_routes_readiness_detail(repo, &policy, &starting).unwrap(),
+            None
+        );
+        assert!(gateway_routes_registered_against_rows(repo, &policy, &starting).unwrap());
     });
 }
 
@@ -2065,7 +2085,8 @@ fn dev_handoff_and_registration_refuse_running_route_without_published_port() {
     zest.service = Some(policy.primary_service.clone());
     zest.port = Some(3769);
     policy.dns_routes = vec![zest];
-    let rows = published_rows(&policy, &[], None);
+    let mut rows = published_rows(&policy, &[], None);
+    rows[0].status = "Up 10 seconds (health: starting)".to_owned();
     let handoff = gateway_routes_registered_against_rows(checkout.path(), &policy, &rows)
         .expect_err("running service has no published route port");
     let registration = finish_gateway_route_registration_with_tls(

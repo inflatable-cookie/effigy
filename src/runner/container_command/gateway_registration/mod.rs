@@ -791,7 +791,7 @@ fn resolve_gateway_routes_against_rows_with_validation(
             else {
                 let service_is_running = rows.iter().any(|row| {
                     row_matches_policy_project(row, repo_root, policy)
-                        && effigy_containers::exec::compose_status_is_running(&row.status)
+                        && gateway_route_container_is_running(row)
                         && dns_route
                             .service
                             .as_deref()
@@ -914,6 +914,13 @@ fn resolve_gateway_shared_service_alias_routes(
     Ok(routes)
 }
 
+// Docker's health annotation does not change whether published ports exist.
+// Keep lifecycle transitions (for example Restarting) subject to the usual check.
+fn gateway_route_container_is_running(row: &RunningComposeContainer) -> bool {
+    let status = row.status.split(" (health:").next().unwrap_or(&row.status);
+    effigy_containers::exec::compose_status_is_running(status)
+}
+
 fn runtime_host_port_for_route(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -923,7 +930,7 @@ fn runtime_host_port_for_route(
     let matching_rows: Vec<&RunningComposeContainer> = rows
         .iter()
         .filter(|row| row_matches_policy_project(row, repo_root, policy))
-        .filter(|row| effigy_containers::exec::compose_status_is_running(&row.status))
+        .filter(|row| gateway_route_container_is_running(row))
         .filter(|row| {
             dns_route
                 .service
