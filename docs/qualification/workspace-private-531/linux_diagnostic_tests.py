@@ -1851,7 +1851,8 @@ class WriterBoundObservationTests(unittest.TestCase):
         self.assertEqual(legacy_setup.SUPPORTED_HARD_LIMITS, frozenset({legacy_setup.capacity.MECHANISM}))
         self.assertEqual(legacy_setup.SUPPORTED_DISK_MECHANISMS,
                          frozenset({legacy_setup.disk_association.MECHANISM}))
-        self.assertIsNone(legacy_setup.EXTERNAL_ANCHORS)
+        self.assertFalse(hasattr(legacy_setup, 'setup_plan'))
+        self.assertFalse(hasattr(legacy_setup, 'execute_plan'))
         self.assertEqual(legacy_setup.SUPPORTED_TOP_MECHANISMS, frozenset({'parallels-descriptor-selection-v1'}))
         self.assertIn('linux_diagnostic_probe.py', proof.SOURCES)
         limits = result['limits']
@@ -3188,7 +3189,7 @@ class DiskAssociationHandoff(unittest.TestCase):
                       handoff['result']['not_established'])
 
     def test_stored_outcome_record_is_what_setup_reverifies(self):
-        """execute() stores handoff['facts'] as the fact document, so setup_plan E7* re-verifies the
+        """execute() stores handoff['facts'] as the fact document, so historical readers re-verify the
         same facts; the reduced verify result is kept beside it and is never the stored record."""
         block, lsblk = association_tests.guest_block_observations()
         handoff = proof.observe_association(

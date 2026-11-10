@@ -318,7 +318,7 @@ def stored_association(handoff):
     """The outcome keys one handoff contributes.
 
     `disk_association` holds the complete fact document (raw originals included), which is exactly
-    what `setup.setup_plan` E7* re-verifies; the reduced verify result is kept beside it for reading
+    what historical evidence readers re-verify; the reduced verify result is kept beside it for reading
     and is never the stored record. A handoff that was not attempted stores nothing.
     """
     if not isinstance(handoff, dict) or handoff.get('facts') is None:
@@ -783,7 +783,7 @@ def execute(request, request_path, request_hash, selector_streams=None, *, explo
         # bracketed by two fresh guest boot originals of this same boot. The writer-bound guest
         # block reads must have completed for this same boot, and the complete fact document goes
         # through production setup.verify_disk_association; that document is what the stored
-        # `disk_association` key holds, so setup_plan E7* re-verifies the same facts and the
+        # `disk_association` key holds, so historical readers re-verify the same facts and the
         # retained raw originals rather than a reduced summary.
         def association_dispatch(argv, timeout, cap):
             nonlocal serial

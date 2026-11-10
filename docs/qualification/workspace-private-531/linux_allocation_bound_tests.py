@@ -30,14 +30,15 @@ import linux_rescue_input as rescue
 import linux_rescue_input_proof as rescue_proof
 import linux_allocation_probe as probe
 import linux_supervisor as supervisor
-import linux_setup as setup
-import linux_setup_tests as lst
+from linux_native_support import PVM_HOME
 from linux_supervisor import Refusal
 
 BOOT = 'boot-1234'
 UID = 1001
 ROOT = '/Volumes/Stash/scratch/effigy/linux-4f6a5ed3'
-LIMIT = setup.TRANSFER_CAP
+HISTORICAL_BASE_DIRS = ('source', 'qual-root', 'driver', 'inputs', 'inputs/go', 'frozen', 'metadata',
+                        'docker-config', 'toolchain', 'old-823d859d', 'docker-build-ctx')
+LIMIT = bound.ROW_RESERVATIONS['E9a']
 MECH = bound.MECHANISM
 # Retained 747 root dumpe2fs features line (observation-filesystem.raw), unchanged.
 OBSERVED_747_FEATURES = ('has_journal ext_attr resize_inode dir_index orphan_file filetype needs_recovery extent '
@@ -95,8 +96,7 @@ def render(mount_dev='8:2', mount_fs='ext4', mount_source='/dev/sda2', mount_opt
     enforcement_text = 'status=refused phase=edquot bytes=%d\n' % LIMIT
     return {'mechanism': MECH, 'row': 'E9a', 'nonce': NONCE, 'boot_id': BOOT, 'device': bound.ROOT_DEVICE,
             'project': bound.PROJECT_ID, 'charged_bytes': charged, 'limit_bytes': LIMIT, 'setter_exit': 0,
-            'custody': {'entry_sha256': hashlib.sha256(bound.WRITER_HELPER.parent.joinpath(
-                'linux_supervisor.py').read_bytes()).hexdigest(),
+            'custody': {'entry_sha256': hashlib.sha256(Path(supervisor.__file__).read_bytes()).hexdigest(),
                         'approval_digest': 'e' * 64, 'device': bound.ROOT_DEVICE, 'project': bound.PROJECT_ID},
             'enforcement': {'argv': ['--enforce', bound.QUOTA_ROOT_PROBE, str(LIMIT)], 'exit': 3,
                             'bytes_allocated': LIMIT, 'phase': 'edquot', 'reservation_bytes': LIMIT,
@@ -270,16 +270,6 @@ class VerifierChecks(unittest.TestCase):
     def verify(self, witness=None, limit=LIMIT, fx=None):
         return bound.verify(witness if witness is not None else render(), limit, fx or facts(), {MECH})
 
-    def test_candidate_request_is_exact_and_never_supplies_device_or_limit(self):
-        good = {'row': 'E8', 'nonce': 'a' * 64, 'boot_id': '12345678-1234-1234-1234-123456789abc'}
-        self.assertEqual(bound.validate_candidate_request(good), good)
-        bad = (dict(good, row='E19.0'), dict(good, nonce='bad'), dict(good, boot_id='unknown'),
-               dict(good, device=bound.ROOT_DEVICE), dict(good, project=bound.PROJECT_ID),
-               dict(good, limit=LIMIT), {'row': 'E8'})
-        for request in bad:
-            with self.subTest(request=request), self.assertRaises(Refusal):
-                bound.validate_candidate_request(request)
-
     def test_offline_versions_require_both_original_streams_and_waited_success(self):
         def item(stdout, stderr, exit=0):
             return {'stdout': stdout, 'stderr': stderr, 'exit': exit,
@@ -345,17 +335,6 @@ class VerifierChecks(unittest.TestCase):
         with self.assertRaises(Refusal):
             bound.inspect_candidate_superblock(bytes(raw[:-1]))
 
-    def test_fixed_row_limit_reservation_is_bounded_and_not_authority(self):
-        for row, reservation in bound.ROW_RESERVATIONS.items():
-            with self.subTest(row=row):
-                block = bound.prospective_row_limit(row, CHARGED)
-                self.assertEqual(block.bhard * probe.QB_UNIT_BYTES, CHARGED + reservation)
-                self.assertEqual(block.valid, bound.QIF_BLIMITS)
-        for row, charged in (('E19.0', 0), ('foreign', 0), ('E8', -1), ('E8', True),
-                             ('E8', 1), ('E9b', bound.PROJECT_CEILING)):
-            with self.subTest(row=row, charged=charged), self.assertRaises(Refusal):
-                bound.prospective_row_limit(row, charged)
-
     def test_fixed_setter_builds_only_the_project_block_limit(self):
         record = bound.quota_limit_record(CHARGED, 64 << 20)
         self.assertEqual(record.bhard, (CHARGED + (64 << 20)) // probe.QB_UNIT_BYTES)
@@ -394,15 +373,17 @@ class VerifierChecks(unittest.TestCase):
                 with self.assertRaises(Refusal):
                     self.verify(dict(witness, **change))
 
-    def test_production_admits_the_mechanism_but_still_requires_a_complete_witness(self):
-        with patch.object(setup, 'SUPPORTED_HARD_LIMITS', frozenset({MECH})):
-            with self.assertRaisesRegex(Refusal, 'activation completion'):
-                setup.verify_hard_limit(render(), LIMIT, None, facts())
-            incomplete = {k: v for k, v in render().items() if k != 'enforcement'}
-            with self.assertRaises(Refusal):
-                setup.verify_hard_limit(incomplete, LIMIT, None, facts())
+    def test_witness_admission_requires_originals_and_activation_cannot_be_a_label(self):
+        incomplete = {k: v for k, v in render().items() if k != 'enforcement'}
+        with self.assertRaises(Refusal):
+            self.verify(incomplete)
+        for activation in (None, {'completed': True}):
+            with self.subTest(activation=activation), self.assertRaises(Refusal):
+                bound.inspect_activation_completion(activation)
         with self.assertRaises(Refusal):
             bound.verify(render(), LIMIT, facts(), frozenset())
+        with self.assertRaisesRegex(Refusal, 'allocation facts are incomplete'):
+            bound.verify(render(), LIMIT, {}, {MECH})
 
     def test_retained_747_absence_is_refused_as_unprovisioned_not_as_enforced(self):
         witness = render(features=OBSERVED_747_FEATURES)
@@ -681,24 +662,9 @@ class HelperChecks(unittest.TestCase):
         fx = facts(uid=os.getuid(), root=str(root), entries={f['path'] for f in fields})
         self.assertEqual(bound.verify(witness, LIMIT, fx, {MECH})['mechanism'], MECH)
 
-    def test_route_plan_binds_the_fixed_argv_and_the_helper_source(self):
-        plan, digest = bound.route_plan(ROOT)
-        self.assertEqual([item['route'] for item in plan], list(bound.ROUTES))
-        self.assertEqual(digest, hashlib.sha256(Path(probe.__file__).read_bytes()).hexdigest())
-        self.assertEqual(plan[0]['argv'], ['/bin/cat', '/proc/self/mountinfo'])
-        self.assertIn('quota', plan[3]['argv'])
-        self.assertIn(ROOT, plan[4]['argv'])
-
-    def test_writer_tool_route_binds_fixed_entry_and_its_local_dependencies(self):
-        route = bound.writer_tool_route()
-        self.assertEqual(route['argv'], ['/usr/bin/python3', '-I', '-B', str(bound.WRITER_HELPER),
-                                          '--observe-writer-tools'])
-        self.assertEqual(route['sha256'], hashlib.sha256(bound.WRITER_HELPER.read_bytes()).hexdigest())
-        self.assertEqual(set(route['dependencies']), {'linux_supervisor.py', 'preparation_resources.py'})
-
 
 class FixedPathChecks(unittest.TestCase):
-    """The installed entry, the verifier and the plan cannot drift on a path, table or mechanism."""
+    """The retained installed entry and verifier agree on each fixed path and reservation."""
 
     def test_fixed_paths_and_the_reservation_table_cannot_drift(self):
         self.assertEqual(bound.ROW_RESERVATIONS, supervisor.QUOTA_ROWS)
@@ -708,10 +674,6 @@ class FixedPathChecks(unittest.TestCase):
         self.assertEqual(bound.QUOTA_ROOT_PROBE,
                          supervisor.QUOTA_ROOT + '/' + supervisor.QUOTA_PROBE_NAME)
         self.assertEqual(bound._forced_command(), supervisor.forced_command())
-        self.assertEqual(setup.PLACEMENT_GROUP_CAP, supervisor.QUOTA_ROWS['E19'])
-        self.assertEqual(setup.BASE, supervisor.QUOTA_ROOT)
-        self.assertEqual(setup.SUPERVISOR_PATH, supervisor.SUPERVISOR_PATH)
-        self.assertEqual(setup.SUPERVISOR_SOURCE, Path(supervisor.__file__).resolve())
 
 
 class QuotaAdminChecks(unittest.TestCase):
@@ -898,14 +860,14 @@ class QuotaAdminChecks(unittest.TestCase):
     def test_e7c_legitimate_nonzero_charge_passes_the_exact_first_row_equality(self):
         # After the genuine E7p zero anchor, E7c creates the eleven directories under BASE; they
         # allocate before the first quota set, so the census is nonzero and must still be exact.
-        for name in setup.BASE_DIRS:
+        for name in HISTORICAL_BASE_DIRS:
             (self.root / name).mkdir(mode=0o700, exist_ok=True)
         census = census_of(self.root)
         self.assertGreater(census, 0)
         ops, _ = self.ops(self.state(cur=census))
         witness = supervisor.quota_admin(self.request(), ops, 'f' * 64)
         self.assertEqual(witness['charged_bytes'], census)
-        entries = {'.', 'inputs', 'inputs/archive.tar'} | set(setup.BASE_DIRS)
+        entries = {'.', 'inputs', 'inputs/archive.tar'} | set(HISTORICAL_BASE_DIRS)
         fx = facts(boot_id=self.boot, root=str(self.root), uid=os.getuid(), entries=entries)
         admitted = bound.verify(witness, bound.ROW_RESERVATIONS['E9a'], fx, {MECH})
         self.assertEqual(admitted['tree_bytes'], census)
@@ -932,49 +894,6 @@ class InventoryChecks(unittest.TestCase):
         for name in ('linux_allocation_bound.py', 'linux_allocation_probe.py'):
             with self.subTest(name=name):
                 self.assertIn(name, requests.REQUIRED_MODULE_NAMES)
-
-
-class ProductionPathChecks(unittest.TestCase):
-    def setUp(self):
-        self.fx = lst.PlanFixture()
-        patcher = patch.object(setup, 'ARCHIVE_SHA256', self.fx.archive_sha)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
-    def test_the_plan_requires_the_fixed_quota_role_not_a_prebound_label(self):
-        witness = render(tree_root=setup.BASE, boot=lst.BOOT, tree_boot=lst.BOOT, entries=ENTRIES)
-        entries = {'.', 'inputs', 'inputs/archive.tar'}
-        live = self.fx.facts(hard_limit=witness, allocation_entries=entries)
-        with patch.object(setup, 'SUPPORTED_HARD_LIMITS', frozenset({MECH})), \
-                patch.object(setup, 'SUPPORTED_DISK_MECHANISMS', frozenset({'test-disk'})):
-            rows = {r['id']: r for r in setup.setup_plan(dict(live, disk_association=lst.disk_witness()))}
-        # A pre-bound witness never opens a quota row: the plan demands the fixed admin request and
-        # the writer custody observation, and the witness is admitted only when the row runs.
-        self.assertEqual(rows['E9a']['missing'], [])
-        self.assertEqual(rows['E9a']['quota']['row'], 'E9a')
-        admitted = {r['id']: r for r in setup.setup_plan(self.fx.facts(hard_limit=witness,
-                                                                      allocation_entries=entries))}
-        self.assertEqual(admitted['E9a']['missing'], [])
-        without = {r['id']: r for r in setup.setup_plan(self.fx.facts(hard_limit=witness,
-                                                                      allocation_entries=entries,
-                                                                      writer_tools=None))}
-        self.assertTrue(any('writer tool custody' in m for m in without['E9a']['missing']))
-
-    def test_completed_label_cannot_credit_quota(self):
-        witness = render(tree_root=setup.BASE, boot=lst.BOOT, tree_boot=lst.BOOT, entries=ENTRIES)
-        live = self.fx.facts(hard_limit=witness, allocation_entries={'.', 'inputs', 'inputs/archive.tar'},
-                             activation={'completed': True})
-        reason = setup._hard_limit_reason(live, {'limit_bytes': LIMIT})
-        self.assertIn('activation completion', reason)
-
-    def test_missing_exact_entries_refuses_the_prebound_hard_limit_path(self):
-        witness = render(tree_root=setup.BASE, boot=lst.BOOT, tree_boot=lst.BOOT)
-        with patch.object(setup, 'SUPPORTED_HARD_LIMITS', frozenset({MECH})):
-            reason = setup._hard_limit_reason(self.fx.facts(hard_limit=witness, allocation_entries=None),
-                                             {'limit_bytes': LIMIT})
-        self.assertIn('allocation facts are incomplete', reason)
-        with self.assertRaisesRegex(Refusal, 'allocation facts are incomplete'):
-            bound.verify(render(), LIMIT, {}, {MECH})
 
 
 class ProjectAssignmentChecks(unittest.TestCase):
@@ -1079,12 +998,6 @@ class ProjectAssignmentChecks(unittest.TestCase):
         self.assertEqual(flags, probe.FS_XFLAG_PROJINHERIT)
         self.assertEqual((extent, count, cowextent, padding), (0, 0, 0, bytes(8)))
         self.assertEqual(os.listdir(self.base), [], 'the assignment must not create an object')
-
-    def test_the_witness_line_satisfies_the_plan_expectation(self):
-        code, out, _err, _digest = self.dispatch()
-        self.assertEqual(code, 0)
-        row = {'id': setup.PROJECT_ROW, 'effect': 'bootstrap', 'expect': setup.PROJECT_ROW_EXPECT}
-        self.assertTrue(setup._expect_met(row, {'stdout': out.encode()}))
 
     def test_the_role_refuses_a_nonempty_base_and_leaves_it_unchanged(self):
         (self.base / 'inputs').mkdir()
@@ -1245,51 +1158,6 @@ class ProjectAssignmentChecks(unittest.TestCase):
         with self.assertRaises(Refusal):
             bound.verify_project_assignment(witness, {'boot_id': BOOT_ID, 'root': str(self.base),
                                                        'device': '/dev/sda1', 'uid': os.geteuid()})
-
-
-class ProjectPlanWiringChecks(unittest.TestCase):
-    """The assignment is wired into the real plan at the E7b/E7c boundary, not only a builder."""
-
-    def setUp(self):
-        self.fx = lst.PlanFixture()
-        self.addCleanup(shutil.rmtree, self.fx.dir, True)
-        patcher = patch.object(setup, 'ARCHIVE_SHA256', self.fx.archive_sha)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
-    def test_the_plan_assigns_the_project_after_base_and_before_its_subdirectories(self):
-        rows = [row['id'] for row in setup._rows(self.fx.facts())]
-        self.assertLess(rows.index('E7b'), rows.index('E-SUP'))
-        self.assertLess(rows.index('E-SUP'), rows.index(setup.PROJECT_ROW))
-        self.assertLess(rows.index(setup.PROJECT_ROW), rows.index('E7c'))
-        self.assertIn(setup.PROJECT_ROW, setup.BOOTSTRAP_ROOT)
-
-    def test_the_row_carries_the_fixed_role_argv_and_its_one_use_request(self):
-        row = next(row for row in setup._rows(self.fx.facts()) if row['id'] == setup.PROJECT_ROW)
-        self.assertEqual(row['argv'], setup.project_row_argv(row))
-        self.assertEqual(row['credit']['entry'], '--approved-project')
-        self.assertFalse(row['credit']['sudoers'])
-        self.assertEqual(json.loads(row['credit']['request_json']),
-                         {'nonce': row['credit']['nonce'], 'boot_id': self.fx.facts()['identity']['boot_id']})
-        self.assertIn('--approved-project', ' '.join(row['argv']))
-        self.assertEqual(row['project'], {'device': supervisor.PROJECT_DEVICE,
-                                          'project': supervisor.PROJECT_ID, 'uid': 0})
-
-    def test_a_missing_nonce_or_uninstalled_entry_keeps_the_row_empty(self):
-        rows = {r['id']: r for r in setup.setup_plan(self.fx.facts(row_nonces={}))}
-        self.assertEqual(rows[setup.PROJECT_ROW]['argv'], [])
-        self.assertTrue(rows[setup.PROJECT_ROW]['missing'])
-        without = {r['id']: r for r in setup.setup_plan(self.fx.facts(supervisor_installed=None))}
-        self.assertTrue(any('installed reviewed entry' in m for m in without[setup.PROJECT_ROW]['missing']))
-
-    def test_an_edited_argv_cannot_pass_the_executor(self):
-        facts = self.fx.facts(disk_association=lst.disk_witness())
-        row = next(r for r in setup._rows(facts) if r['id'] == setup.PROJECT_ROW)
-        edited = dict(row, argv=list(row['argv']) + ['--project', '7'])
-        self.assertNotEqual(edited['argv'], setup.project_row_argv(edited))
-        with self.assertRaises(Refusal):
-            setup.project_row_argv(dict(row, credit={'request_sha256': 'x'}))
-        self.assertEqual(row['timeout_seconds'], 60)
 
 
 BOOT_ID = '11111111-2222-3333-4444-555555555555'
@@ -1472,8 +1340,8 @@ class ActivationRouteChecks(unittest.TestCase):
                     'stderr_sha256': empty, 'exit': 0}
         def vm(state):
             return json.dumps([{'ID': bound.ACTIVATION_VM, 'State': state,
-                                'Home': setup.PVM_HOME + '/', 'Home path': setup.PVM_HOME + '/config.pvs',
-                                'Hardware': {'hdd0': {'image': setup.PVM_HOME + '/harddisk1.hdd',
+                                'Home': PVM_HOME + '/', 'Home path': PVM_HOME + '/config.pvs',
+                                'Hardware': {'hdd0': {'image': PVM_HOME + '/harddisk1.hdd',
                                                      'enabled': True}}}])
         list_argv = [PRLCTL, 'list', '--info', bound.ACTIVATION_VM, '--json']
         boot_argv = [PRLCTL, 'exec', bound.ACTIVATION_VM, '/bin/cat', '/proc/sys/kernel/random/boot_id']
