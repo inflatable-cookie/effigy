@@ -625,3 +625,10 @@ fixture's five-second observation bound, 1200 ms probe deadline, three-second
 O14 assertion and terminal-result assertions remain unchanged. A controlled
 sequence covers absent, unknown, active and stopped observations before the
 positive zombie state; none may release the observer.
+
+The Bun watcher cold-start and simulated-interrupt controls run in private
+children. Installing the watcher is irreversible process-wide state, and the
+cold-start assertion must not observe a sibling's installation. Both original
+assertion sets remain; the child harness requires one actual passing case.
+`test:deps:shared-process` runs the complete dependency library with eight
+libtest threads to retain its shared-process coverage.

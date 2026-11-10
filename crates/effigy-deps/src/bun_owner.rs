@@ -256,8 +256,35 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    // Watcher installation is process-wide and cannot be undone. Its cold-start
+    // control and simulated interrupt must not share state with sibling tests.
+    fn run_watcher_isolated(name: &str) -> bool {
+        const CHILD: &str = "EFFIGY_BUN_WATCHER_TEST";
+        if std::env::var(CHILD).as_deref() == Ok(name) {
+            return false;
+        }
+        let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args(["--exact", name, "--nocapture"])
+            .env(CHILD, name)
+            .output()
+            .expect("isolated watcher test");
+        assert!(
+            output.status.success()
+                && String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed;"),
+            "{name}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        true
+    }
+
     #[test]
     fn arming_installs_the_interrupt_watcher_before_it_returns() {
+        if run_watcher_isolated(
+            "bun_owner::tests::arming_installs_the_interrupt_watcher_before_it_returns",
+        ) {
+            return;
+        }
         let home = TempDir::new().unwrap();
         let consumer = TempDir::new().unwrap();
         let library = TempDir::new().unwrap();
@@ -278,6 +305,11 @@ mod tests {
 
     #[test]
     fn dropping_an_owner_waits_for_an_interrupt_cleanup() {
+        if run_watcher_isolated(
+            "bun_owner::tests::dropping_an_owner_waits_for_an_interrupt_cleanup",
+        ) {
+            return;
+        }
         let home = TempDir::new().unwrap();
         let consumer = TempDir::new().unwrap();
         let library = TempDir::new().unwrap();
