@@ -1103,3 +1103,25 @@ the client compared a prefixed credential hash with the strict v2 document's
 bare hex digest. Credential verification now uses the same kernel `Digest` hex
 representation as publication. The direct-terminal test document follows that
 strict contract too; changed bytes still refuse before enrolment.
+
+Native exploration at `b65eb8ee6` now completes real guest enrolment and reaches
+host standard-task admission. That admission is explicitly unavailable in the
+current reserved engine (`execute/selection.rs`); it supports managed tasks
+only. The full-session stream control therefore still refuses before a task
+starts. A proper standard-engine handoff must carry the same ticket into
+`TaskRun::begin_admitted`, preserve the dispatcher resolution fence, stream
+both outputs, and observe owning-client loss through settlement. Changing the
+fixture into a managed task would leave this gap untested.
+
+The dedicated daemon now uses a closed device policy, protects kernel modules,
+logs and clocks, and binds `/sys` and `/dev` read-only. `/sys/fs/cgroup` and
+`/proc/sys/net` remain explicit writable kernel interfaces: runc needs the
+former, and Docker's container-network setup needs the latter. Actual mount
+readback must select the visible mount by descriptor mount ID and read-only
+flags: `mountinfo` also contains hidden lower writable mounts, which are not
+writable paths for the actor. `linux_native_writers.py` retains those originals,
+PID births, executable hashes, writable descriptors and shared mappings. The
+resume route uses that observer instead of its older partial actor loop, checks
+actual cgroup memory/swap ceilings, and retains whole-filesystem allocation
+attribution. Both idle daemon actors passed natively with no findings; this is
+not yet the complete controller/workload closure or sealed mechanism admission.

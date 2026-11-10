@@ -84,10 +84,17 @@ Delegate=yes
 DelegateSubgroup=manager
 ProtectSystem=strict
 ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+DevicePolicy=closed
+DeviceAllow=char-pts rw
+BindReadOnlyPaths=/sys /dev
 # One cgroupfs mount: a bind over only the delegated subtree breaks runc's
 # RESOLVE_NO_XDEV reads. The trusted daemon's cgroup-parent stays its own unit.
 # This kernel-control filesystem consumes RAM, not persisted engine allocation.
-ReadWritePaths=/var/lib/effigy-829/rootful /Volumes/Stash/scratch/effigy/linux-native-829/qualification /sys/fs/cgroup
+ReadWritePaths=/var/lib/effigy-829/rootful /Volumes/Stash/scratch/effigy/linux-native-829/qualification /sys/fs/cgroup /proc/sys/net
 TemporaryFileSystem=/tmp:rw,nosuid,nodev,size=64M,mode=1777
 TemporaryFileSystem=/var/tmp:rw,nosuid,nodev,size=64M,mode=1777
 TemporaryFileSystem=/run:rw,nosuid,nodev,size=64M,mode=755

@@ -12,6 +12,7 @@ import common
 import linux_native_artifact as producer
 import linux_native_build as build
 import linux_native_storage as storage
+import linux_native_writers as writers
 import linux_native_run as native_run
 import linux_native_session as session
 import linux_native_assets as assets
@@ -169,6 +170,50 @@ class StorageCustodyTests(unittest.TestCase):
                 storage.superblock(raw, project_quota=True)
         struct.pack_into('<I', raw, 0x64, 0x2100)
         self.assertEqual(storage.superblock(bytes(raw), project_quota=True)['ro_compat'], 0x2100)
+
+
+class WriterClosureTests(unittest.TestCase):
+    def actor(self, mounts, descriptors=None):
+        return {'pid': 123, 'birth': '456', 'mountinfo': mounts,
+                'descriptors': descriptors or [], 'shared_writable_mappings': [],
+                'mount_visibility': [{'target': row['target'], 'mount_id': int(line.split()[0]),
+                    'device': row['device'], 'read_only': 'ro' in row['options']}
+                    for line, row in zip(mounts.splitlines(), storage.mount_rows(mounts))]}
+
+    def test_readonly_root_and_bounded_workspace_are_distinct(self):
+        mounts = ('1 0 8:2 / / ro - ext4 /dev/sda2 rw\n'
+                  '2 1 7:12 / /workspace rw,nodev,nosuid - ext4 /dev/loop12 rw')
+        self.assertEqual(len(writers.verify_actor(self.actor(mounts), {'7:12'}, '/engine', 1024)['writable_mounts']), 1)
+        with self.assertRaises(ValueError):
+            writers.verify_actor(self.actor(mounts.replace('/ ro', '/ rw')), {'7:12'}, '/engine', 1024)
+
+    def test_writable_fd_cannot_escape_readonly_mount_protection(self):
+        mounts = '1 0 8:2 / / ro - ext4 /dev/sda2 rw'
+        for kind in ('regular', 'block'):
+            item = {'kind': kind, 'device': '8:2', 'filesystem_magic': 0xef53}
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                writers.verify_actor(self.actor(mounts, [item]), {'7:12'}, '/engine', 1024)
+        memory = {'kind': 'regular', 'device': '0:1', 'filesystem_magic': 0x01021994}
+        writers.verify_actor(self.actor(mounts, [memory]), {'7:12'}, '/engine', 1024)
+
+    def test_hidden_writable_mount_does_not_impersonate_the_visible_readonly_mount(self):
+        mounts = ('1 0 0:4 / /sys rw - sysfs sysfs rw\n'
+                  '2 0 0:4 / /sys ro - sysfs sysfs rw')
+        item = self.actor(mounts)
+        item['mount_visibility'] = [item['mount_visibility'][1]]
+        self.assertEqual(writers.verify_actor(item, {'7:12'}, '/engine', 1024)['writable_mounts'], [])
+        item['mount_visibility'][0]['read_only'] = False
+        with self.assertRaises(ValueError):
+            writers.verify_actor(item, {'7:12'}, '/engine', 1024)
+
+    def test_overlay_requires_both_allocating_paths_inside_the_engine(self):
+        mounts = '1 0 0:3 / / rw - overlay overlay rw,upperdir=/engine/upper,workdir=/engine/work'
+        writers.verify_actor(self.actor(mounts), {'7:12'}, '/engine', 1024)
+        for altered in (mounts.replace('/engine/work', '/foreign/work'),
+                        mounts.replace('upperdir=/engine/upper,', ''),
+                        mounts.replace('/engine/upper', '/engine/../foreign')):
+            with self.subTest(mounts=altered), self.assertRaises(ValueError):
+                writers.verify_actor(self.actor(altered), {'7:12'}, '/engine', 1024)
 
 
 class SubmissionTests(unittest.TestCase):

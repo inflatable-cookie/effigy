@@ -9,6 +9,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import linux_native_storage as storage
+import linux_native_writers as writers
 
 ROOT = Path('/var/lib/effigy-829')
 WORKSPACE = Path('/Volumes/Stash/scratch/effigy/linux-native-829/qualification')
@@ -91,23 +92,15 @@ def resume():
     state = dict(line.split('=', 1) for line in service.splitlines())
     if state['ActiveState'] != 'active' or int(state['MainPID']) <= 0:
         raise RuntimeError('ready engine lost its service owner')
-    actors = []
-    for pid in (int(state['MainPID']), int((ROOT / 'rootful/run/containerd.pid').read_text())):
-        proc = Path('/proc') / str(pid)
-        before = (proc / 'stat').read_text()
-        executable = (proc / 'exe').resolve(strict=True)
-        status = dict(line.split(':', 1) for line in (proc / 'status').read_text().splitlines() if ':' in line)
-        if set(status['Uid'].split()) != {'0'}:
-            raise RuntimeError('engine actor is not rootful')
-        actors.append({'pid': pid, 'executable': str(executable),
-                       'sha256': hashlib.sha256(executable.read_bytes()).hexdigest(),
-                       'uid': status['Uid'].split(), 'cap_eff': status['CapEff'].strip(),
-                       'cgroup': (proc / 'cgroup').read_text(),
-                       'mountinfo': (proc / 'mountinfo').read_text()})
-        if before.rpartition(')')[2].split()[19] != (proc / 'stat').read_text().rpartition(')')[2].split()[19]:
-            raise RuntimeError('engine actor identity changed during observation')
+    if engine['Containers'] != 0:
+        raise RuntimeError('resume requires the dedicated engine to have no container writers')
+    devices = {item['mount']['device'] for item in observations}
+    closure = writers.observe([state['ControlGroup']], devices, str(ROOT / 'rootful'), 3221225472)
+    allocation = {str(target): storage.accounting(target) for _, target, _, _ in IMAGES}
     return {'exploratory': True, 'qualification_credit': False, 'images': observations,
-            'daemon_config_sha256': configs, 'engine': engine, 'actors': actors, 'service': service}
+            'daemon_config_sha256': configs, 'engine': engine, 'writer_closure': closure,
+            'accounting': allocation, 'service': service}
+
 
 
 if __name__ == '__main__':
