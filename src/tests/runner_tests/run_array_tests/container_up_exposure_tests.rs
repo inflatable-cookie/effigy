@@ -870,9 +870,13 @@ fn detached_up_settles_retrying_failures_before_detaching_healthy_listeners() {
         assert_eq!(state["status"], "failed");
         assert_eq!(state["custody_nonce"].is_null(), collision);
         assert!(state["route_owner"].is_null());
-        let run = serde_json::from_value(state["run"].clone()).expect("exact failed run");
+        let run = state["run"]
+            .as_str()
+            .expect("failed run id")
+            .parse()
+            .expect("exact failed run");
         let crate::runner::task_engine::Lookup::Found(record) =
-            crate::runner::task_engine::lookup_checkout(fixture.repo(), run)
+            crate::runner::task_engine::lookup_checkout(&fixture.repo(), run)
         else {
             panic!("failed listener run is retained");
         };

@@ -61,15 +61,6 @@ pub(in crate::runner) fn withheld_attribution(
     )
 }
 
-/// The run's environment boundary, for every named environment — with or
-/// without host processes: a new session's phase begins settled and count-free
-/// before the run starts polling it, so an interrupted prior run's container
-/// counts are never projected into a workload's wait (effigy#458). The host
-/// snapshot is a separate record and is untouched.
-pub(in crate::runner) fn begin_environment_phase(publisher: &WaitPublisher) {
-    publisher.settle_phase();
-}
-
 /// The run's environment-failure reason, kept together with the failure the
 /// host planner published when it owned the scope. The planner is the only
 /// process that saw which entry failed and what it reported, so its attribution
@@ -122,7 +113,7 @@ impl HostWaitGraph {
         publisher: &WaitPublisher,
         now: Instant,
     ) -> Self {
-        begin_environment_phase(publisher);
+        publisher.settle_phase();
         let started = policy
             .host_processes
             .iter()
@@ -1830,7 +1821,7 @@ mod environment_tests {
         assert_eq!(ledger.read_progress(), Some((3, 4)));
 
         // The run's boundary for this named environment, with no host graph.
-        begin_environment_phase(&publisher);
+        publisher.settle_phase();
         assert_eq!(
             ledger.read_progress(),
             None,
