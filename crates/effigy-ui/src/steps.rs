@@ -328,6 +328,8 @@ struct StepInner {
     finished: AtomicBool,
     children: Mutex<Vec<Weak<StepInner>>>,
     render_lock: Mutex<()>,
+    streaming: Mutex<Option<StreamingGuard>>,
+    started: Instant,
 }
 
 impl StepInner {
@@ -372,8 +374,11 @@ impl Step {
     fn new(sink: Arc<Sink>, parent: Option<&Step>, label: &str) -> Self {
         let mut active = sink.active.lock().unwrap_or_else(PoisonError::into_inner);
         let mode = sink.mode();
-        let bar = (mode == StepMode::Spinner && !is_capturing() && !sink.is_suspended())
-            .then(|| sink.start_bar(label));
+        let bar = (mode == StepMode::Spinner
+            && !is_capturing()
+            && !sink.is_suspended()
+            && !sink.is_streaming())
+        .then(|| sink.start_bar(label));
         if mode == StepMode::Pane && !is_capturing() && !sink.is_suspended() {
             sink.write_line(&format!("Started: {label}\n"));
         }
@@ -386,6 +391,8 @@ impl Step {
                 finished: AtomicBool::new(false),
                 children: Mutex::new(Vec::new()),
                 render_lock: Mutex::new(()),
+                streaming: Mutex::new(None),
+                started: Instant::now(),
             }),
         };
         active.retain(|entry| entry.strong_count() > 0);
@@ -483,6 +490,11 @@ impl Step {
             return;
         }
         self.finish_children();
+        self.inner
+            .streaming
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
         if let Some(bar) = self.inner.bar.as_ref() {
             bar.finish_and_clear();
         }
@@ -510,6 +522,21 @@ impl Step {
         };
         if let Some(bar) = self.inner.bar.as_ref() {
             bar.finish_and_clear();
+        }
+        let streaming = self
+            .inner
+            .streaming
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if streaming.is_some() {
+            let mark = if ok { SUCCESS } else { FAILURE };
+            self.inner.sink.write_line(&format!(
+                "{mark} {summary} ({})\n",
+                crate::human::human_duration(self.inner.started.elapsed())
+            ));
+            drop(streaming);
+            return;
         }
         if capture_finish(ok, &summary) {
             return;
@@ -553,6 +580,7 @@ struct Sink {
     multi: OnceLock<MultiProgress>,
     lines: Mutex<Box<dyn Write + Send>>,
     suspended: AtomicUsize,
+    streaming: AtomicUsize,
     active: Mutex<Vec<Weak<StepInner>>>,
 }
 
@@ -587,6 +615,7 @@ impl Sink {
             multi: OnceLock::new(),
             lines: Mutex::new(Box::new(lines)),
             suspended: AtomicUsize::new(0),
+            streaming: AtomicUsize::new(0),
             active: Mutex::new(Vec::new()),
         })
     }
@@ -601,6 +630,10 @@ impl Sink {
 
     fn is_suspended(&self) -> bool {
         self.suspended.load(Ordering::SeqCst) > 0
+    }
+
+    fn is_streaming(&self) -> bool {
+        self.streaming.load(Ordering::SeqCst) > 0
     }
 
     fn multi(&self) -> &MultiProgress {
@@ -626,7 +659,7 @@ impl Sink {
     }
 
     fn write_finish(&self, mode: StepMode, ok: bool, summary: &str) {
-        if mode == StepMode::Silent || self.is_suspended() {
+        if mode == StepMode::Silent || self.is_suspended() || self.is_streaming() {
             return;
         }
         let (mark, style) = if ok {
@@ -775,6 +808,68 @@ pub fn live_step(source: ProgressSource) -> Step {
     Step::new_live(Arc::clone(global_sink()), None, source)
 }
 
+/// Whether a human terminal can receive a producer's live output.
+/// Nested producers remain eligible while another producer suppresses spinners.
+pub fn streams_output() -> bool {
+    mode() == StepMode::Spinner
+        && !JSON_OUTPUT.load(Ordering::SeqCst)
+        && !in_managed_pane()
+        && !is_capturing()
+        && !global_sink().is_suspended()
+}
+
+/// Show a producer's header and timed ending, leaving its own output visible.
+/// Machine, piped and managed-pane feedback keeps its existing behavior.
+pub fn streaming_step(source: ProgressSource) -> Step {
+    if !streams_output() {
+        return live_step(source);
+    }
+    Step::new_streaming(Arc::clone(global_sink()), source)
+}
+
+impl Step {
+    fn new_streaming(sink: Arc<Sink>, source: ProgressSource) -> Self {
+        let guard = StreamingGuard::new(Arc::clone(&sink));
+        let label = source.frame_at(Duration::ZERO);
+        let step = Self::new(Arc::clone(&sink), None, &label);
+        sink.write_line(&format!("{label}…\n"));
+        *step
+            .inner
+            .streaming
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(guard);
+        step
+    }
+}
+
+struct StreamingGuard {
+    sink: Arc<Sink>,
+}
+
+impl StreamingGuard {
+    fn new(sink: Arc<Sink>) -> Self {
+        let _active = sink.active.lock().unwrap_or_else(PoisonError::into_inner);
+        sink.streaming.fetch_add(1, Ordering::SeqCst);
+        if let Some(multi) = sink.multi.get() {
+            // Clear the current frame before handing the terminal to output.
+            let _ = multi.clear();
+            multi.set_draw_target(ProgressDrawTarget::hidden());
+        }
+        drop(_active);
+        Self { sink }
+    }
+}
+
+impl Drop for StreamingGuard {
+    fn drop(&mut self) {
+        if self.sink.streaming.fetch_sub(1, Ordering::SeqCst) == 1 && !self.sink.is_suspended() {
+            if let Some(multi) = self.sink.multi.get() {
+                multi.set_draw_target(ProgressDrawTarget::stderr());
+            }
+        }
+    }
+}
+
 /// Silence steps while another surface owns the terminal (the managed-run
 /// TUI). Dropping the guard restores drawing.
 pub fn suspend_terminal() -> TerminalGuard {
@@ -820,7 +915,7 @@ impl Drop for TerminalGuard {
             .active
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        if self.sink.suspended.fetch_sub(1, Ordering::SeqCst) == 1 {
+        if self.sink.suspended.fetch_sub(1, Ordering::SeqCst) == 1 && !self.sink.is_streaming() {
             if let Some(multi) = self.sink.multi.get() {
                 multi.set_draw_target(ProgressDrawTarget::stderr());
             }
@@ -1066,6 +1161,39 @@ mod tests {
             assert!(line.starts_with("✓ service "), "whole line: {line}");
             assert_eq!(line.matches("ready").count(), 40);
         }
+    }
+
+    #[test]
+    fn producers_show_headers_and_timed_endings_without_spinners() {
+        let (sink, buffer) = silent_spinner_sink();
+        let source = ProgressSource::waiting_for("the Linux build to exit");
+        source.label("Building Linux effigy");
+        let step = Step::new_streaming(sink.clone(), source);
+        assert!(sink.is_streaming());
+        assert!(step.inner.bar.is_none());
+        let child = Step::new(sink.clone(), None, "probing the builder");
+        assert!(child.inner.bar.is_none());
+        sink.write_line("Compiling effigy\n");
+        step.succeed("Built Linux effigy");
+        step.fail("must not print twice");
+        assert!(!sink.is_streaming());
+        let text = buffer.text();
+        assert!(
+            text.starts_with("Building Linux effigy…\nCompiling effigy\n✓ Built Linux effigy ("),
+            "{text}"
+        );
+        assert_eq!(text.lines().count(), 3);
+    }
+
+    #[test]
+    fn nested_producers_restore_spinners_only_after_the_last_ends() {
+        let (sink, _) = silent_spinner_sink();
+        let first = Step::new_streaming(sink.clone(), ProgressSource::waiting_for("build"));
+        let second = Step::new_streaming(sink.clone(), ProgressSource::waiting_for("install"));
+        second.fail("Install failed");
+        assert!(sink.is_streaming());
+        drop(first);
+        assert!(!sink.is_streaming());
     }
 
     #[test]

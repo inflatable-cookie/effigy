@@ -38,6 +38,11 @@ pub enum SourceProgressEvent {
         /// What went wrong, when it did. The source's pin, if any, is kept.
         failure: Option<String>,
     },
+    /// Bounded, redacted producer bytes delivered as they arrive.
+    Output {
+        /// The producer output, without interpreting it as a record.
+        bytes: Vec<u8>,
+    },
     /// Something the operator should see that does not end a step: a kept pin
     /// after a failed refresh, or a retired setting.
     Warning {
@@ -55,17 +60,27 @@ pub enum SourceProgressEvent {
 /// Where acquisition progress goes. The default is silent, which is what
 /// `--json`, piped output and library callers get.
 #[derive(Clone, Default)]
-pub struct SourceProgress(Option<Arc<dyn Fn(SourceProgressEvent) + Send + Sync>>);
+pub struct SourceProgress(Option<Arc<dyn Fn(SourceProgressEvent) + Send + Sync>>, bool);
 
 impl SourceProgress {
     /// Report nothing.
     pub fn silent() -> Self {
-        Self(None)
+        Self(None, false)
     }
 
     /// Report every event to `report`.
     pub fn to(report: impl Fn(SourceProgressEvent) + Send + Sync + 'static) -> Self {
-        Self(Some(Arc::new(report)))
+        Self(Some(Arc::new(report)), false)
+    }
+
+    /// Include live output from long-running acquisition commands.
+    pub fn with_output(mut self) -> Self {
+        self.1 = true;
+        self
+    }
+
+    pub(crate) fn output_enabled(&self) -> bool {
+        self.1
     }
 
     pub(crate) fn emit(&self, event: SourceProgressEvent) {
@@ -99,7 +114,10 @@ mod tests {
             revision: "main".to_owned(),
             local: false,
         });
-        assert!(matches!(SourceProgress::default(), SourceProgress(None)));
+        assert!(matches!(
+            SourceProgress::default(),
+            SourceProgress(None, false)
+        ));
     }
 
     #[test]

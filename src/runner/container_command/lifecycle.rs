@@ -756,10 +756,14 @@ fn run_container_up_compose(
     // runtime line it read, so a runtime whose progress this parser does not
     // recognise still shows what it is waiting for (effigy#460, Q-017).
     let progress = activation_source(&plan.up_plan.label, &plan.policy.name);
-    let whole_stack = TimedStep::live(progress.clone());
+    let streaming = effigy_ui::steps::streams_output();
+    let output_step = streaming.then(|| effigy_ui::steps::streaming_step(progress.clone()));
+    let whole_stack = (!streaming).then(|| TimedStep::live(progress.clone()));
     let project = plan.policy.project_name.clone();
     let mut observe = |line: &str| {
-        if let Some(event) = parse_compose_step_event(line) {
+        if streaming {
+            effigy_ui::steps::print_line(line);
+        } else if let Some(event) = parse_compose_step_event(line) {
             progress.event(event.label(&project));
             compose_steps.observe(&event);
         }
@@ -796,21 +800,36 @@ fn run_container_up_compose(
                 Some(deadline),
                 &mut restart_stage,
             );
-            if compose_steps.touched() == 0 {
-                whole_stack.succeed("the stack is up");
-            } else {
-                whole_stack.finish_clear();
+            if let Some(step) = output_step {
+                step.succeed("The stack is up");
+            }
+            if let Some(whole_stack) = whole_stack {
+                if compose_steps.touched() == 0 {
+                    whole_stack.succeed("the stack is up");
+                } else {
+                    whole_stack.finish_clear();
+                }
             }
             Ok(None)
         }
         Err(_) if container_up_stop_requested(plan) => {
             compose_steps.finish_unfinished(false, "the activation was interrupted");
-            whole_stack.finish_clear();
+            if let Some(step) = output_step {
+                step.fail("Stack activation interrupted");
+            }
+            if let Some(whole_stack) = whole_stack {
+                whole_stack.finish_clear();
+            }
             Ok(Some(AttachedComposeEnd::Interrupted))
         }
         Err(error) => {
             compose_steps.finish_unfinished(false, "the runtime reported the stack as failed");
-            whole_stack.fail(format!("the stack did not start: {error}"));
+            if let Some(step) = output_step {
+                step.fail(&format!("The stack did not start: {error}"));
+            }
+            if let Some(whole_stack) = whole_stack {
+                whole_stack.fail(format!("the stack did not start: {error}"));
+            }
             Ok(Some(AttachedComposeEnd::Failed(error.to_string())))
         }
     }

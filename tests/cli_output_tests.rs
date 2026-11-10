@@ -55,3 +55,7 @@ mod partial_startup_tests;
 
 #[path = "cli_output_tests/retirement_tests.rs"]
 mod retirement_tests;
+
+#[cfg(unix)]
+#[path = "cli_output_tests/stream_build_output_tests.rs"]
+mod stream_build_output_tests;
