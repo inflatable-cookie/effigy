@@ -161,9 +161,11 @@ they are the ones to re-check on a host that links `target` to another volume.
 
 `scripts/ci-shared-process.py` drives Cargo directly on hosted CI, where Oxide
 is unavailable. The local inventory-only selector leases this driver through
-`oxide exec`; it builds and lists tests without executing their bodies. It compiles every test target and partitions only
-whole binaries; local selectors continue to use Oxide. Its unit controls mock
-all subprocess calls and do not build or execute Cargo.
+`oxide exec`; it builds and lists tests without executing their bodies. Library
+cohorts build workspace libraries and the bootstrap CLI target, then verify the
+root library's complete family inventory. Other cohorts build every test target
+and keep binaries whole. Local selectors continue to use Oxide. Unit controls
+mock subprocess calls and do not build or execute Cargo.
 
 | Route | Rule | Reason |
 | --- | --- | --- |
