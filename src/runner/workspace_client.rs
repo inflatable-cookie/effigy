@@ -824,7 +824,7 @@ pub(crate) fn load_auth(
     };
     // The pinned document names the credential's own digest: bytes that differ
     // from what the host staged are refused instead of presented.
-    let digest = context::sha256_text(&bytes);
+    let digest = Digest::of(&bytes).hex();
     if digest != context.credential.digest {
         return Err(RunnerError::task_invocation(format!(
             "the workspace enrolment credential at `{path}` is {digest} but the context pins {}; \

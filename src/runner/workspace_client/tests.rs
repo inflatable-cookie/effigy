@@ -105,7 +105,7 @@ pub(super) fn workspace_document(
             "credential": {
                 "generation": GENERATION,
                 "path": enrolment_path(),
-                "digest": sha256_text(credential.as_bytes()),
+                "digest": Digest::of(credential.as_bytes()).hex(),
             },
             "locator": {
                 "endpoint": CHANNEL_ENDPOINT,

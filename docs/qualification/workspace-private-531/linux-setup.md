@@ -1097,3 +1097,9 @@ required on their mounts. A no-follow whole-filesystem census now compares
 distinct-inode allocation with stable before/after filesystem usage, allowing
 at most 1 MiB for filesystem metadata. This strengthens observation; mechanism
 registration and the downstream activation/receipt integration remain required.
+
+The following native window passed version identity and reached enrolment, where
+the client compared a prefixed credential hash with the strict v2 document's
+bare hex digest. Credential verification now uses the same kernel `Digest` hex
+representation as publication. The direct-terminal test document follows that
+strict contract too; changed bytes still refuse before enrolment.
