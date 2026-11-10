@@ -1745,9 +1745,32 @@ fn verified_service_binding(
         .filter(|row| row.service.as_deref() == Some(service))
         .collect::<Vec<_>>();
     if selected.is_empty() {
+        let reason = match crate::runner::environment::record(policy) {
+            Some(record) if record.state == effigy_containers::environment::EnvState::Stopped => {
+                format!(
+                    "environment `{}` was stopped before this command could start",
+                    policy.name
+                )
+            }
+            Some(record)
+                if record
+                    .engine()
+                    .is_some_and(|engine| engine.project != policy.project_name) =>
+            {
+                format!(
+                    "resolved project `{}` differs from the environment's recorded project `{}`",
+                    policy.project_name,
+                    record.engine().expect("checked engine").project
+                )
+            }
+            _ => format!(
+                "the runtime reported no running target in resolved project `{}`",
+                policy.project_name
+            ),
+        };
         return Err(RunnerError::task_invocation(format!(
-            "container service `{service}` is not running; start it with `effigy container {} up`",
-            policy.name
+            "container service `{service}` is not running: {reason}; inspect it with `effigy container {} status`, then start it with `effigy container {} up`",
+            policy.name, policy.name
         )));
     }
     let mut bindings = effigy_containers::exec::verify_owned_running_compose_identities(

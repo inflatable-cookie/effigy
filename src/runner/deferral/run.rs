@@ -218,6 +218,13 @@ fn run_deferred_request_with_binding(
         };
     }
 
+    let local_working_dir = local_container_deferral_working_dir();
+    if local_working_dir.is_none() {
+        // A cold bring-up also prepares sources. Do that before resolving the
+        // binding: a bundle refresh can change the project, service or workdir.
+        // The activation below then owns one hold and one snapshot through exec.
+        crate::runner::bundle_command::prepare_sources_at(&deferral.working_dir)?;
+    }
     let manifest = load_task_manifest(&manifest_path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let binding_task = ManifestTask {
@@ -251,7 +258,7 @@ fn run_deferred_request_with_binding(
             )))
         }
         ContainerExecutionBinding::Container { .. } | ContainerExecutionBinding::Inline { .. } => {
-            if let Some(local_working_dir) = local_container_deferral_working_dir() {
+            if let Some(local_working_dir) = local_working_dir {
                 let command =
                     build_deferred_command(task, runtime_args, deferral, &local_working_dir)?;
                 let rendered_command = render_deferred_runtime_command(
@@ -317,10 +324,10 @@ fn run_deferred_request_with_binding(
                         ),
                 },
             )?;
-            let policy = activation.policy;
+            let policy = &activation.policy;
             let tty = std::io::stdout().is_terminal() || std::io::stderr().is_terminal();
             let args = build_deferred_container_command_args(
-                &policy,
+                policy,
                 &rendered_command,
                 &exec_working_dir,
                 current_depth,
@@ -328,7 +335,7 @@ fn run_deferred_request_with_binding(
             );
             let output = run_compose_exec(
                 &deferral.working_dir,
-                &policy,
+                policy,
                 &args,
                 false,
                 "docker compose exec",
