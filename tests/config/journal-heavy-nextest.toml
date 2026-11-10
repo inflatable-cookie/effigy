@@ -1,7 +1,7 @@
 # The one budget for selectors whose every case owns a durable journal on the
 # drive-backed scratch root: a journal commit costs about 26 ms there against
-# 0.16 ms on the internal disk, and one supervisor matrix owns 288 journals
-# (2026-10-25: 207 s quiet, about 550 s under competing load). The point is that
+# 0.16 ms on the internal disk. The former 288-scenario supervisor matrix took
+# 207 s quiet, about 550 s under competing load (2026-10-25). The point is that
 # a hung case still dies; it does not need a per-test number, so a selector
 # picks this whole file instead of adding another override.
 [profile.default]

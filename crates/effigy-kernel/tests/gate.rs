@@ -418,29 +418,27 @@ fn gate_sigstop_holder_is_never_stolen_and_completes_on_resume() {
     let home = home();
     let mut holder = spawn_holder(home.path(), "plain");
     holder.signal(libc::SIGSTOP);
-    let stopped = Instant::now();
-    // The holder stays stopped for 60 s. Every waiter reports it as the
-    // stopped holder; nothing is stolen and no staleness exists.
-    let mut attempts = 0;
-    while stopped.elapsed() < Duration::from_secs(60) {
+    // Observe the real stop before testing contention and the wait deadline.
+    let stopped_deadline = Instant::now() + Duration::from_secs(30);
+    loop {
         match acquire(home.path(), &[task("build")], Wait::FailFast) {
             Err(GateError::Busy { id, holder: diag }) => {
                 assert_eq!(id, task("build"));
                 let diag = holder_diag(&diag);
                 assert_eq!(diag.pid, holder.pid());
-                if attempts > 0 {
-                    assert_eq!(diag.state.verified(), Some(&ProcessState::Stopped));
+                if diag.state.verified() == Some(&ProcessState::Stopped) {
+                    break;
                 }
             }
             other => panic!("stopped holder's gate was granted: {other:?}"),
         }
-        assert!(matches!(
-            probe(home.path(), &task("build")),
-            Observed::Verified(GateState::Held(_), _)
-        ));
-        attempts += 1;
-        std::thread::sleep(Duration::from_secs(5));
+        assert!(Instant::now() < stopped_deadline, "holder never stopped");
+        std::thread::sleep(Duration::from_millis(5));
     }
+    assert!(matches!(
+        probe(home.path(), &task("build")),
+        Observed::Verified(GateState::Held(_), _)
+    ));
     // Prepare the filesystem/context before starting the wait budget. `waited`
     // starts inside Gate::acquire, whereas Until is an absolute caller deadline.
     // Comparing waited with the whole budget incorrectly counts preparation

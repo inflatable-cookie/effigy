@@ -532,10 +532,8 @@ fn pinned_reader_reads_a_store_this_build_wrote() {
     );
 }
 
-/// A route whose target is briefly down survives far past the interval the
-/// retired dead-route sweep ran on. A container restart, a Colima restart and
-/// a listener that has not bound yet all look like this, and the route has to
-/// be there when the target is back.
+/// An old route survives a failed upstream request and serves again when its
+/// target returns, without re-registration.
 #[cfg(unix)]
 #[test]
 fn private_gateway_keeps_a_route_whose_target_is_down() {
@@ -548,17 +546,19 @@ fn private_gateway_keeps_a_route_whose_target_is_down() {
     let down = listener.local_addr().expect("probe address");
     drop(listener);
     save_private_routes(&root, &[("localhost", down, false)]);
+    // Cross the retired sweep's age threshold without spending wall time.
+    edit_live_fixture_routes(&root.join("routes.json"), |routes| {
+        routes.routes.get_mut("localhost").unwrap().registered =
+            Utc::now() - chrono::Duration::days(1);
+    });
 
     let mut child = spawn_private_gateway_daemon(&root, false);
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while !root.join("gateway.addresses.json").exists() {
-        assert!(
-            Instant::now() < deadline,
-            "private daemon did not start; log={}",
-            fs::read_to_string(root.join("daemon.log")).unwrap_or_default()
-        );
-        thread::sleep(Duration::from_millis(20));
-    }
+    wait_for_private_gateway_http_ready(
+        &mut child,
+        &root,
+        "502 Bad Gateway",
+        Duration::from_secs(20),
+    );
     let routed = || {
         let status = parse_json_success(run_gateway(&root, "status", &effects, None, &[]));
         status["routes"]
@@ -567,8 +567,16 @@ fn private_gateway_keeps_a_route_whose_target_is_down() {
     };
     assert!(routed(), "the route is listed while its target is down");
 
-    // The retired sweep dropped a route like this within 30 seconds.
-    thread::sleep(Duration::from_secs(60));
+    let _upstream = Upstream::from_listener(
+        TcpListener::bind(down).expect("return the target on its recorded address"),
+        "target returned",
+    );
+    wait_for_private_gateway_http_ready(
+        &mut child,
+        &root,
+        "target returned",
+        Duration::from_secs(20),
+    );
 
     assert!(
         routed(),
@@ -5653,7 +5661,13 @@ struct Upstream {
 
 impl Upstream {
     fn start(body: &str) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("upstream listener");
+        Self::from_listener(
+            TcpListener::bind("127.0.0.1:0").expect("upstream listener"),
+            body,
+        )
+    }
+
+    fn from_listener(listener: TcpListener, body: &str) -> Self {
         listener
             .set_nonblocking(true)
             .expect("nonblocking listener");
