@@ -37,6 +37,36 @@ fn managed_host_fixture() -> effigy_test_support::Fixture {
         .expect("owned external managed host fixture")
 }
 
+fn print_listener_owners() {
+    for (program, args) in [
+        ("lsof", vec!["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn"]),
+        ("ss", vec!["-tanp"]),
+    ] {
+        match Command::new(program).args(args).output_owned() {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                println!(
+                    "listener owner inventory ({program}) status={}:\n{stdout}\nstderr: {}",
+                    output.status,
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                #[cfg(target_os = "linux")]
+                if program == "lsof" {
+                    for pid in stdout.lines().filter_map(|line| line.strip_prefix('p')) {
+                        if let Ok(pid) = pid.parse::<u32>() {
+                            println!(
+                                "listener owner {pid} cwd: {:?}",
+                                fs::read_link(format!("/proc/{pid}/cwd"))
+                            );
+                        }
+                    }
+                }
+            }
+            Err(error) => println!("listener owner inventory ({program}) unavailable: {error}"),
+        }
+    }
+}
+
 fn copy_dir_all(src: &Path, dst: &Path) {
     fs::create_dir_all(dst).expect("create fixture directory");
     for entry in fs::read_dir(src).expect("read fixture source") {
@@ -1235,6 +1265,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         .collect::<Vec<_>>();
     for (index, result) in startup_results.iter().enumerate() {
         if !result.status.success() {
+            print_listener_owners();
             println!("private activation diagnostic: {result:?}");
             let (checkout, profile, ..) = &checkouts[index];
             let runtime = checkout
@@ -3535,6 +3566,21 @@ fn managed_host_listener_leader_exit_restarts_by_policy() {
     };
 
     let started = run_container_cli(&checkout, &cleanup, &["up", "--detach", "--json"]);
+    if !started.status.success() {
+        print_listener_owners();
+        for name in ["replaced", "settled"] {
+            for suffix in ["listener.json", "log"] {
+                let path = checkout
+                    .join(".effigy/runtime/host-processes/web")
+                    .join(profile)
+                    .join(format!("{name}.{suffix}"));
+                println!(
+                    "leader-exit startup diagnostic for {name}.{suffix}: {:?}",
+                    fs::read_to_string(path)
+                );
+            }
+        }
+    }
     assert!(
         started.status.success(),
         "leader-exit startup failed: stdout={} stderr={}",

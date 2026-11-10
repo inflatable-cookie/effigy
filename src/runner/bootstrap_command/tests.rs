@@ -59,6 +59,7 @@ fn owned_root(name: &str) -> (Fixture, PathBuf) {
 
 #[test]
 fn bootstrap_setup_and_start_are_dispatched_as_ordinary_selectors() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
     let (_fixture, root) = owned_root("bootstrap-selectors-");
     let project = root.join("app");
     write_project(
@@ -92,6 +93,7 @@ run = "printf 'start\n' >> order.txt"
 
 #[test]
 fn no_start_skips_the_start_selector() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
     let (_fixture, root) = owned_root("bootstrap-no-start-");
     let project = root.join("app");
     write_project(
@@ -120,6 +122,7 @@ run = "printf 'start\n' >> order.txt"
 
 #[test]
 fn a_plan_renders_without_running_anything() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
     let (_fixture, root) = owned_root("bootstrap-plan-");
     let project = root.join("app");
     write_project(
@@ -153,6 +156,7 @@ run = "printf 'start\n' >> order.txt"
 
 #[test]
 fn a_plan_renders_json_with_the_stable_schema() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
     let (_fixture, root) = owned_root("bootstrap-plan-json-");
     let project = root.join("app");
     write_project(&project, "[bootstrap]\nstart = \"dev\"\n");

@@ -559,3 +559,14 @@ is unproven. The bounded address avoids client traffic taking the dependent's
 port. Every app still uses `:0`, preserving automatic allocation in all three
 scopes and both text/JSON fronts. Dependency generation, route replacement,
 foreign identity, restart-port retention and scope teardown assertions remain.
+Startup failures in this proof and the leader-exit proof snapshot listener
+owners (`lsof`/`ss`), Linux owner working directories and the owned listener
+records before cleanup. An occupied-port refusal alone does not identify a
+foreign listener, self-connect or another generation; retain those facts before
+assigning a cause.
+
+Functional bootstrap-command fixtures acquire the same clean environment guard
+before root allocation, Git setup or bootstrap invocation, as the failing-setup
+fixture already did. Hosted shared-process execution caught a Git reader using
+a prerequisite fixture's deleted fake-Git path. Hold the guard across the whole
+functional case, preserving every selector, plan/schema and failure assertion.
