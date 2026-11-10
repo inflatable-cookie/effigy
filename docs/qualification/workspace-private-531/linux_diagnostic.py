@@ -7,6 +7,7 @@ import hashlib
 import os
 from pathlib import Path
 import stat
+import time
 import xml.etree.ElementTree as ET
 
 from preparation_stage import Refusal, exclusive
@@ -17,6 +18,7 @@ COUNTERS = ('logical', 'allocated')
 # One live sample may repeat once when a protected object's listing or identity moved between
 # its observation and the package walk. A persistent failure refuses; both attempts are retained.
 ATTEMPTS = 2
+OBSERVATION_RETRY_DELAY = .25
 _ISSUER = object()
 # Ancillary-metadata ownership modes. STRICT is the default for every other caller: a foreign
 # owner refuses. OBSERVED is the narrow read-only inventory mode the Linux diagnostic uses for
@@ -482,6 +484,12 @@ class ExtentMonitor:
                 self.observation_failures.append(dict(exc.observation, attempt=attempt))
                 if attempt == ATTEMPTS:
                     raise
+                # Parallels can unlink then republish its descriptor during
+                # start. A tight immediate re-read observes the same gap.
+                # Pause only after a failed observation; the next complete
+                # sample must independently re-establish every byte/custody
+                # invariant. Changed bytes and custody refusals never retry.
+                time.sleep(OBSERVATION_RETRY_DELAY)
 
     def check(self):
         try:

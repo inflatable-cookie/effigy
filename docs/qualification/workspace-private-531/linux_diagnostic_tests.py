@@ -756,6 +756,18 @@ class ProtectedSampleTests(unittest.TestCase):
         self.assertIn('No such file', str(caught.exception))
         self.assertEqual(len(monitor.observation_failures), 2)
 
+    def test_descriptor_republication_gap_waits_before_fresh_verification(self):
+        root, disk, xml, monitor = self.monitor()
+        descriptor = disk / 'DiskDescriptor.xml'
+        descriptor.unlink()
+        with patch.object(diagnostic.time, 'sleep', side_effect=lambda _: descriptor.write_bytes(xml)) as pause:
+            result = monitor.check()
+        pause.assert_called_once_with(diagnostic.OBSERVATION_RETRY_DELAY)
+        self.assertEqual(result['attempts'], 2)
+        self.assertEqual(monitor.observation_failures[0]['errno'], errno.ENOENT)
+        self.assertEqual(len(monitor.identity_events), 1)
+        self.assertTrue(monitor.identity_events[0]['content_identical'])
+
     def test_persistent_unreadability_refuses_with_errno(self):
         if os.geteuid() == 0:
             self.skipTest('an owner-mode refusal needs a non-root owner')
