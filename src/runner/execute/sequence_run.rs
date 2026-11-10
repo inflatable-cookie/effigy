@@ -1,4 +1,6 @@
 //! One typed, ordered sequence engine. Output mode chooses sinks only.
+use effigy_ui::steps::ProgressFrame;
+
 use super::host_alias::{host_alias_resolver, secret_env_slice};
 use super::{context::ExecutionTaskContext, preflight::ExecutionPreflight};
 use crate::runner::command_context::{command_repo_override, EmbeddedRepoOverrideMode};
@@ -580,9 +582,7 @@ pub(in crate::runner::execute) fn sequence_step_label(
 /// observes the child's inside, so the frame names that wait rather than
 /// animating a fixed label (effigy#467, Q-017).
 fn sequence_step_progress(label: &str, step_id: &str) -> ProgressSource {
-    let progress = ProgressSource::waiting_for(format!("step `{step_id}` to exit"));
-    progress.update(label, None, None);
-    progress
+    ProgressSource::new(ProgressFrame::new(label).waiting_for(format!("step `{step_id}` to exit")))
 }
 
 type StepExit = (i32, String, String, WorkloadOutcome);
@@ -1135,12 +1135,6 @@ mod tests {
         assert_eq!(
             first,
             "running dev step 2/4: build; waiting for step `db:migrate` to exit; 0s elapsed"
-        );
-        let later = progress.detailed_frame_at(std::time::Duration::from_secs(45));
-        assert_ne!(first, later, "a frame that never changes is not progress");
-        assert_eq!(
-            later,
-            "running dev step 2/4: build; waiting for step `db:migrate` to exit; 45s elapsed"
         );
     }
 

@@ -99,7 +99,7 @@ use effigy_containers::{
 };
 use effigy_core::repo_markers::has_task_manifest;
 use effigy_core::shell::shell_quote;
-use effigy_ui::steps::ProgressSource;
+use effigy_ui::steps::{ProgressFrame, ProgressSource};
 use serde_json::json;
 
 use super::gateway_registration::{
@@ -222,20 +222,17 @@ fn primary_service_container_observed(
 /// The exact wait the identity read is in: the runtime's row for the primary
 /// service, with elapsed time (effigy#460, Q-017).
 fn primary_container_progress(policy: &EffectiveContainerPolicy) -> ProgressSource {
-    let progress = ProgressSource::waiting_for(format!(
-        "the runtime to name the primary container of `{}`",
-        policy.project_name
-    ));
-    progress.update(
-        format!(
+    ProgressSource::new(
+        ProgressFrame::new(format!(
             "reading the runtime's row for primary service `{}` of `{}`",
             policy.primary_service, policy.project_name
-        ),
-        None,
-        None,
-    );
-    progress.label(format!("Checking {} container", policy.primary_service));
-    progress
+        ))
+        .label(format!("Checking {} container", policy.primary_service))
+        .waiting_for(format!(
+            "the runtime to name the primary container of `{}`",
+            policy.project_name
+        )),
+    )
 }
 
 /// One runtime inventory read, selecting the primary service's own row.
@@ -295,14 +292,11 @@ fn declared_health_tail(policy: &EffectiveContainerPolicy, container: &str) -> O
 /// The exact wait the log tail is in: the runtime's own log read for the
 /// container that failed, with elapsed time (effigy#460, Q-017).
 fn declared_health_tail_progress(container: &str) -> ProgressSource {
-    let progress = ProgressSource::waiting_for(format!("the runtime's log tail of `{container}`"));
-    progress.update(
-        format!("reading the last line `{container}` printed"),
-        None,
-        None,
-    );
-    progress.label("Reading container logs");
-    progress
+    ProgressSource::new(
+        ProgressFrame::new(format!("reading the last line `{container}` printed"))
+            .label("Reading container logs")
+            .waiting_for(format!("the runtime's log tail of `{container}`")),
+    )
 }
 
 /// The first line of a runtime error, bounded so one frame stays one line.
@@ -704,29 +698,27 @@ fn ensure_shared_services_with_renders_observed(
         // service's awaited subject and drops the event it ended on, so a
         // stalled stage here never names the service that already finished
         // (effigy#460, Q-017).
-        begin_shared_service_wait(progress, &service.service_name);
         // Held across inventory, publication, replacement and apply.
-        progress.update(
-            format!(
+        progress.update(|_| {
+            ProgressFrame::new(format!(
                 "waiting for the machine gate of shared project `{}`",
                 service.project_name
-            ),
-            Some((done, total)),
-            None,
-        );
-        progress.label("Waiting for shared service lock");
+            ))
+            .count(Some((done, total)))
+            .label("Waiting for shared service lock")
+            .waiting_for(shared_service_subject(&service.service_name))
+        });
         let _gate = crate::runner::task_engine::shared_service_gate(&service.project_name)
             .map_err(|error| shared_service_refusal(policy, service, "machine gate", error))?;
         // One inventory read serves the refusal and the replacement below.
-        progress.update(
-            format!(
+        progress.update(|_| {
+            ProgressFrame::new(format!(
                 "reading the runtime's containers for shared `{}`",
                 service.service_name
-            ),
-            Some((done, total)),
-            None,
-        );
-        progress.label("Checking shared containers");
+            ))
+            .count(Some((done, total)))
+            .label("Checking shared containers")
+        });
         // Ok(empty) proves absence; Ok(rows) is verified inventory; Err is
         // unknown and refuses before any publication or runtime mutation.
         let containers = effigy_containers::exec::shared_project_containers(
@@ -741,12 +733,14 @@ fn ensure_shared_services_with_renders_observed(
             .iter()
             .find(|render| Some(render.directory.as_path()) == service.compose_file.parent())
         {
-            progress.update(
-                format!("publishing the render of shared `{}`", service.service_name),
-                Some((done, total)),
-                None,
-            );
-            progress.label("Saving shared stack");
+            progress.update(|_| {
+                ProgressFrame::new(format!(
+                    "publishing the render of shared `{}`",
+                    service.service_name
+                ))
+                .count(Some((done, total)))
+                .label("Saving shared stack")
+            });
             effigy_containers::policy::render::publish_shared_render(render).map_err(|error| {
                 shared_service_refusal(
                     policy,
@@ -759,15 +753,14 @@ fn ensure_shared_services_with_renders_observed(
                 )
             })?;
         }
-        progress.update(
-            format!(
+        progress.update(|_| {
+            ProgressFrame::new(format!(
                 "checking the render of shared `{}` against its container",
                 service.service_name
-            ),
-            Some((done, total)),
-            None,
-        );
-        progress.label("Checking shared stack");
+            ))
+            .count(Some((done, total)))
+            .label("Checking shared stack")
+        });
         let mut replaced = false;
         for container in containers
             .iter()
@@ -797,15 +790,14 @@ fn ensure_shared_services_with_renders_observed(
         let workdir = service.compose_file.parent().ok_or_else(|| {
             RunnerError::task_invocation("shared service compose file has no parent directory")
         })?;
-        progress.update(
-            format!(
+        progress.update(|_| {
+            ProgressFrame::new(format!(
                 "waiting for docker compose up (shared {}) to return",
                 service.service_name
-            ),
-            Some((done, total)),
-            None,
-        );
-        progress.label("Starting shared service");
+            ))
+            .count(Some((done, total)))
+            .label("Starting shared service")
+        });
         run_shared_compose_capture(
             workdir,
             policy,
@@ -852,14 +844,6 @@ fn ensure_shared_services_with_renders_observed(
 /// The awaited subject for one shared service's wait.
 fn shared_service_subject(service_name: &str) -> String {
     format!("shared `{service_name}`")
-}
-
-/// Enter one shared service's wait: it names that service and drops the
-/// previous service's event, which described work that already finished
-/// (effigy#460, Q-017).
-fn begin_shared_service_wait(progress: &ProgressSource, service_name: &str) {
-    progress.waiting_on(shared_service_subject(service_name));
-    progress.clear_event();
 }
 
 /// A shared service's failed step, as the wait it was in: the service, its
@@ -1611,7 +1595,7 @@ mod tests {
     use effigy_containers::{
         exec::RunningComposeContainer, EffectiveComposeSource, EffectiveContainerPolicy,
     };
-    use effigy_ui::steps::ProgressSource;
+    use effigy_ui::steps::{ProgressFrame, ProgressSource};
     use std::ffi::OsString;
     use std::path::{Path, PathBuf};
 
@@ -2571,12 +2555,12 @@ mod tests {
 
         // Service `db` reaches its restart-policy apply, which is where its
         // wait ends.
-        super::begin_shared_service_wait(&progress, "db");
-        progress.update(
-            "waiting for the machine gate of shared project `demo-db`",
-            Some((0, 2)),
-            None,
-        );
+        progress
+            .update(|_| ProgressFrame::default().waiting_for(super::shared_service_subject("db")));
+        progress.update(|_| {
+            ProgressFrame::new("waiting for the machine gate of shared project `demo-db`")
+                .count(Some((0, 2)))
+        });
         super::super::steps::restart_policy_stage(
             &progress,
             &super::shared_service_subject("db"),
@@ -2595,12 +2579,13 @@ mod tests {
 
         // Service `cache` is a different wait: its gate frame names `cache` and
         // carries neither `db`'s subject nor its event.
-        super::begin_shared_service_wait(&progress, "cache");
-        progress.update(
-            "waiting for the machine gate of shared project `demo-cache`",
-            Some((1, 2)),
-            None,
-        );
+        progress.update(|_| {
+            ProgressFrame::default().waiting_for(super::shared_service_subject("cache"))
+        });
+        progress.update(|_| {
+            ProgressFrame::new("waiting for the machine gate of shared project `demo-cache`")
+                .count(Some((1, 2)))
+        });
         let frame = progress.detailed_frame_at(Duration::from_secs(9));
         assert_eq!(
             frame,

@@ -10,6 +10,8 @@
 //! the holder its own body records, the reconcile names the phase now running,
 //! and the frame always carries the last thing this run observed.
 
+use effigy_ui::steps::ProgressFrame;
+
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::Read;
@@ -307,13 +309,9 @@ fn publish_gate_state(source: &ProgressSource, env: &str, state: &Observed<GateS
             format!("the gate state is unreadable ({})", unknown_label(reason))
         }
     };
-    source.update(
-        format!("waiting for Gate(Env) on `{env}`"),
-        None,
-        Some(event),
-    );
-    source.label(format!("Waiting for {env}"));
-    match state {
+    let frame = ProgressFrame::new(format!("waiting for Gate(Env) on `{env}`"))
+        .label(format!("Waiting for {env}"));
+    let frame = match state {
         Observed::Verified(GateState::Held(holder), _) => {
             let label = match holder.as_ref() {
                 Observed::Verified(diag, _) => match &diag.foreground {
@@ -326,11 +324,14 @@ fn publish_gate_state(source: &ProgressSource, env: &str, state: &Observed<GateS
                 },
                 _ => "Environment lock owner is unreadable".to_owned(),
             };
-            source.event_label(label);
+            frame.detail_event(event).event_label(label)
         }
-        Observed::Unknown(_) => source.event_label("Cannot read environment lock"),
-        _ => source.clear_event(),
-    }
+        Observed::Unknown(_) => frame
+            .detail_event(event)
+            .event_label("Cannot read environment lock"),
+        _ => frame,
+    };
+    source.update(|_| frame);
 }
 
 /// Reads `Gate(Env)` with a momentary shared lock: no create, no authority and
@@ -1147,9 +1148,11 @@ impl<'r> EnvRun<'r> {
         });
         let run = match admitted {
             Ok(run) => {
-                progress.update("reading the environment record", None, None);
-                progress.detail_event(format!("run {} holds the environment gate", run.id()));
-                progress.label("Reading environment");
+                progress.update(|_| {
+                    ProgressFrame::new("reading the environment record")
+                        .detail_event(format!("run {} holds the environment gate", run.id()))
+                        .label("Reading environment")
+                });
                 run
             }
             Err(error) => {
@@ -2290,7 +2293,6 @@ impl<'r> EnvRun<'r> {
 
     /// The phase this transition is in now.
     pub(super) fn phase(&self, phase: impl Into<String>, count: Option<(u64, u64)>) {
-        self.progress.clear_event();
         let phase = phase.into();
         let label = match phase.as_str() {
             "publishing the desired render" | "publishing the sealed render" => "Saving stack",
@@ -2298,8 +2300,8 @@ impl<'r> EnvRun<'r> {
             APPLY_PHASE => "Updating containers",
             _ => "Checking environment",
         };
-        self.progress.update(phase, count, None);
-        self.progress.label(label);
+        self.progress
+            .update(|_| ProgressFrame::new(phase).count(count).label(label));
     }
 
     /// Publish the last thing this transition observed, for a phase a sibling

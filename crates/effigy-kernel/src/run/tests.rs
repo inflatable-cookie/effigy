@@ -900,7 +900,7 @@ fn run_status_and_history_distinguish_missing_rows_from_corrupt_state() {
     use std::os::unix::fs::PermissionsExt;
     let gates = root.state_directory().path().join("gates");
     let permissions = std::fs::metadata(&gates).unwrap().permissions();
-    std::fs::set_permissions(&gates, std::fs::Permissions::from_mode(0)).unwrap();
+    std::fs::set_permissions(&gates, std::fs::Permissions::from_mode(0o0)).unwrap();
     let denied = status(&observe(&cx), &root, &view, id(1), next());
     std::fs::set_permissions(&gates, permissions).unwrap();
     assert!(

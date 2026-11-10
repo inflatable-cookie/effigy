@@ -5,6 +5,8 @@
 //! runner-specific phase helper: a step around one piece of work that ends
 //! with its own failure sentence.
 
+use effigy_ui::steps::ProgressFrame;
+
 pub(super) use effigy_containers::exec::{ComposeSteps, TimedStep};
 pub(super) use effigy_containers::policy::restart::RestartPolicyStage;
 pub(super) use effigy_ui::steps::ProgressSource;
@@ -22,9 +24,12 @@ pub(super) fn restart_policy_stage(
     // `now_waiting_for` drops the previous stage's event and count, so the
     // frame names only the stage now running; the stage's own sentence is the
     // frame's subject and the wait behind it is the policy being applied.
-    progress.now_waiting_for(format!("`restart: unless-stopped` on {subject}"));
-    progress.update(stage.description(subject), count, None);
-    progress.label(stage.concise_description());
+    progress.update(|_| {
+        ProgressFrame::new(stage.description(subject))
+            .count(count)
+            .label(stage.concise_description())
+            .waiting_for(format!("`restart: unless-stopped` on {subject}"))
+    });
 }
 
 /// Run one phase under a live step driven by `progress`, ending it with

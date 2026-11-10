@@ -5,6 +5,7 @@ use effigy_release::{
     toml_value_at_path, BumpKind, GateStage, IdentityKind, ResolvedVersionSource, TargetKind,
     VersionFileKind,
 };
+use effigy_ui::steps::ProgressFrame;
 
 #[test]
 fn toml_and_json_path_helpers_follow_dot_segments() {
@@ -436,8 +437,9 @@ fn a_release_run_step_names_the_stage_the_gate_and_the_next_stage() {
 
     // A test process draws nothing, so the frames are read from the source on a
     // fake clock.
-    let progress = ProgressSource::waiting_for(NEXT_GATE_OR_STAGE);
-    progress.update("running the release through publish", None, None);
+    let progress = ProgressSource::new(
+        ProgressFrame::new("running the release through publish").waiting_for(NEXT_GATE_OR_STAGE),
+    );
     let root = effigy_ui::steps::live_step(progress.clone());
     let mut observer = ReleaseRunSteps {
         root: root.clone(),

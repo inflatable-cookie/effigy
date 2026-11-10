@@ -1,3 +1,4 @@
+use effigy_ui::steps::ProgressFrame;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::Path;
@@ -633,9 +634,11 @@ fn prepare_container_up_with_loader(
     // inputs, renders the generation once and prepares every mount source it
     // binds. Each of those can take time, so the step follows the stage the
     // load is in rather than holding one fixed label (effigy#460, Q-017).
-    let preparation =
-        ProgressSource::waiting_for("the container policy, its ports and mount sources");
-    preparation.label("Preparing config");
+    let preparation = ProgressSource::new(
+        ProgressFrame::default()
+            .label("Preparing config")
+            .waiting_for("the container policy, its ports and mount sources"),
+    );
     let ports_step = TimedStep::live(preparation.clone());
     let mut render_started = None;
     let mut render_duration = std::time::Duration::ZERO;
@@ -646,8 +649,8 @@ fn prepare_container_up_with_loader(
         if matches!(stage, effigy_containers::CreationPolicyStage::Render) {
             render_started = Some(std::time::Instant::now());
         }
-        preparation.update(stage.description(), None, None);
-        preparation.label(stage.concise_description());
+        preparation
+            .update(|_| ProgressFrame::new(stage.description()).label(stage.concise_description()));
     }) {
         Ok(prepared) => {
             ports_step.succeed("Prepared config");
@@ -709,8 +712,11 @@ fn prepare_container_up_with_loader(
     } else {
         format!("shared services {shared_names} to be ready")
     };
-    let shared_progress = ProgressSource::waiting_for(awaiting);
-    shared_progress.label("Starting shared services");
+    let shared_progress = ProgressSource::new(
+        ProgressFrame::default()
+            .label("Starting shared services")
+            .waiting_for(awaiting),
+    );
     let shared_service_notes =
         steps::during(shared_progress, "Started shared services", |progress| {
             ensure_shared_services_observed(&policy, progress)
@@ -839,10 +845,11 @@ fn run_container_up_compose(
 /// call it waits on and the stack it brings up. Runtime lines move it with
 /// `event` (effigy#460, Q-017).
 fn activation_source(up_label: &str, stack: &str) -> ProgressSource {
-    let progress = ProgressSource::waiting_for(format!("{up_label} to return for stack `{stack}`"));
-    progress.update(format!("starting the `{stack}` stack"), None, None);
-    progress.label(format!("Starting {stack} stack"));
-    progress
+    ProgressSource::new(
+        ProgressFrame::new(format!("starting the `{stack}` stack"))
+            .label(format!("Starting {stack} stack"))
+            .waiting_for(format!("{up_label} to return for stack `{stack}`")),
+    )
 }
 
 /// The machine-readable details of a container wait that ended unfinished.
@@ -880,8 +887,7 @@ const INTEGRATION_STAGES: u64 = 8;
 fn integration_stage(progress: &ProgressSource, finished: u64, stage: &str) {
     // A new stage is a new wait: an earlier stage's blocker must not stay on
     // screen for work it no longer describes (effigy#460, Q-017).
-    progress.clear_event();
-    progress.update(stage, Some((finished, INTEGRATION_STAGES)), None);
+    progress.update(|_| ProgressFrame::new(stage).count(Some((finished, INTEGRATION_STAGES))));
 }
 
 /// The route stage while the declared gateway service ports are polled: the
@@ -902,49 +908,31 @@ fn gateway_port_wait_stage(
         GatewayPortWait::ReadingExitedContainers => "Checking exited containers",
     };
     let count = Some((5, INTEGRATION_STAGES));
-    match wait {
+    progress.update(|previous| {
+    let frame = match wait {
         // The next poll keeps the last blocker as its event: that is what the
         // previous read observed about this same wait.
-        GatewayPortWait::Reading { attempt } => progress.update(
-            format!(
+        GatewayPortWait::Reading { attempt } => ProgressFrame::new(format!(
                 "reading the runtime's containers for the declared gateway service ports (attempt {attempt})"
-            ),
-            count,
-            None,
-        ),
-        GatewayPortWait::Blocked { attempt, detail } => progress.update(
-            format!("waiting for the declared gateway service ports (attempt {attempt})"),
-            count,
-            Some(detail.to_owned()),
-        ),
+            )).count(count).observations_from(previous),
+        GatewayPortWait::Blocked { attempt, detail } => ProgressFrame::new(format!("waiting for the declared gateway service ports (attempt {attempt})")).count(count).event(Some(detail.to_owned())),
         // The work after the poll is a different wait, so the poll's blocker is
         // cleared rather than shown against it.
         GatewayPortWait::ConfirmingOwnership => {
-            progress.clear_event();
-            progress.update("confirming the primary container still owns its binding", count, None);
+            ProgressFrame::new("confirming the primary container still owns its binding").count(count)
         }
         GatewayPortWait::ResolvingRoutes => {
-            progress.clear_event();
-            progress.update(
-                "resolving the declared gateway routes against the published ports",
-                count,
-                None,
-            );
+            ProgressFrame::new("resolving the declared gateway routes against the published ports").count(count)
         }
         GatewayPortWait::ReconcilingRoutes => {
-            progress.clear_event();
-            progress.update("writing the gateway route table", count, None);
+            ProgressFrame::new("writing the gateway route table").count(count)
         }
         GatewayPortWait::ReadingExitedContainers => {
-            progress.clear_event();
-            progress.update(
-                "reading the exited gateway service containers for the timeout diagnostic",
-                count,
-                None,
-            );
+            ProgressFrame::new("reading the exited gateway service containers for the timeout diagnostic").count(count)
         }
-    }
-    progress.label(label);
+    };
+    frame.label(label)
+    });
 }
 
 fn complete_container_up_runtime_integrations(
@@ -1993,7 +1981,7 @@ mod tests {
         annotate_workspace_extra_mount_decisions, detached_activation_failure,
         detached_activation_identity, ensure_up_workspace_permissions,
         gateway_registration_failure, lifecycle_operation_plan, prepare_container_up,
-        run_container_down_command, sanitized_failure_cause, DetachedOperationState,
+        run_container_down_command, sanitized_failure_cause, DetachedOperationState, ProgressFrame,
         ProgressSource, RunnerError,
     };
     use crate::runner::container_command::handover::hand_over_conflicting_environments;
@@ -2191,15 +2179,11 @@ mod tests {
             subject: "demo-web-1".to_owned(),
         };
         progress.event(started.label("demo"));
-        // The event never replaces the call still awaited: two reads after it
-        // both keep `docker compose up` and the elapsed wait.
+        // The event never replaces the call still awaited: the frame
+        // keeps `docker compose up` and the elapsed wait.
         assert_eq!(
             progress.detailed_frame_at(Duration::from_secs(20)),
             "starting the `web` stack; waiting for docker compose up to return for stack `web`; last: starting web; 20s elapsed"
-        );
-        assert_eq!(
-            progress.detailed_frame_at(Duration::from_secs(90)),
-            "starting the `web` stack; waiting for docker compose up to return for stack `web`; last: starting web; 90s elapsed"
         );
         // Compose has returned and the restart-policy apply begins: each of its
         // stages names itself as it starts, so a stalled read names that read
@@ -2356,7 +2340,7 @@ mod tests {
                 "preparing the mount sources the stack binds",
             ),
         ] {
-            progress.update(stage.description(), None, None);
+            progress.update(|_| ProgressFrame::new(stage.description()));
             assert_eq!(
                 progress.detailed_frame_at(Duration::from_secs(9)),
                 format!("{expected}; waiting for the container policy, its ports and mount sources; 9s elapsed")

@@ -1,3 +1,4 @@
+use effigy_ui::steps::ProgressFrame;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
@@ -180,12 +181,12 @@ pub(in crate::runner) fn checkout_awaiting(destination: &Path) -> String {
 
 /// The live state of one phase: its current action, then what it waits on.
 pub(in crate::runner) fn phase_progress(label: &str, awaiting: String) -> ProgressSource {
-    let progress = ProgressSource::waiting_for(awaiting);
-    progress.update(label, None, None);
-    if label.starts_with("pulling ") {
-        progress.label("Updating checkout");
-    }
-    progress
+    let frame = ProgressFrame::new(label).waiting_for(awaiting);
+    ProgressSource::new(if label.starts_with("pulling ") {
+        frame.label("Updating checkout")
+    } else {
+        frame
+    })
 }
 
 /// One running phase: its live step, and the label it started with. A phase

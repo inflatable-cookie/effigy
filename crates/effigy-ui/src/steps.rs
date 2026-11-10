@@ -14,11 +14,11 @@
 //! moves is not progress and is not expressible (Q-017).
 //!
 //! ```no_run
-//! use effigy_ui::steps::{live_step, ProgressSource};
+//! use effigy_ui::steps::{live_step, ProgressFrame, ProgressSource};
 //!
 //! let source = ProgressSource::waiting_for("the web health probe on :8080");
 //! let step = live_step(source.clone());
-//! source.update("waiting for web to report healthy", Some((2, 4)), None);
+//! source.update(|_| ProgressFrame::new("waiting for web to report healthy").count(Some((2, 4))));
 //! step.succeed("web is healthy");
 //! ```
 //!
@@ -139,102 +139,108 @@ impl StepMode {
 /// always present, even before the operation has emitted its first event.
 #[derive(Debug, Clone)]
 pub struct ProgressSource {
-    state: Arc<Mutex<ProgressState>>,
+    state: Arc<Mutex<ProgressFrame>>,
     started: Instant,
 }
 
-#[derive(Debug)]
-struct ProgressState {
-    awaiting: String,
+/// A phase's complete presentation, built inside a source update.
+/// An omitted wait keeps the operation's current awaited object; all other
+/// evidence is replaced, so a new phase cannot inherit an old blocker.
+#[derive(Debug, Default)]
+pub struct ProgressFrame {
+    awaiting: Option<String>,
     sub_step: Option<String>,
     count: Option<(u64, u64)>,
     event: Option<String>,
     concise_label: Option<String>,
     concise_event: Option<String>,
-    detail_only_event: bool,
+}
+
+impl ProgressFrame {
+    pub fn new(sub_step: impl Into<String>) -> Self {
+        Self {
+            sub_step: Some(sub_step.into()),
+            ..Self::default()
+        }
+    }
+
+    pub fn count(mut self, count: Option<(u64, u64)>) -> Self {
+        self.count = count;
+        self
+    }
+
+    pub fn event(mut self, event: Option<String>) -> Self {
+        self.concise_event = event.clone();
+        self.event = event;
+        self
+    }
+
+    pub fn waiting_for(mut self, awaiting: impl Into<String>) -> Self {
+        self.awaiting = Some(awaiting.into());
+        self
+    }
+
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.concise_label = Some(label.into());
+        self
+    }
+
+    pub fn event_label(mut self, label: impl Into<String>) -> Self {
+        self.concise_event = Some(label.into());
+        self
+    }
+
+    /// Carry a still-current observation explicitly while the same wait advances.
+    pub fn observations_from(mut self, previous: &Self) -> Self {
+        self.event = previous.event.clone();
+        self.concise_event = previous.concise_event.clone();
+        self
+    }
+
+    pub fn detail_event(mut self, event: impl Into<String>) -> Self {
+        self.event = Some(event.into());
+        self.concise_event = None;
+        self
+    }
 }
 
 impl ProgressSource {
     /// Name the exact object or probe being awaited.
     pub fn waiting_for(awaiting: impl Into<String>) -> Self {
+        Self::new(ProgressFrame::default().waiting_for(awaiting))
+    }
+
+    pub fn new(frame: ProgressFrame) -> Self {
         Self {
-            state: Arc::new(Mutex::new(ProgressState {
-                awaiting: awaiting.into(),
-                sub_step: None,
-                count: None,
-                event: None,
-                concise_label: None,
-                concise_event: None,
-                detail_only_event: false,
-            })),
+            state: Arc::new(Mutex::new(frame)),
             started: Instant::now(),
         }
     }
 
-    /// Name the exact object or probe now awaited, when the work moves on to
-    /// something other than the one first named.
-    pub fn waiting_on(&self, awaiting: impl Into<String>) {
-        self.state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .awaiting = awaiting.into();
-    }
-
-    /// Update the current object or sub-step, known count and latest event.
-    pub fn update(
-        &self,
-        sub_step: impl Into<String>,
-        count: Option<(u64, u64)>,
-        event: Option<String>,
-    ) {
+    /// Build and replace the phase, including concise and detailed evidence,
+    /// under one lock. The builder must not call back into this source.
+    pub fn update(&self, build: impl FnOnce(&ProgressFrame) -> ProgressFrame) {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        state.concise_label = None;
-        state.sub_step = Some(sub_step.into());
-        state.count = count;
-        if event.is_some() {
-            state.detail_only_event = false;
-            state.concise_event = None;
-            state.event = event;
+        let mut frame = build(&state);
+        if frame.awaiting.is_none() {
+            frame.awaiting = state.awaiting.take();
         }
+        *state = frame;
     }
 
-    /// Publish the latest event without changing the current sub-step: what an
-    /// operation just observed about the object it is waiting on.
+    /// Publish an observation without changing the phase or its count.
     pub fn event(&self, event: impl Into<String>) {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        state.detail_only_event = false;
-        state.concise_event = None;
+        let event = event.into();
+        state.concise_event = Some(event.clone());
+        state.event = Some(event);
+    }
+
+    /// Publish a blocker and its short terminal wording in one observation.
+    pub fn blocker(&self, event: impl Into<String>, label: impl Into<String>) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         state.event = Some(event.into());
-    }
-
-    /// Drop the last event when the work moves on to a different wait, so a
-    /// blocker that has been resolved is never shown against the new step.
-    pub fn clear_event(&self) {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        state.event = None;
-        state.concise_event = None;
-        state.detail_only_event = false;
-    }
-
-    /// Name a new object or probe after the previous wait ended. Clears
-    /// sub-step, count and event so frames name this wait until `update`.
-    pub fn now_waiting_for(&self, awaiting: impl Into<String>) {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        state.concise_label = None;
-        state.concise_event = None;
-        state.detail_only_event = false;
-        state.awaiting = awaiting.into();
-        state.sub_step = None;
-        state.count = None;
-        state.event = None;
-    }
-
-    /// A short terminal phrase; the full subject stays available in logs.
-    pub fn label(&self, label: impl Into<String>) {
-        self.state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .concise_label = Some(label.into());
+        state.concise_event = Some(label.into());
     }
 
     /// Keep diagnostic evidence for verbose output without crowding the spinner.
@@ -242,34 +248,22 @@ impl ProgressSource {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         state.event = Some(event.into());
         state.concise_event = None;
-        state.detail_only_event = true;
-    }
-
-    /// Plain words for a blocker whose full evidence remains in verbose output.
-    pub fn event_label(&self, label: impl Into<String>) {
-        self.state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .concise_event = Some(label.into());
     }
 
     /// A concise terminal frame. Time earns a place after two seconds; a
     /// sub-step replaces the wait rather than repeating it.
     pub fn frame_at(&self, elapsed: Duration) -> String {
         let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let awaiting = state.awaiting.as_deref().unwrap_or_default();
         let mut label = state
             .concise_label
             .clone()
             .or_else(|| state.sub_step.clone())
-            .unwrap_or_else(|| format!("Waiting for {}", state.awaiting));
+            .unwrap_or_else(|| format!("Waiting for {}", awaiting));
         if let Some((done, total)) = state.count {
             label.push_str(&format!(" ({done}/{total})"));
         }
-        if let Some(event) = state.concise_event.as_ref().or_else(|| {
-            (!state.detail_only_event)
-                .then_some(state.event.as_ref())
-                .flatten()
-        }) {
+        if let Some(event) = &state.concise_event {
             label.push_str(&format!(" · {event}"));
         }
         if elapsed >= Duration::from_secs(2) {
@@ -285,7 +279,7 @@ impl ProgressSource {
         state
             .sub_step
             .clone()
-            .unwrap_or_else(|| state.awaiting.clone())
+            .unwrap_or_else(|| state.awaiting.clone().unwrap_or_default())
     }
 
     /// The operator-visible label at `elapsed`. Tests use this as a fake clock.
@@ -296,15 +290,16 @@ impl ProgressSource {
     /// the awaited object for the rest of the phase (Q-017).
     pub fn detailed_frame_at(&self, elapsed: Duration) -> String {
         let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let awaiting = state.awaiting.as_deref().unwrap_or_default();
         let mut label = state
             .sub_step
             .clone()
-            .unwrap_or_else(|| format!("waiting for {}", state.awaiting));
+            .unwrap_or_else(|| format!("waiting for {}", awaiting));
         if let Some((done, total)) = state.count {
             label.push_str(&format!(" ({done}/{total})"));
         }
-        if state.sub_step.is_some() && !state.awaiting.is_empty() {
-            label.push_str(&format!("; waiting for {}", state.awaiting));
+        if state.sub_step.is_some() && !awaiting.is_empty() {
+            label.push_str(&format!("; waiting for {}", awaiting));
         }
         if let Some(event) = &state.event {
             label.push_str(&format!("; last: {event}"));
@@ -965,8 +960,11 @@ mod tests {
 
     #[test]
     fn concise_frames_keep_counts_blockers_and_verbose_evidence() {
-        let source = ProgressSource::waiting_for("environment `web` to be free");
-        source.label("Waiting for web");
+        let source = ProgressSource::new(
+            ProgressFrame::default()
+                .label("Waiting for web")
+                .waiting_for("environment `web` to be free"),
+        );
         assert_eq!(
             source.frame_at(Duration::from_millis(1999)),
             "Waiting for web"
@@ -975,9 +973,12 @@ mod tests {
             source.frame_at(Duration::from_secs(2)),
             "Waiting for web · 2s"
         );
-        source.update("reconciling the backend", Some((3, 7)), None);
-        source.label("Waiting for web");
-        source.detail_event("engine colima-nerdctl, context `effigy`, project `inventors`");
+        source.update(|_| {
+            ProgressFrame::new("reconciling the backend")
+                .count(Some((3, 7)))
+                .label("Waiting for web")
+                .detail_event("engine colima-nerdctl, context `effigy`, project `inventors`")
+        });
         assert_eq!(
             source.frame_at(Duration::from_secs(21)),
             "Waiting for web (3/7) · 21s"
@@ -985,21 +986,59 @@ mod tests {
         assert!(source
             .detailed_frame_at(Duration::from_secs(21))
             .contains("engine colima-nerdctl"));
-        source.event("run abc holds the gate");
-        source.event_label("held by `effigy dev` (pid 9012)");
+        source.blocker("run abc holds the gate", "held by `effigy dev` (pid 9012)");
         assert_eq!(
             source.frame_at(Duration::from_secs(3)),
             "Waiting for web (3/7) · held by `effigy dev` (pid 9012) · 3s"
         );
-        source.now_waiting_for("web health check");
-        source.label("Waiting for web");
-        source.event("last check: HTTP 404");
+        source.update(|_| {
+            ProgressFrame::default()
+                .waiting_for("web health check")
+                .label("Waiting for web")
+                .detail_event("last check: HTTP 404")
+                .event_label("last check: HTTP 404")
+        });
         assert_eq!(
             source.frame_at(Duration::from_secs(12)),
             "Waiting for web · last check: HTTP 404 · 12s"
         );
-        source.clear_event();
+        source.update(|_| ProgressFrame::default().label("Waiting for web"));
         assert_eq!(source.frame_at(Duration::ZERO), "Waiting for web");
+    }
+
+    #[test]
+    fn phase_replacement_is_atomic_for_both_renderers() {
+        fn phase(n: u64) -> ProgressFrame {
+            ProgressFrame::new(format!("phase {n}"))
+                .waiting_for(format!("probe {n}"))
+                .label(format!("short {n}"))
+                .count(Some((n, 2)))
+                .detail_event(format!("evidence {n}"))
+                .event_label(format!("blocker {n}"))
+        }
+        let source = ProgressSource::new(phase(0));
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                for n in 0..2000 {
+                    source.update(|_| phase(n % 2));
+                }
+            });
+            for _ in 0..2000 {
+                let short = source.frame_at(Duration::ZERO);
+                assert!(
+                    (0..2).any(|n| short == format!("short {n} ({n}/2) · blocker {n}")),
+                    "{short}"
+                );
+                let detail = source.detailed_frame_at(Duration::ZERO);
+                assert!((0..2).any(|n| detail == format!("phase {n} ({n}/2); waiting for probe {n}; last: evidence {n}; 0s elapsed")), "{detail}");
+            }
+        });
+        source.update(|_| ProgressFrame::default().waiting_for("next probe"));
+        assert_eq!(source.frame_at(Duration::ZERO), "Waiting for next probe");
+        assert_eq!(
+            source.detailed_frame_at(Duration::ZERO),
+            "waiting for next probe; 0s elapsed"
+        );
     }
 
     #[test]
@@ -1012,14 +1051,18 @@ mod tests {
             step.label(),
             "Waiting for web health probe on port 8080 · 2s"
         );
-        source.update("checking web", Some((2, 3)), Some("HTTP 404".into()));
+        source.update(|_| {
+            ProgressFrame::new("checking web")
+                .count(Some((2, 3)))
+                .event(Some("HTTP 404".into()))
+        });
         assert!(step.inner.render_live(&source, Duration::from_secs(5)));
         assert_eq!(step.label(), "checking web (2/3) · HTTP 404 · 5s");
-        source.update(
-            "checking database",
-            Some((3, 3)),
-            Some("connection refused".into()),
-        );
+        source.update(|_| {
+            ProgressFrame::new("checking database")
+                .count(Some((3, 3)))
+                .event(Some("connection refused".into()))
+        });
         assert!(step.inner.render_live(&source, Duration::from_secs(7)));
         assert_eq!(
             step.label(),
@@ -1037,7 +1080,7 @@ mod tests {
             source.detailed_frame_at(Duration::from_secs(1)),
             "waiting for the environment gate for `stack`; 1s elapsed"
         );
-        source.update("reconciling the backend", Some((1, 3)), None);
+        source.update(|_| ProgressFrame::new("reconciling the backend").count(Some((1, 3))));
         source.event("run agq holds it (pid 9012, task `dev`)");
         assert_eq!(
             source.detailed_frame_at(Duration::from_secs(3)),
@@ -1166,8 +1209,11 @@ mod tests {
     #[test]
     fn producers_show_headers_and_timed_endings_without_spinners() {
         let (sink, buffer) = silent_spinner_sink();
-        let source = ProgressSource::waiting_for("the Linux build to exit");
-        source.label("Building Linux effigy");
+        let source = ProgressSource::new(
+            ProgressFrame::default()
+                .label("Building Linux effigy")
+                .waiting_for("the Linux build to exit"),
+        );
         let step = Step::new_streaming(sink.clone(), source);
         assert!(sink.is_streaming());
         assert!(step.inner.bar.is_none());

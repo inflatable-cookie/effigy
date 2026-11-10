@@ -1,3 +1,4 @@
+use effigy_ui::steps::ProgressFrame;
 #[path = "reserved_guest.rs"]
 pub(in crate::runner) mod reserved_guest;
 #[path = "staging.rs"]
@@ -188,11 +189,9 @@ pub(super) fn ensure_workspace_permissions_ready(
         super::PROBE_PERMISSION_PREP,
         false,
     );
-    progress.update(
-        progress_label,
-        Some((0, perm_plan.targets.len() as u64)),
-        None,
-    );
+    progress.update(|_| {
+        ProgressFrame::new(progress_label).count(Some((0, perm_plan.targets.len() as u64)))
+    });
     let mut backend = super::permissions::compose_backend(workspace_repo_root, policy);
     match super::permissions::ensure_workspace_permissions_ready_with(
         policy,
@@ -417,7 +416,7 @@ pub(in crate::runner) fn prepare_workspace_guest(
         return Ok(None);
     };
     let progress = super::WorkspaceOpProgress::start(false, super::PROBE_GUEST_PUBLICATION, false);
-    progress.update("verifying guest artifact", None, None);
+    progress.update(|_| ProgressFrame::new("verifying guest artifact"));
     let binary = match verify_guest_artifact(artifact, target) {
         Ok(binary) => binary,
         Err(error) => {
@@ -462,27 +461,27 @@ pub(in crate::runner) fn prepare_workspace_guest(
         // The executable and the rendered snapshots are published before the
         // context that names them, so an entry never resolves a generation whose
         // executable or snapshot is still missing.
-        progress.update(
-            "installing pinned guest binary",
-            None,
-            Some("guest artifact verified".to_owned()),
-        );
+        progress.update(|_| {
+            ProgressFrame::new("installing pinned guest binary")
+                .event(Some("guest artifact verified".to_owned()))
+        });
         install_pinned_guest_binary(
             guest,
             artifact,
             &binary,
             facts.artifact_install_identity.as_deref(),
         )?;
-        progress.update(
-            "publishing source snapshots",
-            None,
-            Some("guest binary installed".to_owned()),
-        );
+        progress.update(|_| {
+            ProgressFrame::new("publishing source snapshots")
+                .event(Some("guest binary installed".to_owned()))
+        });
         publish_source_snapshots(guest, &closure.snapshots)?;
         // A restart or replacement outside Effigy's gate may race container I/O.
         // Never publish a context/receipt for a different identity than we probed.
-        progress.now_waiting_for(super::PROBE_CONTAINER_IDENTITY);
-        progress.update("probing workspace container identity", None, None);
+        progress.update(|_| {
+            ProgressFrame::new("probing workspace container identity")
+                .waiting_for(super::PROBE_CONTAINER_IDENTITY)
+        });
         let observed = guest.probe_container_identity()?;
         if !activation.container.container_matches(&observed)
             || !activation.container.boot_matches(&observed)
@@ -491,19 +490,17 @@ pub(in crate::runner) fn prepare_workspace_guest(
                 "workspace identity changed during publication; run `{HOST_REPREPARE_COMMAND}` on the host"
             )));
         }
-        progress.now_waiting_for(super::PROBE_GUEST_PUBLICATION);
-        progress.update(
-            "publishing workspace context",
-            None,
-            Some(format!("container `{}`", observed.container_id)),
-        );
+        progress.update(|_| {
+            ProgressFrame::new("publishing workspace context")
+                .detail_event(format!("container `{}`", observed.container_id))
+                .waiting_for(super::PROBE_GUEST_PUBLICATION)
+        });
         let context_generation = publish_context_generation(guest, &mut context)?;
         if let Some(enrolment) = facts.enrolment.as_ref() {
-            progress.update(
-                "publishing enrolment credential",
-                None,
-                Some("workspace context published".to_owned()),
-            );
+            progress.update(|_| {
+                ProgressFrame::new("publishing enrolment credential")
+                    .event(Some("workspace context published".to_owned()))
+            });
             publish_enrolment_credential(guest, &workspace.user, enrolment)?;
         }
         Ok(Some(PreparedWorkspaceGuest {
@@ -610,7 +607,7 @@ fn publish_workspace_guest_effect(
     // The host verified the backend's full id when it bound this guest. Every
     // read, probe and publication below targets that exact id, never an alias.
     let progress = super::WorkspaceOpProgress::start(false, super::PROBE_CONTAINER_IDENTITY, false);
-    progress.update("probing workspace container identity", None, None);
+    progress.update(|_| ProgressFrame::new("probing workspace container identity"));
     let bound = match guest.probe_container_identity() {
         Ok(bound) => bound,
         Err(error) => {
@@ -618,11 +615,10 @@ fn publish_workspace_guest_effect(
             return Err(error);
         }
     };
-    progress.update(
-        "probing workspace container identity",
-        None,
-        Some(format!("container `{}`", bound.container_id)),
-    );
+    progress.update(|_| {
+        ProgressFrame::new("probing workspace container identity")
+            .detail_event(format!("container `{}`", bound.container_id))
+    });
     progress.finish_clear();
     let target = LinuxWorkspaceTarget::from_image(&bound.platform, &bound.libc)?;
     check_acquired_artifact(artifact, target)?;
@@ -3099,20 +3095,22 @@ pub(super) fn ensure_downloaded_linux_workspace_effigy_artifact(
         false,
     );
     let progress = super::WorkspaceOpProgress::start(false, format!("GET `{url}`"), false);
-    progress.update(
-        format!("downloading linux effigy `{}`", target.release_triple()),
-        None,
-        None,
-    );
+    progress.update(|_| {
+        ProgressFrame::new(format!(
+            "downloading linux effigy `{}`",
+            target.release_triple()
+        ))
+    });
     let result = (|| {
         let digest = download_linux_workspace_effigy_release(&url, &cache_path, &progress)?;
         // The download records the receipt its consumer authenticates against, so
         // a cached artifact is never trusted on a version sidecar alone.
-        progress.now_waiting_for(format!(
-            "write artifact receipt and identity in `{}`",
-            parent.display()
-        ));
-        progress.update("recording linux effigy artifact identity", None, None);
+        progress.update(|_| {
+            ProgressFrame::new("recording linux effigy artifact identity").waiting_for(format!(
+                "write artifact receipt and identity in `{}`",
+                parent.display()
+            ))
+        });
         write_workspace_artifact_receipt(&cache_path, target, &digest, "release-download")?;
         ensure_workspace_effigy_active_version_file(
             &cache_path,
@@ -3307,11 +3305,15 @@ pub(super) fn download_linux_workspace_effigy_release(
             "failed to download linux effigy release artifact from `{url}`: {error}"
         ))
     })?;
-    progress.now_waiting_for(format!("GET `{url}{RELEASE_CHECKSUM_SUFFIX}`"));
-    progress.update("fetching linux effigy release checksum", None, None);
+    progress.update(|_| {
+        ProgressFrame::new("fetching linux effigy release checksum")
+            .waiting_for(format!("GET `{url}{RELEASE_CHECKSUM_SUFFIX}`"))
+    });
     let expected = published_release_checksum(&client, url)?;
-    progress.now_waiting_for("SHA-256 artifact digest comparison");
-    progress.update("verifying linux effigy release checksum", None, None);
+    progress.update(|_| {
+        ProgressFrame::new("verifying linux effigy release checksum")
+            .waiting_for("SHA-256 artifact digest comparison")
+    });
     let digest = render_digest(sha256(&bytes));
     if !digest_matches(&digest, &expected) {
         return Err(RunnerError::task_invocation(format!(
@@ -3321,8 +3323,10 @@ pub(super) fn download_linux_workspace_effigy_release(
     }
 
     let tmp_path = dest.with_extension("tmp");
-    progress.now_waiting_for(format!("write and rename `{}`", tmp_path.display()));
-    progress.update("caching verified linux effigy artifact", None, None);
+    progress.update(|_| {
+        ProgressFrame::new("caching verified linux effigy artifact")
+            .waiting_for(format!("write and rename `{}`", tmp_path.display()))
+    });
     std::fs::write(&tmp_path, &bytes).map_err(|error| {
         RunnerError::task_invocation(format!(
             "failed to write linux effigy release artifact to `{}`: {error}",

@@ -136,7 +136,7 @@ of its own.
 
 | Audited site | What it was | Now | Disposition |
 | --- | --- | --- | --- |
-| `src/runner/release_command/ops.rs:188` | `root.set_label("release: continuing")` between gates | `ops.rs:206-211` — the root source takes the gate position/count and the last gate's outcome, then `waiting_on(NEXT_GATE_OR_STAGE)` (110-122) | live |
+| `src/runner/release_command/ops.rs:188` | `root.set_label("release: continuing")` between gates | `ops.rs:206-211` — the root source takes the gate position/count and the last gate's outcome, and the next awaited stage in one frame | live |
 | `src/runner/release_command/ops.rs:329` | `steps::step(release_gate_label(..))` per gate | `ops.rs:368` — `live_step(gate_progress(position, total, gate, reused))`, source at 400, ending at 376-383 | live |
 
 ### Bundle sources
@@ -245,9 +245,9 @@ unrecognized lines through its existing diagnostics.
 
 ## Fake-clock frame coverage
 
-Every plane proves its frames on a fake clock: the same operation's frames move
+The UI proves count, blocker and elapsed formatting on a fake clock. Each plane proves its own producer: the same operation's frames move
 as its object, sub-step, count, event or elapsed wait moves, and each names the
-exact thing awaited. An event is additive — `frame_at` names the awaited object
+exact thing awaited. An event is additive — `detailed_frame_at` names the awaited object
 alongside the last event, so a published progress line never replaces the wait
 for the rest of the phase. A glyph that only animates is not evidence, and no
 test reads the wall clock.
@@ -304,9 +304,17 @@ run).
 
 ## A new site
 
-A step that can wait starts from `ProgressSource::waiting_for(the exact thing
-awaited)` and calls `update`/`event`/`now_waiting_for` as the operation moves.
-If the operation truly cannot report more, the frame still names that exact
-wait and the elapsed time. A short operation that ends immediately calls
+A step that can wait starts from `ProgressSource::new(ProgressFrame)` with its
+exact awaited object and short label. Compose phase changes as a `ProgressFrame`
+inside one `update` closure: label, detailed action, wait, count and blocker
+become visible together. Omitted waits keep the current awaited object; all other
+phase evidence is replaced, clearing old events. A repeated read of the same wait
+may explicitly use `observations_from(previous)` inside that closure. The planner
+ruling for effigy#847 keeps current profile/gateway observations this way; phase
+changes have no implicit event carry-over. `event`, `blocker` and
+`detail_event` publish observations without changing the phase. Both renderers
+read the same frame under its lock. The UI concurrency test
+`phase_replacement_is_atomic_for_both_renderers` covers complete replacement.
+An operation with no more observations still names its exact wait and elapsed time. A short operation that ends immediately calls
 `finish_line`. `effigy lint:feedback` rejects anything else, in every workspace
 crate.

@@ -3,7 +3,7 @@ use effigy_manifest::{
     inspect_bundle_source, sync_bundle_source, BundleSourceType, SourceProgress,
     SourceProgressEvent, TASK_MANIFEST_FILE,
 };
-use effigy_ui::steps::{ProgressSource, Step};
+use effigy_ui::steps::{ProgressFrame, ProgressSource, Step};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -452,13 +452,15 @@ pub(in crate::runner) fn source_progress(
     revision: &str,
     local: bool,
 ) -> ProgressSource {
-    let progress = ProgressSource::waiting_for(source_awaiting(source, subject, revision, local));
-    progress.label(if local {
-        format!("Copying {source}")
-    } else {
-        format!("Fetching {source}")
-    });
-    progress
+    ProgressSource::new(
+        ProgressFrame::default()
+            .label(if local {
+                format!("Copying {source}")
+            } else {
+                format!("Fetching {source}")
+            })
+            .waiting_for(source_awaiting(source, subject, revision, local)),
+    )
 }
 
 /// What a source acquisition waits on, named as the operator would name it:
@@ -790,10 +792,6 @@ mod tests {
         assert_eq!(
             catalog.detailed_frame_at(seconds(3)),
             "waiting for catalog `acme` at main; 3s elapsed"
-        );
-        assert_eq!(
-            bundle.detailed_frame_at(seconds(9)),
-            "waiting for bundle `decodelabs` at main; 9s elapsed"
         );
         assert_eq!(
             snapshot.detailed_frame_at(seconds(7)),

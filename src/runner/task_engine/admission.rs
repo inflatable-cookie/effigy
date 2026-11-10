@@ -37,6 +37,8 @@
 //! custody fact is the narrow terminal record written to the owning checkout
 //! journal at settle; see [`finish`].
 
+use effigy_ui::steps::ProgressFrame;
+
 use std::cell::RefCell;
 use std::ffi::OsString;
 use std::io::Write;
@@ -646,11 +648,9 @@ pub(super) fn admit(
                 // The hook's own progress ("waiting for capacity, 2 ahead") is
                 // the operator's: it becomes the step's sub-step.
                 Some(progress) if effigy_ui::steps::mode() != effigy_ui::StepMode::Silent => {
-                    waiting.update(
-                        admission_wait_label(&target.label, Some(&progress)),
-                        None,
-                        None,
-                    );
+                    waiting.update(|_| {
+                        ProgressFrame::new(admission_wait_label(&target.label, Some(&progress)))
+                    });
                 }
                 _ => {
                     let _ = std::io::stderr().write_all(&err);
@@ -1060,10 +1060,10 @@ pub(in crate::runner) fn admission_wait_label(task: &str, progress: Option<&str>
 /// exact probe (the hook's decision line) and the elapsed wait. Before the
 /// hook says more, the frame names the probe it awaits.
 fn admission_progress(task: &str, progress: Option<&str>) -> ProgressSource {
-    let source =
-        ProgressSource::waiting_for(format!("the admission hook's decision for task `{task}`"));
-    source.update(admission_wait_label(task, progress), None, None);
-    source
+    ProgressSource::new(
+        ProgressFrame::new(admission_wait_label(task, progress))
+            .waiting_for(format!("the admission hook's decision for task `{task}`")),
+    )
 }
 
 /// The last non-empty line the hook wrote to stderr, as progress.
@@ -1125,11 +1125,12 @@ mod tests {
             "waiting for heavy admission (task `dev`); waiting for the admission hook's \
              decision for task `dev`; 0s elapsed"
         );
-        progress.update(
-            admission_wait_label("dev", Some("waiting for capacity, 2 ahead")),
-            None,
-            None,
-        );
+        progress.update(|_| {
+            ProgressFrame::new(admission_wait_label(
+                "dev",
+                Some("waiting for capacity, 2 ahead"),
+            ))
+        });
         let later = progress.detailed_frame_at(Duration::from_secs(45));
         assert_eq!(
             later,

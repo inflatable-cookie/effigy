@@ -1,3 +1,4 @@
+use effigy_ui::steps::ProgressFrame;
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -258,8 +259,9 @@ impl ProfileProgress {
                 step: None,
             };
         }
-        let source = effigy_ui::steps::ProgressSource::waiting_for(awaiting);
-        source.update(operation, None, None);
+        let source = effigy_ui::steps::ProgressSource::new(
+            ProgressFrame::new(operation).waiting_for(awaiting),
+        );
         let step = effigy_ui::steps::live_step(source.clone());
         Self {
             profile,
@@ -280,8 +282,12 @@ impl ProfileProgress {
             // The last state Colima reported belongs to the profile, not to
             // the finished probe, so it stays as the last event while the wait
             // names the operation now in flight.
-            source.waiting_on(awaiting);
-            source.update(operation, count, None);
+            source.update(|previous| {
+                ProgressFrame::new(operation)
+                    .count(count)
+                    .waiting_for(awaiting)
+                    .observations_from(previous)
+            });
         }
     }
 

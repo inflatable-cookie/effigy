@@ -1,3 +1,4 @@
+use effigy_ui::steps::ProgressFrame;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -893,7 +894,7 @@ fn read_task_secret_vault_payload(
     let progress = crate::runner::secrets_command::SecretOpProgress::start(
         crate::runner::secrets_command::PROBE_VAULT_DECRYPT,
     );
-    progress.update("decrypting vault", None, None);
+    progress.update(|_| ProgressFrame::new("decrypting vault"));
     match crate::runner::secret_vault::read_effigy_vault_payload(vault_path, passphrase) {
         Ok(payload) => {
             progress.succeed("vault unlocked");

@@ -1,3 +1,4 @@
+use effigy_ui::steps::ProgressFrame;
 pub(in crate::runner) mod permissions;
 pub(in crate::runner) mod provisioning;
 mod session;
@@ -512,7 +513,7 @@ impl WorkspaceShutdownProgressReporter {
         if !std::io::stderr().is_terminal() || is_ci_environment() {
             emit_workspace_info("waiting for workspace system shutdown", false);
         }
-        progress.update(format!("stopping workspace system `{system}`"), None, None);
+        progress.update(|_| ProgressFrame::new(format!("stopping workspace system `{system}`")));
         Self {
             progress,
             system: system.to_owned(),
@@ -576,8 +577,11 @@ impl WorkspaceOpProgress {
             let _ = writeln!(stderr);
             let _ = writeln!(stderr);
         }
-        let source = ProgressSource::waiting_for(probe);
-        source.label("Preparing workspace");
+        let source = ProgressSource::new(
+            ProgressFrame::default()
+                .label("Preparing workspace")
+                .waiting_for(probe),
+        );
         let step = steps::live_step(source.clone());
         Self {
             source: Some(source),
@@ -585,26 +589,9 @@ impl WorkspaceOpProgress {
         }
     }
 
-    pub(super) fn now_waiting_for(&self, probe: impl Into<String>) {
+    pub(super) fn update(&self, build: impl FnOnce(&ProgressFrame) -> ProgressFrame) {
         if let Some(source) = &self.source {
-            source.now_waiting_for(probe);
-        }
-    }
-
-    pub(super) fn update(
-        &self,
-        sub_step: impl Into<String>,
-        count: Option<(u64, u64)>,
-        event: Option<String>,
-    ) {
-        if let Some(source) = &self.source {
-            match event {
-                Some(event) if event.starts_with("container `") => {
-                    source.update(sub_step, count, None);
-                    source.detail_event(event);
-                }
-                event => source.update(sub_step, count, event),
-            }
+            source.update(build);
         }
     }
 

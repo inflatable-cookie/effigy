@@ -1,4 +1,5 @@
 use super::*;
+use effigy_ui::steps::ProgressFrame;
 
 /// Health-check URLs: an HTTP check keeps its path (and defaults to `/` on
 /// port 80), a TCP check needs an explicit port, and the wrong scheme for each
@@ -59,24 +60,18 @@ fn split_host_port_cases() {
 #[test]
 fn a_health_wait_frame_names_the_probe_attempt_elapsed_and_last_answer() {
     let (progress, step) = health_wait_progress("web", "http://127.0.0.1:8080/healthz");
-    progress.update(
-        "probing `http://127.0.0.1:8080/healthz` for web (attempt 3)",
-        None,
-        None,
-    );
+    progress.update(|_| {
+        ProgressFrame::new("probing `http://127.0.0.1:8080/healthz` for web (attempt 3)")
+    });
     assert_eq!(
         progress.detailed_frame_at(std::time::Duration::from_secs(4)),
         "probing `http://127.0.0.1:8080/healthz` for web (attempt 3); waiting for `http://127.0.0.1:8080/healthz` to report web healthy; 4s elapsed"
     );
     progress.event("`http://127.0.0.1:8080/healthz` did not answer healthy");
-    // Two reads after the event: the probe and the attempt stay named.
+    // The observation keeps the probe and attempt named.
     assert_eq!(
         progress.detailed_frame_at(std::time::Duration::from_secs(9)),
         "probing `http://127.0.0.1:8080/healthz` for web (attempt 3); waiting for `http://127.0.0.1:8080/healthz` to report web healthy; last: `http://127.0.0.1:8080/healthz` did not answer healthy; 9s elapsed"
-    );
-    assert_eq!(
-        progress.detailed_frame_at(std::time::Duration::from_secs(30)),
-        "probing `http://127.0.0.1:8080/healthz` for web (attempt 3); waiting for `http://127.0.0.1:8080/healthz` to report web healthy; last: `http://127.0.0.1:8080/healthz` did not answer healthy; 30s elapsed"
     );
     step.finish_clear();
 }

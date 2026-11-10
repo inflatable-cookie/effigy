@@ -1,3 +1,4 @@
+use effigy_ui::steps::ProgressFrame;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -400,23 +401,21 @@ fn layer_progress(
     position: usize,
     planned: usize,
 ) -> ProgressSource {
-    let progress = ProgressSource::waiting_for(action.awaiting(source));
-    progress.update(
-        action.label(key),
-        Some((position as u64, planned as u64)),
-        None,
-    );
-    progress
+    ProgressSource::new(
+        ProgressFrame::new(action.label(key))
+            .count(Some((position as u64, planned as u64)))
+            .waiting_for(action.awaiting(source)),
+    )
 }
 
 /// The hook runs after its layer applied; the last event says so.
 fn show_apply_hook(progress: &ProgressSource, key: &str, position: usize, planned: usize) {
-    progress.now_waiting_for(format!("apply hook `{key}` to finish"));
-    progress.update(
-        apply_hook_label(key),
-        Some((position as u64, planned as u64)),
-        Some(format!("layer `{key}` applied")),
-    );
+    progress.update(|_| {
+        ProgressFrame::new(apply_hook_label(key))
+            .count(Some((position as u64, planned as u64)))
+            .event(Some(format!("layer `{key}` applied")))
+            .waiting_for(format!("apply hook `{key}` to finish"))
+    });
 }
 
 fn apply_hook_label(key: &str) -> String {
@@ -449,21 +448,21 @@ fn capture_artifact_label(key: &str, push: bool, destination: Option<&str>) -> S
 
 /// A capture task's live step: the first of two phases, waiting on the task.
 fn capture_task_progress(name: &str) -> ProgressSource {
-    let progress = ProgressSource::waiting_for(format!("task `{name}` to finish"));
-    progress.update(capture_task_label(name), Some((1, 2)), None);
-    progress
+    ProgressSource::new(
+        ProgressFrame::new(capture_task_label(name))
+            .count(Some((1, 2)))
+            .waiting_for(format!("task `{name}` to finish")),
+    )
 }
 
 /// A capture artifact's live step, waiting on the stage or push it names.
 fn capture_artifact_progress(key: &str, push: bool, destination: Option<&str>) -> ProgressSource {
-    let progress = ProgressSource::waiting_for(capture_artifact_awaiting(key, push));
-    progress.update(
-        capture_artifact_label(key, push, destination),
-        Some((1, 1)),
-        None,
-    );
-    progress.label(capture_artifact_label(key, push, None));
-    progress
+    ProgressSource::new(
+        ProgressFrame::new(capture_artifact_label(key, push, destination))
+            .count(Some((1, 1)))
+            .label(capture_artifact_label(key, push, None))
+            .waiting_for(capture_artifact_awaiting(key, push)),
+    )
 }
 
 /// What the artifact wait is called once its own phase starts. The exact
@@ -486,13 +485,13 @@ fn show_capture_artifact_phase(
     destination: Option<&str>,
     task: &str,
 ) {
-    progress.now_waiting_for(capture_artifact_awaiting(key, push));
-    progress.update(
-        capture_artifact_label(key, push, destination),
-        Some((2, 2)),
-        Some(format!("capture task `{task}` finished")),
-    );
-    progress.label(capture_artifact_label(key, push, None));
+    progress.update(|_| {
+        ProgressFrame::new(capture_artifact_label(key, push, destination))
+            .count(Some((2, 2)))
+            .event(Some(format!("capture task `{task}` finished")))
+            .label(capture_artifact_label(key, push, None))
+            .waiting_for(capture_artifact_awaiting(key, push))
+    });
 }
 
 fn captured_layer_summary(key: &str) -> String {

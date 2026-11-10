@@ -2,6 +2,7 @@ use super::*;
 use chrono::Utc;
 use effigy_gateway::linux_operator::{BindOutcome, BindProbe, BindProbeReport, BIND_PROBE_SCHEMA};
 use effigy_gateway::routes::{Route, RouteSource};
+use effigy_ui::steps::ProgressFrame;
 
 /// A fixture child this test started, stopped by its own recorded PID.
 #[cfg(unix)]
@@ -2040,7 +2041,7 @@ fn setup_stages_end_with_what_now_holds_or_what_is_wrong() {
             "trusting mkcert's local CA",
             "mkcert's local CA in this user's trust store",
             |progress| {
-                progress.update("the mkcert CA is trusted for this user", None, None);
+                progress.update(|_| ProgressFrame::new("the mkcert CA is trusted for this user"));
                 Ok(())
             },
         )
@@ -2073,11 +2074,11 @@ fn setup_stages_end_with_what_now_holds_or_what_is_wrong() {
 #[test]
 fn platform_phase_frames_name_the_operation_while_the_child_runs() {
     let awaited = "the administrator-approved setup child to apply DNS, trust and broker for test";
-    let progress = ProgressSource::waiting_for(awaited);
-    progress.update(
-        "applying platform setup (approve the administrator prompt if it appears)",
-        None,
-        None,
+    let progress = ProgressSource::new(
+        ProgressFrame::new(
+            "applying platform setup (approve the administrator prompt if it appears)",
+        )
+        .waiting_for(awaited),
     );
     observe_platform_phase(&progress, "writing the resolver files for test");
     assert!(progress.detailed_frame_at(fake_clock(4)).contains(awaited));
@@ -2098,7 +2099,7 @@ fn platform_phase_frames_name_the_operation_while_the_child_runs() {
             awaited,
             |progress| {
                 observe_platform_phase(progress, "installing the privileged bind broker");
-                progress.update("applied the platform setup for test", None, None);
+                progress.update(|_| ProgressFrame::new("applied the platform setup for test"));
                 Ok(())
             },
         )
@@ -2207,8 +2208,10 @@ fn fake_clock(seconds: u64) -> std::time::Duration {
 /// then the daemon's own self-test reports the status it is in.
 #[test]
 fn operator_start_frames_follow_the_supervisor_then_the_self_test() {
-    let progress = ProgressSource::waiting_for("the gateway process to start");
-    progress.update("starting the gateway process", None, None);
+    let progress = ProgressSource::new(
+        ProgressFrame::new("starting the gateway process")
+            .waiting_for("the gateway process to start"),
+    );
     observe_start(&progress, "127.0.0.1:80", StartPhase::Admitting);
     assert_eq!(progress.frame_at(fake_clock(1)), "Starting gateway");
     observe_start(
@@ -2228,8 +2231,10 @@ fn operator_start_frames_follow_the_supervisor_then_the_self_test() {
 /// The self-test's own blocker reaches the operator frame, word for word.
 #[test]
 fn operator_start_frame_carries_the_self_test_blocker() {
-    let progress = ProgressSource::waiting_for("the gateway process to start");
-    progress.update("starting the gateway process", None, None);
+    let progress = ProgressSource::new(
+        ProgressFrame::new("starting the gateway process")
+            .waiting_for("the gateway process to start"),
+    );
     observe_start(
         &progress,
         "127.0.0.1:80",
@@ -2247,8 +2252,10 @@ fn operator_start_frame_carries_the_self_test_blocker() {
 /// A status that cannot be read on this pass is the step's event, not silence.
 #[test]
 fn operator_start_frame_names_an_unreadable_status() {
-    let progress = ProgressSource::waiting_for("the gateway process to start");
-    progress.update("starting the gateway process", None, None);
+    let progress = ProgressSource::new(
+        ProgressFrame::new("starting the gateway process")
+            .waiting_for("the gateway process to start"),
+    );
     observe_start(
         &progress,
         "127.0.0.1:80",
@@ -2266,8 +2273,10 @@ fn operator_start_frame_names_an_unreadable_status() {
 /// winds down.
 #[test]
 fn operator_stop_frames_follow_the_request_then_the_daemon_winding_down() {
-    let progress = ProgressSource::waiting_for("the gateway process to exit");
-    progress.update("stopping the gateway process", None, None);
+    let progress = ProgressSource::new(
+        ProgressFrame::new("stopping the gateway process")
+            .waiting_for("the gateway process to exit"),
+    );
     observe_stop(&progress, StopPhase::Requested);
     assert_eq!(
         progress.frame_at(fake_clock(2)),
@@ -2437,8 +2446,8 @@ fn route_frames_name_each_route_as_it_is_read() {
         );
     }
     let awaited = "the route table at /state/routes.json";
-    let progress = ProgressSource::waiting_for(awaited);
-    progress.update("reading the route table", None, None);
+    let progress =
+        ProgressSource::new(ProgressFrame::new("reading the route table").waiting_for(awaited));
     let summary = summarize_published_routes(&config, &route_table, &progress);
     // No certificate store exists here, so both TLS routes are missing one.
     assert_eq!(summary.route_count, 2);
@@ -2478,8 +2487,9 @@ fn route_frames_name_each_route_before_its_certificate_lookup() {
         );
     }
     let awaited = format!("the route table at {}", config.route_table_path.display());
-    let progress = ProgressSource::waiting_for(&awaited);
-    progress.update("reading the existing route table", None, None);
+    let progress = ProgressSource::new(
+        ProgressFrame::new("reading the existing route table").waiting_for(&awaited),
+    );
     let mut frames = Vec::new();
     let mut lookups = 0;
     let summary = summarize_routes(&config, &route_table, &progress, |_, domain| {
@@ -2512,8 +2522,10 @@ fn route_frames_name_each_route_before_its_certificate_lookup() {
 fn an_empty_route_table_is_read_without_a_route_frame() {
     let home = tempfile::tempdir().expect("gateway fixture");
     let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
-    let progress = ProgressSource::waiting_for("the gateway to answer on 127.0.0.1:80");
-    progress.update("reading the existing route table", None, None);
+    let progress = ProgressSource::new(
+        ProgressFrame::new("reading the existing route table")
+            .waiting_for("the gateway to answer on 127.0.0.1:80"),
+    );
     let mut lookups = 0;
     let summary = summarize_routes(&config, &RouteTable::new(), &progress, |_, _| {
         lookups += 1;
@@ -2536,8 +2548,9 @@ fn reading_existing_routes_reports_an_absent_table_and_a_read_failure() {
     let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
     std::fs::create_dir_all(config.route_table_path.parent().expect("gateway directory"))
         .expect("an empty gateway directory");
-    let progress = ProgressSource::waiting_for("the gateway to answer");
-    progress.update("checking the gateway self-test", None, None);
+    let progress = ProgressSource::new(
+        ProgressFrame::new("checking the gateway self-test").waiting_for("the gateway to answer"),
+    );
     let count = read_existing_routes(&config, &progress).expect("an absent table reads as empty");
     assert_eq!(count, 0);
     assert_eq!(
@@ -2554,8 +2567,9 @@ fn reading_existing_routes_reports_an_absent_table_and_a_read_failure() {
     let blocked = home.path().join("not-a-directory");
     std::fs::write(&blocked, b"not a directory").expect("blocking file");
     let unreadable = GatewayConfig::standard(blocked.join("gateway"));
-    let progress = ProgressSource::waiting_for("the gateway to answer");
-    progress.update("checking the gateway self-test", None, None);
+    let progress = ProgressSource::new(
+        ProgressFrame::new("checking the gateway self-test").waiting_for("the gateway to answer"),
+    );
     let error = read_existing_routes(&unreadable, &progress)
         .expect_err("a table under a regular file cannot be read");
     assert!(!error.to_string().is_empty(), "{error}");
@@ -2619,8 +2633,9 @@ fn the_route_read_step_finishes_with_what_it_read_or_why_it_could_not() {
     let blocked = home.path().join("not-a-directory");
     std::fs::write(&blocked, b"not a directory").expect("blocking file");
     let unreadable = GatewayConfig::standard(blocked.join("gateway"));
-    let progress = ProgressSource::waiting_for("the gateway to answer");
-    progress.update("checking the gateway self-test", None, None);
+    let progress = ProgressSource::new(
+        ProgressFrame::new("checking the gateway self-test").waiting_for("the gateway to answer"),
+    );
     let cause = read_existing_routes(&unreadable, &progress)
         .expect_err("a table under a regular file cannot be read")
         .to_string();

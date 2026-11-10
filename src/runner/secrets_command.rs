@@ -1,3 +1,4 @@
+use effigy_ui::steps::ProgressFrame;
 use std::fs;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -38,23 +39,17 @@ pub(in crate::runner) struct SecretOpProgress {
 
 impl SecretOpProgress {
     pub(in crate::runner) fn start(probe: impl Into<String>) -> Self {
-        let source = ProgressSource::waiting_for(probe);
-        source.label("Waiting for vault access");
+        let source = ProgressSource::new(
+            ProgressFrame::default()
+                .label("Waiting for vault access")
+                .waiting_for(probe),
+        );
         let step = steps::live_step(source.clone());
         Self { source, step }
     }
 
-    pub(in crate::runner) fn update(
-        &self,
-        sub_step: impl Into<String>,
-        count: Option<(u64, u64)>,
-        event: Option<String>,
-    ) {
-        self.source.update(sub_step, count, event);
-    }
-
-    fn now_waiting_for(&self, probe: impl Into<String>) {
-        self.source.now_waiting_for(probe);
+    pub(in crate::runner) fn update(&self, build: impl FnOnce(&ProgressFrame) -> ProgressFrame) {
+        self.source.update(build);
     }
 
     pub(in crate::runner) fn succeed(self, summary: &str) {
@@ -267,35 +262,27 @@ fn unlock_local_vault(
     progress: &SecretOpProgress,
 ) -> Result<(), RunnerError> {
     let write = crate::runner::secret_vault::begin_vault_write(vault_path)?;
-    progress.now_waiting_for(PROBE_VAULT_DECRYPT);
-    progress.update("decrypting vault", None, None);
+    progress.update(|_| ProgressFrame::new("decrypting vault").waiting_for(PROBE_VAULT_DECRYPT));
     let payload = read_vault_payload(vault_path, passphrase)?;
-    progress.update(
-        "checking local payload",
-        None,
-        Some("vault decrypted".to_owned()),
-    );
+    progress.update(|_| {
+        ProgressFrame::new("checking local payload").event(Some("vault decrypted".to_owned()))
+    });
     if !matches!(
         crate::runner::secret_vault::read_effigy_vault_payload_for_local_dev(vault_path),
         Ok(ref local_payload) if local_payload == &payload
     ) {
-        progress.update(
-            "rewriting local payload",
-            None,
-            Some("vault decrypted".to_owned()),
-        );
+        progress.update(|_| {
+            ProgressFrame::new("rewriting local payload").event(Some("vault decrypted".to_owned()))
+        });
         crate::runner::secret_vault::write_effigy_vault_payload(&write, &payload, passphrase)?;
-        progress.update(
-            "rewriting local payload",
-            None,
-            Some("local payload rewritten".to_owned()),
-        );
+        progress.update(|_| {
+            ProgressFrame::new("rewriting local payload")
+                .event(Some("local payload rewritten".to_owned()))
+        });
     }
-    progress.update(
-        "sealing local credential",
-        None,
-        Some("vault decrypted".to_owned()),
-    );
+    progress.update(|_| {
+        ProgressFrame::new("sealing local credential").event(Some("vault decrypted".to_owned()))
+    });
     let key_path = local_dev_unlock_key_path(vault_path);
     let key = LocalDevUnlockKey::from_bytes(fs::read(&key_path).map_err(|error| {
         RunnerError::task_invocation(format!(
@@ -315,11 +302,9 @@ fn unlock_local_vault(
             vault_path.display()
         ))
     })?;
-    progress.update(
-        "writing local credential",
-        None,
-        Some("credential sealed".to_owned()),
-    );
+    progress.update(|_| {
+        ProgressFrame::new("writing local credential").event(Some("credential sealed".to_owned()))
+    });
     crate::runner::secret_vault::write_private_file(
         &write,
         &local_unlock_credential_path(vault_path),
@@ -341,8 +326,11 @@ fn run_secrets_lock(
             return Err(error);
         }
     };
-    progress.now_waiting_for(PROBE_VAULT_LOCK);
-    progress.update("removing local unlock files", Some((0, 2)), None);
+    progress.update(|_| {
+        ProgressFrame::new("removing local unlock files")
+            .count(Some((0, 2)))
+            .waiting_for(PROBE_VAULT_LOCK)
+    });
     let files = [
         (local_dev_unlock_key_path(&vault_path), "local-dev key"),
         (
@@ -353,16 +341,16 @@ fn run_secrets_lock(
     for (index, (path, name)) in files.iter().enumerate() {
         let done = index as u64 + 1;
         match fs::remove_file(path) {
-            Ok(()) => progress.update(
-                "removing local unlock files",
-                Some((done, 2)),
-                Some(format!("removed {name}")),
-            ),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => progress.update(
-                "removing local unlock files",
-                Some((done, 2)),
-                Some(format!("{name} already absent")),
-            ),
+            Ok(()) => progress.update(|_| {
+                ProgressFrame::new("removing local unlock files")
+                    .count(Some((done, 2)))
+                    .event(Some(format!("removed {name}")))
+            }),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => progress.update(|_| {
+                ProgressFrame::new("removing local unlock files")
+                    .count(Some((done, 2)))
+                    .event(Some(format!("{name} already absent")))
+            }),
             Err(error) => {
                 progress.fail(&format!(
                     "could not lock the vault: failed to remove {name}"
@@ -412,7 +400,7 @@ pub(in crate::runner) fn run_configured_vault_generate_task(
     let _guard = ScopedVaultGenerateTask;
     let event = generate_hook_event(&generate);
     let progress = SecretOpProgress::start(PROBE_VAULT_GENERATE);
-    progress.update("running generate hook", None, Some(event));
+    progress.update(|_| ProgressFrame::new("running generate hook").event(Some(event)));
     match crate::runner::execute::api::run_inline_task_with_cwd_and_env(
         generate.into_manifest_task(),
         repo_root.to_path_buf(),
@@ -1923,24 +1911,23 @@ mod live_progress_tests {
                 progress.frame_at(Duration::from_secs(12)),
                 "Waiting for vault access · 12s"
             );
-            progress.now_waiting_for(PROBE_VAULT_DECRYPT);
-            progress.update("decrypting vault", None, None);
+            progress.update(|_| {
+                ProgressFrame::new("decrypting vault").waiting_for(PROBE_VAULT_DECRYPT)
+            });
             let frame = progress.frame_at(Duration::from_secs(14));
             assert_eq!(frame, "decrypting vault · 14s");
             assert_redacted(&frame);
-            progress.update(
-                "sealing local credential",
-                None,
-                Some("vault decrypted".to_owned()),
-            );
+            progress.update(|_| {
+                ProgressFrame::new("sealing local credential")
+                    .event(Some("vault decrypted".to_owned()))
+            });
             let frame = progress.frame_at(Duration::from_secs(17));
             assert_eq!(frame, "sealing local credential · vault decrypted · 17s");
             assert_redacted(&frame);
-            progress.update(
-                "writing local credential",
-                None,
-                Some("credential sealed".to_owned()),
-            );
+            progress.update(|_| {
+                ProgressFrame::new("writing local credential")
+                    .event(Some("credential sealed".to_owned()))
+            });
             let frame = progress.frame_at(Duration::from_secs(18));
             assert_eq!(frame, "writing local credential · credential sealed · 18s");
             assert_redacted(&frame);
@@ -1963,28 +1950,31 @@ mod live_progress_tests {
                 progress.frame_at(Duration::from_secs(4)),
                 "Waiting for vault access · 4s"
             );
-            progress.now_waiting_for(PROBE_VAULT_LOCK);
-            progress.update("removing local unlock files", Some((0, 2)), None);
+            progress.update(|_| {
+                ProgressFrame::new("removing local unlock files")
+                    .count(Some((0, 2)))
+                    .waiting_for(PROBE_VAULT_LOCK)
+            });
             assert_eq!(
                 progress.frame_at(Duration::from_secs(5)),
                 "removing local unlock files (0/2) · 5s"
             );
-            progress.update(
-                "removing local unlock files",
-                Some((1, 2)),
-                Some("removed local-dev key".to_owned()),
-            );
+            progress.update(|_| {
+                ProgressFrame::new("removing local unlock files")
+                    .count(Some((1, 2)))
+                    .event(Some("removed local-dev key".to_owned()))
+            });
             let frame = progress.frame_at(Duration::from_secs(2));
             assert_eq!(
                 frame,
                 "removing local unlock files (1/2) · removed local-dev key · 2s"
             );
             assert_redacted(&frame);
-            progress.update(
-                "removing local unlock files",
-                Some((2, 2)),
-                Some("removed local unlock credential".to_owned()),
-            );
+            progress.update(|_| {
+                ProgressFrame::new("removing local unlock files")
+                    .count(Some((2, 2)))
+                    .event(Some("removed local unlock credential".to_owned()))
+            });
             let frame = progress.frame_at(Duration::from_secs(3));
             assert_eq!(
                 frame,
@@ -2006,7 +1996,7 @@ mod live_progress_tests {
     fn task_secret_decrypt_names_the_vault_decrypt_probe() {
         let ((), lines) = steps::capture_lines(|| {
             let progress = SecretOpProgress::start(PROBE_VAULT_DECRYPT);
-            progress.update("decrypting vault", None, None);
+            progress.update(|_| ProgressFrame::new("decrypting vault"));
             let frame = progress.frame_at(Duration::from_secs(4));
             assert_eq!(frame, "decrypting vault · 4s");
             assert_redacted(&frame);
@@ -2025,11 +2015,9 @@ mod live_progress_tests {
     fn hook_frames_name_the_wait_and_kind_without_command_text() {
         let ((), lines) = steps::capture_lines(|| {
             let progress = SecretOpProgress::start(PROBE_VAULT_GENERATE);
-            progress.update(
-                "running generate hook",
-                None,
-                Some("inline command".to_owned()),
-            );
+            progress.update(|_| {
+                ProgressFrame::new("running generate hook").event(Some("inline command".to_owned()))
+            });
             let frame = progress.frame_at(Duration::from_secs(8));
             assert_eq!(frame, "running generate hook · inline command · 8s");
             assert_redacted(&frame);

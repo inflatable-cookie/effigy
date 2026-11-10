@@ -236,17 +236,12 @@ fn bootstrap_steps_name_the_setup_and_start_selectors() {
 #[test]
 fn a_phase_frame_names_its_action_and_what_it_waits_on_as_time_passes() {
     let seconds = std::time::Duration::from_secs;
-    // One phase, read twice on the fake clock: the same wait moves, and both
-    // frames still name the selector it waits for.
+    // The producer names the selector it waits for; UI tests own elapsed formatting.
     let setup = phase_progress(
         &running_setup_label("record-one"),
         task_awaiting("record-one"),
     );
     assert_eq!(setup.frame_at(seconds(4)), "running setup record-one · 4s");
-    assert_eq!(
-        setup.frame_at(seconds(50)),
-        "running setup record-one · 50s"
-    );
     assert!(setup
         .detailed_frame_at(seconds(4))
         .contains("`record-one` to finish"));
@@ -256,7 +251,6 @@ fn a_phase_frame_names_its_action_and_what_it_waits_on_as_time_passes() {
         checkout_awaiting(Path::new("app")),
     );
     assert_eq!(checkout.frame_at(seconds(12)), "Updating checkout · 12s");
-    assert_eq!(checkout.frame_at(seconds(90)), "Updating checkout · 90s");
 }
 
 fn setup_started(selector: &str) -> BootstrapProgressEvent {

@@ -1,3 +1,4 @@
+use effigy_ui::steps::ProgressFrame;
 use std::ffi::OsString;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -680,7 +681,8 @@ fn run_private_gateway_up(
                     gateway_diagnosis_hint(config)
                 )));
             }
-            progress.update("checking whether a gateway is already running", None, None);
+            progress
+                .update(|_| ProgressFrame::new("checking whether a gateway is already running"));
             inspect_existing_gateway(config, probe.status)
         },
     )?;
@@ -694,8 +696,10 @@ fn run_private_gateway_up(
                 &format!("gateway process {} to exit", status.pid),
                 |progress| {
                     stop_existing_gateway(status.as_ref())?;
-                    progress.now_waiting_for("the private gateway addresses to be released");
-                    progress.update("removing the private gateway addresses", None, None);
+                    progress.update(|_| {
+                        ProgressFrame::new("removing the private gateway addresses")
+                            .waiting_for("the private gateway addresses to be released")
+                    });
                     server::remove_private_gateway_addresses_if_unchanged(config, &status.snapshot)
                         .map_err(|error| RunnerError::task_invocation(error.to_string()))
                 },
@@ -760,7 +764,7 @@ fn read_private_route_facts(
                 .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
             let count = route_table.len();
             let routes = summarize_published_routes(config, &route_table, progress);
-            progress.update(route_read_summary(count), None, None);
+            progress.update(|_| ProgressFrame::new(route_read_summary(count)));
             Ok(routes)
         },
     )
@@ -824,14 +828,12 @@ fn run_gateway_down_with_config(
                 )));
             }
             let status = resolve_gateway_status_for_config(config, probe.status)?;
-            progress.update(
-                match &status {
+            progress.update(|_| {
+                ProgressFrame::new(match &status {
                     Some(running) => format!("gateway is running on pid {}", running.pid),
                     None => "the gateway is already stopped".to_owned(),
-                },
-                None,
-                None,
-            );
+                })
+            });
             Ok(status)
         },
     )?;
@@ -883,8 +885,10 @@ fn run_gateway_down_with_config(
                     ));
                 }
                 if config.is_private() {
-                    progress.now_waiting_for("the private gateway endpoint receipt to be removed");
-                    progress.update("removing the private gateway endpoint receipt", None, None);
+                    progress.update(|_| {
+                        ProgressFrame::new("removing the private gateway endpoint receipt")
+                            .waiting_for("the private gateway endpoint receipt to be removed")
+                    });
                 }
                 if config.is_private()
                     && !server::remove_private_gateway_addresses_if_unchanged(
@@ -2039,40 +2043,32 @@ fn probe_low_ports(
 /// daemon's own self-test with the status and blocker it reports, or the
 /// reason its status could not be read on this pass.
 fn observe_start(progress: &ProgressSource, listener: &str, phase: StartPhase) {
-    let admitting = matches!(&phase, StartPhase::Admitting);
-    match phase {
-        StartPhase::Admitting => {
-            progress.now_waiting_for("the supervisor to start the gateway daemon");
-            progress.update("admitting the gateway run", None, None);
-            progress.label("Starting gateway");
-        }
-        StartPhase::SelfTest { status, reason } => {
-            progress.now_waiting_for(format!("the gateway to answer on {listener}"));
-            let event = match reason {
-                Some(reason) => format!("gateway status is {status}: {reason}"),
-                None => format!("gateway status is {status}"),
+    let frame = match phase {
+        StartPhase::Admitting => ProgressFrame::new("admitting the gateway run")
+            .waiting_for("the supervisor to start the gateway daemon")
+            .label("Starting gateway"),
+        phase => {
+            let event = match phase {
+                StartPhase::SelfTest {
+                    status,
+                    reason: Some(reason),
+                } => format!("gateway status is {status}: {reason}"),
+                StartPhase::SelfTest {
+                    status,
+                    reason: None,
+                } => format!("gateway status is {status}"),
+                StartPhase::Unobserved { reason } => {
+                    format!("cannot read the gateway status: {reason}")
+                }
+                StartPhase::Admitting => unreachable!(),
             };
-            // The listener is in the sub-step as well as the awaited sentence:
-            // the event replaces that sentence in the frame, and the port must
-            // never leave the operator's view.
-            progress.update(
-                format!("checking the gateway self-test on {listener}"),
-                None,
-                Some(event),
-            );
+            ProgressFrame::new(format!("checking the gateway self-test on {listener}"))
+                .event(Some(event))
+                .waiting_for(format!("the gateway to answer on {listener}"))
+                .label(format!("Checking gateway on {listener}"))
         }
-        StartPhase::Unobserved { reason } => {
-            progress.now_waiting_for(format!("the gateway to answer on {listener}"));
-            progress.update(
-                format!("checking the gateway self-test on {listener}"),
-                None,
-                Some(format!("cannot read the gateway status: {reason}")),
-            );
-        }
-    }
-    if !admitting {
-        progress.label(format!("Checking gateway on {listener}"));
-    }
+    };
+    progress.update(|_| frame);
 }
 
 /// Show one operator stop phase: the stop request, then the daemon winding
@@ -2080,16 +2076,21 @@ fn observe_start(progress: &ProgressSource, listener: &str, phase: StartPhase) {
 fn observe_stop(progress: &ProgressSource, phase: StopPhase) {
     match phase {
         StopPhase::Requested => {
-            progress.now_waiting_for("the supervisor to record the stop");
-            progress.update("requesting the gateway stop", None, None);
+            progress.update(|_| {
+                ProgressFrame::new("requesting the gateway stop")
+                    .waiting_for("the supervisor to record the stop")
+            });
         }
         StopPhase::Settling { status, reason } => {
-            progress.now_waiting_for("the gateway process to exit");
             let event = match reason {
                 Some(reason) => format!("gateway status is {status}: {reason}"),
                 None => format!("gateway status is {status}"),
             };
-            progress.update("waiting for the gateway to stop", None, Some(event));
+            progress.update(|_| {
+                ProgressFrame::new("waiting for the gateway to stop")
+                    .event(Some(event))
+                    .waiting_for("the gateway process to exit")
+            });
         }
     }
 }
@@ -2131,7 +2132,11 @@ fn summarize_routes(
         // slow lookup must never leave the preceding route on screen. The
         // previous route's outcome stays the last event until this one's
         // arrives.
-        progress.update(action.as_str(), Some(position), None);
+        progress.update(|previous| {
+            ProgressFrame::new(action.as_str())
+                .count(Some(position))
+                .observations_from(previous)
+        });
         let outcome = match config.tls.as_ref() {
             None => format!(
                 "{} is listed; no certificate store is configured",
@@ -2151,7 +2156,11 @@ fn summarize_routes(
                 }
             }
         };
-        progress.update(action.as_str(), Some(position), Some(outcome));
+        progress.update(|_| {
+            ProgressFrame::new(action.as_str())
+                .count(Some(position))
+                .event(Some(outcome))
+        });
     }
     summary
 }
@@ -2160,7 +2169,7 @@ fn summarize_routes(
 /// operation happening now, in place of the combined label the whole action
 /// started with. The child it waits on stays named as the awaited object.
 fn observe_platform_phase(progress: &ProgressSource, phase: &str) {
-    progress.update(phase, None, None);
+    progress.update(|_| ProgressFrame::new(phase));
 }
 
 /// Read the existing route table, one route at a time, naming each route with
@@ -2172,13 +2181,15 @@ fn read_existing_routes(
     progress: &ProgressSource,
 ) -> std::io::Result<usize> {
     let path = config.route_table_path.display();
-    progress.now_waiting_for(format!("the route table at {path}"));
-    progress.update("reading the existing route table", None, None);
+    progress.update(|_| {
+        ProgressFrame::new("reading the existing route table")
+            .waiting_for(format!("the route table at {path}"))
+    });
     let route_table = RouteTable::load(&config.route_table_path)
         .map_err(|error| std::io::Error::other(error.to_string()))?;
     let count = route_table.len();
     summarize_published_routes(config, &route_table, progress);
-    progress.update(route_read_summary(count), None, None);
+    progress.update(|_| ProgressFrame::new(route_read_summary(count)));
     Ok(count)
 }
 
@@ -2187,11 +2198,12 @@ fn read_existing_routes(
 /// unreadable table ends this step with the exact read error and leaves the
 /// command's own outcome as it was.
 fn read_existing_routes_step(config: &GatewayConfig) {
-    let progress = ProgressSource::waiting_for(format!(
-        "the route table at {}",
-        config.route_table_path.display()
-    ));
-    progress.update("reading the existing route table", None, None);
+    let progress = ProgressSource::new(
+        ProgressFrame::new("reading the existing route table").waiting_for(format!(
+            "the route table at {}",
+            config.route_table_path.display()
+        )),
+    );
     let step = live_step(progress.clone());
     match read_existing_routes(config, &progress) {
         Ok(_) => step.succeed(&progress.summary()),
@@ -2261,7 +2273,11 @@ fn probe_bind_addresses(
     let total = addresses.len() as u64;
     for (index, address) in addresses.iter().enumerate() {
         let position = ((index + 1) as u64, total);
-        progress.update(format!("probing {address}"), Some(position), None);
+        progress.update(|previous| {
+            ProgressFrame::new(format!("probing {address}"))
+                .count(Some(position))
+                .observations_from(previous)
+        });
         let child = probe(address)?;
         // A refused bind exits non-zero after printing its report, so the
         // report is read before the exit code decides the outcome: the exact
@@ -2277,15 +2293,15 @@ fn probe_bind_addresses(
             }
         };
         if let Some(outcome) = report.addresses.first() {
-            progress.update(
-                format!("probing {address}"),
-                Some(position),
-                Some(format!(
-                    "{} {}",
-                    outcome.address,
-                    bind_outcome_label(&outcome.outcome)
-                )),
-            );
+            progress.update(|_| {
+                ProgressFrame::new(format!("probing {address}"))
+                    .count(Some(position))
+                    .event(Some(format!(
+                        "{} {}",
+                        outcome.address,
+                        bind_outcome_label(&outcome.outcome)
+                    )))
+            });
         }
         if let Some(reason) = report.refusal() {
             return Err(std::io::Error::other(reason));
@@ -2317,11 +2333,12 @@ fn setup_step<T>(
     awaiting: &str,
     work: impl FnOnce(&ProgressSource) -> std::io::Result<T>,
 ) -> std::io::Result<T> {
-    let progress = ProgressSource::waiting_for(awaiting);
-    progress.update(action, None, None);
-    if action.starts_with("applying platform setup") {
-        progress.label("Applying gateway setup");
-    }
+    let frame = ProgressFrame::new(action).waiting_for(awaiting);
+    let progress = ProgressSource::new(if action.starts_with("applying platform setup") {
+        frame.label("Applying gateway setup")
+    } else {
+        frame
+    });
     let step = live_step(progress.clone());
     match work(&progress) {
         Ok(value) => {
@@ -2402,11 +2419,12 @@ fn run_gateway_setup(
                                 setup::print_platform_phase(phase);
                             }
                         })?;
-                        progress.update(
-                            format!("applied the platform setup for {}", suffixes.join(", ")),
-                            None,
-                            None,
-                        );
+                        progress.update(|_| {
+                            ProgressFrame::new(format!(
+                                "applied the platform setup for {}",
+                                suffixes.join(", ")
+                            ))
+                        });
                         Ok(())
                     },
                 )
@@ -2506,11 +2524,12 @@ fn run_gateway_setup(
                         true,
                         &mut |phase| observe_platform_phase(progress, phase),
                     )?;
-                    progress.update(
-                        format!("applied the platform setup for {}", suffixes.join(", ")),
-                        None,
-                        None,
-                    );
+                    progress.update(|_| {
+                        ProgressFrame::new(format!(
+                            "applied the platform setup for {}",
+                            suffixes.join(", ")
+                        ))
+                    });
                     Ok(output)
                 },
             )?;

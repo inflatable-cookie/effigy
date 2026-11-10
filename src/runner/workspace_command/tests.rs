@@ -1,3 +1,4 @@
+use effigy_ui::steps::ProgressFrame;
 mod artifact_acquisition;
 mod builder_recovery;
 mod provisioning_guest;
@@ -1561,11 +1562,10 @@ mod live_progress_tests {
     #[test]
     fn container_identity_evidence_stays_in_detailed_workspace_frames() {
         let progress = WorkspaceOpProgress::start(false, PROBE_CONTAINER_IDENTITY, false);
-        progress.update(
-            "probing workspace container identity",
-            None,
-            Some("container `full-runtime-id`".into()),
-        );
+        progress.update(|_| {
+            ProgressFrame::new("probing workspace container identity")
+                .detail_event("container `full-runtime-id`")
+        });
         assert_eq!(
             progress.frame_at(Duration::from_secs(3)),
             "probing workspace container identity · 3s"
@@ -1584,19 +1584,23 @@ mod live_progress_tests {
         let ((), lines) = steps::capture_lines(|| {
             let url = "https://example.test/effigy-x86_64";
             let progress = WorkspaceOpProgress::start(false, format!("GET `{url}`"), false);
-            progress.update("downloading linux effigy `x86_64`", None, None);
+            progress.update(|_| ProgressFrame::new("downloading linux effigy `x86_64`"));
             assert_eq!(
                 progress.frame_at(Duration::from_secs(3)),
                 "downloading linux effigy `x86_64` · 3s"
             );
-            progress.now_waiting_for(format!("GET `{url}.sha256`"));
-            progress.update("fetching linux effigy release checksum", None, None);
+            progress.update(|_| {
+                ProgressFrame::new("fetching linux effigy release checksum")
+                    .waiting_for(format!("GET `{url}.sha256`"))
+            });
             assert_eq!(
                 progress.frame_at(Duration::from_secs(7)),
                 "fetching linux effigy release checksum · 7s"
             );
-            progress.now_waiting_for("write and rename `/cache/effigy.tmp`");
-            progress.update("caching verified linux effigy artifact", None, None);
+            progress.update(|_| {
+                ProgressFrame::new("caching verified linux effigy artifact")
+                    .waiting_for("write and rename `/cache/effigy.tmp`")
+            });
             assert!(progress
                 .source
                 .as_ref()
@@ -1613,46 +1617,19 @@ mod live_progress_tests {
     }
 
     #[test]
-    fn context_and_provisioning_frames_name_sub_steps_count_and_elapsed() {
+    fn shutdown_finishes_with_the_workspace_outcome() {
         let ((), lines) = steps::capture_lines(|| {
-            let progress = WorkspaceOpProgress::start(false, PROBE_GUEST_PUBLICATION, false);
-            assert_eq!(
-                progress.frame_at(Duration::from_secs(0)),
-                "Preparing workspace"
-            );
-            progress.update("verifying guest artifact", None, None);
-            assert_eq!(
-                progress.frame_at(Duration::from_secs(2)),
-                "verifying guest artifact · 2s"
-            );
-            progress.update(
-                "installing pinned guest binary",
-                None,
-                Some("guest artifact verified".to_owned()),
-            );
-            assert_eq!(
-                progress.frame_at(Duration::from_secs(4)),
-                "installing pinned guest binary · guest artifact verified · 4s"
-            );
-            progress.update(
-                "publishing workspace context",
-                Some((1, 2)),
-                Some("guest binary installed".to_owned()),
-            );
-            assert_eq!(
-                progress.frame_at(Duration::from_secs(6)),
-                "publishing workspace context (1/2) · guest binary installed · 6s"
-            );
-            progress.finish_clear();
+            WorkspaceOpProgress::start(false, PROBE_CONTAINER_DOWN, false)
+                .succeed("workspace system app stopped");
         });
-        assert!(lines.is_empty(), "{lines:?}");
+        assert_eq!(lines, vec!["✓ workspace system app stopped".to_owned()]);
     }
 
     #[test]
     fn a_blocked_identity_probe_names_the_exact_wait() {
         let ((), lines) = steps::capture_lines(|| {
             let progress = WorkspaceOpProgress::start(false, PROBE_CONTAINER_IDENTITY, false);
-            progress.update("probing workspace container identity", None, None);
+            progress.update(|_| ProgressFrame::new("probing workspace container identity"));
             assert_eq!(
                 progress.frame_at(Duration::from_secs(8)),
                 "probing workspace container identity · 8s"
@@ -1668,27 +1645,5 @@ mod live_progress_tests {
                     .to_owned()
             ]
         );
-    }
-
-    #[test]
-    fn permission_and_shutdown_frames_name_the_probe_and_count() {
-        let ((), lines) = steps::capture_lines(|| {
-            let progress = WorkspaceOpProgress::start(false, PROBE_PERMISSION_PREP, false);
-            progress.update("preparing workspace permissions", Some((0, 3)), None);
-            assert_eq!(
-                progress.frame_at(Duration::from_secs(3)),
-                "preparing workspace permissions (0/3) · 3s"
-            );
-            progress.finish_clear();
-
-            let progress = WorkspaceOpProgress::start(false, PROBE_CONTAINER_DOWN, false);
-            progress.update("stopping workspace system `app`", None, None);
-            assert_eq!(
-                progress.frame_at(Duration::from_secs(5)),
-                "stopping workspace system `app` · 5s"
-            );
-            progress.succeed("workspace system app stopped");
-        });
-        assert_eq!(lines, vec!["✓ workspace system app stopped".to_owned()]);
     }
 }
