@@ -26,6 +26,13 @@ Every site has one of three dispositions:
 There is no fourth disposition. A site that cannot name a real live-state
 source is a missing hook for its owning plane, not an exception.
 
+Leading `--verbose` enables detailed progress in every command plane, for example
+`effigy --verbose container up`. Default terminal frames use the current short
+operation and subject, known counts, useful events and elapsed time after two
+seconds. Exact probes, paths and runtime identity remain in detailed frames;
+managed panes keep their bounded plain form. Doctor also accepts its existing
+command-local `--verbose`.
+
 ## The gate
 
 `effigy lint:feedback` runs `scripts/check-feedback-inventory.py` and then a
@@ -84,7 +91,7 @@ of its own.
 | `src/runner/container_command/lifecycle.rs:339` | `steps::during("registering routes", ..)` | `lifecycle.rs:839` — `integration_stage(progress, 5, "registering gateway routes")` on the integrations source | live |
 | `src/runner/container_command/lifecycle.rs:356` | `steps::phase("settling the environment")` outer settling spinner | Removed: `lifecycle.rs:434` records that the settle adds no second fixed label, and the environment publishes its own wait (`crates/effigy-containers/src/environment/reconcile.rs:1172`) | removed |
 | `src/runner/container_command/lifecycle.rs:409` | `steps::phase("preparing ports and loopback")` | `lifecycle.rs:503` — `TimedStep::live(preparation.clone())` | live |
-| `src/runner/container_command/lifecycle.rs:424` | `steps::phase("rendering the stack")` rendering spinner | `lifecycle.rs:519` — `effigy_ui::steps::finish_line(true, "stack rendered from ..")` | immediate line |
+| `src/runner/container_command/lifecycle.rs:424` | `steps::phase("rendering the stack")` rendering spinner | `lifecycle.rs:519` — `effigy_ui::steps::finish_line(true, "Rendered stack (<duration>)")` | immediate line |
 | `src/runner/container_command/lifecycle.rs:449` | `steps::during("starting shared services", ..)` | `lifecycle.rs:554` — `steps::during` over the named shared-service source built at `lifecycle.rs:550-552` (the per-service subject comes from `support.rs`) | live |
 | `src/runner/container_command/lifecycle.rs:491` | `steps::phase("starting the `<name>` stack")` whole-stack step | `lifecycle.rs:600` — `TimedStep::live(progress.clone())`, with per-service `runtime_wait` steps from `exec/compose_steps.rs` | live |
 

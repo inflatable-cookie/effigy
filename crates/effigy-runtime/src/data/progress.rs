@@ -16,6 +16,7 @@ pub(super) struct CacheVolumeProgress {
 impl CacheVolumeProgress {
     pub(super) fn start(probe: impl Into<String>) -> Self {
         let source = ProgressSource::waiting_for(probe);
+        source.label("Inspecting volumes");
         let step = steps::live_step(source.clone());
         Self { source, step }
     }
@@ -47,7 +48,18 @@ impl CacheVolumeProgress {
         count: Option<(u64, u64)>,
         event: Option<String>,
     ) {
+        let sub_step = sub_step.into();
+        let label = if sub_step.starts_with("inspecting cache volumes for ") {
+            Some("Inspecting cache volumes")
+        } else if sub_step.starts_with("inspecting volumes for ") {
+            Some("Inspecting volumes")
+        } else {
+            None
+        };
         self.source.update(sub_step, count, event);
+        if let Some(label) = label {
+            self.source.label(label);
+        }
     }
 
     fn fail_error(&self, error: &EffigyRuntimeError) {
@@ -72,17 +84,40 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    fn repository_paths_stay_in_detailed_volume_frames() {
+        let progress = CacheVolumeProgress::start(PROBE_VOLUME_INSPECT);
+        progress.update(
+            "inspecting cache volumes for `/workspace/private`",
+            Some((1, 2)),
+            None,
+        );
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(3)),
+            "Inspecting cache volumes (1/2) · 3s"
+        );
+        assert!(progress
+            .source
+            .detailed_frame_at(Duration::from_secs(3))
+            .contains("/workspace/private"));
+        progress.step.finish_clear();
+    }
+
+    #[test]
     fn cleanup_frames_name_the_volume_count_elapsed_and_last_event() {
         let ((), lines) = steps::capture_lines(|| {
             let progress = CacheVolumeProgress::start(PROBE_VOLUME_INSPECT);
+            assert!(progress
+                .source
+                .detailed_frame_at(Duration::from_secs(3))
+                .contains(PROBE_VOLUME_INSPECT));
             assert_eq!(
                 progress.frame_at(Duration::from_secs(0)),
-                "waiting for runtime volume inspect; 0s elapsed"
+                "Inspecting volumes"
             );
             progress.update("inspecting cache volumes", None, None);
             assert_eq!(
                 progress.frame_at(Duration::from_secs(3)),
-                "inspecting cache volumes; waiting for runtime volume inspect; 3s elapsed"
+                "inspecting cache volumes · 3s"
             );
             progress.now_waiting_for(PROBE_VOLUME_REMOVE);
             progress.update(
@@ -92,7 +127,7 @@ mod tests {
             );
             assert_eq!(
                 progress.frame_at(Duration::from_secs(5)),
-                "removing cache volume `web-target` (1/3); waiting for runtime volume remove; last: listed 3 cache volumes; 5s elapsed"
+                "removing cache volume `web-target` (1/3) · listed 3 cache volumes · 5s"
             );
             progress.update(
                 "removing volume `orphaned-data`",
@@ -101,7 +136,7 @@ mod tests {
             );
             assert_eq!(
                 progress.frame_at(Duration::from_secs(8)),
-                "removing volume `orphaned-data` (2/3); waiting for runtime volume remove; last: removed `web-target`; 8s elapsed"
+                "removing volume `orphaned-data` (2/3) · removed `web-target` · 8s"
             );
             progress.step.finish_clear();
         });
@@ -114,7 +149,7 @@ mod tests {
             let progress = CacheVolumeProgress::start(PROBE_VOLUME_INSPECT);
             assert_eq!(
                 progress.frame_at(Duration::from_secs(12)),
-                "waiting for runtime volume inspect; 12s elapsed"
+                "Inspecting volumes · 12s"
             );
             progress.fail_error(&EffigyRuntimeError::task_invocation(
                 "runtime volume inspect timed out",

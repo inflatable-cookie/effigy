@@ -238,27 +238,21 @@ fn a_phase_frame_names_its_action_and_what_it_waits_on_as_time_passes() {
         &running_setup_label("record-one"),
         task_awaiting("record-one"),
     );
-    assert_eq!(
-        setup.frame_at(seconds(4)),
-        "running setup record-one; waiting for `record-one` to finish; 4s elapsed"
-    );
+    assert_eq!(setup.frame_at(seconds(4)), "running setup record-one · 4s");
     assert_eq!(
         setup.frame_at(seconds(50)),
-        "running setup record-one; waiting for `record-one` to finish; 50s elapsed"
+        "running setup record-one · 50s"
     );
+    assert!(setup
+        .detailed_frame_at(seconds(4))
+        .contains("`record-one` to finish"));
     // A checkout phase waits on the destination, not a selector.
     let checkout = phase_progress(
         "pulling https://example.test/app.git into app",
         checkout_awaiting(Path::new("app")),
     );
-    assert_eq!(
-        checkout.frame_at(seconds(12)),
-        "pulling https://example.test/app.git into app; waiting for the checkout at app; 12s elapsed"
-    );
-    assert_eq!(
-        checkout.frame_at(seconds(90)),
-        "pulling https://example.test/app.git into app; waiting for the checkout at app; 90s elapsed"
-    );
+    assert_eq!(checkout.frame_at(seconds(12)), "Updating checkout · 12s");
+    assert_eq!(checkout.frame_at(seconds(90)), "Updating checkout · 90s");
 }
 
 fn setup_started(selector: &str) -> BootstrapProgressEvent {

@@ -152,7 +152,7 @@ pub fn run_cli(raw_args: Vec<String>) {
     // output, which prints one plain line per step instead.
     effigy_ui::steps::configure_from_terminal(
         emit_json_envelope,
-        matches!(&cmd, Command::Doctor(args) if args.verbose),
+        global_options.verbose || matches!(&cmd, Command::Doctor(args) if args.verbose),
     );
     let (command_kind, command_name) = command_kind_and_name(&cmd);
     let runtime_context = match EffigyRuntimeContext::capture_lossy(

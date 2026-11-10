@@ -2080,14 +2080,15 @@ fn platform_phase_frames_name_the_operation_while_the_child_runs() {
         None,
     );
     observe_platform_phase(&progress, "writing the resolver files for test");
+    assert!(progress.detailed_frame_at(fake_clock(4)).contains(awaited));
     assert_eq!(
         progress.frame_at(fake_clock(4)),
-        format!("writing the resolver files for test; waiting for {awaited}; 4s elapsed")
+        "writing the resolver files for test · 4s".to_owned()
     );
     observe_platform_phase(&progress, "installing the privileged bind broker");
     assert_eq!(
         progress.frame_at(fake_clock(9)),
-        format!("installing the privileged bind broker; waiting for {awaited}; 9s elapsed")
+        "installing the privileged bind broker · 9s".to_owned()
     );
 
     // The stage ends with what now holds, not with whichever phase ran last.
@@ -2149,9 +2150,9 @@ fn listener_readiness_frames_keep_the_listener_address_as_blockers_arrive() {
     assert_eq!(
         frames,
         vec![
-            "checking the verified listener on 127.0.0.1:8080; waiting for the gateway to answer; 1s elapsed",
-            "checking the verified listener on 127.0.0.1:8080; waiting for the gateway to answer; last: the gateway is not answering yet; 2s elapsed",
-            "checking the verified listener on 127.0.0.1:8080; waiting for the gateway to answer; last: the gateway record is not published yet; 3s elapsed",
+            "Checking gateway on 127.0.0.1:8080",
+            "Checking gateway on 127.0.0.1:8080 · the gateway is not answering yet · 2s",
+            "Checking gateway on 127.0.0.1:8080 · the gateway record is not published yet · 3s",
         ]
     );
 }
@@ -2178,7 +2179,7 @@ fn listener_readiness_failure_keeps_the_probe_it_refused_on() {
     assert!(result.is_err());
     assert_eq!(
         progress.frame_at(std::time::Duration::from_secs(5)),
-        "checking the verified listener on 127.0.0.1:8080; waiting for the gateway to answer; 5s elapsed"
+        "Checking gateway on 127.0.0.1:8080 · 5s"
     );
 }
 
@@ -2209,10 +2210,7 @@ fn operator_start_frames_follow_the_supervisor_then_the_self_test() {
     let progress = ProgressSource::waiting_for("the gateway process to start");
     progress.update("starting the gateway process", None, None);
     observe_start(&progress, "127.0.0.1:80", StartPhase::Admitting);
-    assert_eq!(
-        progress.frame_at(fake_clock(1)),
-        "admitting the gateway run; waiting for the supervisor to start the gateway daemon; 1s elapsed"
-    );
+    assert_eq!(progress.frame_at(fake_clock(1)), "Starting gateway");
     observe_start(
         &progress,
         "127.0.0.1:80",
@@ -2223,7 +2221,7 @@ fn operator_start_frames_follow_the_supervisor_then_the_self_test() {
     );
     assert_eq!(
         progress.frame_at(fake_clock(4)),
-        "checking the gateway self-test on 127.0.0.1:80; waiting for the gateway to answer on 127.0.0.1:80; last: gateway status is starting; 4s elapsed"
+        "Checking gateway on 127.0.0.1:80 · gateway status is starting · 4s"
     );
 }
 
@@ -2242,7 +2240,7 @@ fn operator_start_frame_carries_the_self_test_blocker() {
     );
     assert_eq!(
         progress.frame_at(fake_clock(6)),
-        "checking the gateway self-test on 127.0.0.1:80; waiting for the gateway to answer on 127.0.0.1:80; last: gateway status is starting: the listener on 127.0.0.1:80 is not bound yet; 6s elapsed"
+        "Checking gateway on 127.0.0.1:80 · gateway status is starting: the listener on 127.0.0.1:80 is not bound yet · 6s"
     );
 }
 
@@ -2260,7 +2258,7 @@ fn operator_start_frame_names_an_unreadable_status() {
     );
     assert_eq!(
         progress.frame_at(fake_clock(3)),
-        "checking the gateway self-test on 127.0.0.1:80; waiting for the gateway to answer on 127.0.0.1:80; last: cannot read the gateway status: permission denied reading the gateway record; 3s elapsed"
+        "Checking gateway on 127.0.0.1:80 · cannot read the gateway status: permission denied reading the gateway record · 3s"
     );
 }
 
@@ -2273,7 +2271,7 @@ fn operator_stop_frames_follow_the_request_then_the_daemon_winding_down() {
     observe_stop(&progress, StopPhase::Requested);
     assert_eq!(
         progress.frame_at(fake_clock(2)),
-        "requesting the gateway stop; waiting for the supervisor to record the stop; 2s elapsed"
+        "requesting the gateway stop · 2s"
     );
     observe_stop(
         &progress,
@@ -2284,7 +2282,7 @@ fn operator_stop_frames_follow_the_request_then_the_daemon_winding_down() {
     );
     assert_eq!(
         progress.frame_at(fake_clock(5)),
-        "waiting for the gateway to stop; waiting for the gateway process to exit; last: gateway status is stopping: the daemon is closing its listeners; 5s elapsed"
+        "waiting for the gateway to stop · gateway status is stopping: the daemon is closing its listeners · 5s"
     );
 }
 
@@ -2308,14 +2306,14 @@ fn bind_probe_frames_name_each_address_as_it_is_probed() {
     assert_eq!(
         frames,
         vec![
-            format!("probing 127.0.0.1:53 (1/3); waiting for {awaited}; 1s elapsed"),
-            format!("probing 127.0.0.1:80 (2/3); waiting for the bind probe for 127.0.0.1:53, 127.0.0.1:80, 127.0.0.1:443; last: 127.0.0.1:53 bound; 2s elapsed"),
-            format!("probing 127.0.0.1:443 (3/3); waiting for the bind probe for 127.0.0.1:53, 127.0.0.1:80, 127.0.0.1:443; last: 127.0.0.1:80 already in use; 3s elapsed"),
+            "probing 127.0.0.1:53 (1/3)".to_owned(),
+            "probing 127.0.0.1:80 (2/3) · 127.0.0.1:53 bound · 2s".to_owned(),
+            "probing 127.0.0.1:443 (3/3) · 127.0.0.1:80 already in use · 3s".to_owned(),
         ]
     );
     assert_eq!(
         progress.frame_at(fake_clock(4)),
-        format!("probing 127.0.0.1:443 (3/3); waiting for the bind probe for 127.0.0.1:53, 127.0.0.1:80, 127.0.0.1:443; last: 127.0.0.1:443 bound; 4s elapsed")
+        "probing 127.0.0.1:443 (3/3) · 127.0.0.1:443 bound · 4s".to_owned()
     );
 }
 
@@ -2347,7 +2345,7 @@ fn bind_probe_refusal_reports_the_child_refusal_before_returning_it() {
     );
     assert_eq!(
         progress.frame_at(fake_clock(5)),
-        "probing 127.0.0.1:80 (2/3); waiting for the bind probe for 127.0.0.1:53, 127.0.0.1:80, 127.0.0.1:443; last: 127.0.0.1:80 denied; 5s elapsed"
+        "probing 127.0.0.1:80 (2/3) · 127.0.0.1:80 denied · 5s"
     );
 }
 
@@ -2373,7 +2371,7 @@ fn bind_probe_failure_names_the_address_and_keeps_its_reason() {
     );
     assert_eq!(
         progress.frame_at(fake_clock(2)),
-        "probing 127.0.0.1:53 (1/1); waiting for the bind probe for 127.0.0.1:53; last: 127.0.0.1:53 failed: Address already in use (os error 48); 2s elapsed"
+        "probing 127.0.0.1:53 (1/1) · 127.0.0.1:53 failed: Address already in use (os error 48) · 2s"
     );
 }
 
@@ -2448,7 +2446,7 @@ fn route_frames_name_each_route_as_it_is_read() {
     assert_eq!(summary.missing_domains, vec!["a.test", "b.test"]);
     assert_eq!(
         progress.frame_at(fake_clock(5)),
-        "reading route b.test (2/2); waiting for the route table at /state/routes.json; last: b.test has no certificate yet; 5s elapsed"
+        "reading route b.test (2/2) · b.test has no certificate yet · 5s"
     );
 }
 
@@ -2493,16 +2491,14 @@ fn route_frames_name_each_route_before_its_certificate_lookup() {
     assert_eq!(
         frames,
         vec![
-            format!("reading route a.test (1/3); waiting for {awaited}; 1s elapsed"),
-            format!("reading route b.test (2/3); waiting for {awaited}; last: a.test has its certificate; 2s elapsed"),
-            format!("reading route c.test (3/3); waiting for {awaited}; last: b.test has no certificate yet; 3s elapsed"),
+            "reading route a.test (1/3)".to_owned(),
+            "reading route b.test (2/3) · a.test has its certificate · 2s".to_owned(),
+            "reading route c.test (3/3) · b.test has no certificate yet · 3s".to_owned(),
         ]
     );
     assert_eq!(
         progress.frame_at(fake_clock(4)),
-        format!(
-            "reading route c.test (3/3); waiting for {awaited}; last: c.test has its certificate; 4s elapsed"
-        )
+        "reading route c.test (3/3) · c.test has its certificate · 4s".to_owned()
     );
     assert_eq!(lookups, 3);
     assert_eq!(summary.route_count, 3);
@@ -2527,7 +2523,7 @@ fn an_empty_route_table_is_read_without_a_route_frame() {
     assert_eq!(summary.route_count, 0);
     assert_eq!(
         progress.frame_at(fake_clock(2)),
-        "reading the existing route table; waiting for the gateway to answer on 127.0.0.1:80; 2s elapsed"
+        "reading the existing route table · 2s"
     );
 }
 
@@ -2550,10 +2546,7 @@ fn reading_existing_routes_reports_an_absent_table_and_a_read_failure() {
     );
     assert_eq!(
         progress.frame_at(fake_clock(2)),
-        format!(
-            "the route table has no routes registered yet; waiting for the route table at {}; 2s elapsed",
-            config.route_table_path.display()
-        )
+        "the route table has no routes registered yet · 2s"
     );
 
     // A table path under a regular file cannot be read: the read error comes

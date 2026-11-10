@@ -182,6 +182,9 @@ pub(in crate::runner) fn checkout_awaiting(destination: &Path) -> String {
 pub(in crate::runner) fn phase_progress(label: &str, awaiting: String) -> ProgressSource {
     let progress = ProgressSource::waiting_for(awaiting);
     progress.update(label, None, None);
+    if label.starts_with("pulling ") {
+        progress.label("Updating checkout");
+    }
     progress
 }
 

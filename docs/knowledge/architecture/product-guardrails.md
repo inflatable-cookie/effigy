@@ -96,7 +96,8 @@ when the real cause was two named services failing their health checks.
   about two seconds. Add a blocker or meaningful event only when it helps,
   in plain words. Never restate the label as "waiting for". Engine, context,
   project, policy literals and paths belong in verbose output, run logs and
-  structured output. Success uses one short past-tense phrase with duration;
+  structured output. Use leading `--verbose` (for example, `effigy --verbose
+  container up`) for detailed progress in any plane. Success uses one short past-tense phrase with duration;
   failure says what is wrong, with detail on the next line or in verbose.
 - **A managed entry's wait comes from the ordering graph.** Each entry's tab
   and status say what actually blocks it: the entry the resolved start order or
