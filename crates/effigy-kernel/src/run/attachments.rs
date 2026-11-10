@@ -687,14 +687,6 @@ impl Run<'_> {
         workspace_fact(self.store.conn(), self.id, WORKSPACE_TARGET_KIND)
     }
 
-    pub(crate) fn workspace_bound_platform(
-        &self,
-        reservation: &crate::workspace_session::WorkspaceActivationReservation,
-    ) -> Result<crate::workspace_session::BoundPlatform, RunError> {
-        self.verify_workspace_reservation(reservation)?;
-        workspace_fact(self.store.conn(), self.id, WORKSPACE_PLATFORM_KIND)
-    }
-
     pub(crate) fn bind_workspace_target(
         &mut self,
         reservation: &crate::workspace_session::WorkspaceActivationReservation,
@@ -779,16 +771,38 @@ fn workspace_fact<T: serde::de::DeserializeOwned>(
     run: RunId,
     kind: &str,
 ) -> Result<T, RunError> {
-    let facts: Vec<_> = journal::effects(conn, run)?
-        .into_iter()
-        .filter(|effect| effect.spec.kind == kind)
-        .collect();
-    if facts.len() != 1 || facts[0].state != EffectState::Applied {
+    workspace_fact_in(&journal::effects(conn, run)?, kind)
+}
+
+fn workspace_fact_in<T: serde::de::DeserializeOwned>(
+    effects: &[Effect],
+    kind: &str,
+) -> Result<T, RunError> {
+    let mut facts = effects.iter().filter(|effect| effect.spec.kind == kind);
+    let fact = facts
+        .next()
+        .ok_or_else(|| RunError::refused("workspace binding is absent or uncertain"))?;
+    if facts.next().is_some() || fact.state != EffectState::Applied {
         return Err(RunError::refused(
             "workspace binding is absent or uncertain",
         ));
     }
-    Ok(serde_json::from_value(facts[0].spec.payload.clone())?)
+    Ok(serde_json::from_value(fact.spec.payload.clone())?)
+}
+
+pub(crate) fn workspace_bindings(
+    effects: &[Effect],
+) -> Result<
+    (
+        crate::workspace_session::ContainerIdentity,
+        crate::workspace_session::BoundPlatform,
+    ),
+    RunError,
+> {
+    Ok((
+        workspace_fact_in(effects, WORKSPACE_TARGET_KIND)?,
+        workspace_fact_in(effects, WORKSPACE_PLATFORM_KIND)?,
+    ))
 }
 
 impl Run<'_> {

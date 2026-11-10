@@ -35,7 +35,9 @@ pub use terminal::{
     EVIDENCE as TERMINAL_RECORD_EVIDENCE, KEEP_MS as TERMINAL_RECORD_KEEP_MS,
 };
 
-pub(crate) use attachments::{check_activation_fence, holder_attachment, publish_active_state};
+pub(crate) use attachments::{
+    check_activation_fence, holder_attachment, publish_active_state, workspace_bindings,
+};
 /// Disposable-fixture support: record one environment's own `active`
 /// publication exactly as an activation commit does, through the same fence
 /// check and the same transaction, so a process-lifetime proof can admit a
@@ -597,7 +599,7 @@ impl<'a> ReacquiredWorkspaceRun<'a> {
     /// owner's full receipt validation and bounded backend reobservation; this
     /// kernel method does not qualify a backend or authenticate an adapter.
     pub fn resume(
-        self,
+        mut self,
         session: &Run<'_>,
         observed: crate::observe::Observed<WorkspaceResumeFacts>,
     ) -> Result<Run<'a>, (RunError, Box<Self>)> {
@@ -652,12 +654,8 @@ impl<'a> ReacquiredWorkspaceRun<'a> {
                 ));
             }
             self.owner.verify_session()?;
-            if self
-                .owner
-                .run
-                .workspace_resume_facts(&self.owner.reservation, &current)?
-                != *expected
-            {
+            let (current, facts) = self.owner.run.workspace_snapshot(&self.owner.reservation)?;
+            if current != self.owner.snapshot || facts? != *expected {
                 return Err(RunError::refused(
                     "workspace journalled resume evidence changed",
                 ));
@@ -729,7 +727,7 @@ impl<'a> ParkedWorkspaceRun<'a> {
                 "retained workspace session owner does not hold its exact slot",
             ));
         }
-        journal::check_run_fence(conn, session.id, &session.owner)?;
+        crate::workspace_session::check_run_fence(conn, session.id, &session.owner)?;
         let current = self
             .reservation
             .verify_claimed_run(conn, self.run.id, &self.run.owner)?;
@@ -810,7 +808,7 @@ impl<'a> ParkedWorkspaceRun<'a> {
         session
             .store
             .transaction_within(cx, BusyWait::Context, |txn| {
-                journal::check_run_fence(txn.conn(), run_id, &owner)?;
+                crate::workspace_session::check_run_fence(txn.conn(), run_id, &owner)?;
                 let current = self.reservation.verify_claimed_run(
                     txn.conn(),
                     self.run.id,
@@ -1009,253 +1007,23 @@ impl std::fmt::Debug for Run<'_> {
     }
 }
 impl<'a> Run<'a> {
-    fn workspace_resume_facts(
-        &self,
+    fn workspace_snapshot(
+        &mut self,
         reservation: &crate::workspace_session::WorkspaceActivationReservation,
-        record: &crate::workspace_session::ActivationReservationRecord,
-    ) -> Result<WorkspaceResumeFacts, RunError> {
-        use crate::workspace_session::TargetEvidence;
+    ) -> Result<
+        (
+            crate::workspace_session::ActivationReservationRecord,
+            Result<WorkspaceResumeFacts, RunError>,
+        ),
+        RunError,
+    > {
         self.can_effect()?;
-        let session = record
-            .session
-            .clone()
-            .ok_or_else(|| RunError::unavailable("workspace session binding unavailable"))?;
-        let inputs = record
-            .inputs
-            .as_ref()
-            .ok_or_else(|| RunError::unavailable("workspace frozen inputs unavailable"))?;
-        let target = self.workspace_bound_target(reservation)?;
-        let platform = self.workspace_bound_platform(reservation)?;
-        if platform.target != target {
-            return Err(RunError::refused("workspace target and platform differ"));
-        }
-        let effects = self.effects()?;
-        let mut creations = effects
-            .iter()
-            .filter(|effect| effect.spec.kind == "environment:gate-scoped-id-difference");
-        let creation = creations
-            .next()
-            .ok_or_else(|| RunError::unavailable("workspace creator receipt unavailable"))?;
-        if creations.next().is_some()
-            || creation.state != EffectState::Applied
-            || creation.spec.target != self.owner
-        {
-            return Err(RunError::unavailable(
-                "workspace creator receipt is ambiguous or incomplete",
-            ));
-        }
-        let receipt = creation
-            .receipt
-            .clone()
-            .ok_or_else(|| RunError::unavailable("workspace creator receipt unavailable"))?;
-        let record_value = receipt
-            .get("record")
-            .ok_or_else(|| RunError::unavailable("workspace creator receipt is malformed"))?;
-        if receipt.get("schema").and_then(Value::as_str)
-            != Some("effigy.environment.gate-scoped-creation.v5")
-            || record_value.get("state").and_then(Value::as_str) != Some("attributed")
-            || record_value.get("generation").and_then(Value::as_u64)
-                != Some(self.owner.generation.get())
-        {
-            return Err(RunError::unavailable(
-                "workspace creator receipt is malformed or stale",
-            ));
-        }
-        // The kernel checks the complete v5 record's shape and target
-        // correspondence. Backend-specific creator qualification remains the
-        // container owner's responsibility before calling `resume`.
-        let text = |key: &str| record_value.get(key).and_then(Value::as_str);
-        let project = text("project")
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| RunError::unavailable("workspace creator project unavailable"))?;
-        let primary = text("primary_service")
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| {
-                RunError::unavailable("workspace creator primary service unavailable")
-            })?;
-        if text("engine").is_none_or(str::is_empty)
-            || text("context").is_none()
-            || text("workdir").is_none_or(str::is_empty)
-            || record_value.get("workspace_predecessor").is_none()
-            || [
-                "expected_created",
-                "image_identities",
-                "reference_resolutions",
-            ]
-            .iter()
-            .any(|key| record_value.get(key).and_then(Value::as_object).is_none())
-            || ["observed", "compose_files", "created", "attached"]
-                .iter()
-                .any(|key| record_value.get(key).and_then(Value::as_array).is_none())
-        {
-            return Err(RunError::unavailable(
-                "workspace creator receipt is incomplete",
-            ));
-        }
-        if let TargetEvidence::Absent {
-            project: expected, ..
-        } = &inputs.target
-        {
-            if expected != project {
-                return Err(RunError::refused(
-                    "workspace creator project differs from frozen decision",
-                ));
-            }
-        }
-        let observed = record_value
-            .get("observed")
-            .and_then(Value::as_array)
-            .ok_or_else(|| RunError::unavailable("workspace creator inventory unavailable"))?;
-        let mut observed_ids = std::collections::BTreeSet::new();
-        let mut target_rows = 0;
-        for row in observed {
-            let id = row
-                .get("id")
-                .and_then(Value::as_str)
-                .filter(|id| id.len() == 64 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
-                .ok_or_else(|| RunError::unavailable("workspace creator inventory is malformed"))?;
-            let labels = row
-                .get("labels")
-                .and_then(Value::as_object)
-                .ok_or_else(|| {
-                    RunError::unavailable("workspace creator inventory labels unavailable")
-                })?;
-            if row.get("name").and_then(Value::as_str).is_none()
-                || row.get("running").and_then(Value::as_bool).is_none()
-                || row.get("binds").and_then(Value::as_array).is_none()
-                || row.get("image").and_then(Value::as_str).is_none()
-                || row.get("image_reference").and_then(Value::as_str).is_none()
-                || !observed_ids.insert(id.to_owned())
-                || labels
-                    .get("com.docker.compose.project")
-                    .and_then(Value::as_str)
-                    != Some(project)
-            {
-                return Err(RunError::unavailable(
-                    "workspace creator inventory is incomplete or ambiguous",
-                ));
-            }
-            if id == target.container_id {
-                if labels
-                    .get("com.docker.compose.service")
-                    .and_then(Value::as_str)
-                    != Some(primary)
-                {
-                    return Err(RunError::refused(
-                        "workspace creator target is not the primary service",
-                    ));
-                }
-                target_rows += 1;
-            }
-        }
-        if target_rows != 1
-            || !record_value
-                .get("image_identities")
-                .and_then(Value::as_object)
-                .is_some_and(|images| images.contains_key(primary))
-        {
-            return Err(RunError::unavailable(
-                "workspace creator target or image identity unavailable",
-            ));
-        }
-        let images = record_value
-            .get("image_identities")
-            .and_then(Value::as_object)
-            .ok_or_else(|| RunError::unavailable("workspace creator images unavailable"))?;
-        for image in images.values() {
-            let capability = image.get("capability").and_then(Value::as_str);
-            if image
-                .get("rendered_reference")
-                .and_then(Value::as_str)
-                .is_none()
-                || image
-                    .get("observed_reference")
-                    .and_then(Value::as_str)
-                    .is_none()
-                || image.get("resolved_id").is_none()
-                || image.get("config_hash").is_none()
-                || !matches!(
-                    capability,
-                    Some(
-                        "container_image_id"
-                            | "reference_resolved_id"
-                            | "digest_reference"
-                            | "attached_reference_config_hash"
-                    )
-                )
-            {
-                return Err(RunError::unavailable(
-                    "workspace creator image identity is incomplete",
-                ));
-            }
-        }
-        if record_value
-            .get("compose_files")
-            .and_then(Value::as_array)
-            .is_none_or(|rows| rows.iter().any(|row| row.as_str().is_none()))
-            || record_value
-                .get("attached")
-                .and_then(Value::as_array)
-                .is_none_or(|rows| rows.iter().any(|row| row.as_str().is_none()))
-        {
-            return Err(RunError::unavailable(
-                "workspace creator attachment or compose list is malformed",
-            ));
-        }
-        let created = record_value
-            .get("created")
-            .and_then(Value::as_array)
-            .ok_or_else(|| RunError::unavailable("workspace creator ID set unavailable"))?;
-        let mut created_ids = Vec::with_capacity(created.len());
-        for entry in created {
-            let id = entry
-                .get("container_id")
-                .and_then(Value::as_str)
-                .filter(|id| id.len() == 64 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
-                .ok_or_else(|| RunError::unavailable("workspace creator ID set is malformed"))?;
-            if [
-                "name",
-                "service",
-                "image_id",
-                "image_reference",
-                "image_capability",
-            ]
-            .iter()
-            .any(|key| entry.get(key).and_then(Value::as_str).is_none())
-                || !observed_ids.contains(id)
-            {
-                return Err(RunError::unavailable(
-                    "workspace creator ID record is incomplete or absent from inventory",
-                ));
-            }
-            created_ids.push(id.to_owned());
-        }
-        created_ids.sort();
-        if created_ids.windows(2).any(|pair| pair[0] == pair[1]) {
-            return Err(RunError::unavailable(
-                "workspace creator ID set is ambiguous",
-            ));
-        }
-        match &inputs.target {
-            TargetEvidence::Observed(expected) if expected == &target => {}
-            TargetEvidence::Absent { .. } if created_ids.contains(&target.container_id) => {}
-            _ => {
-                return Err(RunError::refused(
-                    "workspace target differs from frozen creation evidence",
-                ))
-            }
-        }
-        Ok(WorkspaceResumeFacts {
-            reservation: reservation.id(),
-            environment: self.owner.resource.clone(),
-            environment_run: self.id,
-            environment_generation: self.owner.generation,
-            session,
-            selection: inputs.selection.clone(),
-            target,
-            platform,
-            creator_receipt: receipt,
-            created_ids,
+        self.store.transaction(&self.cx, |txn| {
+            let record = reservation.verify_claimed_run(txn.conn(), self.id, &self.owner)?;
+            let facts = journal::effects(txn.conn(), self.id).and_then(|effects| {
+                crate::workspace_session::resume_facts(&record, self.id, &self.owner, &effects)
+            });
+            Ok((record, facts))
         })
     }
 
@@ -1285,11 +1053,10 @@ impl<'a> Run<'a> {
                     "workspace activation deadline expired",
                 ));
             }
-            let snapshot =
-                reservation.verify_claimed_run(self.store.conn(), self.id, &self.owner)?;
             // A partially prepared owner may still park for safe cleanup, but
             // it cannot resume unless every required fact was captured.
-            let resume_facts = self.workspace_resume_facts(reservation, &snapshot).ok();
+            let (snapshot, facts) = self.workspace_snapshot(reservation)?;
+            let resume_facts = facts.ok();
             let identity = crate::ident::process_identity(std::process::id())
                 .verified()
                 .cloned()
@@ -2121,7 +1888,7 @@ impl<'a> Run<'a> {
         sequence: i64,
     ) -> Result<(), RunError> {
         self.store.transaction(&self.cx, |txn| {
-            journal::check_run_fence(txn.conn(), self.id, &self.owner)?;
+            crate::workspace_session::check_run_fence(txn.conn(), self.id, &self.owner)?;
             journal::write_effect(txn, self.id, sequence, EffectState::Released, None, None)
         })
     }
@@ -2256,7 +2023,7 @@ impl<'a> Run<'a> {
                 |txn| {
                     journal::check_fence(txn.conn(), &self.owner)?;
                     if spec.target != self.owner {
-                        journal::check_intent_target(txn.conn(), self.id, &spec)?;
+                        crate::workspace_session::check_intent_target(txn.conn(), self.id, &spec)?;
                     }
                     journal::insert_effect(txn, self.id, &spec)
                 },
@@ -2337,7 +2104,7 @@ impl<'a> Run<'a> {
             crate::fault_point!(AppliedBefore)?;
             self.store
                 .transaction(&self.cx.child(std::time::Duration::from_secs(30)), |txn| {
-                    journal::check_run_fence(txn.conn(), self.id, &self.owner)?;
+                    crate::workspace_session::check_run_fence(txn.conn(), self.id, &self.owner)?;
                     let effect = journal::effect(txn.conn(), self.id, ticket.sequence)?;
                     journal::check_run_target(txn.conn(), self.id, &self.owner, &effect)?;
                     if effect.spec.target != self.owner
@@ -2385,7 +2152,7 @@ impl<'a> Run<'a> {
             }
             self.store
                 .transaction(&self.cx.child(std::time::Duration::from_secs(30)), |txn| {
-                    journal::check_run_fence(txn.conn(), self.id, &self.owner)?;
+                    crate::workspace_session::check_run_fence(txn.conn(), self.id, &self.owner)?;
                     let effect = journal::effect(txn.conn(), self.id, ticket.sequence)?;
                     journal::check_run_target(txn.conn(), self.id, &self.owner, &effect)?;
                     if !matches!(effect.state, EffectState::Intended | EffectState::Unknown) {
@@ -2456,7 +2223,7 @@ impl<'a> Run<'a> {
             crate::fault_point!(PhaseBefore)?;
             self.store
                 .transaction(&self.cx.child(std::time::Duration::from_secs(30)), |txn| {
-                    journal::check_run_fence(txn.conn(), self.id, &self.owner)?;
+                    crate::workspace_session::check_run_fence(txn.conn(), self.id, &self.owner)?;
                     txn.conn().execute(
                         "UPDATE runs SET phase=?2,updated_at=?3 WHERE run_id=?1",
                         params![self.id.to_string(), phase.name(), txn.now()],
@@ -2482,7 +2249,7 @@ impl<'a> Run<'a> {
         if ticket.run != self.id || ticket.owner != self.owner {
             return Err(RunError::broken("foreign completion ticket"));
         }
-        journal::check_run_fence(self.store.conn(), self.id, &self.owner)?;
+        crate::workspace_session::check_run_fence(self.store.conn(), self.id, &self.owner)?;
         let effect = journal::effect(self.store.conn(), self.id, ticket.sequence)?;
         journal::check_run_target(self.store.conn(), self.id, &self.owner, &effect)?;
         if effect.state != EffectState::Applied || self.completed.contains_key(&ticket.sequence) {
@@ -2550,7 +2317,7 @@ impl<'a> Run<'a> {
                 &self.cx,
                 BusyWait::AtLeast(SETTLE_BUSY_WAIT),
                 |txn| {
-                    journal::check_run_fence(txn.conn(), self.id, &self.owner)?;
+                    crate::workspace_session::check_run_fence(txn.conn(), self.id, &self.owner)?;
                     crate::fault_point!(PhaseBefore)?;
                     txn.conn().execute("UPDATE runs SET phase='stopping',workload_outcome=?2,updated_at=?3 WHERE run_id=?1",
                         params![self.id.to_string(), serde_json::to_string(&workload)?, txn.now()])?;
@@ -2586,7 +2353,7 @@ impl<'a> Run<'a> {
         let cx = settle::cleanup_effects(cleanup)?;
         let machine_lifecycle = self.machine_lifecycle();
         self.store.transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
-            journal::check_run_fence(txn.conn(), self.id, &self.owner)?;
+            crate::workspace_session::check_run_fence(txn.conn(), self.id, &self.owner)?;
             txn.conn().execute("UPDATE runs SET phase='stopping',workload_outcome=?2,updated_at=?3 WHERE run_id=?1",params![self.id.to_string(),serde_json::to_string(&workload)?,txn.now()])?;
             if machine_lifecycle {
                 txn.conn().execute("UPDATE requests SET state='resolved',resolved_at=?2 WHERE run_id=?1 AND state='pending'", params![self.id.to_string(),txn.now()])?;
@@ -2708,7 +2475,7 @@ pub(super) fn request_bounded(
     let mut store = Store::open_within(cx, root, wait)?;
     crate::fault_point!(RequestBefore)?;
     store.transaction_within(cx, wait, |txn| {
-        journal::check_run_fence(txn.conn(), request.run, &request.expected)?;
+        crate::workspace_session::check_run_fence(txn.conn(), request.run, &request.expected)?;
         let record = journal::run(txn.conn(), request.run)?;
         if record.owner != request.expected.resource.name().to_string() || record.generation != request.expected.generation || record.phase == Phase::Closed {
             return Err(RunError::refused("request run is not current"));
@@ -2766,7 +2533,7 @@ fn pending_requests(
 
 impl Run<'_> {
     pub fn requests(&self) -> Result<Vec<Request>, RunError> {
-        journal::check_run_fence(self.store.conn(), self.id, &self.owner)?;
+        crate::workspace_session::check_run_fence(self.store.conn(), self.id, &self.owner)?;
         pending_requests(self.store.conn(), self.id, &self.owner)
     }
 
@@ -2810,7 +2577,7 @@ impl Run<'_> {
             return Err(RunError::broken("foreign request"));
         }
         self.store.transaction(&self.cx.child(std::time::Duration::from_secs(30)), |txn| {
-            journal::check_run_fence(txn.conn(), request.run, &request.expected)?;
+            crate::workspace_session::check_run_fence(txn.conn(), request.run, &request.expected)?;
             txn.conn().execute("UPDATE requests SET state='resolved',resolved_at=?2 WHERE request_id=?1 AND run_id=?3",
                 params![request.id.to_string(), txn.now(), self.id.to_string()])?;
             Ok::<_, RunError>(())
@@ -2921,7 +2688,7 @@ impl Run<'_> {
         cleanup: &CleanupContext,
     ) -> Result<std::process::ExitStatus, RunError> {
         self.require_environment_gate()?;
-        journal::check_run_fence(self.store.conn(), self.id, &self.owner)?;
+        crate::workspace_session::check_run_fence(self.store.conn(), self.id, &self.owner)?;
         let partial = self
             .partial_sentinel
             .as_mut()

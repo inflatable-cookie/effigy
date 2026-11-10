@@ -45,6 +45,8 @@ pub use guest_stage::{
 };
 mod selection;
 mod serving;
+mod transition;
+pub(crate) use transition::{check_intent_target, check_run_fence, resume_facts};
 
 #[cfg(test)]
 mod tests;
@@ -1147,23 +1149,32 @@ fn read_reservation(
     decode_reservation(conn, environment, row)
 }
 
-/// The most recent reservation for `environment`: a later generation is a new
-/// activation, and the earlier row stays as the evidence a recovery reads.
-fn latest_reservation(
+/// Re-read an exact reservation in the caller's snapshot. Missing or mismatched
+/// records never grant a claim, publication or recovery authority.
+fn require_reservation(
     conn: &rusqlite::Connection,
     environment: &ResourceId,
-) -> Result<Option<ActivationReservationRecord>, RunError> {
-    let row = conn
-        .query_row(
-            "SELECT environment_generation, reservation_id, state, environment_run, \
-             session_owner, session_run, session_generation, inputs \
-             FROM workspace_activation_reservations \
-             WHERE environment=?1 ORDER BY environment_generation DESC LIMIT 1",
-            [environment.name().to_string()],
-            reservation_row,
-        )
-        .optional()?;
-    decode_reservation(conn, environment, row)
+    generation: Generation,
+    id: ActivationReservationId,
+) -> Result<ActivationReservationRecord, RunError> {
+    let stored = read_reservation(conn, environment, generation)?
+        .ok_or_else(|| RunError::broken("the activation reservation vanished"))?;
+    if stored.id != id {
+        return Err(ActivationRefusal::WrongReservation.into());
+    }
+    Ok(stored)
+}
+
+impl ActivationReservationRecord {
+    fn require_reserved(&self) -> Result<(), RunError> {
+        match self.state {
+            ActivationReservationState::Reserved => Ok(()),
+            ActivationReservationState::Committed => {
+                Err(ActivationRefusal::AlreadyCommitted.into())
+            }
+            ActivationReservationState::Cancelled => Err(ActivationRefusal::Cancelled.into()),
+        }
+    }
 }
 
 /// Never hide an unfinished fence behind a later empty reservation. This also
@@ -1172,19 +1183,19 @@ fn recoverable_reservation(
     conn: &rusqlite::Connection,
     environment: &ResourceId,
 ) -> Result<Option<ActivationReservationRecord>, RunError> {
-    let pending: Option<i64> = conn
+    let row = conn
         .query_row(
-            "SELECT environment_generation FROM workspace_activation_reservations \
-         WHERE environment=?1 AND state NOT IN ('committed','cancelled') \
-         ORDER BY environment_generation LIMIT 1",
+            "SELECT environment_generation, reservation_id, state, environment_run, \
+         session_owner, session_run, session_generation, inputs \
+         FROM workspace_activation_reservations WHERE environment=?1 \
+         ORDER BY state IN ('committed','cancelled'), \
+         CASE WHEN state NOT IN ('committed','cancelled') THEN environment_generation END ASC, \
+         environment_generation DESC LIMIT 1",
             [environment.name().to_string()],
-            |row| row.get(0),
+            reservation_row,
         )
         .optional()?;
-    match pending {
-        Some(generation) => read_reservation(conn, environment, Generation::new(generation as u64)),
-        None => latest_reservation(conn, environment),
-    }
+    decode_reservation(conn, environment, row)
 }
 
 /// Whether the live mapping already serves exactly these inputs, and if so the
@@ -1348,20 +1359,15 @@ pub(crate) fn session_of_run(
     conn: &rusqlite::Connection,
     run: RunId,
 ) -> Result<Option<SessionRef>, RunError> {
-    let mapped: Option<(i64, i64, String)> = conn
+    let mapped: Option<(i64, i64, String, String)> = conn
         .query_row(
-            "SELECT session_generation, environment_generation, environment FROM workspace_sessions \
-             WHERE run_id=?1",
+            "SELECT s.session_generation, s.environment_generation, s.environment, r.owner \
+             FROM workspace_sessions s LEFT JOIN runs r ON r.run_id=s.run_id WHERE s.run_id=?1",
             [run.to_string()],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .optional()?;
-    if let Some((session, environment_generation, environment)) = mapped {
-        let owner: String = conn.query_row(
-            "SELECT owner FROM runs WHERE run_id=?1",
-            [run.to_string()],
-            |row| row.get(0),
-        )?;
+    if let Some((session, environment_generation, environment, owner)) = mapped {
         let owner = owner_identity(conn, &owner)?;
         let environment = owner_identity(conn, &environment)?;
         return Ok(Some(SessionRef::new(
@@ -1463,14 +1469,22 @@ pub(crate) fn preserved_environment(
     if session.environment_generation != fence.generation {
         return Ok(false);
     }
+    preserved_session(conn, &fence.resource, &session)
+}
+
+fn preserved_session(
+    conn: &rusqlite::Connection,
+    environment: &ResourceId,
+    session: &SessionRow,
+) -> Result<bool, RunError> {
     Ok(conn
         .query_row(
             "SELECT r.state IN ('active','pending') AND r.last_applied=?2 \
              AND EXISTS(SELECT 1 FROM runs WHERE run_id=?3 AND phase IN ('admitted','starting','active')) \
              FROM resources r WHERE r.name=?1",
             params![
-                fence.resource.name().to_string(),
-                fence.generation.get().to_string(),
+                environment.name().to_string(),
+                session.environment_generation.get().to_string(),
                 session.run.to_string()
             ],
             |row| row.get::<_, Option<bool>>(0),
@@ -1492,7 +1506,7 @@ pub(crate) fn preserve_active_predecessor(
         resource: owner.resource.clone(),
         generation: session.environment_generation,
     };
-    if !preserved_environment(txn.conn(), &applied)? {
+    if !preserved_session(txn.conn(), &owner.resource, &session)? {
         return Ok(None);
     }
     txn.conn().execute(
@@ -1796,6 +1810,10 @@ pub struct WorkspaceActivationReservation {
 }
 
 impl WorkspaceActivationReservation {
+    fn stored(&self, conn: &rusqlite::Connection) -> Result<ActivationReservationRecord, RunError> {
+        require_reservation(conn, self.environment(), self.generation(), self.id())
+    }
+
     /// Reserve `environment`'s next generation E.
     ///
     /// `Gate(Env)` is taken for this commit and relinquished before it returns,
@@ -2264,11 +2282,7 @@ impl WorkspaceActivationReservation {
             return Err(ActivationRefusal::WrongGeneration.into());
         }
         crate::run::check_workspace_fence(conn, fence)?;
-        let stored = read_reservation(conn, &self.record.environment, self.record.generation)?
-            .ok_or(ActivationRefusal::WrongReservation)?;
-        if stored.id != self.record.id {
-            return Err(ActivationRefusal::WrongReservation.into());
-        }
+        let stored = self.stored(conn)?;
         if stored.state != ActivationReservationState::Reserved {
             return Err(ActivationRefusal::Frozen.into());
         }
@@ -2354,27 +2368,9 @@ impl WorkspaceActivationReservation {
     ) -> Result<SessionClaim, RunError> {
         let observe = activation_observe(cx)?;
         let reader = activation_reader(&observe, root)?;
-        let stored = read_reservation(
-            reader.conn(),
-            &self.record.environment,
-            self.record.generation,
-        )?
-        .ok_or_else(|| {
-            RunError::broken("the activation reservation vanished before its session")
-        })?;
-        if stored.id != self.record.id {
-            return Err(RunError::from(ActivationRefusal::WrongReservation));
-        }
+        let stored = self.stored(reader.conn())?;
         check_staging_attempt(reader.conn(), stored.id, attempt)?;
-        match stored.state {
-            ActivationReservationState::Reserved => {}
-            ActivationReservationState::Committed => {
-                return Err(RunError::from(ActivationRefusal::AlreadyCommitted))
-            }
-            ActivationReservationState::Cancelled => {
-                return Err(RunError::from(ActivationRefusal::Cancelled))
-            }
-        }
+        stored.require_reserved()?;
         let Some(binding) = stored.session else {
             return Err(RunError::from(ActivationRefusal::NotStaged));
         };
@@ -2439,11 +2435,7 @@ impl WorkspaceActivationReservation {
             // environment's exists from its first reservation, so the frozen
             // identity can always be read back to the identity it names.
             txn.resource(owner, "workspace session")?;
-            let stored = read_reservation(txn.conn(), &self.record.environment, self.record.generation)?
-                .ok_or_else(|| RunError::broken("the activation reservation vanished before staging"))?;
-            if stored.id != self.record.id {
-                return Err(RunError::from(ActivationRefusal::WrongReservation));
-            }
+            let stored = self.stored(txn.conn())?;
             let prior_attempt: Option<String> = txn.conn().query_row(
                 "SELECT attempt_id FROM workspace_activation_attempts WHERE reservation_id=?1",
                 [stored.id.to_string()], |row| row.get(0),
@@ -2486,24 +2478,7 @@ impl WorkspaceActivationReservation {
                     "the staged workspace session already borrows another environment",
                 ));
             }
-            let stored = read_reservation(
-                txn.conn(),
-                &self.record.environment,
-                self.record.generation,
-            )?
-            .ok_or_else(|| RunError::broken("the activation reservation vanished before staging"))?;
-            if stored.id != self.record.id {
-                return Err(RunError::from(ActivationRefusal::WrongReservation));
-            }
-            match stored.state {
-                ActivationReservationState::Reserved => {}
-                ActivationReservationState::Committed => {
-                    return Err(RunError::from(ActivationRefusal::AlreadyCommitted))
-                }
-                ActivationReservationState::Cancelled => {
-                    return Err(RunError::from(ActivationRefusal::Cancelled))
-                }
-            }
+            stored.require_reserved()?;
             // The activation has admitted its environment run: its publication
             // may already have happened, so the session it will publish is
             // frozen. This is the replacement-after-publication refusal.
@@ -2695,17 +2670,7 @@ impl WorkspaceActivationReservation {
         let (plan, frozen) = {
             let observe = activation_observe(cx)?;
             let reader = activation_reader(&observe, root)?;
-            let stored = read_reservation(
-                reader.conn(),
-                &self.record.environment,
-                self.record.generation,
-            )?
-            .ok_or_else(|| {
-                RunError::broken("the activation reservation vanished before its commit")
-            })?;
-            if stored.id != self.record.id {
-                return Err(RunError::from(ActivationRefusal::WrongReservation));
-            }
+            let stored = self.stored(reader.conn())?;
             let plan = activation_plan(reader.conn(), &stored)?
                 .ok_or_else(|| RunError::from(ActivationRefusal::NotStaged))?;
             if !session_run.owns_workspace_session(root, &plan.session)? {
@@ -2775,11 +2740,7 @@ impl WorkspaceActivationReservation {
         let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
         let committed = store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
             run::check_activation_fence(txn.conn(), &fence)?;
-            let stored = read_reservation(txn.conn(), &self.record.environment, self.record.generation)?
-                .ok_or_else(|| RunError::broken("the activation reservation vanished before its commit"))?;
-            if stored.id != self.record.id {
-                return Err(RunError::from(ActivationRefusal::WrongReservation));
-            }
+            let stored = self.stored(txn.conn())?;
             // The frozen staged identity is what the receipt was authenticated
             // against: the exact owner, run and S the staging froze, never a
             // session that appeared or changed afterwards.
@@ -2937,16 +2898,7 @@ impl WorkspaceActivationReservation {
         )?;
         let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
         let record = store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
-            let stored =
-                read_reservation(txn.conn(), &self.record.environment, self.record.generation)?
-                    .ok_or_else(|| {
-                        RunError::broken(
-                            "the activation reservation vanished before it was cancelled",
-                        )
-                    })?;
-            if stored.id != self.record.id {
-                return Err(RunError::from(ActivationRefusal::WrongReservation));
-            }
+            let stored = self.stored(txn.conn())?;
             let saved: Option<String> = txn
                 .conn()
                 .query_row(
@@ -3098,21 +3050,8 @@ impl EnvironmentClaim {
         if generation != self.generation {
             return Err(RunError::from(ActivationRefusal::WrongGeneration));
         }
-        let stored = read_reservation(txn.conn(), owner, generation)?.ok_or_else(|| {
-            RunError::broken("the activation reservation vanished before its run was admitted")
-        })?;
-        if stored.id != self.reservation {
-            return Err(RunError::from(ActivationRefusal::WrongReservation));
-        }
-        match stored.state {
-            ActivationReservationState::Reserved => {}
-            ActivationReservationState::Committed => {
-                return Err(RunError::from(ActivationRefusal::AlreadyCommitted))
-            }
-            ActivationReservationState::Cancelled => {
-                return Err(RunError::from(ActivationRefusal::Cancelled))
-            }
-        }
+        let stored = require_reservation(txn.conn(), owner, generation, self.reservation)?;
+        stored.require_reserved()?;
         if let Some(claimed) = stored.environment_run {
             if claimed != run {
                 return Err(RunError::from(ActivationRefusal::ClaimedByAnotherRun));
@@ -3198,23 +3137,14 @@ impl SessionClaim {
         if run != self.binding.run || generation != self.binding.generation {
             return Err(RunError::from(ActivationRefusal::WrongGeneration));
         }
-        let stored =
-            read_reservation(txn.conn(), &self.environment, self.generation)?.ok_or_else(|| {
-                RunError::broken("the activation reservation vanished before its session")
-            })?;
-        if stored.id != self.reservation {
-            return Err(RunError::from(ActivationRefusal::WrongReservation));
-        }
+        let stored = require_reservation(
+            txn.conn(),
+            &self.environment,
+            self.generation,
+            self.reservation,
+        )?;
         check_staging_attempt(txn.conn(), self.reservation, self.attempt)?;
-        match stored.state {
-            ActivationReservationState::Reserved => {}
-            ActivationReservationState::Committed => {
-                return Err(RunError::from(ActivationRefusal::AlreadyCommitted))
-            }
-            ActivationReservationState::Cancelled => {
-                return Err(RunError::from(ActivationRefusal::Cancelled))
-            }
-        }
+        stored.require_reserved()?;
         // The staging is frozen: the identity this claim names is still the one
         // the reservation holds, or the claim admits nothing.
         if stored.session.as_ref() != Some(&self.binding) {
