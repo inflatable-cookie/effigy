@@ -1115,6 +1115,10 @@ Spawn protocol:
 | 3 | parent records `{pid, pgid, start identity, boot identity, anchor}` as `Applied` | child and pre-go anchor exit; settle observes closure |
 | 4 | parent writes go; child releases the anchor, then execs the workload | settle stops the workload and anchor by identity |
 
+Custody prepares one ordered descriptor mapping before fork. It copies every
+source above all destinations and derives the child's close ranges from that
+mapping; fd 10 remains the closure pin and fd 11 the one-shot handoff.
+
 Every custody spawn sets `EFFIGY_CUSTODY_NONCE=<run>:<effect>` in the child's
 environment; descendants inherit it. It is evidence, not a credential.
 The blocked leader creates the workload's process group, and for every route
