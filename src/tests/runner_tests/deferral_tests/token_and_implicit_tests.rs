@@ -194,6 +194,11 @@ case "$*" in
 esac
 if [ "$id_mode" = uid ]; then printf '501\n'; exit 0; fi
 if [ "$id_mode" = gid ]; then printf '20\n'; exit 0; fi
+case "$*" in
+  *EFFIGY_DEFER_DEPTH=1*)
+    if [ -f "$PWD/defer-probe.py" ]; then python3 "$PWD/defer-probe.py" || exit $?; fi
+    ;;
+esac
 if [ "$1" = exec ] || [ "$1" = compose ]; then
   # Guest-owned provisioning scripts run against the private guest root. Any
   # other exec (the deferred user command) keeps its recorded no-op behaviour.
@@ -1095,5 +1100,211 @@ fn run_manifest_task_php_app_bundle_refuses_tampered_staged_guest_bytes() {
     assert!(
         message.contains("does not match the pinned digest"),
         "tampered staged bytes must refuse at read-back, got {message}"
+    );
+}
+
+fn deferred_environment_lifetime(running: bool, bundle_update: bool) {
+    let _guard = lock_test();
+    let fixture = effigy_test_support::Fixture::new("defer-held").expect("owned fixture");
+    let root = fixture.path();
+    fs::create_dir(root.join(".git")).expect("git dir");
+    setup_php_library_path_bundle(root);
+    let source = root.join("bundles/php-library");
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&source)
+            .output()
+            .expect("fixture git");
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    };
+    let commit = || {
+        git(&["add", "."]);
+        git(&[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.test",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            "fixture",
+        ]);
+        git(&["rev-parse", "HEAD"])
+    };
+    if bundle_update {
+        git(&["init", "--initial-branch=main", "--quiet"]);
+        commit();
+        write_root_manifest(
+            root,
+            &format!(
+                "[bundle]\nbase = {{ type = \"git\", url = \"file://{}\" }}\n",
+                source.display()
+            ),
+        );
+    } else {
+        write_root_manifest(
+            root,
+            "[bundle]\nbase = { type = \"path\", dir = \"bundles/php-library\" }\n",
+        );
+    }
+    let (docker_log, _env) = setup_fake_docker_deferral_runtime(root);
+    crate::runner::bundle_command::prepare_missing_sources_for_manifest(&root.join("effigy.toml"))
+        .expect("acquire fixture bundle");
+    let before =
+        effigy_containers::load_container_policy(root, Some("web")).expect("initial policy");
+    if running {
+        // A held stack left by an interrupted invocation is adopted by this run.
+        let bring_up = crate::runner::environment::reconcile(
+            root,
+            &before,
+            effigy_containers::environment::Retention::Held,
+            || Ok(()),
+        )
+        .expect("record stack");
+        fs::write(root.join("fake-docker-running"), "running").expect("running runtime");
+        fs::write(root.join("fake-compose-project"), &before.project_name).expect("project");
+        crate::runner::environment::activate(&bring_up, &before, &[]).expect("activate stack");
+    }
+    let updated = if bundle_update {
+        let export = source.join("export.toml");
+        let text = fs::read_to_string(&export)
+            .expect("read export")
+            .replace(
+                "project_name = \"{{ resolved_project_name }}\"",
+                "project_name = \"deferred-updated-project\"",
+            )
+            .replace("node_version = \"24\"", "node_version = \"25\"");
+        fs::write(export, text).expect("update bundle render");
+        Some(commit())
+    } else {
+        None
+    };
+    fs::write(
+        root.join("defer-probe.py"),
+        r#"import pathlib, sqlite3
+root = pathlib.Path.cwd()
+assert (root / 'fake-docker-running').exists(), 'stopped before deferred exec'
+with sqlite3.connect('file:' + str(root / '.effigy/state/kernel.db') + '?mode=ro', uri=True) as db:
+    holders = db.execute("SELECT run_id FROM attachments WHERE state != 'released'").fetchall()
+    assert len(holders) == 1, 'deferred exec must own one hold: ' + str(holders)
+(root / 'deferred-observed').write_text(str(holders))
+"#,
+    )
+    .expect("write probe");
+    run_task_expect_empty_output(root, "missing-task", &[], "deferred command succeeds");
+    assert!(root.join("deferred-observed").is_file());
+    assert!(
+        !root.join("fake-docker-running").exists(),
+        "idle policy stops after exec"
+    );
+    let log = fs::read_to_string(docker_log).expect("backend log");
+    let exec = log.find("EFFIGY_DEFER_DEPTH=1").expect("deferred exec");
+    let down = log.find(" down").expect("idle stop");
+    assert!(exec < down, "{log}");
+    let policy = effigy_containers::load_container_policy(root, Some("web")).expect("policy");
+    let record = crate::runner::environment::record(&policy).expect("record");
+    assert!(!record.protected(), "deferred hold released");
+    assert_eq!(
+        record.state,
+        effigy_containers::environment::EnvState::Stopped
+    );
+    let missing =
+        crate::runner::container_runtime_prep::ensure_primary_service_binding(root, &policy, None)
+            .expect_err("stopped target refuses")
+            .to_string();
+    assert!(
+        missing.contains("was stopped before this command could start"),
+        "{missing}"
+    );
+    if let Some(updated) = updated {
+        let lock: serde_json::Value = serde_json::from_slice(
+            &fs::read(root.join(".effigy/sources.lock.json")).expect("lock"),
+        )
+        .expect("json");
+        assert_eq!(lock["sources"]["bundle"]["revision"], updated);
+        assert_eq!(
+            record.engine().expect("engine").project,
+            "deferred-updated-project"
+        );
+        assert!(
+            log.contains("-p deferred-updated-project"),
+            "new render applied before exec: {log}"
+        );
+    }
+}
+
+#[test]
+fn deferred_container_holds_stopped_environment_until_command_exit() {
+    deferred_environment_lifetime(false, false);
+}
+
+#[test]
+fn deferred_container_holds_running_environment_until_command_exit() {
+    deferred_environment_lifetime(true, false);
+}
+
+#[test]
+fn deferred_container_holds_environment_across_bundle_update() {
+    deferred_environment_lifetime(false, true);
+}
+
+/// An either deferral with no container is an ordinary host task: a usable
+/// bundle pin stays fixed even when the source has changed (contract 020).
+#[test]
+fn host_bound_either_deferral_keeps_changed_bundle_source_pinned() {
+    let _guard = lock_test();
+    let fixture = effigy_test_support::Fixture::new("defer-host-pin").expect("owned fixture");
+    let root = fixture.path();
+    fs::create_dir(root.join(".git")).expect("git dir");
+    let source = root.join("bundle");
+    fs::create_dir(&source).expect("bundle dir");
+    fs::write(
+        source.join("bundle.toml"),
+        "[bundle]\nname = \"host-deferral\"\n",
+    )
+    .expect("bundle identity");
+    let export = source.join("effigy.toml");
+    let original = "[defer]\nrun = \"printf original > deferred-observed\"\nrun_in = \"either\"\n";
+    fs::write(&export, original).expect("bundle export");
+    write_root_manifest(
+        root,
+        "[bundle]\nbase = { type = \"path\", dir = \"bundle\" }\n",
+    );
+    let home = root.join("home");
+    fs::create_dir(&home).expect("private home");
+    let _env = EnvGuard::set_many(&[
+        ("HOME", Some(home.display().to_string())),
+        ("SHELL", Some("/bin/sh".to_owned())),
+    ]);
+    crate::runner::bundle_command::prepare_missing_sources_for_manifest(&root.join("effigy.toml"))
+        .expect("acquire usable bundle pin");
+    let lock_path = root.join(".effigy/sources.lock.json");
+    let lock = fs::read(&lock_path).expect("source pin");
+    let update_path = root.join(".effigy/sources.update.json");
+    let update = fs::read(&update_path).ok();
+    fs::write(&export, original.replace("original", "updated")).expect("changed source");
+
+    run_task_expect_empty_output(root, "missing-task", &[], "host deferral succeeds");
+
+    assert_eq!(
+        fs::read_to_string(root.join("deferred-observed")).expect("host command"),
+        "original"
+    );
+    assert_eq!(
+        fs::read(lock_path).expect("retained source pin"),
+        lock,
+        "host deferral must not refresh a usable pin"
+    );
+    assert_eq!(
+        fs::read(update_path).ok(),
+        update,
+        "host deferral must not record a source refresh"
     );
 }

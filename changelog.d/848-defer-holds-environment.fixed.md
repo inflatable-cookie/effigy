@@ -1,0 +1,1 @@
+Deferrals that resolve to a container now refresh bundle sources before resolving their environment, keeping preparation and execution on the same container policy under one hold. A first run after a bundle update no longer probes the previous project or stops the stack before the deferred command starts. Missing container targets report the environment state or resolved project.

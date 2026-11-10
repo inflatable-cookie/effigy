@@ -218,13 +218,14 @@ fn run_deferred_request_with_binding(
         };
     }
 
-    let manifest = load_task_manifest(&manifest_path)
+    let local_working_dir = local_container_deferral_working_dir();
+    let mut manifest = load_task_manifest(&manifest_path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let binding_task = ManifestTask {
         run_in: Some(deferral.run_in),
         ..Default::default()
     };
-    let binding_resolution = resolve_execution_binding_resolution(
+    let mut binding_resolution = resolve_execution_binding_resolution(
         None,
         manifest.systems.as_ref(),
         manifest.containers.as_ref(),
@@ -232,6 +233,26 @@ fn run_deferred_request_with_binding(
         &binding_task,
         "deferral",
     )?;
+    if local_working_dir.is_none()
+        && matches!(
+            binding_resolution.binding(),
+            ContainerExecutionBinding::Container { .. } | ContainerExecutionBinding::Inline { .. }
+        )
+    {
+        // Only a container route prepares sources. Re-resolve its binding
+        // afterward: the refresh can change the project, service or workdir.
+        crate::runner::bundle_command::prepare_sources_at(&deferral.working_dir)?;
+        manifest = load_task_manifest(&manifest_path)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        binding_resolution = resolve_execution_binding_resolution(
+            None,
+            manifest.systems.as_ref(),
+            manifest.containers.as_ref(),
+            "defer",
+            &binding_task,
+            "deferral",
+        )?;
+    }
     let binding = binding_resolution.binding();
 
     match binding {
@@ -251,7 +272,7 @@ fn run_deferred_request_with_binding(
             )))
         }
         ContainerExecutionBinding::Container { .. } | ContainerExecutionBinding::Inline { .. } => {
-            if let Some(local_working_dir) = local_container_deferral_working_dir() {
+            if let Some(local_working_dir) = local_working_dir {
                 let command =
                     build_deferred_command(task, runtime_args, deferral, &local_working_dir)?;
                 let rendered_command = render_deferred_runtime_command(
@@ -317,10 +338,10 @@ fn run_deferred_request_with_binding(
                         ),
                 },
             )?;
-            let policy = activation.policy;
+            let policy = &activation.policy;
             let tty = std::io::stdout().is_terminal() || std::io::stderr().is_terminal();
             let args = build_deferred_container_command_args(
-                &policy,
+                policy,
                 &rendered_command,
                 &exec_working_dir,
                 current_depth,
@@ -328,7 +349,7 @@ fn run_deferred_request_with_binding(
             );
             let output = run_compose_exec(
                 &deferral.working_dir,
-                &policy,
+                policy,
                 &args,
                 false,
                 "docker compose exec",
