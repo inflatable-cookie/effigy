@@ -23,23 +23,18 @@ pub(super) fn maybe_run_in_process_sequence(
     context: &ExecutionTaskContext<'_>,
     env_schema: &Option<ResolvedEnv>,
     secrets: Option<&[(&str, &SecretString)]>,
-    run: &mut TaskRun,
-    workload: &mut Option<WorkloadOutcome>,
+    execution: (&mut TaskRun, &mut Option<WorkloadOutcome>),
     tree: ResolvedSteps,
 ) -> Result<Option<String>, RunnerError> {
-    let single;
-    let steps = match selection.task.run.as_ref() {
-        Some(ManifestManagedRun::Sequence(steps)) => steps.as_slice(),
-        Some(ManifestManagedRun::Command(command)) if command.starts_with("task:") => {
-            single = [ManifestManagedRunStep::Command(command.clone())];
-            &single
-        }
+    let (run, workload) = execution;
+    match selection.task.run.as_ref() {
+        Some(ManifestManagedRun::Sequence(_)) => {}
+        Some(ManifestManagedRun::Command(command)) if command.starts_with("task:") => {}
         _ => return Ok(None),
-    };
+    }
     let report = run_steps(
         preflight,
         selection,
-        steps,
         env_schema,
         secrets,
         (
@@ -99,9 +94,7 @@ pub(super) fn run_in_process_sequence_steps(
     run: &TaskRun,
 ) -> Result<(), RunnerError> {
     let tree = resolve_steps(preflight, selection, steps, owner.1, &mut Vec::new())?;
-    let report = run_steps(
-        preflight, selection, steps, env_schema, secrets, owner, run, tree,
-    )?;
+    let report = run_steps(preflight, selection, env_schema, secrets, owner, run, tree)?;
     if report.code == 0 {
         Ok(())
     } else {
@@ -121,7 +114,14 @@ pub(super) fn run_in_process_sequence_steps(
 /// The execution actions and their admission class share one resolved tree.
 pub(in crate::runner::execute) struct ResolvedSteps {
     pub(super) foreground: bool,
-    actions: Vec<StepAction>,
+    steps: Vec<ResolvedStep>,
+}
+
+struct ResolvedStep {
+    action: StepAction,
+    // Environment directives, label and timeout remain declarative inputs;
+    // only `action` decides the execution target.
+    declaration: ManifestManagedRunStep,
 }
 
 pub(in crate::runner::execute) fn resolve_tree(
@@ -215,7 +215,7 @@ fn resolve_tree_from(
         ),
         None => Ok(ResolvedSteps {
             foreground: false,
-            actions: Vec::new(),
+            steps: Vec::new(),
         }),
     };
     ancestors.pop();
@@ -232,22 +232,23 @@ fn resolve_steps(
     passthrough: &[String],
     ancestors: &mut Vec<(PathBuf, String)>,
 ) -> Result<ResolvedSteps, RunnerError> {
-    let actions = steps
+    let steps = steps
         .iter()
-        .map(|step| resolve_step_action(step, preflight, selection, passthrough, ancestors))
-        .collect::<Result<Vec<_>, _>>()?;
-    let foreground = actions.iter().all(|action| match action {
+        .map(|step| {
+            Ok(ResolvedStep {
+                action: resolve_step_action(step, preflight, selection, passthrough, ancestors)?,
+                declaration: step.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, RunnerError>>()?;
+    let foreground = steps.iter().all(|step| match &step.action {
         StepAction::Command(_) | StepAction::Noop => true,
         StepAction::Rhai { .. } => false,
         StepAction::Helper { foreground, .. } => *foreground,
         StepAction::Exec { .. } => false,
         StepAction::Task(child) => child.tree.foreground,
-        StepAction::Fallback { foreground, .. } => *foreground,
     });
-    Ok(ResolvedSteps {
-        actions,
-        foreground,
-    })
+    Ok(ResolvedSteps { steps, foreground })
 }
 
 fn classify_builtin(command: &Command) -> bool {
@@ -295,7 +296,6 @@ struct SequenceReport {
 fn run_steps(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
-    steps: &[ManifestManagedRunStep],
     env_schema: &Option<ResolvedEnv>,
     secrets: Option<&[(&str, &SecretString)]>,
     owner: (&str, &[String]),
@@ -304,14 +304,14 @@ fn run_steps(
 ) -> Result<SequenceReport, RunnerError> {
     let (task_name, passthrough) = owner;
     let _signals = CustodyWait::enter();
-    if steps.is_empty() {
+    if tree.steps.is_empty() {
         return Err(RunnerError::task_invocation(
             "a run sequence must contain at least one step",
         ));
     }
     let mut labels = std::collections::BTreeSet::new();
-    for step in steps {
-        if let ManifestManagedRunStep::Step(table) = step {
+    for step in &tree.steps {
+        if let ManifestManagedRunStep::Step(table) = &step.declaration {
             if let Some(label) = &table.id {
                 if label.trim().is_empty() || !labels.insert(label) {
                     return Err(RunnerError::task_invocation(format!(
@@ -336,11 +336,18 @@ fn run_steps(
     // including the values a step inherits from the task and chains from its
     // predecessors (contract 005).
     let mut host_aliases = host_alias_resolver(preflight, selection)?;
-    let mut planned = Vec::with_capacity(steps.len());
-    for (index, (step, action)) in steps.iter().zip(tree.actions).enumerate() {
+    let mut planned = Vec::with_capacity(tree.steps.len());
+    for (
+        index,
+        ResolvedStep {
+            action,
+            declaration: step,
+        },
+    ) in tree.steps.into_iter().enumerate()
+    {
         env.apply_from_step(
             task_name,
-            step,
+            &step,
             &selection.catalog.manifest.env,
             root,
             &preflight.catalogs,
@@ -380,14 +387,14 @@ fn run_steps(
         for (key, value) in inherited {
             step_env.entry(key).or_insert(value);
         }
-        let (label, timeout) = match step {
+        let (label, timeout) = match &step {
             ManifestManagedRunStep::Command(_) => ((index + 1).to_string(), None),
             ManifestManagedRunStep::Step(table) => (
                 table.id.clone().unwrap_or_else(|| (index + 1).to_string()),
                 table.timeout_ms,
             ),
         };
-        let subject = step_subject(step);
+        let subject = step_subject(&step);
         planned.push((action, step_env, label, timeout, subject, step_secrets));
     }
     let mut report = SequenceReport {
@@ -462,7 +469,6 @@ fn run_steps(
                 selection,
                 root,
                 (task_name, passthrough),
-                timeout,
                 &launch,
                 &mut child,
             )
@@ -598,7 +604,6 @@ fn execute_step(
     selection: &TaskSelection<'_>,
     root: &Path,
     owner: (&str, &[String]),
-    timeout_ms: Option<u64>,
     launch: &crate::runner::task_engine::LaunchInputs,
     run: &mut TaskRun,
 ) -> Result<StepExit, RunnerError> {
@@ -607,18 +612,6 @@ fn execute_step(
         StepAction::Noop => Ok((0, String::new(), String::new(), WorkloadOutcome::Succeeded)),
         StepAction::Task(child) => {
             let output = child.run(launch)?;
-            nested_exit(output, preflight.output_json)
-        }
-        StepAction::Fallback {
-            preflight: child,
-            route,
-            ..
-        } => {
-            let _scope = SpawnScope::inherit(launch);
-            let output = super::selection::run_fallback_route(&child.invocation, &child, route)?;
-            let super::selection::SelectionResolution::Output(output) = output else {
-                unreachable!("fallback contains no selected task")
-            };
             nested_exit(output, preflight.output_json)
         }
         StepAction::Exec { args, cwd } => {
@@ -723,7 +716,8 @@ fn execute_step(
                 cwd: &cwd,
                 env: environment,
                 capture: preflight.output_json || helper,
-                timeout_ms,
+                // The scope already carries the absolute local/parent minimum.
+                timeout_ms: None,
             };
             // A builtin or script step is Effigy's own child process: it
             // receives the session grant. A user command is a workload and
@@ -783,11 +777,6 @@ fn nested_exit(output: String, capture: bool) -> Result<StepExit, RunnerError> {
 enum StepAction {
     Command(String),
     Task(Box<ResolvedTask>),
-    Fallback {
-        preflight: Box<ExecutionPreflight>,
-        route: super::route::Route<'static>,
-        foreground: bool,
-    },
     Helper {
         argv: Vec<String>,
         cwd: PathBuf,
@@ -951,7 +940,7 @@ fn resolve_task_step(
             let tree = if child.help || child.plan {
                 ResolvedSteps {
                     foreground: true,
-                    actions: Vec::new(),
+                    steps: Vec::new(),
                 }
             } else {
                 resolve_tree_from(&child, &selection, ancestors)?
@@ -966,16 +955,13 @@ fn resolve_task_step(
                 tree,
             })))
         }
-        Ok(super::route::Route::Defer { deferral, cause }) => Ok(StepAction::Fallback {
-            preflight: Box::new(child),
-            route: super::route::Route::Defer { deferral, cause },
-            foreground: false,
-        }),
-        Ok(super::route::Route::ExecAlias) => Ok(StepAction::Fallback {
-            preflight: Box::new(child),
-            route: super::route::Route::ExecAlias,
-            foreground: false,
-        }),
+        Ok(super::route::Route::Defer { .. } | super::route::Route::ExecAlias) => helper_step(
+            Some(child.resolved.resolved_root),
+            &invocation.name,
+            &invocation.args,
+            child.invocation_cwd,
+            false,
+        ),
         Ok(super::route::Route::Builtin) => {
             let parsed = parse_builtin_step_command(&selector.task_name, &invocation.args, &cwd)?;
             if matches!(parsed, Command::Task(_)) {
@@ -995,24 +981,34 @@ fn resolve_task_step(
                 } else {
                     false
                 };
-                Ok(StepAction::Fallback {
-                    preflight: Box::new(child),
-                    route: super::route::Route::Builtin,
+                helper_step(
+                    Some(cwd.clone()),
+                    &selector.task_name,
+                    &invocation.args,
+                    cwd,
                     foreground,
-                })
+                )
             } else {
                 if let Command::Exec(args) = parsed {
                     if !crate::runner::container_runtime::inside_container_handoff() {
                         return Ok(StepAction::Exec { args, cwd });
                     }
                     return helper_step(
-                        Command::Exec(args),
+                        args.repo_override.clone(),
                         &selector.task_name,
                         &invocation.args,
                         cwd,
+                        false,
                     );
                 }
-                helper_step(parsed, &selector.task_name, &invocation.args, cwd)
+                let foreground = classify_builtin(&parsed);
+                helper_step(
+                    command_repo_override(&parsed),
+                    &selector.task_name,
+                    &invocation.args,
+                    cwd,
+                    foreground,
+                )
             }
         }
         Err(error) => Err(error),
@@ -1022,17 +1018,18 @@ fn resolve_task_step(
 /// Keep one executable argv. The admission parse supplies class and target,
 /// then is discarded; the supervised child performs its ordinary CLI ingress.
 fn helper_step(
-    parsed: Command,
+    repo: Option<PathBuf>,
     name: &str,
     args: &[String],
     cwd: PathBuf,
+    foreground: bool,
 ) -> Result<StepAction, RunnerError> {
     let mut argv = effigy_core::effigy_invocation::resolve_effigy_invocation_argv(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/Cargo.toml"
     ))
     .map_err(RunnerError::Cwd)?;
-    if let Some(repo) = command_repo_override(&parsed) {
+    if let Some(repo) = repo {
         // Leading globals never enter a builtin's trailing payload or grammar.
         argv.extend(["--repo".to_owned(), repo.display().to_string()]);
     }
@@ -1041,7 +1038,7 @@ fn helper_step(
     Ok(StepAction::Helper {
         argv,
         cwd,
-        foreground: classify_builtin(&parsed),
+        foreground,
     })
 }
 

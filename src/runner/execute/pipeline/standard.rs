@@ -306,8 +306,7 @@ fn run_standard_task_inner(
         context,
         env_schema_resolved,
         secret_ref,
-        run,
-        workload,
+        (run, workload),
         tree,
     )? {
         return Ok(output);

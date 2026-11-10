@@ -14,7 +14,7 @@ use effigy_builtin::{try_run_builtin_task, TestRunRequirement};
 
 /// Carries out the route the one resolver chose for a selector that names
 /// no declared task.
-pub(in crate::runner::execute) fn run_fallback_route<'a>(
+pub(super) fn run_fallback_route<'a>(
     task: &TaskInvocation,
     preflight: &'a ExecutionPreflight,
     route: Route<'a>,
