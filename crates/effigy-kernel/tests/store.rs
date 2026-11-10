@@ -14,7 +14,7 @@ use effigy_kernel::run::{
     SettlementAdapter,
 };
 use effigy_kernel::store::*;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use support::*;
@@ -1561,7 +1561,7 @@ fn store_helper_read_live_wal() {
 }
 
 #[test]
-fn store_live_wal_observation_never_changes_files() {
+fn store_live_wal_observation_preserves_data_and_index_identity() {
     let home = home();
     let cx = effects(EffectClass::Mutate);
     let root = root(home.path());
@@ -1571,14 +1571,42 @@ fn store_live_wal_observation_never_changes_files() {
             txn.resource(&task("wal-only"), "task").map(|_| ())
         })
         .unwrap();
-    let before = snapshot(home.path());
+    let state = home.path().join(".effigy/state");
+    let database = state.join(DB_NAME);
+    let wal = state.join(format!("{DB_NAME}-wal"));
+    let index = state.join(format!("{DB_NAME}-shm"));
+    let data_before = std::fs::read(&database).unwrap();
+    let wal_before = std::fs::read(&wal).unwrap();
+    let index_identity = || {
+        let metadata = std::fs::symlink_metadata(&index).unwrap();
+        (
+            metadata.mode(),
+            metadata.uid(),
+            metadata.gid(),
+            metadata.dev(),
+            metadata.ino(),
+            metadata.nlink(),
+            metadata.len(),
+        )
+    };
+    let index_before = index_identity();
+    let index_entry = PathBuf::from(format!(".effigy/state/{DB_NAME}-shm"));
+    let mut before = snapshot(home.path());
+    assert!(before.remove(&index_entry).is_some());
     let mut helper = support::Helper::spawn(
         "store_helper_read_live_wal",
         &[("EFFIGY_STORE_STRESS_HOME", home.path().to_str().unwrap())],
     );
     helper.expect("WAL-READ", Duration::from_secs(30));
     assert!(helper.wait_for_exit().success());
-    assert_eq!(snapshot(home.path()), before);
+    // SQLite's WAL reader may update its existing shared-memory read marks.
+    // It must not replace that index or mutate the persistent database/log.
+    assert_eq!(index_identity(), index_before);
+    assert_eq!(std::fs::read(&database).unwrap(), data_before);
+    assert_eq!(std::fs::read(&wal).unwrap(), wal_before);
+    let mut after = snapshot(home.path());
+    assert!(after.remove(&index_entry).is_some());
+    assert_eq!(after, before);
 }
 
 #[test]

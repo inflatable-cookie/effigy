@@ -3,17 +3,20 @@ use std::path::{Path, PathBuf};
 
 use super::{format_files, resolve_rust_files};
 
-/// Create a throwaway directory unique to this test run.
-fn temp_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "effigy-fmt-{name}-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos()
-    ));
-    fs::create_dir_all(&dir).expect("temp dir");
-    dir
+/// Hold one declared environment through directory creation, formatting and
+/// assertions. The owned fixture cleans up before the environment is restored.
+fn temp_dir(
+    name: &str,
+) -> (
+    crate::contract_test_support::EnvGuard,
+    effigy_test_support::Fixture,
+    PathBuf,
+) {
+    let environment = crate::contract_test_support::clean_fixture_environment();
+    let fixture = effigy_test_support::Fixture::workspace(&format!("effigy-fmt-{name}-"))
+        .expect("owned formatting fixture");
+    let dir = fixture.path().to_path_buf();
+    (environment, fixture, dir)
 }
 
 fn write(dir: &Path, relative: &str, contents: &str) -> PathBuf {
@@ -29,7 +32,7 @@ fn write(dir: &Path, relative: &str, contents: &str) -> PathBuf {
 /// module that rustfmt would otherwise follow.
 #[test]
 fn fmt_rust_formats_only_the_named_files() {
-    let root = temp_dir("named-files");
+    let (_environment, _fixture, root) = temp_dir("named-files");
     let named = write(
         &root,
         "src/named.rs",
@@ -63,15 +66,13 @@ fn fmt_rust_formats_only_the_named_files() {
         "pub fn other( )->u32{3}\n",
         "an unrelated crate must stay untouched"
     );
-
-    fs::remove_dir_all(&root).ok();
 }
 
 /// The file's own `rustfmt.toml` wins over the repository root's, because
 /// rustfmt runs from the file's directory.
 #[test]
 fn fmt_rust_uses_the_nearest_rustfmt_config() {
-    let root = temp_dir("nearest-config");
+    let (_environment, _fixture, root) = temp_dir("nearest-config");
     write(&root, "rustfmt.toml", "max_width = 100\n");
     write(&root, "consumer/rustfmt.toml", "max_width = 40\n");
     let wide = write(&root, "wide.rs", "pub fn wide() -> u32 { 1 }\n");
@@ -98,13 +99,11 @@ fn fmt_rust_uses_the_nearest_rustfmt_config() {
         fs::read_to_string(&wide).expect("wide"),
         "pub fn wide() -> u32 {\n    1\n}\n"
     );
-
-    fs::remove_dir_all(&root).ok();
 }
 
 #[test]
 fn fmt_rust_check_reports_without_writing() {
-    let root = temp_dir("check");
+    let (_environment, _fixture, root) = temp_dir("check");
     let unformatted = write(&root, "lib.rs", "pub fn a( )->u32{1}\n");
 
     let error = format_files(&root, std::slice::from_ref(&unformatted), true)
@@ -122,14 +121,12 @@ fn fmt_rust_check_reports_without_writing() {
     format_files(&root, &[unformatted], false).expect("format");
     let report = format_files(&root, &[root.join("lib.rs")], true).expect("clean check");
     assert!(report.contains("Rust formatting clean"), "{report}");
-
-    fs::remove_dir_all(&root).ok();
 }
 
 #[test]
 fn fmt_rust_refuses_files_outside_the_repository() {
-    let root = temp_dir("outside-root");
-    let outside = temp_dir("outside-file");
+    let (_environment, _fixture, root) = temp_dir("outside-root");
+    let (_outside_environment, _outside_fixture, outside) = temp_dir("outside-file");
     let linked = write(&outside, "linked.rs", "pub fn linked( )->u32{1}\n");
 
     let error = format_files(&root, std::slice::from_ref(&linked), false)
@@ -139,14 +136,11 @@ fn fmt_rust_refuses_files_outside_the_repository() {
         fs::read_to_string(&linked).expect("linked"),
         "pub fn linked( )->u32{1}\n"
     );
-
-    fs::remove_dir_all(&root).ok();
-    fs::remove_dir_all(&outside).ok();
 }
 
 #[test]
 fn fmt_rust_refuses_non_rust_and_missing_files() {
-    let root = temp_dir("refusals");
+    let (_environment, _fixture, root) = temp_dir("refusals");
     let markdown = write(&root, "notes.md", "# Notes\n");
 
     let error = format_files(&root, std::slice::from_ref(&markdown), false)
@@ -160,6 +154,12 @@ fn fmt_rust_refuses_non_rust_and_missing_files() {
     let canonical_root = fs::canonicalize(&root).expect("canonical root");
     let error = resolve_rust_files(&canonical_root, &[]).expect_err("no files");
     assert!(error.to_string().contains("at least one file"), "{error}");
+}
 
-    fs::remove_dir_all(&root).ok();
+#[test]
+fn fmt_fixture_waits_for_environment_before_creating_directories() {
+    crate::contract_test_support::assert_waits_for_path_mutator(|boundary| {
+        boundary();
+        fmt_rust_uses_the_nearest_rustfmt_config();
+    });
 }

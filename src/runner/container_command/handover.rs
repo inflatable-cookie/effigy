@@ -554,7 +554,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
 
             let temp = tempfile::tempdir().expect("temporary fixture root");
-            let parent = temp.path().to_path_buf();
+            let parent = temp.path().canonicalize().expect("canonical fixture root");
             let repo_root = parent.join("repo");
             fs::create_dir_all(&repo_root).expect("mkdir repo");
             fs::write(

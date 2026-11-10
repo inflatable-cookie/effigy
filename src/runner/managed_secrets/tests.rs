@@ -655,6 +655,19 @@ fn wait_for_exit(owner: &mut TaskRun, child: &mut effigy_kernel::custody::OwnedP
         assert!(Instant::now() < deadline, "fixture did not exit");
         std::thread::sleep(Duration::from_millis(20));
     };
+    // A leader exit is not capture EOF: poll drains before observing exit,
+    // so its final PTY bytes and redactor prefix may still be pending. Settle
+    // the recorded group and drain to EOF before asserting final sink bytes.
+    let capture = child.stop(&crate::runner::task_engine::cleanup_context(
+        Duration::from_secs(10),
+    ));
+    assert!(
+        matches!(capture.group, Observed::Verified(..) | Observed::Absent(_))
+            && capture.capture == effigy_kernel::custody::CaptureState::Complete
+            && capture.residue.is_empty(),
+        "final output requires verified closure and complete capture: {capture:?}"
+    );
+    assert_eq!(capture.leader.verified(), Some(&exit), "{capture:?}");
     owner.complete(child, exit).unwrap();
     exit.code
 }

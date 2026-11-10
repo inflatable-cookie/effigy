@@ -126,11 +126,12 @@ impl Fixture {
 
     /// A hook command. It runs through `sh <script>`, never by exec of the
     /// file just written: a sibling test's fork can still hold that file's
-    /// write descriptor, and exec would wait on `ETXTBSY`.
+    /// write descriptor, and exec would wait on `ETXTBSY`. Replace the command
+    /// shell so it cannot retain a second reader when the hook closes stdin.
     fn hook(&self, name: &str, body: &str) -> String {
         let path = self.repo.join(name);
         fs::write(&path, body).expect("hook");
-        format!("/bin/sh '{}'", path.display())
+        format!("exec /bin/sh '{}'", path.display())
     }
 
     fn effigy(&self, args: &[&str]) -> Command {
@@ -1487,7 +1488,12 @@ fn admission_protocol_v2_reports_every_workload_group_and_the_terminal_result() 
     // checkout and the boot.
     let status = fixture.status_json(&run_id);
     assert_eq!(status["evidence_source"], "foreground-terminal-record.v1");
-    assert_eq!(status["state"], "succeeded");
+    assert_eq!(
+        status["state"],
+        "succeeded",
+        "terminal status: {status}; command: {}",
+        text(&output)
+    );
     assert_eq!(status["phase"], "closed");
     assert_eq!(status["cleanup"], "complete");
     assert_eq!(status["exit_code"], 0);
@@ -1525,9 +1531,13 @@ while IFS= read -r line; do :; done
         (
             r#"#!/bin/sh
 echo admit
+# Keep the reader until the complete report arrives. This selects EOF after
+# delivery, rather than racing the owner's write against a closed pipe.
+IFS= read -r line
+printf '%s\n' "$line" > "$HOOK_LOG.received"
 exit 0
 "#,
-            "the hook exited instead of retaining admission",
+            "the hook exited before acknowledging seq 1",
             "custodians",
         ),
         (
@@ -1535,7 +1545,9 @@ exit 0
 echo admit
 IFS= read -r line
 echo "ok 1"
-sleep 2
+# Model a malformed acknowledgement from a retained hook; its owner ends
+# the hook after refusing the frame, without a timer or a sleep child.
+while IFS= read -r line; do :; done
 "#,
             "an acknowledgement is `ack <seq>`",
             "custodians",
@@ -1573,6 +1585,11 @@ while :; do sleep 0.1; done
             "case {index} ({report}): {details}"
         );
         assert!(!fixture.exists("ran.txt"), "case {index}: nothing ran");
+        if index == 1 {
+            let received = json_of(&fixture.read("hook.log.received"));
+            assert_eq!(received["event"], "custodians", "EOF follows delivery");
+            assert_eq!(received["seq"], 1, "the first report was consumed");
+        }
     }
 
     // A workload report that is not acknowledged fails the same way, after

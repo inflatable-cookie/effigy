@@ -660,6 +660,10 @@ mod tests {
     /// explicitly: the child still reads its grant after exec (effigy#338).
     #[test]
     fn a_grant_survives_exec_when_its_reader_is_already_the_handoff_slot() {
+        if crate::contract_test_support::run_in_isolated_test_process("runner::secret_session::tests::a_grant_survives_exec_when_its_reader_is_already_the_handoff_slot") {
+        return;
+    }
+
         let _test_passphrase =
             ScopedEnv::set("EFFIGY_TEST_SECRETS_PASSPHRASE", Some("vault-passphrase"));
         let _public_passphrase = ScopedEnv::set("EFFIGY_SECRET_PASSPHRASE", None);
@@ -802,6 +806,12 @@ mod tests {
     /// that adopted one keeps resolving through the local-dev key.
     #[test]
     fn adopting_a_grant_activates_local_dev_access() {
+        if crate::contract_test_support::run_in_isolated_test_process(
+            "runner::secret_session::tests::adopting_a_grant_activates_local_dev_access",
+        ) {
+            return;
+        }
+
         let _test_passphrase = ScopedEnv::set("EFFIGY_TEST_SECRETS_PASSPHRASE", None);
         let _public_passphrase = ScopedEnv::set("EFFIGY_SECRET_PASSPHRASE", None);
         forget_session_passphrase_for_tests();

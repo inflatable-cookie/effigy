@@ -1263,7 +1263,9 @@ mod capture_deadline_tests {
         let (sender, receiver) = mpsc::channel();
         {
             let root = root.clone();
+            let clock = _controlled.shared();
             thread::spawn(move || {
+                let _clock = clock.enter();
                 let result = run_command_capture_until(
                     &root,
                     OsStr::new("/bin/sh"),

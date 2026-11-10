@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 use effigy_cli::{ContainerArgs, ContainerSubcommand};
 use effigy_gateway::routes::RouteTable;
 
-use crate::contract_test_support::{strip_ambient_agent_environment, EnvGuard};
+use crate::contract_test_support::{clean_fixture_environment, EnvGuard};
 use crate::runner::container_command::run_container_command;
 use crate::runner::host_process::take_listener_progress;
 
@@ -271,6 +271,15 @@ case "$subcmd" in
 esac
 "#;
 
+/// HTTPServer normally resolves its own bound address before listen. This
+/// fixture owns a numeric loopback endpoint and never needs host reverse DNS.
+fn fixture_child_source(child: &str) -> String {
+    format!(
+        "import http.server, socketserver\nclass NoReverseDnsServer(http.server.HTTPServer):\n    def server_bind(self):\n        socketserver.TCPServer.server_bind(self)\n        self.server_name, self.server_port = self.server_address[:2]\n{}",
+        child.trim().replace("http.server.HTTPServer", "NoReverseDnsServer")
+    )
+}
+
 /// One private fixture checkout with a hybrid environment: one routed container
 /// service and the given managed host listeners.
 struct ExposureFixture {
@@ -364,7 +373,7 @@ impl ExposureFixture {
     fn new(label: &str, listeners: &[FixtureListener], health_timeout_secs: u64) -> Self {
         use std::os::unix::fs::PermissionsExt;
 
-        let ambient_env = strip_ambient_agent_environment();
+        let ambient_env = clean_fixture_environment();
         let temp = effigy_test_support::Fixture::workspace(&format!("effigy-exposure-{label}-"))
             .expect("fresh private root");
         let root = std::fs::canonicalize(temp.path()).expect("canonical private root");
@@ -393,7 +402,7 @@ impl ExposureFixture {
         for listener in listeners {
             std::fs::write(
                 repo.join(format!("scripts/{}.py", listener.name)),
-                listener.child.trim(),
+                fixture_child_source(listener.child),
             )
             .expect("write listener child");
             declared.push((
@@ -521,8 +530,11 @@ impl ExposureFixture {
 
     /// Replace a listener's own program, as an edited checkout would.
     fn set_listener_child(&self, name: &str, child: &str) {
-        std::fs::write(self.repo().join(format!("scripts/{name}.py")), child.trim())
-            .expect("write the listener child");
+        std::fs::write(
+            self.repo().join(format!("scripts/{name}.py")),
+            fixture_child_source(child),
+        )
+        .expect("write the listener child");
     }
 
     /// Shorten the bring-up's observation budget for the next activation.
@@ -597,6 +609,26 @@ impl ExposureFixture {
 impl Drop for ExposureFixture {
     /// Nothing the fixture started outlives it, even when an assertion panics.
     fn drop(&mut self) {
+        if std::thread::panicking() {
+            let mut directories = vec![self.repo().join(".effigy/runtime/host-processes")];
+            while let Some(directory) = directories.pop() {
+                for entry in std::fs::read_dir(directory).into_iter().flatten().flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        directories.push(path);
+                    } else if path.file_name().is_some_and(|name| {
+                        let name = name.to_string_lossy();
+                        name.ends_with(".log") || name.ends_with(".listener.json")
+                    }) {
+                        eprintln!(
+                            "exposure listener {}: {:?}",
+                            path.display(),
+                            std::fs::read_to_string(&path)
+                        );
+                    }
+                }
+            }
+        }
         let _ = run_container_command(ContainerArgs {
             subcommand: ContainerSubcommand::Down {
                 name: Some("e2e".to_owned()),

@@ -292,10 +292,12 @@ fn preflight_seal_returns_a_verified_private_receipt_and_no_canonical_object() {
 #[test]
 fn preflight_seal_timeout_leaves_only_the_helpers_private_tree() {
     let home = tempfile::tempdir().unwrap();
+    let hook_context = context(EffectClass::Mutate);
+    let hook_root = StateRoot::effects(&hook_context, home.path()).unwrap();
     let value = closure("late");
     let (entered_tx, entered_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel::<()>();
-    test_hooks::staged(move || {
+    let _staged = test_hooks::staged(&hook_root, move || {
         let _ = entered_tx.send(());
         // The proof releases this only after the caller has already returned.
         let _ = release_rx.recv_timeout(Duration::from_secs(60));
@@ -378,7 +380,7 @@ fn preflight_recovery_never_races_an_owner_at_the_lease_boundary() {
     // Park a second helper between creating its lease and locking it.
     let (entered_tx, entered_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel::<()>();
-    test_hooks::lease(move || {
+    let _lease = test_hooks::lease(&root, move || {
         let _ = entered_tx.send(());
         let _ = release_rx.recv_timeout(Duration::from_secs(60));
     });
@@ -496,15 +498,67 @@ fn preflight_recovery_leaves_a_live_tree_whose_lease_cannot_be_inspected() {
     );
 }
 
+#[test]
+fn preflight_helper_hooks_are_bound_to_their_state_root() {
+    let home = tempfile::tempdir().unwrap();
+    let sibling_home = tempfile::tempdir().unwrap();
+    let cx = context(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let lease_seen = seen.clone();
+    let _lease = test_hooks::lease(&root, move || {
+        lease_seen.lock().unwrap().push("lease");
+    });
+    let staged_seen = seen.clone();
+    let _staged = test_hooks::staged(&root, move || {
+        staged_seen.lock().unwrap().push("staged");
+    });
+    let verified_seen = seen.clone();
+    let _verified = test_hooks::verified(&root, move || {
+        verified_seen.lock().unwrap().push("verified");
+    });
+    // Force the sibling's helper through every boundary while this root's
+    // hooks are armed. No scheduler timing is needed to attempt the takeover.
+    let sibling_path = sibling_home.path().to_path_buf();
+    let sibling = std::thread::spawn(move || {
+        let cx = context(EffectClass::Mutate);
+        let root = StateRoot::effects(&cx, &sibling_path).unwrap();
+        seal(&cx, &root, &closure("sibling")).unwrap()
+    })
+    .join()
+    .unwrap();
+    assert!(
+        seen.lock().unwrap().is_empty(),
+        "a sibling consumed an owned hook"
+    );
+    let owned = seal(&cx, &root, &closure("owned")).unwrap();
+    assert_eq!(*seen.lock().unwrap(), ["lease", "staged", "verified"]);
+    assert!(owned.matches(&closure("owned")));
+    assert!(sibling.matches(&closure("sibling")));
+
+    // An unconsumed hook must disappear with its guard, so it cannot retain
+    // fixture handles or affect another seal after the proof has ended.
+    let stale_ran = Arc::new(AtomicBool::new(false));
+    let stale_seen = stale_ran.clone();
+    let stale = test_hooks::staged(&root, move || {
+        stale_seen.store(true, Ordering::SeqCst);
+    });
+    drop(stale);
+    let _next = seal(&cx, &root, &closure("next")).unwrap();
+    assert!(!stale_ran.load(Ordering::SeqCst));
+}
+
 /// Recovery never touches a tree whose lease is held, so a helper still working
 /// after its caller timed out is never raced.
 #[test]
 fn preflight_recovery_leaves_a_live_helpers_tree_alone() {
     let home = tempfile::tempdir().unwrap();
+    let hook_context = context(EffectClass::Mutate);
+    let hook_root = StateRoot::effects(&hook_context, home.path()).unwrap();
     let value = closure("live");
     let (entered_tx, entered_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel::<()>();
-    test_hooks::staged(move || {
+    let _staged = test_hooks::staged(&hook_root, move || {
         let _ = entered_tx.send(());
         let _ = release_rx.recv_timeout(Duration::from_secs(60));
     });
@@ -518,8 +572,16 @@ fn preflight_recovery_leaves_a_live_helpers_tree_alone() {
     entered_rx
         .recv_timeout(Duration::from_secs(20))
         .expect("the first helper reached its durable stage");
-    let live_dir = seal_dirs(home.path())[0].clone();
-    let live_lease = seal_leases(home.path())[0].clone();
+    let live_dirs = seal_dirs(home.path());
+    let live_leases = seal_leases(home.path());
+    assert_eq!(
+        live_dirs.len(),
+        1,
+        "the owned helper reached its own durable stage"
+    );
+    assert_eq!(live_leases.len(), 1, "the owned helper holds its own lease");
+    let live_dir = live_dirs[0].clone();
+    let live_lease = live_leases[0].clone();
     // A publication runs recovery while the first helper still lives.
     let cx = context(EffectClass::Mutate);
     let root = StateRoot::effects(&cx, home.path()).unwrap();
@@ -1476,20 +1538,20 @@ fn helper_crashed_sealer() {
     let root = StateRoot::effects(&cx, &home).unwrap();
     let value = closure("crash");
     let marker = home.join(MARKER);
-    if std::env::var(HELPER_STAGE).as_deref() == Ok("lease") {
+    let _hook = if std::env::var(HELPER_STAGE).as_deref() == Ok("lease") {
         // Park between creating the lease and locking it: the crash window that
         // leaves a bare lease and no tree.
-        test_hooks::lease(move || {
+        test_hooks::lease(&root, move || {
             std::fs::write(&marker, b"lease created, unlocked").unwrap();
             std::thread::sleep(Duration::from_secs(120));
-        });
+        })
     } else {
-        test_hooks::verified(move || {
+        test_hooks::verified(&root, move || {
             // The seal is verified and durable; the receipt has not been returned.
             std::fs::write(&marker, b"verified, unreturned").unwrap();
             std::thread::sleep(Duration::from_secs(120));
-        });
-    }
+        })
+    };
     let outcome = Objects::seal_for_preflight(&cx, &root, &value, soon(120_000));
     let _ = std::fs::write(home.join("helper-outcome"), format!("{outcome:?}"));
 }

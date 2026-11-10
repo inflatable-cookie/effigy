@@ -13,6 +13,12 @@ status-level = "fail"
 final-status-level = "leak"
 
 [[profile.default.overrides]]
+# These host-dependent proofs report named missing-prerequisite results to
+# stderr and the hosted step summary. Keep those notices visible on success.
+filter = 'package(effigy) & (test(scoped_host_database_alias_tests::) | test(/::the_production_predecessor_adapter_accepts_a_matching_live_predecessor_and_publishes$/))'
+success-output = "immediate"
+
+[[profile.default.overrides]]
 # Match the focused gateway profile: these real listener fixtures must reach
 # listener startup before their enclosing activation budget expires, including
 # when selected alongside the milestone suite's other fixture processes.

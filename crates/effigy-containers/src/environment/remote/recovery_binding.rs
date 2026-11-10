@@ -181,12 +181,12 @@ mod tests {
 
     #[test]
     fn recovery_binding_rejects_changed_or_missing_executable_and_directory() {
-        let scratch = std::env::var_os("TMPDIR").expect("run TMPDIR");
-        let root = tempfile::Builder::new()
+        let scratch = std::env::temp_dir();
+        let fixture = tempfile::Builder::new()
             .prefix("signal-backend-binding-")
             .tempdir_in(scratch)
-            .unwrap()
-            .keep();
+            .unwrap();
+        let root = fixture.path().canonicalize().unwrap();
         let binary = root.join("backend");
         let workdir = root.join("work");
         std::fs::create_dir(&workdir).unwrap();
@@ -212,12 +212,12 @@ mod tests {
     #[test]
     fn hostcli_recovery_refuses_missing_or_changed_binding() {
         use super::super::{BackendCli, HostCli};
-        let scratch = std::env::var_os("TMPDIR").expect("run TMPDIR");
-        let root = tempfile::Builder::new()
+        let scratch = std::env::temp_dir();
+        let fixture = tempfile::Builder::new()
             .prefix("signal-hostcli-binding-")
             .tempdir_in(scratch)
-            .unwrap()
-            .keep();
+            .unwrap();
+        let root = fixture.path().canonicalize().unwrap();
         let binary = root.join("backend");
         std::fs::write(&binary, b"#!/bin/sh\nexit 0\n").unwrap();
         std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -226,7 +226,7 @@ mod tests {
             RecoveryBinding::capture_selected("docker", &binary, &root, deadline()).unwrap();
         let encoded = serde_json::to_value(&binding).unwrap();
         let mut cli = HostCli {
-            workdir: root.clone(),
+            workdir: root.to_path_buf(),
             binding: None,
         };
         assert!(cli.restore_recovery(None, deadline()).is_err());
@@ -240,7 +240,7 @@ mod tests {
         std::fs::write(&binary, b"#!/bin/sh\nexit 1\n").unwrap();
         assert!(cli.launch_program("docker", deadline()).is_err());
         let mut fresh = HostCli {
-            workdir: root,
+            workdir: root.to_path_buf(),
             binding: None,
         };
         assert!(fresh.restore_recovery(Some(&encoded), deadline()).is_err());

@@ -527,6 +527,31 @@ mod gateway_log_tests {
 
     #[test]
     fn gateway_log_writer_creates_private_streams_under_restrictive_umask() {
+        // umask belongs to the process, not this test thread. Run the real
+        // creation proof alone so sibling fixtures never inherit mode 000.
+        let _environment = crate::contract_test_support::lock_test();
+        if std::env::var_os("EFFIGY_TEST_ISOLATED_GATEWAY_UMASK").is_none() {
+            use effigy_test_support::process::FixtureCommandExt;
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "runner::gateway_command::daemon::gateway_log_tests::gateway_log_writer_creates_private_streams_under_restrictive_umask",
+                    "--nocapture",
+                ])
+                .env_clear()
+                .env("TMPDIR", std::env::temp_dir())
+                .env("EFFIGY_TEST_ISOLATED_GATEWAY_UMASK", "1")
+                .output_owned()
+                .unwrap();
+            assert!(
+                output.status.success()
+                    && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+                "isolated umask proof failed: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
         let root = tempfile::tempdir().unwrap();
         let directory_owner = std::fs::metadata(root.path()).unwrap().uid();
         // SAFETY: restore before assertions; no child process is started.

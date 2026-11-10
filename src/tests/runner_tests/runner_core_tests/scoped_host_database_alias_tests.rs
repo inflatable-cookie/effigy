@@ -25,6 +25,29 @@ use effigy_gateway::routes::{Route, RouteSource};
 use crate::runner::gateway_command::{gateway_dir, set_test_gateway_home};
 use crate::runner::tests::prelude::*;
 
+// Missing interface aliases are a hosted prerequisite, not an occupied port or
+// a routing verdict. Probe before any fixture can clear the hosted environment.
+fn skip_hosted_missing_loopback_aliases(test_name: &str) -> bool {
+    let _environment = crate::contract_test_support::lock_test();
+    let mut first_error = None;
+    for last in 1..=50u8 {
+        let address = Ipv4Addr::new(127, 1, 0, last);
+        match TcpListener::bind((address, 5432)) {
+            Err(error) if error.kind() == std::io::ErrorKind::AddrNotAvailable => {
+                first_error.get_or_insert_with(|| format!("{address}:5432: {error:?}"));
+            }
+            // A usable address or any other failure leaves the original proof
+            // responsible for its result. Port conflicts never authorize skips.
+            _ => return false,
+        }
+    }
+    crate::contract_test_support::hosted_prerequisite_skip(
+        test_name,
+        "configured native loopback aliases 127.1.0.1–127.1.0.50",
+        &format!("all 50 native bind probes returned AddrNotAvailable; first={first_error:?}"),
+    )
+}
+
 /// One manifest for every checkout: a declared apex, one HTTP route and the
 /// catalog `postgres` backing service. The task keeps the canonical declared
 /// alias in its `env`, exactly as consumer configuration does.
@@ -122,14 +145,9 @@ fn effective_alias_in(checkout: &Path, environment: Option<&str>, label: &str) -
 /// service listens on an OS-assigned port and answers, because the proof asks
 /// the recorded upstream whether it is alive.
 fn publish_alias_route(checkout: &Path, domain: &str) -> u16 {
+    let address = next_free_alias_address();
     let database = fake_database("alias-service");
-    publish_alias_route_with_endpoint(
-        checkout,
-        domain,
-        next_free_alias_address(),
-        5432,
-        database.port,
-    );
+    publish_alias_route_with_endpoint(checkout, domain, address, 5432, database.port);
     database.port
 }
 
@@ -161,12 +179,16 @@ fn reserve_alias_addresses(count: usize) -> Vec<Ipv4Addr> {
         RESERVED.get_or_init(|| std::sync::Mutex::new(std::collections::BTreeSet::new()));
     let mut reserved = reserved.lock().unwrap_or_else(|poison| poison.into_inner());
     let mut found = Vec::new();
+    let mut unavailable = 0;
+    let mut first_bind_error = None;
     for last in 1..=50u8 {
         let address = Ipv4Addr::new(127, 1, 0, last);
         if reserved.contains(&address) {
             continue;
         }
-        if TcpListener::bind((address, 5432)).is_err() {
+        if let Err(error) = TcpListener::bind((address, 5432)) {
+            unavailable += 1;
+            first_bind_error.get_or_insert_with(|| format!("{address}:5432: {error:?}"));
             continue;
         }
         reserved.insert(address);
@@ -178,7 +200,10 @@ fn reserve_alias_addresses(count: usize) -> Vec<Ipv4Addr> {
     assert_eq!(
         found.len(),
         count,
-        "free loopback alias addresses on port 5432: found {found:?}"
+        "host precondition: {count} distinct 127.1.0.1–127.1.0.50 loopback aliases must support \
+         binding port 5432; found {found:?}; {unavailable} bind probes failed; \
+         first error: {first_bind_error:?}. macOS requires these aliases to be configured \
+         externally; this fixture never changes host network configuration"
     );
     found
 }
@@ -329,6 +354,9 @@ fn database_url(checkout: &Path) -> String {
 /// the harness's configured root (the run's own temporary directory), so this
 /// suite creates nothing outside it.
 fn with_private_gateway<T>(name: &str, run: impl FnOnce() -> T) -> T {
+    // Policy loading reads HOME and gateway environment before run_task locks.
+    // Keep setup and the assertion in the same declared fixture environment.
+    let _environment = crate::contract_test_support::clean_fixture_environment();
     let home = temp_workspace(&format!("gateway-home-{name}"));
     let guard = set_test_gateway_home(&home);
     let result = run();
@@ -338,6 +366,12 @@ fn with_private_gateway<T>(name: &str, run: impl FnOnce() -> T) -> T {
 
 #[test]
 fn each_scoped_host_task_reaches_only_its_own_declared_database_alias() {
+    if skip_hosted_missing_loopback_aliases(concat!(
+        module_path!(),
+        "::each_scoped_host_task_reaches_only_its_own_declared_database_alias"
+    )) {
+        return;
+    }
     with_private_gateway("scoped-host-alias", || {
         let primary = primary_checkout("scoped-host-alias");
         let one = linked_worktree(&primary, "worktree-one");
@@ -406,12 +440,14 @@ fn write_connect_manifest(checkout: &Path, dns_port: u16) {
 /// listener: this machine shares its loopback pool with other work, and fixture
 /// timing is not the thing under test.
 fn connect_task_manifest(checkout: &Path, dns_port: u16) -> String {
+    // /dev/tcp is Bash syntax; /bin/sh is dash on hosted Ubuntu. Avoid login
+    // startup files changing the fixture's declared environment.
     let out = checkout.join("reached.txt");
     format!(
         r#"{MANIFEST}
 [tasks.connect]
 run_in = "host"
-run = "sh -lc 'url=$DATABASE_URL; rest=$(printf %s $url | cut -d@ -f2); host=$(printf %s $rest | cut -d: -f1); port=$(printf %s $rest | cut -d: -f2 | cut -d/ -f1); ip=$(dig +short +time=2 +tries=3 @127.0.0.1 -p $DNS_PORT $host | head -1); echo $host > $OUT; echo $port >> $OUT; echo $ip >> $OUT; if [ -z $ip ]; then exit 4; fi; tries=0; while [ $tries -lt 50 ]; do if exec 3<>/dev/tcp/$ip/$port 2>/dev/null; then head -c 128 <&3 >> $OUT; exit 0; fi; tries=$((tries+1)); sleep 0.1; done; exit 5'"
+run = "/bin/bash -c 'url=$DATABASE_URL; rest=$(printf %s $url | cut -d@ -f2); host=$(printf %s $rest | cut -d: -f1); port=$(printf %s $rest | cut -d: -f2 | cut -d/ -f1); ip=$(dig +short +time=2 +tries=3 @127.0.0.1 -p $DNS_PORT $host | head -1); echo $host > $OUT; echo $port >> $OUT; echo $ip >> $OUT; if [ -z $ip ]; then exit 4; fi; tries=0; while [ $tries -lt 50 ]; do if exec 3<>/dev/tcp/$ip/$port 2>/dev/null; then head -c 128 <&3 >> $OUT; exit 0; fi; tries=$((tries+1)); sleep 0.1; done; exit 5'"
 env = {{ DATABASE_URL = "postgres://app:secret@postgres.acme.test:5432/app", DNS_PORT = "{dns_port}", OUT = "{}" }}
 "#,
         out.display()
@@ -439,6 +475,12 @@ fn reached(checkout: &Path) -> (String, String, String, String) {
 /// declared value (effigy#431 review).
 #[test]
 fn an_inherited_database_url_is_resolved_and_proved_by_a_host_task() {
+    if skip_hosted_missing_loopback_aliases(concat!(
+        module_path!(),
+        "::an_inherited_database_url_is_resolved_and_proved_by_a_host_task"
+    )) {
+        return;
+    }
     with_private_gateway("scoped-host-alias-inherited", || {
         let primary = primary_checkout("scoped-host-alias-inherited");
         let checkout = linked_worktree(&primary, "worktree-one");
@@ -478,6 +520,12 @@ fn an_inherited_database_url_is_resolved_and_proved_by_a_host_task() {
 /// The same source rules apply to a managed session's host workload.
 #[test]
 fn an_inherited_database_url_is_resolved_and_proved_by_a_managed_session() {
+    if skip_hosted_missing_loopback_aliases(concat!(
+        module_path!(),
+        "::an_inherited_database_url_is_resolved_and_proved_by_a_managed_session"
+    )) {
+        return;
+    }
     with_private_gateway("scoped-host-alias-inherited-session", || {
         let primary = primary_checkout("scoped-host-alias-inherited-session");
         let checkout = linked_worktree(&primary, "worktree-one");
@@ -513,6 +561,12 @@ fn an_inherited_database_url_is_resolved_and_proved_by_a_managed_session() {
 /// (effigy#431 review).
 #[test]
 fn a_configured_host_suite_resolves_and_proves_an_inherited_url() {
+    if skip_hosted_missing_loopback_aliases(concat!(
+        module_path!(),
+        "::a_configured_host_suite_resolves_and_proves_an_inherited_url"
+    )) {
+        return;
+    }
     with_private_gateway("scoped-host-alias-suite-inherited", || {
         let primary = primary_checkout("scoped-host-alias-suite-inherited");
         let checkout = linked_worktree(&primary, "worktree-one");
@@ -751,6 +805,12 @@ concurrent = [
 /// quietly reaching the primary database (effigy#431 review).
 #[test]
 fn a_worktrees_first_host_run_is_scoped() {
+    if skip_hosted_missing_loopback_aliases(concat!(
+        module_path!(),
+        "::a_worktrees_first_host_run_is_scoped"
+    )) {
+        return;
+    }
     with_private_gateway("scoped-host-alias-first-run", || {
         let primary = primary_checkout("scoped-host-alias-first-run");
         let checkout = linked_worktree_checkout(&primary, "worktree-one");
@@ -792,6 +852,12 @@ fn a_worktrees_first_host_run_is_scoped() {
 /// (effigy#431 review).
 #[test]
 fn a_stale_alias_route_refuses() {
+    if skip_hosted_missing_loopback_aliases(concat!(
+        module_path!(),
+        "::a_stale_alias_route_refuses"
+    )) {
+        return;
+    }
     with_private_gateway("scoped-host-alias-stale", || {
         let primary = primary_checkout("scoped-host-alias-stale");
         let checkout = linked_worktree(&primary, "worktree-one");
@@ -1025,6 +1091,12 @@ fn an_overridden_sensitive_value_is_not_proved() {
 /// container runtime is a fixture.
 #[test]
 fn each_scoped_host_task_connects_to_only_its_own_test_database() {
+    if skip_hosted_missing_loopback_aliases(concat!(
+        module_path!(),
+        "::each_scoped_host_task_connects_to_only_its_own_test_database"
+    )) {
+        return;
+    }
     with_private_gateway("scoped-host-database-reach", || {
         let primary = primary_checkout("scoped-host-database-reach");
         let one = linked_worktree(&primary, "worktree-one");
@@ -1170,6 +1242,12 @@ fn a_suite_that_only_mentions_the_key_still_refuses_its_inherited_url() {
 /// declared port 5432, and reaches only its own backing service.
 #[test]
 fn each_scoped_managed_session_connects_to_only_its_own_test_database() {
+    if skip_hosted_missing_loopback_aliases(concat!(
+        module_path!(),
+        "::each_scoped_managed_session_connects_to_only_its_own_test_database"
+    )) {
+        return;
+    }
     with_private_gateway("scoped-managed-database-reach", || {
         let primary = primary_checkout("scoped-managed-database-reach");
         let one = linked_worktree(&primary, "worktree-one");
@@ -1352,6 +1430,12 @@ fn a_scoped_host_task_refuses_before_it_runs_without_a_published_backing_service
 
 #[test]
 fn a_scoped_host_task_refuses_an_alias_route_another_checkout_owns() {
+    if skip_hosted_missing_loopback_aliases(concat!(
+        module_path!(),
+        "::a_scoped_host_task_refuses_an_alias_route_another_checkout_owns"
+    )) {
+        return;
+    }
     with_private_gateway("scoped-host-alias-sibling", || {
         let primary = primary_checkout("scoped-host-alias-sibling");
         let checkout = linked_worktree(&primary, "worktree-one");
@@ -1371,6 +1455,12 @@ fn a_scoped_host_task_refuses_an_alias_route_another_checkout_owns() {
 
 #[test]
 fn a_scoped_host_task_refuses_an_alias_route_with_no_published_port() {
+    if skip_hosted_missing_loopback_aliases(concat!(
+        module_path!(),
+        "::a_scoped_host_task_refuses_an_alias_route_with_no_published_port"
+    )) {
+        return;
+    }
     with_private_gateway("scoped-host-alias-unpublished", || {
         let primary = primary_checkout("scoped-host-alias-unpublished");
         let checkout = linked_worktree(&primary, "worktree-one");
@@ -1397,6 +1487,12 @@ fn a_scoped_host_task_refuses_an_alias_route_with_no_published_port() {
 
 #[test]
 fn a_scoped_host_task_resolves_an_env_schema_secret_and_keeps_the_task_env_precedence() {
+    if skip_hosted_missing_loopback_aliases(concat!(
+        module_path!(),
+        "::a_scoped_host_task_resolves_an_env_schema_secret_and_keeps_the_task_env_precedence"
+    )) {
+        return;
+    }
     with_private_gateway("scoped-host-alias-schema", || {
         let primary = primary_checkout("scoped-host-alias-schema");
         let checkout = linked_worktree(&primary, "worktree-one");
@@ -1439,6 +1535,12 @@ fn a_scoped_host_task_resolves_an_env_schema_secret_and_keeps_the_task_env_prece
 
 #[test]
 fn a_sequence_step_environment_resolves_the_same_declared_alias() {
+    if skip_hosted_missing_loopback_aliases(concat!(
+        module_path!(),
+        "::a_sequence_step_environment_resolves_the_same_declared_alias"
+    )) {
+        return;
+    }
     with_private_gateway("scoped-host-alias-sequence", || {
         let primary = primary_checkout("scoped-host-alias-sequence");
         let checkout = linked_worktree(&primary, "worktree-one");
@@ -1459,6 +1561,12 @@ fn a_sequence_step_environment_resolves_the_same_declared_alias() {
 /// effective alias.
 #[test]
 fn a_managed_session_resolves_the_scoped_database_alias() {
+    if skip_hosted_missing_loopback_aliases(concat!(
+        module_path!(),
+        "::a_managed_session_resolves_the_scoped_database_alias"
+    )) {
+        return;
+    }
     with_private_gateway("scoped-host-alias-managed", || {
         let primary = primary_checkout("scoped-host-alias-managed");
         let checkout = linked_worktree(&primary, "worktree-one");
@@ -1525,6 +1633,12 @@ fn write_managed_session_manifest(checkout: &Path) {
 /// `second`, and the task carries both declared URLs.
 #[test]
 fn a_task_resolves_a_second_environments_declared_alias() {
+    if skip_hosted_missing_loopback_aliases(concat!(
+        module_path!(),
+        "::a_task_resolves_a_second_environments_declared_alias"
+    )) {
+        return;
+    }
     with_private_gateway("scoped-host-alias-environments", || {
         let primary = primary_checkout("scoped-host-alias-environments");
         let checkout = linked_worktree(&primary, "worktree-one");
@@ -1666,6 +1780,12 @@ env = {{ CREDENTIAL_URL = "{credential_url}", PASSWORD_URL = "{password_url}", U
 /// A suite this run does not select is neither proved nor run.
 #[test]
 fn a_configured_test_suite_resolves_and_proves_its_scoped_alias() {
+    if skip_hosted_missing_loopback_aliases(concat!(
+        module_path!(),
+        "::a_configured_test_suite_resolves_and_proves_its_scoped_alias"
+    )) {
+        return;
+    }
     with_private_gateway("scoped-host-alias-suite", || {
         let primary = primary_checkout("scoped-host-alias-suite");
         let checkout = linked_worktree(&primary, "worktree-one");
@@ -1799,6 +1919,12 @@ fn rendered_command(root: &Path, selector: &str) -> crate::runner::execute::Task
 
 #[test]
 fn a_container_task_keeps_the_canonical_alias_the_scope_network_answers() {
+    if skip_hosted_missing_loopback_aliases(concat!(
+        module_path!(),
+        "::a_container_task_keeps_the_canonical_alias_the_scope_network_answers"
+    )) {
+        return;
+    }
     with_private_gateway("scoped-host-alias-container", || {
         let primary = primary_checkout("scoped-host-alias-container");
         let checkout = linked_worktree(&primary, "worktree-one");

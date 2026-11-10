@@ -1162,6 +1162,7 @@ dependencies = [
  "effigy-core",
  "effigy-kernel",
  "effigy-process",
+ "effigy-test-support",
  "fs2",
  "getrandom 0.4.3",
  "hex",

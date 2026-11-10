@@ -292,8 +292,12 @@ lock with a dead/unverifiable named owner remains held; the guard may refresh
 its own identity in the diagnostic body without creating durable authority. No
 stale-file unlink or PID-only reclaim exists. Owner and guard retain the group
 and unreaped-child/verified-anchor evidence through descendant and stream closure,
-even after leader exit. Normal settle closes the in-memory effects before
-unlocking. Owner EOF or terminal HUP/INT/TERM makes the guard stop the retained
+even after leader exit. Normal settle explicitly releases its gate only after
+complete in-memory effects, positive completion of every descendant, and the
+exact backup’s successful exit. Incidental pre-exec fork copies cannot retain
+a completely settled run; failed, unknown or unconfirmed custody never enables
+that release. Child completion propagates only after the same descendant
+closure proof. Owner EOF or terminal HUP/INT/TERM makes the guard stop the retained
 group within the cleanup budget, using the same positive evidence as the
 owner, then exit. While cleanup runs it keeps the owner gate held; it never
 unlocks on owner EOF alone. The owner similarly keeps custody if its guard dies.
@@ -822,7 +826,11 @@ read-only connection (`mode=ro`), so a writer beside the read is
 no obstacle: WAL already gives one consistent committed state, and a crashed
 writer's uncommitted frames are invisible to the reader and left untouched. The
 read never asks for a read-only shared-memory index: that left the index
-unwritable and the next write in this process failed. A
+unwritable and the next write in this process failed. SQLite may update read
+marks in an existing shared-memory index, including its modification time;
+this is WAL synchronization, not a persistent state write. Its type, owner,
+mode, identity and length remain unchanged. No read may create a side file or
+change the database or WAL bytes or metadata. A
 checkpointed store without side files is an immutable open, which needs no lock
 and no index. A read that fails is `Unknown`: the foreground path warns once and
 proceeds, and `runs` reports the journal as unavailable rather than refusing.
@@ -1264,9 +1272,11 @@ workload closure and capture drain are verified. With an anchor, TERM plus
 CONT and then KILL target individually inventoried workload identities,
 checking the anchor and membership before every signal. KILL inventories
 repeat until closure, covering children forked during an earlier inventory.
-The anchor itself is excluded from workload closure and killed last, after
-no live workload member remains. Group closure is then verified, and only
-then is the leader reaped. Output EOF and exit are separate events; capture
+The anchor itself is excluded from workload closure and retires last: an active
+anchor completes its own positive group observation; a stopped anchor needs the
+verified signal path because it cannot observe its group. The owner still
+requires a positive full-group closure observation, within its cleanup context,
+after no live workload member remains. Only then is the leader reaped. Output EOF and exit are separate events; capture
 drains under its own deadline. Unanchored custody retains the unreaped-leader
 group-signal path. `ESRCH` proves absence; unreadable observations remain
 `Unknown`. Leader exit alone is never closure. A stop counts its window from
@@ -1568,16 +1578,18 @@ only where identity, byte offset and text exactly match its canonical read;
 missing, stale or expired style data renders plain. TUI typed ingest renders
 those spans directly, without ANSI interpretation or a second redactor.
 
-Tom's 2026-10-31 launcher ruling classifies ambient `CLAUDE_CODE_*` as a
-non-secret switch namespace only for the exact values `0`, `1`, `true`, `false`.
-Switch names are bounded to 128 ASCII alphanumeric/underscore bytes with a
-nonempty suffix. Case-insensitive `TOKEN`, `KEY`, `SECRET`, `PASSWORD`,
-`CREDENTIAL` and `AUTH` name segments override the namespace. Schema sensitivity
-and aliases containing a known secret also override all metadata exceptions.
-Non-boolean values and unknown names outside the namespace remain Secret;
-the established exact launcher flags keep their closed-domain classification.
-The custody argv guard is unchanged. This policy avoids an expanding list of
-individual Claude flags without trusting arbitrary environment values.
+Ambient host-process values without schema or literal provenance qualify for
+secret protection only at eight or more bytes, excluding ASCII decimal integers
+(an optional `+` or `-` followed by digits). Short switches and numeric settings
+cannot provide useful credential evidence: matching them as substrings would
+refuse unrelated argv and corrupt ordinary output. This is a classification
+boundary, not a credential-strength guarantee. Applications with short or numeric
+credentials must declare them sensitive in their environment schema.
+Schema-sensitive values and Effigy-supplied `EnvValue::Secret` values retain full
+argv refusal and output redaction at every nonempty length. Their aliases also
+remain protected, including aliases in otherwise plain metadata or literals.
+The kernel custody guard itself applies to every classified secret unchanged;
+no launcher namespace or growing switch-name exception is needed.
 
 Canonical shared-lock reads intentionally return `WouldBlock` during writer
 commit. TUI followers retry on their next poll without blocking all panes;

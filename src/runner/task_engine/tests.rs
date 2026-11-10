@@ -534,7 +534,6 @@ fn a_nested_run_reuses_its_parents_scratch_instead_of_starting_another() {
 fn a_run_that_died_keeps_its_scratch_until_the_sweep_removes_it() {
     let _guard = crate::contract_test_support::lock_test();
     let root = tempfile::tempdir().expect("root");
-    let work = tempfile::tempdir().expect("work");
     let catalog = catalog(root.path(), "", "root", 0);
     let target = TaskTarget::for_catalog(root.path(), "dev", &catalog);
     let scratch_root = root.path().join("scratch-vol");
@@ -543,8 +542,20 @@ fn a_run_that_died_keeps_its_scratch_until_the_sweep_removes_it() {
 
     let seen = crate::runner::scratch::with_test_scratch(Some(config.root.clone()), true, || {
         let mut run = begin_scratching(&target);
-        let (seen, _) = read_temp(&mut run, work.path());
-        // What a killed owner leaves: an open effect and no decision.
+        // Scratch is not a kernel effect. Observe its actual allocated scope
+        // directly: read_temp would create a process effect whose leader exit
+        // still needs group settlement before its live custody can be dropped.
+        let seen = crate::runner::scratch::current_dir().expect("the run owns scratch");
+        std::fs::write(seen.join("effigy-probe"), b"probe").expect("scratch is writable");
+        assert!(
+            run.run_mut()
+                .expect("durable scratch fixture")
+                .effects()
+                .expect("scratch run effects")
+                .is_empty(),
+            "scratch retention must not depend on unrelated process recovery"
+        );
+        // What a killed owner leaves: an open run and no scratch decision.
         run.abandon_for_tests();
         // The successor settles the predecessor through the same adapter
         // the sentinel uses, and still keeps its directory.
@@ -567,6 +578,10 @@ fn a_run_that_died_keeps_its_scratch_until_the_sweep_removes_it() {
     assert!(
         Path::new(&seen).exists(),
         "an unsettled run's scratch is not removed by its own absent decision"
+    );
+    assert_eq!(
+        std::fs::read(seen.join("effigy-probe")).expect("retained scratch bytes"),
+        b"probe"
     );
     let marker =
         std::fs::read_to_string(Path::new(&seen).join(".effigy-scratch.json")).expect("marker");
@@ -1463,6 +1478,12 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
 
 #[test]
 fn reserved_child_receives_grant_at_handoff_fd() {
+    if crate::contract_test_support::run_in_isolated_test_process(
+        "runner::task_engine::tests::reserved_child_receives_grant_at_handoff_fd",
+    ) {
+        return;
+    }
+
     use effigy_kernel::run::{Reservation, Session};
     use effigy_kernel::supervise::Executable;
     use std::os::unix::fs::PermissionsExt;
@@ -1492,11 +1513,10 @@ fn reserved_child_receives_grant_at_handoff_fd() {
         Reservation::Fresh(ticket) => ticket,
         other => panic!("fresh reservation: {other:?}"),
     };
-    // This nextest process owns its environment and the shared test lock.
-    unsafe {
-        std::env::remove_var("EFFIGY_TEST_SECRETS_PASSPHRASE");
-        std::env::remove_var("EFFIGY_SECRET_PASSPHRASE");
-    }
+    let _environment = crate::contract_test_support::EnvGuard::set_many(&[
+        ("EFFIGY_TEST_SECRETS_PASSPHRASE", None),
+        ("EFFIGY_SECRET_PASSPHRASE", None),
+    ]);
     crate::runner::secret_session::forget_session_passphrase_for_tests();
     let grant = crate::runner::secret_session::activate_local_dev_secret_access(true);
     let invocation = effigy_cli::TaskInvocation {

@@ -12,8 +12,6 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-#[cfg(test)]
-use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
@@ -414,19 +412,20 @@ impl RetryDeadlines {
     }
 }
 
-/// The follow's retry budget. Proofs shrink it in-process under `cfg(test)`
-/// (nextest runs each test in its own process); the shipped budget stays
-/// `UNKNOWN_BUDGET` of real clock.
+/// The follow's retry budget. A proof may shrink only its own thread's budget;
+/// the shipped budget stays `UNKNOWN_BUDGET` of real clock.
 fn unknown_budget() -> Duration {
     #[cfg(test)]
-    if let Some(budget) = TEST_UNKNOWN_BUDGET.lock().expect("budget lock").as_ref() {
-        return *budget;
+    if let Some(budget) = TEST_UNKNOWN_BUDGET.with(std::cell::Cell::get) {
+        return budget;
     }
     UNKNOWN_BUDGET
 }
 
 #[cfg(test)]
-static TEST_UNKNOWN_BUDGET: Mutex<Option<Duration>> = Mutex::new(None);
+std::thread_local! {
+    static TEST_UNKNOWN_BUDGET: std::cell::Cell<Option<Duration>> = const { std::cell::Cell::new(None) };
+}
 
 /// Reads the run's workload logs from `offsets`, handing every byte to
 /// `sink` once and in order, until the log end (or, when following, until

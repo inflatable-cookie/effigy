@@ -131,6 +131,27 @@ mod tests {
     }
     #[test]
     fn descriptor_frames_bind_the_request_and_close_all_received_handles_on_refusal() {
+        // Isolate descriptor counts from sibling tests opening and closing handles.
+        if std::env::var_os("EFFIGY_TEST_ISOLATED_FDS").is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "interpolation::channel::tests::descriptor_frames_bind_the_request_and_close_all_received_handles_on_refusal",
+                    "--nocapture",
+                ])
+                .env_clear()
+                .env("TMPDIR", std::env::temp_dir())
+                .env("EFFIGY_TEST_ISOLATED_FDS", "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "isolated proof failed: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
         let root = tempfile::tempdir().unwrap();
         let file = std::fs::File::create(root.path().join("fixture")).unwrap();
         let (sender, receiver) = UnixDatagram::pair().unwrap();
