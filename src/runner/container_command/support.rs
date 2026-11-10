@@ -705,9 +705,7 @@ fn ensure_shared_services_with_renders_observed(
         // stalled stage here never names the service that already finished
         // (effigy#460, Q-017).
         begin_shared_service_wait(progress, &service.service_name);
-        // Held until this service's ensure is complete; a gate that cannot be
-        // taken is named and the ensure proceeds, because the service still
-        // has to run.
+        // Held across inventory, publication, replacement and apply.
         progress.update(
             format!(
                 "waiting for the machine gate of shared project `{}`",
@@ -717,16 +715,8 @@ fn ensure_shared_services_with_renders_observed(
             None,
         );
         progress.label("Waiting for shared service lock");
-        let _gate = match crate::runner::task_engine::shared_service_gate(&service.project_name) {
-            Ok(gate) => Some(gate),
-            Err(error) => {
-                eprintln!(
-                    "[warn] shared {} ran without its machine gate: {error}",
-                    service.service_name
-                );
-                None
-            }
-        };
+        let _gate = crate::runner::task_engine::shared_service_gate(&service.project_name)
+            .map_err(|error| shared_service_refusal(policy, service, "machine gate", error))?;
         // One inventory read serves the refusal and the replacement below.
         progress.update(
             format!(
@@ -737,8 +727,15 @@ fn ensure_shared_services_with_renders_observed(
             None,
         );
         progress.label("Checking shared containers");
-        let containers = read_shared_containers(policy, service);
-        refuse_vanished_shared_render(policy, service, containers.as_deref())
+        // Ok(empty) proves absence; Ok(rows) is verified inventory; Err is
+        // unknown and refuses before any publication or runtime mutation.
+        let containers = effigy_containers::exec::shared_project_containers(
+            &policy.repo_root,
+            policy,
+            &service.project_name,
+        )
+        .map_err(|error| shared_service_refusal(policy, service, "inventory", error.into()))?;
+        refuse_vanished_shared_render(policy, service, &containers)
             .map_err(|error| shared_service_refusal(policy, service, "render check", error))?;
         if let Some(render) = renders
             .iter()
@@ -771,10 +768,32 @@ fn ensure_shared_services_with_renders_observed(
             None,
         );
         progress.label("Checking shared stack");
-        let replaced = replace_stale_shared_render(policy, service, containers.as_deref())
-            .map_err(|error| {
-                shared_service_refusal(policy, service, "render replacement", error)
-            })?;
+        let mut replaced = false;
+        for container in containers
+            .iter()
+            .filter(|container| container.render.as_deref() != Some(service.render_digest.as_str()))
+        {
+            for (phase, args) in [
+                (
+                    "replacement stop",
+                    vec!["stop", container.container_name.as_str()],
+                ),
+                (
+                    "replacement remove",
+                    vec!["rm", "-f", container.container_name.as_str()],
+                ),
+            ] {
+                effigy_containers::exec::run_runtime_command_capture_for_policy_with_timeout(
+                    &policy.repo_root,
+                    policy,
+                    &args.into_iter().map(OsString::from).collect::<Vec<_>>(),
+                    phase,
+                    SHARED_COMPOSE_TIMEOUT,
+                )
+                .map_err(|error| shared_service_refusal(policy, service, phase, error.into()))?;
+            }
+            replaced = true;
+        }
         let workdir = service.compose_file.parent().ok_or_else(|| {
             RunnerError::task_invocation("shared service compose file has no parent directory")
         })?;
@@ -870,59 +889,19 @@ fn shared_service_refusal(
     )
 }
 
-/// The shared project's containers as the runtime reports them. A failed read is
-/// named and yields `None`.
-fn read_shared_containers(
-    policy: &EffectiveContainerPolicy,
-    service: &effigy_containers::SharedServiceBinding,
-) -> Option<Vec<effigy_containers::exec::SharedProjectContainer>> {
-    match effigy_containers::exec::shared_project_containers(
-        &policy.repo_root,
-        policy,
-        &service.project_name,
-    ) {
-        Ok(containers) => Some(containers),
-        Err(error) => {
-            eprintln!(
-                "[warn] cannot read the runtime's shared {} containers: {error}",
-                service.service_name
-            );
-            None
-        }
-    }
-}
-
 /// Refuse a shared service that would start against a missing render (ef5780da).
 ///
 /// A container whose own render directory is gone has bind sources that no
 /// longer exist, so starting or replacing it fails after a stop or remove. That
 /// is refused before any publish, stop, remove or Compose call, whichever render
 /// the container was created from. A missing render with no container is the
-/// normal creation path. A missing render with an unreadable inventory is
-/// refused, because no container can be ruled out. A present render keeps the
-/// previous behaviour when the inventory is unreadable.
+/// normal creation path. Inventory must already be verified before this check.
 fn refuse_vanished_shared_render(
     policy: &EffectiveContainerPolicy,
     service: &effigy_containers::SharedServiceBinding,
-    containers: Option<&[effigy_containers::exec::SharedProjectContainer]>,
+    containers: &[effigy_containers::exec::SharedProjectContainer],
 ) -> Result<(), RunnerError> {
     let current_present = service.compose_file.is_file();
-    let Some(containers) = containers else {
-        if current_present {
-            return Ok(());
-        }
-        let render = service
-            .compose_file
-            .parent()
-            .unwrap_or(&service.compose_file)
-            .display();
-        return Err(RunnerError::task_invocation(format!(
-            "shared {service} (project `{project}`) has no render at `{render}`, and the runtime's containers cannot be read, so no container can be ruled out. Nothing was stopped, removed, published or started. Make the runtime readable, then re-run `effigy container {env} up`.",
-            service = service.service_name,
-            project = service.project_name,
-            env = policy.name,
-        )));
-    };
     // `<project>/<digest>/<file>`: the project directory names every render.
     let project_dir = service.compose_file.ancestors().nth(2);
     let vanished = containers
@@ -959,41 +938,6 @@ fn refuse_vanished_shared_render(
         project = service.project_name,
         env = policy.name,
     )))
-}
-
-/// Stop and remove every container of a shared project the runtime says came
-/// from a different render, so Compose creates the new one against a free
-/// port. An unreadable runtime (`None`) is left to Compose rather than stopping
-/// a service this run cannot see.
-fn replace_stale_shared_render(
-    policy: &EffectiveContainerPolicy,
-    service: &effigy_containers::SharedServiceBinding,
-    containers: Option<&[effigy_containers::exec::SharedProjectContainer]>,
-) -> Result<bool, RunnerError> {
-    let Some(containers) = containers else {
-        return Ok(false);
-    };
-    let stale = containers
-        .iter()
-        .filter(|container| container.render.as_deref() != Some(service.render_digest.as_str()))
-        .collect::<Vec<_>>();
-    if stale.is_empty() {
-        return Ok(false);
-    }
-    for container in stale {
-        stop_and_remove_container(
-            &policy.repo_root,
-            &policy.profile,
-            &container.container_name,
-        )
-        .map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "cannot replace shared {}: {error}",
-                service.service_name
-            ))
-        })?;
-    }
-    Ok(true)
 }
 
 /// Stop a container, then remove it (effigy#376). A forced remove of a running
@@ -3127,7 +3071,12 @@ mod tests {
             super::ensure_shared_services_with_renders(&policy, &[fixture.render("this-render")])
                 .expect_err("an unreadable inventory is refused");
 
-        assert!(error.to_string().contains("cannot be read"), "{error}");
+        assert!(error.to_string().contains("daemon is down"), "{error}");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(error.json_error_details().unwrap()).unwrap()
+                ["waiting_on"][0]["step"],
+            "inventory"
+        );
         let calls = fixture.calls();
         assert!(
             calls.iter().all(|call| call.starts_with("ps ")),
@@ -3136,23 +3085,143 @@ mod tests {
         assert!(!fixture.render_dir("this-render").exists());
     }
 
-    /// A present render with an unreadable inventory keeps the previous
-    /// behaviour: it is named and the service still starts.
     #[test]
-    fn a_healthy_render_with_an_unreadable_inventory_still_starts() {
+    fn a_present_shared_render_with_unknown_inventory_refuses_before_publication() {
         let project = "effigy-shared-mariadb-probe";
         let fixture = SharedFixture::unreadable("effigy-shared-healthy-", project);
         let _env = runtime_env(&fixture);
         let policy = fixture.policy(project, "this-render");
-
-        let notes = super::ensure_shared_services_running(&policy)
-            .expect("a present render starts without the inventory");
-
+        let mut render = fixture.render("this-render");
+        render
+            .files
+            .insert("compose.yml".into(), b"must not publish".to_vec());
+        let error = super::ensure_shared_services_with_renders(&policy, &[render]).unwrap_err();
+        assert!(error.to_string().contains("daemon is down"), "{error}");
         assert_eq!(
-            notes,
-            vec!["legacy_mysql [mariadb] -> host.docker.internal:23306".to_owned()]
+            serde_json::from_str::<serde_json::Value>(error.json_error_details().unwrap()).unwrap()
+                ["waiting_on"][0]["step"],
+            "inventory"
         );
-        assert!(fixture.calls().iter().any(|call| call.contains(" up ")));
+        assert!(fixture.calls().iter().all(|call| call.starts_with("ps ")));
+        assert_eq!(
+            std::fs::read(policy.shared_services[0].compose_file.clone()).unwrap(),
+            fixture.compose
+        );
+        assert!(fixture.volume_kept());
+    }
+
+    #[test]
+    fn a_shared_machine_gate_error_refuses_before_any_publish_or_runtime_call() {
+        let project = "effigy-shared-gate-error";
+        let fixture = SharedFixture::unlisted("effigy-shared-gate-error-", project);
+        drop(crate::runner::task_engine::shared_service_gate(project).unwrap());
+        let id = effigy_kernel::id::ResourceId::store(
+            effigy_kernel::id::Scope::Machine,
+            &format!("shared-service {project}"),
+        )
+        .unwrap();
+        let gate = crate::runner::task_engine::test_state_home()
+            .join(".effigy/state/gates/machine")
+            .join(format!("{}.gate", id.name()));
+        std::fs::remove_file(&gate).unwrap();
+        std::fs::create_dir(&gate).unwrap();
+        let _env = runtime_env(&fixture);
+        fixture.vanish_render("this-render");
+        let error = super::ensure_shared_services_with_renders(
+            &fixture.policy(project, "this-render"),
+            &[fixture.render("this-render")],
+        )
+        .unwrap_err();
+        std::fs::remove_dir(&gate).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(error.json_error_details().unwrap()).unwrap()
+                ["waiting_on"][0]["step"],
+            "machine gate"
+        );
+        assert!(fixture.calls().is_empty());
+        assert!(!fixture.render_dir("this-render").exists());
+        assert!(fixture.volume_kept());
+    }
+
+    #[test]
+    fn concurrent_shared_callers_hold_the_machine_gate_through_apply() {
+        let project = "effigy-shared-concurrent";
+        let fixture = SharedFixture::with_compose(
+            "effigy-shared-concurrent-",
+            project,
+            "services: {}\n",
+            "mkdir active || exit 70; sleep 0.1",
+        );
+        // Inventory claims an exclusive marker, released only when up returns.
+        // Overlapping ensures would fail inventory and leave interleaved calls.
+        let script = fixture.root.join("bin/docker");
+        let source = std::fs::read_to_string(&script).unwrap().replace(
+            "case \"$*\" in",
+            &format!(
+                "case \"$*\" in *' up '*) rmdir '{}/active' ;;",
+                fixture.root.display()
+            ),
+        );
+        std::fs::write(script, source).unwrap();
+        let _env = runtime_env(&fixture);
+        let policy = fixture.policy(project, "this-render");
+        let start = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            let call = || {
+                start.wait();
+                super::ensure_shared_services_running(&policy).unwrap()
+            };
+            let first = scope.spawn(call);
+            let second = scope.spawn(call);
+            first.join().unwrap();
+            second.join().unwrap();
+        });
+        let calls = fixture.calls();
+        assert_eq!(
+            calls.iter().filter(|call| call.starts_with("ps ")).count(),
+            2
+        );
+        assert_eq!(calls.iter().filter(|call| call.contains(" up ")).count(), 2);
+        assert!(!fixture.root.join("active").exists());
+        assert!(fixture.volume_kept());
+    }
+
+    #[test]
+    fn failed_shared_replacement_and_apply_report_the_exact_phase() {
+        for (command, phase, forbidden) in [
+            ("stop", "replacement stop", "rm"),
+            ("rm", "replacement remove", "up"),
+            ("up", "docker compose up", "update"),
+        ] {
+            let project = "effigy-shared-phase";
+            let fixture = SharedFixture::new(
+                "effigy-shared-phase-",
+                project,
+                "shared-db",
+                "previous-render",
+            );
+            let script = fixture.root.join("bin/docker");
+            let source = std::fs::read_to_string(&script).unwrap().replace(
+                "case \"$*\" in",
+                &format!("case \" $* \" in *' {command} '*) echo 'phase failed' >&2; exit 1 ;;"),
+            );
+            std::fs::write(script, source).unwrap();
+            let _env = runtime_env(&fixture);
+            let error =
+                super::ensure_shared_services_running(&fixture.policy(project, "this-render"))
+                    .unwrap_err();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(error.json_error_details().unwrap())
+                    .unwrap()["waiting_on"][0]["step"],
+                phase
+            );
+            assert!(error.to_string().contains("phase failed"), "{error}");
+            assert!(!fixture
+                .calls()
+                .iter()
+                .any(|call| call.split_whitespace().any(|arg| arg == forbidden)));
+            assert!(fixture.volume_kept());
+        }
     }
 
     /// First creation: no shared container and no render yet. The ensure

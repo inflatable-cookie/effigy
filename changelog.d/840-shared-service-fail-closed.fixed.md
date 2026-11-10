@@ -1,0 +1,1 @@
+Shared-service startup now refuses before publishing or changing containers when its machine gate or runtime inventory is unavailable. Replacement stops on a failed stop or removal, reports the failed phase, and preserves named data volumes.
