@@ -1344,3 +1344,64 @@ then launches the separately authorized #622 full-session occurrence. Only after
 that session closes does the owner launch the already prepared historical D4.
 The `/Users` exception above is exploratory only; a sealed use would need its own
 reviewed admission and authority. No full-session success is claimed here.
+
+### Desktop directory-lock diagnosis (effigy#864)
+
+On 2026-11-10 at 23:20–23:30 UTC, fresh owned probes did **not reproduce** the
+earlier hang. Desktop's retained backend log does locate the earlier failure:
+`DockerApiProxyVolumeSharer` waited on Desktop's own `POST /locks/lock-directory`
+for the Stash checkout's `.effigy/state` from 04:41:49.985Z until a five-minute
+timeout at 04:46:49.987Z, then timed out locking `.effigy/secrets`. The `/Users`
+session hit the same state/secrets lock timeouts at 04:58:50.644Z and
+05:03:50.647Z. This identifies the stalled Desktop operation, not its underlying
+cause or what cleared it. The original fixture is no longer available for an
+exact replay; no full-session or #622 success is claimed.
+
+Desktop reported 4.92.0 (240144), Engine/CLI 29.8.0, Compose v5.5.1, 18 CPUs,
+8192 MiB memory, 1024 MiB swap and Resource Saver enabled. Effective shared roots
+were `/Users`, `/Volumes`, `/private`, `/tmp` and `/var/folders`. VirtioFS was
+confirmed by VM startup and live mounts; the also-enabled legacy `useGrpcfuse`
+flag does not describe the active implementation.
+
+Brief-v2 probes used a fresh empty owned `/Users/tom/.effigy-desktop-diag-*`
+directory and owned Stash scratch only. All bounds were 20 seconds for create,
+25 seconds for start and 15 seconds for inspect; none expired. Running time
+below ends at the first successful inspection, measured from start invocation.
+
+| Probe | Create | Start | Running confirmed |
+| --- | --- | --- | --- |
+| Busybox, both dedicated binds | 0.102 s | 0.129 s | 0.176 s |
+| Effigy-rendered ordinary service, both dedicated binds | 0.213 s | 0.326 s | 0.375 s |
+| Stash bind with two empty read-only named-volume masks, no-copy | 0.083 s | 0.134 s | 0.173 s |
+
+The rendered service also wrote successfully to its owned checkout bind. The
+fresh nested-mask probe reached the same Desktop lock API and returned OK in
+about 6–9 ms. The evidence supports an earlier path/state-dependent Desktop
+directory-lock stall; its trigger and lock holder remain unknown. It does not
+establish a consistency, propagation or path-rendering fault. Effigy's relevant
+mask construction is `build_guest_mask_mounts` in
+`crates/effigy-containers/src/workspace.rs`, applied by
+`rewrite_workspace_mounts_for_direct_compose` in `workspace/compose_rewrite.rs`.
+No clearly correct product fix was established, and the isolation masks must
+not be removed as a workaround. No code or Desktop settings changed.
+
+**Planner-brief error:** before v2, four read-only probes mounted `/Users/tom`
+itself, including `effigy864-qe9lkmvl-users`, triggering Tom's home-sharing
+warning. All four had been removed before v2 resumed. No broad bind followed
+the amendment. The dedicated empty `/Users` fixture was removed after use.
+
+Durable evidence is `/Volumes/Stash/scratch/effigy/desktop-diag-qe9lkmvl/`:
+`README.md`, `commands.jsonl`, `lifecycle-summary.json`,
+`stall-window-backend.txt`, `current-lock-api.txt`, archived fixture inputs and
+exact cleanup receipts. `SHA256SUMS.json` has SHA-256
+`3a759215246ea4b2e2407db21a53136e6b3a01e0af0132ef40d6f920ab27c00e`.
+All nine containers, two volumes and the newly pulled busybox image were
+removed by exact identity; no network was created. Complete final container,
+volume, network and image inventories match task start. No fixture process
+remains. Archived pre-v2 inputs are evidence and must not be replayed.
+
+No restart or settings change is indicated while fresh probes pass. If the
+same lock API stalls in the next authorized unsealed session, retain its exact
+fixture and logs; Tom can then restart Desktop and retry that small owned
+fixture as a recovery experiment. A restart is not a proven fix, and only Tom
+applies Desktop lifecycle or settings changes.
