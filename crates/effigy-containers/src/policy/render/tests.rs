@@ -870,19 +870,13 @@ include: [/source/extra.yml]
 "#;
     for first in [Path::new("checkout"), Path::new("checkout/overrides")] {
         let names = BTreeMap::from([
-            (
-                PathBuf::from("/source/config.yaml"),
-                "checkout/generated/config.yaml",
-            ),
-            (
-                PathBuf::from("/source/extra.yml"),
-                "checkout/overrides/extra.yml",
-            ),
+            ("/source/config.yaml", "checkout/generated/config.yaml"),
+            ("/source/extra.yml", "checkout/overrides/extra.yml"),
         ]);
         let mut value: serde_yaml::Value = serde_yaml::from_str(source).unwrap();
         crate::workspace::map_compose_paths(&mut value, &mut |path, _| {
             names
-                .get(Path::new(path))
+                .get(path)
                 .map(|name| relative_name(first, Path::new(name)))
         });
         let expected = r#"services:

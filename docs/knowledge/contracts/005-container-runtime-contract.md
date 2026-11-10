@@ -746,17 +746,14 @@ first `-f` input — so no Effigy value is interpolated into the stack and no
 container environment carries one. Internal policy readers resolve those
 relative inputs to the generation's own paths before parsing bind syntax or
 estimating mount budgets; the immutable file bytes keep the relative spelling.
-Path relocation visits Compose file-reference fields only; environment, commands,
-inline content and generated config bodies remain literal. Reports derive logical
-Compose input names in invocation order from the render, including overrides,
-without caching a separate display string.
+Relocation visits Compose file references; commands, environment and config bodies
+stay literal. Reports derive input names in invocation order, including overrides.
 A shared service belongs to no checkout, so it is not part of a generation. Its
 Compose input and every file its fragment binds (MariaDB and Postgres init SQL)
 are published at one machine-wide, content-addressed directory under the Effigy
 home — `<effigy home>/shared-services/<project>/<digest>/` — with absolute bind
-sources. Its digest hashes the field-aware relative file references before binding
-them to that absolute directory; literal metadata stays unchanged. Two checkouts
-with the same shared declaration therefore hand Compose
+sources. Its digest covers relative file references before their absolute binding.
+Two checkouts with the same shared declaration therefore hand Compose
 byte-identical input at the same absolute path, and its config-hash does not
 change with the checkout. That render also names itself on the service it
 creates (`com.effigy.shared-render`). `up` reads the label from the runtime: a

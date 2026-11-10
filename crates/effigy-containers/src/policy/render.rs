@@ -86,7 +86,6 @@ pub fn prepare_inputs(
 }
 
 impl EffectiveContainerPolicy {
-    /// Logical Compose inputs in invocation order, independent of publication or staging.
     pub fn compose_file_display(&self) -> String {
         self.compose_files
             .iter()
@@ -521,7 +520,6 @@ fn finish_shared_render(
     if backend == crate::compose::ComposeBackend::ColimaNerdctl {
         healthcheck::normalize_exec_form(&mut document);
     }
-    // Hash the field-aware render before binding its own absolute directory.
     crate::workspace::map_compose_paths(&mut document, &mut |source, _| {
         Path::new(source)
             .strip_prefix(&pending.directory)
