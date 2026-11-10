@@ -15,10 +15,6 @@ if sys.argv[1] == "--run":
     if group != suite:
         raise SystemExit(0)
     start = time.monotonic()
-    # Keep the entire shared-process cohort. Extra threads let independent
-    # tests progress while other test threads wait on the fixture env lock.
-    if suite == "library":
-        args.append("--test-threads=16")
     result = subprocess.run([binary, *args])
     print(f"shared-process {binary}: exit={result.returncode} wall={time.monotonic() - start:.3f}s", flush=True)
     raise SystemExit(result.returncode)

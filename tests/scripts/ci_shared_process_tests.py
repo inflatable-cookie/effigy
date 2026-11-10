@@ -34,7 +34,7 @@ class PartitionTests(unittest.TestCase):
         self.assertEqual({c.args[0][0] for c in calls}, set(PLAN))
         for call in calls:
             args = call.args[0]
-            self.assertEqual(args[1:], ["--test-threads=16"] if args[0] == "/synthetic/lib" else [])
+            self.assertEqual(args[1:], [])
 
     def test_runner_propagates_test_failure(self):
         self.assertEqual(self.runner("library", "/synthetic/lib", 7)[0], 7)

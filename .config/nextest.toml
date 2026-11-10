@@ -38,7 +38,7 @@ slow-timeout = { period = "120s", terminate-after = 1, grace-period = "2s" }
 leak-timeout = { period = "30s", result = "fail" }
 
 [[profile.default.overrides]]
-filter = 'binary(gateway_private) & test(managed_matrix_)'
+filter = 'binary(gateway_private) & (test(managed_matrix_) | test(managed_host_))'
 test-group = "cold-start"
 
 [[profile.default.overrides]]

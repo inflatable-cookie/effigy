@@ -416,7 +416,8 @@ Worktree archive controls use private synthetic scratch roots and retain the exp
 Nextest's default suite caps cold-start fixtures at one concurrent test in the
 `cold-start` group; the durable supervisor matrix has its own `journal-matrix`
 group. These caps bound contention within each class while ordinary tests keep
-using the remaining runner slots. Focused exposure checks use the same cold-start
+using the remaining runner slots. All managed-host gateway listener fixtures
+share that cold-start cap, including terminal readiness failure. Focused exposure checks use the same cold-start
 cap. No test reserves every runner thread; activation deadlines and assertions
 remain unchanged.
 
@@ -425,9 +426,9 @@ process runs partition whole test binaries into library, CLI, gateway and remain
 cohorts through `scripts/ci-shared-process.py`. Cargo discovers the complete target
 inventory at each head, and new binaries enter the remaining cohort. Every test in
 a binary still runs together under the original `effigy_shared_process`
-configuration. The library cohort uses 16 libtest threads so unrelated tests
-can progress while fixture environment locks occupy other threads; other
-cohorts retain the default. A Cargo runner selects whole binaries from the
+configuration and libtest's default parallel thread count. The library cohort
+uses optimization level 1 with debug assertions explicitly enabled; every
+cohort omits debug symbols. A Cargo runner selects whole binaries from the
 compiled inventory in one workspace invocation, preserving feature unification
 and Cargo's per-package execution environment. Both operating systems retain all
 tests and doc tests. Compilation is cached independently of the partition.
