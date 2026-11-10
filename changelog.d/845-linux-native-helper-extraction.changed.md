@@ -1,0 +1,1 @@
+Linux physical preparation and native diagnostics now use shared VM identity, SSH, custody and bounded transport helpers without importing the retired quota executor. Historical setup and receipt readers remain available.

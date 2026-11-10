@@ -23,8 +23,9 @@ import linux_diagnostic_probe as guest_probe
 import linux_disk_association as disk_association
 import linux_disk_inventory as disk_inventory
 import linux_engine_inputs as engine_inputs
-import linux_setup as setup
+import linux_native_support as setup
 import preparation_stage as stage
+import preparation_requests
 
 REPO_ROOT = HERE.parents[2]
 MODULE_ROLE = HERE.relative_to(REPO_ROOT).as_posix()
@@ -176,7 +177,7 @@ def digest(path, role):
 
 def repository_identity():
     """Checkout-owned inputs by repository-relative role and exact SHA-256. No checkout path is stored."""
-    names = sorted(set(SOURCES) | set(setup.REQUIRED_MODULE_NAMES))
+    names = sorted(set(SOURCES) | set(preparation_requests.REQUIRED_MODULE_NAMES))
     roles = {MODULE_ROLE + '/' + name: digest(HERE / name, name) for name in names}
     roles[MANIFEST_ROLE] = digest(REPO_ROOT / MANIFEST_ROLE, MANIFEST_ROLE)
     if roles[MODULE_ROLE + '/linux-setup-probe.sh'] != setup.PROBE_SHA256:

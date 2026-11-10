@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import common
 import linux_diagnostic_proof as diagnostic
-import linux_setup as setup
+import linux_native_support as setup
 
 BASE = '/Volumes/Stash/scratch/effigy/linux-native-829'
 SOURCE_REF = 'refs/remotes/origin/main'

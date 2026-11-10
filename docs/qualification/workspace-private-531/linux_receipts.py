@@ -19,8 +19,6 @@ import re
 import subprocess
 from pathlib import Path
 
-from linux_supervisor import Refusal
-
 NAMESPACE = 'effigy-go-receipt'
 HEX64 = re.compile(r'^[0-9a-f]{64}$')
 HEX40 = re.compile(r'^[0-9a-f]{40}$')

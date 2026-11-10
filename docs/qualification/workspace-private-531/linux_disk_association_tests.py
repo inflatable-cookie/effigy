@@ -29,7 +29,7 @@ import linux_disk_identity as identity
 import linux_disk_identity_tests as identity_tests
 import linux_disk_inventory as inventory
 import linux_setup as setup
-from linux_supervisor import Refusal
+from preparation_stage import Refusal
 
 VM = '433c9e5b-c7b9-469f-9633-24b4addcd3b5'
 DISK_UID = setup.DISK_UID
@@ -348,13 +348,13 @@ class DiskAssociationControls(unittest.TestCase):
         with self.assertRaises(Refusal):
             dal.verify(association, supported, pins)
         # The production integration, with the same pins: the gate must refuse too.
-        with mock.patch.object(dal, 'PINS', pins), self.assertRaises(Refusal):
+        with mock.patch.object(dal, 'PINS', pins), self.assertRaises(setup.Refusal):
             setup.verify_disk_association(association, supported)
 
     def test_production_gate_refuses_the_test_mechanism(self):
         self.assertEqual(set(dal.PINS), {dal.MECHANISM})
         self.assertEqual(setup.SUPPORTED_DISK_MECHANISMS, frozenset({dal.MECHANISM}))
-        with self.assertRaises(Refusal):
+        with self.assertRaises(setup.Refusal):
             setup.verify_disk_association(valid_association())
         with self.assertRaises(Refusal):
             dal.verify(valid_association(), frozenset(), dal.PINS)
@@ -442,10 +442,10 @@ class DiskAssociationControls(unittest.TestCase):
         }
         with mock.patch.object(dal, 'PINS', TEST_PINS):
             for label, facts in counterexamples.items():
-                with self.subTest(label), self.assertRaises(Refusal):
+                with self.subTest(label), self.assertRaises(setup.Refusal):
                     setup.verify_disk_association(facts, TEST_SUPPORTED)
             self.assertEqual(setup.verify_disk_association(valid_association(), TEST_SUPPORTED)['serial'], SERIAL)
-        with self.assertRaises(Refusal):
+        with self.assertRaises(setup.Refusal):
             setup.verify_disk_association(valid_association(), TEST_SUPPORTED)
 
     def test_repeated_top_level_section_refuses_config(self):
@@ -740,11 +740,11 @@ class ProductionInventoryControls(unittest.TestCase):
             with self.subTest(label):
                 read = host_read_with(hardware=hardware)
                 self.assertEqual(table(valid_association(host_read=read))['host_read'][0], 'refuse')
-                with mock.patch.object(dal, 'PINS', TEST_PINS), self.assertRaises(Refusal):
+                with mock.patch.object(dal, 'PINS', TEST_PINS), self.assertRaises(setup.Refusal):
                     setup.verify_disk_association(valid_association(host_read=read), TEST_SUPPORTED)
                 prod = host_read(dal.PINS[dal.MECHANISM],
                                  output=cli_info_text(dal.PINS[dal.MECHANISM], hardware=hardware).encode())
-                with self.assertRaises(Refusal):
+                with self.assertRaises(setup.Refusal):
                     setup.verify_disk_association(production_association(host_read=prod))
 
     def test_the_data_disk_must_be_the_reviewed_image_backed_hdd0(self):
@@ -1152,7 +1152,7 @@ class ProductionInventoryControls(unittest.TestCase):
         self.assertEqual(setup.verify_disk_association(stored), result)
         self.assertEqual(dal.load_facts(stored)['config'], config_xml())
         # A reduced verify result is not facts and is refused by the same consumer entry.
-        with self.assertRaises(Refusal):
+        with self.assertRaises(setup.Refusal):
             setup.verify_disk_association(result)
 
         def reseal(document, field, data):
@@ -1173,7 +1173,7 @@ class ProductionInventoryControls(unittest.TestCase):
             with self.subTest(label):
                 tampered = json.loads(json.dumps(stored))
                 mutate(tampered)
-                with self.assertRaises(Refusal):
+                with self.assertRaises(setup.Refusal):
                     setup.verify_disk_association(tampered)
 
     def test_retained_747_replay_is_offline_and_supplies_no_fresh_evidence(self):
@@ -1184,7 +1184,7 @@ class ProductionInventoryControls(unittest.TestCase):
         self.assertEqual(rows['descriptor'][0], 'pass')
         self.assertEqual(rows['guest_blocks'][0], 'pass')
         self.assertEqual(rows['host_read'][0], 'refuse')
-        with self.assertRaises(Refusal):
+        with self.assertRaises(setup.Refusal):
             setup.verify_disk_association(dict(production_association(), host_read=None))
 
 

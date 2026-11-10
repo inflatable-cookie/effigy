@@ -16,20 +16,16 @@ import hashlib
 import json
 import os
 import re
-import select
-import signal
 import stat
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import preparation_resources as resources
+import linux_native_support as native
 from linux_supervisor import Refusal
 import linux_supervisor as supervisor
 
-MAX_DEADLINE = 1200
 # The two programs the forced-command writer can reach: the fixed interpreter and the installed
 # supervisor entry. There is no outer login shell, environment or PATH lookup in the reviewed form.
 WRITER_TOOLS = ('/usr/bin/python3', '/usr/local/libexec/effigy-stage-supervisor')
@@ -171,96 +167,21 @@ def writer_tool_main(argv):
     return 0
 
 
-def _kill_group(proc):
-    """Kill the process group. An already-exited group reports EPERM or ESRCH on macOS; both mean nothing is left."""
-    try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        pass
-
-
+# R2-temporary compatibility seam; removed with the old executor.
 def drain(procs, timeout, output_cap, monitor=None, poll=0.05):
-    """Read the streams of every process until all exit or the deadline or a refusal.
-
-    Returns (failure, exit_codes, streams). failure is None or (disposition, reason).
-    """
-    if not isinstance(output_cap, int) or output_cap <= 0 or not 0 < timeout <= MAX_DEADLINE:
-        raise Refusal('invalid output cap or deadline')
-    streams = {proc: {'stdout': bytearray(), 'stderr': bytearray()} for proc in procs}
-    owners = {}
-    for proc in procs:
-        owners[proc.stdout] = (proc, 'stdout')
-        owners[proc.stderr] = (proc, 'stderr')
-    open_pipes = set(owners)
-    failure = None
-    started = time.monotonic()
     try:
-        while open_pipes and failure is None:
-            if time.monotonic() - started > timeout:
-                failure = ('timeout', 'deadline reached')
-                break
-            if monitor is not None:
-                try:
-                    monitor.check()
-                except resources.Refusal as exc:
-                    failure = ('resource-refusal', str(exc))
-                    break
-            ready, _, _ = select.select(list(open_pipes), [], [], poll)
-            for pipe in ready:
-                chunk = os.read(pipe.fileno(), 65536)
-                if not chunk:
-                    open_pipes.discard(pipe)
-                    continue
-                proc, name = owners[pipe]
-                streams[proc][name].extend(chunk)
-                if len(streams[proc][name]) > output_cap:
-                    failure = ('output-cap', 'stream exceeded the cap; partial output is not accepted')
-                    break
-    finally:
-        if failure is not None:
-            for proc in procs:
-                _kill_group(proc)
-        codes = []
-        for proc in procs:
-            remaining = max(0.1, timeout - (time.monotonic() - started))
-            try:
-                codes.append(proc.wait(timeout=remaining))
-            except subprocess.TimeoutExpired:
-                _kill_group(proc)
-                codes.append(proc.wait(timeout=10))
-                failure = failure or ('timeout', 'process outlived the deadline')
-        for proc in procs:
-            proc.stdout.close()
-            proc.stderr.close()
-    if failure is None and monitor is not None:
-        try:
-            monitor.check()
-        except resources.Refusal as exc:
-            failure = ('resource-refusal', str(exc))
-    return failure, codes, {proc: {k: bytes(v) for k, v in streams[proc].items()} for proc in procs}
+        return native.drain(procs, timeout, output_cap, monitor, poll)
+    except native.Refusal as exc:
+        raise Refusal(str(exc)) from exc
 
 
+# R2-temporary compatibility seam; removed with the old executor.
 def run_transfer(argv, stdin_path, timeout, output_cap, monitor=None, popen=subprocess.Popen,
                  environment=None):
-    """One bounded local process, stdin from a file. Exit status is the waited result, never closure.
-    environment, when given, is the child's exact environment (the fixed Parallels CLI read pins
-    the retained LANG/PATH); the default inherits this process's environment."""
-    stdin = open(stdin_path, 'rb') if stdin_path else subprocess.DEVNULL
     try:
-        popen_kwargs = {} if environment is None else {'env': dict(environment)}
-        proc = popen(argv, stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                     start_new_session=True, **popen_kwargs)
-    finally:
-        if stdin_path:
-            stdin.close()
-    failure, codes, streams = drain([proc], timeout, output_cap, monitor)
-    out = streams[proc]
-    if failure is not None:
-        return {'disposition': failure[0], 'reason': failure[1], 'waited_exit': codes[0],
-                'stdout': out['stdout'], 'stderr': out['stderr']}
-    disposition = 'exited' if codes[0] == 0 else 'failed'
-    return {'disposition': disposition, 'reason': None, 'waited_exit': codes[0],
-            'stdout': out['stdout'], 'stderr': out['stderr']}
+        return native.run_transfer(argv, stdin_path, timeout, output_cap, monitor, popen, environment)
+    except native.Refusal as exc:
+        raise Refusal(str(exc)) from exc
 
 
 def run_contained_transfer(supervisor_argv, writer_argv, stdin_path, timeout, output_cap, monitor=None,
