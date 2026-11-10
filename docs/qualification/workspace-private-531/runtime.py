@@ -511,7 +511,8 @@ targets = ["containers"]
         env = dict(self.env, EFFIGY_OLD_CUSTODY_BINARY=str(self.old), EFFIGY_KERNEL_CUSTODY_FIXTURE=str(self.kernel_fixture))
         runner = [self.nextest, 'nextest', 'run', '--config-file', self.nextest_config,
                   '--user-config-file', 'none', '--binaries-metadata', self.binaries_metadata,
-                  '--cargo-metadata', self.cargo_metadata, '--no-fail-fast', '--retries', '0', '--no-tests', 'fail']
+                  '--cargo-metadata', self.cargo_metadata, '--target-dir', self.base / 'nextest-target',
+                  '--no-fail-fast', '--retries', '0', '--no-tests', 'fail']
         self.verify_root()
         self.command(runner + ['--run-ignored', 'only', '-E', 'test(custody::tests::discard_old_sentinel_refuses_before_child_exec)'],
             cwd=Path(self.cell['source_root']), env=env, timeout=min(600, self.end - time.monotonic()))

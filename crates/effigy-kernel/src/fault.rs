@@ -52,6 +52,7 @@ points! {
     ProbeObservation,
     SocketBind,
     CaptureWrite,
+    CapturePlainPublish,
     CaptureSync,
     CaptureCommitAfterPublish,
     CapturePendingRemoval,

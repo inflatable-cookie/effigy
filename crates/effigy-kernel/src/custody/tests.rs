@@ -3553,6 +3553,35 @@ fn redaction_drops_a_tab_that_a_renderer_would_shift_the_next_bytes_with() {
 }
 
 #[test]
+#[cfg(feature = "fault-injection")]
+fn plain_capture_marker_publishes_after_its_complete_extent() {
+    use crate::fault::{self, Fault, Point};
+    let fixture = home();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let mut log = capture::Log::open(&root, id(), -1, STD, cx.operation().limits()).unwrap();
+    fault::arm_point(Point::CapturePlainPublish, Fault::Eperm);
+    assert!(log.enable_plain().is_err());
+    assert!(fault::fired());
+    fault::arm(None);
+    let directory = root.path().join("runs").join(id().to_string());
+    assert!(!directory.join("-1.stdout.plain").exists());
+    let extent: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join("-1.stdout.committed")).unwrap())
+            .unwrap();
+    assert_eq!(extent["committed"], 0);
+    assert!(directory.join("-1.stdout.guard").is_file());
+    let mut complete = capture::Log::open(&root, id(), -2, STD, cx.operation().limits()).unwrap();
+    complete.enable_plain().unwrap();
+    assert_eq!(
+        std::fs::read(directory.join("-2.stdout.plain")).unwrap(),
+        b"effigy.plain.v2\n"
+    );
+    assert!(directory.join("-2.stdout.committed").is_file());
+    assert!(!directory.join("-2.stdout.plain.initial").exists());
+}
+
+#[test]
 fn merged_log_is_plain_redacted_and_committed_before_fanout() {
     let cx = cx();
     let capture = FakeCapture::new(home(), &cx, vec![]);

@@ -1150,3 +1150,10 @@ New exploratory windows also compare complete stable network configuration
 when an engine restart recreates a bridge ID. They retain both inventories; a
 same-name network with changed IPAM, driver, options, labels or isolation refuses.
 Each active window still requires its exact original inventory at settlement.
+
+The next unsealed window exposed an output initialization race: the format
+marker could become visible before its committed extent. Plain capture now
+stages the complete marker, durably publishes its guard and initial zero extent,
+then exclusively renames the marker into view. A fault before that last boundary
+leaves no selectable partial protocol. This preserves strict missing-extent
+refusal while preventing a healthy new capture from manufacturing that state.

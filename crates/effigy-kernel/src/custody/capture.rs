@@ -113,10 +113,11 @@ impl Log {
         guard.sync_all()?;
         self.guard = Some(FileIdentity::of(&stat));
         let name = plain_name(self.sequence)?;
+        let stage = name.with_suffix(".initial").map_err(io::Error::other)?;
         let (mut file, _) = self
             .dir
             .open_file(
-                &name,
+                &stage,
                 libc::O_WRONLY | libc::O_EXCL,
                 Some(0o600),
                 Trust::Private,
@@ -126,7 +127,6 @@ impl Log {
         crate::fs::fchmod(&file, 0o600)?;
         file.write_all(b"effigy.plain.v2\n")?;
         file.sync_all()?;
-        self.dir.sync().map_err(io::Error::other)?;
         self.extent_identity = Some(super::merged::atomic::publish(
             &self.dir,
             &extent_name(self.sequence)?,
@@ -138,6 +138,18 @@ impl Log {
             "initial",
             None,
         )?);
+        // Readers select the plain protocol from this marker. Publish it only
+        // after its guard and initial committed extent are durable, and never
+        // expose a partially written format record.
+        crate::fault_point!(CapturePlainPublish)?;
+        super::merged::atomic::rename(
+            &self.dir,
+            &stage,
+            &self.dir,
+            &name,
+            super::merged::atomic::Rename::Exclusive,
+        )?;
+        self.dir.sync().map_err(io::Error::other)?;
         Ok(())
     }
     pub fn publish_styles(
