@@ -46,6 +46,11 @@ the `run_manifest_task_builtin_test_sweeps_a_leaked_suite_process` proof: a
 suite that leaves a process in its own process group, which the route must name
 and reap.
 
+The handoff descriptor controls re-exec a fresh test process for each source
+slot (11, 3 and 10). Its launcher first moves inherited non-stdio descriptors
+above fd 11, preserving suite markers and runner pipes while leaving the
+controlled slots available. Each cell then claims only its own source slot.
+
 ### The kernel-custody boundary
 
 Kernel custody is an explicit boundary, not a sweep target. A helper started

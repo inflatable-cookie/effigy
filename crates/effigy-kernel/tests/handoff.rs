@@ -152,11 +152,30 @@ fn a_handoff_reader_already_at_the_slot_survives_exec() {
         return;
     }
     // Keep 11 and 3, and cover the cleanup-pin target too. These slots are
-    // claimed by the cell; inherited suite-marker descriptors are untouched.
+    // claimed by the cell; inherited suite markers remain open above them.
     for source in [HANDOFF_FD, 3, 10] {
         // A fresh process keeps earlier cells' process-global kernel signal
         // descriptors from occupying a later cell's deliberately claimed slot.
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
+        // Before the Rust harness starts, move inherited non-stdio descriptors
+        // above the controlled slots. A built-in test runner may supply a pipe
+        // or sweep marker at 10; keep that evidence open without claiming it.
+        let output = std::process::Command::new("python3")
+            .args(["-I", "-B", "-c"])
+            .arg(
+                r#"import errno, fcntl, os, sys
+for source in range(3, 12):
+    try:
+        spare = fcntl.fcntl(source, fcntl.F_DUPFD, 12)
+    except OSError as error:
+        if error.errno != errno.EBADF:
+            raise
+    else:
+        os.set_inheritable(spare, True)
+        os.close(source)
+os.execv(sys.argv[1], sys.argv[1:])
+"#,
+            )
+            .arg(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "a_handoff_reader_already_at_the_slot_survives_exec",
@@ -183,7 +202,20 @@ fn assert_handoff_reader_survives_from(source: i32) {
     let holder = held
         .iter()
         .position(|fd| fd.as_raw_fd() == source)
-        .expect("the source slot holder");
+        .unwrap_or_else(|| {
+            let facts = std::process::Command::new("lsof")
+                .args([
+                    "-n",
+                    "-P",
+                    "-a",
+                    "-p",
+                    &std::process::id().to_string(),
+                    "-d",
+                ])
+                .arg(source.to_string())
+                .output_owned();
+            panic!("source {source} was not claimed by this cell: {facts:?}");
+        });
     drop(held.remove(holder));
     // SAFETY: the slot is free and the reader is live; ownership of the
     // duplicate transfers below.
