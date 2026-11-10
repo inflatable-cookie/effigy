@@ -34,13 +34,20 @@ pub(super) const GUEST_CHECKOUT: &str = "/workspace";
 const MANIFEST: &[u8] = b"[tasks]\nbuild = \"cargo build\"\nseed = \"cargo run -- seed\"\n";
 
 fn running_binary() -> RunningBinary {
-    // This compiled test executable is immutable for the process's lifetime.
-    // Context/peer fixtures need copies of that identity, not another full-file
-    // hash for each matrix cell. Production dispatch still observes its binary.
-    static BINARY: OnceLock<RunningBinary> = OnceLock::new();
-    BINARY
-        .get_or_init(|| RunningBinary::observe().expect("the test binary's own identity"))
-        .clone()
+    // Only the compiled executable's digest is immutable. Keep observing the
+    // display version, which may come from a fixture's environment. Production
+    // dispatch still observes its binary; these are context/peer fixture copies.
+    static DIGEST: OnceLock<String> = OnceLock::new();
+    RunningBinary {
+        version: effigy_core::build_info::display_version(),
+        digest: DIGEST
+            .get_or_init(|| {
+                RunningBinary::observe()
+                    .expect("the test binary's own identity")
+                    .digest
+            })
+            .clone(),
+    }
 }
 
 pub(super) fn session_run() -> RunId {
