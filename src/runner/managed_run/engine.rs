@@ -24,7 +24,7 @@ use effigy_kernel::observe::Observed;
 use effigy_kernel::outcome::{CleanupOutcome, WorkloadOutcome};
 use effigy_kernel::run::{EffectSpec, RequestAction, RunError, Settlement};
 use effigy_kernel::supervise::{EngineSession, OwnerWatch};
-use effigy_tui::waits::{should_publish, EntryPhase, EntryState, EntryWaits, SessionOrder, WaitOn};
+use effigy_core::managed_waits::{should_publish, EntryPhase, EntryState, EntryWaits, SessionOrder, WaitOn};
 
 use super::environment::{self, EnvironmentPlan, Health, NotReady, RouteHealth};
 use super::settlement::{self, Binding, ExecGroupEffect};

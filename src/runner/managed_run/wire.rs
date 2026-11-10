@@ -50,7 +50,7 @@ pub(in crate::runner) enum EngineEvent {
     /// `waiting_on` names the exact dependency, phase, probe or delay, so a
     /// front end never renders a generic wait (effigy#458).
     Entry {
-        state: effigy_tui::waits::EntryState,
+        state: effigy_core::managed_waits::EntryState,
     },
     /// Every workload has started.
     StartupFinished,
@@ -99,12 +99,12 @@ mod tests {
             },
             EngineEvent::StartupFinished,
             EngineEvent::Entry {
-                state: effigy_tui::waits::EntryState {
+                state: effigy_core::managed_waits::EntryState {
                     entry: "front".into(),
-                    phase: effigy_tui::waits::EntryPhase::Waiting,
-                    waiting_on: Some(effigy_tui::waits::WaitOn::Entry {
+                    phase: effigy_core::managed_waits::EntryPhase::Waiting,
+                    waiting_on: Some(effigy_core::managed_waits::WaitOn::Entry {
                         name: "api".into(),
-                        phase: effigy_tui::waits::EntryPhase::Starting,
+                        phase: effigy_core::managed_waits::EntryPhase::Starting,
                     }),
                     not_started_because: None,
                     detail: None,
@@ -127,7 +127,7 @@ mod tests {
     /// that never started carries the prerequisite's report (effigy#458).
     #[test]
     fn the_event_json_names_each_entry_s_own_wait() {
-        use effigy_tui::waits::{Attribution, EntryPhase, EntryState, WaitOn};
+        use effigy_core::managed_waits::{Attribution, EntryPhase, EntryState, WaitOn};
 
         let state = |entry: &str, phase, waiting_on, not_started_because| EntryState {
             entry: entry.into(),

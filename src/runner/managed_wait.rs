@@ -13,7 +13,7 @@
 
 use std::path::{Path, PathBuf};
 
-use effigy_tui::waits::{EntryPhase, EntryState, ENTRY_WAIT_SCHEMA};
+use effigy_core::managed_waits::{EntryPhase, EntryState, ENTRY_WAIT_SCHEMA};
 use serde::{Deserialize, Serialize};
 
 use crate::runner::host_process::write_private_json;
@@ -270,7 +270,7 @@ impl WaitLedger {
     /// names (effigy#458).
     pub(in crate::runner) fn read_progress(&self) -> Option<(u32, u32)> {
         match self.read_phase()?.waiting_on? {
-            effigy_tui::waits::WaitOn::Environment {
+            effigy_core::managed_waits::WaitOn::Environment {
                 healthy: Some(healthy),
                 total: Some(total),
             } => Some((healthy, total)),
@@ -415,7 +415,7 @@ pub(in crate::runner) fn path_component(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use effigy_tui::waits::{Attribution, EntryPhase, WaitOn};
+    use effigy_core::managed_waits::{Attribution, EntryPhase, WaitOn};
 
     fn fixture() -> (tempfile::TempDir, WaitLedger) {
         let home = tempfile::tempdir().expect("fixture directory");
@@ -884,7 +884,7 @@ mod tests {
             entry: "front".to_owned(),
             phase: EntryPhase::NotStarted,
             waiting_on: None,
-            not_started_because: Some(effigy_tui::waits::Attribution::new(
+            not_started_because: Some(effigy_core::managed_waits::Attribution::new(
                 "api",
                 "failed: readiness probe GET / returned 500",
             )),
@@ -895,7 +895,7 @@ mod tests {
             entry: "front".to_owned(),
             phase: EntryPhase::NotStarted,
             waiting_on: None,
-            not_started_because: Some(effigy_tui::waits::Attribution::new(
+            not_started_because: Some(effigy_core::managed_waits::Attribution::new(
                 "environment",
                 "failed: `up` exited 1",
             )),

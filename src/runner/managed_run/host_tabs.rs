@@ -9,23 +9,23 @@
 //!
 //! - where the supervisor writes the process's output
 //!   ([`crate::runner::host_process::host_process_log_path`]) and, for a
-//!   listener, the state file that says when it is ready;
+//!   listener, the old reader path for an already-running older supervisor;
 //! - the status line, derived from the owner journal and a generation-bound
-//!   listener record, never child log text or a process-tree scrape;
+//!   lifecycle observation, never child log text or a process-tree scrape;
 //! - [`LogTail`], a bounded incremental reader for the log file, shared by the
 //!   TUI tabs and the `--headless` front end so both show the same lines.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::runner::host_process::{HostPaneIdentity, HostPaneObservation};
+use crate::runner::host_process::{HostLifecycleStatus, HostPaneIdentity, HostPaneObservation};
 use effigy_containers::{EffectiveContainerPolicy, HostProcessRestart};
-use effigy_tui::waits::{EntryPhase, EntryState};
+use effigy_core::managed_waits::{EntryPhase, EntryState};
 
 /// The most one log tail read returns, so a chatty process cannot stall a
 /// frame or a headless turn.
 const READ_MAX: usize = 64 * 1024;
-/// How often a front end asks a listener's state file whether it is ready.
+/// How often a front end reads the host owner's lifecycle observation.
 const LISTENER_POLL: Duration = Duration::from_millis(250);
 
 /// One environment host process, as a tab and as a followed log.
@@ -34,7 +34,7 @@ pub(in crate::runner) struct HostProcessTab {
     pub(in crate::runner) name: String,
     pub(in crate::runner) identity: Option<HostPaneIdentity>,
     pub(in crate::runner) log: PathBuf,
-    /// The state file a listener publishes; `None` for a plain process.
+    /// The legacy reader path; new owners publish lifecycle observations in the journal.
     pub(in crate::runner) listener_state: Option<PathBuf>,
     pub(in crate::runner) restart: HostProcessRestart,
     pub(in crate::runner) restart_delay_ms: u64,
@@ -151,6 +151,9 @@ impl HostStatus {
 /// Only typed owner/journal observations can change a pane's status.
 fn observed_status(tab: &HostProcessTab, view: &HostPaneObservation) -> HostStatus {
     use effigy_kernel::run::Phase;
+    if matches!(view.lifecycle, Some((HostLifecycleStatus::Failed, _))) {
+        return HostStatus::Failed;
+    }
     if view.phase == Phase::Closed {
         return view
             .exit
@@ -170,19 +173,21 @@ fn observed_status(tab: &HostProcessTab, view: &HostPaneObservation) -> HostStat
             HostStatus::Exited(code)
         };
     }
-    if let Some((status, url)) = &view.listener {
-        match status.as_str() {
-            "ready" => {
+    if let Some((status, url)) = &view.lifecycle {
+        match status {
+            HostLifecycleStatus::Ready => {
                 return url
                     .clone()
                     .map(HostStatus::Ready)
                     .unwrap_or(HostStatus::Unavailable)
             }
-            "unavailable" => return HostStatus::Unavailable,
-            "failed" => return HostStatus::Failed,
-            "stopped" => return HostStatus::Stopped,
-            "starting" => return HostStatus::Starting,
-            _ => {}
+            HostLifecycleStatus::Unavailable | HostLifecycleStatus::OwnerGone => {
+                return HostStatus::Unavailable
+            }
+            HostLifecycleStatus::Failed => return HostStatus::Failed,
+            HostLifecycleStatus::Stopped => return HostStatus::Stopped,
+            HostLifecycleStatus::Starting => return HostStatus::Starting,
+            HostLifecycleStatus::Running => return HostStatus::Running,
         }
     }
     if matches!(view.phase, Phase::Admitted | Phase::Starting) {
@@ -537,29 +542,47 @@ mod tests {
             phase: effigy_kernel::run::Phase::Active,
             live: true,
             exit: None,
-            listener: Some(("ready".into(), Some("https://api.test".into()))),
+            lifecycle: Some((HostLifecycleStatus::Ready, Some("https://api.test".into()))),
         };
         assert_eq!(
             observed_status(&tab, &view),
             HostStatus::Ready("https://api.test".into())
         );
-        view.listener = Some(("unavailable".into(), None));
+        view.lifecycle = Some((HostLifecycleStatus::Unavailable, None));
         assert_eq!(observed_status(&tab, &view), HostStatus::Unavailable);
-        view.listener = Some(("ready".into(), Some("https://api.test".into())));
+        view.lifecycle = Some((HostLifecycleStatus::Ready, Some("https://api.test".into())));
         assert_eq!(
             observed_status(&tab, &view),
             HostStatus::Ready("https://api.test".into())
         );
         for (state, status) in [
-            ("failed", HostStatus::Failed),
-            ("stopped", HostStatus::Stopped),
+            (HostLifecycleStatus::Failed, HostStatus::Failed),
+            (HostLifecycleStatus::Stopped, HostStatus::Stopped),
+            (HostLifecycleStatus::OwnerGone, HostStatus::Unavailable),
         ] {
-            view.listener = Some((state.into(), None));
+            view.lifecycle = Some((state, None));
             assert_eq!(observed_status(&tab, &view), status);
         }
-        view.listener = None;
+        view.lifecycle = None;
         assert_eq!(observed_status(&tab, &view), HostStatus::Running);
     }
+    #[test]
+    fn a_journaled_launch_refusal_never_announces_a_start_without_an_event() {
+        let tab = tab(HostProcessRestart::Never, None);
+        let view = HostPaneObservation {
+            phase: effigy_kernel::run::Phase::Closed,
+            live: false,
+            exit: Some(127),
+            lifecycle: Some((HostLifecycleStatus::Failed, None)),
+        };
+        let status = observed_status(&tab, &view);
+        assert_eq!(status, HostStatus::Failed);
+        assert!(!status.reports_a_start());
+        let mut follower = HostFollower::new(tab);
+        follower.status = status;
+        assert!(!follower.may_announce_started());
+    }
+
     #[test]
     fn child_owner_marker_spoofs_never_change_status() {
         let mut follower = HostFollower::new(tab(HostProcessRestart::Never, None));
@@ -605,7 +628,7 @@ mod tests {
     /// and attributed (effigy#458).
     #[test]
     fn a_published_wait_names_the_dependency_and_a_failure_is_attributed() {
-        use effigy_tui::waits::{Attribution, EntryPhase, EntryState, WaitOn};
+        use effigy_core::managed_waits::{Attribution, EntryPhase, EntryState, WaitOn};
 
         let dir = tempfile::tempdir().expect("wait dir");
         let ledger = crate::runner::managed_wait::WaitLedger::environment(dir.path(), "app");
@@ -679,10 +702,10 @@ mod tests {
         ledger.clear();
         let mut tab = tab(HostProcessRestart::Never, None);
         tab.wait_ledger = ledger.clone();
-        ledger.publish(&effigy_tui::waits::EntryState {
+        ledger.publish(&effigy_core::managed_waits::EntryState {
             entry: "api".to_owned(),
-            phase: effigy_tui::waits::EntryPhase::Starting,
-            waiting_on: Some(effigy_tui::waits::WaitOn::Probe {
+            phase: effigy_core::managed_waits::EntryPhase::Starting,
+            waiting_on: Some(effigy_core::managed_waits::WaitOn::Probe {
                 probe: "GET / -> 200".to_owned(),
             }),
             not_started_because: None,
@@ -715,7 +738,7 @@ mod tests {
     /// report announces the process (effigy#458).
     #[test]
     fn a_staged_snapshot_never_erases_a_wait_or_announces_a_start() {
-        use effigy_tui::waits::{EntryPhase, EntryState, WaitOn};
+        use effigy_core::managed_waits::{EntryPhase, EntryState, WaitOn};
 
         let dir = tempfile::tempdir().expect("wait dir");
         let ledger = crate::runner::managed_wait::WaitLedger::environment(dir.path(), "app");
@@ -790,7 +813,7 @@ mod tests {
     /// folded together (effigy#458).
     #[test]
     fn a_late_attach_reads_the_entry_its_tab_names() {
-        use effigy_tui::waits::{EntryPhase, EntryState, WaitOn};
+        use effigy_core::managed_waits::{EntryPhase, EntryState, WaitOn};
 
         let dir = tempfile::tempdir().expect("wait dir");
         let ledger = crate::runner::managed_wait::WaitLedger::environment(dir.path(), "app");
@@ -825,7 +848,7 @@ mod tests {
             follower
                 .wait_state()
                 .and_then(|state| state.waiting_on.clone()),
-            Some(effigy_tui::waits::WaitOn::Probe {
+            Some(effigy_core::managed_waits::WaitOn::Probe {
                 probe: probe.to_owned()
             }),
             "the tab reads its own entry's wait"
@@ -837,7 +860,7 @@ mod tests {
     /// with no wait is (effigy#458).
     #[test]
     fn a_blocked_host_is_not_announced_as_started() {
-        use effigy_tui::waits::{EntryPhase, EntryState, WaitOn};
+        use effigy_core::managed_waits::{EntryPhase, EntryState, WaitOn};
 
         let dir = tempfile::tempdir().expect("wait dir");
         let ledger = crate::runner::managed_wait::WaitLedger::environment(dir.path(), "app");

@@ -28,7 +28,7 @@ use super::host_tabs::{HostFollower, HostProcessTab};
 use super::wire::{self, EngineEvent, Front, Payload};
 use crate::runner::error::RunnerError;
 use crate::runner::task_engine::{self, read_run_log};
-use effigy_tui::waits::EntryState;
+use effigy_core::managed_waits::EntryState;
 
 /// How long a client waits for one supervisor event before its next turn.
 const TURN: Duration = Duration::from_millis(50);

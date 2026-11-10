@@ -748,13 +748,13 @@ fn session_tabs(
 /// The session's waits before the supervisor's first event: every workload
 /// names the environment phase or the entry before it, so no tab opens with a
 /// generic spinner (effigy#458).
-fn initial_waits(plan: &effigy_managed::ManagedTaskPlan) -> Vec<effigy_tui::waits::EntryState> {
-    let order = effigy_tui::waits::SessionOrder::workloads(
+fn initial_waits(plan: &effigy_managed::ManagedTaskPlan) -> Vec<effigy_core::managed_waits::EntryState> {
+    let order = effigy_core::managed_waits::SessionOrder::workloads(
         &plan
             .processes
             .iter()
             .filter(|process| process.role == ManagedProcessRole::Standard)
-            .map(|process| effigy_tui::waits::WorkloadOrder {
+            .map(|process| effigy_core::managed_waits::WorkloadOrder {
                 name: &process.name,
                 after: &process.after,
             })
@@ -762,7 +762,7 @@ fn initial_waits(plan: &effigy_managed::ManagedTaskPlan) -> Vec<effigy_tui::wait
     );
     let environment = plan.owns_environment.then_some("environment");
     let now = std::time::Instant::now();
-    effigy_tui::waits::EntryWaits::new(order, environment, now).states(now)
+    effigy_core::managed_waits::EntryWaits::new(order, environment, now).states(now)
 }
 
 /// A shell tab's interactive attach, run by the TUI client itself.
@@ -873,12 +873,12 @@ fn own_managed_run(
         let target = context.target(&plan.profile);
         // The run's own ordering graph, resolved once: the supervisor derives
         // every entry's wait from it (effigy#458).
-        let workload_order = effigy_tui::waits::SessionOrder::workloads(
+        let workload_order = effigy_core::managed_waits::SessionOrder::workloads(
             &plan
                 .processes
                 .iter()
                 .filter(|process| process.role == ManagedProcessRole::Standard)
-                .map(|process| effigy_tui::waits::WorkloadOrder {
+                .map(|process| effigy_core::managed_waits::WorkloadOrder {
                     name: &process.name,
                     after: &process.after,
                 })

@@ -1862,3 +1862,13 @@ terms = ["def setup_plan(", "def execute_plan(", "def default_quota_runner("]
 paths = []
 config_keys = []
 allow = []
+
+[[retired]]
+id = "host-listener-file-publication"
+retired = "2026-11-10; host lifecycle projection (effigy#851)"
+replacement = "New host supervisors record typed lifecycle and readiness observations on their existing kernel run effects. Activation, dependencies, status and panes read the same run and custody generation. Readers continue reading an already-running older supervisor's listener file until it is explicitly stopped; installing a new CLI neither dual-writes nor replaces that owner."
+owner = "docs/knowledge/contracts/052-runtime-kernel-contract.md"
+terms = ["fn write_listener_state("]
+paths = []
+config_keys = []
+allow = ["CHANGELOG.md"]

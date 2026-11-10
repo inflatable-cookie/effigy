@@ -10,7 +10,7 @@ use effigy_kernel::id::RunId;
 use effigy_kernel::observe::Observed;
 use effigy_kernel::run::{Effect, EffectState};
 use effigy_kernel::supervise::OUTPUT_SEQUENCE;
-use effigy_tui::waits::EntryState;
+use effigy_core::managed_waits::EntryState;
 use serde::Serialize;
 
 use super::engine::SETTLE_BUDGET;
@@ -40,7 +40,7 @@ pub(in crate::runner) struct ProcessView {
     /// What this process waits for, when it is starting against a named wait
     /// (effigy#458). A started process usually has none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(in crate::runner) waiting_on: Option<effigy_tui::waits::WaitOn>,
+    pub(in crate::runner) waiting_on: Option<effigy_core::managed_waits::WaitOn>,
     #[serde(skip)]
     pub(in crate::runner) sequence: i64,
 }
@@ -694,7 +694,7 @@ fn not_running(addressed: &Addressed<'_>, status: &ManagedStatus) -> RunnerError
 mod tests {
     use super::*;
     use crate::runner::managed_wait::WaitLedger;
-    use effigy_tui::waits::{Attribution, EntryPhase, WaitOn};
+    use effigy_core::managed_waits::{Attribution, EntryPhase, WaitOn};
 
     fn waiting(entry: &str, waiting_on: WaitOn) -> EntryState {
         EntryState {

@@ -19,7 +19,7 @@ use effigy_containers::health::readiness::{
     HealthProbeStage, ServiceHealth, SharedFailureTracker,
 };
 use effigy_containers::EffectiveContainerPolicy;
-use effigy_tui::waits::{EntryPhase, EntryState, WaitOn};
+use effigy_core::managed_waits::{EntryPhase, EntryState, WaitOn};
 
 use crate::runner::error::RunnerError;
 use crate::runner::managed_wait::WaitLedger;

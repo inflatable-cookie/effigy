@@ -25,7 +25,7 @@ use effigy_tui::multiprocess::{
     run_multiprocess_tui_with_source, MultiProcessTuiControl, MultiProcessTuiOptions,
     SessionEntryState, SessionProcesses, SessionTab,
 };
-use effigy_tui::waits::EntryState;
+use effigy_core::managed_waits::EntryState;
 
 use super::client::{Closed, Started, StopSender};
 use super::control::Addressed;

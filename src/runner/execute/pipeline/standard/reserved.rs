@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::runner::managed_run::{self, OwnedRun, WorkloadSpec};
-use effigy_tui::waits::{SessionOrder, WorkloadOrder};
+use effigy_core::managed_waits::{SessionOrder, WorkloadOrder};
 use std::collections::BTreeMap;
 
 struct ReadOnlySchema;

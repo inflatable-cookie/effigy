@@ -1,0 +1,1 @@
+Host activation, dependencies, status and panes now read typed lifecycle observations from the host owner’s journal, preserving readiness budgets and exact child generations. Running older supervisors keep their existing reader until stopped.

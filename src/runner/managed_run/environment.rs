@@ -583,7 +583,7 @@ fn find_program(name: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use effigy_tui::waits::WaitOn;
+    use effigy_core::managed_waits::WaitOn;
 
     /// The wait names the request being observed, not the whole URL: the
     /// readiness line a person reads (effigy#458).
@@ -616,9 +616,9 @@ mod tests {
         assert_eq!(environment_counts(&plan), None, "nothing is published yet");
 
         // The readiness publisher's own write path.
-        ledger.publish_phase(&effigy_tui::waits::EntryState {
+        ledger.publish_phase(&effigy_core::managed_waits::EntryState {
             entry: "environment".to_owned(),
-            phase: effigy_tui::waits::EntryPhase::Waiting,
+            phase: effigy_core::managed_waits::EntryPhase::Waiting,
             waiting_on: Some(WaitOn::Environment {
                 healthy: Some(3),
                 total: Some(4),
@@ -631,9 +631,9 @@ mod tests {
 
         // A host process that happens to be named `environment` is an entry,
         // not the phase, and never changes the counts.
-        ledger.publish(&effigy_tui::waits::EntryState {
+        ledger.publish(&effigy_core::managed_waits::EntryState {
             entry: "environment".to_owned(),
-            phase: effigy_tui::waits::EntryPhase::Starting,
+            phase: effigy_core::managed_waits::EntryPhase::Starting,
             waiting_on: Some(WaitOn::Probe {
                 probe: "GET / -> 200".to_owned(),
             }),

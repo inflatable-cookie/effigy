@@ -2422,7 +2422,6 @@ mod tests {
                 declared_route_domain: "api.test".to_owned(),
                 route_domain: "api.test".to_owned(),
                 route_tls: false,
-                state_file: "/checkout/.effigy/runtime/api.listener.json".to_owned(),
             }],
             managed_host_listener_failures: vec![
                 crate::runner::host_process::ManagedHostListenerFailure {

@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 use std::time::Instant;
 
 use effigy_containers::{EffectiveContainerPolicy, EffectiveHostProcess};
-use effigy_tui::waits::{should_publish, EntryState, EntryWaits, HostOrder, SessionOrder};
+use effigy_core::managed_waits::{should_publish, EntryState, EntryWaits, HostOrder, SessionOrder};
 
 use std::collections::BTreeMap;
 
@@ -41,7 +41,7 @@ fn withheld_dependency(
 pub(in crate::runner) fn withheld_attribution(
     holder: &str,
     reason: &str,
-) -> effigy_tui::waits::Attribution {
+) -> effigy_core::managed_waits::Attribution {
     let line = reason
         .lines()
         .next()
@@ -51,7 +51,7 @@ pub(in crate::runner) fn withheld_attribution(
         .chars()
         .take(160)
         .collect::<String>();
-    effigy_tui::waits::Attribution::new(
+    effigy_core::managed_waits::Attribution::new(
         holder,
         if line.is_empty() {
             "did not become ready".to_owned()
@@ -82,7 +82,7 @@ pub(in crate::runner) fn attributed_environment_failure(
     let published = ledger.read_all();
     let failed = published
         .iter()
-        .find(|state| state.phase == effigy_tui::waits::EntryPhase::Failed)
+        .find(|state| state.phase == effigy_core::managed_waits::EntryPhase::Failed)
         .and_then(|state| {
             state
                 .detail
@@ -328,7 +328,8 @@ impl HostWaitGraph {
             }
             if !matches!(
                 state.phase,
-                effigy_tui::waits::EntryPhase::NotStarted | effigy_tui::waits::EntryPhase::Failed
+                effigy_core::managed_waits::EntryPhase::NotStarted
+                    | effigy_core::managed_waits::EntryPhase::Failed
             ) {
                 self.ledger.settle(&state.entry);
                 self.published.remove(&state.entry);
@@ -371,7 +372,7 @@ impl HostWaitGraph {
     pub(in crate::runner) fn withheld(
         &mut self,
         entry: &str,
-        attribution: effigy_tui::waits::Attribution,
+        attribution: effigy_core::managed_waits::Attribution,
         now: Instant,
     ) {
         self.waits.withheld(entry, attribution, now);
@@ -381,8 +382,10 @@ impl HostWaitGraph {
     /// The plan aborted before it reached every entry: each one it never
     /// started is terminal and names what ended the plan (effigy#458).
     pub(in crate::runner) fn abandon_plan(&mut self, detail: &str, now: Instant) {
-        self.waits
-            .abandon(effigy_tui::waits::Attribution::new("plan", detail), now);
+        self.waits.abandon(
+            effigy_core::managed_waits::Attribution::new("plan", detail),
+            now,
+        );
         self.publish_all(now);
     }
 }
@@ -600,7 +603,7 @@ pub(in crate::runner) fn run_host_activation(
         };
         graph.probing(
             &process.name,
-            effigy_tui::waits::listener_probe_label(
+            effigy_core::managed_waits::listener_probe_label(
                 &listener.readiness_path,
                 listener.readiness_status,
             ),
@@ -644,7 +647,7 @@ mod tests {
         EffectiveContainerPolicy, EffectiveHostProcess, EffectiveManagedHostListener,
         HostProcessRestart, HostProcessSignal,
     };
-    use effigy_tui::waits::{Attribution, EntryPhase, EntryState, WaitOn};
+    use effigy_core::managed_waits::{Attribution, EntryPhase, EntryState, WaitOn};
 
     use super::*;
 
@@ -1051,7 +1054,7 @@ mod environment_tests {
 
     use std::time::Duration;
 
-    use effigy_tui::waits::{EntryPhase, WaitOn};
+    use effigy_core::managed_waits::{EntryPhase, WaitOn};
 
     use super::tests::{
         four_entry_policy, policy_with_an_independent_host, process, records, run_plan, state_of,
@@ -1224,7 +1227,7 @@ mod environment_tests {
         planner.started("api", clock.at());
         planner.probing(
             "api",
-            effigy_tui::waits::listener_probe_label("/", 200),
+            effigy_core::managed_waits::listener_probe_label("/", 200),
             clock.at(),
         );
 
@@ -1456,7 +1459,7 @@ mod environment_tests {
             entry: "api".to_owned(),
             phase: EntryPhase::Starting,
             waiting_on: Some(WaitOn::Probe {
-                probe: effigy_tui::waits::listener_probe_label("/", 200),
+                probe: effigy_core::managed_waits::listener_probe_label("/", 200),
             }),
             not_started_because: None,
             detail: None,
@@ -1481,7 +1484,7 @@ mod environment_tests {
         planner.started("api", clock.at());
         planner.probing(
             "api",
-            effigy_tui::waits::listener_probe_label("/", 200),
+            effigy_core::managed_waits::listener_probe_label("/", 200),
             clock.at(),
         );
         let presented = frame(&checkout, &["api", "front", "admin"], "api");
