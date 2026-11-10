@@ -167,4 +167,3 @@ all subprocess calls and do not build or execute Cargo.
 | Route | Rule | Reason |
 | --- | --- | --- |
 | `scripts/ci-shared-process.py` | genuine exception | Hosted-only binary partitioner; GitHub runners have no Oxide. |
-| `tests/scripts/ci_shared_process_tests.py` | genuine exception | Mock-only controls name Cargo argv; never launch Cargo. |
