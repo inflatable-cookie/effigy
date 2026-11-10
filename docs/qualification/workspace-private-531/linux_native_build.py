@@ -1,0 +1,141 @@
+"""Unsealed guest-local bootstrap through the documented missing-Oxide selector route.
+
+Only the fixed task-829 VM is addressed. No host Cargo command, install, engine or
+proof-only entry is used. Source and command originals stay in an owned evidence root.
+"""
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import stat
+import subprocess
+import sys
+import time
+import uuid
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import common
+import linux_diagnostic_proof as diagnostic
+import linux_setup as setup
+
+BASE = '/Volumes/Stash/scratch/effigy/linux-native-829'
+SOURCE_REF = 'refs/remotes/origin/main'
+
+
+def file_input(path):
+    info = path.lstat()
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+            or info.st_nlink != 1 or path.resolve(strict=True) != path):
+        raise RuntimeError('unsafe native build input: ' + str(path))
+    return {'path': str(path), 'sha256': common.digest(path)}
+
+
+def guest_script(pin, remote, bundle_sha):
+    if not re.fullmatch('[0-9a-f]{40}', pin) or not re.fullmatch('[0-9a-f]{64}', bundle_sha):
+        raise ValueError('exact source and bundle digests required')
+    return '\n'.join([
+        'set -eu', 'umask 077',
+        'base=' + shlex.quote(BASE), 'remote=' + shlex.quote(remote),
+        'printf "guest-build-pid=%s\\n" "$$"',
+        "printf '%s  %s\\n' " + shlex.quote(bundle_sha) + ' "$remote/source.bundle" | sha256sum -c -',
+        'export RUSTUP_HOME="$base/toolchain/rustup" CARGO_HOME="$base/toolchain/cargo"',
+        'export PATH="$base/tools/bin:$CARGO_HOME/bin:/usr/bin:/bin"',
+        'if command -v oxide >/dev/null 2>&1; then echo "guest now has Oxide; rebind route" >&2; exit 1; fi',
+        'git init -q "$remote/source"', 'cd "$remote/source"',
+        'git fetch --no-tags ../source.bundle ' + SOURCE_REF,
+        'git checkout --detach ' + pin,
+        'test "$(git rev-parse HEAD)" = ' + pin,
+        'test -z "$(git status --porcelain)"',
+        'rustc -vV', 'cargo -vV',
+        'export EFFIGY_OXIDE_ESCAPE=cargo',
+        'export CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_DEV_INCREMENTAL=false CARGO_BUILD_JOBS=4',
+        # The host Effigy selector owns this bootstrap. Once built, native Effigy
+        # dispatches subsequent selectors with the same recorded guest-only need.
+        'sh scripts/oxide-selector.sh build --locked --bin effigy',
+        './target/debug/effigy --version', 'sha256sum target/debug/effigy',
+    ]) + '\n'
+
+
+def build(root):
+    diagnostic.private_root(str(root))
+    run_root = root / ('native-build-' + uuid.uuid4().hex)
+    run_root.mkdir(mode=0o700)
+    counter = 0
+
+    def run(argv, *, data=None, stdin=None, timeout=30):
+        nonlocal counter
+        counter += 1
+        stem = run_root / ('step-%03d' % counter)
+        intent = {'argv': [str(arg) for arg in argv], 'started_at': time.time(),
+                  'timeout_seconds': timeout, 'stdin_sha256': hashlib.sha256(data).hexdigest() if data else None}
+        (stem.with_suffix('.intent.json')).write_text(json.dumps(intent, indent=2))
+        with stem.with_suffix('.stdout').open('xb') as stdout, stem.with_suffix('.stderr').open('xb') as stderr:
+            child = subprocess.Popen(argv, stdin=subprocess.PIPE if data is not None else stdin,
+                                     stdout=stdout, stderr=stderr)
+            intent['local_pid'] = child.pid
+            stem.with_suffix('.intent.json').write_text(json.dumps(intent, indent=2))
+            timed_out = False
+            try:
+                child.communicate(input=data, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                child.kill()  # Only this locally started child; no remote closure claim.
+                child.communicate()
+        stem.with_suffix('.exit').write_text(str(child.returncode) + '\n')
+        stem.with_suffix('.terminal.json').write_text(json.dumps({
+            'local_pid': child.pid, 'local_exit': child.returncode, 'timed_out': timed_out,
+            'elapsed_seconds': time.time() - intent['started_at'],
+            'remote_closure': 'not established by local process exit'}))
+        if timed_out or child.returncode:
+            raise RuntimeError('native build command failed; retained at ' + str(stem))
+        return stem.with_suffix('.stdout').read_bytes()
+
+    raw = run([diagnostic.PRLCTL, 'list', '--info', setup.VM_UUID, '--json'])
+    diagnostic.check_vm(raw, 'running')
+    pin = run([diagnostic.GIT, 'rev-parse', SOURCE_REF]).decode().strip()
+    if not re.fullmatch('[0-9a-f]{40}', pin):
+        raise RuntimeError('current main source pin missing')
+    control = root / 'control'
+    diagnostic.private_root(str(control))
+    config, known = file_input(control / 'ssh_config'), file_input(control / 'ssh_known_hosts')
+    ssh = common.isolated_ssh_prefix('effigy-531-vault', config, known, control, run_root)
+    # Authenticate the exact fixed VM's public SSH host key again, rather than
+    # trusting endpoint spelling or an unauthenticated network key scan.
+    key = run([diagnostic.PRLCTL, 'exec', setup.VM_UUID, '/bin/cat', '/etc/ssh/ssh_host_ed25519_key.pub']).decode().split()
+    pinned = (control / 'ssh_known_hosts').read_text().split()
+    if len(key) < 2 or len(pinned) < 3 or key[:2] != pinned[1:3]:
+        raise RuntimeError('SSH host key differs from the fixed VM')
+    bundle = run_root / 'source.bundle'
+    run([diagnostic.GIT, 'bundle', 'create', str(bundle), SOURCE_REF], timeout=120)
+    bundle.chmod(0o400)
+    binding = {'schema': 'effigy.linux-native-build-exploration.v1', 'exploratory': True,
+               'qualification_credit': False, 'source_pin': pin, 'bundle': file_input(bundle),
+               'ssh_config': config, 'ssh_known_hosts': known,
+               'route': 'guest-local scripts/oxide-selector.sh with EFFIGY_OXIDE_ESCAPE=cargo',
+               'need': 'guest has no Oxide; planner answer ee843c6e 2026-11-09'}
+    (run_root / 'binding.json').write_text(json.dumps(binding, indent=2))
+    remote = BASE + '/builds/' + run_root.name
+    with bundle.open('rb') as source:
+        run(ssh + ['mkdir -p ' + shlex.quote(remote) + '; cat > ' + shlex.quote(remote + '/source.bundle')],
+            stdin=source, timeout=180)
+    script = guest_script(pin, remote, binding['bundle']['sha256']).encode()
+    (run_root / 'build.sh').write_bytes(script)
+    output = run(ssh + ['timeout --signal=TERM --kill-after=20s 1800 /bin/sh -s'], data=script, timeout=1860)
+    binding['guest_source'] = remote + '/source'
+    binding['guest_binary'] = remote + '/source/target/debug/effigy'
+    match = re.search(rb'(?m)^([0-9a-f]{64})  target/debug/effigy$', output)
+    if not match:
+        raise RuntimeError('native build did not return the actual binary digest')
+    binding['guest_binary_sha256'] = match[1].decode()
+    binding['complete'] = True
+    (run_root / 'outcome.json').write_text(json.dumps(binding, indent=2))
+    print(json.dumps(binding, indent=2))
+    return 0
+
+
+if __name__ == '__main__':
+    if len(sys.argv) != 2:
+        raise SystemExit('usage: build:qualification:linux-native -- OWNED_EVIDENCE_ROOT')
+    sys.exit(build(Path(sys.argv[1])))

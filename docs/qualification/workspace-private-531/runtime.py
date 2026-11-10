@@ -20,14 +20,40 @@ import sys
 import tempfile
 import time
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import (PACKET, SCRATCH, artifact, digest, exclusive, load, require, run,
+from common import (PACKET, SCRATCH, artifact, digest, exclusive, exclusive_bytes, load, require, run,
                     open_qualification_root, qualification_path, verify_qualification_root,
                     validate_go, validate_inputs)
 
 
+def engine_inventory(engine_command):
+    containers = engine_command('ps', '-a', '--no-trunc', '--format', '{{.ID}}').stdout.decode().splitlines()
+    require(len(containers) == len(set(containers)) and all(__import__('re').fullmatch(r'[0-9a-f]{64}', ident) for ident in containers),
+            'container inventory identity unavailable')
+    names = engine_command('network', 'ls', '--format', '{{.Name}}').stdout.decode().splitlines()
+    require(len(names) == len(set(names)), 'ambiguous network inventory')
+    networks = []
+    for name in sorted(names):
+        rows = json.loads(engine_command('network', 'inspect', name).stdout)
+        require(len(rows) == 1 and rows[0]['Name'] == name, 'network observation unavailable')
+        row = rows[0]
+        stable = {key: row.get(key) for key in ('Name', 'Id', 'Driver', 'IPAM', 'Options', 'Labels', 'Internal')}
+        networks.append({'name': name, 'engine_id': row.get('Id'),
+                         'configuration_sha256': hashlib.sha256(json.dumps(stable, sort_keys=True).encode()).hexdigest()})
+    volumes = engine_command('volume', 'ls', '--format', '{{.Name}}').stdout.decode().splitlines()
+    require(len(volumes) == len(set(volumes)), 'ambiguous volume inventory')
+    return {'containers': sorted(containers), 'networks': networks, 'volumes': sorted(volumes)}
+
+
 class Window:
-    def __init__(self, cell, inputs_hash, go):
+    def __init__(self, cell, inputs_hash, go, *, exploratory=False):
         self.cell = cell
+        native_linux = cell['backend'] == 'linux'
+        self.guest_user = 'effigy' if native_linux else 'root'
+        self.guest_home = '/home/effigy' if native_linux else '/root'
+        self.guest_options = ['-u', self.guest_user] if native_linux else []
+        self.guest_receipts = self.guest_home if native_linux else '/run/effigy'
+        self.exploratory = exploratory
+        self.command_count = 0
         self.end = time.monotonic() + cell['budget_seconds']
         self.base = qualification_path(cell['qualification_root'])
         self.root = self.base / 'checkout'
@@ -94,7 +120,9 @@ class Window:
                 out.write('repo_root = ' + json.dumps(cell['source_root']) + '\n')
             exclusive('window.json', {'backend': cell['backend'], 'inputs_sha256': inputs_hash,
                       'source_head': cell['source_head'], 'go': go['decision_id'],
-                      'qualification_root': cell['qualification_root']}, dir_fd=self.root_fd)
+                      'qualification_root': cell['qualification_root'],
+                      **({'exploratory': True, 'qualification_credit': False} if exploratory else {})},
+                      dir_fd=self.root_fd)
             self.verify_root()
         except BaseException:
             self.close()
@@ -108,11 +136,30 @@ class Window:
             os.close(self.root_fd)
             self.root_fd = None
 
-    def command(self, args, *, check=True, data=None, cwd=None):
+    def command(self, args, *, check=True, data=None, cwd=None, timeout=60):
         self.verify_root()
         remaining = self.end - time.monotonic()
         require(remaining > 0, 'native window deadline expired')
-        return run(args, cwd=cwd or self.root, env=self.env, timeout=min(60, remaining), check=check, data=data)
+        limit = min(timeout, remaining)
+        if not self.exploratory:
+            return run(args, cwd=cwd or self.root, env=self.env, timeout=limit, check=check, data=data)
+        self.command_count += 1
+        stem = 'explore-command-%04d' % self.command_count
+        exclusive(stem + '.intent.json', {'argv': [str(arg) for arg in args],
+                  'cwd': str(cwd or self.root), 'timeout_seconds': limit}, dir_fd=self.root_fd)
+        try:
+            result = run(args, cwd=cwd or self.root, env=self.env, timeout=limit, check=False, data=data)
+        except subprocess.TimeoutExpired as error:
+            for name in ('stdout', 'stderr'):
+                exclusive_bytes(stem + '.' + name, getattr(error, name) or b'', dir_fd=self.root_fd)
+            exclusive(stem + '.exit.json', {'exit': None, 'timeout': True,
+                      'remote_closure': 'unknown'}, dir_fd=self.root_fd)
+            raise
+        for name in ('stdout', 'stderr'):
+            exclusive_bytes(stem + '.' + name, getattr(result, name), dir_fd=self.root_fd)
+        exclusive(stem + '.exit.json', {'exit': result.returncode}, dir_fd=self.root_fd)
+        require(not check or result.returncode == 0, 'exploratory command failed: ' + stem)
+        return result
 
     def engine_command(self, *args, **kwargs):
         return self.command(self.engine + list(args), **kwargs)
@@ -124,22 +171,7 @@ class Window:
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     def inventory(self):
-        containers = self.engine_command('ps', '-a', '--no-trunc', '--format', '{{.ID}}').stdout.decode().splitlines()
-        require(len(containers) == len(set(containers)) and all(__import__('re').fullmatch(r'[0-9a-f]{64}', ident) for ident in containers),
-                'container inventory identity unavailable')
-        names = self.engine_command('network', 'ls', '--format', '{{.Name}}').stdout.decode().splitlines()
-        require(len(names) == len(set(names)), 'ambiguous network inventory')
-        networks = []
-        for name in sorted(names):
-            rows = json.loads(self.engine_command('network', 'inspect', name).stdout)
-            require(len(rows) == 1 and rows[0]['Name'] == name, 'network observation unavailable')
-            row = rows[0]
-            stable = {key: row.get(key) for key in ('Name', 'Id', 'Driver', 'IPAM', 'Options', 'Labels', 'Internal')}
-            networks.append({'name': name, 'engine_id': row.get('Id'),
-                             'configuration_sha256': hashlib.sha256(json.dumps(stable, sort_keys=True).encode()).hexdigest()})
-        volumes = self.engine_command('volume', 'ls', '--format', '{{.Name}}').stdout.decode().splitlines()
-        require(len(volumes) == len(set(volumes)), 'ambiguous volume inventory')
-        return {'containers': sorted(containers), 'networks': networks, 'volumes': sorted(volumes)}
+        return engine_inventory(self.engine_command)
 
     def db(self):
         self.verify_root()
@@ -182,7 +214,7 @@ class Window:
         (self.root / '.git/config').write_text('[effigy]\n runtimeScope = ephemeral\n')
         (self.root / 'probe.py').write_bytes((PACKET / 'probe.py').read_bytes())
         # No ports, volumes, shared services, pull or user stack. The image must
-        # already contain Python 3, a GNU loader and the configured root user.
+        # already contain Python 3, a GNU loader and the declared workspace user.
         profile = self.cell['engine_identity']
         (self.root / 'effigy.toml').write_text('''[containers]
 default = "web"
@@ -197,8 +229,8 @@ default_workspace = "app"
 [systems.dev.workspaces.app]
 container = "web"
 working_dir = "/workspace"
-user = "root"
-home = "/root"
+user = ''' + json.dumps(self.guest_user) + '''
+home = ''' + json.dumps(self.guest_home) + '''
 [tasks]
 ''' + '\n'.join('"531-' + name + '" = { run = "exec python3 -I -B probe.py ' + name + '", run_in = "host" }'
                 for name in ('stream', 'signal', 'owner', 'gap', 'truncated')) + '''
@@ -212,7 +244,11 @@ targets = ["containers"]
 ''')
         compose = {'services': {'app': {'image': self.cell['runtime_image'], 'pull_policy': 'never',
                     'command': ['python3', '-c', 'import time; time.sleep(86400)'],
-                    'volumes': [str(self.root) + ':/workspace'], 'working_dir': '/workspace', 'environment': {'PROBE_TOKEN': '${PROBE_TOKEN}'}}}}
+                    'volumes': [str(self.root) + ':/workspace'], 'working_dir': '/workspace',
+                    # The maintained Compose importer treats dollar syntax as
+                    # literal. Inherit the private invocation value instead;
+                    # no secret enters the generated source or render.
+                    'environment': ['PROBE_TOKEN']}}}
         (self.root / 'compose.yml').write_text(json.dumps(compose))
         self.command([self.utility, 'prepare', self.root])
         before = self.inventory()
@@ -234,6 +270,12 @@ targets = ["containers"]
                                     '--filter', 'label=com.docker.compose.service=app', '--format', '{{.ID}}').stdout.decode().splitlines()
         require(len(found) == 1 and len(found[0]) == 64, 'native primary is missing or ambiguous')
         self.container = found[0]
+        if self.cell.get('native_engine_root'):
+            import linux_native_storage
+            inspected = json.loads(self.engine_command('inspect', self.container).stdout)
+            require(len(inspected) == 1 and inspected[0]['Id'] == self.container, 'workload identity changed')
+            facts = linux_native_storage.verify_workload(inspected[0], self.root, self.cell['native_engine_root'])
+            self.record('bounded-native-workload', **facts)
         # Read the one selected full v2 document, never a v1 projection.
         selected = self.guest(['python3', '-c', "from pathlib import Path; import sys; g=Path('/run/effigy/context/current').read_text().strip(); sys.stdout.buffer.write(Path('/run/effigy/context/'+g+'/context.json').read_bytes())"]).stdout
         document = json.loads(selected)
@@ -259,10 +301,10 @@ targets = ["containers"]
         return session, generation
 
     def guest(self, args, **kwargs):
-        return self.engine_command('exec', '-i', self.container, *args, **kwargs)
+        return self.engine_command('exec', '-i', *self.guest_options, self.container, *args, **kwargs)
 
     def guest_argv(self, task, client):
-        return self.engine + ['exec', '-i', '-w', '/workspace', '-e', 'EFFIGY_WORKSPACE_CLIENT_ID=' + client,
+        return self.engine + ['exec', '-i', *self.guest_options, '-w', '/workspace', '-e', 'EFFIGY_WORKSPACE_CLIENT_ID=' + client,
                               self.container, self.document['binary_path'], task]
 
     def tasks(self):
@@ -343,7 +385,7 @@ targets = ["containers"]
 
     def guest_client(self, task, client, receipt):
         script = 'import os; from pathlib import Path; p=os.getpid(); Path(' + repr(receipt) + ').write_text(str(p)+" "+Path("/proc/self/stat").read_text().split()[21]); os.execv(' + repr(self.document['binary_path']) + ',["effigy",' + repr(task) + '])'
-        return self.spawn(self.engine + ['exec', '-i', '-w', '/workspace', '-e', 'EFFIGY_WORKSPACE_CLIENT_ID=' + client,
+        return self.spawn(self.engine + ['exec', '-i', *self.guest_options, '-w', '/workspace', '-e', 'EFFIGY_WORKSPACE_CLIENT_ID=' + client,
                                         self.container, 'python3', '-c', script])
 
     def guest_signal(self, receipt, number):
@@ -351,7 +393,7 @@ targets = ["containers"]
         self.guest(['python3', '-c', code])
 
     def owner_drop(self):
-        receipt = '/run/effigy/531-owner-client'
+        receipt = self.guest_receipts + '/531-owner-client'
         child = self.guest_client('531-owner', '531-owner', receipt)
         try:
             self.wait(lambda: (self.root / 'owner-started').is_file(), 'host task admission')
@@ -372,7 +414,7 @@ targets = ["containers"]
     def gap(self):
         # Capture the guest client PID and /proc birth in a guest-private file
         # before exec. This process is started by this exact engine invocation.
-        receipt = '/run/effigy/531-gap-client'
+        receipt = self.guest_receipts + '/531-gap-client'
         child = self.guest_client('531-gap', '531-gap', receipt)
         guest_signal = lambda number: self.guest_signal(receipt, number)
         try:
@@ -463,14 +505,23 @@ targets = ["containers"]
         fresh = self.up()
         require(fresh[0] != first[0] and fresh[1] > first[1], 'down/fresh-up did not replace session and generation')
         self.down()
+        # Down closes the session and removes containers; disposable cache
+        # volumes have a separate labelled retirement operation.
+        self.command([self.candidate, 'container', 'retire', '--yes', '--json'])
         require(self.inventory() == self.cell['baseline'], 'native baseline/cleanup differs; retain exact fixture')
         open_runs = self.rows("SELECT run_id FROM runs WHERE phase <> 'closed' OR cleanup_outcome <> 'complete' OR cleanup_outcome IS NULL")
         require(not open_runs, 'unsettled fixture owners remain')
         # Fixture trees remain as evidence. Removal requires a separately
         # validated exact manifest and operator disposition; no rmtree here.
         self.record('baseline-and-cleanup', inventory=self.cell['baseline'], fixture_retained=True)
-        exclusive('complete.json', {'cells': self.events, 'native': True, 'production_enabled': False}, dir_fd=self.root_fd)
-        print(json.dumps({'receipt': str(self.base / 'complete.json')}))
+        if self.exploratory:
+            exclusive('exploratory-complete.json', {'cells': self.events, 'exploratory': True,
+                      'qualification_credit': False, 'production_enabled': False}, dir_fd=self.root_fd)
+            print(json.dumps({'exploratory_result': str(self.base / 'exploratory-complete.json'),
+                              'qualification_credit': False}))
+        else:
+            exclusive('complete.json', {'cells': self.events, 'native': True, 'production_enabled': False}, dir_fd=self.root_fd)
+            print(json.dumps({'receipt': str(self.base / 'complete.json')}))
 
 
 def main():

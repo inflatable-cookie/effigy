@@ -1,0 +1,8 @@
+# Appended to the immutable offline runtime recipe for native Linux only.
+# Keep historical macOS recipe pins intact; share their exact package closure.
+RUN groupadd --gid 1001 effigy \
+    && useradd --uid 1001 --gid 1001 --create-home --shell /bin/sh effigy \
+    && test "$(id -u effigy)" = 1001 \
+    && chmod 0755 /
+USER effigy
+RUN python3 -c "import ssl; import os; assert os.getuid() == 1001"

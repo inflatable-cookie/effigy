@@ -1,8 +1,8 @@
 # Linux transport and Vault-backed placement proposal — unarmed
 
-No VM/SSH/account/key/storage inspection or effect is authorized here. A later
-fresh Queue-bound stage needs exact operator effects, numeric time/storage bounds
-and disposition. Keep the reviewed **SSH** transport; Parallels authenticates
+This document grants no VM, SSH or storage authority. Task 829's Queue-held brief
+separately authorizes the exploration recorded below; the legacy sealed packet
+remains unarmed. Keep the reviewed **SSH** transport; Parallels authenticates
 preparation facts, not a replacement proof transport.
 
 ## Fixed diagnostic snapshot binding
@@ -931,3 +931,92 @@ refuses, budgets decrease, and retries never extend the caller's absolute deadli
 The local readiness fixtures use a two-second shared window, with ten seconds
 for the four-launch #817 reproduction under host contention; their state transition is published atomically so a reader
 cannot mistake a truncate/write interval for a terminal systemd state.
+
+### Native build and engine exploration
+
+Phase-two commands, streams and exits live in the same owned evidence root under
+`phase2/`; each `native-session-*` directory retains a separate attempt and its
+exact guest fixture archive. None is a sealed occurrence or qualification receipt.
+The dedicated account is `effigy531` (UID/GID 1001), with a locked password and an
+expiring restricted SSH key. Its private host control files stay outside guest
+shares. The key currently permits exploratory preparation, not the sealed E6
+forced-command role. Guest scratch ancestors need read and traverse access for
+descriptor custody; the task base and qualification roots remain mode 0700.
+
+Native Rust 1.97.1 built current-main `26b639f46f24b1353643a4f657b2f3e8a74cc255`,
+its separate ordinary and qualification binaries, the real fixture utility and
+nextest test executables. The genuine old build is
+`823d859dace2cbaa848c8ad5a0b5bdfd8959fdf1`. Nextest 0.9.145's downloaded archive
+matched the existing pin. Linux Oxide cannot compile its pinned Barge dependency;
+the planner-approved guest-only selector route is recorded in
+[`cargo-routes.md`](../../knowledge/cargo-routes.md#task-829-interactive-guest-bootstrap).
+
+Ubuntu 26's ordinary native binary needs GNU 2.39; the pinned Ubuntu 22 runtime
+provides 2.35. The native Zig producer targets ARM64 GNU 2.31 and checks the real
+ELF machine, interpreter and version requirements before publishing its own
+factual producer record. The observed binary requires at most GNU 2.30 and has
+SHA-256 `66cc77b0d9a8d69d48970cd2107fa21e108d4a757ecc853786fee5546958ebe6`.
+An ignored machine-local task overlay selects this genuine producer without
+changing current-main Rust source. Ordinary current-main `container up`, `down`
+and `retire` each returned zero in `phase2/ordinary-acquire-resume.*`; the actual
+consumer, rather than a handwritten sidecar, bound its install identity. Build
+HOME is a private stable directory under the owned guest toolchain (outside
+the service's hidden `/home`): fixture-specific homes change
+cargo-zigbuild's linker-cache path and otherwise force repeated cold builds.
+
+The native Linux recipe appends `linux-native-runtime.fragment` to the existing
+offline recipe, preserving historical macOS packet bytes and pins while sharing
+their package closure. It creates non-root `effigy` UID/GID 1001. Current permission
+preparation correctly refuses a root workspace identity. Its directory root is
+explicitly readable by that user; a daemon mask of 077 had made an imported OCI
+root mode 0700 even though its libraries were readable. The daemon uses its normal
+022 mask, and the recipe verifies Python/SSL as the declared non-root user. The
+fixture inherits `PROBE_TOKEN` from the private invocation environment; the old
+`${PROBE_TOKEN}` source syntax is rejected by the maintained Compose importer.
+
+Planner answer `5b63ff1d431522bbb8a6da63065d08527a642ce6b47c003a1f2e96064f8c14fd`
+selects a dedicated **rootful** daemon on a fixed-capacity loop image. The earlier
+rootless experiment remains exploratory and grants no rootless qualification.
+The original VM Docker and containerd services were not replaced. The pilot puts
+its own containerd root/state, Docker data, BuildKit cache and daemon/container
+logs on one root-owned 2 GiB ext4 image with zero reserved-block percentage;
+temporary `/run`, `/tmp` and `/var/tmp` mounts and service memory have explicit
+RAM limits. The image's outer extents/metadata are accounted separately from
+inner filesystem capacity. This trusts the pinned daemons, not arbitrary
+privileged workloads; mount, privilege and namespace observations must agree
+with the owned bounded roots. Final capacity still needs a complete peak census
+and an honest ENOSPC control; the pilot size is not an admitted E12 ceiling.
+
+Two native unit details matter. A bind over only the delegated cgroup subtree
+breaks runc's `RESOLVE_NO_XDEV` checks; the daemon instead sees one writable
+cgroupfs mount and uses its own fixed cgroup parent. Cgroupfs is kernel/RAM state,
+not persisted engine allocation. `PrivateDevices` removes CAP_MKNOD from the
+daemon's bounding set and breaks runc's default capability setup, so the daemon
+uses Docker's workload device isolation, seccomp and AppArmor rather than that
+incompatible service option. Effective properties and startup failures are
+retained, not inferred from a successful `systemctl start` return.
+
+A fresh 4 GiB ext4 image demonstrated project-531 inheritance, real EDQUOT at a
+64 MiB hard limit, and exact equality between kernel quota charge and the inode
+allocation census. That witness covers a `PrivateUsers=identity` writer with no
+capabilities. A later actual rootful-container probe, UID 1001 with zero effective
+capabilities and default seccomp, could change its empty inode from project 531
+to 0. It restored project 531 before exiting; no payload extent was allocated.
+Project quota therefore cannot supply this guest-writer bound. The chosen next
+step is a workspace image with at most 1 GiB physical capacity, rather than
+claiming the controller-only quota witness covers container writers. Provisioning
+and ENOSPC validation of that final image remain outstanding.
+`linux_native_storage.py` independently checks root-owned image custody,
+loop offset/size, mount identity, features and association to the fixed native
+root UUID; it does not manufacture a positive legacy root-partition witness.
+
+Outstanding native integration findings are retained in the latest session
+attempts. The private candidate still refuses frozen publication planning.
+The serving-host launcher clears inherited environment but forwards neither
+`DOCKER_CONFIG` nor the explicit local-artifact policy; the ordinary path does
+work with those inputs. This handoff needs correction and native re-exercise.
+Also, `retire` reports no remaining resources while two generated read-only
+state/secret mask volumes remain after the ordinary acquisition fixture. Their
+identities and original baselines remain recorded; no cleanup or rebaseline is
+claimed. Full-session controls, final engine/quota admission and integration of
+the complete native-smoke chain remain outstanding before candidate freeze.

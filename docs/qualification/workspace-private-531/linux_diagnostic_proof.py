@@ -605,7 +605,7 @@ def execute(request, request_path, request_hash, selector_streams=None, *, explo
                              'stderr': {'bytes': len(stderr), 'sha256': hashlib.sha256(stderr).hexdigest(),
                                         'text': stderr[:2048].decode('utf-8', 'replace')}})
             remaining -= len(raw) + len(stderr)
-            # Reuse 818's outcome-shape helper; wrapper drift is never a retry candidate.
+            # Retry only the empty nonzero read shape, within the shared deadline.
             try:
                 retry = classify_transport(result, raw, stderr) == 'unavailable'
             except stage.Refusal:

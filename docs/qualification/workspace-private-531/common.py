@@ -119,12 +119,17 @@ def open_qualification_root(binding):
 
 
 def ssh_prefix(cell):
-    alias = cell['ssh_alias']
+    return isolated_ssh_prefix(cell['ssh_alias'], cell['ssh_config'], cell['ssh_known_hosts'],
+                               SSH_CONTROL, qualification_path(cell['qualification_root']))
+
+
+def isolated_ssh_prefix(alias, config_item, known_item, control_root, excluded_root):
+    """One private SSH policy for sealed packets and separately authorized exploration."""
     require(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*', alias), 'exact SSH alias required')
-    config = artifact(cell['ssh_config'])
+    config = artifact(config_item)
     info = config.lstat()
-    parent = SSH_CONTROL.lstat()
-    require(config.is_relative_to(SSH_CONTROL) and config.resolve(strict=True) == config
+    parent = control_root.lstat()
+    require(config.is_relative_to(control_root) and config.resolve(strict=True) == config
             and not any(p.is_symlink() for p in config.parents)
             and stat.S_ISDIR(parent.st_mode) and stat.S_IMODE(parent.st_mode) == 0o700
             and parent.st_uid == os.geteuid()
@@ -155,10 +160,10 @@ def ssh_prefix(cell):
     for key in ('identityfile', 'userknownhostsfile'):
         path = Path(values[key])
         require(path.is_absolute() and str(path) == values[key] and '..' not in path.parts
-                and path.is_relative_to(SSH_CONTROL) and re.fullmatch(r'[A-Za-z0-9_./-]+', values[key])
+                and path.is_relative_to(control_root) and re.fullmatch(r'[A-Za-z0-9_./-]+', values[key])
                 and path.resolve(strict=False) == path and not path.is_relative_to(
-                    qualification_path(cell['qualification_root'])), 'private unshared SSH path required')
-    known = artifact(cell['ssh_known_hosts'])
+                    excluded_root), 'private unshared SSH path required')
+    known = artifact(known_item)
     known_info = known.lstat()
     require(str(known) == values['userknownhostsfile'] and known_info.st_uid == os.geteuid()
             and stat.S_IMODE(known_info.st_mode) == 0o600, 'pinned private known-hosts required')

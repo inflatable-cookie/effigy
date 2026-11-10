@@ -1,1 +1,1 @@
-Added an explicitly unsealed native Linux diagnostic selector that binds the current snapshot inventory for interactive exploration while preserving the sealed entry's fixed snapshot pin and qualification boundaries.
+Added unsealed native Linux diagnostic, build and session exploration selectors, a checked GNU artifact producer, and observation helpers for owned loop filesystems and workload bounds. Exploratory outputs preserve their commands and failures and grant no qualification credit; the sealed diagnostic keeps its fixed snapshot pin.
