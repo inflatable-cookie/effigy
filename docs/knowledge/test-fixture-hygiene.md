@@ -51,6 +51,10 @@ slot (11, 3 and 10). Its launcher first moves inherited non-stdio descriptors
 above fd 11, preserving suite markers and runner pipes while leaving the
 controlled slots available. Each cell then claims only its own source slot.
 
+The workspace guest's exact-version control uses a private child environment.
+Changing `EFFIGY_ACTIVE_VERSION` in the shared harness would race concurrent
+terminal/context proofs that correctly compare their pinned binary identities.
+
 ### The kernel-custody boundary
 
 Kernel custody is an explicit boundary, not a sweep target. A helper started

@@ -18,6 +18,7 @@ use crate::runner::workspace_client::identity::{
     GuestIdentity, GuestIdentityRefusal, GuestSelfObservation,
 };
 use effigy_cli::{parse_command, Command};
+use effigy_test_support::process::FixtureCommandExt;
 use std::collections::{BTreeMap, VecDeque};
 
 use std::io;
@@ -55,10 +56,29 @@ fn running_binary() -> RunningBinary {
 #[test]
 fn running_guest_version_matches_producer_context_without_display_normalization() {
     let _lock = crate::contract_test_support::lock_test();
-    let _env = crate::contract_test_support::EnvGuard::set_many(&[(
-        "EFFIGY_ACTIVE_VERSION",
-        Some("0.14.1+local.fixture".into()),
-    )]);
+    const CHILD: &str = "EFFIGY_TEST_EXACT_GUEST_VERSION";
+    if std::env::var_os(CHILD).is_none() {
+        // The real observer reads the process version. Keep this deliberate
+        // override out of concurrent shared-process terminal/context proofs.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "runner::workspace_client::tests::running_guest_version_matches_producer_context_without_display_normalization",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD, "1")
+            .env("EFFIGY_ACTIVE_VERSION", "0.14.1+local.fixture")
+            .output_owned()
+            .expect("isolated exact-version control");
+        assert!(output.status.success(), "{output:?}");
+        return;
+    }
+    assert_eq!(
+        effigy_core::build_info::active_version(),
+        "0.14.1+local.fixture",
+        "the child runs the original exact-version input"
+    );
     let document = workspace_document(Some(session_run()), None);
     let mut value: serde_json::Value = serde_json::from_slice(&document.render().unwrap()).unwrap();
     value["version"] = effigy_core::build_info::active_version().into();
