@@ -18,7 +18,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use effigy_containers::exec::{
-    compose_status_is_running, list_running_compose_containers_for_policy_with_deadline,
+    list_running_compose_containers_for_policy_with_deadline,
     list_running_compose_containers_for_project_with_deadline,
 };
 use effigy_containers::{
@@ -303,7 +303,7 @@ fn environment_is_live(
             })?;
     if rows
         .iter()
-        .any(|row| !row.oneoff && compose_status_is_running(&row.status))
+        .any(|row| !row.oneoff && row.status.is_running())
     {
         return Ok(true);
     }
@@ -369,7 +369,7 @@ pub(super) fn stop_peer_data_services(
         let active = running
             .iter()
             .filter(|row| !row.oneoff)
-            .filter(|row| compose_status_is_running(&row.status))
+            .filter(|row| row.status.is_running())
             .filter_map(|row| row.service.clone())
             .filter(|service| handover.services.contains(service))
             .collect::<std::collections::BTreeSet<_>>();

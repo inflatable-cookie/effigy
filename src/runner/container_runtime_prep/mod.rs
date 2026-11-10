@@ -994,7 +994,7 @@ pub(in crate::runner) fn observed_predecessor_compatibility_with(
         .filter(|row| {
             row.project_name.as_deref() == Some(policy.project_name.as_str())
                 && !row.oneoff
-                && effigy_containers::exec::compose_status_is_running(&row.status)
+                && row.status.is_running()
         })
         .collect::<Vec<_>>();
     // Verified empty listing only. Unknown inventory already returned above:

@@ -305,7 +305,7 @@ impl ReservedBackendObservation for ContainerBackendObservation {
                 "ambiguous primary inventory".into(),
             ));
         }
-        if !effigy_containers::exec::compose_status_is_running(&primary[0].status) {
+        if !primary[0].status.is_running() {
             return Observed::Unknown(UnknownReason::Inconsistent(
                 "primary container state is not running".into(),
             ));

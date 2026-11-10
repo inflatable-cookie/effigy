@@ -267,7 +267,7 @@ pub(in crate::runner) fn running(
     }
     let live = rows
         .into_iter()
-        .filter(|row| effigy_containers::exec::compose_status_is_running(&row.status))
+        .filter(|row| row.status.is_running())
         .collect::<Vec<_>>();
     if live.is_empty() {
         return Ok(Observed::Verified(false, evidence()));

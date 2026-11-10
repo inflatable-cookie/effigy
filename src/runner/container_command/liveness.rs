@@ -3,10 +3,11 @@
 //! `container status`, doctor, routed-task preparation and managed pipelines
 //! share these probes so "is the stack up?" has one answer.
 
+pub(super) use super::support::exec_error_means_runtime_not_running;
 use effigy_containers::{
     exec::{
         colima_is_running_with_deadline, list_running_compose_containers_for_policy_with_deadline,
-        ContainerExecError, RunningComposeContainer,
+        RunningComposeContainer,
     },
     EffectiveContainerPolicy,
 };
@@ -123,55 +124,28 @@ pub(super) fn has_running_primary_service(
     })
 }
 
-pub(super) fn exec_error_means_runtime_not_running(error: &ContainerExecError) -> bool {
-    match error {
-        ContainerExecError::Failure { stderr, .. } => {
-            stderr.contains("level=fatal msg=\"colima is not running\"")
-                || (stderr.contains("level=fatal msg=\"colima [profile=")
-                    && stderr.contains("] is not running\""))
-                || stderr.contains("Cannot connect to the Docker daemon")
-                || stderr.contains("daemon is not running")
-        }
-        ContainerExecError::Launch { .. } | ContainerExecError::Refusal { .. } => false,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use effigy_containers::exec::ContainerExecError;
 
     #[test]
     fn running_primary_service_requires_repo_project_and_service_match() {
         let repo_root = std::path::Path::new("/tmp/demo");
-        let rows = vec![
-            RunningComposeContainer {
-                container_name: "demo-postgres-1".to_owned(),
-                status: "Up 10 seconds".to_owned(),
-                ports: Vec::new(),
-                project_name: Some("demo".to_owned()),
-                working_dir: Some("/tmp/demo".to_owned()),
-                service: Some("postgres".to_owned()),
-                oneoff: false,
-            },
-            RunningComposeContainer {
-                container_name: "other-workspace-1".to_owned(),
-                status: "Up 10 seconds".to_owned(),
-                ports: Vec::new(),
-                project_name: Some("other".to_owned()),
-                working_dir: Some("/tmp/demo".to_owned()),
-                service: Some("workspace".to_owned()),
-                oneoff: false,
-            },
-            RunningComposeContainer {
-                container_name: "demo-workspace-1".to_owned(),
-                status: "Up 10 seconds".to_owned(),
-                ports: Vec::new(),
-                project_name: Some("demo".to_owned()),
-                working_dir: Some("/tmp/demo".to_owned()),
-                service: Some("workspace".to_owned()),
-                oneoff: false,
-            },
-        ];
+        let rows = [
+            ("demo-postgres-1", "demo", "postgres"),
+            ("other-workspace-1", "other", "workspace"),
+            ("demo-workspace-1", "demo", "workspace"),
+        ]
+        .map(|(name, project, service)| RunningComposeContainer {
+            container_name: name.into(),
+            status: "Up 10 seconds".into(),
+            ports: Vec::new(),
+            project_name: Some(project.into()),
+            working_dir: Some("/tmp/demo".into()),
+            service: Some(service.into()),
+            oneoff: false,
+        });
 
         assert!(has_running_primary_service(
             &rows,

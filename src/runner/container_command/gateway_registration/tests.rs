@@ -123,6 +123,14 @@ fn shared_service(
 /// `policy`'s services. Compose publishes the port; this is how a route
 /// learns it.
 #[cfg(test)]
+// Native ps columns: name, status, publications, project, working dir, service, oneoff.
+fn runtime_row(row: &str) -> RunningComposeContainer {
+    effigy_containers::exec::parse_running_compose_containers(row)
+        .unwrap()
+        .pop()
+        .unwrap()
+}
+
 fn published_rows(
     policy: &EffectiveContainerPolicy,
     bindings: &[(u16, u16)],
@@ -130,10 +138,10 @@ fn published_rows(
 ) -> Vec<RunningComposeContainer> {
     vec![RunningComposeContainer {
         container_name: format!("{}-app-1", policy.project_name),
-        status: "Up 10 seconds".to_owned(),
+        status: "Up 10 seconds".into(),
         ports: bindings
             .iter()
-            .map(|(host, container)| format!("0.0.0.0:{host}->{container}/tcp"))
+            .map(|(host, container)| format!("0.0.0.0:{host}->{container}/tcp").into())
             .collect(),
         project_name: Some(policy.project_name.clone()),
         working_dir: None,
@@ -238,24 +246,12 @@ fn a_service_route_reads_that_services_own_published_port() {
     policy.dns_routes[0].service = Some("web".to_owned());
     let repo_root = Path::new("/tmp/repo");
     let rows = vec![
-        RunningComposeContainer {
-            container_name: "demo-web-dev-pma-1".to_owned(),
-            status: "Up 10 seconds".to_owned(),
-            ports: vec!["0.0.0.0:18900->80/tcp".to_owned()],
-            project_name: Some("demo-web-dev".to_owned()),
-            working_dir: None,
-            service: Some("pma".to_owned()),
-            oneoff: false,
-        },
-        RunningComposeContainer {
-            container_name: "demo-web-dev-web-1".to_owned(),
-            status: "Up 10 seconds".to_owned(),
-            ports: vec!["0.0.0.0:18901->80/tcp".to_owned()],
-            project_name: Some("demo-web-dev".to_owned()),
-            working_dir: None,
-            service: Some("web".to_owned()),
-            oneoff: false,
-        },
+        runtime_row(
+            "demo-web-dev-pma-1\tUp 10 seconds\t0.0.0.0:18900->80/tcp\tdemo-web-dev\t\tpma\tfalse",
+        ),
+        runtime_row(
+            "demo-web-dev-web-1\tUp 10 seconds\t0.0.0.0:18901->80/tcp\tdemo-web-dev\t\tweb\tfalse",
+        ),
     ];
 
     let routes = resolve_gateway_routes_against_rows(repo_root, &policy, &rows)
@@ -516,18 +512,7 @@ fn resolves_multiple_gateway_routes_from_their_own_published_ports() {
 fn validates_gateway_route_against_matching_runtime_port() {
     let policy = test_policy();
     let repo_root = PathBuf::from("/tmp/repo");
-    let rows = vec![RunningComposeContainer {
-        container_name: "demo-web-dev-app-1".to_owned(),
-        status: "Up 10 seconds".to_owned(),
-        ports: vec![
-            "0.0.0.0:8080->80/tcp".to_owned(),
-            ":::8080->80/tcp".to_owned(),
-        ],
-        project_name: Some("demo-web-dev".to_owned()),
-        working_dir: None,
-        service: Some("app".to_owned()),
-        oneoff: false,
-    }];
+    let rows = vec![runtime_row("demo-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp, :::8080->80/tcp\tdemo-web-dev\t\tapp\tfalse")];
     let routes = resolve_gateway_routes_against_rows(&repo_root, &policy, &rows)
         .expect("routes")
         .expect("published");
@@ -543,24 +528,8 @@ fn gateway_readiness_waits_for_declared_service_ports_before_returning_rows() {
     let delayed_rows = [
         Vec::new(),
         vec![
-            RunningComposeContainer {
-                container_name: "demo-web-dev-app-1".to_owned(),
-                status: "Up 10 seconds".to_owned(),
-                ports: vec!["0.0.0.0:8080->80/tcp".to_owned()],
-                project_name: Some("demo-web-dev".to_owned()),
-                working_dir: Some("/tmp".to_owned()),
-                service: Some("app".to_owned()),
-                oneoff: false,
-            },
-            RunningComposeContainer {
-                container_name: "demo-web-dev-db-1".to_owned(),
-                status: "Up 10 seconds".to_owned(),
-                ports: vec!["127.0.0.1:15432->5432/tcp".to_owned()],
-                project_name: Some("demo-web-dev".to_owned()),
-                working_dir: Some("/tmp".to_owned()),
-                service: Some("db".to_owned()),
-                oneoff: false,
-            },
+            runtime_row("demo-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tdemo-web-dev\t/tmp\tapp\tfalse"),
+            runtime_row("demo-web-dev-db-1\tUp 10 seconds\t127.0.0.1:15432->5432/tcp\tdemo-web-dev\t/tmp\tdb\tfalse"),
         ],
     ];
     let mut calls = 0;
@@ -603,7 +572,7 @@ fn gateway_readiness_reports_a_blocked_poll_then_the_ready_one() {
     let repo_root = PathBuf::from("/tmp");
     let blocked = vec![RunningComposeContainer {
         container_name: "demo-web-dev-app-1".to_owned(),
-        status: "Up 10 seconds".to_owned(),
+        status: "Up 10 seconds".into(),
         ports: Vec::new(),
         project_name: Some("demo-web-dev".to_owned()),
         working_dir: Some("/tmp".to_owned()),
@@ -611,24 +580,8 @@ fn gateway_readiness_reports_a_blocked_poll_then_the_ready_one() {
         oneoff: false,
     }];
     let ready = vec![
-        RunningComposeContainer {
-            container_name: "demo-web-dev-app-1".to_owned(),
-            status: "Up 10 seconds".to_owned(),
-            ports: vec!["0.0.0.0:8080->80/tcp".to_owned()],
-            project_name: Some("demo-web-dev".to_owned()),
-            working_dir: Some("/tmp".to_owned()),
-            service: Some("app".to_owned()),
-            oneoff: false,
-        },
-        RunningComposeContainer {
-            container_name: "demo-web-dev-db-1".to_owned(),
-            status: "Up 10 seconds".to_owned(),
-            ports: vec!["127.0.0.1:15432->5432/tcp".to_owned()],
-            project_name: Some("demo-web-dev".to_owned()),
-            working_dir: Some("/tmp".to_owned()),
-            service: Some("db".to_owned()),
-            oneoff: false,
-        },
+        runtime_row("demo-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tdemo-web-dev\t/tmp\tapp\tfalse"),
+        runtime_row("demo-web-dev-db-1\tUp 10 seconds\t127.0.0.1:15432->5432/tcp\tdemo-web-dev\t/tmp\tdb\tfalse"),
     ];
     let mut observed = Vec::new();
     let mut calls = 0;
@@ -683,24 +636,8 @@ fn route_registration_reports_its_post_poll_stages() {
         let mut policy = test_policy();
         policy.repo_root = PathBuf::from(&project_path);
         let rows = vec![
-            RunningComposeContainer {
-                container_name: "demo-web-dev-app-1".to_owned(),
-                status: "Up 10 seconds".to_owned(),
-                ports: vec!["0.0.0.0:8080->80/tcp".to_owned()],
-                project_name: Some("demo-web-dev".to_owned()),
-                working_dir: Some(project_path.clone()),
-                service: Some("app".to_owned()),
-                oneoff: false,
-            },
-            RunningComposeContainer {
-                container_name: "demo-web-dev-db-1".to_owned(),
-                status: "Up 10 seconds".to_owned(),
-                ports: vec!["127.0.0.1:15432->5432/tcp".to_owned()],
-                project_name: Some("demo-web-dev".to_owned()),
-                working_dir: Some(project_path.clone()),
-                service: Some("db".to_owned()),
-                oneoff: false,
-            },
+            runtime_row(&format!("demo-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tdemo-web-dev\t{project_path}\tapp\tfalse")),
+            runtime_row(&format!("demo-web-dev-db-1\tUp 10 seconds\t127.0.0.1:15432->5432/tcp\tdemo-web-dev\t{project_path}\tdb\tfalse")),
         ];
         let mut observed = Vec::new();
         let mut certificates = Vec::new();
@@ -742,7 +679,7 @@ fn gateway_readiness_reports_each_poll_and_its_blocker() {
         // gateway route yet: the poll is blocked, not complete.
         Ok(vec![RunningComposeContainer {
             container_name: "demo-web-dev-db-1".to_owned(),
-            status: "Up 10 seconds".to_owned(),
+            status: "Up 10 seconds".into(),
             ports: Vec::new(),
             project_name: Some("demo-web-dev".to_owned()),
             working_dir: Some("/tmp".to_owned()),
@@ -799,7 +736,7 @@ fn gateway_readiness_reports_a_declared_service_exit() {
         |_| {
             Ok(vec![RunningComposeContainer {
                 container_name: "demo-web-dev-app-1".to_owned(),
-                status: "Exited (1) 2 seconds ago".to_owned(),
+                status: "Exited (1) 2 seconds ago".into(),
                 ports: Vec::new(),
                 project_name: Some("demo-web-dev".to_owned()),
                 working_dir: Some("/tmp".to_owned()),
@@ -914,15 +851,9 @@ fn rejects_gateway_route_when_declared_service_does_not_match_runtime_service() 
 fn rejects_gateway_route_when_runtime_does_not_publish_selected_port() {
     let policy = test_policy();
     let repo_root = PathBuf::from("/tmp/repo");
-    let rows = vec![RunningComposeContainer {
-        container_name: "demo-web-dev-app-1".to_owned(),
-        status: "Up 10 seconds".to_owned(),
-        ports: vec!["0.0.0.0:9090->80/tcp".to_owned()],
-        project_name: Some("demo-web-dev".to_owned()),
-        working_dir: None,
-        service: Some("app".to_owned()),
-        oneoff: false,
-    }];
+    let rows = vec![runtime_row(
+        "demo-web-dev-app-1\tUp 10 seconds\t0.0.0.0:9090->80/tcp\tdemo-web-dev\t\tapp\tfalse",
+    )];
     let routes = resolve_gateway_routes_against_rows(&repo_root, &policy, &rows)
         .expect("routes")
         .expect("published");
@@ -2039,7 +1970,7 @@ fn dev_handoff_gateway_readiness_for_absent_stopped_and_registered_stacks() {
         let rows = published_rows(&policy, &[(41001, 80), (41002, 3769)], None);
         assert!(!gateway_routes_registered_against_rows(repo, &policy, &[]).unwrap());
         let mut stopped = rows.clone();
-        stopped[0].status = "Exited (0) 2 days ago".to_owned();
+        stopped[0].status = "Exited (0) 2 days ago".into();
         assert!(!gateway_routes_registered_against_rows(repo, &policy, &stopped).unwrap());
         assert!(!gateway_routes_registered_against_rows(repo, &policy, &rows).unwrap());
         finish_gateway_route_registration_with_tls(
@@ -2061,7 +1992,7 @@ fn dev_handoff_gateway_readiness_for_absent_stopped_and_registered_stacks() {
         );
 
         let mut starting = rows.clone();
-        starting[0].status = "Up 10 seconds (health: starting)".to_owned();
+        starting[0].status = "Up 10 seconds (health: starting)".into();
         let routes = resolve_gateway_routes_against_rows(repo, &policy, &starting)
             .expect("health-starting resolution")
             .expect("running ports remain published while health starts");
@@ -2086,7 +2017,7 @@ fn dev_handoff_and_registration_refuse_running_route_without_published_port() {
     zest.port = Some(3769);
     policy.dns_routes = vec![zest];
     let mut rows = published_rows(&policy, &[], None);
-    rows[0].status = "Up 10 seconds (health: starting)".to_owned();
+    rows[0].status = "Up 10 seconds (health: starting)".into();
     let handoff = gateway_routes_registered_against_rows(checkout.path(), &policy, &rows)
         .expect_err("running service has no published route port");
     let registration = finish_gateway_route_registration_with_tls(

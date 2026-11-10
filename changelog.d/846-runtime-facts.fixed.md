@@ -1,0 +1,1 @@
+Docker target routing and container runtime observations now use shared typed adapters, keeping pinned endpoints and published ports consistent across startup, workspace handoff and gateway registration.

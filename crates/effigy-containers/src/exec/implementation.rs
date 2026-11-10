@@ -804,7 +804,7 @@ mod legacy_admission_tests {
     fn builder_row(project: &str) -> super::RunningComposeContainer {
         super::RunningComposeContainer {
             container_name: format!("{project}-builder-1"),
-            status: "Up".to_owned(),
+            status: "Up".into(),
             ports: vec![],
             project_name: Some(project.to_owned()),
             working_dir: None,
@@ -1425,7 +1425,7 @@ pub fn observed_workspace_artifact_builder(
     row: &RunningComposeContainer,
     deadline: Instant,
 ) -> Result<ObservedWorkspaceArtifactBuilder, ContainerExecError> {
-    if super::parse::compose_status_is_created(&row.status) {
+    if row.status.lifecycle == super::parse::ContainerLifecycle::Created {
         return observed_never_started_builder(repo_root, policy, row, deadline);
     }
     let inspected = inspect_workspace_artifact_builder(repo_root, policy, row, deadline)?;
@@ -2104,7 +2104,7 @@ pub fn compose_stack_is_running(
             row.project_name.as_deref() == Some(policy.project_name.as_str())
                 && row.service.as_deref() == Some(service.as_str())
                 && !row.oneoff
-                && super::parse::compose_status_is_running(&row.status)
+                && row.status.is_running()
         })
     }))
 }
@@ -2559,7 +2559,9 @@ impl OwnershipContext {
                     if matches!(ip, "127.0.0.1" | "0.0.0.0")
                         && port.parse::<u16>().is_ok_and(|port| port != 0)
                     {
-                        current.ports.push(format!("{ip}:{port}->{container_port}"));
+                        current
+                            .ports
+                            .push(format!("{ip}:{port}->{container_port}").into());
                     }
                 }
             }
@@ -3495,7 +3497,7 @@ mod inventory_tests {
     fn row(project_name: &str, working_dir: &str) -> RunningComposeContainer {
         RunningComposeContainer {
             container_name: format!("{project_name}-1"),
-            status: "Up 10 seconds".to_owned(),
+            status: "Up 10 seconds".into(),
             ports: Vec::new(),
             project_name: Some(project_name.to_owned()),
             working_dir: Some(working_dir.to_owned()),

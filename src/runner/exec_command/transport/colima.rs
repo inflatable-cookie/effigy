@@ -955,35 +955,23 @@ mod tests {
             host_processes: Vec::new(),
         };
 
-        let rows = vec![
-            effigy_containers::exec::RunningComposeContainer {
-                container_name: "other-pma-1".to_owned(),
-                status: "running".to_owned(),
-                ports: vec![],
-                project_name: Some("demo".to_owned()),
-                working_dir: Some("/tmp/repo".to_owned()),
-                service: Some("pma".to_owned()),
+        let rows = [
+            ("other-pma-1", "demo", "pma"),
+            ("other-app-1", "other", "app"),
+            ("demo-app-1", "demo", "app"),
+        ]
+        .map(
+            |(name, project, service)| effigy_containers::exec::RunningComposeContainer {
+                container_name: name.into(),
+                status: "running".into(),
+                ports: Vec::new(),
+                project_name: Some(project.into()),
+                working_dir: Some("/tmp/repo".into()),
+                service: Some(service.into()),
                 oneoff: false,
             },
-            effigy_containers::exec::RunningComposeContainer {
-                container_name: "other-app-1".to_owned(),
-                status: "running".to_owned(),
-                ports: vec![],
-                project_name: Some("other".to_owned()),
-                working_dir: Some("/tmp/repo".to_owned()),
-                service: Some("app".to_owned()),
-                oneoff: false,
-            },
-            effigy_containers::exec::RunningComposeContainer {
-                container_name: "demo-app-1".to_owned(),
-                status: "running".to_owned(),
-                ports: vec![],
-                project_name: Some("demo".to_owned()),
-                working_dir: Some("/tmp/repo".to_owned()),
-                service: Some("app".to_owned()),
-                oneoff: false,
-            },
-        ];
+        );
+        let rows = rows.to_vec();
 
         let resolved =
             select_running_service_container_name(rows, Path::new("/tmp/repo"), &policy, "app");

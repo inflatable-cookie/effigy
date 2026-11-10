@@ -386,7 +386,7 @@ pub fn run_container_stats_all(output_json: bool) -> Result<String, EffigyRuntim
                                 .clone()
                                 .unwrap_or_else(|| service.container_name.clone()),
                             container_name: service.container_name,
-                            status: service.status,
+                            status: service.status.to_string(),
                             cpu_percent: sample.and_then(|value| value.cpu_percent.clone()),
                             memory_usage: sample.and_then(|value| value.memory_usage.clone()),
                             memory_percent: sample.and_then(|value| value.memory_percent.clone()),
@@ -486,19 +486,7 @@ fn discover_running_services_for_policy(
             .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?,
         );
     }
-    Ok(rows
-        .into_iter()
-        .map(|service| ContainerStatusService {
-            name: service
-                .service
-                .clone()
-                .unwrap_or_else(|| service.container_name.clone()),
-            container_name: service.container_name,
-            status: service.status,
-            ports: service.ports,
-            health: None,
-        })
-        .collect())
+    Ok(rows.iter().map(report::service_status).collect())
 }
 
 fn should_probe_primary_service_exec(

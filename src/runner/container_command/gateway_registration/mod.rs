@@ -1,3 +1,7 @@
+use super::support::exec_error_means_runtime_not_running;
+use effigy_containers::exec::ContainerLifecycle;
+#[cfg(test)]
+use effigy_containers::exec::PublishedPort;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
@@ -7,8 +11,7 @@ use effigy_containers::exec::{
     list_compose_containers_for_policy_including_stopped_with_timeout,
     list_running_compose_containers_for_policy,
     list_running_compose_containers_for_policy_with_deadline,
-    list_running_compose_containers_for_policy_with_timeout, ContainerExecError,
-    RunningComposeContainer,
+    list_running_compose_containers_for_policy_with_timeout, RunningComposeContainer,
 };
 use effigy_containers::{EffectiveContainerPolicy, EffectiveDnsRoute};
 use effigy_gateway::endpoint_store::EndpointStore;
@@ -311,13 +314,12 @@ fn finish_gateway_route_registration_with_tls(
         )?;
     }
     on_wait(GatewayPortWait::ResolvingRoutes);
-    let mut routes = resolve_gateway_routes_against_rows_with_validation(
-        repo_root,
-        policy,
-        rows,
-        RoutePortValidation::Registration,
-    )?
-    .expect("required gateway routes either resolve or return an error");
+    let mut routes = match observe_gateway_routes(repo_root, policy, rows)? {
+        GatewayRoutes::Published(routes) => routes,
+        GatewayRoutes::Unpublished { route, .. } => {
+            return Err(unpublished_route_error(policy, route))
+        }
+    };
     let project_alias_routes =
         resolve_gateway_service_alias_routes(repo_root, policy, true, Some(rows))?;
     let shared_alias_routes = resolve_gateway_shared_service_alias_routes(
@@ -538,8 +540,7 @@ fn exited_gateway_service_detail(
             .find(|row| {
                 row.project_name.as_deref() == Some(policy.project_name.as_str())
                     && row.service.as_deref() == Some(service)
-                    && (row.status.to_ascii_lowercase().contains("exited")
-                        || row.status.to_ascii_lowercase().contains("dead"))
+                    && row.status.lifecycle == ContainerLifecycle::Exited
             })
             .map(|row| {
                 format!(
@@ -567,14 +568,13 @@ fn gateway_routes_registered_against_rows(
     policy: &EffectiveContainerPolicy,
     rows: &[RunningComposeContainer],
 ) -> Result<bool, RunnerError> {
-    let Some(mut routes) = resolve_gateway_routes_against_rows_with_validation(
-        repo_root,
-        policy,
-        rows,
-        RoutePortValidation::Handoff,
-    )?
-    else {
-        return Ok(false);
+    let mut routes = match observe_gateway_routes(repo_root, policy, rows)? {
+        GatewayRoutes::Published(routes) => routes,
+        GatewayRoutes::Unpublished {
+            route,
+            running: true,
+        } => return Err(unpublished_route_error(policy, route)),
+        GatewayRoutes::Unpublished { running: false, .. } => return Ok(false),
     };
     let project_alias_routes =
         resolve_gateway_service_alias_routes(repo_root, policy, false, Some(rows))?;
@@ -599,19 +599,6 @@ fn gateway_routes_registered_against_rows(
         repo_root,
         &routes,
     )
-}
-
-fn exec_error_means_runtime_not_running(error: &ContainerExecError) -> bool {
-    match error {
-        ContainerExecError::Failure { stderr, .. } => {
-            stderr.contains("level=fatal msg=\"colima is not running\"")
-                || (stderr.contains("level=fatal msg=\"colima [profile=")
-                    && stderr.contains("] is not running\""))
-                || stderr.contains("Cannot connect to the Docker daemon")
-                || stderr.contains("daemon is not running")
-        }
-        ContainerExecError::Launch { .. } | ContainerExecError::Refusal { .. } => false,
-    }
 }
 
 pub(in crate::runner) fn resolve_gateway_tcp_alias_routes_for_container(
@@ -762,26 +749,39 @@ fn resolve_gateway_routes_against_rows(
     policy: &EffectiveContainerPolicy,
     rows: &[RunningComposeContainer],
 ) -> Result<Option<Vec<RegisteredGatewayRoute>>, RunnerError> {
-    resolve_gateway_routes_against_rows_with_validation(
-        repo_root,
-        policy,
-        rows,
-        RoutePortValidation::Wait,
-    )
+    Ok(match observe_gateway_routes(repo_root, policy, rows)? {
+        GatewayRoutes::Published(routes) => Some(routes),
+        GatewayRoutes::Unpublished { .. } => None,
+    })
 }
 
-enum RoutePortValidation {
-    Wait,
-    Handoff,
-    Registration,
+enum GatewayRoutes<'a> {
+    Published(Vec<RegisteredGatewayRoute>),
+    Unpublished {
+        route: &'a EffectiveDnsRoute,
+        running: bool,
+    },
 }
 
-fn resolve_gateway_routes_against_rows_with_validation(
-    repo_root: &Path,
+fn unpublished_route_error(
     policy: &EffectiveContainerPolicy,
+    route: &EffectiveDnsRoute,
+) -> RunnerError {
+    gateway_runtime_target_error(format!(
+        "gateway route `{}` (service `{}`, selected port {}) published no host port",
+        route.domain,
+        route.service.as_deref().unwrap_or(&policy.primary_service),
+        route
+            .port
+            .map_or_else(|| "automatic".to_owned(), |port| port.to_string()),
+    ))
+}
+
+fn observe_gateway_routes<'a>(
+    repo_root: &Path,
+    policy: &'a EffectiveContainerPolicy,
     rows: &[RunningComposeContainer],
-    validation: RoutePortValidation,
-) -> Result<Option<Vec<RegisteredGatewayRoute>>, RunnerError> {
+) -> Result<GatewayRoutes<'a>, RunnerError> {
     let mut routes = Vec::new();
     for dns_route in &policy.dns_routes {
         let target = if let Some(host_target) = dns_route.target_host.as_deref() {
@@ -791,23 +791,16 @@ fn resolve_gateway_routes_against_rows_with_validation(
             else {
                 let service_is_running = rows.iter().any(|row| {
                     row_matches_policy_project(row, repo_root, policy)
-                        && gateway_route_container_is_running(row)
+                        && row.status.lifecycle == ContainerLifecycle::Running
                         && dns_route
                             .service
                             .as_deref()
                             .is_none_or(|service| row.service.as_deref() == Some(service))
                 });
-                if matches!(validation, RoutePortValidation::Registration)
-                    || (matches!(validation, RoutePortValidation::Handoff) && service_is_running)
-                {
-                    return Err(gateway_runtime_target_error(format!(
-                        "gateway route `{}` (service `{}`, selected port {}) published no host port",
-                        dns_route.domain,
-                        dns_route.service.as_deref().unwrap_or(&policy.primary_service),
-                        dns_route.port.map_or_else(|| "automatic".to_owned(), |port| port.to_string()),
-                    )));
-                }
-                return Ok(None);
+                return Ok(GatewayRoutes::Unpublished {
+                    route: dns_route,
+                    running: service_is_running,
+                });
             };
             format!("127.0.0.1:{host_port}")
         };
@@ -822,7 +815,7 @@ fn resolve_gateway_routes_against_rows_with_validation(
             external_target: dns_route.target_host.is_some(),
         });
     }
-    Ok(Some(routes))
+    Ok(GatewayRoutes::Published(routes))
 }
 
 fn resolve_gateway_service_alias_routes(
@@ -914,13 +907,6 @@ fn resolve_gateway_shared_service_alias_routes(
     Ok(routes)
 }
 
-// Docker's health annotation does not change whether published ports exist.
-// Keep lifecycle transitions (for example Restarting) subject to the usual check.
-fn gateway_route_container_is_running(row: &RunningComposeContainer) -> bool {
-    let status = row.status.split(" (health:").next().unwrap_or(&row.status);
-    effigy_containers::exec::compose_status_is_running(status)
-}
-
 fn runtime_host_port_for_route(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -930,7 +916,7 @@ fn runtime_host_port_for_route(
     let matching_rows: Vec<&RunningComposeContainer> = rows
         .iter()
         .filter(|row| row_matches_policy_project(row, repo_root, policy))
-        .filter(|row| gateway_route_container_is_running(row))
+        .filter(|row| row.status.lifecycle == ContainerLifecycle::Running)
         .filter(|row| {
             dns_route
                 .service
@@ -994,9 +980,10 @@ fn runtime_host_port_for_selected_port(
     selected_port: u16,
 ) -> Result<Option<u16>, RunnerError> {
     let mut container_match = None;
-    for raw in &row.ports {
-        let ((host_start, host_end), (container_start, container_end)) =
-            parse_runtime_port_binding_range(raw)?;
+    for port in &row.ports {
+        let binding = port.binding().map_err(gateway_route_shape_error)?;
+        let (host_start, host_end) = binding.host;
+        let (container_start, container_end) = binding.container;
         if host_start == selected_port && host_end == selected_port {
             return Ok(Some(host_start));
         }
@@ -1006,7 +993,7 @@ fn runtime_host_port_for_selected_port(
             if host_port > host_end {
                 continue;
             }
-            if !runtime_binding_looks_loopback_alias(raw) {
+            if !binding.loopback_alias {
                 return Ok(Some(host_port));
             }
             container_match = Some(host_port);
@@ -1017,12 +1004,13 @@ fn runtime_host_port_for_selected_port(
 
 fn first_runtime_http_host_port(row: &RunningComposeContainer) -> Result<Option<u16>, RunnerError> {
     let mut first_binding = None;
-    for raw in &row.ports {
-        if runtime_binding_looks_loopback_alias(raw) {
+    for port in &row.ports {
+        let binding = port.binding().map_err(gateway_route_shape_error)?;
+        if binding.loopback_alias {
             continue;
         }
-        let ((host_start, host_end), (container_start, container_end)) =
-            parse_runtime_port_binding_range(raw)?;
+        let (host_start, host_end) = binding.host;
+        let (container_start, container_end) = binding.container;
         if host_start != host_end {
             continue;
         }
@@ -1036,10 +1024,6 @@ fn first_runtime_http_host_port(row: &RunningComposeContainer) -> Result<Option<
         }
     }
     Ok(first_binding)
-}
-
-fn runtime_binding_looks_loopback_alias(raw: &str) -> bool {
-    raw.trim_start().starts_with("127.1.")
 }
 
 fn validate_gateway_routes_against_rows(
@@ -1316,9 +1300,8 @@ fn row_matches_policy_project(
 
 fn row_publishes_host_port(row: &RunningComposeContainer, target_port: u16) -> bool {
     row.ports.iter().any(|port| {
-        parse_published_host_port_range(port)
-            .ok()
-            .is_some_and(|(start, end)| (start..=end).contains(&target_port))
+        port.binding()
+            .is_ok_and(|binding| (binding.host.0..=binding.host.1).contains(&target_port))
     })
 }
 
@@ -1336,52 +1319,20 @@ fn gateway_route_shape_error(detail: impl Into<String>) -> RunnerError {
     RunnerError::gateway_route_shape("validation", detail)
 }
 
+#[cfg(test)]
 fn parse_published_host_port_range(raw: &str) -> Result<(u16, u16), RunnerError> {
-    parse_runtime_port_binding_range(raw).map(|(host, _container)| host)
+    parse_runtime_port_binding_range(raw).map(|(host, _)| host)
 }
 
+#[cfg(test)]
 type PortRange = (u16, u16);
-type RuntimePortBindingRange = (PortRange, PortRange);
 
-fn parse_runtime_port_binding_range(raw: &str) -> Result<RuntimePortBindingRange, RunnerError> {
-    let Some((published, container)) = raw.split_once("->") else {
-        return Err(gateway_route_shape_error(format!(
-            "runtime port mapping `{raw}` is missing a published-port segment"
-        )));
-    };
-    let host_candidate = published.rsplit(':').next().unwrap_or_default().trim();
-    let container_candidate = container.split('/').next().unwrap_or_default().trim();
-    let host = parse_port_range(host_candidate).map_err(|error| {
-        gateway_route_shape_error(format!(
-            "runtime port mapping `{raw}` does not expose a valid published host port: {error}"
-        ))
-    })?;
-    let container = parse_port_range(container_candidate).map_err(|error| {
-        gateway_route_shape_error(format!(
-            "runtime port mapping `{raw}` does not expose a valid container port: {error}"
-        ))
-    })?;
-    Ok((host, container))
-}
-
-fn parse_port_range(raw: &str) -> Result<(u16, u16), String> {
-    let raw = raw.trim();
-    if let Some((start, end)) = raw.split_once('-') {
-        let start = start
-            .trim()
-            .parse::<u16>()
-            .map_err(|error| error.to_string())?;
-        let end = end
-            .trim()
-            .parse::<u16>()
-            .map_err(|error| error.to_string())?;
-        if start > end {
-            return Err("range start exceeds range end".to_owned());
-        }
-        return Ok((start, end));
-    }
-    let port = raw.parse::<u16>().map_err(|error| error.to_string())?;
-    Ok((port, port))
+#[cfg(test)]
+fn parse_runtime_port_binding_range(raw: &str) -> Result<(PortRange, PortRange), RunnerError> {
+    PublishedPort::from(raw)
+        .binding()
+        .map(|binding| (binding.host, binding.container))
+        .map_err(gateway_route_shape_error)
 }
 
 fn non_runtime_listener_for_port(port: u16) -> Result<Option<String>, RunnerError> {

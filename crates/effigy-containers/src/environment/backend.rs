@@ -173,22 +173,7 @@ impl BackendSelection {
                 "the selected backend context is unreadable".into(),
             ));
         }
-        Ok(match self.kind {
-            BackendKind::Colima => {
-                let mut args = vec![
-                    OsString::from("nerdctl"),
-                    OsString::from("--profile"),
-                    OsString::from(&self.context),
-                    OsString::from("--"),
-                ];
-                args.extend(compose_args.iter().cloned());
-                (OsString::from("colima"), args)
-            }
-            BackendKind::DockerDesktop | BackendKind::DockerEngine => (
-                OsString::from("docker"),
-                docker_args(&self.context, compose_args),
-            ),
-        })
+        Ok(runtime_invocation(self, compose_args))
     }
 }
 
@@ -921,14 +906,43 @@ fn non_empty_lines(bytes: &[u8]) -> usize {
         .count()
 }
 
-fn docker_args(context: &str, tail: &[OsString]) -> Vec<OsString> {
-    let endpoint = context.contains("://") || context.starts_with('/');
-    let mut args = vec![
-        OsString::from(if endpoint { "--host" } else { "--context" }),
-        OsString::from(context),
-    ];
-    args.extend_from_slice(tail);
-    args
+/// A Docker CLI target, decoded at the adapter boundary. Recorded pins remain
+/// strings so existing environment and workspace records keep their wire shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockerTarget<'a> {
+    Context(&'a str),
+    Endpoint(&'a str),
+}
+
+impl<'a> DockerTarget<'a> {
+    pub fn resolve(target: &'a str) -> Self {
+        if target.contains("://") || target.starts_with('/') {
+            Self::Endpoint(target)
+        } else {
+            Self::Context(target)
+        }
+    }
+
+    fn arguments(self, tail: &[OsString]) -> Vec<OsString> {
+        let (flag, value) = match self {
+            Self::Context(value) => ("--context", value),
+            Self::Endpoint(value) => ("--host", value),
+        };
+        let mut args = vec![flag.into(), value.into()];
+        args.extend_from_slice(tail);
+        args
+    }
+
+    pub fn environment(self) -> Vec<(OsString, OsString)> {
+        match self {
+            Self::Context(value) => vec![("DOCKER_CONTEXT".into(), value.into())],
+            // A context overrides DOCKER_HOST, so clear it for a pinned endpoint.
+            Self::Endpoint(value) => vec![
+                ("DOCKER_CONTEXT".into(), "".into()),
+                ("DOCKER_HOST".into(), value.into()),
+            ],
+        }
+    }
 }
 
 fn runtime_invocation(
@@ -948,7 +962,7 @@ fn runtime_invocation(
         }
         BackendKind::DockerDesktop | BackendKind::DockerEngine => (
             OsString::from("docker"),
-            docker_args(&selection.context, tail),
+            DockerTarget::resolve(&selection.context).arguments(tail),
         ),
     }
 }

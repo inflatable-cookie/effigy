@@ -385,7 +385,7 @@ pub(in crate::runner) fn validate_running_container_runtime_match(
     Ok(())
 }
 
-fn exec_error_means_runtime_not_running(error: &ContainerExecError) -> bool {
+pub(super) fn exec_error_means_runtime_not_running(error: &ContainerExecError) -> bool {
     match error {
         ContainerExecError::Failure { stderr, .. } => {
             runtime_probe_means_runtime_not_running("", stderr)
@@ -630,9 +630,9 @@ pub(super) fn ensure_pinned_host_ports_available(
     .map(|rows| {
         rows.iter()
             .flat_map(|row| row.ports.iter())
-            .filter_map(|published| published.split_once("->").map(|(host, _)| host))
-            .filter_map(|host| host.rsplit(':').next())
-            .filter_map(|port| port.trim().parse::<u16>().ok())
+            .filter_map(|port| port.binding().ok())
+            .filter(|binding| binding.host.0 == binding.host.1)
+            .map(|binding| binding.host.0)
             .collect::<std::collections::BTreeSet<_>>()
     })
     .unwrap_or_default();
@@ -2283,7 +2283,7 @@ mod tests {
             &test_policy(),
             &[RunningComposeContainer {
                 container_name: "demo-app-1".to_owned(),
-                status: "Up 2 minutes".to_owned(),
+                status: "Up 2 minutes".into(),
                 ports: vec![],
                 project_name: Some("demo-web-old".to_owned()),
                 working_dir: Some("/tmp/demo".to_owned()),
@@ -2304,7 +2304,7 @@ mod tests {
             &test_policy(),
             &[RunningComposeContainer {
                 container_name: "demo-app-1".to_owned(),
-                status: "Up 2 minutes".to_owned(),
+                status: "Up 2 minutes".into(),
                 ports: vec![],
                 project_name: Some("demo-web-renamed".to_owned()),
                 working_dir: Some("/tmp/demo".to_owned()),

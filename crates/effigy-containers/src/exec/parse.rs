@@ -8,8 +8,8 @@ use super::implementation::ContainerExecError;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunningComposeContainer {
     pub container_name: String,
-    pub status: String,
-    pub ports: Vec<String>,
+    pub status: ContainerStatus,
+    pub ports: Vec<PublishedPort>,
     pub project_name: Option<String>,
     pub working_dir: Option<String>,
     pub service: Option<String>,
@@ -45,36 +45,171 @@ pub(super) fn docker_failure_looks_like_colima_runtime_state_loss(
         || (combined.contains("current runtime") && combined.contains("empty value"))
 }
 
-pub fn compose_status_is_running(status: &str) -> bool {
-    let lowered = status.to_ascii_lowercase();
-    if compose_status_is_in_flight(status) || lowered.contains("paused") {
-        return false;
-    }
-    if lowered.contains("exited") || lowered.contains("created") || lowered.contains("dead") {
-        return false;
-    }
-    lowered.contains("up") || lowered.contains("running")
+/// Lifecycle is independent of health: a health-starting container can publish
+/// ports, while callers requiring readiness still wait for health to settle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContainerLifecycle {
+    Running,
+    Created,
+    Exited,
+    Paused,
+    Transitioning,
+    Unknown,
 }
 
-/// The listed status of a container created but never started.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContainerHealth {
+    Unspecified,
+    Starting,
+    Healthy,
+    Unhealthy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerStatus {
+    text: String,
+    pub lifecycle: ContainerLifecycle,
+    pub health: ContainerHealth,
+}
+
+impl ContainerStatus {
+    /// Preserve the exec/start readiness policy; route publication uses lifecycle alone.
+    pub fn is_running(&self) -> bool {
+        self.lifecycle == ContainerLifecycle::Running && self.health != ContainerHealth::Starting
+    }
+}
+
+impl From<String> for ContainerStatus {
+    fn from(text: String) -> Self {
+        let lowered = text.to_ascii_lowercase();
+        let (state, annotation) = lowered.split_once(" (").unwrap_or((&lowered, ""));
+        let lifecycle = match state.split_whitespace().next().unwrap_or_default() {
+            "up" | "running" if annotation == "paused)" => ContainerLifecycle::Paused,
+            "up" | "running" => ContainerLifecycle::Running,
+            "created" => ContainerLifecycle::Created,
+            "exited" | "dead" => ContainerLifecycle::Exited,
+            "paused" => ContainerLifecycle::Paused,
+            "restarting" | "starting" | "stopping" | "pausing" | "unpausing" | "removing" => {
+                ContainerLifecycle::Transitioning
+            }
+            _ => ContainerLifecycle::Unknown,
+        };
+        let health = match annotation.trim_end_matches(')') {
+            "unhealthy" => ContainerHealth::Unhealthy,
+            "health: starting" => ContainerHealth::Starting,
+            "healthy" => ContainerHealth::Healthy,
+            _ => ContainerHealth::Unspecified,
+        };
+        Self {
+            text,
+            lifecycle,
+            health,
+        }
+    }
+}
+
+impl From<&str> for ContainerStatus {
+    fn from(text: &str) -> Self {
+        text.to_owned().into()
+    }
+}
+
+impl std::ops::Deref for ContainerStatus {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.text
+    }
+}
+
+impl std::fmt::Display for ContainerStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.text)
+    }
+}
+
+pub fn compose_status_is_running(status: &str) -> bool {
+    ContainerStatus::from(status).is_running()
+}
+
 pub fn compose_status_is_created(status: &str) -> bool {
     status.trim().eq_ignore_ascii_case("created")
 }
 
-/// Statuses that say the backend is already acting on the container, so the
-/// container is neither running nor a reliable start target.
-fn compose_status_is_in_flight(status: &str) -> bool {
-    let lowered = status.to_ascii_lowercase();
-    [
-        "restarting",
-        "starting",
-        "stopping",
-        "pausing",
-        "unpausing",
-        "removing",
-    ]
-    .iter()
-    .any(|word| lowered.contains(word))
+/// A publication keeps its display text and its decoded binding. Invalid
+/// bindings remain errors at the route boundary, not an absent container.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublishedPort {
+    text: String,
+    binding: Result<PortBinding, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortBinding {
+    pub host: (u16, u16),
+    pub container: (u16, u16),
+    pub loopback_alias: bool,
+}
+
+impl PublishedPort {
+    pub fn binding(&self) -> Result<&PortBinding, &str> {
+        self.binding.as_ref().map_err(String::as_str)
+    }
+}
+
+impl From<String> for PublishedPort {
+    fn from(text: String) -> Self {
+        let binding = (|| {
+            let (published, container) = text.split_once("->").ok_or_else(|| {
+                format!("runtime port mapping `{text}` is missing a published-port segment")
+            })?;
+            let range = |raw, label| {
+                parse_port_range(raw).map_err(|error|
+                format!("runtime port mapping `{text}` does not expose a valid {label} port: {error}"))
+            };
+            Ok(PortBinding {
+                host: range(
+                    published.rsplit(':').next().unwrap_or_default().trim(),
+                    "published host",
+                )?,
+                container: range(
+                    container.split('/').next().unwrap_or_default().trim(),
+                    "container",
+                )?,
+                loopback_alias: text.trim_start().starts_with("127.1."),
+            })
+        })();
+        Self { text, binding }
+    }
+}
+
+impl From<&str> for PublishedPort {
+    fn from(text: &str) -> Self {
+        text.to_owned().into()
+    }
+}
+
+impl std::ops::Deref for PublishedPort {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.text
+    }
+}
+
+fn parse_port_range(raw: &str) -> Result<(u16, u16), String> {
+    let raw = raw.trim();
+    let (start, end) = raw.split_once('-').unwrap_or((raw, raw));
+    let start = start
+        .trim()
+        .parse::<u16>()
+        .map_err(|error| error.to_string())?;
+    let end = end
+        .trim()
+        .parse::<u16>()
+        .map_err(|error| error.to_string())?;
+    if start > end {
+        return Err("range start exceeds range end".to_owned());
+    }
+    Ok((start, end))
 }
 
 /// A full 64-character container id, with any `sha256:` prefix removed.
@@ -297,13 +432,11 @@ pub fn parse_running_compose_containers(
 ) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
     let mut rows = Vec::new();
     for line in stdout.lines().filter(|line| !line.trim().is_empty()) {
-        let Some((container_name, status, ports, project_name, working_dir, service, oneoff)) =
-            parse_running_compose_container_row(line)
-        else {
+        let Some(row) = parse_running_compose_container_row(line) else {
             continue;
         };
 
-        if container_name.is_empty() || status.is_empty() {
+        if row.container_name.is_empty() || row.status.is_empty() {
             return Err(ContainerExecError::Failure {
                 command: "docker ps".to_owned(),
                 code: None,
@@ -312,15 +445,7 @@ pub fn parse_running_compose_containers(
             });
         }
 
-        rows.push(RunningComposeContainer {
-            container_name,
-            status,
-            ports,
-            project_name,
-            working_dir,
-            service,
-            oneoff,
-        });
+        rows.push(row);
     }
 
     Ok(rows)
@@ -355,69 +480,41 @@ pub(super) fn strict_project_inventory(
     parse_running_compose_containers(stdout)
 }
 
-type RunningComposeContainerRow = (
-    String,
-    String,
-    Vec<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    bool,
-);
-
-fn parse_running_compose_container_row(line: &str) -> Option<RunningComposeContainerRow> {
-    let trimmed = line.trim();
-    if trimmed.eq_ignore_ascii_case("name status") {
+fn parse_running_compose_container_row(line: &str) -> Option<RunningComposeContainer> {
+    if line.trim().eq_ignore_ascii_case("name status") {
         return None;
     }
-
     if line.contains('\t') {
-        let mut parts = line.splitn(7, '\t');
-        let container_name = parts.next().unwrap_or_default().trim().to_owned();
-        let status = parts.next().unwrap_or_default().trim().to_owned();
-        let ports = parts
-            .next()
-            .unwrap_or_default()
+        let mut parts = line.splitn(7, '\t').map(str::trim);
+        let mut next = || parts.next().unwrap_or_default();
+        let container_name = next().to_owned();
+        let status = next().into();
+        let ports = next()
             .split(',')
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
-        let project_name = parts
-            .next()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned);
-        let working_dir = parts
-            .next()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned);
-        let service = parts
-            .next()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned);
-        let oneoff = parts
-            .next()
-            .map(str::trim)
-            .is_some_and(compose_oneoff_label);
-
-        return Some((
+            .map(PublishedPort::from)
+            .collect();
+        return Some(RunningComposeContainer {
             container_name,
             status,
             ports,
-            project_name,
-            working_dir,
-            service,
-            oneoff,
-        ));
+            project_name: empty_to_none(Some(next().to_owned())),
+            working_dir: empty_to_none(Some(next().to_owned())),
+            service: empty_to_none(Some(next().to_owned())),
+            oneoff: compose_oneoff_label(next()),
+        });
     }
-
-    let mut parts = trimmed.split_whitespace();
-    let container_name = parts.next()?.to_owned();
-    let status = parts.collect::<Vec<_>>().join(" ");
-    Some((container_name, status, Vec::new(), None, None, None, false))
+    let mut parts = line.split_whitespace();
+    Some(RunningComposeContainer {
+        container_name: parts.next()?.to_owned(),
+        status: parts.collect::<Vec<_>>().join(" ").into(),
+        ports: Vec::new(),
+        project_name: None,
+        working_dir: None,
+        service: None,
+        oneoff: false,
+    })
 }
 
 fn compose_oneoff_label(value: &str) -> bool {
@@ -554,73 +651,97 @@ mod tests {
     /// oneoff row, a header alone and a plain table row.
     #[test]
     fn parse_running_compose_containers_cases() {
-        struct Expect {
-            container_name: &'static str,
-            status: &'static str,
-            project: Option<&'static str>,
-            working_dir: Option<&'static str>,
-            service: Option<&'static str>,
-            ports: usize,
-            oneoff: bool,
-        }
-        let cases: [(&str, &str, Option<Expect>); 4] = [
-            (
-                "a tab-separated row",
-                "demo-app-1\tUp 2 minutes\t0.0.0.0:18080->80/tcp, :::18080->80/tcp\tdemo-web-dev\t/tmp/demo\tapp\n",
-                Some(Expect {
-                    container_name: "demo-app-1",
-                    status: "Up 2 minutes",
-                    project: Some("demo-web-dev"),
-                    working_dir: Some("/tmp/demo"),
-                    service: Some("app"),
-                    ports: 2,
-                    oneoff: false,
-                }),
-            ),
-            (
-                "an oneoff container",
-                "demo-app-run-deadbeef\tExited (0) 1 second ago\t\tdemo-web-dev\t/tmp/demo\tapp\tTrue\n",
-                Some(Expect {
-                    container_name: "demo-app-run-deadbeef",
-                    status: "Exited (0) 1 second ago",
-                    project: Some("demo-web-dev"),
-                    working_dir: Some("/tmp/demo"),
-                    service: Some("app"),
-                    ports: 0,
-                    oneoff: true,
-                }),
-            ),
+        // Expected columns: name, status, project, working directory, service, ports, oneoff.
+        #[rustfmt::skip]
+        let cases = [
+            ("a tab-separated row",
+             "demo-app-1\tUp 2 minutes\t0.0.0.0:18080->80/tcp, :::18080->80/tcp\tdemo-web-dev\t/tmp/demo\tapp\n",
+             Some(("demo-app-1", "Up 2 minutes", Some("demo-web-dev"), Some("/tmp/demo"), Some("app"), 2, false))),
+            ("an oneoff container",
+             "demo-app-run-deadbeef\tExited (0) 1 second ago\t\tdemo-web-dev\t/tmp/demo\tapp\tTrue\n",
+             Some(("demo-app-run-deadbeef", "Exited (0) 1 second ago", Some("demo-web-dev"), Some("/tmp/demo"), Some("app"), 0, true))),
             ("a header alone", "NAME STATUS\n", None),
-            (
-                "a plain table row",
-                "NAME STATUS\napp running\n",
-                Some(Expect {
-                    container_name: "app",
-                    status: "running",
-                    project: None,
-                    working_dir: None,
-                    service: None,
-                    ports: 0,
-                    oneoff: false,
-                }),
-            ),
+            ("a plain table row", "NAME STATUS\napp running\n",
+             Some(("app", "running", None, None, None, 0, false))),
         ];
         for (name, input, expected) in cases {
             let parsed = parse_running_compose_containers(input).expect(name);
-            let Some(expected) = expected else {
+            let Some((container_name, status, project, working_dir, service, ports, oneoff)) =
+                expected
+            else {
                 assert!(parsed.is_empty(), "{name}");
                 continue;
             };
             assert_eq!(parsed.len(), 1, "{name}");
             let row = &parsed[0];
-            assert_eq!(row.container_name, expected.container_name, "{name}");
-            assert_eq!(row.status, expected.status, "{name}");
-            assert_eq!(row.project_name.as_deref(), expected.project, "{name}");
-            assert_eq!(row.working_dir.as_deref(), expected.working_dir, "{name}");
-            assert_eq!(row.service.as_deref(), expected.service, "{name}");
-            assert_eq!(row.ports.len(), expected.ports, "{name}");
-            assert_eq!(row.oneoff, expected.oneoff, "{name}");
+            assert_eq!(row.container_name, container_name, "{name}");
+            assert_eq!(&*row.status, status, "{name}");
+            assert_eq!(row.project_name.as_deref(), project, "{name}");
+            assert_eq!(row.working_dir.as_deref(), working_dir, "{name}");
+            assert_eq!(row.service.as_deref(), service, "{name}");
+            assert_eq!(row.ports.len(), ports, "{name}");
+            assert_eq!(row.oneoff, oneoff, "{name}");
         }
+    }
+
+    fn decoder_matrix(running: &str, working_dir: &str) {
+        use ContainerHealth::*;
+        use ContainerLifecycle::*;
+        for (status, lifecycle, health) in [
+            (running, Running, Unspecified),
+            ("Up 10 seconds (healthy)", Running, Healthy),
+            ("Up 10 seconds (unhealthy)", Running, Unhealthy),
+            ("Up 10 seconds (health: starting)", Running, Starting),
+            ("Created", Created, Unspecified),
+            ("Exited (0) 2 days ago", Exited, Unspecified),
+            ("Paused", Paused, Unspecified),
+            ("Up 10 seconds (Paused)", Paused, Unspecified),
+            ("Restarting (1) 2 seconds ago", Transitioning, Unspecified),
+            ("unknown", Unknown, Unspecified),
+        ] {
+            let input = format!("app\t{status}\t0.0.0.0:41001->80/tcp, :::41001->80/tcp, 127.1.0.1:5432->5432/tcp, 0.0.0.0:42000-42002->9000-9002/tcp\tdemo\t{working_dir}\tapp\tfalse\n");
+            let rows = parse_running_compose_containers(&input).unwrap();
+            let row = &rows[0];
+            assert_eq!(
+                (row.status.lifecycle, row.status.health),
+                (lifecycle, health)
+            );
+            assert_eq!(
+                row.status.is_running(),
+                lifecycle == Running && health != Starting
+            );
+            assert_eq!(
+                row.working_dir.as_deref(),
+                (!working_dir.is_empty()).then_some(working_dir)
+            );
+            for port in &row.ports[..2] {
+                let binding = port.binding().unwrap();
+                assert_eq!(
+                    (binding.host, binding.container),
+                    ((41001, 41001), (80, 80))
+                );
+            }
+            assert!(row.ports[2].binding().unwrap().loopback_alias);
+            assert_eq!(row.ports[3].binding().unwrap().host, (42000, 42002));
+            assert_eq!(row.ports[3].binding().unwrap().container, (9000, 9002));
+        }
+        assert!(PublishedPort::from("invalid-binding").binding().is_err());
+        assert!(PublishedPort::from("127.0.0.1:9-1->80/tcp")
+            .binding()
+            .is_err());
+    }
+
+    #[test]
+    fn decoder_colima_nerdctl_matrix() {
+        decoder_matrix("Up 10 seconds", "");
+    }
+    #[test]
+    fn decoder_docker_desktop_matrix() {
+        decoder_matrix("Up 10 seconds", "/owned/desktop");
+    }
+    #[test]
+    fn decoder_linux_engine_matrix() {
+        decoder_matrix("running", "/owned/linux");
     }
 
     #[test]

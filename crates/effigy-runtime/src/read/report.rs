@@ -36,19 +36,21 @@ pub(super) fn environment_status_entry(
         dns_domain: policy.dns_domain.clone(),
         dns_tls: policy.dns_tls,
         declared_ports: policy.declared_ports.clone(),
-        services: environment
-            .services
-            .iter()
-            .map(|service| ContainerStatusService {
-                name: service
-                    .service
-                    .clone()
-                    .unwrap_or_else(|| service.container_name.clone()),
-                container_name: service.container_name.clone(),
-                status: service.status.clone(),
-                ports: service.ports.clone(),
-                health: None,
-            })
-            .collect(),
+        services: environment.services.iter().map(service_status).collect(),
+    }
+}
+
+pub(super) fn service_status(
+    service: &effigy_containers::exec::RunningComposeContainer,
+) -> ContainerStatusService {
+    ContainerStatusService {
+        name: service
+            .service
+            .clone()
+            .unwrap_or_else(|| service.container_name.clone()),
+        container_name: service.container_name.clone(),
+        status: service.status.to_string(),
+        ports: service.ports.iter().map(|port| port.to_string()).collect(),
+        health: None,
     }
 }
