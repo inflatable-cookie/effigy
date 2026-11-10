@@ -78,6 +78,124 @@ def superblock(raw, *, project_quota):
             'capacity_bytes': blocks * (1024 << block_log)}
 
 
+# Linux UAPI fiemap.h/fs.h: 32-byte header, 56-byte extents. This is a
+# descriptor read, not a filefrag text classifier. Only allocated ordinary or
+# unwritten extents qualify; delayed, shared and unknown allocation refuses.
+FIEMAP_IOCTL = 0xc020660b
+METADATA_TOLERANCE = 1048576
+
+
+def verify_extents(extents, capacity):
+    logical = 0
+    physical = []
+    if not extents:
+        raise ValueError('image has no allocated extents')
+    for index, extent in enumerate(extents):
+        start, disk, length, flags = (extent[key] for key in ('logical', 'physical', 'length', 'flags'))
+        if (start != logical or disk <= 0 or length <= 0 or flags & ~0x801
+                or bool(flags & 1) != (index == len(extents) - 1)):
+            raise ValueError('image allocation has holes, unknown flags or an incomplete extent map')
+        logical += length
+        physical.append((disk, disk + length))
+    if logical != capacity:
+        raise ValueError('allocated extents do not cover the exact fixed image')
+    ordered = sorted(physical)
+    if any(left[1] > right[0] for left, right in zip(ordered, ordered[1:])):
+        raise ValueError('image extents overlap physically')
+    return {'allocated_coverage_bytes': logical, 'extents': extents}
+
+
+def allocated_extents(fd, capacity):
+    import fcntl
+    extents = []
+    start = 0
+    while start < capacity:
+        raw = bytearray(32 + 256 * 56)
+        struct.pack_into('<QQIIII', raw, 0, start, capacity - start, 1, 0, 256, 0)
+        fcntl.ioctl(fd, FIEMAP_IOCTL, raw, True)
+        _, _, flags, count, slots, reserved = struct.unpack_from('<QQIIII', raw)
+        if flags != 1 or not 0 < count <= 256 or slots != 256 or reserved:
+            raise ValueError('incomplete or unsupported FIEMAP response')
+        for index in range(count):
+            values = struct.unpack_from('<QQQQQIIII', raw, 32 + index * 56)
+            logical, physical, length, r1, r2, bits, r3, r4, r5 = values
+            if any((r1, r2, r3, r4, r5)) or logical != start or length <= 0:
+                raise ValueError('noncontiguous or malformed FIEMAP response')
+            extents.append(dict(logical=logical, physical=physical, length=length, flags=bits))
+            start += length
+        if extents[-1]['flags'] & 1:
+            break
+    return verify_extents(extents, capacity)
+
+
+def verify_accounting(value):
+    before, after = value['used_bytes_before'], value['used_bytes_after']
+    tree = value['inode_allocated_bytes']
+    if (not all(isinstance(number, int) and number >= 0 for number in (before, after, tree))
+            or before != after or not 0 <= before - tree <= METADATA_TOLERANCE):
+        raise ValueError('tree allocation and stable filesystem usage exceed the metadata tolerance')
+    return dict(value, metadata_bytes=before - tree, metadata_tolerance_bytes=METADATA_TOLERANCE)
+
+
+def accounting(root):
+    """Quiescent no-follow census of the whole dedicated filesystem, including metadata roots."""
+    root = Path(root)
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        identity = os.fstat(fd)
+        before = os.fstatvfs(fd)
+        seen = set()
+        allocated = 0
+
+        def visit(directory):
+            nonlocal allocated
+            initial = os.fstat(directory)
+            if initial.st_dev != identity.st_dev:
+                raise ValueError('allocation census crossed a filesystem')
+            key = (initial.st_dev, initial.st_ino)
+            if key in seen:
+                raise ValueError('allocation census found an aliased directory')
+            seen.add(key)
+            allocated += initial.st_blocks * 512
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    info = entry.stat(follow_symlinks=False)
+                    if info.st_dev != identity.st_dev:
+                        raise ValueError('allocation census crossed a filesystem')
+                    if stat.S_ISDIR(info.st_mode):
+                        child = os.open(entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+                        try:
+                            opened = os.fstat(child)
+                            if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+                                raise ValueError('allocation census directory changed')
+                            visit(child)
+                        finally:
+                            os.close(child)
+                    else:
+                        key = (info.st_dev, info.st_ino)
+                        if key not in seen:
+                            seen.add(key)
+                            allocated += info.st_blocks * 512
+                        visible = os.stat(entry.name, dir_fd=directory, follow_symlinks=False)
+                        if (visible.st_ino, visible.st_size, visible.st_blocks, visible.st_mtime_ns, visible.st_ctime_ns) != (
+                                info.st_ino, info.st_size, info.st_blocks, info.st_mtime_ns, info.st_ctime_ns):
+                            raise ValueError('allocation census entry changed')
+            final = os.fstat(directory)
+            if (final.st_mtime_ns, final.st_ctime_ns) != (initial.st_mtime_ns, initial.st_ctime_ns):
+                raise ValueError('allocation census directory changed')
+
+        visit(fd)
+        after = os.fstatvfs(fd)
+        if root.stat().st_ino != identity.st_ino or root.stat().st_dev != identity.st_dev:
+            raise ValueError('allocation census root changed')
+        return verify_accounting({'device': identity.st_dev, 'root_inode': identity.st_ino,
+                'distinct_inodes': len(seen), 'inode_allocated_bytes': allocated,
+                'used_bytes_before': (before.f_blocks - before.f_bfree) * before.f_frsize,
+                'used_bytes_after': (after.f_blocks - after.f_bfree) * after.f_frsize})
+    finally:
+        os.close(fd)
+
+
 def observe(image, mountpoint, capacity, *, project_quota):
     if os.geteuid() != 0 or sys.platform != 'linux':
         raise RuntimeError('read-only native root observer required')
@@ -100,6 +218,9 @@ def observe(image, mountpoint, capacity, *, project_quota):
                 or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size != capacity
                 or info.st_dev != os.stat('/').st_dev):
             raise ValueError('image owner, size, mode or backing differs')
+        extents = allocated_extents(fd, capacity)
+        if info.st_blocks * 512 < capacity:
+            raise ValueError('image is not fully preallocated')
         fs = superblock(os.pread(fd, 1024, 1024), project_quota=project_quota)
         with open('/dev/sda2', 'rb', buffering=0) as root:
             root.seek(1024)
@@ -108,7 +229,7 @@ def observe(image, mountpoint, capacity, *, project_quota):
         device = os.stat(mountpoint).st_dev
         major, minor = os.major(device), os.minor(device)
         if (mounted['device'] != '%d:%d' % (major, minor) or mounted['fstype'] != 'ext4'
-                or mounted['root'] != '/' or 'rw' not in mounted['options']
+                or mounted['root'] != '/' or not {'rw', 'nodev', 'nosuid'} <= set(mounted['options'])
                 or (project_quota and 'prjquota' not in mounted['super_options'])):
             raise ValueError('loop mount identity or quota mode differs')
         sysfs = Path('/sys/dev/block/%d:%d/loop' % (major, minor))
@@ -129,7 +250,7 @@ def observe(image, mountpoint, capacity, *, project_quota):
             raise ValueError('image changed during observation')
         return {'image': str(image), 'image_device': info.st_dev, 'image_inode': info.st_ino,
                 'image_bytes': info.st_size, 'image_allocated_bytes': info.st_blocks * 512,
-                'inner_capacity_bytes': device_bytes, 'filesystem': fs, 'mount': mounted,
+                'inner_capacity_bytes': device_bytes, 'filesystem': fs, 'mount': mounted, 'allocation_map': extents,
                 'native_root_uuid': ROOT_UUID, 'boot_id': Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
                 'exploratory': True, 'qualification_credit': False}
     finally:

@@ -1088,3 +1088,12 @@ hashed, and the GNU producer publishes its real bytes and receipt into the
 source's artifact store. No cache path or symlink is used as a frozen artifact.
 The guest-only missing-Oxide ruling remains the reason for this route. The host
 build/admission route is unchanged.
+
+The native image observer also checks a synchronized descriptor FIEMAP: exact
+contiguous logical coverage, distinct physical extents, and only ordinary or
+unwritten allocated extents. Sparse, delayed, unknown, shared or truncated
+allocation refuses. Both real images passed this check, with `nodev,nosuid`
+required on their mounts. A no-follow whole-filesystem census now compares
+distinct-inode allocation with stable before/after filesystem usage, allowing
+at most 1 MiB for filesystem metadata. This strengthens observation; mechanism
+registration and the downstream activation/receipt integration remain required.

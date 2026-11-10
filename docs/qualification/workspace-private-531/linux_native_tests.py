@@ -111,6 +111,29 @@ class BuildInputTests(unittest.TestCase):
 
 
 class StorageCustodyTests(unittest.TestCase):
+    def test_physical_allocation_requires_exact_unshared_contiguous_coverage(self):
+        extents = [dict(logical=0, physical=4096, length=4096, flags=0),
+                   dict(logical=4096, physical=16384, length=4096, flags=0x801)]
+        self.assertEqual(storage.verify_extents(extents, 8192)['allocated_coverage_bytes'], 8192)
+        import copy
+        for field, value in (('logical', 8192), ('physical', 4096), ('length', 0),
+                             ('flags', 0x2001), ('flags', 0x805), ('flags', 0)):
+            altered = copy.deepcopy(extents)
+            altered[1][field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                storage.verify_extents(altered, 8192)
+        for capacity in (4096, 12288):
+            with self.subTest(capacity=capacity), self.assertRaises(ValueError):
+                storage.verify_extents(extents, capacity)
+
+    def test_allocation_attribution_has_a_finite_metadata_tolerance(self):
+        value = dict(used_bytes_before=2097152, used_bytes_after=2097152, inode_allocated_bytes=1572864)
+        self.assertEqual(storage.verify_accounting(value)['metadata_bytes'], 524288)
+        for change in (dict(used_bytes_after=2097151), dict(inode_allocated_bytes=2097153),
+                       dict(inode_allocated_bytes=0), dict(inode_allocated_bytes=-1)):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                storage.verify_accounting(dict(value, **change))
+
     def test_workload_mount_and_privilege_boundaries(self):
         row = {'HostConfig': {'Privileged': False, 'CapAdd': None},
                'Mounts': [{'Type': 'bind', 'Source': '/owned/checkout'},
