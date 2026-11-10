@@ -59,3 +59,7 @@ mod retirement_tests;
 #[cfg(unix)]
 #[path = "cli_output_tests/stream_build_output_tests.rs"]
 mod stream_build_output_tests;
+
+#[cfg(unix)]
+#[path = "cli_output_tests/linux_artifact_stream_tests.rs"]
+mod linux_artifact_stream_tests;
