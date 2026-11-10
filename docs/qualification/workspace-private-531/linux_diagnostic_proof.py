@@ -429,9 +429,7 @@ def classify_transport(result, stdout, stderr):
     if (result.get('disposition') == 'exited' and result.get('waited_exit') == 0
             and not stderr and stdout == (TRANSPORT_SENTINEL + '\n').encode()):
         return 'ready'
-    if (result.get('disposition') == 'failed' and isinstance(result.get('waited_exit'), int)
-            and result['waited_exit'] != 0 and not stdout
-            and len(stderr) <= 2048):
+    if guest_probe.transport_unavailable(result, stdout, stderr):
         return 'unavailable'
     raise stage.Refusal(
         'guest transport probe is neither the exact sentinel nor a bounded empty-output session '
@@ -591,10 +589,12 @@ def execute(request, request_path, request_hash, selector_streams=None, *, explo
 
     def read_only_route(argv, timeout, cap, end):
         # Only these fixed observation callers enter here. Start/stop/setup never do.
-        route_end = min(end, time.monotonic() + timeout)
+        # The caller derives this shared absolute window once. A route timeout bounds each
+        # attempt, not a fresh retry window; all later routes spend the same remaining time.
+        route_end = end
         remaining = cap
         attempts = []
-        for attempt_number in range(3):
+        while True:
             result, raw = call(['exec', setup.VM_UUID] + argv,
                                min(timeout, max(0, route_end - time.monotonic())),
                                remaining, route_end)
@@ -612,13 +612,20 @@ def execute(request, request_path, request_hash, selector_streams=None, *, explo
                 retry = classify_transport(result, raw, stderr) == 'unavailable'
             except stage.Refusal:
                 retry = False
-            if (not retry or attempt_number == 2 or remaining < 1
-                    or route_end - time.monotonic() < min(guest_probe.MIN_ROUTE_SECONDS, TRANSPORT_FLOOR)):
+            if (not retry or remaining < 1
+                    or route_end - time.monotonic() < PAUSE + TRANSPORT_FLOOR):
                 break
             if private_root(str(root)) != request['root_identity']:
                 raise stage.Refusal('evidence root identity changed')
             pause(route_end)
+            # Accounting during the pause can spend the remaining window too. Preserve the
+            # last waited refusal instead of trying to launch after the shared end.
+            if route_end - time.monotonic() < TRANSPORT_FLOOR:
+                break
         result['attempts'] = attempts
+        if retry:
+            result['status'] = guest_probe.TRANSPORT_UNAVAILABLE
+            result['stderr_classes'] = sorted({row['stderr']['text'] for row in attempts})
         return result, raw
 
     def pause(end, track=True):

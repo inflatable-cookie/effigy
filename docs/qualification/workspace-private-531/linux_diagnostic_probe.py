@@ -21,12 +21,13 @@ NOT_FOUND = 'not-found'            # the documented inventory has no entry for t
 AMBIGUOUS = 'ambiguous'            # more than one candidate, or a mapper the fixed schema cannot resolve
 FAILED = 'failed'                  # the read ran and did not complete
 MALFORMED = 'malformed'            # duplicate, oversize, truncated or otherwise invalid output
+TRANSPORT_UNAVAILABLE = 'transport-unavailable'  # no guest program output was observed
 NOT_ATTEMPTED = 'not-attempted'    # the shared observation window ended before this read
 
 # An unfinished read: the observation is incomplete and the caller records a finding. Absence,
 # unsupported invocations, a missing inventory entry and an ambiguous mapper are negative
 # observations of this guest, not broken reads, so they stay facts without a finding.
-INCOMPLETE = frozenset({FAILED, MALFORMED, NOT_ATTEMPTED})
+INCOMPLETE = frozenset({FAILED, MALFORMED, NOT_ATTEMPTED, TRANSPORT_UNAVAILABLE})
 
 BUDGET_SECONDS = 90
 MIN_ROUTE_SECONDS = 1
@@ -427,10 +428,24 @@ def route_argv(route):
     return argv
 
 
+def transport_unavailable(result, stdout, stderr):
+    """A bounded failed empty read, not proof of a transient fault or guest execution."""
+    return (result.get('disposition') == 'failed' and type(result.get('waited_exit')) is int
+            and result['waited_exit'] != 0 and not stdout and len(stderr) <= 2048
+            and not wrapper_stderr(stderr.decode('utf-8', 'replace')))
+
+
+def wrapper_stderr(text):
+    return re.search(r'(?m)^(?:/bin/)?(?:ba|da)?sh:|(?:-c requires an argument)', text)
+
+
 def unwrap_program(route, result, raw):
-    if re.search(r'(?m)^(?:/bin/)?(?:ba|da)?sh:|(?:-c requires an argument)',
-                 result.get('stderr_text', '')):
+    if wrapper_stderr(result.get('stderr_text', '')):
         raise Bad(MALFORMED, 'transport-semantics drift: guest wrapper stderr')
+    if transport_unavailable(result, raw, result.get('stderr_text', '').encode()):
+        raise Bad(TRANSPORT_UNAVAILABLE,
+                  'no guest program output; stderr classes: ' + repr(result.get('stderr_classes',
+                      [result.get('stderr_text', '')])))
     begin, end = (value.encode() for value in markers(route))
     lines = raw.splitlines(keepends=True)
     if (not lines or lines[0] != begin + b'\n' or
@@ -1073,7 +1088,8 @@ def observe(run, retain, guard, deadline, budget=BUDGET_SECONDS, legacy_partitio
             status, reasons = FAILED, reasons + [retained_error]
         row.update(status=status, exit=result.get('waited_exit'), disposition=result.get('disposition'),
                    reasons=reasons, facts=facts, original=original, sha256=sha, bytes=len(raw),
-                   attempts=result.get('attempts', []))
+                   attempts=result.get('attempts', []),
+                   stderr_classes=result.get('stderr_classes', []))
         rows.append(row)
     guard()
     return summarize(rows)

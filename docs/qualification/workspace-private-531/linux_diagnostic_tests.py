@@ -1159,6 +1159,35 @@ def statuses(result):
     return {row['id']: row['status'] for row in result['routes']}
 
 
+class ProgramTransportTests(unittest.TestCase):
+    def test_transport_shape_and_marker_defects_stay_distinct_for_both_consumers(self):
+        for module in (guest_probe, engine_inputs):
+            route = module.ROUTES[0]
+            begin, end = guest_probe.markers(route)
+            valid = (begin + '\n' + end + ' 0\n').encode()
+            for name, code, raw, stderr, expected in (
+                ('unavailable', 255, b'', SESSION_INVALID, 'transport-unavailable'),
+                ('empty-error', 1, b'', b'', 'transport-unavailable'),
+                ('missing', 0, b'', b'', 'malformed'),
+                ('partial', 1, (begin + '\n').encode(), SESSION_INVALID, 'malformed'),
+                ('duplicate', 0, (begin + '\n').encode() + valid, b'', 'malformed'),
+                ('wrapper', 255, b'', b'/bin/sh: 0: -c requires an argument', 'malformed'),
+                ('oversize', 255, b'', b'x' * 2049, 'malformed'),
+            ):
+                with self.subTest(module=module.__name__, case=name):
+                    result = {'disposition': 'exited' if code == 0 else 'failed',
+                              'waited_exit': code, 'stderr_text': stderr.decode(),
+                              'stderr_classes': [stderr.decode()]}
+                    with patch.object(module, 'ROUTES', (route,)):
+                        report = module.observe(lambda *a: (result, raw), lambda *a: 'original',
+                                                lambda: None, 10 ** 9)
+                    row = report['routes'][0]
+                    self.assertEqual(row['status'], expected)
+                    self.assertEqual(row['facts'], {})
+                    self.assertFalse(report['complete'])
+                    self.assertEqual(row['stderr_classes'], [stderr.decode()])
+
+
 class WriterBoundObservationTests(unittest.TestCase):
     """Every fixed read route and its full parser; observations only, never gate credit."""
 
@@ -1997,10 +2026,12 @@ elif args[0] == 'exec':
         pending.rename(home / 'config.pvs.e13c235b')
     for name in routes:
         if ('# effigy-linux-observation: ' + name) in script:
-            if name == 'device-uuids' and mode in ('device_retry', 'device_after_marker', 'device_exhausted', 'device_stderr_cap', 'device_window'):
+            if name == 'device-uuids' and mode in ('device_retry', 'device_retry_four', 'device_after_marker', 'device_exhausted', 'device_stderr_cap', 'device_window', 'device_wrapper_empty'):
                 counter = root / 'device-attempts'
                 seen = int(counter.read_text()) if counter.exists() else 0
                 counter.write_text(str(seen + 1))
+                if mode == 'device_wrapper_empty':
+                    print('/bin/sh: 0: -c requires an argument', file=sys.stderr); sys.exit(255)
                 if mode == 'device_stderr_cap':
                     print('x' * 2049, file=sys.stderr); sys.exit(255)
                 if mode == 'device_window':
@@ -2008,7 +2039,7 @@ elif args[0] == 'exec':
                 if mode == 'device_after_marker':
                     print(routes[name][1].splitlines()[0])
                     sys.exit(1)
-                if seen == 0 or mode == 'device_exhausted':
+                if seen == 0 or (mode == 'device_retry_four' and seen < 3) or mode == 'device_exhausted':
                     print('PrlJob_GetResult: Invalid argument. An invalid argument was passed.', file=sys.stderr)
                     sys.exit(255)
             code, out = mode_routes.get(mode, {}).get(name, routes[name])
@@ -2103,6 +2134,8 @@ class EntryTests(unittest.TestCase):
         ('transport_retry', 0, 1),
         ('readiness_retry', 0, 1),
         ('device_retry', 0, 1),
+        ('device_retry_four', 0, 1),
+        ('device_wrapper_empty', 1, 1),
         ('device_after_marker', 1, 1),
         ('device_exhausted', 1, 1),
         ('device_stderr_cap', 1, 1),
@@ -2437,6 +2470,7 @@ class EntryTests(unittest.TestCase):
             original_run = proof.stage.run_stage
 
             readiness_bounds = []
+            observe_writer = guest_probe.observe
 
             def bounded(*args, **kwargs):
                 argv = args[1]
@@ -2478,7 +2512,7 @@ class EntryTests(unittest.TestCase):
                         reset(mode)
                         readiness_bounds.clear()
                         window = (patch.dict(next(r for r in guest_probe.ROUTES if r['id'] == 'device-uuids'),
-                                             timeout=1.1) if mode == 'device_window' else contextlib.nullcontext())
+                                             timeout=1.1) if mode in ('device_window', 'device_retry_four') else contextlib.nullcontext())
                         with window:
                             item = proof.plan(str(evidence), 'fixture%02d' % index, head)
                         item_path = root / ('request-%02d.json' % index)
@@ -2490,10 +2524,18 @@ class EntryTests(unittest.TestCase):
                         injection = (injected_stat('config.pvs.e13c235b', uid=os.geteuid() + 1)
                                      if mode == 'foreign_metadata' else contextlib.nullcontext())
                         window = (patch.dict(next(r for r in guest_probe.ROUTES if r['id'] == 'device-uuids'),
-                                             timeout=1.1) if mode == 'device_window' else contextlib.nullcontext())
+                                             timeout=1.1) if mode in ('device_window', 'device_retry_four') else contextlib.nullcontext())
                         readiness_window = (patch.object(proof, 'READY_WAIT', 10)
                                             if mode == 'transport_817' else contextlib.nullcontext())
-                        with injection, window, readiness_window, contextlib.redirect_stdout(io.StringIO()):
+                        # Exhaustion spends a short shared observation window, never 90 seconds
+                        # per fixture. The other modes exercise the production window unchanged.
+                        observation_window = (patch.object(guest_probe, 'observe',
+                            lambda *a, **kw: observe_writer(*a, **kw, budget=4))
+                            if mode == 'device_exhausted' else contextlib.nullcontext())
+                        with contextlib.ExitStack() as contexts:
+                            for context in (injection, window, readiness_window, observation_window,
+                                            contextlib.redirect_stdout(io.StringIO())):
+                                contexts.enter_context(context)
                             actual_exit = proof.main(['proof', str(item_path), hashlib.sha256(item_raw).hexdigest()])
                         observed_result = json.loads((evidence / ('linux-diagnostic-fixture%02d' % index) / 'outcome.json').read_text())
                         self.assertEqual(actual_exit, expected, observed_result['findings'])
@@ -2623,20 +2665,36 @@ class EntryTests(unittest.TestCase):
                                 self.assertEqual(limits['system.slice']['io.max']['devices']['8:0']['wbps'], '1024')
                                 self.assertEqual(limits['user.slice']['memory.max']['value'], 'max')
                         if mode.startswith('device_'):
-                            attempts = next(row for row in result['guest_writer_bound']['routes']
-                                            if row['id'] == 'device-uuids')['attempts']
-                            self.assertEqual(len(attempts), {'device_retry': 2, 'device_after_marker': 1,
-                                                            'device_exhausted': 3, 'device_stderr_cap': 1, 'device_window': 1}[mode])
+                            row = next(row for row in result['guest_writer_bound']['routes']
+                                       if row['id'] == 'device-uuids')
+                            attempts = row['attempts']
+                            if mode == 'device_exhausted':
+                                self.assertGreaterEqual(len(attempts), 1)
+                                self.assertEqual(row['status'], 'transport-unavailable')
+                                receipt = json.loads((destination / attempts[-1]['step'] / 'receipt.json').read_text())
+                                self.assertEqual(receipt['disposition'], 'failed')
+                                self.assertEqual(row['facts'], {})
+                                self.assertEqual(row['stderr_classes'], sorted({a['stderr']['text'] for a in attempts}))
+                                self.assertFalse(result['guest_writer_bound']['complete'])
+                                self.assertNotIn('program markers', ' '.join(row['reasons']))
+                            else:
+                                self.assertEqual(len(attempts), {'device_retry': 2, 'device_retry_four': 4,
+                                    'device_after_marker': 1, 'device_stderr_cap': 1,
+                                    'device_wrapper_empty': 1, 'device_window': 1}[mode])
+                            if mode == 'device_wrapper_empty':
+                                self.assertEqual(row['status'], 'malformed')
+                                self.assertIn('wrapper stderr', ' '.join(row['reasons']))
                             for attempt in attempts:
                                 intent = json.loads((destination / attempt['step'] / 'intent.json').read_text())
-                                self.assertLessEqual(intent['timeout_seconds'], 20)
+                                self.assertLessEqual(intent['timeout_seconds'],
+                                                     1.1 if mode == 'device_retry_four' else 20)
                                 self.assertLessEqual(intent['output_cap_bytes_each'], guest_probe.MAX_ROUTE_BYTES)
                             if len(attempts) > 1:
                                 intents = [json.loads((destination / a['step'] / 'intent.json').read_text()) for a in attempts]
                                 self.assertEqual(len({i['deadline_monotonic'] for i in intents}), 1)
                                 self.assertLess(intents[1]['output_cap_bytes_each'], intents[0]['output_cap_bytes_each'])
                             self.assertTrue(all('step' in row and 'sha256' in row['stderr'] for row in attempts))
-                            if mode == 'device_retry':
+                            if mode in ('device_retry', 'device_retry_four'):
                                 self.assertEqual(result['guest_writer_bound']['facts']['root_uuids']['status'], 'observed')
                                 self.assertTrue(result['guest_writer_bound']['complete'])
                         if mode in ('transport_retry', 'transport_817'):

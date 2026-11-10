@@ -673,7 +673,8 @@ def observe(run, retain, guard, deadline, budget=BUDGET_SECONDS):
             status, reasons = FAILED, reasons + [retained_error]
         row.update(status=status, exit=result.get('waited_exit'), disposition=result.get('disposition'),
                    reasons=reasons, facts=facts, original=original, sha256=sha, bytes=len(raw),
-                   attempts=result.get('attempts', []))
+                   attempts=result.get('attempts', []),
+                   stderr_classes=result.get('stderr_classes', []))
         rows.append(row)
     guard()
     return summarize(rows)
