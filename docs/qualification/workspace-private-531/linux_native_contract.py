@@ -1,6 +1,6 @@
 """Freeze and collect the physical contract through the existing native runner.
 
-This producer emits exploratory originals only. The pure capacity checker owns
+The preparation entry freezes the evidence kind. The pure capacity checker owns
 acceptance; no packet or success label here grants qualification authority.
 """
 import copy

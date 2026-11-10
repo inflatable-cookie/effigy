@@ -59,7 +59,9 @@ def execute(path, expected):
     raw=attempt.command([diagnostic.PRLCTL,'list','--info',capacity.VM,'--json'],read_only=True)
     diagnostic.check_vm(raw,'running')
     snapshots=json.loads(attempt.command([diagnostic.PRLCTL,'snapshot-list',capacity.VM,'--json'],read_only=True))
-    common.require(any(key.strip('{}')==SNAPSHOT for key in snapshots),'owned rollback snapshot is absent')
+    owned=snapshots.get('{'+SNAPSHOT+'}') if isinstance(snapshots,dict) else None
+    common.require(isinstance(owned,dict) and owned.get('name')=='effigy-explore-2026-11-09',
+                   'owned rollback snapshot is absent or differs')
     # Stage1 account, private SSH files and installed tools were prepared under
     # the preceding approved exploration. Adopt only their actual exact state;
     # no absent account/tool/config is fabricated or silently installed here.
