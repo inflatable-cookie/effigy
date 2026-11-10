@@ -14,6 +14,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import macos_colima_session_smoke as smoke
+import macos_desktop_smoke as desktop
 
 
 class ExplorationTests(unittest.TestCase):
@@ -45,6 +46,90 @@ class ExplorationTests(unittest.TestCase):
         path = self.control / 'request.json'
         with self.assertRaises((RuntimeError, ValueError)):
             smoke.checked_request(str(path), '0' * 64)
+
+    def test_desktop_binds_endpoint_preparation_and_image_before_window_creation(self):
+        cell = dict(self.request['cell'], backend='desktop', engine_kind='docker',
+                    engine_identity=smoke.executor.prep.DESKTOP_HOST,
+                    docker_config=str(self.control / 'session-docker-config'), runtime_image='sha256:' + 'a' * 64)
+        ref = dict(stage='D3', path=str(self.control.parent / 'evidence/d3.json'), sha256='b' * 64)
+        request = dict(self.request, cell=cell, preparation_receipt=ref)
+        body = dict(control=str(self.control), token='12345678', receipts=[dict(kind='image', id=cell['runtime_image'])])
+        def check(value):
+            path = self.control / 'desktop-request.json'
+            raw = json.dumps(value).encode()
+            path.write_bytes(raw)
+            return smoke.checked_request(str(path), hashlib.sha256(raw).hexdigest(), backend='desktop')
+        with mock.patch.object(smoke.executor, 'read_receipt', return_value=body), \
+             mock.patch.object(smoke.proof, 'checked_prior') as prior:
+            self.assertEqual(check(request), request)
+            prior.assert_called_once()
+            for key, value in [('engine_identity', 'unix:///foreign.sock'), ('runtime_image', 'sha256:' + 'c' * 64),
+                               ('docker_config', '/foreign/config'), ('budget_seconds', 1801)]:
+                with self.subTest(key=key), self.assertRaises(RuntimeError):
+                    check(dict(request, cell=dict(cell, **{key: value})))
+            with self.assertRaises(RuntimeError):
+                check(dict(request, preparation_receipt=dict(ref, stage='D2')))
+
+    def test_cleanup_refuses_hash_or_foreign_control_before_any_effect(self):
+        path = self.control / 'cleanup.json'
+        path.write_text('{}')
+        with mock.patch.object(desktop.proof, 'window_recipe') as recipe:
+            with self.assertRaises(ValueError):
+                desktop.cleanup_preparation(str(path), '0' * 64)
+            body = dict(bindings=dict(control='/foreign'), prior_receipt={}, proof=False)
+            path.write_text(json.dumps(body))
+            with self.assertRaises(ValueError):
+                desktop.cleanup_preparation(str(path), hashlib.sha256(path.read_bytes()).hexdigest())
+            recipe.assert_not_called()
+
+    def test_shared_inventory_pins_socket_and_observes_full_network_ids(self):
+        child = subprocess.CompletedProcess([], 0, b'', b'')
+        with mock.patch.object(desktop.subprocess, 'run', return_value=child) as run:
+            self.assertEqual(set(desktop.inventory()), {'container', 'image', 'volume', 'network'})
+            network = run.call_args_list[-1]
+            self.assertIn('--no-trunc', network.args[0])
+            self.assertNotIn('--all', network.args[0])
+            for call in run.call_args_list:
+                self.assertEqual(call.kwargs['env']['DOCKER_HOST'], desktop.executor.prep.DESKTOP_HOST)
+                self.assertNotIn('DOCKER_CONTEXT', call.kwargs['env'])
+
+    def test_external_checkout_replacement_is_refused_and_size_is_observed(self):
+        w = smoke.runtime.Window.__new__(smoke.runtime.Window)
+        def binding(path):
+            st = path.stat()
+            return dict(path=str(path), device=st.st_dev, inode=st.st_ino, uid=st.st_uid)
+        w.root = self.control / 'checkout'
+        w.root.mkdir(mode=0o700)
+        (w.root / 'probe').write_bytes(b'owned')
+        w.root_fd = os.open(self.control, os.O_RDONLY | os.O_DIRECTORY)
+        w.external_checkout_fd = os.open(w.root, os.O_RDONLY | os.O_DIRECTORY)
+        w.external_checkout = binding(w.root)
+        w.external_checkout_peak = 0
+        w.cell = dict(qualification_root=binding(self.control))
+        try:
+            w.verify_root()
+            self.assertEqual(w.external_checkout_peak, 5)
+            w.root.rename(self.control / 'old-checkout')
+            w.root.mkdir(mode=0o700)
+            with self.assertRaises(RuntimeError):
+                w.verify_root()
+        finally:
+            w.close()
+
+    def test_desktop_activation_timeout_records_owned_bind_diagnosis(self):
+        window = smoke.runtime.Window.__new__(smoke.runtime.Window)
+        window.cell = dict(backend='desktop')
+        window.exploratory, window.candidate, window.root, window.env = True, Path('/candidate'), self.control, {}
+        window.end = time.monotonic() + 500
+        window.verify_root = lambda: None
+        events = []
+        window.record = lambda cell, **facts: events.append(dict(cell=cell, **facts))
+        with mock.patch.object(smoke.runtime, 'run', side_effect=subprocess.TimeoutExpired(['/candidate'], 300)):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                window.command(['/candidate'], activation=True)
+        self.assertEqual(events[0]['bind_source'], str(self.control))
+        self.assertEqual(events[0]['phase_bound_seconds'], 300)
+        self.assertFalse(events[0]['proof'])
 
     def test_sqlite_readiness_refuses_an_incapable_interpreter(self):
         with mock.patch.object(smoke.sqlite3, 'connect', side_effect=smoke.sqlite3.OperationalError('fixture refusal')):
@@ -202,6 +287,7 @@ class ExplorationTests(unittest.TestCase):
             window = smoke.runtime.Window.__new__(smoke.runtime.Window)
             window.base, window.exploratory, window.events = directory, exploratory, []
             window.cell = {'baseline': {}}
+            window.external_checkout_fd = None
             window.root_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
             sessions = iter([('first', 1), ('second', 2)])
             window.up = lambda: next(sessions)

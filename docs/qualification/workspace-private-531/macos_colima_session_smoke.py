@@ -20,7 +20,7 @@ import runtime
 from common import SCRATCH, digest, exclusive, require
 
 
-def checked_request(path, expected):
+def checked_request(path, expected, *, backend='colima'):
     path = Path(path)
     require(path.is_absolute() and path.resolve(strict=True) == path and path.is_relative_to(SCRATCH),
             'exploration request must be canonical under Stash scratch')
@@ -28,20 +28,59 @@ def checked_request(path, expected):
     require(len(raw) <= 1024 * 1024 and hashlib.sha256(raw).hexdigest() == expected,
             'exploration input hash or size differs')
     request = json.loads(raw, object_pairs_hook=proof.unique_object)
-    require(set(request) == {'control', 'identity', 'cell', 'exploration_authority'}, 'unsupported exploration request')
+    keys = {'control', 'identity', 'cell', 'exploration_authority'}
+    require(backend in ('colima', 'desktop'), 'unsupported exploration backend')
+    require(set(request) == keys | ({'preparation_receipt'} if backend == 'desktop' else set())
+            | ({'external_checkout'} if backend == 'desktop' and 'external_checkout' in request else set()),
+            'unsupported exploration request')
     control, cell = request['control'], request['cell']
     require(isinstance(control, str) and str(Path(control).resolve(strict=True)) == control
             and Path(control).is_relative_to(SCRATCH) and Path(control) != SCRATCH,
             'owned control must be canonical below Stash scratch')
     require(list(executor.Pins.observe(control)) == request['identity'], 'owned control identity changed')
-    require(cell['backend'] == 'colima' and cell['engine_kind'] == 'colima' and cell['driver'] == 'local',
-            'exploration supports only local Colima')
+    require(cell['backend'] == backend and cell['engine_kind'] == ('docker' if backend == 'desktop' else 'colima')
+            and cell['driver'] == 'local', 'exploration supports only the selected local backend')
     require(type(cell['budget_seconds']) is int and 0 < cell['budget_seconds'] <= 1800,
             'full-session exploration must keep the 1800-second cell bound')
-    require(cell['colima_home'] == control + '/c' and cell['docker_config'] == control + '/docker-config',
-            'Colima home and config must belong to the named control')
+    if backend == 'colima':
+        require(cell['colima_home'] == control + '/c' and cell['docker_config'] == control + '/docker-config',
+                'Colima home and config must belong to the named control')
+    else:
+        require(cell['engine_identity'] == executor.prep.DESKTOP_HOST
+                and cell['docker_config'] == control + '/session-docker-config',
+                'Desktop endpoint and private config differ')
+        ref = request['preparation_receipt']
+        parent = Path(control).parent
+        require(Path(ref['path']).is_relative_to(parent / 'evidence'),
+                'Desktop predecessor must belong to the owned preparation evidence')
+        executor.ACTIVATIONS_DIR, executor.CLAIMS_DIR = str(parent / 'activations'), str(parent / 'claims')
+        body = executor.read_receipt(ref)
+        bindings = dict(executor.prep.control_paths(body['token'], parent=str(Path(control).parent)),
+                        token=body['token'], desktop_host=executor.prep.DESKTOP_HOST,
+                        check_source=executor.prep.CHECK_SOURCE, route_echo=executor.prep.ROUTE_ECHO)
+        require(body['control'] == control and ref['stage'] == 'D3', 'Desktop preparation belongs to another control')
+        proof.checked_prior(ref, bindings, executor.load_manifest(), 'D3')
+        images = [row['id'] for row in body['receipts'] if row['kind'] == 'image']
+        require(images == [cell['runtime_image']], 'session image differs from receipted preparation')
+    if 'external_checkout' in request:
+        external = request['external_checkout']
+        require(isinstance(external, dict) and set(external) == {'path', 'device', 'inode', 'uid'},
+                'external checkout must pin its complete directory identity')
+        path = Path(external['path'])
+        require(path.parent == Path('/Users/tom/.effigy-qual-831')
+                and path.resolve(strict=True) == path and not path.is_symlink(),
+                'only the planner-approved owned Users fixture may be mounted')
+        st = path.stat()
+        require((st.st_dev, st.st_ino, st.st_uid) == (external['device'], external['inode'], external['uid'])
+                and st.st_uid == os.getuid() and not list(path.iterdir()),
+                'external checkout identity changed or is not fresh')
     root = Path(cell['qualification_root']['path'])
-    require(root.is_relative_to(Path(control) / 's'), 'session root must be below the owned qualification share')
+    if backend == 'colima':
+        require(root.is_relative_to(Path(control) / 's'), 'session root must be below the owned qualification share')
+    else:
+        scratch = Path(os.environ['TMPDIR']).resolve(strict=True)
+        require(scratch.is_relative_to(SCRATCH) and root.is_relative_to(scratch) and root != scratch,
+                'Desktop evidence must be below this run’s owned scratch')
     require(isinstance(request['exploration_authority'], str) and request['exploration_authority'],
             'record the actual exploration authority')
     return request
@@ -80,16 +119,24 @@ def sqlite_readiness(scratch):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--backend', choices=('colima', 'desktop'), default='colima')
     parser.add_argument('--request', required=True)
     parser.add_argument('--sha256', required=True)
     args = parser.parse_args()
-    request = checked_request(args.request, args.sha256)
+    request = checked_request(args.request, args.sha256, backend=args.backend)
     cell, control = request['cell'], request['control']
     readiness = sqlite_readiness(os.environ['TMPDIR'])
     window = runtime.Window(cell, args.sha256, None,
-                            exploration_authority=request['exploration_authority'])
-    window.env.update(COLIMA_CACHE_HOME=control + '/cache', DOCKER_CONFIG=cell['docker_config'],
-                      TMP=str(window.temp), TEMP=str(window.temp))
+                            exploration_authority=request['exploration_authority'],
+                            exploration_checkout=request.get('external_checkout'))
+    window.env.update(DOCKER_CONFIG=cell['docker_config'], TMP=str(window.temp), TEMP=str(window.temp))
+    if args.backend == 'colima':
+        window.env['COLIMA_CACHE_HOME'] = control + '/cache'
+    desktop_inventory = None
+    if args.backend == 'desktop':
+        from macos_desktop_smoke import inventory
+        desktop_inventory = inventory()
+        exclusive('inventory-before.json', desktop_inventory, dir_fd=window.root_fd)
     try:
         exclusive('exploration.json', dict(proof=False, request_sha256=args.sha256,
                   exploration_authority=request['exploration_authority'], sqlite_readiness=readiness,
@@ -100,7 +147,23 @@ def main():
                   cells=window.events), dir_fd=window.root_fd)
         raise
     finally:
-        window.close()
+        try:
+            if window.external_checkout is not None:
+                window.verify_root()
+                exclusive('external-checkout.json', dict(binding=window.external_checkout,
+                          peak_observed_bytes=window.external_checkout_peak, cap_bytes=16 * 1024 * 1024,
+                          ruling='planner 0796c1788c789665ffc81b2ecd6c4051d58d91889814e1cd273ff6c36572f190'),
+                          dir_fd=window.root_fd)
+            if desktop_inventory is not None:
+                after = inventory()
+                exclusive('inventory-after.json', after, dir_fd=window.root_fd)
+                difference = {kind: dict(removed=sorted(set(desktop_inventory[kind]) - set(after[kind])),
+                                         added=sorted(set(after[kind]) - set(desktop_inventory[kind])))
+                              for kind in desktop_inventory}
+                exclusive('inventory-difference.json', difference, dir_fd=window.root_fd)
+                print('inventory differences: ' + json.dumps(difference), flush=True)
+        finally:
+            window.close()
 
 
 if __name__ == '__main__':

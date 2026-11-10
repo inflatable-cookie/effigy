@@ -13,6 +13,7 @@ r2 pin set.
 """
 import datetime
 import json
+import os
 import re
 
 STASH = '/Volumes/Stash/scratch/effigy'
@@ -123,11 +124,15 @@ def guest_dir(token32):
     return f'effigy-531-image-{token32}'
 
 
-def control_paths(token):
-    """Fresh owned Colima and Desktop paths for one token. Pure: no filesystem access."""
+def control_paths(token, *, parent=None):
+    """Fresh owned Colima and Desktop paths for one token beneath a canonical parent."""
     require(TOKEN.fullmatch(token or ''), 'eight lowercase hex token required')
     require(PROFILE not in PROTECTED_PROFILES, 'planned profile must not be a protected backend')
-    control = f'{STASH}/mac-4f6a-{token}'
+    parent = STASH if parent is None else parent
+    require(isinstance(parent, str) and os.path.realpath(parent) == parent
+            and (parent == STASH or parent.startswith(STASH + '/')),
+            'control parent must be canonical under Stash scratch')
+    control = f'{parent}/mac-4f6a-{token}'
     home = f'{control}/c'
     instance = f'colima-{PROFILE}'
     return dict(
