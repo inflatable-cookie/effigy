@@ -424,8 +424,12 @@ Hosted nextest runs use four hash partitions on each operating system. Shared-
 process runs partition whole test binaries into library, CLI, gateway and remaining
 cohorts through `scripts/ci-shared-process.py`. Cargo discovers the complete target
 inventory at each head, and new binaries enter the remaining cohort. Every test in
-a binary still runs together with libtest's default parallel threads, under the
-original `effigy_shared_process` configuration. Both operating systems retain all
+a binary still runs together under the original `effigy_shared_process`
+configuration. The library cohort uses 16 libtest threads so unrelated tests
+can progress while fixture environment locks occupy other threads; other
+cohorts retain the default. A Cargo runner selects whole binaries from the
+compiled inventory in one workspace invocation, preserving feature unification
+and Cargo's per-package execution environment. Both operating systems retain all
 tests and doc tests. Compilation is cached independently of the partition.
 
 The healthy headless lifecycle fixture retains its 35-second cold engine start,
