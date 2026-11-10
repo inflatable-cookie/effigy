@@ -37,9 +37,11 @@ import sys
 import tempfile
 import termios
 import time
+from managed_pane_live_step import prove_animation
 from pathlib import Path
 
 binary = str(Path(sys.argv[1]).resolve())
+live_fixture = os.environ["EFFIGY_PANE_LIVE_STEP_FIXTURE"]
 evidence_path = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("EFFIGY_PANE_EVIDENCE")
 evidence = Path(evidence_path).resolve() if evidence_path else None
 
@@ -105,7 +107,7 @@ run = [
 ]
 [tasks."nested:wait"]
 run_in = "host"
-run = "sleep 4; printf 'nested-waited\\n'"
+run = "printf 'nested-stream-ready\\n'; sleep 4; printf 'nested-waited\\n'"
 [tasks."nested:long"]
 run_in = "host"
 run = "python3 __LONG_LINE__"
@@ -121,7 +123,7 @@ STEPS = (
 )
 
 
-def start(args, cwd, env, cols, rows):
+def start(args, cwd, env, cols, rows, program=binary):
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
@@ -130,7 +132,7 @@ def start(args, cwd, env, cols, rows):
         fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
 
     child = subprocess.Popen(
-        [binary, *args],
+        [program, *args],
         cwd=cwd,
         env=env,
         stdin=slave,
@@ -432,13 +434,27 @@ def assert_bounded(label, summary, services, adjacent):
 
 
 def run_standalone(root, env):
-    """A child is bounded only inside a pane: standalone still animates."""
+    """Producer bytes arrive live; non-streaming steps still animate."""
+    prove_animation(
+        lambda: start(["--ignored", "--exact", "non_streaming_live_step_fixture", "--nocapture", "--color", "never"], root, env, 120, 40, program=live_fixture),
+        drain,
+    )
+    manifest = root / "effigy.toml"
+    manifest.write_text(manifest.read_text().replace(
+        "sleep 4;", "while [ ! -f release-stream ]; do sleep 0.02; done;"
+    ))
     client, master = start(["nested:steps"], root, env, 120, 40)
     output = bytearray()
     try:
         deadline = time.monotonic() + 60
+        live = False
         while client.poll() is None and time.monotonic() < deadline:
             drain(master, output)
+            if not live and b"nested-stream-ready" in output:
+                assert client.poll() is None, "producer completed before live output"
+                live = True
+                (root / "release-stream").touch()
+        assert live, bytes(output[-4000:])
         for _ in range(5):
             drain(master, output)
         assert client.poll() == 3, (client.poll(), bytes(output[-4000:]))
@@ -448,9 +464,6 @@ def run_standalone(root, env):
             client.wait(timeout=15)
         os.close(master)
     text = bytes(output)
-    # Judge actual animated redraws, independently of the status label's words.
-    frames = len(re.findall(rb"\r\x1b\[2K[^\r\n]*running nested:steps step 1/3:", text))
-    assert frames >= 5, ("standalone progress stopped", frames, text[-4000:])
     assert b"EFFIGY" in text, text[-4000:]
     return text
 

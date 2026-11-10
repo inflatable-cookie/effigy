@@ -43,6 +43,11 @@ jobs:
         # so no -A flags are needed here — a plain clippy matches local runs.
         run: cargo clippy --all-targets -- -D warnings
 
+      - name: Prove real Cargo partitioner
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: python3 -I -B tests/scripts/ci_shared_process_fixture.py
+
   test:
     name: Test (${{ matrix.os }}, ${{ matrix.shard }}/4)
     runs-on: ${{ matrix.os }}

@@ -80,8 +80,9 @@ It pauses only its own TUI reader, releases the coloured line, observes the
 writer's optional style publication, then resumes the reader. Canonical plain
 append deliberately precedes that publication; reading the plain fallback in
 that interval cannot prove colour loss. The red SGR assertion and the 180-second
-fixture and three-second render bounds remain. Standalone progress requires
-at least five redraw frames for the running step, independently of label wording.
+fixture and three-second render bounds remain. Standalone producer checks observe bytes before releasing the workload. A
+separate non-streaming live-step PTY control retains at least five redraw frames
+and escape-byte assertions, independently of label wording.
 
 ### The kernel-custody boundary
 
@@ -632,3 +633,16 @@ cold-start assertion must not observe a sibling's installation. Both original
 assertion sets remain; the child harness requires one actual passing case.
 `test:deps:shared-process` runs the complete dependency library with eight
 libtest threads to retain its shared-process coverage.
+
+Planner ruling `8f2c4183773f8836bd196fc20baf2f63018c6ffdbf7e105d96a769bbacbca7e6`
+keeps both feedback planes after approved task 835: streaming producers must
+publish bytes before completion; a separate non-streaming live-step fixture
+still proves five animated redraws and escape bytes. The pane/plain/JSON/width
+assertions remain. Hosted `Lint & format` also executes the real partitioner
+fixture so independent proof owns only disposable runner fixtures.
+
+`test:kernel:probe:load` repeats the unchanged checked-pause case twenty times
+under up to twelve owned CPU workers. Admission precedes the load, workers
+self-expire after five minutes, and the driver stops and reaps only its recorded
+PIDs before removing its own fixture. Every iteration requires a passing exact
+case and live load workers; probe assertions and deadlines are unchanged.
