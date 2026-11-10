@@ -265,7 +265,7 @@ test reads the wall clock.
 | Bootstrap | `bootstrap_command::tests::a_phase_frame_names_its_action_and_what_it_waits_on_as_time_passes` (one phase read at two times) |
 | Deploy provider fetch | `deploy_command::provider_package::tests::a_fetch_frame_names_the_exact_source_and_pin_as_time_passes` (one fetch read at two times) |
 | Release | `release_command::tests::release_gate_steps_name_the_gate_and_its_outcome`, `a_release_run_step_names_the_stage_the_gate_and_the_next_stage`, `a_paused_release_run_names_what_it_waits_on` |
-| Bundle sources | `bundle_command::tests::source_frames_name_each_source_and_its_elapsed_wait` |
+| Bundle sources | `bundle_command::tests::source_steps_name_the_bundle_its_revision_and_the_outcome` |
 | Secrets | `secrets_command::tests::unlock_frames_name_sub_steps_elapsed_and_never_secrets` and `lock_frames_count_removed_files_and_never_paths` |
 | Workspace | `workspace_command::tests::download_frames_name_artifact_checksum_and_cache_waits` |
 | Gateway setup and platform phases | `gateway_command::tests::platform_phase_frames_name_the_operation_while_the_child_runs` |

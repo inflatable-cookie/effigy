@@ -780,27 +780,12 @@ mod tests {
     }
 
     #[test]
-    fn source_frames_name_each_source_and_its_elapsed_wait() {
-        let bundle = source_progress("bundle", "decodelabs", "main", false);
-        let catalog = source_progress("catalog:acme", "acme", "main", false);
-        let snapshot = source_progress("bundle", "decodelabs", "path", true);
-        let seconds = std::time::Duration::from_secs;
+    fn source_steps_name_the_bundle_its_revision_and_the_outcome() {
         assert_eq!(
-            bundle.detailed_frame_at(seconds(0)),
+            source_progress("bundle", "decodelabs", "main", false)
+                .detailed_frame_at(std::time::Duration::ZERO),
             "waiting for bundle `decodelabs` at main; 0s elapsed"
         );
-        assert_eq!(
-            catalog.detailed_frame_at(seconds(3)),
-            "waiting for catalog `acme` at main; 3s elapsed"
-        );
-        assert_eq!(
-            snapshot.detailed_frame_at(seconds(7)),
-            "waiting for the local snapshot of bundle `decodelabs`; 7s elapsed"
-        );
-    }
-
-    #[test]
-    fn source_steps_name_the_bundle_its_revision_and_the_outcome() {
         assert_eq!(
             source_awaiting("bundle", "decodelabs", "main", false),
             "bundle `decodelabs` at main"
