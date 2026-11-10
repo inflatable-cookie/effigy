@@ -461,9 +461,10 @@ exited zero, rather than waiting 60 seconds on each activation. The cold-start
 regression, immediate reuse, permission preparation and final cleanup assertions
 are unchanged.
 
-Workspace-client fixture contexts and peer replies clone one observed digest
-of their immutable compiled test executable per test process. They still read
-the display version from the current fixture environment on every call. Rehashing that
+Workspace-client fixture contexts and peer replies reuse one observation of
+their immutable compiled executable while the active-version input is unchanged.
+Changed version inputs call the real observer again, keeping its wire-version
+format authoritative rather than reconstructing that version in a fixture. Rehashing that
 same file for each context, live-run record and peer response inflated every
 matrix cell. Production dispatch still calls the real binary observer, and the
 version/digest mismatch controls retain their original assertions.

@@ -34,19 +34,21 @@ pub(super) const GUEST_CHECKOUT: &str = "/workspace";
 const MANIFEST: &[u8] = b"[tasks]\nbuild = \"cargo build\"\nseed = \"cargo run -- seed\"\n";
 
 fn running_binary() -> RunningBinary {
-    // Only the compiled executable's digest is immutable. Keep observing the
-    // display version, which may come from a fixture's environment. Production
-    // dispatch still observes its binary; these are context/peer fixture copies.
-    static DIGEST: OnceLock<String> = OnceLock::new();
-    RunningBinary {
-        version: effigy_core::build_info::display_version(),
-        digest: DIGEST
-            .get_or_init(|| {
-                RunningBinary::observe()
-                    .expect("the test binary's own identity")
-                    .digest
-            })
-            .clone(),
+    // The executable is immutable. Reuse its observation only while the active
+    // version input is unchanged; the observer remains authoritative about
+    // wire-version formatting, including after production API changes.
+    static BINARY: OnceLock<(String, RunningBinary)> = OnceLock::new();
+    let active_version = effigy_core::build_info::active_version();
+    let (cached_version, binary) = BINARY.get_or_init(|| {
+        (
+            active_version.clone(),
+            RunningBinary::observe().expect("the test binary's own identity"),
+        )
+    });
+    if *cached_version == active_version {
+        binary.clone()
+    } else {
+        RunningBinary::observe().expect("the test binary's changed version identity")
     }
 }
 
