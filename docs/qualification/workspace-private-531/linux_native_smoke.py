@@ -114,6 +114,51 @@ def root_resume(root, attempt, ssh):
     return result
 
 
+def verify_engine_stopped(state, pids):
+    common.require(state == {'ActiveState': 'inactive', 'MainPID': '0', 'ControlGroup': ''}
+                   and pids == [], 'engine did not close; retain the exact owner')
+
+
+def stop_engine(attempt):
+    """One retained systemd name latches a stop despite ambiguous Parallels acknowledgements."""
+    unit = 'effigy-829-quiesce-' + uuid.uuid4().hex
+    streams = {name: '/var/lib/effigy-829/rootful/' + unit + '.' + name for name in ('stdout', 'stderr')}
+    argv = ['systemd-run', '--unit=' + unit, '--no-block', '--service-type=exec',
+            '--property=RemainAfterExit=yes', '--property=CollectMode=inactive',
+            '--property=RuntimeMaxSec=45', '--property=TimeoutStopSec=5',
+            '--property=MemoryMax=64M', '--property=MemorySwapMax=0', '--property=TasksMax=16',
+            '--property=LimitFSIZE=1M', '--property=LimitCORE=0',
+            '--property=StandardOutput=append:' + streams['stdout'],
+            '--property=StandardError=append:' + streams['stderr'],
+            '--', '/usr/bin/systemctl', 'stop', 'effigy-829-rootful.service']
+    native_run.submit_unit(attempt, argv, unit)
+    deadline = time.monotonic() + 65
+    while True:
+        raw = attempt.admin('systemctl show --all ' + unit + '.service '
+                            '--property=MainPID,SubState,Result,ExecMainStatus', read_only=True)
+        state = dict(line.split('=', 1) for line in raw.decode().splitlines())
+        if state.get('MainPID') == '0' and state.get('SubState') in ('exited', 'failed', 'dead'):
+            break
+        common.require(time.monotonic() < deadline, 'latched engine stop has no terminal observation')
+        time.sleep(.2)
+    common.exclusive(attempt.root / (unit + '.terminal.json'), state)
+    for name, path in streams.items():
+        common.exclusive_bytes(attempt.root / (unit + '.' + name),
+                               attempt.admin('cat ' + shlex.quote(path), read_only=True))
+    attempt.admin('systemctl stop ' + unit + '.service')
+    common.require(state['Result'] == 'success' and state['ExecMainStatus'] == '0',
+                   'latched engine stop failed; retained streams and unit identity')
+    raw = attempt.admin('systemctl show --all effigy-829-rootful.service '
+                        '--property=ActiveState,MainPID,ControlGroup', read_only=True)
+    state = dict(line.split('=', 1) for line in raw.decode().splitlines())
+    code = ('import json; from pathlib import Path; '
+            'p=Path("/sys/fs/cgroup/system.slice/effigy-829-rootful.service"); '
+            'print(json.dumps([int(n) for f in p.rglob("cgroup.procs") for n in f.read_text().split()]))')
+    pids = json.loads(attempt.admin('python3 -I -B -c ' + shlex.quote(code), read_only=True))
+    common.exclusive(attempt.root / (unit + '.engine-terminal.json'), {'state': state, 'pids': pids})
+    verify_engine_stopped(state, pids)
+
+
 def capacity_probe(attempt, ssh, root, size, *, image=None):
     payload = (Path(__file__).parent / 'linux_native_capacity.py').read_bytes()
     argv = '/usr/bin/python3 -I -B - ' + shlex.quote(root) + ' ' + str(size)
@@ -146,10 +191,7 @@ def full_chain(root, seed):
     known = (root / 'control/ssh_known_hosts').read_text().split()
     common.require(len(key) >= 2 and key[:2] == known[1:3], 'fixed VM SSH identity differs')
     root_resume(root, attempt, ssh)
-    attempt.admin('systemctl stop effigy-829-rootful.service')
-    stopped = attempt.admin('systemctl show effigy-829-rootful.service -p ActiveState -p MainPID -p ControlGroup', read_only=True)
-    common.require(dict(line.split('=', 1) for line in stopped.decode().splitlines()) ==
-                   {'ActiveState': 'inactive', 'MainPID': '0', 'ControlGroup': ''}, 'engine did not close')
+    stop_engine(attempt)
     capacity_probe(attempt, ssh, '/var/lib/effigy-829/rootful/client/tmp', 2147483648)
     root_resume(root, attempt, ssh)
     capacity_probe(attempt, ssh, build.BASE + '/qualification', 1073741824,
@@ -160,7 +202,7 @@ def full_chain(root, seed):
     common.require(native_run.execute(root, prepared, 'acquire') == 0, 'native acquisition failed')
     common.require(native_run.execute(root, prepared, 'full') == 0, 'native full session failed')
     final = root_resume(root, attempt, ssh)
-    attempt.admin('systemctl stop effigy-829-rootful.service')
+    stop_engine(attempt)
     attempt.command([diagnostic.PRLCTL, 'stop', setup.VM_UUID], timeout=90)
     raw = attempt.command([diagnostic.PRLCTL, 'list', '--info', setup.VM_UUID, '--json'], read_only=True)
     diagnostic.check_vm(raw, 'stopped')

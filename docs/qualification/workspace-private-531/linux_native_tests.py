@@ -16,6 +16,7 @@ import linux_native_writers as writers
 import linux_native_run as native_run
 import linux_native_session as session
 import linux_native_assets as assets
+import linux_native_smoke as smoke
 import runtime
 import subprocess
 import time
@@ -217,6 +218,15 @@ class WriterClosureTests(unittest.TestCase):
 
 
 class SubmissionTests(unittest.TestCase):
+    def test_engine_exit_is_not_kernel_cgroup_closure(self):
+        state = {'ActiveState': 'inactive', 'MainPID': '0', 'ControlGroup': ''}
+        smoke.verify_engine_stopped(state, [])
+        for observed, pids in ((dict(state, ActiveState='active'), []),
+                               (dict(state, MainPID='123'), []), (state, [123]),
+                               (dict(state, ControlGroup='/system.slice/owned'), []), ({}, [])):
+            with self.subTest(observed=observed, pids=pids), self.assertRaises(RuntimeError):
+                smoke.verify_engine_stopped(observed, pids)
+
     def test_existing_unit_refuses_without_launch(self):
         attempt = unittest.mock.Mock()
         attempt.admin.return_value = b'LoadState=loaded\n'

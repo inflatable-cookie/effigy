@@ -1125,3 +1125,10 @@ resume route uses that observer instead of its older partial actor loop, checks
 actual cgroup memory/swap ceilings, and retains whole-filesystem allocation
 attribution. Both idle daemon actors passed natively with no findings; this is
 not yet the complete controller/workload closure or sealed mechanism admission.
+
+The native smoke also latches engine stops under fresh retained systemd unit
+names, using the same bounded ambiguous-submission handling as resume. A local
+Parallels acknowledgement can fail before a stop starts; neither that failure
+nor a client exit is engine closure. The route retains helper streams and
+waited status, then independently requires inactive/MainPID-zero state and an
+empty kernel cgroup before the capacity control or VM stop.
