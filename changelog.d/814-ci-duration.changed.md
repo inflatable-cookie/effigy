@@ -1,0 +1,1 @@
+Bound cold-start test contention by fixture class so ordinary tests can run alongside protected fixtures; partition hosted tests on both operating systems while retaining every shared-process test cohort.

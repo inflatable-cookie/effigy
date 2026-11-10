@@ -4432,7 +4432,7 @@ concurrent = [
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "api", run = "printf api-running", start = 2, tab = 2 },
   { name = "front", run = "printf front-running", start = 3, tab = 3 },
-  { name = "window", run = "sleep 60", run_in = "host", start = 4, tab = 4, shutdown_on_exit = true },
+  { name = "window", run = "while [ ! -f window-release ]; do sleep 0.05; done", run_in = "host", start = 4, tab = 4, shutdown_on_exit = true },
 ]
 
 [systems]
@@ -4557,6 +4557,12 @@ mounts = ["./app:/workspace"]
         ),
     ];
     let run_headless = |extra_env: &[(&str, &str)]| -> std::process::Output {
+        // Release the host window only after both exec children have completed.
+        // Keep the real 35-second cold-start discriminator and the 240s bound.
+        let release = root.join("window-release");
+        if release.exists() {
+            fs::remove_file(&release).expect("reset window barrier");
+        }
         let mut child = Command::new(env!("CARGO_BIN_EXE_effigy"))
             .arg("--repo")
             .arg(&root)
@@ -4576,6 +4582,40 @@ mounts = ["./app:/workspace"]
         loop {
             if child.try_wait().expect("poll headless run").is_some() {
                 return child.wait_with_output().expect("wait headless run");
+            }
+            if !release.exists() {
+                let status = Command::new(env!("CARGO_BIN_EXE_effigy"))
+                    .arg("--repo")
+                    .arg(&root)
+                    .args(["dev", "status", "--json"])
+                    .envs(
+                        base_env
+                            .iter()
+                            .map(|(key, value)| (key.as_str(), value.as_str())),
+                    )
+                    .output()
+                    .expect("observe exec completion");
+                let raw = String::from_utf8_lossy(&status.stdout);
+                let completed = raw
+                    .lines()
+                    .rev()
+                    .find_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
+                    .is_some_and(|status| {
+                        // The previous activation's closed journal is not
+                        // evidence that this activation has completed exec.
+                        status["run"]["phase"] != "closed"
+                            && status["processes"].as_array().is_some_and(|processes| {
+                                ["api", "front"].iter().all(|name| {
+                                    processes
+                                        .iter()
+                                        .any(|entry| entry["name"] == *name && entry["exit"] == 0)
+                                })
+                            })
+                    });
+                if completed {
+                    fs::write(&release, "exec children exited cleanly")
+                        .expect("release host window");
+                }
             }
             if Instant::now() >= deadline {
                 let _ = child.kill();

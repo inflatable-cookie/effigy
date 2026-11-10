@@ -3,7 +3,7 @@ name: CI
 # Ordinary pushes intentionally rely on local `effigy qa`. Hosted CI runs when
 # explicitly requested or when a pull request needs clean-clone evidence.
 # Recent hosted tests took 14–17 minutes; allow compilation and workspace growth.
-# The lifecycle selector has a 40-minute cap; its job also allows bootstrap time.
+# Partition test execution to keep each job below 20 minutes, including builds.
 on:
   workflow_dispatch:
   pull_request:
@@ -38,13 +38,14 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
 
   test:
-    name: Test (${{ matrix.os }})
+    name: Test (${{ matrix.os }}, ${{ matrix.shard }}/4)
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 50
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+        shard: [1, 2, 3, 4]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -64,21 +65,23 @@ jobs:
           node-version: lts/*
 
       - name: Run tests
-        run: cargo nextest run --workspace --config-file .config/nextest.toml --user-config-file none --no-fail-fast --retries 0 --final-status-level pass
+        run: cargo nextest run --workspace --partition hash:${{ matrix.shard }}/4 --config-file .config/nextest.toml --user-config-file none --no-fail-fast --retries 0 --final-status-level pass
 
       - name: Run doc tests
+        if: matrix.shard == 1
         run: cargo test --workspace --doc
 
   shared-process:
-    name: Shared-process tests (${{ matrix.os }})
+    name: Shared-process tests (${{ matrix.os }}, ${{ matrix.suite }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 20
     env:
       RUSTFLAGS: --cfg effigy_shared_process
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+        suite: [library, cli, gateway, rest]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -97,12 +100,12 @@ jobs:
       # Keep libtest's parallel threads: this is the release test gate's
       # shared-process model, which nextest's per-test processes cannot prove.
       - name: Run workspace tests in shared processes
-        run: cargo test --workspace --no-fail-fast
+        run: python3 scripts/ci-shared-process.py ${{ matrix.suite }}
 
   managed-lifecycle:
     name: Managed lifecycle matrix
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v7

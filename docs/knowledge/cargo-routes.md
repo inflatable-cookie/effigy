@@ -156,3 +156,15 @@ they are the ones to re-check on a host that links `target` to another volume.
   `oxide exec -- cargo …`, which works, but a first-class answer (pass an
   unlisted Cargo profile through, or name it in the refusal) would remove the
   workaround.
+
+## Hosted binary partitioner
+
+`scripts/ci-shared-process.py` is a hosted-only Cargo driver, invoked by CI
+where Oxide is unavailable. It compiles every test target and partitions only
+whole binaries; local selectors continue to use Oxide. Its unit controls mock
+all subprocess calls and do not build or execute Cargo.
+
+| Route | Rule | Reason |
+| --- | --- | --- |
+| `scripts/ci-shared-process.py` | genuine exception | Hosted-only binary partitioner; GitHub runners have no Oxide. |
+| `tests/scripts/ci_shared_process_tests.py` | genuine exception | Mock-only controls name Cargo argv; never launch Cargo. |

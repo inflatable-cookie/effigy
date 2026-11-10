@@ -1,3 +1,6 @@
+[test-groups.cold-start]
+max-threads = 1
+
 [profile.default]
 # One budget for one ordinary selector. A journal-heavy selector names its own
 # budget file (journal-heavy-nextest.toml) instead of raising this per test.
@@ -8,9 +11,7 @@ leak-timeout = { period = "30s", result = "fail" }
 global-timeout = "1800s"
 
 [[profile.default.overrides]]
-# Detached exposure proofs start real supervisors and cold listener children
-# inside an enclosing activation budget. Reserve the runner so the covering
-# concurrent selection reaches the listener phase instead of spending that
-# budget competing with its other fixtures. Keep timeouts and assertions.
+# Share the default suite's bounded cold-start class without reserving ordinary
+# test slots. Keep the enclosing activation budgets and assertions unchanged.
 filter = 'test(container_up_exposure_tests::)'
-threads-required = "num-test-threads"
+test-group = "cold-start"

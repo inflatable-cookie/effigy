@@ -410,3 +410,26 @@ exact test filter. `lint:bundle:deadline-proof` covers that feature's targets;
 the ordinary bundle controls also run without the feature.
 
 Worktree archive controls use private synthetic scratch roots and retain the explicit archive-base and fixture override routes. They must not probe or move real host archives.
+
+## Test scheduling
+
+Nextest's default suite caps cold-start fixtures at one concurrent test in the
+`cold-start` group; the durable supervisor matrix has its own `journal-matrix`
+group. These caps bound contention within each class while ordinary tests keep
+using the remaining runner slots. Focused exposure checks use the same cold-start
+cap. No test reserves every runner thread; activation deadlines and assertions
+remain unchanged.
+
+Hosted nextest runs use four hash partitions on each operating system. Shared-
+process runs partition whole test binaries into library, CLI, gateway and remaining
+cohorts through `scripts/ci-shared-process.py`. Cargo discovers the complete target
+inventory at each head, and new binaries enter the remaining cohort. Every test in
+a binary still runs together with libtest's default parallel threads, under the
+original `effigy_shared_process` configuration. Both operating systems retain all
+tests and doc tests. Compilation is cached independently of the partition.
+
+The healthy headless lifecycle fixture retains its 35-second cold engine start,
+but its host window now ends when status positively reports both exec children
+exited zero, rather than waiting 60 seconds on each activation. The cold-start
+regression, immediate reuse, permission preparation and final cleanup assertions
+are unchanged.
