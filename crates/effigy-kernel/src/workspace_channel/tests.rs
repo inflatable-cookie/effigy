@@ -5269,7 +5269,8 @@ fn outcome_observation_is_bound_to_accepted_request_and_never_admits() {
             run_id: None,
         })
     };
-    let mut attachment = None;
+    let mut attachment = Some(run::resume_owner(&cx, &root, session, run_id).unwrap());
+    host.attach = Some(RequestId::new([42; 16]));
     let mut streams = NoStreams;
     let poll = |host: &mut Server<Admitter, Resolver, Observer, Ids>, body, session| {
         host.answer(
@@ -5317,6 +5318,7 @@ fn outcome_observation_is_bound_to_accepted_request_and_never_admits() {
     );
     assert!(!host.dispatcher.admitted.contains(&run_id));
     assert!(!host.dispatcher.admitted_owners.contains_key(&run_id));
+    assert!(attachment.is_none() && host.attach.is_none());
     let mut wrong_grants = GrantBook::new();
     let mut wrong_binding = binding(session);
     wrong_binding.session.generation = Generation::new(99);
@@ -5339,4 +5341,40 @@ fn outcome_observation_is_bound_to_accepted_request_and_never_admits() {
     assert!(matches!(response.outcome, ResponseOutcome::Refused(_)));
     assert!(host.dispatcher.admission.tickets.is_empty());
     assert_eq!(host.dispatcher.resolver.calls, 0);
+}
+
+#[test]
+fn session_request_phases_renew_only_open_lifetimes_and_preserve_fixed_deadlines() {
+    let fixed = effects(Placement::Host);
+    let operation = fixed.operation();
+    let session = OperationContext::new(
+        Deadline::Open(crate::ctx::OpenReason::DevServer),
+        operation.cancel_token().clone(),
+        operation.limits().clone(),
+        operation.class(),
+        operation.placement(),
+    )
+    .effects()
+    .unwrap();
+    let expired = fixed.child(Duration::ZERO).operation().observe().unwrap();
+    let (_, unchanged) = RequestPhases::Fixed(&expired).contexts(&session).unwrap();
+    assert!(unchanged.check("fixed request").is_err());
+    let (first, observed) = RequestPhases::Session.contexts(&session).unwrap();
+    assert!(observed.check("session request").is_ok());
+    let Deadline::At(first_deadline) = first.operation().deadline() else {
+        panic!("finite request")
+    };
+    std::thread::sleep(Duration::from_millis(2));
+    let (second, _) = RequestPhases::Session.contexts(&session).unwrap();
+    let Deadline::At(second_deadline) = second.operation().deadline() else {
+        panic!("finite request")
+    };
+    assert!(second_deadline > first_deadline);
+    assert!(second.operation().remaining().unwrap() <= Duration::from_secs(10));
+    session
+        .operation()
+        .cancel_token()
+        .cancel(crate::ctx::StopCause::Requested);
+    let (_, cancelled) = RequestPhases::Session.contexts(&session).unwrap();
+    assert!(cancelled.check("cancelled request").is_err());
 }

@@ -328,6 +328,18 @@ targets = ["containers"]
                               '-e', 'EFFIGY_WORKSPACE_CLIENT_ID=' + client,
                               self.container, self.document['binary_path'], task]
 
+    def record_exploratory_client(self, label, status, stdout, stderr):
+        if not self.exploratory:
+            return
+        self.verify_root()
+        # These fixed probes emit markers and public CLI errors, never the
+        # Compose interpolation or enrolment credential used by setup.
+        require(max(len(stdout), len(stderr)) <= 64 * 1024, 'exploratory probe output exceeds its bound')
+        for name, payload in (('stdout', stdout), ('stderr', stderr)):
+            exclusive_bytes('exploration-' + label + '-' + name + '.bin', bytes(payload), dir_fd=self.root_fd)
+        self.record('exploration-' + label + '-client', proof=False, exit=status,
+                    stdout_bytes=len(stdout), stderr_bytes=len(stderr))
+
     def tasks(self):
         identity = json.loads(self.guest([self.document['binary_path'], '__guest-identity']).stdout)
         # Probe spelling is validated independently of context document fields.
@@ -371,15 +383,7 @@ targets = ["containers"]
             if child.poll() is None:
                 child.terminate()  # exact client this driver started; failure only
                 child.wait(timeout=5)
-        if self.exploratory:
-            self.verify_root()
-            # This closed synthetic probe emits only fixed markers and public
-            # CLI errors. Keep its bounded streams independently, never Compose
-            # interpolation or credential input, for native exploration.
-            for name, payload in output.items():
-                exclusive_bytes('exploration-level-one-' + name + '.bin', bytes(payload), dir_fd=self.root_fd)
-            self.record('exploration-level-one-client', proof=False, exit=status,
-                        stdout_bytes=len(output['stdout']), stderr_bytes=len(output['stderr']))
+        self.record_exploratory_client('level-one', status, output['stdout'], output['stderr'])
         require(status != 0 and set(early) == {'stdout', 'stderr'}, 'stream or nonzero outcome missing')
         require(all(state is None for _, state in early.values()), 'output arrived only after completion')
         require(b'531-stderr-first' not in output['stdout'] and b'531-stdout-first' not in output['stderr'], 'streams merged')
@@ -392,6 +396,7 @@ targets = ["containers"]
         require(stamp == {'system': platform.system(), 'hostname': socket.gethostname()}, 'task ran in another placement')
         self.record('level-one-stream', incremental=True, streams_distinct=True, real_exit=23, no_pty_and_stdin_eof=True)
         signal_result = self.command(self.guest_argv('531-signal', '531-signal'), check=False)
+        self.record_exploratory_client('signal', signal_result.returncode, signal_result.stdout, signal_result.stderr)
         require(signal_result.returncode != 0, 'signal reported success')
         signal_runs = self.task_runs('531-signal')
         require(len(signal_runs) == 1, 'signal task was not admitted exactly once')
@@ -415,8 +420,32 @@ targets = ["containers"]
                 require(credential not in path.read_bytes(), 'guest credential leaked into host checkout')
         self.record('credential-refusal', invalid_new_client_refused=True)
 
-    def guest_client(self, task, client, receipt):
+    def guest_client(self, task, client, receipt, *, slow_stdout=False):
         script = 'import os; from pathlib import Path; p=os.getpid(); Path(' + repr(receipt) + ').write_text(str(p)+" "+Path("/proc/self/stat").read_text().split()[21]); os.execv(' + repr(self.document['binary_path']) + ',["effigy",' + repr(task) + '])'
+        if slow_stdout:
+            # Throttle inside the guest, before SSH/engine buffering. The real
+            # Effigy client blocks on stdout for <1 second per 16-KiB chunk,
+            # keeps polling its original channel, and naturally lags retention.
+            script = """import os, subprocess, sys, time
+from pathlib import Path
+child = subprocess.Popen([BINARY, TASK], stdout=subprocess.PIPE)
+p = child.pid
+Path(RECEIPT).write_text(str(p) + ' ' + Path('/proc/' + str(p) + '/stat').read_text().split()[21])
+try:
+    while True:
+        chunk = child.stdout.read(4096)
+        if not chunk:
+            break
+        time.sleep(.25)
+        sys.stdout.buffer.write(chunk)
+        sys.stdout.buffer.flush()
+except BaseException:
+    if child.poll() is None:
+        child.kill()
+    child.wait()
+    raise
+sys.exit(child.wait())
+""".replace('BINARY', repr(self.document['binary_path'])).replace('TASK', repr(task)).replace('RECEIPT', repr(receipt))
         return self.spawn(self.engine + ['exec', '-i', '-u', 'nobody', '-w', '/workspace', '-e', 'HOME=/home/nobody',
                               '-e', 'EFFIGY_WORKSPACE_CLIENT_ID=' + client,
                                         self.container, 'python3', '-c', script])
@@ -444,33 +473,51 @@ targets = ["containers"]
                 child.wait(timeout=5)
         self.record('caller-drop', actual_cancelled_and_settled=True, cause='OwnerLost')
 
+    def capture_state(self, run_id):
+        value = json.loads(self.command([self.utility, 'capture-state', self.root, run_id]).stdout)
+        require(set(value) == {'from', 'end', 'truncated'} and type(value['from']) is int
+                and type(value['end']) is int and 0 <= value['from'] <= value['end']
+                and type(value['truncated']) is bool, 'capture extent observation is malformed')
+        return value
+
     def gap(self):
-        # Capture the guest client PID and /proc birth in a guest-private file
-        # before exec. This process is started by this exact engine invocation.
         receipt = '/home/nobody/531-gap-client'
-        child = self.guest_client('531-gap', '531-gap', receipt)
-        guest_signal = lambda number: self.guest_signal(receipt, number)
+        child = self.guest_client('531-gap', '531-gap', receipt, slow_stdout=True)
         try:
             self.wait(lambda: (self.root / 'gap-started').exists(), 'gap task admission')
-            guest_signal(signal.SIGSTOP)
             (self.root / 'gap-go').write_text('emit')
-            self.wait(lambda: (self.root / 'gap-finished').exists(), 'actual output rotation')
-            guest_signal(signal.SIGCONT)
-            stdout, stderr = child.communicate(timeout=30)
-            require(child.returncode != 0 and (b'incomplete' in stderr + stdout or b'Unknown' in stderr + stdout), 'rotated output reported complete')
+            stdout, stderr = child.communicate(timeout=min(60, self.end - time.monotonic()))
+            require(len(stdout) <= 8 * 1024 * 1024 and len(stderr) <= 65536,
+                    'slow-reader diagnostics exceed their fixed fixture bound')
+            self.wait(lambda: len(self.task_runs('531-gap')) == 1
+                      and self.task_runs('531-gap')[0][1] == 'closed'
+                      and self.task_runs('531-gap')[0][3] == 'complete', 'gap task settlement')
+            self.record_exploratory_client('gap', child.returncode, b'', stderr)
+            gap = self.capture_state(self.task_runs('531-gap')[0][0])
+            require(child.returncode != 0 and gap['from'] > 0 and not gap['truncated'],
+                    'slow reader did not refuse actual retained output rotation')
         finally:
             if child.poll() is None:
-                # Failure retains fixture evidence; never claim teardown pass.
+                # Reap the exact guest producer before its engine front end.
+                # Preserve the primary failure if the guest already exited.
                 try:
-                    guest_signal(signal.SIGCONT)
+                    self.guest_signal(receipt, signal.SIGKILL)
+                except Exception:
+                    pass
                 finally:
                     child.kill()
                     child.wait(timeout=5)
         result = self.command(self.guest_argv('531-truncated', '531-truncated'), check=False)
-        require(result.returncode != 0 and (b'incomplete' in result.stdout + result.stderr or b'Unknown' in result.stdout + result.stderr), 'truncated output reported complete')
+        self.record_exploratory_client('truncated', result.returncode, b'', result.stderr)
+        self.wait(lambda: len(self.task_runs('531-truncated')) == 1
+                  and self.task_runs('531-truncated')[0][1] == 'closed'
+                  and self.task_runs('531-truncated')[0][3] == 'complete', 'truncation task settlement')
+        truncated = self.capture_state(self.task_runs('531-truncated')[0][0])
+        require(result.returncode != 0 and truncated['truncated'], 'truncated output reported complete')
         require(len(self.task_runs('531-gap')) == 1 and len(self.task_runs('531-truncated')) == 1,
                 'incomplete output was resent or fell back to a second admission')
-        self.record('gap-and-truncation', unknown_refused=True)
+        self.record('gap-and-truncation', unknown_refused=True, expired_before=gap['from'],
+                    truncation_observed=True)
 
     def kernel_controls(self):
         # Genuine old binary provided by a separately recorded immutable source
@@ -480,13 +527,13 @@ targets = ["containers"]
                   '--user-config-file', 'none', '--binaries-metadata', self.binaries_metadata,
                   '--cargo-metadata', self.cargo_metadata, '--no-fail-fast', '--retries', '0', '--no-tests', 'fail']
         self.verify_root()
-        run(runner + ['--run-ignored', 'only', '-E', 'test(custody::tests::discard_old_sentinel_refuses_before_child_exec)'],
+        run(runner + ['--run-ignored', 'only', '-E', 'test(custody::tests::discard_old_sentinel_refuses_before_child_exec) | test(qualification_discard_refuses_genuine_old_helper_after_successful_admission)'],
             cwd=Path(self.cell['source_root']), env=env, timeout=min(600, self.end - time.monotonic()))
         self.verify_root()
         run(runner + ['-E', 'test(run::lifecycle::tests::retained_interpolation_) | test(run::lifecycle::tests::prelaunch_) | test(run::lifecycle::tests::reserved_env_admission_) | test(custody_signal_and_owner_kill_matrix) | test(custody_both_owner_and_sentinel_die) | test(custody_deleted_checkout_lease_survives_owner_kill) | test(custody::tests::fault_matrix_registration_spawn_and_socket_kill_enospc)'],
             cwd=Path(self.cell['source_root']), env=env, timeout=min(600, self.end - time.monotonic()))
         for mode in ('private-qualification', 'private-qualification-descendant', 'private-qualification-foreign',
-                     'private-qualification-uninitialized', 'private-qualification-expired', 'private-qualification-old'):
+                     'private-qualification-uninitialized', 'private-qualification-expired'):
             self.verify_root()
             home = Path(tempfile.mkdtemp(prefix='kernel-', dir=self.base))
             run([self.kernel_fixture, mode, home], cwd=self.root, env=env, timeout=min(60, self.end - time.monotonic()))

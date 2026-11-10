@@ -220,16 +220,20 @@ impl CanonicalOutput {
         Ok(())
     }
     pub(crate) fn feed(&self, stream: usize, bytes: &[u8], terminal_eof: bool) -> io::Result<()> {
+        let tagged: Vec<_> = bytes.iter().map(|byte| (stream as u8, *byte)).collect();
+        self.feed_observed(&tagged, terminal_eof)
+    }
+    /// Commit one bounded observed-order window without regrouping streams.
+    pub(crate) fn feed_observed(&self, tagged: &[(u8, u8)], terminal_eof: bool) -> io::Result<()> {
         let mut writer = lock(&self.0);
-        if writer.finished && bytes.is_empty() {
+        if writer.finished && tagged.is_empty() {
             return Ok(());
         }
         writer.check()?;
-        let tagged: Vec<_> = bytes.iter().map(|byte| (stream as u8, *byte)).collect();
         let final_eof = terminal_eof && matches!(&writer.log, Destination::Run(_));
         let clean = writer
             .pipeline
-            .push_terminal(&tagged, terminal_eof, final_eof);
+            .push_terminal(tagged, terminal_eof, final_eof);
         writer.commit(clean, final_eof)?;
         if final_eof {
             writer.finished = true;

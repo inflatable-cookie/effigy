@@ -28,13 +28,13 @@ elif mode == 'owner':
     while True:
         time.sleep(1)
 elif mode == 'gap':
-    # The driver stops the guest front end before letting this host task emit.
+    # The driver gives the real guest client a slow stdout consumer.
     Path('gap-started').write_text(str(os.getpid()))
     while not Path('gap-go').exists():
         time.sleep(.01)
-    sys.stdout.buffer.write(b'531-rotate\n' * (1024 * 1024))
+    # 5.5 MiB exceeds the frozen four 1-MiB log segments.
+    sys.stdout.buffer.write(b'531-rotate\n' * (512 * 1024))
     sys.stdout.buffer.flush()
-    Path('gap-finished').write_text('complete')
 elif mode == 'truncated':
     # A single over-limit line exercises truncation independently of rotation.
     sys.stdout.buffer.write(b'x' * (2 * 1024 * 1024) + b'\n')

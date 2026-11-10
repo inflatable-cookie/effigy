@@ -119,6 +119,17 @@ activation exceeded that bound after genuine publication reached a pending
 selection, so the later candidate freeze must measure the optimized artifacts
 against it or explicitly review a new phase bound before sealing. This task
 neither changes the sealed bound nor claims that timing proof.
+The full-session gap control throttles the real client's stdout inside the guest,
+before engine/SSH buffering, while leaving channel polling live. Its fixture utility
+reads typed retained extents without output payloads; actual expiry and truncation
+must accompany client refusal and complete task settlement. Stopping the entire
+client coupled log rotation to the five-second TLS idle timeout, so that obsolete
+probe is removed. Capture coalesces at most 64 KiB for up to five milliseconds;
+retention and transport limits stay unchanged. After successful publication,
+the adopted session owns an open serving operation with the same cancellation,
+limits and capability; each request takes a fresh ten-second phase. The finite
+publication deadline remains enforced at handoff, and fixed-context channel
+callers keep their original deadlines.
 Its result is `exploration-complete.json`
 with `exploratory: true, proof: false`; aggregate verification refuses it even
 if renamed. This entry grants no VM startup or artifact-build authority.
@@ -135,8 +146,31 @@ was also bound successfully on this host before the start.
 Original receipts and streams are archived under that control root's
 `exploration-evidence`; earlier exploratory failures are copied under
 `earlier-exploration`. This is native smoke evidence only. The #621 full-session
-exploration, candidate freeze and sealed C2–C6/full-session occurrences remain
-separate work; no #621 qualification is claimed.
+exploration is recorded below. Candidate freeze and sealed C2–C6/full-session
+occurrences remain separate work; no #621 qualification is claimed.
+
+## Full-session exploration, 2026-11-10
+
+The complete unsealed Colima cell passed on the same owned profile. Its receipt is
+`/Volumes/Stash/scratch/effigy/mac-4f6a-11a01580/s/session-30/exploration-complete.json`.
+It records actual v2 publication and private interpolation, guest identity and TLS
+pin refusal, distinct incremental streams, stdin EOF/no PTY, exit 23, signal 15,
+credential refusal, caller-loss settlement, retained-output expiry and truncation,
+the genuine older-helper controls, supervisor crash/reuse refusal, three closed
+sessions, retirement and the original native inventory. Each forwarded fixture task was
+admitted once. The receipt explicitly carries `exploratory: true, proof: false`.
+
+The optimized host artifacts, genuine produced Linux guest, exact source patches,
+request and per-cell observations are retained under that control root. The host
+uses the integrated worker changes over the planning main; the guest uses that
+main plus the recorded identity/version/authentication fixes. These exploratory
+roles do not substitute for a coherent reviewed-head Recipe A–E freeze. The later
+sealed plan above still applies, including its independent timing check.
+Both owned Colima profiles then reported `Stopped`, with waited stop exit 0 for
+the session profile. A separate audit of 580 recorded process identities across
+42 retained journals found no matching live owned process. Earlier failed
+explorations remain retained as failure evidence, including unqualified startup
+records; they are not relabelled as settled qualification.
 
 ## Historical revision notes
 

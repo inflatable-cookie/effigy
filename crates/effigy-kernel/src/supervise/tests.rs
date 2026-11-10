@@ -665,6 +665,77 @@ fn engine_supervisor_config_carries_the_workspace_admission() {
 }
 
 #[test]
+fn workspace_owner_eof_preserves_owner_loss_while_the_host_frontend_is_alive() {
+    use crate::run::{AdmissionKey, Release, RequestId, Reservation, Session};
+    for cause in [Release::Eof, Release::Detach] {
+        let world = World::new();
+        let cx = cx();
+        let root = StateRoot::effects(&cx, &world.home()).unwrap();
+        let _session = Run::begin(
+            &cx,
+            &root,
+            &inv("workspace-session"),
+            opts(2, None),
+            &cleanup(&cx),
+            &mut Strict,
+        )
+        .unwrap();
+        let session = Session {
+            run: _session.id(),
+            generation: _session.fence().generation,
+        };
+        let key = AdmissionKey {
+            session,
+            request: RequestId::new([46; 16]),
+        };
+        let resolved = inv("workspace-owned-command");
+        let options = opts(46, None);
+        let Reservation::Fresh(ticket) = crate::run::reserve_resolved(
+            &cx,
+            &root,
+            key,
+            Digest::of(b"workspace owner EOF"),
+            options.id,
+            &resolved,
+        )
+        .unwrap() else {
+            panic!("fresh ticket")
+        };
+        let mut run = Run::begin_admitted(
+            &cx,
+            &root,
+            &resolved,
+            options,
+            &cleanup(&cx),
+            &mut Strict,
+            ticket,
+        )
+        .unwrap();
+        let mut owner = crate::run::resume_owner(&cx, &root, session, run.id()).unwrap();
+        owner.release(&cx, &root, cause).unwrap();
+        let (input, _front) = std::os::unix::net::UnixStream::pair().unwrap();
+        input.set_nonblocking(true).unwrap();
+        let input: std::os::fd::OwnedFd = input.into();
+        let mut channel = OwningChannel {
+            input: input.into(),
+            buffer: vec![],
+            listener: None,
+            detached: false,
+        };
+        let control = channel.turn(&mut run, &[]).unwrap();
+        if cause == Release::Eof {
+            assert_eq!(control.stop, Some(crate::ctx::StopCause::OwnerLost));
+        } else {
+            assert_eq!(control.stop, None);
+            assert!(channel.detached);
+        }
+        run.finish(crate::outcome::WorkloadOutcome::Succeeded)
+            .unwrap();
+        run.settle(&cleanup(&cx), &mut Strict).unwrap();
+    }
+}
+
+#[test]
 fn workspace_capture_busy_read_waits_within_the_original_window() {
     use crate::custody::{CanonicalOutput, Stream};
     let world = World::new();

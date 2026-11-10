@@ -1554,6 +1554,13 @@ impl OwningChannel {
         // could miss that detach and mistake it for owner death.
         let (eof, requests) =
             observe_client_requests(&mut self.input, &mut self.buffer, || run.requests())?;
+        match run.workspace_owner_release()? {
+            Some(crate::run::Release::Detach) => self.detached = true,
+            Some(crate::run::Release::Eof) => {
+                control.stop.get_or_insert(StopCause::OwnerLost);
+            }
+            None => {}
+        }
         for request in requests {
             match request.action {
                 RequestAction::Detach => self.detached = true,
@@ -1580,7 +1587,6 @@ impl OwningChannel {
                 }
             }
         }
-        self.detached |= run.workspace_owner_detached()?;
         if eof && !self.detached {
             control.stop.get_or_insert(StopCause::OwnerLost);
         }
@@ -1974,6 +1980,8 @@ fn pump_output(
     let mut open = [true, true];
     let mut deadline = None;
     let mut buf = [0u8; 8192];
+    let mut batch = Vec::with_capacity(crate::custody::DRAIN_COMMIT_BOUND);
+    let mut commit_by = None;
     while open.iter().any(|open| *open) {
         if stopping.load(std::sync::atomic::Ordering::Acquire) {
             let until = deadline.get_or_insert_with(|| Instant::now() + Duration::from_secs(1));
@@ -1991,8 +1999,9 @@ fn pump_output(
             events: libc::POLLIN,
             revents: 0,
         });
+        let timeout_ms = if batch.is_empty() { 50 } else { 1 };
         // SAFETY: initialized pollfd array of its own length.
-        if unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, 50) } < 0 {
+        if unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout_ms) } < 0 {
             if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted {
                 continue;
             }
@@ -2003,8 +2012,13 @@ fn pump_output(
             if !open[index] || fd.revents == 0 {
                 continue;
             }
-            // SAFETY: live pipe read end and writable stack buffer.
-            let count = unsafe { libc::read(fd.fd, buf.as_mut_ptr().cast(), buf.len()) };
+            let remaining = crate::custody::DRAIN_COMMIT_BOUND - batch.len();
+            if remaining == 0 {
+                break;
+            }
+            // SAFETY: live pipe read end and a length within the writable stack buffer.
+            let count =
+                unsafe { libc::read(fd.fd, buf.as_mut_ptr().cast(), buf.len().min(remaining)) };
             if count == 0 {
                 open[index] = false;
                 continue;
@@ -2020,10 +2034,30 @@ fn pump_output(
                 }
                 continue;
             }
-            if output.feed(index, &buf[..count as usize], false).is_err() {
+            batch.extend(
+                buf[..count as usize]
+                    .iter()
+                    .map(|byte| (index as u8, *byte)),
+            );
+            commit_by.get_or_insert_with(|| Instant::now() + Duration::from_millis(5));
+        }
+        // The same 64-KiB commit bound as process custody avoids fsyncing three
+        // durable logs per pipe read. Tags retain the exact observed read order;
+        // a five-millisecond bound still releases incremental output promptly.
+        if !batch.is_empty()
+            && (batch.len() == crate::custody::DRAIN_COMMIT_BOUND
+                || commit_by.is_some_and(|until| Instant::now() >= until)
+                || !open.iter().any(|open| *open))
+        {
+            if output.feed_observed(&batch, false).is_err() {
                 output.fail();
             }
+            batch.clear();
+            commit_by = None;
         }
+    }
+    if !batch.is_empty() && output.feed_observed(&batch, false).is_err() {
+        output.fail();
     }
     let _ = output.finish();
 }

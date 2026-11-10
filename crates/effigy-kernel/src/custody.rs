@@ -43,7 +43,7 @@ pub const STOP_MARGIN: Duration = Duration::from_secs(30);
 /// bounded to 64 KiB of text (styled_tap's own clamp), so a commit never
 /// exceeds the window a pane matches exactly, and a full pipe no longer pays
 /// the append-and-provenance dance sixteen times per drain (effigy#558).
-const DRAIN_COMMIT_BOUND: usize = 64 * 1024;
+pub(crate) const DRAIN_COMMIT_BOUND: usize = 64 * 1024;
 /// The descriptor slot a spawn hands its optional one-shot reader to (K12).
 /// It sits above the capability reader (9) and cleanup pin (10) slots, so a
 /// caller can hand one short-lived payload to its own child without either

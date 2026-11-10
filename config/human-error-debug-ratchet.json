@@ -20,7 +20,6 @@
     "crates/effigy-kernel/src/remote.rs": 1,
     "crates/effigy-kernel/src/root/gates.rs": 1,
     "crates/effigy-kernel/src/run/checkout_custody.rs": 1,
-    "crates/effigy-kernel/src/run/logs.rs": 1,
     "crates/effigy-kernel/src/supervise.rs": 5,
     "crates/effigy-secrets/src/lib.rs": 2,
     "crates/effigy-state/src/capture.rs": 1,

@@ -5124,12 +5124,25 @@ Log commit contention and rotation have a typed busy result, retried for at most
 one second within the original observation deadline. Corruption still refuses
 immediately. A normally exited reserved shell flushes capture before committing
 its terminal outcome, so the final reader cannot outrun its last pipe bytes.
-Once an unattached Level 1 connection observes its exact keyed terminal outcome,
-it drops that run's completed ownership instead of requesting EOF release of
+Once a Level 1 connection observes its exact keyed terminal outcome,
+it drops that run's custody-only owning handle instead of requesting EOF release of
 compacted attachment rows. Pending uncertain releases remain fenced. A command
 that closes before owner attachment resumes still returns its first run ID for
 output drain only when the keyed completion, original invocation and acknowledged
 fence all match; replay continues to return the recorded outcome without admission.
+For a live run, the supervisor reads the typed durable workspace-owner release
+before interpreting its generic stop request. EOF remains `OwnerLost`, while an
+acknowledged detach leaves the workload running.
+
+Supervisor pipe capture commits at most 64 KiB of observed-order tagged reads per
+window, with at most five milliseconds of coalescing before incremental output
+is released. Workspace stream projections share that window and retain their own
+redaction and durable extents. The transport idle timeout and log retention limits
+are unchanged. Successful production handoff separates the finite publication
+operation from the adopted session's open serving lifetime, retaining cancellation,
+limits, placement and effect class. Expired or cancelled publication refuses the
+handoff. Each request takes a fresh ten-second child phase for admission and
+observation. The fixed-context channel entry never renews a caller's deadline.
 
 **Lane A dispatcher.** `crates/effigy-kernel/src/workspace_channel.rs` owns the
 v1 wire, its framing and limits, the server pin check, negotiation, grants,

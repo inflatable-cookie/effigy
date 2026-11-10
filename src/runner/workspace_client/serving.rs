@@ -113,6 +113,26 @@ impl<A: effigy_kernel::run::SettlementAdapter> effigy_kernel::run::SettlementAda
     }
 }
 
+/// Publication has a finite deadline. Only a successfully selected/adopted
+/// owner crosses into a new serving operation with its own workload lifetime.
+/// Cancellation, limits and host capability remain the activation's.
+fn session_effect(effect: &EffectContext) -> Result<EffectContext, RunError> {
+    use effigy_kernel::ctx::{Deadline, OpenReason, OperationContext};
+    let operation = effect.operation();
+    operation
+        .check("workspace serving handoff")
+        .map_err(RunError::Interrupted)?;
+    OperationContext::new(
+        Deadline::Open(OpenReason::DevServer),
+        operation.cancel_token().clone(),
+        operation.limits().clone(),
+        operation.class(),
+        operation.placement(),
+    )
+    .effects()
+    .map_err(|_| RunError::refused("workspace serving capability is unavailable"))
+}
+
 /// Where accepted connections come from.
 ///
 /// Production accepts through the session's bound TLS listener
@@ -222,7 +242,8 @@ pub(crate) struct OwnedWorkspaceChannel<'a> {
     /// state, so the serving owner never needs a `'static` reference or a
     /// self-referential leak.
     pub(crate) effect: Arc<EffectContext>,
-    /// The observation context derived from that same operation.
+    /// Activation observation for fixed callers. Production adoption creates
+    /// bounded request phases under its new session serving operation.
     pub(crate) observe: Arc<ObserveContext>,
     /// `environment::workspace::WorkspaceOwner::root`: the environment's cached
     /// state root, which the dispatcher fences every request against.
@@ -406,13 +427,24 @@ impl<'a>
         {
             return Err((AdoptError::Facts, Box::new(owned)));
         }
+        let (effect, observe) = match session_effect(&owned.effect).and_then(|effect| {
+            let observe = effect
+                .child(Duration::from_secs(10))
+                .operation()
+                .observe()
+                .map_err(|_| RunError::refused("workspace serving observation is unavailable"))?;
+            Ok((Arc::new(effect), Arc::new(observe)))
+        }) {
+            Ok(contexts) => contexts,
+            Err(_) => return Err((AdoptError::Facts, Box::new(owned))),
+        };
         let OwnedWorkspaceChannel {
             supervisor,
             session,
             channel: prepared,
             serving,
-            effect,
-            observe,
+            effect: _,
+            observe: _,
             root,
         } = owned;
         let PreparedHostChannel {
@@ -688,13 +720,21 @@ where
         else {
             return Ok(None);
         };
-        let served = self.server.serve(
-            &mut transport,
-            self.cx.as_ref(),
-            self.observe.as_ref(),
-            self.root,
-            streams,
-        )?;
+        let served = if matches!(
+            self.cx.operation().deadline(),
+            effigy_kernel::ctx::Deadline::Open(_)
+        ) {
+            self.server
+                .serve_session(&mut transport, self.cx.as_ref(), self.root, streams)
+        } else {
+            self.server.serve(
+                &mut transport,
+                self.cx.as_ref(),
+                self.observe.as_ref(),
+                self.root,
+                streams,
+            )
+        }?;
         self.served += 1;
         Ok(Some(served))
     }
@@ -748,5 +788,57 @@ where
             .field("serving", &self.serving())
             .field("served", &self.served)
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod phase_tests {
+    use super::*;
+    use effigy_kernel::ctx::{Deadline, OpenReason, StopCause};
+
+    #[test]
+    fn serving_handoff_ends_activation_timing_but_keeps_its_cancellation_and_limits() {
+        let source = crate::runner::task_engine::effect_context(OpenReason::DevServer);
+        let activation = source.child(Duration::from_secs(1));
+        let serving = session_effect(&activation).unwrap();
+        assert!(matches!(serving.operation().deadline(), Deadline::Open(_)));
+        assert_eq!(
+            serving.operation().limits().line_max,
+            activation.operation().limits().line_max
+        );
+        assert_eq!(
+            serving.operation().placement(),
+            activation.operation().placement()
+        );
+        let Deadline::At(activation_end) = activation.operation().deadline() else {
+            panic!("bounded activation")
+        };
+        let request = serving.child(Duration::from_secs(10));
+        let Deadline::At(request_end) = request.operation().deadline() else {
+            panic!("bounded request")
+        };
+        assert!(request_end > activation_end);
+        assert!(
+            session_effect(&activation.child(Duration::ZERO)).is_err(),
+            "expired publication cannot gain serving authority"
+        );
+        assert!(serving
+            .child(Duration::from_secs(10))
+            .operation()
+            .observe()
+            .unwrap()
+            .check("new request")
+            .is_ok());
+        activation
+            .operation()
+            .cancel_token()
+            .cancel(StopCause::Requested);
+        assert!(serving
+            .child(Duration::from_secs(10))
+            .operation()
+            .observe()
+            .unwrap()
+            .check("cancelled request")
+            .is_err());
     }
 }

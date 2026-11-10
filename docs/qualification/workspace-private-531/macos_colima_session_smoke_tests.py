@@ -80,6 +80,37 @@ class ExplorationTests(unittest.TestCase):
                 window.command(['/pinned'], activation=activation)
                 self.assertEqual(run.call_args.kwargs['timeout'], expected)
 
+    def test_rotation_requires_independently_observed_retention_expiry(self):
+        window = smoke.runtime.Window.__new__(smoke.runtime.Window)
+        window.root = self.control
+        window.exploratory = False
+        (self.control / 'gap-started').write_text('fixture')
+        child = mock.Mock(returncode=1)
+        child.communicate.return_value = (b'', b'Unknown')
+        child.poll.return_value = 1
+        window.guest_client = lambda *_args, **_kwargs: child
+        window.guest_signal = lambda *_args: None
+        window.wait = lambda predicate, _label: self.assertTrue(predicate())
+        window.task_runs = lambda _task: [('run', 'closed', {'Cancelled': {'cause': 'OwnerLost'}}, 'complete')]
+        window.end = time.monotonic() + 60
+        window.capture_state = lambda _run: {'from': 0, 'end': 1024, 'truncated': False}
+        with self.assertRaisesRegex(RuntimeError, 'actual retained output rotation'):
+            window.gap()
+
+    def test_rotation_cleanup_preserves_the_primary_failure_after_guest_exit(self):
+        window = smoke.runtime.Window.__new__(smoke.runtime.Window)
+        window.root = self.control
+        window.exploratory = False
+        child = mock.Mock()
+        child.poll.return_value = None
+        window.guest_client = lambda *_args, **_kwargs: child
+        window.wait = mock.Mock(side_effect=RuntimeError('primary predicate timeout'))
+        window.guest_signal = mock.Mock(side_effect=RuntimeError('guest already exited'))
+        with self.assertRaisesRegex(RuntimeError, 'primary predicate timeout'):
+            window.gap()
+        child.kill.assert_called_once_with()
+        child.wait.assert_called_once_with(timeout=5)
+
     def test_network_inventory_keeps_intrinsic_modes_and_inspects_every_object(self):
         from types import SimpleNamespace
         window = smoke.runtime.Window.__new__(smoke.runtime.Window)
