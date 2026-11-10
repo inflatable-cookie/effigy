@@ -219,19 +219,13 @@ fn run_deferred_request_with_binding(
     }
 
     let local_working_dir = local_container_deferral_working_dir();
-    if local_working_dir.is_none() {
-        // A cold bring-up also prepares sources. Do that before resolving the
-        // binding: a bundle refresh can change the project, service or workdir.
-        // The activation below then owns one hold and one snapshot through exec.
-        crate::runner::bundle_command::prepare_sources_at(&deferral.working_dir)?;
-    }
-    let manifest = load_task_manifest(&manifest_path)
+    let mut manifest = load_task_manifest(&manifest_path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let binding_task = ManifestTask {
         run_in: Some(deferral.run_in),
         ..Default::default()
     };
-    let binding_resolution = resolve_execution_binding_resolution(
+    let mut binding_resolution = resolve_execution_binding_resolution(
         None,
         manifest.systems.as_ref(),
         manifest.containers.as_ref(),
@@ -239,6 +233,26 @@ fn run_deferred_request_with_binding(
         &binding_task,
         "deferral",
     )?;
+    if local_working_dir.is_none()
+        && matches!(
+            binding_resolution.binding(),
+            ContainerExecutionBinding::Container { .. } | ContainerExecutionBinding::Inline { .. }
+        )
+    {
+        // Only a container route prepares sources. Re-resolve its binding
+        // afterward: the refresh can change the project, service or workdir.
+        crate::runner::bundle_command::prepare_sources_at(&deferral.working_dir)?;
+        manifest = load_task_manifest(&manifest_path)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        binding_resolution = resolve_execution_binding_resolution(
+            None,
+            manifest.systems.as_ref(),
+            manifest.containers.as_ref(),
+            "defer",
+            &binding_task,
+            "deferral",
+        )?;
+    }
     let binding = binding_resolution.binding();
 
     match binding {

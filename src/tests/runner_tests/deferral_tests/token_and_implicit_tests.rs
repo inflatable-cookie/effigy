@@ -1254,3 +1254,57 @@ fn deferred_container_holds_running_environment_until_command_exit() {
 fn deferred_container_holds_environment_across_bundle_update() {
     deferred_environment_lifetime(false, true);
 }
+
+/// An either deferral with no container is an ordinary host task: a usable
+/// bundle pin stays fixed even when the source has changed (contract 020).
+#[test]
+fn host_bound_either_deferral_keeps_changed_bundle_source_pinned() {
+    let _guard = lock_test();
+    let fixture = effigy_test_support::Fixture::new("defer-host-pin").expect("owned fixture");
+    let root = fixture.path();
+    fs::create_dir(root.join(".git")).expect("git dir");
+    let source = root.join("bundle");
+    fs::create_dir(&source).expect("bundle dir");
+    fs::write(
+        source.join("bundle.toml"),
+        "[bundle]\nname = \"host-deferral\"\n",
+    )
+    .expect("bundle identity");
+    let export = source.join("effigy.toml");
+    let original = "[defer]\nrun = \"printf original > deferred-observed\"\nrun_in = \"either\"\n";
+    fs::write(&export, original).expect("bundle export");
+    write_root_manifest(
+        root,
+        "[bundle]\nbase = { type = \"path\", dir = \"bundle\" }\n",
+    );
+    let home = root.join("home");
+    fs::create_dir(&home).expect("private home");
+    let _env = EnvGuard::set_many(&[
+        ("HOME", Some(home.display().to_string())),
+        ("SHELL", Some("/bin/sh".to_owned())),
+    ]);
+    crate::runner::bundle_command::prepare_missing_sources_for_manifest(&root.join("effigy.toml"))
+        .expect("acquire usable bundle pin");
+    let lock_path = root.join(".effigy/sources.lock.json");
+    let lock = fs::read(&lock_path).expect("source pin");
+    let update_path = root.join(".effigy/sources.update.json");
+    let update = fs::read(&update_path).ok();
+    fs::write(&export, original.replace("original", "updated")).expect("changed source");
+
+    run_task_expect_empty_output(root, "missing-task", &[], "host deferral succeeds");
+
+    assert_eq!(
+        fs::read_to_string(root.join("deferred-observed")).expect("host command"),
+        "original"
+    );
+    assert_eq!(
+        fs::read(lock_path).expect("retained source pin"),
+        lock,
+        "host deferral must not refresh a usable pin"
+    );
+    assert_eq!(
+        fs::read(update_path).ok(),
+        update,
+        "host deferral must not record a source refresh"
+    );
+}
