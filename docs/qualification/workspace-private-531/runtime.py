@@ -73,7 +73,7 @@ def restarted_inventory(engine_command, prior):
 
 
 class Window:
-    def __init__(self, cell, inputs_hash, go, *, exploration_authority=None):
+    def __init__(self, cell, inputs_hash, go, *, exploration_authority=None, exploration_checkout=None):
         require((go is None) != (exploration_authority is None), "one execution authority record required")
         self.exploratory = exploration_authority is not None
         self.cell = cell
@@ -83,7 +83,12 @@ class Window:
         self.guest_options = ['-u', self.guest_user] if cell['backend'] == 'linux' else []
         self.end = time.monotonic() + cell['budget_seconds']
         self.base = qualification_path(cell['qualification_root'])
-        self.root = self.base / 'checkout'
+        self.external_checkout = exploration_checkout
+        self.external_checkout_fd = None
+        self.external_checkout_peak = 0
+        require(exploration_checkout is None or (self.exploratory and cell['backend'] == 'desktop'),
+                'external checkout is unsealed Desktop exploration only')
+        self.root = Path(exploration_checkout['path']) if exploration_checkout else self.base / 'checkout'
         self.events = []
         self.candidate = artifact(cell['candidate'])
         self.production = artifact(cell['production'])
@@ -129,8 +134,10 @@ class Window:
         self.home = self.base / 'home'
         self.env['HOME'] = str(self.home)
         if cell['engine_kind'] == 'docker':
-            self.engine = [str(artifact(cell['engine_binary'])), '--context', cell['engine_identity']]
-            self.env.update(EFFIGY_COMPOSE_BACKEND='docker', DOCKER_CONTEXT=cell['engine_identity'], DOCKER_CONFIG=cell['docker_config'])
+            endpoint = '://' in cell['engine_identity']
+            self.engine = [str(artifact(cell['engine_binary'])), '--host' if endpoint else '--context', cell['engine_identity']]
+            self.env.update(EFFIGY_COMPOSE_BACKEND='docker', DOCKER_CONFIG=cell['docker_config'])
+            self.env['DOCKER_HOST' if endpoint else 'DOCKER_CONTEXT'] = cell['engine_identity']
         else:
             self.engine = [str(artifact(cell['engine_binary'])), 'nerdctl', '-p', cell['engine_identity'], '--']
             self.env.update(EFFIGY_COMPOSE_BACKEND='containerd', COLIMA_HOME=cell['colima_home'])
@@ -142,7 +149,10 @@ class Window:
         self.base, self.root_fd = open_qualification_root(cell['qualification_root'])
         try:
             require(not os.listdir(self.root_fd), 'qualification root is already used or contains foreign files')
-            for name in ('checkout', 'tmp', 'home', 'home/.effigy'):
+            if self.external_checkout is not None:
+                self.external_checkout_fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                require(not os.listdir(self.external_checkout_fd), 'external checkout is not fresh')
+            for name in (('tmp', 'home', 'home/.effigy') if exploration_checkout else ('checkout', 'tmp', 'home', 'home/.effigy')):
                 os.mkdir(name, mode=0o700, dir_fd=self.root_fd)
             backend = 'containerd' if cell['engine_kind'] == 'colima' else 'docker'
             files = {'source.toml': 'repo_root = ' + json.dumps(cell['source_root']) + '\n',
@@ -165,8 +175,20 @@ class Window:
 
     def verify_root(self):
         verify_qualification_root(self.cell['qualification_root'], self.root_fd)
+        if self.external_checkout is not None:
+            held, visible = os.fstat(self.external_checkout_fd), self.root.lstat()
+            expected = tuple(self.external_checkout[key] for key in ('device', 'inode', 'uid'))
+            require(self.root.resolve(strict=True) == self.root and not self.root.is_symlink()
+                    and all((st.st_dev, st.st_ino, st.st_uid) == expected for st in (held, visible)),
+                    'owned external checkout identity changed')
+            size = sum(path.stat().st_size for path in self.root.rglob('*') if path.is_file() and not path.is_symlink())
+            self.external_checkout_peak = max(self.external_checkout_peak, size)
+            require(size <= 16 * 1024 * 1024, 'owned Users fixture exceeded its 16 MiB source/state bound')
 
     def close(self):
+        if self.external_checkout_fd is not None:
+            os.close(self.external_checkout_fd)
+            self.external_checkout_fd = None
         if self.root_fd is not None:
             os.close(self.root_fd)
             self.root_fd = None
@@ -179,7 +201,14 @@ class Window:
         # a sealed occurrence. Sealed commands retain their reviewed 60-second
         # bound; neither route can exceed the original backend window.
         phase_seconds = timeout if timeout is not None else (300 if self.exploratory and activation else 60)
-        result = run(args, cwd=cwd or self.root, env=self.env if env is None else env, timeout=min(phase_seconds, remaining), check=False, data=data)
+        try:
+            result = run(args, cwd=cwd or self.root, env=self.env if env is None else env, timeout=min(phase_seconds, remaining), check=False, data=data)
+        except subprocess.TimeoutExpired:
+            if self.exploratory and activation and self.cell['backend'] == 'desktop':
+                self.record('exploration-activation-timeout', proof=False, bind_source=str(self.root),
+                            phase_bound_seconds=min(phase_seconds, remaining),
+                            diagnostic='Check Docker Desktop bind mounting and file sharing for this owned source; no engine restart or settings change is authorized.')
+            raise
         if check and result.returncode != 0 and self.exploratory and Path(args[0]) == self.candidate:
             # The qualification fixture has one synthetic canary. Only an
             # already-public, structured CLI error is retained for exploration;

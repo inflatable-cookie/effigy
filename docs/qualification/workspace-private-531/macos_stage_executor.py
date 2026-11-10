@@ -364,7 +364,7 @@ def validate_bindings(bindings, manifest):
     supplied = sorted(set(bindings) & set(NOT_SUPPLIED))
     if supplied:
         raise Refusal('not caller-supplied: ' + ', '.join(supplied))
-    paths = prep.control_paths(token)
+    paths = prep.control_paths(token, parent=os.path.dirname(bindings.get('control', '')))
     for key in PATH_BINDINGS:
         if bindings.get(key) != paths[key]:
             raise Refusal(f'{key} differs from the reviewed path for this token')
@@ -1306,7 +1306,7 @@ def h_check_runtime_facts(ctx, step):
 
 def h_read_cidfile(ctx, step):
     path = render1(step['inputs'][0], ctx['bindings'])
-    if path != d3_occurrence(dict(prep.control_paths(ctx['bindings']['token']), token=ctx['bindings']['token']), ctx['activation_id'])['desktop_cidfile']:
+    if path != d3_occurrence(dict(prep.control_paths(ctx['bindings']['token'], parent=os.path.dirname(ctx['bindings']['control'])), token=ctx['bindings']['token']), ctx['activation_id'])['desktop_cidfile']:
         raise Refusal('D3 cidfile readback path drift')
     data = read_checked_file(path, must_be_in=ctx['bindings']['control'], read_only=False, max_bytes=64)
     return {'container_id': prep.read_cidfile(data.decode()), 'path': path,
@@ -2367,10 +2367,10 @@ def verify_creation(rec, body, manifest):
         expected = image_creation_receipt(body['token'], rec['id'], readback, body['engine_id'])
     else:
         helper = json.loads(Path(ev['path']).read_text())
-        occurrence = d3_occurrence(dict(prep.control_paths(body['token']), token=body['token']), act)
+        occurrence = d3_occurrence(dict(prep.control_paths(body['token'], parent=os.path.dirname(body['control'])), token=body['token']), act)
         cidfile = occurrence['desktop_cidfile']
         result = helper['result']
-        data = read_checked_file(cidfile, must_be_in=prep.control_paths(body['token'])['control'],
+        data = read_checked_file(cidfile, must_be_in=prep.control_paths(body['token'], parent=os.path.dirname(body['control']))['control'],
                                  read_only=False, max_bytes=64)
         if (result != {'container_id': rec['id'], 'path': cidfile, 'sha256': hashlib.sha256(data).hexdigest()}
                 or prep.read_cidfile(data.decode()) != rec['id']):

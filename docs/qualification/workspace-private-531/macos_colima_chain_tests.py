@@ -55,7 +55,7 @@ class ChainTests(fixtures.Fixture):
             return result
         real_recipe = proof.window_recipe
         def window(stage, bindings, options):
-            if stage == 'C2':
+            if stage == request['first']['stage']:
                 return real_recipe(stage, bindings, options)
             # Keep the real policy/identity/input binding while replacing only fake predecessor verification.
             with mock.patch.object(proof, 'checked_prior', side_effect=lambda ref, *a: ref):
@@ -135,6 +135,45 @@ class BuildDigestTests(unittest.TestCase):
             with mock.patch.object(ex, 'read_ref', return_value=json.dumps([dict(obj, Image=foreign)])), \
                     self.assertRaisesRegex(ValueError, 'predecessor image'):
                 ex.h_check_container_inspect(ctx, step)
+
+
+class DesktopChainTests(ChainTests):
+    def test_nested_owned_control_paths_are_bound_and_foreign_or_aliased_parents_refuse(self):
+        parent = self.tmp + '/owned'
+        os.mkdir(parent, 0o700)
+        paths = ex.prep.control_paths(self.bindings['token'], parent=parent)
+        bindings = dict(self.bindings, **{key: paths[key] for key in ex.PATH_BINDINGS})
+        self.assertEqual(ex.validate_bindings(bindings, ex.load_manifest()), self.bindings['token'])
+        for bad in ('/foreign', parent + '/../owned'):
+            with self.assertRaises(ValueError):
+                ex.prep.control_paths(self.bindings['token'], parent=bad)
+        bindings['desktop_cidfile'] = self.bindings['desktop_cidfile']
+        with self.assertRaises(ex.Refusal):
+            ex.validate_bindings(bindings, ex.load_manifest())
+
+    def request(self):
+        return chain.recipe(self.bindings, dict(activation_id='desktop-chain', evidence_root=self.evidence,
+                                               prior_receipt=self.d0()), desktop=True)
+
+    def test_chained_window_keeps_budgets_refs_deadline_and_single_use(self):
+        request = self.request()
+        result, calls = self.run_chain(request)
+        self.assertEqual(result['closure'], 'closed')
+        self.assertEqual(request['schema'], chain.DESKTOP_SCHEMA)
+        self.assertEqual([w['stage'] for w, _ in calls], list(chain.DESKTOP_STAGES))
+        self.assertEqual(len({kw['outer_deadline'] for _, kw in calls}), 1)
+        for index, (window, _) in enumerate(calls):
+            self.assertEqual(window['duration_seconds'], ex.stage_of(ex.load_manifest(), window['stage'])['seconds'])
+            self.assertEqual(window['prior_receipt'], request['first']['prior_receipt'] if index == 0
+                             else result['receipts'][index - 1])
+        self.assertNotIn('D4', request['budgets'])
+        with self.assertRaises(ex.Refusal):
+            self.run_chain(request)
+
+    def test_unknown_stage_halts_all_successors(self):
+        result, calls = self.run_chain(self.request(), failed='D2')
+        self.assertEqual(result['closure'], 'guest_unknown')
+        self.assertEqual([w['stage'] for w, _ in calls], ['D1', 'D2'])
 
 
 if __name__ == '__main__':

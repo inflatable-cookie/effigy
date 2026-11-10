@@ -1204,3 +1204,125 @@ The failed-779 Desktop observation entry runs through
 (`macos_desktop_observation_tests.py`: 35 cases, retained-shape fixture originals and one
 supervised harmless fake Docker child, no native action) and compiles through
 `effigy check:qualification:workspace-private:macos-desktop-observation:compile`.
+
+## Desktop exploration route (effigy#831, in progress)
+
+`qualification:macos:desktop-smoke` creates a fresh token and owned control below
+its fresh TMPDIR child, with private claims, activations and evidence. It runs D0,
+one D1–D3 chain request, then D4 on that chain's own receipts. It records complete
+container, image, volume and network inventories before and after, plus their
+difference. It never adopts the retained D2/D3 resources or the prepared D4 packet.
+A failure retains its exact resources and receipts; it does not guess cleanup IDs.
+The original top-level control paths remain valid for existing sealed requests;
+nested controls derive every child from the canonical, hash-bound control parent.
+
+Prepare the later sealed chain with
+`qualification:macos:proof-only -- plan-desktop-chain BINDINGS OPTIONS`, using
+D0 as the predecessor. Run its frozen request only through an owner-launched
+`qualification:macos:chain-proof-only` occurrence. The D1–D3 budgets add up to
+one outer deadline; every original stage deadline, reserve, cap, exclusive claim,
+receipt check and drift refusal remains in place. Colima uses the same loop.
+
+D4 deliberately remains outside the chain. The full-session driver consumes a
+resident runtime image, while it creates its own workspace state volumes and
+never mounts D1's anonymous volume. Keep the prepared historical D4 packet
+untouched while exploring. After the full session closes, the planner can order
+that packet's exact receipted cleanup; deleting its image before a session using
+that image would fail the driver's resident-image check. Freeze the final
+session against integrated Recipe A–E artifacts and a stable shared-engine
+baseline before any sealed #622 occurrence. Exploratory receipts give no #622
+credit. Full-session Desktop exploration and the final ordering observation
+remain work in progress.
+
+The fresh native preparation chain closed on 2026-11-10 under
+`/Volumes/Stash/scratch/effigy/a9b25b38/desktop-smoke-1es4tm7j` (token
+`ca385b4b`). D0, chained D1–D3 and D4 each closed. All four complete engine
+inventories matched before and after: no container, image, volume or network
+was added or removed at closeout. The historical D2/D3 resources and D4 packet
+were untouched. This is unsealed preparation evidence, not a full-session
+result. An earlier attempt remains at `desktop-smoke-c8iowqdj` under the same
+run root: D0/D1 closed, then an author edit triggered source-hash drift before
+D2 could proceed. Its inventory difference contained only that owned volume. The volume was later
+removed by exact identity after re-reading that D1 receipt and matching its live labels
+and engine; the cleanup receipt is `fs.Ve8uJ2ev/initial-d1-volume-cleanup.json` under the run root.
+
+
+## Desktop full-session exploration (effigy#831)
+
+The full session is **not complete**. The current-main optimized host candidate
+and current kernel inputs were built locally through Effigy/Oxide. The real guest
+producer outputs and source freshness anchor were copied with their original
+bytes, timestamps and provenance into the owned Stash fixture. No installation,
+sealed occurrence or #622 credit was consumed.
+
+`qualification:macos:desktop-smoke -- --retain-runtime` closes fresh D0–D3 and
+retains `preparation.json`. `qualification:macos:desktop-session-smoke` consumes a
+hash-bound request with that D3 receipt, the same runtime image and pinned real
+artifacts. It uses the fixed Desktop socket and an owned private Docker config,
+without changing contexts. The receipt chain is checked in its own preparation
+claims namespace. After the session, clean only that preparation with
+`qualification:macos:desktop-smoke -- --cleanup-preparation PREPARATION --sha256 HASH`.
+This runs the unchanged D4 checks against that chain, never the historical packet.
+
+The exploratory request may also carry the planner-approved `external_checkout`
+directory identity described in [contract 053](../../knowledge/contracts/053-workspace-activation-interface.md#detached-docker-routing-effigy831).
+It is unsealed Desktop-only, canonical, fresh and owned. The checkout is bounded
+to 16 MiB of source/state; artifact, temp and evidence roots remain on Stash.
+The sealed entry does not accept this exception.
+
+Native evidence lives under `/Volumes/Stash/scratch/effigy/a9b25b38/`:
+
+- `desktop-smoke-tf0e6sag`: fresh D0–D3 closed on token `1754da80`; its image was
+  `sha256:e2e7b9eaf725608f8baa4a75b0fe92fb91d8880704c8ecbc22d4b2e0d48d50a2`.
+  Its separate cleanup D4 later closed after the failed sessions were removed.
+- `fs.Ve8uJ2ev/session-3.log` exposed a real product fault: the detached owner put
+  the pinned socket URI in `DOCKER_CONTEXT`. The supervisor now preserves endpoint
+  routing with `DOCKER_HOST` and an empty context. Named-context and Colima routes
+  retain their original meaning. The diagnostic-only error expansion was removed.
+- `fs.Ve8uJ2ev/session-4.log` reached an owned Compose container on Stash but timed
+  out after 300 seconds with the container still `Created`. A tiny read-only Stash
+  bind also timed out during create; a no-mount container ran normally.
+- The planner-approved tiny `/Users` bind passed (`usersbind-qq56avc3`). The full
+  `/Users` fixture then also stalled in `Created` and hit the same 300-second bound
+  (`fs.Ve8uJ2ev/session-6.log`). An independent plain actual-checkout bind, a tiny
+  masked bind and a no-copy volume probe also timed out. No-copy did not solve it;
+  the exact Docker Desktop cause remains unresolved. No shared settings or engine
+  lifecycle were changed. A timeout now records the exact owned bind source and
+  points to Desktop bind/file-sharing diagnosis without widening its deadline.
+- Both journalled supervisors were independently identity-checked and stopped via
+  the fixture utility. Their recorded process groups were observed empty. Exact
+  inspected IDs and creation receipts governed removal of all five retained
+  containers, their five volumes and two networks. The `/Users` fixture was
+  archived and removed; its final regular-file size was 328,933 bytes, with no
+  observed sample above the 16 MiB bound. The archive and cleanup records are in
+  `fs.Ve8uJ2ev/`; no fixture process remains.
+
+Final container, image and volume inventories match task start. The intrinsic
+foreign `bridge` network changed from prefix `35b7af735a59` to `d731d2007d15`;
+its cause is unknown. The complete final network IDs and the normalized comparison
+with the original short-ID listing are retained in `final-inventory.json` and
+`final-inventory-difference.json`. Every requested network mutation named one of
+the two receipted owned project networks by its full ID. Do not describe the
+foreign inventory as unchanged. The original #805 image/volume and #807 D4 packet
+remain untouched.
+
+### D4 ordering and remaining sealed plan
+
+Keep D4 **after the full session**. The attempted session actually created its
+container from the D3-receipted image. Its two mounted state-mask volumes were
+new session-owned volumes, not D1's anonymous volume. D4 removes image and volume
+together, so running it before a session that selects that image would break the
+resident-image prerequisite. Keep the historical packet untouched until the #622
+owner completes the session using its pinned image.
+
+Before freezing a candidate, resolve the Desktop bind-start failure and run the
+complete unsealed cell successfully. Then freeze coherent reviewed Recipe A–E
+artifacts, genuine guest sidecars, engine/tool hashes, a fresh qualification-root
+identity and complete stable foreign inventories. Measure optimized commands
+against the sealed 60-second command bound; the exploratory 300-second activation
+allowance does not change it. Reuse retained successful preparation where valid;
+if new preparation is needed, freeze one D1–D3 chain after its fresh D0. The owner
+then launches the separately authorized #622 full-session occurrence. Only after
+that session closes does the owner launch the already prepared historical D4.
+The `/Users` exception above is exploratory only; a sealed use would need its own
+reviewed admission and authority. No full-session success is claimed here.
