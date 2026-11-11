@@ -1185,7 +1185,13 @@ have left the group inside the round after forking a member this inventory canno
 see; it is `unproven` and the anchor stays alive. Any other read
 failure makes the inventory an error, never an absence. In both of those cases the
 anchor keeps retrying as the group's evidence and the observing path reports the
-named state `unproven group closure`. Anchored recovery refusals retain the
+named state `unproven group closure`. Recovery treats a positively observed
+anchor exit (absent generation/state or zombie state, never a replacement or
+unreadable identity) as loss of signal authority and enters the existing bounded
+full-group stop observation. That observation must still positively resolve every
+row before settlement can close; it retries no signal, changes no deadline and
+never treats the anchor's exit alone as group closure (effigy#874).
+Anchored recovery refusals retain the
 first failed verification category from the existing short-circuit checks and
 the already-computed follow-up closure path, verdict and relevant row role,
 alongside the selected stop signal and failed attempt. Final signal refusals
