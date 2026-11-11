@@ -338,28 +338,26 @@ impl TaskManifest {
     pub fn retired_start_after_entries(&self) -> Vec<(String, String, String)> {
         let mut retired = Vec::new();
         for (task_name, task) in &self.tasks {
-            let profiles =
-                std::iter::once((DEFAULT_PROFILE_LABEL.to_owned(), task.concurrent.as_slice()))
-                    .chain(task.profiles.iter().filter_map(|(name, profile)| {
-                        profile
-                            .concurrent_entries()
-                            .map(|entries| (name.clone(), entries))
-                    }));
+            let profiles = std::iter::once((DEFAULT_PROFILE_LABEL, task.concurrent.as_slice()))
+                .chain(task.profiles.iter().filter_map(|(name, profile)| {
+                    profile
+                        .concurrent_entries()
+                        .map(|entries| (name.as_str(), entries))
+                }));
             for (profile, entries) in profiles {
-                for entry in entries {
-                    if entry.start_after_ms.is_none() {
-                        continue;
-                    }
+                for entry in entries
+                    .iter()
+                    .filter(|entry| entry.start_after_ms.is_some())
+                {
                     let entry_name = entry
                         .name
                         .as_deref()
                         .map(str::trim)
                         .filter(|value| !value.is_empty())
-                        .map(ToOwned::to_owned)
-                        .or_else(|| entry.task.clone())
-                        .or_else(|| entry.run.clone())
-                        .unwrap_or_else(|| "<unnamed>".to_owned());
-                    retired.push((task_name.clone(), profile.clone(), entry_name));
+                        .or(entry.task.as_deref())
+                        .or(entry.run.as_deref())
+                        .unwrap_or("<unnamed>");
+                    retired.push((task_name.clone(), profile.to_owned(), entry_name.to_owned()));
                 }
             }
         }

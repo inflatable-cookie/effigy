@@ -1302,7 +1302,7 @@ allow = [
 [[retired]]
 id = "managed-start-after-ordering"
 retired = "2026-10-21; ordered by observed readiness from v0.15 (effigy#322)"
-replacement = "Readiness orders a managed session: workloads start once the environment's `up` finished and its exec readiness answered, so a `[[tasks.<name>.concurrent]]` timer no longer decides order. Say what the session waits for with `after = [\"environment\"]` (the one accepted dependency), and order an environment's host processes with `depends_on`. For the v0.15 line `start_after_ms` still delays its entry, and the manifest's one deprecation notice names this replacement; the key is removed after v0.15."
+replacement = "Readiness orders a managed session: workloads start once the environment's `up` finished and its exec readiness answered, so a `[[tasks.<name>.concurrent]]` timer no longer decides order. Say what the session waits for with `after = [\"environment\"]` (the one accepted dependency), and order an environment's host processes with `depends_on`. For the v0.15 line `start_after_ms` still delays its entry, and one deprecation notice for a manifest or bundle declaration names this replacement and removal in v0.16 (Tom's staged cut, 2026-11-10; effigy#880). Underlay migration is coordinated separately before removal."
 owner = "docs/guides/012-dev-process-manager-tui.md"
 terms = [
   "start_after_ms ordering",

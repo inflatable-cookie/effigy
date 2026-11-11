@@ -229,8 +229,8 @@ Profile entries support:
   has: the environment phase finishes before any workload starts. It is the
   one accepted value; order environment host processes with `depends_on`.
 - `start_after_ms` still delays its entry for the v0.15 line, but it no longer
-  orders a managed session. The manifest's one deprecation notice names the
-  replacement, and the key is removed after v0.15
+  orders a managed session. A manifest or bundle declaration emits one
+  deprecation notice naming the readiness/dependency replacement and removal in v0.16
   (`docs/knowledge/retired.toml`, `managed-start-after-ordering`).
 
 Run-array note:

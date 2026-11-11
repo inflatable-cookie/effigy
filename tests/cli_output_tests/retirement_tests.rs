@@ -206,7 +206,7 @@ run = "printf built"
 }
 
 const RETIRED_MARKER_MANIFEST: &str =
-    "[scan.attention_markers]\nwarn = 1\n\n[tasks.build]\nrun = \"printf built\"\n";
+    "[scan.attention_markers]\nwarn = 1\n\n[tasks.build]\nrun = \"printf built\"\nconcurrent = [{ name = 'api', run = 'a', start_after_ms = 0 }, { name = 'jobs', run = 'b', start_after_ms = 1500 }]\n";
 
 fn retired_notice_fixture(name: &str) -> effigy_test_support::Fixture {
     let fixture = effigy_test_support::Fixture::new("effigy-cli-private-").expect(name);
@@ -247,53 +247,60 @@ fn the_retired_sections_notice_moves_to_the_json_envelope_warnings() {
         .expect("warnings array in every envelope");
     assert_eq!(warnings.len(), 1, "{packet}");
     let warning = warnings[0].as_str().expect("warning text");
-    assert!(
-        warning.contains("retired v0.15 config still loads for one release"),
-        "{warning}"
-    );
-    assert!(
-        warning.contains("`[scan.attention_markers]` is ignored"),
-        "{warning}"
-    );
-    assert!(warning.contains("CHANGELOG.md"), "{warning}");
+    for text in [
+        "retired v0.15 config still loads for one release",
+        "`[scan.attention_markers]` is ignored",
+        "`start_after_ms` is deprecated and will be removed in v0.16",
+        "CHANGELOG.md",
+    ] {
+        assert!(warning.contains(text), "{warning}");
+    }
 }
 
 #[test]
-fn the_retired_sections_notice_prints_once_per_checkout_and_always_in_doctor() {
-    let fixture = retired_notice_fixture("retired-notice-once");
-    let first = retired_notice_stderr(&fixture, &["tasks"]);
-    assert_eq!(
-        first
-            .matches("retired v0.15 config still loads for one release")
-            .count(),
-        1,
-        "{first}"
-    );
-    let second = retired_notice_stderr(&fixture, &["tasks"]);
-    assert!(
-        !second.contains("retired v0.15 config"),
-        "the checkout already named this manifest: {second}"
-    );
-    // Doctor always names retired config, even now that the checkout has seen it.
-    let doctor = retired_notice_stderr(&fixture, &["doctor"]);
-    assert_eq!(
-        doctor
-            .matches("retired v0.15 config still loads for one release")
-            .count(),
-        1,
-        "{doctor}"
-    );
-    // Editing the manifest makes a new digest, so it is named again.
-    fs::write(
-        fixture.path().join("effigy.toml"),
-        "[shell]\nrun = \"exec zsh -i\"\n\n[tasks.build]\nrun = \"printf built\"\n",
-    )
-    .unwrap();
-    let edited = retired_notice_stderr(&fixture, &["tasks"]);
-    assert!(
-        edited.contains("`[shell]` is ignored"),
-        "an edited manifest is named again: {edited}"
-    );
+fn retired_sections_and_start_after_ms_notice_prints_once_for_manifests_and_bundles() {
+    for bundled in [false, true] {
+        let fixture = retired_notice_fixture("retired-notice-once");
+        if bundled {
+            let bundle = fixture.path().join("bundle");
+            fs::create_dir(&bundle).unwrap();
+            fs::write(bundle.join("bundle.toml"), "[bundle]\nname = 'delays'\ndescription = 'Legacy delays'\ndefaults = 'export.toml'\n").unwrap();
+            fs::write(bundle.join("export.toml"), RETIRED_MARKER_MANIFEST).unwrap();
+            fs::write(
+                fixture.path().join("effigy.toml"),
+                "[bundle]\nbase = { type = 'path', dir = 'bundle' }\n",
+            )
+            .unwrap();
+        }
+        let first = retired_notice_stderr(&fixture, &["tasks"]);
+        let second = retired_notice_stderr(&fixture, &["tasks"]);
+        assert!(
+            !second.contains("retired v0.15 config"),
+            "the checkout already named this manifest: {second}"
+        );
+        let doctor = retired_notice_stderr(&fixture, &["doctor"]);
+        for notice in [&first, &doctor] {
+            for text in [
+                "retired v0.15 config still loads for one release",
+                "`start_after_ms` is deprecated",
+                "removed in v0.16",
+                "after = [\"environment\"]",
+                "depends_on",
+            ] {
+                assert_eq!(notice.matches(text).count(), 1, "{notice}");
+            }
+        }
+        fs::write(
+            fixture.path().join("effigy.toml"),
+            "[shell]\nrun = \"exec zsh -i\"\n\n[tasks.build]\nrun = \"printf built\"\n",
+        )
+        .unwrap();
+        let edited = retired_notice_stderr(&fixture, &["tasks"]);
+        assert!(
+            edited.contains("`[shell]` is ignored"),
+            "an edited manifest is named again: {edited}"
+        );
+    }
 }
 
 #[test]
