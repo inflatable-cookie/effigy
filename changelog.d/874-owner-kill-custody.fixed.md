@@ -1,0 +1,1 @@
+Fix custody settlement after owner SIGKILL when the anchor retires during the group census: resolve an exited member only with positive zombie evidence, then check kernel group absence after the census. Unproven or unreadable groups still refuse closure.

@@ -588,32 +588,34 @@ fn wait(mut yes: impl FnMut() -> bool) {
     }
 }
 #[test]
-fn membership_row_keeps_both_vanish_stages_unproven() {
+fn membership_row_resolves_exit_only_from_positive_zombie_state() {
     use super::platform::{membership_row, MembershipRow};
     let pid = 42;
-    let absent = || Observed::Absent(AbsenceProof::NoSuchProcess { pid });
-    assert_eq!(
-        membership_row(pid, absent(), || panic!("identity read after absence")).unwrap(),
-        MembershipRow::Unproven(pid)
-    );
-    assert_eq!(
-        membership_row(
-            pid,
+    for terminal in [
+        Observed::Absent(AbsenceProof::NoSuchProcess { pid }),
+        Observed::Verified(crate::ident::ProcessState::Active, evidence()),
+        Observed::Verified(crate::ident::ProcessState::Zombie, evidence()),
+        Observed::Unknown(UnknownReason::PermissionDenied),
+    ] {
+        let mut states = [
             Observed::Verified(crate::ident::ProcessState::Active, evidence()),
-            || Observed::Absent(AbsenceProof::NoSuchProcess { pid })
-        )
-        .unwrap(),
-        MembershipRow::Unproven(pid)
-    );
-    assert_eq!(
-        membership_row(
+            terminal.clone(),
+        ]
+        .into_iter();
+        let row = membership_row(
             pid,
-            Observed::Verified(crate::ident::ProcessState::Zombie, evidence()),
-            || panic!("identity read after zombie")
-        )
-        .unwrap(),
-        MembershipRow::NotLive(pid)
-    );
+            || states.next().expect("at most two state observations"),
+            || Observed::Absent(AbsenceProof::NoSuchProcess { pid }),
+        );
+        match terminal {
+            Observed::Verified(crate::ident::ProcessState::Zombie, _) => {
+                assert_eq!(row.unwrap(), MembershipRow::NotLive(pid))
+            }
+            Observed::Unknown(_) => assert!(row.is_err()),
+            _ => assert_eq!(row.unwrap(), MembershipRow::Unproven(pid)),
+        }
+        assert!(states.next().is_none());
+    }
 }
 /// Closure classification keeps an unresolved row out of closure, and exclusion is
 /// incarnation-exact: the accounted generation is skipped, a recycled pid is a
@@ -1668,37 +1670,36 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
             assert!(anchor::verified(&r, &anchor));
         }
         if mode == 3 {
-            // Real ordering control: once the last workload retires, the anchor
-            // can retire without the recovering observer having proved closure.
-            // This demonstrates the old fixture's premise, not the historical
-            // failed cell or the row its discarded closure detail would name.
-            assert!(anchor::verified(&r, &anchor));
-            assert!(platform::group_pids(r.pgid).unwrap().contains(&anchor.pid));
-            let anchor_state = crate::ident::process_state(anchor.pid);
-            assert!(matches!(
-                anchor_state,
-                Observed::Verified(crate::ident::ProcessState::Active, _)
-            ));
-            assert!(platform::generation(&descendant).verified().is_some());
             platform::numeric(pid, false, libc::SIGKILL);
-            wait(|| matches!(platform::generation(&anchor), Observed::Absent(_)));
-            // Split the actual membership reads across that owned retirement:
-            // an observer that listed the anchor cannot exclude its vanished row.
-            let row = platform::membership_row(anchor.pid, anchor_state, || {
-                crate::ident::process_identity(anchor.pid)
-            })
-            .unwrap();
-            assert!(matches!(row, platform::MembershipRow::Unproven(pid) if pid == anchor.pid));
-            assert_eq!(
-                platform::classify_round(&[row], &[]),
-                platform::RoundVerdict::Unproven
-            );
-            let sent = anchor::signal(&r, &anchor, libc::SIGTERM);
-            eprintln!("anchor recovery terminal={terminal:?} mode={mode} retired signal={sent:?}");
-            assert!(
-                matches!(sent, Observed::Unknown(UnknownReason::Inconsistent(ref reason))
-                if reason == "unproven group closure; anchor=generation:absent")
-            );
+            let mut empty = Observed::Unknown(UnknownReason::PermissionDenied);
+            wait(|| {
+                empty = platform::group_closed(r.pgid, &[]).map(|_| ());
+                matches!(empty, Observed::Absent(_))
+            });
+            // Only the later real GroupEmpty proof resolves the vanished row.
+            let detail = anchor::ClosureDetail {
+                path: "fallback",
+                result: "positive",
+                role: "none",
+            };
+            for group in [
+                None,
+                Some(Observed::Verified((), evidence())),
+                Some(Observed::Unknown(UnknownReason::PermissionDenied)),
+                Some(empty),
+            ] {
+                let absent = matches!(group, Some(Observed::Absent(_)));
+                let (closure, detail) = platform::closure_inventory(
+                    Ok(vec![platform::MembershipRow::Unproven(anchor.pid)]),
+                    &[],
+                    Some(&anchor),
+                    None,
+                    detail,
+                    group,
+                );
+                assert_eq!(matches!(closure, Observed::Absent(_)), absent);
+                assert_eq!(detail.result, if absent { "positive" } else { "unproven" });
+            }
         }
         if mode == 1 {
             // SAFETY: exact recorded fixture identity, checked immediately.
@@ -1771,27 +1772,13 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
             );
             assert!(survived, "lost anchor must grant no signal authority");
             assert!(!signalled, "refusal must deliver neither TERM nor CONT");
-        } else if mode == 3 {
-            // Recovery's observation and the later positive group_closed wait
-            // establish different facts. Lost continuity may require refusal.
-            match &result {
-                Observed::Verified(..) | Observed::Absent(_) => assert!(refusal.is_none()),
-                Observed::Unknown(UnknownReason::Inconsistent(reason)) => {
-                    assert_eq!(reason, "unproven group closure; anchor=generation:absent");
-                    let detail = refusal.as_deref().unwrap();
-                    assert!(detail.contains("refusal=anchor-verification:inconsistent"));
-                    assert!(detail.contains("closure=fallback:unproven row=anchor"));
-                }
-                _ => panic!("terminal={terminal:?} mode={mode} {result:?} refusal={refusal:?}"),
-            }
-            assert!(!survived);
-            assert!(!signalled);
         } else {
             assert!(
                 matches!(result, Observed::Verified(..) | Observed::Absent(_)),
                 "terminal={terminal:?} mode={mode} {result:?} refusal={refusal:?}"
             );
             assert!(!survived);
+            assert!(mode != 3 || (!signalled && refusal.is_none()));
         }
     }
 }
@@ -4418,7 +4405,7 @@ fn anchor_closure_details_use_the_existing_inventory_and_generation_accounting()
                 role: "none",
             };
             let (observed, detail) =
-                platform::closure_inventory(Ok(rows), &[], Some(&a), Some(&leader), detail);
+                platform::closure_inventory(Ok(rows), &[], Some(&a), Some(&leader), detail, None);
             assert_eq!(detail.result, expected);
             assert_eq!(detail.role, role);
             assert_eq!(
@@ -4437,6 +4424,7 @@ fn anchor_closure_details_use_the_existing_inventory_and_generation_accounting()
             Some(&a),
             None,
             detail,
+            None,
         );
         assert!(matches!(observed, Observed::Unknown(_)));
         assert_eq!(detail.result, "inventory-error");
@@ -4454,6 +4442,7 @@ fn anchor_closure_details_use_the_existing_inventory_and_generation_accounting()
             Some(&a),
             Some(&leader),
             detail,
+            None,
         );
         assert!(matches!(observed, Observed::Verified(..)));
         assert_eq!(detail.result, "positive");
