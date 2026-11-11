@@ -19,10 +19,114 @@ import linux_native_run as native_run
 import linux_native_session as session
 import linux_native_assets as assets
 import linux_native_smoke as smoke
+import linux_native_lifecycle as lifecycle
 import runtime
 import linux_native_window
 import subprocess
 import time
+
+
+class NativeLifecycleTests(unittest.TestCase):
+    def test_cleanup_rejects_shared_roots_toolchain_aliases_and_traversal(self):
+        for path in (lifecycle.BASE, lifecycle.BASE / 'qualification', lifecycle.BASE / 'build-cache',
+                     lifecycle.BASE / 'toolchain/rustup', lifecycle.BASE / 'builds/../toolchain'):
+            with self.subTest(path=path), self.assertRaisesRegex(RuntimeError, 'guest-capacity'):
+                lifecycle.checked(path)
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            root = Path(directory)
+            (root / 'builds').symlink_to(root)
+            with patch.object(lifecycle, 'BASE', root), self.assertRaisesRegex(RuntimeError, 'ancestor aliases'):
+                lifecycle.checked(root / 'builds/output')
+
+    def test_eviction_is_oldest_unreferenced_first_and_keeps_toolchain(self):
+        import contextlib, io
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            root = Path(directory)
+            cache = root / 'build-cache'
+            cache.mkdir()
+            entries = [cache / name for name in ('old', 'referenced', 'new')]
+            for index, entry in enumerate(entries):
+                entry.mkdir()
+                (entry / 'binary').write_bytes(b'build')
+                os.utime(entry, ns=(index + 1, index + 1))
+            (root / 'toolchain').mkdir()
+            real_stat = Path.stat
+            def guest_stat(path, *args, **kwargs):
+                from types import SimpleNamespace
+                result = real_stat(path, *args, **kwargs)
+                values = {name: getattr(result, name) for name in dir(result) if name.startswith('st_')}
+                values['st_uid'] = 1001
+                return SimpleNamespace(**values)
+            with patch.object(lifecycle, 'BASE', root), patch.object(Path, 'stat', guest_stat), \
+                 patch.object(lifecycle, 'no_mounts'), patch.object(lifecycle, 'allocated',
+                    side_effect=lambda p: len(list(p.iterdir())) if p == cache else 1), \
+                 patch.object(lifecycle, 'references', side_effect=lambda paths: [42] if paths == [entries[1]] else []), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                result = lifecycle.evict_cache(1)
+                self.assertEqual([row['path'] for row in result['evicted']], [str(entries[0]), str(entries[2])])
+            self.assertTrue(entries[1].exists())
+            self.assertTrue((root / 'toolchain').exists())
+
+    def test_preflight_names_each_short_mount_without_building(self):
+        mounts = {str(path): dict(available=0) for path in
+                  (lifecycle.BASE, lifecycle.BASE / 'qualification', Path('/var/lib/effigy-829/rootful'))}
+        with patch.object(lifecycle, 'inspect', return_value=dict(mounts=mounts)), \
+             patch.object(lifecycle, 'evict_cache', return_value={}):
+            self.assertEqual(set(lifecycle.preflight()['missing']), set(mounts))
+
+    def test_failed_export_retains_outputs_and_success_exports_before_removal(self):
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            attempt = Mock(root=Path(directory))
+            scope = lifecycle.Scope(attempt)
+            scope.record(str(lifecycle.BASE / 'builds/native-build-owned'), device=1, inode=2)
+            events = []
+            scope.operation = lambda action, **args: events.append(action) or {}
+            def transfer(*args, **kwargs):
+                events.append('host-copy')
+                raise RuntimeError('transfer failed')
+            with patch.object(native_run, 'channel_read', side_effect=transfer), self.assertRaisesRegex(RuntimeError, 'transfer failed'):
+                scope.finish(['ssh'])
+            self.assertEqual(events, ['export', 'host-copy'])
+            events.clear()
+            with patch.object(native_run, 'channel_read', return_value=b'original evidence'):
+                scope.finish(['ssh'])
+            self.assertEqual(events, ['export', 'remove', 'evict', 'inspect'])
+            self.assertEqual((attempt.root / 'outputs.tar').read_bytes(), b'original evidence')
+
+    def test_referenced_outputs_are_retained_before_archive_creation(self):
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            archive = Path(directory) / 'evidence.tar'
+            with patch.object(lifecycle, 'output_identity', return_value=Path(directory)), \
+                 patch.object(lifecycle, 'references', return_value=[123]), self.assertRaisesRegex(RuntimeError, 'resident references'):
+                lifecycle.dispose([dict(path='owned')], archive)
+            self.assertFalse(archive.exists())
+
+    def test_build_failure_still_exports_cleans_and_stops_the_vm(self):
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            root = Path(directory)
+            (root / 'control').mkdir()
+            (root / 'control/ssh_known_hosts').write_text('host key value')
+            attempt = Mock(root=root)
+            attempt.command.return_value = b'key value'
+            scope = Mock(temporary=lifecycle.BASE / 'run-tmp-owned', records=[dict(path='owned')])
+            scope.operation.return_value = dict(missing={}, observation={})
+            with patch.multiple(smoke.diagnostic, private_root=Mock(), check_vm=Mock()), \
+                 patch.multiple(common, run=Mock(return_value=Mock(stdout=b'')), load=Mock(return_value=dict(
+                     schema='effigy.linux-native-session-exploration.v1', qualification_credit=False, cell=dict(runtime_image='image')))), \
+                 patch.multiple(native_run, Attempt=Mock(return_value=attempt), bootstrap_preparation=Mock(),
+                                authorize_channel=Mock(), channel_directory=Mock()), \
+                 patch.multiple(smoke, ssh_prefix=Mock(return_value=['ssh']), diagnostic_run=Mock(return_value=0),
+                                root_resume=Mock(), stage1_observation=Mock(), stop_engine=Mock(), capacity_probe=Mock()), \
+                 patch.object(smoke.subprocess, 'check_output', return_value=''), \
+                 patch.object(lifecycle, 'Scope', return_value=scope), \
+                 patch.object(build, 'build', side_effect=RuntimeError('build failed')), \
+                 self.assertRaisesRegex(RuntimeError, 'build failed'):
+                smoke.full_chain(root, root / 'seed.json')
+            scope.finish.assert_called_once_with(['ssh'])
+            self.assertTrue(any(call.args[0][1] == 'stop' for call in attempt.command.call_args_list))
+            self.assertIsNone(lifecycle.ACTIVE)
 
 
 class PhysicalImportBoundaryTests(unittest.TestCase):

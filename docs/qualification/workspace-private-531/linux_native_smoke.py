@@ -20,6 +20,8 @@ import common
 import linux_native_assets as assets
 import linux_native_build as build
 import linux_native_run as native_run
+import linux_native_lifecycle as lifecycle
+import os
 
 
 def diagnostic_run(root):
@@ -270,48 +272,79 @@ def full_chain(root, seed):
                    and value.get('qualification_credit') is False, 'exploratory native asset seed required')
     attempt = native_run.Attempt(root)
     ssh = ssh_prefix(root, attempt)
-    # Completed smoke runs leave this VM stopped. An interrupted run is kept
-    # for diagnosis and must be reconciled before beginning another window.
     raw = attempt.command([diagnostic.PRLCTL, 'list', '--info', setup.VM_UUID, '--json'], read_only=True)
     diagnostic.check_vm(raw, 'stopped')
+    processes = subprocess.check_output(['ps', '-axo', 'pid=,comm=,args='], text=True)
+    common.require(not any('python' in line.split()[1] and 'linux_native_smoke.py' in line
+                           and int(line.split()[0]) != os.getpid() for line in processes.splitlines()),
+                   'another linux_native_smoke.py is running')
+    attempt.command([diagnostic.PRLCTL, 'snapshot', setup.VM_UUID, '--name',
+                     'effigy-native-before-' + uuid.uuid4().hex], timeout=120)
     common.require(diagnostic_run(root) == 0, 'native diagnostic has findings')
     attempt.command([diagnostic.PRLCTL, 'start', setup.VM_UUID], timeout=90)
-    attempt.admin('cat /proc/sys/kernel/random/boot_id', read_only=True)
-    key = attempt.command([diagnostic.PRLCTL, 'exec', setup.VM_UUID, '/bin/cat',
-                           '/etc/ssh/ssh_host_ed25519_key.pub'], read_only=True).decode().split()
-    known = (root / 'control/ssh_known_hosts').read_text().split()
-    common.require(len(key) >= 2 and key[:2] == known[1:3], 'fixed VM SSH identity differs')
-    root_resume(root, attempt, ssh)
-    native_run.authorize_channel(root, attempt)
-    ssh = ssh_prefix(root, attempt)
-    stage1_observation(attempt)
-    stop_engine(attempt)
-    capacity_probe(attempt, ssh, '/var/lib/effigy-829/rootful/client/tmp', 3221225472)
-    root_resume(root, attempt, ssh)
-    capacity_probe(attempt, ssh, build.BASE + '/qualification', 1073741824,
-                   image=value['cell']['runtime_image'])
-    capacity_probe(attempt,ssh,build.BASE+'/artifact-tmp',42949672960)
-    binding = build.build(root, 'HEAD')
-    value['cell']['source_head'] = binding['source_pin']
-    prepared = assets.prepare(root, binding, value)
-    import linux_native_contract as contract
-    current = common.load(prepared)
-    packet = contract.prepare(root, attempt, ssh, current['cell'])
-    current['cell']['linux_capacity_preparation'] = build.file_input(packet)
-    prepared = attempt.root / 'assets-with-capacity.json'
-    common.exclusive(prepared, current)
-    common.require(native_run.execute(root, prepared, 'acquire') == 0, 'native acquisition failed')
-    common.require(native_run.execute(root, prepared, 'full') == 0, 'native full session failed')
-    final = root_resume(root, attempt, ssh)
-    stop_engine(attempt)
-    attempt.command([diagnostic.PRLCTL, 'stop', setup.VM_UUID], timeout=90)
-    raw = attempt.command([diagnostic.PRLCTL, 'list', '--info', setup.VM_UUID, '--json'], read_only=True)
-    diagnostic.check_vm(raw, 'stopped')
+    scope = lifecycle.Scope(attempt)
+    lifecycle.ACTIVE = scope
+    baseline, after, binding, prepared, final = None, None, None, None, None
+    try:
+        attempt.admin('cat /proc/sys/kernel/random/boot_id', read_only=True)
+        key = attempt.command([diagnostic.PRLCTL, 'exec', setup.VM_UUID, '/bin/cat',
+                               '/etc/ssh/ssh_host_ed25519_key.pub'], read_only=True).decode().split()
+        known = (root / 'control/ssh_known_hosts').read_text().split()
+        common.require(len(key) >= 2 and key[:2] == known[1:3], 'fixed VM SSH identity differs')
+        native_run.bootstrap_preparation(attempt)
+        # Admit before the census, ENOSPC controls or any compilation. Retained
+        # output can exhaust the census observer's cgroup as well as the disk.
+        admission = scope.operation('preflight', preparation_only=True)
+        common.require(not admission['missing'], 'guest-capacity: ' + json.dumps(admission['missing']))
+        root_resume(root, attempt, ssh)
+        admission = scope.operation('preflight')
+        common.require(not admission['missing'], 'guest-capacity: ' + json.dumps(admission['missing']))
+        baseline = admission['observation']
+        native_run.authorize_channel(root, attempt)
+        ssh = ssh_prefix(root, attempt)
+        native_run.channel_directory(attempt, scope.temporary)
+        stage1_observation(attempt)
+        stop_engine(attempt)
+        capacity_probe(attempt, ssh, '/var/lib/effigy-829/rootful/client/tmp', 3221225472)
+        root_resume(root, attempt, ssh)
+        capacity_probe(attempt, ssh, build.BASE + '/qualification', 1073741824,
+                       image=value['cell']['runtime_image'])
+        capacity_probe(attempt, ssh, str(scope.temporary), 42949672960)
+        binding = build.build(root, 'HEAD')
+        scope.operation('evict')
+        value['cell']['source_head'] = binding['source_pin']
+        prepared = assets.prepare(root, binding, value)
+        scope.operation('evict')
+        import linux_native_contract as contract
+        current = common.load(prepared)
+        packet = contract.prepare(root, attempt, ssh, current['cell'])
+        current['cell']['linux_capacity_preparation'] = build.file_input(packet)
+        prepared = attempt.root / 'assets-with-capacity.json'
+        common.exclusive(prepared, current)
+        common.require(native_run.execute(root, prepared, 'acquire') == 0, 'native acquisition failed')
+        common.require(native_run.execute(root, prepared, 'full') == 0, 'native full session failed')
+        final = root_resume(root, attempt, ssh)
+    finally:
+        try:
+            stop_engine(attempt)
+            if scope.records:
+                after = scope.finish(ssh)
+        finally:
+            lifecycle.ACTIVE = None
+            attempt.command([diagnostic.PRLCTL, 'stop', setup.VM_UUID], timeout=90)
+            raw = attempt.command([diagnostic.PRLCTL, 'list', '--info', setup.VM_UUID, '--json'], read_only=True)
+            diagnostic.check_vm(raw, 'stopped')
+    tolerance = 128 * 1024 ** 2
+    deltas = {path: row['free'] - after['mounts'][path]['free'] for path, row in baseline['mounts'].items()}
     result = {'exploratory': True, 'qualification_credit': False, 'source_head': binding['source_pin'],
               'assets': str(prepared), 'final_physical_bounds': final, 'vm_terminal': 'stopped',
+              'capacity_before': baseline, 'capacity_after': after, 'consumed_bytes': deltas,
+              'space_tolerance_bytes': tolerance,
               'chain': ['diagnostic', 'resume', 'engine-enospc', 'workspace-enospc', 'preparation-enospc',
                         'native-build', 'gnu-artifact', 'ordinary-acquisition', 'full-session']}
     common.exclusive(attempt.root / 'native-smoke-complete.json', result)
+    common.require(all(abs(delta) <= tolerance for delta in deltas.values()),
+                   'guest-capacity: run did not restore free space within tolerance')
     print(json.dumps(result, indent=2))
     return 0
 

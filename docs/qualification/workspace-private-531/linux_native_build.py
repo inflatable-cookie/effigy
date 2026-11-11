@@ -29,18 +29,18 @@ def file_input(path):
     return {'path': str(path), 'sha256': common.digest(path)}
 
 
-def guest_script(pin, remote, bundle_sha, source_ref=SOURCE_REF):
+def guest_script(pin, remote, bundle_sha, source_ref=SOURCE_REF, temporary=BASE + '/build-tmp'):
     if not re.fullmatch('[0-9a-f]{40}', pin) or not re.fullmatch('[0-9a-f]{64}', bundle_sha):
         raise ValueError('exact source and bundle digests required')
     return '\n'.join([
         'set -eu', 'umask 077',
         'base=' + shlex.quote(BASE), 'remote=' + shlex.quote(remote),
         'python3 -I -B -c ' + shlex.quote(
-            'import os,stat; from pathlib import Path; p=Path(' + repr(BASE + '/build-tmp') + '); '
+            'import os,stat; from pathlib import Path; p=Path(' + repr(temporary) + '); '
             'p.mkdir(mode=0o700,exist_ok=True); i=p.lstat(); '
             'assert p.resolve()==p and stat.S_ISDIR(i.st_mode) and i.st_uid==os.geteuid() '
             'and stat.S_IMODE(i.st_mode)==0o700'),
-        'export TMPDIR="$base/build-tmp" TMP="$base/build-tmp" TEMP="$base/build-tmp"',
+        'export TMPDIR=' + shlex.quote(temporary) + ' TMP=' + shlex.quote(temporary) + ' TEMP=' + shlex.quote(temporary),
         'printf "guest-build-pid=%s\\n" "$$"',
         "printf '%s  %s\\n' " + shlex.quote(bundle_sha) + ' "$remote/source.bundle" | sha256sum -c -',
         'export RUSTUP_HOME="$base/toolchain/rustup" CARGO_HOME="$base/toolchain/cargo"',
@@ -78,6 +78,8 @@ def run_script(attempt, root, ssh, remote, payload, *, seconds=1800):
     expected = __import__('hashlib').sha256(payload).hexdigest()
     unit = 'effigy-829-' + uuid.uuid4().hex
     gate = remote + '/' + unit + '.go'
+    if native.lifecycle.ACTIVE:
+        native.lifecycle.ACTIVE.record(gate)
     streams = {name: remote + '/' + unit + '.' + name for name in ('stdout', 'stderr')}
     code = ('import os,time,hashlib,fcntl; from pathlib import Path; '
             'b=Path(' + repr(script) + ').read_bytes(); '
@@ -188,7 +190,9 @@ def build(root, source_ref=SOURCE_REF):
     remote = BASE + '/builds/' + run_root.name
     native.channel_directory(attempt, remote)
     native.channel_receive_file(attempt, ssh, remote + '/source.bundle', bundle)
-    script = guest_script(pin, remote, binding['bundle']['sha256'], source_ref).encode()
+    temporary = str(native.lifecycle.ACTIVE.temporary) if native.lifecycle.ACTIVE else BASE + '/build-tmp'
+    binding['guest_tmp'] = temporary
+    script = guest_script(pin, remote, binding['bundle']['sha256'], source_ref, temporary).encode()
     (run_root / 'build.sh').write_bytes(script)
     output = run_script(attempt, root, ssh, remote, script, seconds=1800)
     binding['guest_source'] = remote + '/source'

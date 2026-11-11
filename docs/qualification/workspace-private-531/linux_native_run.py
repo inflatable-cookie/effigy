@@ -18,6 +18,7 @@ import linux_diagnostic_proof as diagnostic
 import linux_native_build as build
 import linux_native_session as session
 import linux_native_support as setup
+import linux_native_lifecycle as lifecycle
 
 FILES = ('common.py', 'runtime.py', 'probe.py', 'linux_native_session.py', 'linux_native_window.py', 'linux_native_storage.py', 'linux_loop_bound.py', 'linux_capacity_contract.py')
 
@@ -217,6 +218,8 @@ def channel_request(attempt, operation, path, *, data=None, size=None, digest=No
 def channel_receive(attempt, ssh, path, data, *, timeout=180):
     identifier, expected = channel_request(attempt, 'receive', path, data=data, limit=len(data))
     attempt.command(ssh + [identifier], data=data, timeout=timeout)
+    if lifecycle.ACTIVE:
+        lifecycle.ACTIVE.record(path)
     return expected
 
 
@@ -226,6 +229,8 @@ def channel_receive_file(attempt, ssh, path, source, *, timeout=180):
                                            digest=common.digest(source), limit=info.st_size)
     with source.open('rb') as stream:
         attempt.command(ssh + [identifier], stdin=stream, timeout=timeout)
+    if lifecycle.ACTIVE:
+        lifecycle.ACTIVE.record(path)
     common.require(all(getattr(source.stat(), key) == getattr(info, key) for key in
                        ('st_dev','st_ino','st_size','st_mtime_ns','st_ctime_ns')), 'transfer source changed')
     return expected
@@ -244,7 +249,10 @@ def channel_directory(attempt, path):
             'print(json.dumps(m["directory"](' + repr(str(path)) + '),sort_keys=True))')
     output, errors, _, _ = admin_operation(attempt, code.encode(), seconds=30, memory='64M', file_limit='16K')
     common.require(not errors, 'directory operation reported an error')
-    return json.loads(output)
+    result = json.loads(output)
+    if lifecycle.ACTIVE:
+        lifecycle.ACTIVE.record(path, **{key: result[key] for key in ('device', 'inode')})
+    return result
 
 
 def submit_unit(attempt, argv, unit):
@@ -266,6 +274,13 @@ def submit_unit(attempt, argv, unit):
         except ValueError as error:
             raise RuntimeError('unit submission custody is unknown') from error
     common.require(observe() == absent, 'fresh unit is not positively absent')
+    if lifecycle.ACTIVE:
+        if __import__('re').fullmatch(r'effigy-829-[0-9a-f]{32}', unit):
+            lifecycle.ACTIVE.units.append(unit)
+        for arg in argv:
+            for prefix in ('--property=StandardOutput=append:', '--property=StandardError=append:'):
+                if arg.startswith(prefix) and Path(arg[len(prefix):]).is_relative_to(lifecycle.BASE):
+                    lifecycle.ACTIVE.record(arg[len(prefix):])
     while True:
         try:
             attempt.admin(shlex.join(argv), deadline=deadline)
@@ -548,6 +563,12 @@ def execute(root, seed, mode, *, proof=None):
     log = str(session.BASE / 'qualification' / (unit + '.log'))
     writable = str(session.BASE if mode in ('acquire', 'preflight') else Path(binding['fixture']))
     release = str(session.BASE / 'qualification' / ('ssh-release-' + unit))
+    if lifecycle.ACTIVE:
+        lifecycle.ACTIVE.record(release)
+        lifecycle.ACTIVE.record(str(session.BASE / 'metadata' / (attempt.root.name + '.tar')))
+        for name in ('531-' + binding['sha256'] + '-linux.started.json',
+                     binding['sha256'] + '.fixture.tar', binding['sha256'] + '.fixture.pending'):
+            lifecycle.ACTIVE.record(str(session.BASE / 'proof-claims' / name))
     token = uuid.uuid4().hex.encode()
     launch_request=dict(release=release,token_hex=token.hex(),main=main,
                         files={driver+'/'+name:digest for name,digest in files.items()})

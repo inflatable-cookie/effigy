@@ -108,7 +108,8 @@ export RUSTUP_HOME="$base/toolchain/rustup" CARGO_HOME="$base/toolchain/cargo"
 export PATH="$base/tools/bin:$base/tools/zig-tools/cargo-zigbuild-aarch64-unknown-linux-gnu:$base/tools/zig-tools/zig-aarch64-linux-0.15.2:$CARGO_HOME/bin:/usr/bin:/bin"
 export EFFIGY_OXIDE_ESCAPE=cargo CARGO_BUILD_JOBS=4 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_DEV_INCREMENTAL=false
 export CARGO_TARGET_DIR="$base/build-cache"
-export ZIG_GLOBAL_CACHE_DIR="$base/toolchain/zig-cache" TMPDIR="$base/artifact-tmp" TMP="$base/artifact-tmp" TEMP="$base/artifact-tmp"
+export ZIG_GLOBAL_CACHE_DIR="$base/toolchain/zig-cache" TMPDIR={shlex.quote(binding.get('guest_tmp', build.BASE + '/artifact-tmp'))}
+export TMP="$TMPDIR" TEMP="$TMPDIR"
 test -d "$roles" && test "$(stat -c %a \"$roles\")" = 700
 install -m 700 "$source/target/debug/effigy" "$roles/effigy-production"
 cd "$source"
