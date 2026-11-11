@@ -1,0 +1,133 @@
+# Test quality ratings
+
+Owner: [test assurance](../test-assurance.md).
+
+The test tables are rated at `4026bd67eae1bdc51dad77bc9792795502e817f8`; the code table has not yet been rated.
+
+## Tables
+
+- [Test summary](tests/SUMMARY.md)
+- [T1 containers](tests/T1.csv), [T2 gateway/host/managed](tests/T2.csv), [T3 kernel/custody](tests/T3.csv)
+- [T4 CLI/config/engine/UI](tests/T4.csv), [T5 other Rust](tests/T5.csv), [T6 Python harness](tests/T6.csv)
+- [Code modules](code/README.md)
+
+## Targets
+
+Tom agreed to option B now: a test floor of 7, with evidenced merges and removals completed. Option C (floor 7 and mean 8.5) is a later target. The code target is TBD.
+
+## Test rubric
+
+# Effigy test-value rating, November 2026: charter
+
+Every rating agent reads this first.
+
+## Why
+Tom, 2026-11-11: "have an agent go through all of the tests we have and give it a rating for effectiveness and usefulness; does it test something valuable? Then put all of those ratings in a table and work up from the bottom improving, removing or merging tests until we hit a reasonable score across the whole table." This sweep produces that table. Tom and the planner set the target score after seeing it. Nothing changes in this sweep.
+
+## Hard constraints
+- **Snapshot:** judge main at exactly `4026bd67e`. Your task checkout should be at that commit; if it isn't, read with `git show 4026bd67e:<path>`. Cite `path:line` at that commit.
+- **Read only:** no source edits, commits, PRs or other tasks. Don't run test suites or builds. You may list tests (`rg`, reading `#[test]`, `fn test_`, `def test_`), read code, and use `git log`/`git blame`.
+- **Write** only your own files under `/Volumes/Stash/scratch/effigy/test-rating-2026-11/ratings/`.
+
+## Score: 0–10, the sum of four parts
+| Part | Range | Question |
+|---|---|---|
+| **V**alue | 0–3 | Would a real regression in behaviour that users, consumers (CBS, inventors, Acowtancy/Underlay, DecodeLabs) or a safety contract (custody, redaction, fail-closed, cleanup) rely on make this test fail? 3 = core contract; 2 = real behaviour; 1 = minor or internal detail; 0 = nothing that matters. |
+| **E**ffectiveness | 0–3 | Does it assert behaviour and outcomes rather than labels, incidental strings, implementation shape or the existence of a call? Would it catch the bug its name implies, with a deterministic oracle and no wall-clock luck? 3 = sharp; 0 = can't fail usefully, or asserts nothing meaningful. |
+| **U**niqueness | 0–2 | 2 = nothing else proves this; 1 = partly overlaps; 0 = another test proves the same thing. |
+| **C**ost | 0–2 | 2 = cheap (pure, fast, no process or fixture); 1 = moderate; 0 = heavy (real processes, full fixtures, more than about 5 s, or historically flaky). |
+
+**Action:** `keep`, `improve` (say how), `merge` (into which test), or `remove` (say what's lost).
+
+## Evidence rules
+- Any `merge` or `remove`, and any U = 0, must name the overlapping test as `path:line` and state what is kept or lost. No evidence, no merge or remove.
+- Any E ≤ 1 must quote the weak assertion briefly, as `path:line`.
+- Mark inference as inference. Don't guess runtime: use C from the code shape (process spawn, fixtures, sleeps, timeouts).
+- Tests that differ only in data (table rows, matrix cells) may share one row that lists every member name and states the count. Don't hide distinct behaviours in a group.
+
+## Output
+1. `ratings/<ID>.csv` with header `id,file_line,V,E,U,C,score,action,reason,evidence`:
+   - `id` = `binary-or-crate::module::test_name`, or `py:file::Class::test` for Python;
+   - `reason` is one line;
+   - `evidence` = `path:line` references, separated by `;`.
+2. `ratings/<ID>.md`, at most two pages:
+   - the score distribution (count per score 0–10);
+   - the 20 lowest-scoring tests with one line each;
+   - families worth merging into tables;
+   - expensive tests that buy little;
+   - anything that looked untested but valuable, without inventing new tests;
+   - coverage notes: total tests rated, how you enumerated them, and anything skipped with the reason.
+
+Rate every test in your scope. Completeness matters more than prose.
+
+## Code rubric
+
+# Effigy product-code module rating: charter (draft; dispatch when rounds 1–3 close)
+
+## Why
+Tom, 2026-11-11, agreeing the planner's proposal ("Sounds spot on, let's do it"): rate Effigy's product code at module level the way the tests were rated. Tom sets a target from the table. The improvement loop is round 5, which runs only after round 4 has brought tests to floor 7.
+
+## Unit
+A module: one Rust source file, or a tight file group with one responsibility, such as `foo/mod.rs` with its private submodules. Product code only, under `src/` and `crates/*/src/`. Exclude tests, test-support and test-only modules, the private qualification harness, and generated code. Expect about 1,500–2,000 units.
+
+## Score: 0–10, the sum of five parts
+| Part | Range | Question |
+|---|---|---|
+| **O**wnership | 0–2 | Is this the single owner of its mechanism (2), or one of several places doing the same thing (0)? Name the duplicates. |
+| **T**yped facts | 0–2 | Does it decode facts once into types and let callers decide (2), or re-derive them from strings, labels or debug text (0)? |
+| **F**ailure | 0–2 | Does it fail closed where the contract requires, keep unknown distinct, and give errors that say what to do (2)? Or does it fail open or lose state (0)? |
+| **P**roportion | 0–2 | Is its size and branching proportionate to its job (2), or has it piled up flags, special cases, retries and patch layers (0)? Use churn and `git log` as evidence. |
+| **Pr**oof | 0–2 | How well do tests cover it? Use `/Volumes/Stash/scratch/effigy/test-rating-2026-11/ALL-ratings.csv`: are its tests at 7 or above and behaviour-level (2), weak (1), or absent (0)? |
+
+**Action:** `keep`, `simplify` (say what), `consolidate` (with which module), `harden` (which failure path), `split`, or `delete` (dead or vestigial; say how you know).
+
+## Objective columns (computed, not judged)
+Lines of code, 30-day churn (commits), 90-day churn, and number of distinct fix commits touching the module.
+
+## Evidence rules
+- Any O = 0, `consolidate` or `delete` needs `path:line` for the duplicate, or proof of no callers.
+- Any T or F of 1 or less needs `path:line` for the offending code.
+- Mark inference as inference. Judge the code as it is at the frozen commit; the re-audit reports are context, not proof.
+
+## Output
+- `ratings/<ID>.csv` with header `module,files,loc,churn30,churn90,fixes,O,T,F,P,Pr,score,action,reason,evidence`.
+- `ratings/<ID>.md`, at most two pages:
+  - the score distribution;
+  - the 20 lowest modules;
+  - consolidation clusters (modules that should become one owner);
+  - dead-code candidates;
+  - coverage notes.
+
+## Domains (same split as the test sweep)
+| | Domain |
+|---|---|
+| C1 | containers |
+| C2 | gateway, host and managed |
+| C3 | kernel and custody |
+| C4 | CLI, config, engine and UI |
+| C5 | other crates and root |
+
+There's no Python harness domain; the harness is out of scope as product code.
+
+## Calibration
+Run an independent stratified sample of at least 60 modules, with one frontier calibrator if the cheaper raters disagree by more than ±1. Design judgement is noisier than test judgement.
+
+## Test results at the rated commit
+
+- 7,993 table rows: 6,736 Rust and 1,257 Python. Thirty `#[ignore]` helper entrypoints are marked in the CSVs and excluded from scoring, leaving 7,963 scored tests.
+- Distribution (scored tests, scores 2–10): 4, 3, 8, 129, 726, 1,602, 2,299, 2,468, 724. Mean 8.05; median 8; 1.8% scored 5 or lower, 10.9% scored 6 or lower, and 31% scored 7 or lower.
+- Table rows, including excluded helpers: T1 1,464; T2 633; T3 870; T4 1,847; T5 1,922; T6 1,257.
+
+An independent Claude Sonnet pass re-scored a stratified 42-test sample from scratch:
+- 23 of 42 scores match and 38 are within ±1;
+- mean difference −0.14, mean absolute difference 0.57.
+
+Two biases roughly cancel:
+- **Effectiveness is overclaimed** when a test's name promises more than its assertions check (net −6 across 16 rows).
+- **Cost is too harsh** on short child spawns (net +6 across 8 rows).
+
+T4 is mildly inflated (−0.86 on average). The true mean is probably about 7.9–8.0. The calibrator would also reverse 9 `keep` rows (3 to merge, 6 to improve) and adds no removals. Details: `calibration-summary.md`.
+
+## Update policy
+
+At each milestone close and after each simplification round, the planner re-rates added and changed tests (and later modules) from the check output, removes dead rows, refreshes the summary, and records the new rated commit. Workers do not edit these tables in ordinary tasks.
