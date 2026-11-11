@@ -555,7 +555,7 @@ sys.exit(child.wait())
                                         self.container, 'python3', '-c', script])
 
     def guest_signal(self, receipt, number):
-        code = 'from pathlib import Path; import os; p,b=Path(' + repr(receipt) + ').read_text().split(); assert Path("/proc/"+p+"/stat").read_text().split()[21]==b; os.kill(int(p),' + str(number) + ')'
+        code = 'from pathlib import Path; import os; p,b=Path(' + repr(receipt) + ').read_text().split(); assert Path("/proc/"+p+"/stat").read_text().split()[21]==b; os.kill(int(p),' + str(int(number)) + ')'
         self.guest(['python3', '-c', code])
 
     def owner_drop(self):
