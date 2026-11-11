@@ -1,0 +1,226 @@
+{
+  "proof": false,
+  "task": "effigy#866",
+  "harness_head": "e66ba085ce3c2eba28f6271c83bdc57cb53f9838",
+  "harness_hashes": {
+    "docs/qualification/workspace-private-531/runtime.py": "fb533264ab1f69d130ce2218d9d7bdd51019e1d277f62b259e0af558c809d599",
+    "docs/qualification/workspace-private-531/macos_desktop_readiness.py": "6a10becd4c71db5159776f42ca5dbf4e5f7842aa1d43bda06d8f41cb704830db",
+    "docs/qualification/workspace-private-531/macos_desktop_smoke.py": "eb65679211faeae142918579d8da98908f22590d4e508dbfed4f2a86c93dec7f",
+    "docs/qualification/workspace-private-531/macos_colima_session_smoke.py": "3caf57ac0feb92174e8e11551a16afb35d6ecc354aa5bca55a0960e276640686"
+  },
+  "scratch": "/Volumes/Stash/scratch/effigy/feeafc9c/desktop-866-SMRTjCd1",
+  "preparation": "/Volumes/Stash/scratch/effigy/feeafc9c/desktop-smoke-xncvg97e",
+  "token": "4636d9b7",
+  "runtime_image": "sha256:988dc4f3e6146889051dc997c1e08f5295969c46829ca67c21c21086d51e7e04",
+  "checks": [
+    {
+      "selector": "test:qualification:workspace-private:macos-desktop-readiness",
+      "exit": 0,
+      "tests": 5
+    },
+    {
+      "selector": "test:qualification:workspace-private:colima-session-smoke",
+      "exit": 0,
+      "tests": 20
+    },
+    {
+      "selector": "check:qualification:workspace-private:macos-desktop-readiness:compile",
+      "exit": 0
+    },
+    {
+      "selector": "qa:docs",
+      "exit": 0,
+      "log": "/Volumes/Stash/scratch/effigy/feeafc9c/desktop-866-SMRTjCd1/qa-docs.log",
+      "log_sha256": "dbbfa38ab54ba19156b032484096498d0614a498fc3ca8a091673af7e98bdaea"
+    }
+  ],
+  "builds": [
+    {
+      "selector": "build:release",
+      "exit": 0,
+      "log_sha256": "4d735a9a90847f217c26d7cb20428b1a243294dbe8f489d71c88a9a8fa32496f"
+    },
+    {
+      "selector": "build:workspace:private-qualification:optimized",
+      "exit": 0,
+      "log_sha256": "162d83250b4d54332dde1722d1ad6ec58e50c9bdab58d04e87a245042c1bded2"
+    },
+    {
+      "selector": "build:workspace:private-qualification:test-inputs",
+      "exit": 0,
+      "log_sha256": "f3ef02fef18efd0523a0063c28c03e3f0b9980551aeec60e9c5c4968e0cc1f38"
+    },
+    {
+      "selector": "build:workspace:private-qualification:cargo-metadata",
+      "exit": 0,
+      "log_sha256": "75eb3cd1a11bca8a26ea7016970b0b70564068f0571ef748c0b3857223310301"
+    },
+    {
+      "selector": "build:workspace:private-qualification:kernel-fixture",
+      "exit": 0,
+      "log_sha256": "0c0959f1edd4b370f01830bcdc579fd58fe06ad2b160192818149c489390239e"
+    }
+  ],
+  "artifacts": {
+    "artifacts/candidate": "bdbc9f63490b44a4b94bb941fbc14c353050028482b25fc0bcebc303ad7272e7",
+    "artifacts/cargo-nextest": "397065d8ae921e384dd087289e545d6428e1a42451db2bb25b36a08d0c254113",
+    "artifacts/kernel-tests": "2f0eb5abb90c73eb738fa4ec214cb82d4a2c230c19230b44d26f11e3ec3acc88",
+    "artifacts/nextest.toml": "33a11f7b6e2d898dad00ec66d67fa6e53770e3fe748d3e8f388ecc20c15f0308",
+    "artifacts/old": "a603c82a9c98d499ea83ea79b403127274cc87d179adcb197dd4478524b117aa",
+    "artifacts/custody-tests": "1adf36fe19dd9317205a206c5c9c4bdf9dac20151aefdedda860f3af9a461747",
+    "artifacts/kernel-fixture": "9b3d159e50502c3a22686db78658262822cee2b1b82ebd49feefd168eba8b06c",
+    "artifacts/cargo.json": "002a797c95acbd57a83e19528eeb02bdea3d381fa75ab7217cfa1ff37b12eca7",
+    "artifacts/binaries.json": "501ad5a03c5ca2988aaa73d1df8ded515cdd25b7d75b1374bc6bfdfd076cc140",
+    "artifacts/production": "71ddce11e0b3dc1b4587741fcaa221e959e4a76dd3591d43826576e8dfff4e3d",
+    "artifacts/utility": "260c4cb5a5947d8feb5294a17ddc2cbf7d3d0722dbeb53e5ac735bda7af57930"
+  },
+  "guest_provenance": {
+    "original": "/Volumes/Stash/scratch/effigy/mac-4f6a-cf21aec6/task-852-evidence",
+    "anchor_original": "/Volumes/Stash/scratch/effigy/mac-4f6a-cf21aec6/task-852-evidence/artifacts/production",
+    "anchor_sha256": "5dfded1945cf937d8f73a286dca05e0c9a00b80edaa4791793d6003b0517cedc",
+    "anchor_bytes": 205402152,
+    "anchor_mtime_ns": 1794345615582578903,
+    "guest_head": "a707ad1409b7b0e9fb0ae45e39f54e37eed0339d",
+    "proof": false
+  },
+  "session": {
+    "argv": [
+      "effigy",
+      "qualification:macos:desktop-session-smoke",
+      "--",
+      "--request",
+      "/Volumes/Stash/scratch/effigy/feeafc9c/desktop-866-SMRTjCd1/session-request.json",
+      "--sha256",
+      "686859759f87aadbb2bcfb2484ec191e6467fd18555d79362d46b0f28069bc82"
+    ],
+    "exit": 1,
+    "started": "2026-11-11T00:28:43.333924+00:00",
+    "ended": "2026-11-11T00:28:55.507945+00:00"
+  },
+  "session_seconds": 12.174021,
+  "apply_event": {
+    "run_id": "agq4qao2kjrnj4pq37wlrf6yqm",
+    "seq": 3,
+    "kind": "kernel:process",
+    "target": "{\"target\":{\"resource\":{\"kind\":\"Env\",\"scope\":{\"Checkout\":{\"kind\":\"EphemeralClone\",\"token\":[210,5,122,46,104,108,199,238,82,3,82,80,220,9,247,41]}},\"key\":[\"web\"]},\"generation\":2},\"kind\":\"kernel:process\",\"payload\":{\"digest\":[137,145,148,16,103,77,236,190,97,129,73,191,177,167,171,18,174,27,152,31,136,25,94,124,110,198,156,79,83,231,162,189],\"label\":\"apply frozen workspace render\",\"purpose\":\"workload\"},\"settlement\":{\"Release\":null},\"required\":true}",
+    "state": "released",
+    "receipt": "{\"discard_v1\":{\"anchor\":{\"boot\":\"1b8278fc-1a9f-491b-bba0-63aeeab38788\",\"pid\":17834,\"start\":{\"MacOs\":{\"microseconds\":424602,\"seconds\":1794356927}}},\"grace_millis\":2000,\"identity\":{\"boot\":\"1b8278fc-1a9f-491b-bba0-63aeeab38788\",\"pid\":17792,\"start\":{\"MacOs\":{\"microseconds\":228499,\"seconds\":1794356927}}},\"nonce\":\"agq4qao2kjrnj4pq37wlrf6yqm:3\",\"pgid\":17792},\"exit\":0}",
+    "error": null
+  },
+  "failure": {
+    "cell": "exploration-command-refusal",
+    "details": {
+      "activation_stage": "workspace_activation",
+      "cause": "workspace activation failed during publication/selection; integration effects unsettled; re-run up; exact owner retained (supervisor_run=agq4qaozad2fsdpdkya74nnh5m); request stop to retry cleanup"
+    },
+    "exit": 1,
+    "proof": false
+  },
+  "selected_sessions": 0,
+  "container": {
+    "id": "c5094da82edd588ee5a0fe049181d957552fdbb413f2bc269d4943b255e0de8b",
+    "status": "running",
+    "started_at": "2026-11-11T00:28:47.684952587Z"
+  },
+  "cleanup": {
+    "D4": {
+      "exit": 0
+    },
+    "inventory_difference": {
+      "container": {
+        "removed": [],
+        "added": []
+      },
+      "image": {
+        "removed": [],
+        "added": []
+      },
+      "volume": {
+        "removed": [],
+        "added": []
+      },
+      "network": {
+        "removed": [],
+        "added": []
+      }
+    },
+    "runs": [
+      {
+        "run_id": "agq4qaovdbsf3cyji3f5wylcaq",
+        "phase": "closed",
+        "workload_outcome": "\"Interrupted\"",
+        "cleanup_outcome": "complete"
+      },
+      {
+        "run_id": "agq4qaozad2fsdpdkya74nnh5m",
+        "phase": "closed",
+        "workload_outcome": "\"NotStarted\"",
+        "cleanup_outcome": "complete"
+      },
+      {
+        "run_id": "agq4qaoznfgmny7sqjulzovwnq",
+        "phase": "closed",
+        "workload_outcome": "\"NotStarted\"",
+        "cleanup_outcome": "complete"
+      },
+      {
+        "run_id": "agq4qao2kjrnj4pq37wlrf6yqm",
+        "phase": "closed",
+        "workload_outcome": "\"Interrupted\"",
+        "cleanup_outcome": "complete"
+      }
+    ],
+    "process_identities": 12,
+    "matching_live": 0,
+    "stop_exit": 1,
+    "actions": [
+      {
+        "identity": {
+          "boot": "1b8278fc-1a9f-491b-bba0-63aeeab38788",
+          "pid": 17711,
+          "start": {
+            "MacOs": {
+              "seconds": 1794356926,
+              "microseconds": 699705
+            }
+          }
+        },
+        "signal": "SIGKILL",
+        "reason": "Exact owned supervisor did not settle within the recorded 30-second run stop; no session retry"
+      }
+    ]
+  },
+  "backend_matching_lines": 0,
+  "stderr": {
+    "original_apply_child": "unavailable: Terminal::Discard closes it before exec; custody unchanged",
+    "activation_cli_bytes": 0,
+    "activation_cli_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "ruling": {
+    "ask_id": "d6041dfcc335764da3f4b3448541e920158b64b71d286fc28bdf34bafe996305",
+    "decision": "Operator-amended held brief v2 preserves Terminal::Discard. The apply exit receipt, exact activation-caller stderr bytes, selector stderr, CLI/Compose preflight receipts and Desktop backend-window observation replace raw apply-child stderr for the original attempt. An apply failure also requires a labelled read-only reproduction; this apply exited 0. No replay or custody change is authorized or performed.",
+    "brief_version": 2,
+    "brief_sha256": "ff8cb7e59ecbb42e654436d1a7dda156ca2fb6fb5703b3f264286953ff73ec29",
+    "review_id": 5851771381,
+    "earlier_ask_role": "Earlier implementation advice; the formal held-brief amendment is the evidence-scope authority."
+  },
+  "bulk_evidence_hashes": {
+    "session-request.json": "686859759f87aadbb2bcfb2484ec191e6467fd18555d79362d46b0f28069bc82",
+    "journal-closeout.json": "32aca192859c0762da814e43416c2bf32e14b03a0c2511ced1c15c4f4b2788e0",
+    "inventory-start.json": "fc8beb5de0c89a39f34681e162bdd7aec70ed2b6b5db6e1ce157777870a0518a",
+    "inventory-final.json": "fa8e578badda6d59ed8bf97d740bba45efd172f21bebc314c263378324a4ff63",
+    "exact-resource-cleanup.json": "84e1348e546435bfe7f5c0255bcb810db411a144e7e15cc040de964da3f98bee",
+    "process-audit-final.json": "137c56c814dd4d83d7363eba598f6b35e5e70b67d7512bef546ce295fe96aacf",
+    "backend-observation.json": "fa3cec0aaab8056bc90235b8485a45bff44d9cef9f88294ff278e7db714d1340",
+    "desktop-backend-session.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "revision_validation": {
+    "review_id": 5851771381,
+    "changed": "Documentation and evidence-scope ruling only; harness source and historical attempt records unchanged.",
+    "selector": "qa:docs",
+    "exit": 0,
+    "log": "/Volumes/Stash/scratch/effigy/d2bad9c1/desktop-866-ruling-T3ZVjkoe/qa-docs.log",
+    "log_sha256": "dbbfa38ab54ba19156b032484096498d0614a498fc3ca8a091673af7e98bdaea",
+    "native_replay": false
+  }
+}

@@ -1,0 +1,10 @@
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ EFFIGY  /Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-2c5eb87b-7996-4fdc-a26a-aa70a412c0a3 │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── v0.14.1+local.446cbe7 ╯
+
+exploration failed: required command failed: candidate
+[error] command `qualification:macos:desktop-session-smoke step `1`` failed
+  cause: exit code 1
+         stderr: full failed-step output: /Volumes/Stash/scratch/effigy/feeafc9c/failed-step-t9TB6x.log
+  next: read the output above, fix the cause, then run the command again
