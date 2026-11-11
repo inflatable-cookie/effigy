@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 
 mod bundles;
 mod composition;
-mod ingress;
 pub mod config_sections;
+mod ingress;
 mod lifecycle_date;
 pub use lifecycle_date::ManifestLifecycleDate;
 pub mod execution_binding;
