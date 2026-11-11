@@ -124,12 +124,14 @@ class ExplorationTests(unittest.TestCase):
         window.verify_root = lambda: None
         events = []
         window.record = lambda cell, **facts: events.append(dict(cell=cell, **facts))
+        window.retain_activation_stderr = mock.Mock()
         with mock.patch.object(smoke.runtime, 'run', side_effect=subprocess.TimeoutExpired(['/candidate'], 300)):
             with self.assertRaises(subprocess.TimeoutExpired):
                 window.command(['/candidate'], activation=True)
         self.assertEqual(events[0]['bind_source'], str(self.control))
         self.assertEqual(events[0]['phase_bound_seconds'], 300)
         self.assertFalse(events[0]['proof'])
+        window.retain_activation_stderr.assert_called_once_with(b'')
 
     def colima_fixture(self):
         binary = self.control / 'colima'
@@ -225,6 +227,7 @@ class ExplorationTests(unittest.TestCase):
         for exploratory, activation, remaining, expected in [(False, True, 500, 60), (True, False, 500, 60), (True, True, 500, 300), (True, True, 30, 30)]:
             window = smoke.runtime.Window.__new__(smoke.runtime.Window)
             window.exploratory, window.candidate, window.root, window.env = exploratory, Path('/pinned'), self.control, {}
+            window.cell = dict(backend='colima')
             window.verify_root = lambda: None
             window.end = 1000 + remaining
             result = subprocess.CompletedProcess([], 0, b'', b'')
