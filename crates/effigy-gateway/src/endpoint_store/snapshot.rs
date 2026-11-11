@@ -88,36 +88,11 @@ impl EndpointSnapshot {
         Ok(table)
     }
 
-    /// Last writer wins for the same checkout path. A different checkout path
-    /// takes the domain over only when the recorded owner is dead: its checkout
-    /// path is gone, or its target is not listening. Every write also drops
-    /// routes whose recorded checkout path is gone, so a deleted worktree
-    /// never keeps a domain or a loopback address anywhere in the table.
+    /// Replace route data, pruning missing checkouts. The store transaction
+    /// owns foreign-claim observation and compare-before-commit.
     pub fn set_routes(&mut self, table: &RouteTable) -> Result<(), GatewayError> {
         let mut table = table.clone();
         prune_gone_checkouts(&mut table);
-        let current = self.routes()?;
-        for route in table.all_routes() {
-            if current.lookup(&route.domain) == Some(route) {
-                continue;
-            }
-            let Some(existing) = current.lookup(&route.domain) else {
-                continue;
-            };
-            if existing.project == route.project {
-                continue;
-            }
-            let Some(reason) = crate::registration::dead_claim_reason(existing) else {
-                return Err(GatewayError::ForeignRoute {
-                    domain: route.domain.clone(),
-                    project: existing.project.clone(),
-                });
-            };
-            eprintln!(
-                "[info] gateway domain `{}` taken over from checkout `{}`: {}",
-                route.domain, existing.project, reason
-            );
-        }
         self.replace(
             "routes",
             "routes",

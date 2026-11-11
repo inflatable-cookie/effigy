@@ -13,9 +13,9 @@
 //! dead. The actual container lifecycle detection is handled by the caller
 //! (the container command in the runner).
 
-use std::net::{Ipv4Addr, SocketAddr, TcpStream, ToSocketAddrs};
+use std::net::{Ipv4Addr, SocketAddr, TcpStream};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::Utc;
 
@@ -23,9 +23,8 @@ use crate::endpoint_store::EndpointStore;
 use crate::error::GatewayError;
 use crate::routes::{ManagedListenerRouteOwner, Route, RouteSource};
 
-/// How long a recorded target has to accept a TCP connection before another
-/// checkout may treat it as gone and take its domain over.
-const TARGET_PROBE_TIMEOUT: Duration = Duration::from_millis(200);
+/// Shared observation budget for all competing claims in one operation.
+pub const TARGET_PROBE_TIMEOUT: Duration = Duration::from_millis(200);
 
 /// Whether a route belongs to this checkout path.
 pub fn owned_by(route: &Route, project_path: &str) -> bool {
@@ -55,38 +54,54 @@ pub fn checkout_is_gone(project: &str) -> bool {
     }
 }
 
-/// Why another checkout may take a recorded owner's domain over: its checkout
-/// path does not exist, or its target address does not accept a connection.
-/// This is the tradeover decision only. Nothing prunes a route because its
-/// target is briefly down, so a container restart, a Colima restart or a
-/// listening process that has not bound yet keeps its route. `None` means the
-/// owner is still there and keeps the domain.
-pub fn dead_claim_reason(route: &Route) -> Option<String> {
+/// Only a missing checkout or a definitively refused connection releases a
+/// foreign claim. Unknown observations refuse takeover and name the remedy.
+pub fn dead_claim_reason(route: &Route, deadline: Instant) -> Result<Option<String>, GatewayError> {
     if checkout_is_gone(&route.project) {
-        return Some(format!("checkout path {} no longer exists", route.project));
+        return Ok(Some(format!(
+            "checkout path {} no longer exists",
+            route.project
+        )));
     }
-    let target = route.target.as_deref().or(route.tcp_target.as_deref())?;
-    if target_accepts_connection(target) {
-        return None;
+    let Some(target) = route.target.as_deref().or(route.tcp_target.as_deref()) else {
+        return Ok(None);
+    };
+    match target_observation(target, deadline) {
+        TargetObservation::Accepting => Ok(None),
+        TargetObservation::Closed => Ok(Some(format!("target {target} refused connections"))),
+        TargetObservation::Unknown(reason) => Err(crate::endpoint_store::error(format!(
+            "cannot determine whether gateway domain `{}` owned by checkout `{}` is closed: {reason}; check target `{target}` (use a numeric socket address), then retry, or run `effigy container down` in that checkout",
+            route.domain, route.project
+        ))),
     }
-    Some(format!("target {target} is not accepting connections"))
 }
 
-fn target_accepts_connection(target: &str) -> bool {
-    let addresses = match target.parse::<SocketAddr>() {
-        Ok(address) => vec![address],
-        Err(_) => match target.to_socket_addrs() {
-            Ok(addresses) => addresses.collect::<Vec<_>>(),
-            Err(_) => return false,
-        },
+enum TargetObservation {
+    Accepting,
+    Closed,
+    Unknown(String),
+}
+
+fn target_observation(target: &str, deadline: Instant) -> TargetObservation {
+    let Ok(address) = target.parse::<SocketAddr>() else {
+        return TargetObservation::Unknown(
+            "hostname or invalid socket address requires resolution".into(),
+        );
     };
-    addresses.into_iter().any(|address| {
-        TcpStream::connect_timeout(&address, TARGET_PROBE_TIMEOUT)
-            .map(|stream| {
-                let _ = stream.shutdown(std::net::Shutdown::Both);
-            })
-            .is_ok()
-    })
+    if address.port() == 0 {
+        return TargetObservation::Unknown("target port is zero".into());
+    }
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return TargetObservation::Unknown("route observation deadline expired".into());
+    }
+    match TcpStream::connect_timeout(&address, remaining) {
+        Ok(_) => TargetObservation::Accepting,
+        Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {
+            TargetObservation::Closed
+        }
+        Err(error) => TargetObservation::Unknown(error.to_string()),
+    }
 }
 
 /// Register a route in the route table file.

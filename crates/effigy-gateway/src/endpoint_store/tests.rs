@@ -298,3 +298,69 @@ fn a_bad_row_does_not_brick_the_next_write() {
     assert!(table.lookup("good.test").is_some());
     assert!(table.lookup("newer.test").is_some());
 }
+
+/// A restarted exact route invalidates a closed observation; an unknown
+/// second claim invalidates the whole batch. Both probes share one deadline.
+#[test]
+fn tradeover_observes_outside_the_gate_and_compares_before_commit() {
+    for restart in [false, true] {
+        let (dir, store) = fixture();
+        let one = dir.path().join("one");
+        let two = dir.path().join("two");
+        for path in [&one, &two] {
+            std::fs::create_dir(path).unwrap();
+        }
+        store
+            .routes(|table| {
+                for name in ["a.test", "b.test"] {
+                    table.upsert(route(name, &one));
+                }
+                Ok::<_, GatewayError>(())
+            })
+            .unwrap();
+        let before = store.snapshot().unwrap();
+        let mut successor = before.routes().unwrap().lookup("a.test").unwrap().clone();
+        successor.target = Some("127.0.0.1:3001".into());
+        let mut first_deadline = None;
+        let refused = store
+            .transaction_with_probe(
+                |snapshot| {
+                    let mut table = snapshot.routes()?;
+                    for name in ["a.test", "b.test"] {
+                        table.upsert(route(name, &two));
+                    }
+                    snapshot.set_routes(&table)
+                },
+                |_, deadline| {
+                    if let Some(first) = first_deadline {
+                        assert_eq!(deadline, first);
+                        if !restart {
+                            return Err(error("observation unknown: permission denied"));
+                        }
+                    } else if restart {
+                        // This would deadlock if the probe held the gate. Only the
+                        // target changes: checkout identity alone is insufficient.
+                        store.routes(|table| {
+                            table.upsert(successor.clone());
+                            Ok::<_, GatewayError>(())
+                        })?;
+                    }
+                    first_deadline = Some(deadline);
+                    Ok(Some("closed before restart".into()))
+                },
+            )
+            .unwrap_err();
+        let after = store.snapshot().unwrap();
+        if restart {
+            assert!(refused.to_string().contains("changed during observation"));
+            assert_eq!(after.routes().unwrap().lookup("a.test"), Some(&successor));
+            assert_eq!(
+                after.routes().unwrap().lookup("b.test"),
+                before.routes().unwrap().lookup("b.test")
+            );
+        } else {
+            assert!(refused.to_string().contains("permission denied"));
+            assert_eq!(after, before);
+        }
+    }
+}
