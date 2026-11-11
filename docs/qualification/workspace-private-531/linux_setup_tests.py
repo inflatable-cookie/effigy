@@ -1135,6 +1135,42 @@ class RunTransferChecks(unittest.TestCase):
 
 class DiskAndHardLimitChecks(unittest.TestCase):
     # Disk association premises are controlled in linux_disk_association_tests.py.
+    def test_setup_gate_admits_the_reconfigured_compaction_value(self):
+        """The setup gate passes the production association built on the reconfigured hdd0:
+        SATA position 0 with online compaction off (the 2026-11-11 revert). A stale
+        online-compact 'on' inventory still refuses through the same gate."""
+        import linux_disk_association as dal
+        import linux_disk_association_tests as association_tests
+        import linux_disk_identity_tests as identity_tests
+        import linux_disk_inventory as inventory
+        self.assertEqual(inventory.HDD0_REVIEWED['online-compact'], 'off')
+        block, lsblk = association_tests.guest_block_observations()
+        facts = dal.association_facts(
+            boot_id=association_tests.BOOT,
+            read_boot_id=association_tests.boot_reader([association_tests.BOOT] * 2),
+            config=association_tests.config_xml(), descriptor=identity_tests.doc(),
+            extents=association_tests.descriptor_extents(),
+            block={'blocks': block}, lsblk={'nodes': lsblk},
+            root=association_tests.guest_root_facts(),
+            transport=association_tests.inventory_transport())
+        result = setup.verify_disk_association(facts)
+        self.assertEqual(result['mechanism'], dal.MECHANISM)
+        self.assertEqual(result['image_path'], setup.PVM_HOME + '/' + setup.DISK_DIR)
+        stale = association_tests.inventory_transport(
+            output=association_tests.cli_info_text(
+                dal.PINS[dal.MECHANISM],
+                hardware=association_tests.cli_hardware(
+                    hdd0=dict(inventory.HDD0_REVIEWED, **{'online-compact': 'on'}))).encode())
+        with self.assertRaises(inventory.Refused) as caught:
+            dal.association_facts(
+                boot_id=association_tests.BOOT,
+                read_boot_id=association_tests.boot_reader([association_tests.BOOT] * 2),
+                config=association_tests.config_xml(), descriptor=identity_tests.doc(),
+                extents=association_tests.descriptor_extents(),
+                block={'blocks': block}, lsblk={'nodes': lsblk},
+                root=association_tests.guest_root_facts(), transport=stale)
+        self.assertEqual(caught.exception.phase, 'inventory-output-grammar')
+
     def test_polling_witness_is_never_a_hard_limit(self):
         with self.assertRaises(Refusal):
             setup.verify_hard_limit({'mechanism': 'polling', 'limits': [LIMIT_BYTES],

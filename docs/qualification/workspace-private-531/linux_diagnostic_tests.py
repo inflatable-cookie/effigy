@@ -3309,6 +3309,65 @@ class DiskAssociationHandoff(unittest.TestCase):
             transport=association_tests.inventory_transport())
         self.assertEqual(handoff['status'], 'verified')
 
+    def test_handoff_retries_transport_failures_inside_the_window_then_reports_unavailable(self):
+        """The shared bounded policy on the disk-association inventory route: a dispatch that
+        never reached the helper's exact refusal retries inside the occurrence window, and an
+        exhausted window reports transport-unavailable with no facts and no raised refusal
+        (so the stage records no disk-association finding). A decided refusal never retries."""
+        import time
+        block, lsblk = association_tests.guest_block_observations()
+        writer = self.writer_bound(block, lsblk, association_tests.guest_root_facts())
+        base = dict(config=association_tests.config_xml(), descriptor=identity_tests.doc(),
+                    extents=association_tests.descriptor_extents(), writer_bound=writer)
+
+        def handoff(transport, deadline):
+            return proof.observe_association(
+                self.BOOT, association_tests.boot_reader([self.BOOT] * 12), deadline=deadline,
+                transport=transport, **base)
+
+        # One transient session failure, then the fixed grammar: verified, two attempts recorded.
+        calls = []
+
+        def flaky(argv, stdin_path, timeout, cap):
+            calls.append(argv)
+            if len(calls) == 1:
+                return {'disposition': 'failed', 'waited_exit': 255, 'stdout': b'',
+                        'stderr': b'Unable to open new session in this virtual machine.\n'}
+            return association_tests.inventory_transport()(argv, stdin_path, timeout, cap)
+
+        result = handoff(flaky, time.monotonic() + 120)
+        self.assertEqual(result['status'], 'verified')
+        self.assertIsNotNone(result['facts'])
+        self.assertEqual(len(calls), 2)
+        self.assertEqual([row['phase'] for row in result['attempts']], ['inventory-not-exited'])
+        self.assertEqual(proof.stored_association(result),
+                         {'disk_association': proof.disk_association.stored_facts(result['facts']),
+                          'disk_association_result': result['result']})
+
+        # A persistent session failure exhausts the window: transport-unavailable, no facts.
+        def down(argv, stdin_path, timeout, cap):
+            return {'disposition': 'failed', 'waited_exit': 255, 'stdout': b'',
+                    'stderr': b'PrlJob_GetRetCode: Invalid argument.\n'}
+
+        result = handoff(down, time.monotonic() + 0.05)
+        self.assertEqual(result['status'], 'transport-unavailable')
+        self.assertEqual(result['status'], proof.guest_probe.TRANSPORT_UNAVAILABLE)
+        self.assertIsNone(result['facts'])
+        self.assertIsNone(result['result'])
+        self.assertTrue(result['attempts'])
+        self.assertTrue(all(row['phase'] == 'inventory-not-exited' for row in result['attempts']))
+        self.assertEqual(proof.stored_association(result),
+                         {'disk_association': None, 'disk_association_result': None})
+
+        # A decided grammar refusal raises immediately: no retry, no transport status.
+        refused = association_tests.inventory_transport(
+            disposition='failed', waited_exit=3,
+            stdout=(b'status=refused phase=inventory-output-grammar'
+                    b' reason=host read Hardware hdd0 online-compact is not the reviewed value\n'))
+        with self.assertRaises(proof.disk_inventory.Refused) as caught:
+            handoff(refused, time.monotonic() + 120)
+        self.assertEqual(caught.exception.phase, 'inventory-output-grammar')
+
     def test_production_transport_rechecks_the_fixed_route_and_returns_the_exact_shape(self):
         """The stage's supervised route adapter: the fixed argv, stdin, timeout and cap are
         re-checked before the dispatch, a foreign route refuses without dispatching, and a matching

@@ -94,10 +94,13 @@ HARDWARE_SECTIONS = frozenset({
     'cpu', 'memory', 'video', 'memory_quota', 'hdd0', 'cdrom0', 'usb', 'net0', 'sound0',
 })
 # The reviewed data disk: the sole image-backed internal disk, SATA position 0, expanding image.
-# Values are the retained 747 grammar values, exact.
+# Values are the retained 747 grammar values, exact, except online-compact: the planner
+# reverted hdd0 to SATA with online compaction off on 2026-11-11 (recorded in the
+# task-897 closing notes), so the reviewed value moved from 'on' to 'off'. The retained
+# 747 bytes still carry 'on' and are kept byte-pinned as grammar history only.
 HDD0_REVIEWED = {
     'enabled': True, 'port': 'sata:0', 'image': REVIEWED_DISK_IMAGE,
-    'type': 'expanded', 'size': '131072Mb', 'online-compact': 'on',
+    'type': 'expanded', 'size': '131072Mb', 'online-compact': 'off',
 }
 # The reviewed optical device: counted, never treated as a disk.
 CDROM0_REVIEWED = {
@@ -117,6 +120,13 @@ READ_PHASES = (
     'inventory-truncated', 'inventory-output-encoding', 'inventory-output-grammar',
     'inventory-vm-differs',
 )
+# The dispatch failures a bounded retry may ride out: the helper never ran to its own
+# exact refusal, so no premise was decided and nothing is a finding. Every other phase
+# is a decided outcome (a premise refusal, a grammar break, a moved boot bracket) and
+# is never retried as transport.
+TRANSPORT_PHASES = frozenset({
+    'inventory-output-missing', 'inventory-not-exited', 'inventory-exit-nonzero',
+})
 # Helper-side phases: installed-tool custody and the inner dispatch, printed as status=refused.
 TOOL_PHASES = (
     'tool-alias', 'tool-unavailable', 'tool-hash-mismatch', 'tool-plist-unavailable',
@@ -275,6 +285,31 @@ def verify_installed_cli(path=PRLCTL, plist_path=DESKTOP_INFO_PLIST, expected_sh
     return {'path': path, 'sha256': digest, 'version': version, 'build': build}
 
 
+def _helper_refusal(output):
+    """The helper's own exact refusal, if its stdout carries one.
+
+    The helper prints exactly one line, `status=refused phase=<phase>[ reason=<reason>]`,
+    and exits nonzero when it refuses. Propagating that phase (instead of masking every
+    failed dispatch as inventory-not-exited) is what lets the caller tell a decided
+    premise refusal from a transport failure that never reached one. Anything else —
+    empty, non-ASCII, multi-line or an unknown phase — is not the helper's exact
+    refusal and stays a dispatch-shaped outcome."""
+    if not isinstance(output, (bytes, bytearray)):
+        return None
+    try:
+        text = bytes(output).decode('ascii')
+    except UnicodeDecodeError:
+        return None
+    lines = text.splitlines()
+    if len(lines) != 1 or not lines[0].startswith('status=refused phase='):
+        return None
+    rest = lines[0][len('status=refused phase='):]
+    phase, separator, reason = rest.partition(' reason=')
+    if phase not in READ_PHASES:
+        return None
+    return phase, reason if separator else None
+
+
 def _checked_dispatch(argv, transport):
     """One bounded waited dispatch; returns (text, raw bytes, stderr). Original streams, waited
     exit, deadline and output cap are the evidence; anything else is refused with an exact phase.
@@ -288,6 +323,10 @@ def _checked_dispatch(argv, transport):
     exit_code = result.get('waited_exit')
     if not isinstance(output, (bytes, bytearray)):
         raise Refused('inventory-output-missing')
+    if result.get('disposition') != 'exited' or exit_code != 0:
+        refusal = _helper_refusal(output)
+        if refusal is not None:
+            raise Refused(*refusal)
     if result.get('disposition') != 'exited':
         raise Refused('inventory-not-exited', 'disposition %r' % (result.get('disposition'),))
     if exit_code != 0:

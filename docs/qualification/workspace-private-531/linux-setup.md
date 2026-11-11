@@ -355,7 +355,7 @@ its meaning. Anything else is observed in the retained originals and stays unadm
 | `ID`, `Home`, `Home path` | reviewed VM UUID, home with trailing slash, `…/config.pvs` | Observed in all four retained 747 CLI originals. `Home`'s trailing slash is part of the retained grammar. |
 | `State` | `running` | Observed (`stopped`/`running` across the retained steps). The one read is a single snapshot, so the earlier state-before/state-after premise is replaced by the boot bracket. |
 | `Hardware` key set | closed set of nine | Observed in the retained originals: cpu, memory, video, memory_quota, hdd0, cdrom0, usb, net0, sound0. Any other section, a second `hddN`/`cdromN` or a missing one refuses. |
-| `hdd0` fields | enabled, `sata:0`, `…/harddisk1.hdd`, `expanded`, `131072Mb`, `online-compact: on` | Observed in the retained originals, exact. The registered XML independently pins the same disk (device Uuid, Enabled/Connected/Remote/Passthrough, DiskType 1) and the two are bound by the shared image path and the config's device-namespace Uuid staying distinct. |
+| `hdd0` fields | enabled, `sata:0`, `…/harddisk1.hdd`, `expanded`, `131072Mb`, `online-compact: off` | Observed in the retained originals except compaction: the planner reverted hdd0 to SATA with online compaction off on 2026-11-11 (recorded in the task-897 closing notes), so the reviewed value moved from `on` to `off`. The registered XML independently pins the same disk (device Uuid, Enabled/Connected/Remote/Passthrough, DiskType 1) and the two are bound by the shared image path and the config's device-namespace Uuid staying distinct. |
 | `cdrom0` fields | enabled, `sata:1`, empty image, `disconnected` | Observed, exact. Counted against the config's one `CdRom`; never a disk. |
 | `usb` fields | `enabled: true` only | Observed, exact: the CLI view carries no USB device. The reviewed virtual camera lives in the registered XML, whose camera record and connect history stay exact-field premises. |
 | Other Hardware sections | flat scalar maps | Observed shape. Their values are not inventory premises, but a nested object under an allowed section refuses, so nothing can hide there. |
@@ -899,7 +899,12 @@ runs the unsealed chain on the prepared fixed VM: diagnostic boot/stop, private
 SSH identity check, physical-image resume, engine and actual-container ENOSPC
 controls, exact-HEAD native builds, GNU artifact production, ordinary acquisition
 and the complete private-session assertions. Success stops the owned engine and
-VM. Each full unsealed smoke records its own output paths and unit identities.
+VM. The run takes one pre-run snapshot (`effigy-native-before-<id>`) before the
+diagnostic and, only after every stage succeeded and guest outputs were cleaned up,
+deletes that snapshot by its exact created identity and records the deletion in
+`native-smoke-complete.json`. A failed run keeps its snapshot for diagnosis, and a
+snapshot whose ID is referenced in `docs/qualification/**` or by code is never
+deleted. Each full unsealed smoke records its own output paths and unit identities.
 After success or failure it closes those units, exports scripts, streams, metadata
 and fixtures to the host, then removes only its recorded outputs. A failed export
 or uncertain custody retains originals for reconciliation. `--diagnostic-only` runs just the original

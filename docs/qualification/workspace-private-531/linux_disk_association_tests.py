@@ -604,8 +604,8 @@ class DiskAssociationControls(unittest.TestCase):
     def test_the_cli_inventory_has_no_serial_and_guest_disagreements_still_refuse(self):
         """The CLI configuration inventory carries no serial: nothing is compared or inferred. A
         guest-side disagreement between the probe and the sysfs read still refuses."""
-        self.assertEqual(set(inventory.parse_output(RETAINED_CLI_STDOUT.decode('ascii'),
-                                                    {'vm': inventory.REVIEWED_VM, 'home': inventory.REVIEWED_HOME})),
+        pin = dal.PINS[dal.MECHANISM]
+        self.assertEqual(set(inventory.parse_output(cli_info_text(pin), pin)),
                          {'vm', 'home', 'home_path', 'state', 'hardware'})
         self.assertEqual(table(valid_association(guest=guest(parent_serial='')))['guest_blocks'][0], 'pass')
         self.assertRefusedAt('guest_blocks', valid_association(guest=guest(sysfs_serial='S9')))
@@ -710,20 +710,27 @@ class ProductionInventoryControls(unittest.TestCase):
                                                         setup.SUPPORTED_DISK_MECHANISMS, dal.PINS).values()},
                          {'pass'})
 
-    def test_the_retained_747_stdout_parses_and_passes_every_premise_offline(self):
-        """The genuine retained step-004 CLI stdout, byte-pinned to its recorded sha256, drives the
-        full production premise table over fixture config/descriptor/guest bytes. This is an offline
+    def test_the_retained_747_stdout_predates_the_reconfigured_compaction_value(self):
+        """The genuine retained step-004 CLI stdout stays byte-pinned to its recorded sha256, but
+        it predates the 2026-11-11 SATA revert: it carries online-compact 'on' while the reviewed
+        value is now 'off'. The production premise table refuses host_read on exactly that field
+        while mechanism, config, descriptor and guest premises still pass. This is an offline
         derivative of the retained originals: no fresh evidence, no current inventory credit."""
         self.assertEqual(len(RETAINED_CLI_STDOUT), 4422)
         self.assertEqual(hashlib.sha256(RETAINED_CLI_STDOUT).hexdigest(), RETAINED_CLI_STDOUT_SHA256)
         pin = dal.PINS[dal.MECHANISM]
+        with self.assertRaises(inventory.GrammarError) as caught:
+            inventory.parse_output(RETAINED_CLI_STDOUT.decode('ascii'), pin)
+        self.assertIn('online-compact', str(caught.exception))
         read = host_read(pin, output=RETAINED_CLI_STDOUT)
         association = production_association(host_read=read)
         rows = table(association, setup.SUPPORTED_DISK_MECHANISMS, dal.PINS)
-        self.assertEqual({status for status, _ in rows.values()}, {'pass'}, rows)
-        result = setup.verify_disk_association(association)
-        self.assertEqual(result['vm'], VM)
-        self.assertEqual(result['system_name'], 'harddisk1.hdd')
+        self.assertEqual(rows['host_read'][0], 'refuse', rows)
+        self.assertIn('online-compact', rows['host_read'][1])
+        for premise in ('mechanism', 'config', 'descriptor', 'guest_blocks'):
+            self.assertEqual(rows[premise][0], 'pass', rows)
+        with self.assertRaises(setup.Refusal):
+            setup.verify_disk_association(association)
 
     def test_extra_or_unknown_device_section_refuses_inventory(self):
         """A second disk, an unknown hardware section, a second USB entry and a nested hiding place
@@ -749,14 +756,17 @@ class ProductionInventoryControls(unittest.TestCase):
 
     def test_the_data_disk_must_be_the_reviewed_image_backed_hdd0(self):
         """Any field of the one data disk that differs from the reviewed expanding image at SATA 0
-        refuses: port, image, type, size, compaction flag, enabled, an extra or missing field."""
+        refuses: port, image, type, size, compaction flag, enabled, an extra or missing field.
+        The reviewed compaction value is 'off' since the 2026-11-11 SATA revert."""
+        self.assertEqual(inventory.HDD0_REVIEWED['online-compact'], 'off')
+        self.assertEqual(table(valid_association())['host_read'][0], 'pass')
         cases = {
             'other port': dict(inventory.HDD0_REVIEWED, port='sata:3'),
             'other image': dict(inventory.HDD0_REVIEWED, image=setup.PVM_HOME + '/harddisk2.hdd'),
             'plain disk type': dict(inventory.HDD0_REVIEWED, type='plain'),
             'disabled disk': dict(inventory.HDD0_REVIEWED, enabled=False),
             'changed size': dict(inventory.HDD0_REVIEWED, size='65536Mb'),
-            'compaction off': dict(inventory.HDD0_REVIEWED, **{'online-compact': 'off'}),
+            'compaction on': dict(inventory.HDD0_REVIEWED, **{'online-compact': 'on'}),
             'extra field': dict(inventory.HDD0_REVIEWED, passthrough='0'),
             'missing field': {k: v for k, v in inventory.HDD0_REVIEWED.items() if k != 'type'},
         }
@@ -1086,6 +1096,71 @@ class ProductionInventoryControls(unittest.TestCase):
             dal.read_inventory(transport=inventory_transport(), pin={}, boot_id=BOOT,
                                read_boot_id=boot_reader([BOOT, BOOT]))
         self.assertEqual(caught.exception.phase, 'pin-missing')
+
+    def test_a_helper_refusal_propagates_its_phase_instead_of_masking_as_not_exited(self):
+        """A failed helper dispatch whose stdout carries the helper's exact refusal reports that
+        phase: a decided grammar refusal stays finding-shaped, while an empty failed dispatch
+        stays transport-shaped. Telling the two apart is what lets the stage retry transport
+        without retrying a decided refusal."""
+        refused_stdout = (b'status=refused phase=inventory-output-grammar'
+                           b' reason=host read Hardware hdd0 online-compact is not the reviewed value\n')
+        transport = inventory_transport(disposition='failed', waited_exit=3, stdout=refused_stdout)
+        with self.assertRaises(inventory.Refused) as caught:
+            dal.read_inventory(transport=transport, boot_id=BOOT, read_boot_id=boot_reader([BOOT, BOOT]))
+        self.assertEqual(caught.exception.phase, 'inventory-output-grammar')
+        self.assertNotIn(caught.exception.phase, inventory.TRANSPORT_PHASES)
+        self.assertIn('online-compact', caught.exception.reason)
+        # The inner-dispatch transport shape also propagates: the helper ran, its inner
+        # prlctl never produced output, and no premise was decided.
+        inner = inventory_transport(disposition='failed', waited_exit=3,
+                                    stdout=b"status=refused phase=inventory-not-exited"
+                                           b" reason=disposition 'failed'\n")
+        with self.assertRaises(inventory.Refused) as caught:
+            dal.read_inventory(transport=inner, boot_id=BOOT, read_boot_id=boot_reader([BOOT, BOOT]))
+        self.assertEqual(caught.exception.phase, 'inventory-not-exited')
+        self.assertIn(caught.exception.phase, inventory.TRANSPORT_PHASES)
+        # Anything that is not the helper's exact one-line refused shape stays
+        # dispatch-shaped: unknown phases, extra lines and non-ASCII bytes.
+        for stdout in (b'status=refused phase=bogus-phase\n', b'status=refused\n',
+                       b'status=refused phase=inventory-not-exited reason=x\nsecond line\n',
+                       'status=refused phase=inventory-not-exited'.encode('utf-16')):
+            with self.subTest(stdout=stdout):
+                shape = inventory_transport(disposition='failed', waited_exit=3, stdout=stdout)
+                with self.assertRaises(inventory.Refused) as caught:
+                    dal.read_inventory(transport=shape, boot_id=BOOT,
+                                       read_boot_id=boot_reader([BOOT, BOOT]))
+                self.assertEqual(caught.exception.phase, 'inventory-not-exited')
+
+    def test_transport_phases_are_exactly_the_undecided_dispatch_failures(self):
+        """Only dispatch failures that never reached the helper's exact refusal are transport:
+        a decided outcome (grammar, encoding, truncation, a moved boot, a drifted helper)
+        is never retried as transport."""
+        self.assertEqual(inventory.TRANSPORT_PHASES,
+                         frozenset({'inventory-output-missing', 'inventory-not-exited',
+                                    'inventory-exit-nonzero'}))
+        for phase in inventory.TRANSPORT_PHASES:
+            self.assertIn(phase, inventory.READ_PHASES)
+        for phase in ('inventory-output-grammar', 'inventory-output-encoding',
+                      'inventory-truncated', 'inventory-vm-differs', 'boot-bracket-moved',
+                      'boot-bracket-malformed', 'helper-bytes-differ', 'pin-missing'):
+            self.assertNotIn(phase, inventory.TRANSPORT_PHASES)
+
+    def test_a_transport_shaped_failure_dispatches_once_at_this_level(self):
+        """read_inventory itself never retries: one failed session dispatch is one Refused with
+        a transport phase, and the boot bracket ran once around that single attempt. The
+        bounded retry lives in the stage handoff, not in this dispatch."""
+        calls = []
+
+        def transport(argv, stdin_path, timeout, cap):
+            calls.append(argv)
+            return {'disposition': 'failed', 'waited_exit': 255, 'stdout': b'',
+                    'stderr': b'Unable to open new session in this virtual machine.\n'}
+
+        with self.assertRaises(inventory.Refused) as caught:
+            dal.read_inventory(transport=transport, boot_id=BOOT, read_boot_id=boot_reader([BOOT]))
+        self.assertEqual(caught.exception.phase, 'inventory-not-exited')
+        self.assertIn(caught.exception.phase, inventory.TRANSPORT_PHASES)
+        self.assertEqual(calls, [inventory.inventory_argv()])
 
     def test_guest_facts_refuse_a_hidden_or_disagreeing_device(self):
         block, lsblk = guest_block_observations()

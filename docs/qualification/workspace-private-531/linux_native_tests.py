@@ -1047,5 +1047,163 @@ def capacity_fixture(head='b'*40, kind='exploration', workspace='/bounded'):
         full['live'].append(original)
     return packet, full
 
+class PrerunSnapshotHygieneTests(unittest.TestCase):
+    """Only the run's own pre-run snapshot is ever deleted, only on success, never a
+    referenced one. No VM runs here: a fake attempt serves canned snapshot-list
+    inventories and records every argv."""
+    PIN_A = 'd1602e5a-964a-4375-9eec-df6ed4350305'
+    PIN_B = '4d475daf-8aa1-497a-9a38-355f21fcd867'
+
+    def fresh_id(self, name):
+        import uuid
+        value = str(uuid.uuid5(uuid.NAMESPACE_URL, name))
+        self.assertNotIn(value, smoke.REFERENCED_SNAPSHOTS)
+        return value
+
+    def fresh_name(self, name):
+        import uuid
+        return smoke.SNAPSHOT_NAME_PREFIX + uuid.uuid5(uuid.NAMESPACE_URL, name).hex
+
+    def listed(self, entries):
+        return {'{%s}' % key: {'name': name} for key, name in entries.items()}
+
+    class FakeAttempt:
+        def __init__(self, inventories):
+            self.inventories = list(inventories)
+            self.argv_log = []
+
+        def command(self, argv, **kwargs):
+            self.argv_log.append(list(argv))
+            if argv[1] == 'snapshot-list':
+                import json
+                return json.dumps(self.inventories.pop(0)).encode()
+            if argv[1] in ('snapshot', 'snapshot-delete'):
+                return b''
+            raise AssertionError(argv)
+
+        def deletes(self):
+            return [argv for argv in self.argv_log if argv[1] == 'snapshot-delete']
+
+    def test_take_binds_the_exact_created_identity(self):
+        import uuid
+        stamp = uuid.uuid5(uuid.NAMESPACE_URL, 'take-stamp').hex
+        name = smoke.SNAPSHOT_NAME_PREFIX + stamp
+        created = self.fresh_id('take')
+        before = {self.fresh_id('take-before'): {'name': 'other'}}
+        after = dict(before, **{created: {'name': name}})
+
+        class Named:
+            hex = stamp
+
+        attempt = self.FakeAttempt([self.listed({k: v['name'] for k, v in before.items()}),
+                                    self.listed({k: v['name'] for k, v in after.items()})])
+        with patch.object(smoke.uuid, 'uuid4', return_value=Named()):
+            bound = smoke.take_prerun_snapshot(attempt)
+        self.assertEqual(bound, {'id': created, 'name': name})
+        self.assertTrue(any(argv[1] == 'snapshot' and argv[-1] == name for argv in attempt.argv_log))
+        self.assertEqual(attempt.deletes(), [])
+
+    def test_creation_that_is_not_exactly_one_new_identity_refuses(self):
+        name = self.fresh_name('ambiguous')
+        created, other = self.fresh_id('ambiguous'), self.fresh_id('ambiguous-other')
+        before = {self.fresh_id('ambiguous-before'): {'name': 'other'}}
+        for label, after in (
+                ('nothing new', dict(before)),
+                ('two new', dict(before, **{created: {'name': name}, other: {'name': name}})),
+                ('renamed entry', dict(before, **{created: {'name': 'renamed'}})),
+                ('duplicate name', {next(iter(before)): {'name': name}, created: {'name': name}})):
+            with self.subTest(label):
+                with self.assertRaisesRegex(RuntimeError, 'pre-run snapshot|created snapshot'):
+                    smoke.resolve_created_snapshot(before, after, name)
+
+    def test_only_the_run_s_own_snapshot_is_deleted(self):
+        own, name = self.fresh_id('own'), self.fresh_name('own')
+        live = {own: name, self.PIN_A: 'effigy-explore-2026-11-09',
+                self.PIN_B: 'clean-base', '11111111-2222-3333-4444-555555555555': 'unrelated'}
+        attempt = self.FakeAttempt([self.listed(live),
+                                    self.listed({k: v for k, v in live.items() if k != own})])
+        record = smoke.delete_owned_snapshot(attempt, own, name)
+        self.assertEqual(record['deleted_id'], own)
+        self.assertEqual(record['deleted_name'], name)
+        self.assertTrue(record['verified_absent'])
+        self.assertEqual(attempt.deletes(),
+                         [[smoke.diagnostic.PRLCTL, 'snapshot-delete', smoke.setup.VM_UUID,
+                           '--id', '{' + own + '}']])
+        self.assertEqual(record['delete_argv'], attempt.deletes()[0])
+
+    def test_referenced_snapshots_are_never_deleted(self):
+        for pin in (self.PIN_A, self.PIN_B):
+            with self.subTest(pin=pin):
+                name = self.fresh_name('referenced-' + pin)
+                live = {pin: name}
+                attempt = self.FakeAttempt([self.listed(live)])
+                with self.assertRaisesRegex(RuntimeError, 'referenced'):
+                    smoke.delete_owned_snapshot(attempt, pin, name)
+                self.assertEqual(attempt.deletes(), [])
+                with self.assertRaisesRegex(RuntimeError, 'referenced'):
+                    smoke.check_deletable(pin, name, {pin: {'name': name}})
+
+    def test_foreign_missing_or_malformed_targets_refuse_without_a_delete(self):
+        own, name = self.fresh_id('foreign'), self.fresh_name('foreign')
+        live = {own: name, self.PIN_A: 'effigy-explore-2026-11-09'}
+        missing = self.fresh_id('missing')
+        cases = {
+            'unlisted identity': (missing, name, live),
+            'name mismatch': (own, self.fresh_name('other-name'), live),
+            'foreign name': (self.PIN_A, 'effigy-explore-2026-11-09', live),
+            'malformed identity': ('not-a-snapshot', name, live),
+            'non-run name': (own, 'effigy-explore-2026-11-09', {own: 'effigy-explore-2026-11-09'}),
+            'duplicate name': (own, name, dict(live, **{'22222222-2222-2222-2222-222222222222': name})),
+        }
+        for label, (target, target_name, inventory) in cases.items():
+            with self.subTest(label):
+                attempt = self.FakeAttempt([self.listed(inventory)])
+                with self.assertRaises(RuntimeError):
+                    smoke.delete_owned_snapshot(attempt, target, target_name)
+                self.assertEqual(attempt.deletes(), [])
+
+    def test_a_delete_that_stays_listed_refuses(self):
+        own, name = self.fresh_id('lingering'), self.fresh_name('lingering')
+        live = {own: name}
+        attempt = self.FakeAttempt([self.listed(live), self.listed(live)])
+        with self.assertRaisesRegex(RuntimeError, 'still listed'):
+            smoke.delete_owned_snapshot(attempt, own, name)
+        self.assertEqual(len(attempt.deletes()), 1)
+
+    def test_success_validations_precede_the_snapshot_deletion(self):
+        """Regression guard for the review finding: the pre-run snapshot is deleted only
+        after the final success validations (GNU export present, capacity restored).
+        A failed final check must keep the snapshot for diagnosis, so the deletion
+        call sits after both requires in full_chain."""
+        import inspect
+        source = inspect.getsource(smoke.full_chain)
+        delete_at = source.index('delete_owned_snapshot(attempt')
+        for marker in ('completed native smoke is missing its exported GNU artifact family',
+                       'guest-capacity: run did not restore free space within tolerance'):
+            self.assertLess(source.index(marker), delete_at, marker)
+
+    def test_referenced_literal_covers_every_uuid_in_qualification_sources(self):
+        import re
+        from pathlib import Path
+        pattern = re.compile(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
+                             r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}')
+        found = set()
+        root = Path(smoke.__file__).resolve().parent
+        for path in sorted(root.rglob('*')):
+            if not path.is_file() or path.is_symlink():
+                continue
+            try:
+                text = path.read_text(encoding='utf-8')
+            except (OSError, UnicodeDecodeError):
+                continue
+            found.update(match.group(0).lower() for match in pattern.finditer(text))
+        self.assertTrue(found, 'the qualification sources name no UUID at all')
+        self.assertEqual(found - smoke.REFERENCED_SNAPSHOTS, set(),
+                         'docs/qualification/** names UUIDs the deletion veto does not cover; '
+                         'extend REFERENCED_SNAPSHOTS')
+        self.assertIn(self.PIN_A, smoke.REFERENCED_SNAPSHOTS)
+        self.assertIn(self.PIN_B, smoke.REFERENCED_SNAPSHOTS)
+
+
 if __name__ == '__main__':
     unittest.main()
