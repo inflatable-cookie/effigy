@@ -13,6 +13,7 @@ mod managed_matrix;
 #[path = "gateway_private/adapterless_listener.rs"]
 mod adapterless_listener;
 
+
 #[path = "gateway_private/fixture_sweep.rs"]
 mod fixture_sweep;
 
@@ -1327,7 +1328,8 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
             );
             assert!(
                 response.contains("200 OK")
-                    && response.contains(&format!("{body}@{}", state["child_pid"])),
+                    && response
+                        .contains(&format!("{body}@{}", state["process"]["identity"]["pid"])),
                 "cold endpoint did not reach its published listener: {response}"
             );
         }
@@ -1452,7 +1454,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
             .read_to_string(&mut direct_response)
             .expect("read direct managed listener response");
         assert!(
-            direct_response.contains(&format!("{body}@{}", state["child_pid"])),
+            direct_response.contains(&format!("{body}@{}", state["process"]["identity"]["pid"])),
             "the reserved listener returned an unexpected response: {direct_response}"
         );
         let gateway_response = wait_for_listener_https(
@@ -1463,7 +1465,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
             body,
             Instant::now() + Duration::from_secs(5),
         );
-        let expected_body = format!("{body}@{}", state["child_pid"]);
+        let expected_body = format!("{body}@{}", state["process"]["identity"]["pid"]);
         assert!(
             gateway_response.contains("200 OK") && gateway_response.contains(&expected_body),
             "gateway request for {domain} did not reach its owned listener: response={gateway_response}; state={state}; route={route:?}; app_log={}; requests={}; gateway_stderr={}",
@@ -1537,7 +1539,10 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         &new_state,
         "app restart",
     );
-    assert_ne!(new_state["child_pid"], old_state["child_pid"]);
+    assert_ne!(
+        new_state["process"]["identity"]["pid"],
+        old_state["process"]["identity"]["pid"]
+    );
     wait_for_listener_https(
         https_address,
         &ca_path,
@@ -1566,7 +1571,10 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         old_dependent["generation"].as_str().unwrap(),
         Duration::from_secs(20),
     );
-    assert_ne!(dependent_successor["child_pid"], old_dependent["child_pid"]);
+    assert_ne!(
+        dependent_successor["process"]["identity"]["pid"],
+        old_dependent["process"]["identity"]["pid"]
+    );
     assert_eq!(dependent_successor["status"], "ready");
     // Handover success is only observed here once the losing dependent scope is
     // settled: the published table no longer names its generation or endpoint,
@@ -1579,7 +1587,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         "dependent replacement",
     );
     println!("published dependent replacement: predecessor={} old_child={} successor={} new_child={} dependency_generation={} selected_phase=published native_exit_and_group_settlement=true",
-        old_dependent["generation"], old_dependent["child_pid"], dependent_successor["generation"], dependent_successor["child_pid"], new_state["generation"]);
+        old_dependent["generation"], old_dependent["process"]["identity"]["pid"], dependent_successor["generation"], dependent_successor["process"]["identity"]["pid"], new_state["generation"]);
     let websocket = curl_websocket_for_hostname(https_address, &ca_path, primary_domain);
     assert!(
         websocket.contains("101 Switching Protocols"),
@@ -1621,7 +1629,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     assert_eq!(primary_stopped_state["status"], "stopped");
     assert!(
         primary_stopped_state["route_owner"].is_null()
-            && primary_stopped_state["child_pid"].is_null(),
+            && primary_stopped_state["process"]["identity"]["pid"].is_null(),
         "scoped stop retained a managed listener generation: {primary_stopped_state}"
     );
     let stopped_dependent = read_json_file(&listener_state_path(
@@ -1630,7 +1638,10 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         "consumer",
     ));
     assert_eq!(stopped_dependent["status"], "stopped");
-    assert!(stopped_dependent["child_pid"].is_null() && stopped_dependent["route_owner"].is_null());
+    assert!(
+        stopped_dependent["process"]["identity"]["pid"].is_null()
+            && stopped_dependent["route_owner"].is_null()
+    );
     for index in [1, 2] {
         let (checkout, profile, domain, body) = &checkouts[index];
         let state = read_json_file(&listener_state_path(checkout, profile, "app"));
@@ -1705,7 +1716,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         .join("\n")
     );
     assert!(
-        collision_stopped["child_pid"].is_null(),
+        collision_stopped["process"]["identity"]["pid"].is_null(),
         "collision cleanup retained its child: {collision_stopped}"
     );
     let collision_generation = collision_stopped["generation"].clone();
@@ -1784,7 +1795,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         "failed startup retained an endpoint owner: {delayed_state}; stderr={}",
         String::from_utf8_lossy(&delayed.stderr)
     );
-    assert!(delayed_state["child_pid"].is_null());
+    assert!(delayed_state["process"]["identity"]["pid"].is_null());
 
     // Another checkout that is still there and still answers owns the domain:
     // its checkout path exists and its target accepts connections, so it is not
@@ -1880,7 +1891,10 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     assert_eq!(recovered_state["route_domain"], "unknown.host.test");
     assert_eq!(
         curl_https(https_address, &ca_path, "unknown.host.test", "/"),
-        format!("{primary_body}@{}", recovered_state["child_pid"]),
+        format!(
+            "{primary_body}@{}",
+            recovered_state["process"]["identity"]["pid"]
+        ),
         "the checkout that replaced its leftover record serves its listener"
     );
     // Leave this checkout as the rest of the proof expects it: stopped, with
@@ -1901,7 +1915,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         let state = read_json_file(&listener_state_path(checkout, profile, "app"));
         assert_eq!(
             curl_https(https_address, &ca_path, domain, "/"),
-            format!("{body}@{}", state["child_pid"]),
+            format!("{body}@{}", state["process"]["identity"]["pid"]),
             "failed private startup must preserve live sibling routes"
         );
     }
@@ -1938,7 +1952,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
             "generation": state["generation"],
             "address": state["address"],
             "supervisor_pid": state["supervisor_pid"],
-            "child_pid": state["child_pid"],
+            "child_pid": state["process"]["identity"]["pid"],
         })
     })
     .collect::<Vec<_>>();
@@ -2259,7 +2273,7 @@ tls = false
         .map(|checkout| {
             read_json_file(&checkout.join(
                 ".effigy/runtime/host-processes/z374proof/scope-fixture/listener.listener.json",
-            ))["child_pid"]
+            ))["process"]["identity"]["pid"]
                 .as_u64()
                 .unwrap() as u32
         })
@@ -2735,10 +2749,10 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
             Duration::from_secs(10),
         );
         generations.push(generation.to_owned());
-        child_pids.push(state["child_pid"].clone());
+        child_pids.push(state["process"]["identity"]["pid"].clone());
     }
     let primary_state = read_json_file(&state_path(&checkouts[0].0, checkouts[0].1));
-    assert_eq!(primary_state["child_pid"], child_pids[0]);
+    assert_eq!(primary_state["process"]["identity"]["pid"], child_pids[0]);
     wait_for_listener_https(
         https_address,
         &ca_path,
@@ -2798,7 +2812,8 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
         "explicit shared identity must not take the primary's declared host"
     );
     assert!(
-        host_lifecycle::read(&state_path(shared_checkout, "scoped-shared")).is_none(),
+        !state_path(shared_checkout, "scoped-shared").exists()
+            && host_lifecycle::at_path(&state_path(shared_checkout, "scoped-shared")).is_none(),
         "a refused shared-identity listener must leave no runtime state"
     );
     assert_eq!(
@@ -2830,7 +2845,7 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
     ));
     assert_eq!(restart_hosts["scope"]["kind"], "worktree");
     assert_ne!(restart_hosts["routes"][0]["effective"], DECLARED_HOST);
-    let restart_pid = read_json_file(&state_path(restart, "restart"))["child_pid"]
+    let restart_pid = read_json_file(&state_path(restart, "restart"))["process"]["identity"]["pid"]
         .as_u64()
         .unwrap() as u32;
     assert_success(run_container_cli(
@@ -2854,7 +2869,7 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
         .is_some());
     let stack_pid =
         read_json_file(&stack.join(".effigy/runtime/host-processes/stack/stack/app.listener.json"))
-            ["child_pid"]
+            ["process"]["identity"]["pid"]
             .as_u64()
             .unwrap() as u32;
     assert_success(
@@ -2881,7 +2896,8 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
             .1,
         failed_token
     );
-    let retry_pid = read_json_file(&state_path(shared_checkout, "scoped-shared"))["child_pid"]
+    let retry_pid = read_json_file(&state_path(shared_checkout, "scoped-shared"))["process"]
+        ["identity"]["pid"]
         .as_u64()
         .unwrap() as u32;
     assert_success(run_container_cli(
@@ -2917,7 +2933,7 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
         "a restart keeps the reserved listener endpoint"
     );
     let new_generation = new_state["generation"].as_str().unwrap();
-    let new_child_pid = new_state["child_pid"].clone();
+    let new_child_pid = new_state["process"]["identity"]["pid"].clone();
     // The scoped successor keeps the worktree's domain published while the
     // superseded generation's route and endpoint are withdrawn (a841af96).
     assert_generation_withdrawn(
@@ -2927,7 +2943,7 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
         &new_state,
         "scoped successor",
     );
-    assert_ne!(new_child_pid, old_state["child_pid"]);
+    assert_ne!(new_child_pid, old_state["process"]["identity"]["pid"]);
     wait_for_listener_https(
         https_address,
         &ca_path,
@@ -2956,7 +2972,7 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
             Some(generations[index].as_str()),
             "a sibling restart must not change this generation"
         );
-        assert_eq!(state["child_pid"], child_pids[index]);
+        assert_eq!(state["process"]["identity"]["pid"], child_pids[index]);
         wait_for_listener_https(
             https_address,
             &ca_path,
@@ -2980,7 +2996,7 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
     for index in [0, 2] {
         let (checkout, profile, body) = &checkouts[index];
         let state = read_json_file(&state_path(checkout, profile));
-        assert_eq!(state["child_pid"], child_pids[index]);
+        assert_eq!(state["process"]["identity"]["pid"], child_pids[index]);
         wait_for_listener_https(
             https_address,
             &ca_path,
@@ -3146,7 +3162,7 @@ fn fresh_linked_hybrid_dev_prepares_scope_before_policy() {
     let state = read_json_file(
         &linked.join(".effigy/runtime/host-processes/web/dev-linked/app.listener.json"),
     );
-    let listener_pid = state["child_pid"].as_u64().unwrap() as u32;
+    let listener_pid = state["process"]["identity"]["pid"].as_u64().unwrap() as u32;
     assert!(RouteTable::load(&private_gateway.join("routes.json"))
         .unwrap()
         .lookup(effective)
@@ -3430,7 +3446,7 @@ fn managed_host_readiness_terminal_failure_names_the_reserved_port() {
     assert!(
         state["address"].is_null()
             && state["route_owner"].is_null()
-            && state["child_pid"].is_null(),
+            && state["process"]["identity"]["pid"].is_null(),
         "a terminal failure retains no endpoint or child claim: {state}"
     );
 
@@ -3595,10 +3611,18 @@ fn managed_host_listener_leader_exit_restarts_by_policy() {
         "",
         Duration::from_secs(30),
     );
-    let replaced_pid = u32::try_from(replaced["child_pid"].as_u64().expect("recorded leader pid"))
-        .expect("leader pid fits a process id");
-    let settled_pid = u32::try_from(settled["child_pid"].as_u64().expect("recorded leader pid"))
-        .expect("leader pid fits a process id");
+    let replaced_pid = u32::try_from(
+        replaced["process"]["identity"]["pid"]
+            .as_u64()
+            .expect("recorded leader pid"),
+    )
+    .expect("leader pid fits a process id");
+    let settled_pid = u32::try_from(
+        settled["process"]["identity"]["pid"]
+            .as_u64()
+            .expect("recorded leader pid"),
+    )
+    .expect("leader pid fits a process id");
 
     let controlled = HeldListenerProxy::start(&private_gateway, held_routes.shared_table());
 
@@ -3623,7 +3647,7 @@ fn managed_host_listener_leader_exit_restarts_by_policy() {
         "an `on-failure` restart keeps the port the endpoint store reserved"
     );
     assert_ne!(
-        successor["child_pid"], replaced["child_pid"],
+        successor["process"]["identity"]["pid"], replaced["process"]["identity"]["pid"],
         "the successor generation is a new child generation"
     );
     assert_generation_withdrawn(
@@ -3669,7 +3693,10 @@ fn managed_host_listener_leader_exit_restarts_by_policy() {
     );
     assert!(
         response.contains("200 OK")
-            && response.contains(&format!("restart-body@{}", successor["child_pid"])),
+            && response.contains(&format!(
+                "restart-body@{}",
+                successor["process"]["identity"]["pid"]
+            )),
         "the republished route must reach the restarted listener: {response}"
     );
 
@@ -3714,8 +3741,12 @@ fn managed_host_listener_leader_exit_restarts_by_policy() {
         String::from_utf8_lossy(&down.stdout),
         String::from_utf8_lossy(&down.stderr)
     );
-    let successor_pid = u32::try_from(successor["child_pid"].as_u64().expect("successor pid"))
-        .expect("successor pid fits a process id");
+    let successor_pid = u32::try_from(
+        successor["process"]["identity"]["pid"]
+            .as_u64()
+            .expect("successor pid"),
+    )
+    .expect("successor pid fits a process id");
     for pid in [successor_pid, settled_pid] {
         let deadline = Instant::now() + Duration::from_secs(20);
         while effigy_process::process_is_running(pid) {
@@ -3948,7 +3979,7 @@ fn milestone_130acca8_https_waits_poll_through_a_missing_certificate_and_an_unco
 
     let domain = "milestone-130acca8.host.test";
     let body = "controlled-body";
-    let generation = serde_json::json!({ "child_pid": 4242u32, "generation": "milestone" });
+    let generation = serde_json::json!({ "process": { "identity": { "pid": 4242u32 } }, "generation": "milestone" });
     let upstream = CannedUpstream::start("controlled-body@4242");
     save_private_routes(&root, &[(domain, upstream.address, true)]);
     let proxy = ControlledTlsProxy::start(&root);
@@ -4202,7 +4233,7 @@ fn wait_for_listener_https(
     body: &str,
     deadline: Instant,
 ) -> String {
-    let pid = generation["child_pid"]
+    let pid = generation["process"]["identity"]["pid"]
         .as_u64()
         .expect("listener child pid");
     let expected = format!("{body}@{pid}");
@@ -4775,6 +4806,15 @@ fn assert_generation_withdrawn(
 }
 
 fn read_json_file(path: &Path) -> Value {
+    if path.to_string_lossy().ends_with(".listener.json") {
+        assert!(
+            !path.exists(),
+            "current supervisors publish lifecycle effects, not {}",
+            path.display()
+        );
+        return host_lifecycle::at_path(path)
+            .unwrap_or_else(|| panic!("no lifecycle observation for {}", path.display()));
+    }
     host_lifecycle::read(path).unwrap_or_else(|| panic!("state {} is unavailable", path.display()))
 }
 
@@ -8021,7 +8061,7 @@ fn environment_owned_supervisor_outlives_the_task_that_started_it() {
         "a restart reuses the port Effigy reserved"
     );
     assert_ne!(
-        successor["child_pid"], first["child_pid"],
+        successor["process"]["identity"]["pid"], first["process"]["identity"]["pid"],
         "the successor must be a fresh listener process"
     );
     wait_for_listener_https(https_address, &ca_path, domain, &successor, body, deadline);

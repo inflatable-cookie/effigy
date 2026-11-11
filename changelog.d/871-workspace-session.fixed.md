@@ -1,0 +1,1 @@
+Keep workspace sessions available for the next task when a completed task's client disconnects after its attachment has settled, and preserve managed listener readiness failures while a replacement waits to start.

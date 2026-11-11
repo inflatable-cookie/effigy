@@ -1915,6 +1915,20 @@ impl<'a> HostGeneration<'a> {
         run: &mut effigy_kernel::run::Run<'_>,
         status: HostLifecycleStatus,
     ) -> Result<(), RunnerError> {
+        // A retry waiting for dependencies has not started another child.
+        // Preserve this owner's failure until the next custody generation
+        // actually exists, so rollback cannot replace it with a blank stop.
+        if status == HostLifecycleStatus::Starting && self.custody_nonce.is_none() {
+            let previous = run
+                .effects()
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+            if kernel_run::lifecycle_from_effects(&previous).is_some_and(|state| {
+                state.status == HostLifecycleStatus::Failed
+                    && state.supervisor_pid == self.supervisor_pid
+            }) {
+                return Ok(());
+            }
+        }
         kernel_run::publish_lifecycle(run, &self.record(status))
     }
 }
@@ -2033,7 +2047,7 @@ fn supervise_managed_host_listener(
         wait_for_dependency_environment(spec, &mut stop)?
     };
     let Some((dependency_env, dependency_generations)) = dependencies else {
-        state.write(run, HostLifecycleStatus::Stopped)?;
+        write_terminal_listener_state(run, spec, supervisor_pid)?;
         shutdown.store(true, Ordering::SeqCst);
         return Ok(GenerationEnd::Stopped);
     };
@@ -2101,6 +2115,7 @@ fn supervise_managed_host_listener(
             write_terminal_listener_state(run, spec, supervisor_pid)?;
             return Ok(GenerationEnd::Stopped);
         }
+        state.custody_nonce = None;
         state.diagnostic = Some(error.to_string());
         state.observed_status = observed_status;
         state.write(run, HostLifecycleStatus::Failed)?;

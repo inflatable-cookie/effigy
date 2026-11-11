@@ -110,9 +110,9 @@ fn wait_for_withdrawn_route(
     }
 }
 
-/// Poll a listener state file until it records what `wanted` names. The
-/// supervisor publishes a route to the store before it rewrites its state
-/// file, so a proof that observed the store must also wait out this
+/// Poll the typed lifecycle observation until it records what `wanted` names.
+/// The supervisor publishes its route before its lifecycle effect, so a proof
+/// that observed the route must also wait out this
 /// write-ordering gap instead of reading the stale record once (effigy#554).
 fn wait_for_listener_state(
     state_path: &Path,
@@ -408,7 +408,7 @@ fn managed_host_adapterless_listener_publishes_a_plain_servers_route_and_restart
 
     // Restarting the child replaces the generation and keeps the reserved
     // port: the successor is ready when that same port answers again.
-    let child_pid = state["child_pid"]
+    let child_pid = state["process"]["identity"]["pid"]
         .as_u64()
         .expect("a ready listener records its child") as u32;
     let old_generation = state["generation"].as_str().unwrap().to_owned();
@@ -733,7 +733,7 @@ while True:
     ));
     let state = read_json_file(&state_path);
     let generation = state["generation"].clone();
-    let child_pid = state["child_pid"].clone();
+    let child_pid = state["process"]["identity"]["pid"].clone();
     assert_eq!(state["status"], "ready", "{state}");
     // Hold each server until verified HTTPS has exercised it. A timer can
     // kill a cold Python before it listens on a busy hosted runner.
@@ -759,7 +759,7 @@ while True:
     let after = read_json_file(&state_path);
     assert_eq!(after["status"], "ready", "{after}");
     assert_eq!(after["generation"], generation, "{after}");
-    assert_eq!(after["child_pid"], child_pid, "{after}");
+    assert_eq!(after["process"]["identity"]["pid"], child_pid, "{after}");
     assert!(
         RouteTable::load(&routes_path)
             .expect("published routes")
@@ -1131,7 +1131,7 @@ fn managed_host_listener_probe_miss_does_not_restart_the_child() {
     let state = read_json_file(&state_path);
     assert_eq!(state["status"], "ready", "{state}");
     let generation = state["generation"].clone();
-    let child_pid = state["child_pid"].clone();
+    let child_pid = state["process"]["identity"]["pid"].clone();
     // The port goes quiet for six seconds, which is at most two consecutive
     // five-second probes: no withdrawal, no restart, no generation change.
     let deadline = Instant::now() + Duration::from_secs(12);
@@ -1139,7 +1139,10 @@ fn managed_host_listener_probe_miss_does_not_restart_the_child() {
         let observed = read_json_file(&state_path);
         assert_eq!(observed["status"], "ready", "{observed}");
         assert_eq!(observed["generation"], generation, "{observed}");
-        assert_eq!(observed["child_pid"], child_pid, "{observed}");
+        assert_eq!(
+            observed["process"]["identity"]["pid"], child_pid,
+            "{observed}"
+        );
         thread::sleep(Duration::from_millis(200));
     }
     wait_for_published_route(
@@ -1289,7 +1292,7 @@ fn managed_host_listener_republishes_its_route_when_the_port_answers_again() {
     let state = read_json_file(&state_path);
     assert_eq!(state["status"], "ready", "{state}");
     let generation = state["generation"].clone();
-    let child_pid = state["child_pid"].clone();
+    let child_pid = state["process"]["identity"]["pid"].clone();
     let address = state["address"]
         .as_str()
         .expect("published address")
@@ -1330,13 +1333,16 @@ fn managed_host_listener_republishes_its_route_when_the_port_answers_again() {
             state["status"] == "unavailable"
                 && state["route_owner"].is_null()
                 && state["generation"] == generation
-                && state["child_pid"] == child_pid
+                && state["process"]["identity"]["pid"] == child_pid
         },
     );
     assert_eq!(withdrawn["status"], "unavailable", "{withdrawn}");
     assert!(withdrawn["route_owner"].is_null(), "{withdrawn}");
     assert_eq!(withdrawn["generation"], generation, "{withdrawn}");
-    assert_eq!(withdrawn["child_pid"], child_pid, "{withdrawn}");
+    assert_eq!(
+        withdrawn["process"]["identity"]["pid"], child_pid,
+        "{withdrawn}"
+    );
     wait_for_file_contains(&log_path, "route withdrawn", Duration::from_secs(10));
 
     control
@@ -1362,13 +1368,16 @@ fn managed_host_listener_republishes_its_route_when_the_port_answers_again() {
         |state| {
             state["status"] == "ready"
                 && state["generation"] == generation
-                && state["child_pid"] == child_pid
+                && state["process"]["identity"]["pid"] == child_pid
                 && state["route_owner"]["generation"] == generation
         },
     );
     assert_eq!(republished["status"], "ready", "{republished}");
     assert_eq!(republished["generation"], generation, "{republished}");
-    assert_eq!(republished["child_pid"], child_pid, "{republished}");
+    assert_eq!(
+        republished["process"]["identity"]["pid"], child_pid,
+        "{republished}"
+    );
     assert_eq!(
         republished["route_owner"]["generation"], generation,
         "the republished route names the same generation: {republished}"
@@ -1564,7 +1573,7 @@ fn managed_host_listener_retries_a_failed_republication_while_the_port_answers()
     let state = read_json_file(&state_path);
     assert_eq!(state["status"], "ready", "{state}");
     let generation = state["generation"].clone();
-    let child_pid = state["child_pid"].clone();
+    let child_pid = state["process"]["identity"]["pid"].clone();
     let address = state["address"]
         .as_str()
         .expect("published address")
@@ -1632,12 +1641,15 @@ fn managed_host_listener_retries_a_failed_republication_while_the_port_answers()
         |state| {
             state["status"] == "ready"
                 && state["generation"] == generation
-                && state["child_pid"] == child_pid
+                && state["process"]["identity"]["pid"] == child_pid
         },
     );
     assert_eq!(republished["status"], "ready", "{republished}");
     assert_eq!(republished["generation"], generation, "{republished}");
-    assert_eq!(republished["child_pid"], child_pid, "{republished}");
+    assert_eq!(
+        republished["process"]["identity"]["pid"], child_pid,
+        "{republished}"
+    );
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         let body = setup.verified_https(domain);

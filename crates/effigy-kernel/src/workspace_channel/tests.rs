@@ -5378,3 +5378,141 @@ fn session_request_phases_renew_only_open_lifetimes_and_preserve_fixed_deadlines
     let (_, cancelled) = RequestPhases::Session.contexts(&session).unwrap();
     assert!(cancelled.check("cancelled request").is_err());
 }
+
+/// The slow gap reader disconnects after the task has settled. Its compacted
+/// attachment must not fence the session's next task admission.
+#[test]
+fn settled_gap_task_eof_allows_the_next_task_on_the_same_workspace_host() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    struct OwnedAdmissions<'a> {
+        root: &'a StateRoot,
+        runs: Rc<RefCell<Vec<Run<'a>>>>,
+    }
+    impl Admission for OwnedAdmissions<'_> {
+        fn admitted_fence(&self, ticket: &AdmissionTicket) -> Option<run::Fence> {
+            self.runs
+                .borrow()
+                .iter()
+                .find(|run| run.id() == ticket.run())
+                .map(|run| run.fence().clone())
+        }
+        fn admit(
+            &mut self,
+            cx: &EffectContext,
+            ticket: &AdmissionTicket,
+            resolved: &ResolvedInvocation,
+        ) -> Result<(), Refusal> {
+            let run = Run::begin_admitted(
+                cx,
+                self.root,
+                resolved,
+                BeginOpts {
+                    id: ticket.run(),
+                    wait: Wait::FailFast,
+                    acknowledge: vec![],
+                    next: next_argv(),
+                    custody: None,
+                },
+                &cleanup(cx),
+                &mut NoEffects,
+                ticket.clone(),
+            )
+            .map_err(refusal_from)?;
+            self.runs.borrow_mut().push(run);
+            Ok(())
+        }
+    }
+    struct SettleBeforeEof<'a> {
+        pipe: Pipe,
+        runs: Rc<RefCell<Vec<Run<'a>>>>,
+        cx: &'a EffectContext,
+    }
+    impl Transport for SettleBeforeEof<'_> {
+        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+            let count = self.pipe.read(bytes)?;
+            if count == 0 {
+                for mut run in self.runs.borrow_mut().drain(..) {
+                    run.finish(crate::outcome::WorkloadOutcome::Succeeded)
+                        .unwrap();
+                    run.settle(&cleanup(self.cx), &mut NoEffects).unwrap();
+                }
+            }
+            Ok(count)
+        }
+        fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+            self.pipe.write_all(bytes)
+        }
+        fn verified_peer(&self) -> Option<ServerIdentity> {
+            self.pipe.verified_peer()
+        }
+    }
+    let (_fixture, cx, root, session) = journal("effigy-gap-next-admission");
+    let runs = Rc::new(RefCell::new(Vec::new()));
+    let mut grants = GrantBook::new();
+    grants.issue(
+        capability(),
+        binding(session),
+        session_operations(),
+        [Target::Host].into_iter().collect(),
+    );
+    let mut host = Server::new(
+        host(),
+        fence(session),
+        pinned(),
+        grants,
+        Dispatcher::new(
+            OwnedAdmissions {
+                root: &root,
+                runs: runs.clone(),
+            },
+            Resolver::new(task("workspace-channel").resource()),
+            Observer::default(),
+            Ids::new(&[184, 185]),
+        ),
+    );
+    for (id, selector) in [(84, "gap"), (85, "next-task")] {
+        let mut transport = SettleBeforeEof {
+            pipe: Pipe::new(
+                stream(&[
+                    Frame::Hello(hello()),
+                    Frame::Authenticate(capability()),
+                    Frame::Request(request(
+                        session,
+                        RequestBody::Invoke(invocation_body(selector)),
+                        id,
+                    )),
+                ]),
+                peer(),
+            ),
+            runs: runs.clone(),
+            cx: &cx,
+        };
+        let result = host.serve(
+            &mut transport,
+            &cx,
+            &observe_context(),
+            &root,
+            &mut NoStreams,
+        );
+        assert!(
+            result.is_ok(),
+            "{selector} disconnect after settlement: {result:?}"
+        );
+        assert!(
+            !host.cleanup_pending(),
+            "closed task left the workspace host fenced"
+        );
+        assert!(
+            written_frames(&transport.pipe).iter().any(|frame| matches!(
+                frame,
+                Frame::Response(Response {
+                    outcome: ResponseOutcome::Accepted(_),
+                    ..
+                })
+            )),
+            "the same host must admit {selector}"
+        );
+    }
+    assert_eq!(host.dispatcher.resolver.calls, 2);
+}

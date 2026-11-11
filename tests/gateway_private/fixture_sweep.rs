@@ -230,13 +230,41 @@ fn began_at_or_after(process: &LiveProcessIdentity, leader: &Record) -> bool {
 fn read_records(checkouts: &[PathBuf], gateway_root: &Path) -> Vec<Record> {
     let mut found = Vec::new();
     for checkout in checkouts {
-        for (_, state) in super::host_lifecycle::snapshots(checkout).unwrap_or_default() {
-            push_record(
-                &mut found,
-                state["child_pid"].as_u64(),
-                state["child_boot_identity"].as_str(),
-                state["child_start_identity"].clone(),
-            );
+        if let Ok(runs) = super::host_lifecycle::runs(checkout) {
+            for (_, effects) in runs {
+                for effect in effects
+                    .iter()
+                    .filter(|effect| effect.spec.kind == "kernel:process")
+                {
+                    let Some(receipt) = effect.receipt.as_ref().and_then(|receipt| {
+                        serde_json::from_value::<effigy_kernel::custody::ProcessReceipt>(
+                            receipt.clone(),
+                        )
+                        .ok()
+                    }) else {
+                        continue;
+                    };
+                    let identity = receipt.identity;
+                    let start = match identity.start {
+                        effigy_kernel::ident::ProcessStartIdentity::LinuxTicks(start_ticks) => {
+                            GatewayStartIdentity::Linux { start_ticks }
+                        }
+                        effigy_kernel::ident::ProcessStartIdentity::MacOs {
+                            seconds,
+                            microseconds,
+                        } => GatewayStartIdentity::Macos {
+                            start_seconds: seconds,
+                            start_microseconds: microseconds,
+                        },
+                    };
+                    found.push(Record {
+                        pid: identity.pid,
+                        boot: identity.boot.as_str().to_owned(),
+                        start,
+                        members: Vec::new(),
+                    });
+                }
+            }
         }
         identity_records(
             &checkout.join(".effigy/runtime/host-processes"),
