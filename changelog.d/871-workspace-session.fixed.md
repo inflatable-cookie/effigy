@@ -1,0 +1,1 @@
+Keep workspace sessions available for the next task when a completed task's client disconnects after its attachment has settled, serve committed output while capture is syncing, and preserve managed listener readiness failures with their recorded child custody identity while a replacement waits to start.

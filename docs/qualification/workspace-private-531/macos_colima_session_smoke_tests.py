@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import signal
 from pathlib import Path
 import sys
 import tempfile
@@ -234,6 +235,17 @@ class ExplorationTests(unittest.TestCase):
             with mock.patch.object(smoke.runtime.time, 'monotonic', return_value=1000), mock.patch.object(smoke.runtime, 'run', return_value=result) as run:
                 window.command(['/pinned'], activation=activation)
                 self.assertEqual(run.call_args.kwargs['timeout'], expected)
+
+    def test_guest_signal_serializes_the_numeric_signal_for_guest_python(self):
+        window = smoke.runtime.Window.__new__(smoke.runtime.Window)
+        window.guest = mock.Mock()
+        receipt = self.control / 'client'
+        receipt.write_text('123 456')
+        window.guest_signal(str(receipt), signal.SIGKILL)
+        code = window.guest.call_args.args[0][-1]
+        with mock.patch.object(Path, 'read_text', side_effect=['123 456', ' '.join(['0'] * 21 + ['456'])]), mock.patch.object(os, 'kill') as kill:
+            exec(code, {})
+        kill.assert_called_once_with(123, int(signal.SIGKILL))
 
     def test_rotation_requires_independently_observed_retention_expiry(self):
         window = smoke.runtime.Window.__new__(smoke.runtime.Window)

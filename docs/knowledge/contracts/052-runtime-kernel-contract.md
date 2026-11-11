@@ -1507,8 +1507,12 @@ managed journal writers publish a durable committed extent after syncing data.
 A synced pending record
 retains the prior extent until publication completes; a failed or interrupted
 append bounds reads to that prior extent and refuses a host restart for explicit
-operator recovery. Effigy reads use the existing nonblocking kernel file-lock
-boundary to avoid observing an in-flight publication. Writer lock acquisition
+operator recovery. Managed journal reads cap the first observed extent by the
+current extent and any pending append's prior boundary, retaining the verified
+guard identity. They serve committed bytes while the writer syncs, including
+the final drain, without waiting for its lock or exposing an uncommitted suffix.
+Host canonical reads use the existing nonblocking kernel file-lock boundary.
+Writer lock acquisition
 is bounded to 500 ms; a stalled reader cannot hold cleanup indefinitely.
 Failure syncing removal of a pending record after data and extent are durable
 does not uncommit those bytes: capture reports truncation and stops further
@@ -1543,7 +1547,10 @@ Multi-source log following keeps separate bounded partial lines and flushes
 them on closure. Host activation, dependencies, status and panes read typed lifecycle and
 readiness observations from the host owner's run effects, bound to the current
 run and custody nonce. Child text cannot forge them, and unavailable, failed,
-stopped or stale generations clear Ready. New supervisors write no listener
+stopped or stale generations clear Ready. A failed generation keeps its
+readiness diagnostic and recorded child custody nonce while a retry waits for
+dependencies; only a new child custody generation supersedes that failure.
+New supervisors write no listener
 state file. An already-running older supervisor keeps its file reader until
 it is stopped; installing a new CLI neither dual-writes nor replaces it.
 A known host run whose journal or owner gate cannot be observed reports
@@ -5041,6 +5048,10 @@ terminal. Owner EOF releases its row and queues one matching stop in that same
 transaction; persistent foreign or resolved request-ID collisions select another
 identity without deleting the existing row. Control and release deadlines also
 bound schema initialization and additive migration.
+A first EOF after settlement is already complete when the same transaction
+observes the exact closed run fence and its session-bound closed admission.
+It writes no release or stop and permits the session's next admission, including
+when an output gap ended the client before it observed the terminal outcome.
 
 If an attachment release commits but its response is lost, and the child run
 closes and compacts the release row before retry can verify its cause, the

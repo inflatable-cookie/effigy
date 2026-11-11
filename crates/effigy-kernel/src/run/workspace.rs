@@ -1024,6 +1024,26 @@ fn release_attachment(
     crate::fault_point!(RunAttachReleaseBefore)?;
     store.transaction_within(cx, BusyWait::Context, |txn| {
         let attached = attached_row(txn.conn(), attachment.id, attachment)?;
+        // Settlement compacts attachments atomically with the keyed outcome.
+        // A first EOF after that commit has no lifetime left to release. It
+        // acknowledges no detach or uncertain earlier release, and writes no
+        // stop. Keep recovery strict: a missing release receipt is still unknown.
+        if !attached && !recover && cause == Release::Eof {
+            let record = journal_run(txn.conn(), attachment.run)?;
+            let closed_admission: bool = txn.conn().query_row(
+                "SELECT EXISTS(SELECT 1 FROM workspace_admissions WHERE run_id=?1 \
+                 AND session_id=?2 AND session_generation=?3 AND state='closed')",
+                params![attachment.run.to_string(), attachment.session.run.to_string(), attachment.session.generation.get() as i64],
+                |row| row.get(0),
+            )?;
+            if closed_admission && record.is_some_and(|record| {
+                record.phase == Phase::Closed
+                    && record.owner == attachment.fence.resource.name().to_string()
+                    && record.generation == attachment.fence.generation
+            }) {
+                return Ok(());
+            }
+        }
         if !attached && !recover {
             return Err(RunError::refused("this attachment is no longer attached to the run"));
         }

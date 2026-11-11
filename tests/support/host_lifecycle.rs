@@ -23,37 +23,49 @@ pub(crate) fn at_path(path: &Path) -> Option<Value> {
     })
 }
 
-pub(crate) fn snapshots(repo: &Path) -> Option<Vec<(PathBuf, Value)>> {
+pub(crate) fn runs(repo: &Path) -> Result<Vec<(run::RunSummary, Vec<run::Effect>)>, String> {
     let cx = effigy_gateway::operator::context(Duration::from_secs(10), EffectClass::Observe)
         .observe()
-        .ok()?;
-    let Observed::Verified(root, _) = effigy_containers::environment::observe_root(&cx, repo)
-    else {
-        return None;
+        .map_err(|error| error.to_string())?;
+    let root = match effigy_containers::environment::observe_root(&cx, repo) {
+        Observed::Verified(root, _) => root,
+        Observed::Absent(_) => return Ok(Vec::new()),
+        Observed::Unknown(reason) => return Err(format!("host journal: {reason:?}")),
     };
-    let Observed::Verified(reader, _) = Store::read(&cx, &root) else {
-        return None;
+    let reader = match Store::read(&cx, &root) {
+        Observed::Verified(reader, _) => reader,
+        other => return Err(format!("host journal reader: {other:?}")),
     };
-    let Observed::Verified(runs, _) = run::recent(&reader, None, usize::MAX / 2) else {
-        return None;
+    let rows = match run::recent(&reader, None, usize::MAX / 2) {
+        Observed::Verified(rows, _) => rows,
+        other => return Err(format!("host runs: {other:?}")),
     };
+    rows.into_iter()
+        .filter(|run| {
+            run.invocation.as_ref().is_some_and(|invocation| {
+                invocation.spec().owner.kind() == effigy_kernel::id::ResourceKind::HostProcess
+            })
+        })
+        .map(|row| match run::effects(&reader, row.id) {
+            Observed::Verified(effects, _) => Ok((row, effects)),
+            other => Err(format!("host effects: {other:?}")),
+        })
+        .collect()
+}
+
+pub(crate) fn snapshots(repo: &Path) -> Option<Vec<(PathBuf, Value)>> {
     let mut found = Vec::new();
     let mut seen = BTreeSet::new();
-    for run in runs {
+    for (run, effects) in runs(repo).ok()? {
         let Some(invocation) = run.invocation else {
             continue;
         };
         let owner = &invocation.spec().owner;
-        if owner.kind() != effigy_kernel::id::ResourceKind::HostProcess
-            || !seen.insert(owner.key().to_vec())
-        {
+        if !seen.insert(owner.key().to_vec()) {
             continue;
         }
         let [Some(environment), Some(profile), Some(process)] = owner.key() else {
             continue;
-        };
-        let Observed::Verified(effects, _) = run::effects(&reader, run.id) else {
-            return None;
         };
         let Some(effect) = effects
             .iter()
@@ -69,16 +81,21 @@ pub(crate) fn snapshots(repo: &Path) -> Option<Vec<(PathBuf, Value)>> {
             Some("failed" | "stopped" | "owner_gone")
         );
         if state["custody_nonce"].is_string() && !terminal {
-            let effect = effects
-                .iter()
-                .rev()
-                .find(|e| e.spec.kind == "kernel:process")?;
+            let effect = effects.iter().rev().find(|effect| {
+                effect.spec.kind == "kernel:process"
+                    && effect
+                        .receipt
+                        .as_ref()
+                        .is_some_and(|receipt| receipt["nonce"] == state["custody_nonce"])
+            })?;
+            let process = effect.receipt.clone()?;
             let receipt: effigy_kernel::custody::ProcessReceipt =
-                serde_json::from_value(effect.receipt.clone()?).ok()?;
+                serde_json::from_value(process.clone()).ok()?;
             if state["run"] != run.id.to_string() || state["custody_nonce"] != receipt.nonce {
                 continue;
             }
             if effect.state != run::EffectState::Released {
+                state["process"] = process;
                 state["child_pid"] = receipt.identity.pid.into();
                 state["child_boot_identity"] = receipt.identity.boot.as_str().into();
                 state["child_start_identity"] = match receipt.identity.start {

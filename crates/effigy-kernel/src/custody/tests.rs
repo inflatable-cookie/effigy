@@ -3737,7 +3737,7 @@ fn managed_journal_readers_never_surface_a_failed_inflight_append() {
         let seen = observed.clone();
         let _reset = Reset;
         fault::hook(Some(Box::new(move |at| {
-            if at == Point::CaptureSync {
+            if at == point {
                 seen.set(true);
                 let read = crate::run::read_log(
                     &self::cx().operation().observe().unwrap(),
@@ -3748,9 +3748,10 @@ fn managed_journal_readers_never_surface_a_failed_inflight_append() {
                     0,
                     4096,
                 );
-                if let Observed::Verified(read, _) = read {
-                    assert_eq!(read.bytes, b"before\n");
-                }
+                let Observed::Verified(read, _) = read else {
+                    panic!("the previous committed range stays readable during {at:?}: {read:?}");
+                };
+                assert_eq!(read.bytes, b"before\n");
             }
         })));
         fault::arm_point(point, Fault::Enospc);
@@ -3763,6 +3764,70 @@ fn managed_journal_readers_never_surface_a_failed_inflight_append() {
         assert_eq!(capture.log(&cx, STD), b"before\n");
         assert_eq!(capture.merged(), b"before\n");
     }
+}
+
+#[cfg(feature = "fault-injection")]
+#[test]
+fn managed_journal_reads_committed_bytes_during_append_and_drains_after_commit() {
+    use crate::fault::{self, Point};
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            fault::hook(None);
+        }
+    }
+    let cx = cx();
+    let capture = FakeCapture::new(home(), &cx, vec![]);
+    {
+        let mut core = lock(&capture.core);
+        let log = core.logs[0].take().unwrap();
+        core.canonical_output =
+            Some(CanonicalOutput::for_run(log, vec![], cx.operation().limits()).unwrap());
+    }
+    capture.feed(STD, b"before\n");
+    let root = capture.root.clone();
+    let seen = std::rc::Rc::new(std::cell::Cell::new(0));
+    let observed = seen.clone();
+    let _reset = Reset;
+    fault::hook(Some(Box::new(move |at| {
+        if matches!(at, Point::CaptureSync | Point::CaptureCommitAfterPublish) {
+            observed.set(observed.get() + 1);
+            let read = crate::run::read_log(
+                &self::cx().operation().observe().unwrap(),
+                &root,
+                id(),
+                1,
+                STD,
+                0,
+                4096,
+            );
+            let Observed::Verified(read, _) = read else {
+                panic!("committed output stays readable while the writer owns its guard: {read:?}");
+            };
+            assert_eq!(read.bytes, b"before\n");
+            assert_eq!(read.end, 7);
+        }
+    })));
+    capture.feed(STD, b"after\n");
+    fault::hook(None);
+    assert_eq!(seen.get(), 2);
+    capture.close();
+    let read = crate::run::read_log(
+        &cx.operation().observe().unwrap(),
+        &capture.root,
+        id(),
+        1,
+        STD,
+        7,
+        4096,
+    );
+    let Observed::Verified(read, _) = read else {
+        panic!("the final drain reads the newly committed remainder: {read:?}");
+    };
+    assert_eq!(read.from, 7);
+    assert_eq!(read.bytes, b"after\n");
+    assert_eq!(read.end, 13);
+    assert!(!read.truncated);
 }
 
 #[test]
