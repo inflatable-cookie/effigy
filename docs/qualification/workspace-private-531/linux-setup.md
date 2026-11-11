@@ -978,6 +978,32 @@ This policy does not prove whether the guest command began. Partial or duplicate
 markers, wrapper shell stderr, caps, timeout and unknown disposition still
 refuse without retry. No SSH authority or guest configuration changes are added.
 
+### Stateful transport recovery (#870)
+
+The existing forced SSH entry accepts root-provisioned opaque IDs, not root
+commands. Provisioning still requires the host-authority `prlctl` route; giving
+the SSH account command or provisioning authority would change that custody
+model. The private harness therefore uses #870's guarded resubmission fallback.
+One 120-second window covers initial absence, submission, recovery observations
+and any resubmission. Only not-found, inactive, MainPID 0, empty ControlGroup
+**and** an independent empty kernel cgroup permit the same unit request again.
+Unknown or unavailable observations refuse; an observed loaded unit proceeds to
+its existing independent terminal and cgroup checks. Retained systemd names
+prevent a late duplicate from running a second payload. Empty-stdout exit 255
+from Parallels or SSH is `transport-unavailable`, including in command terminals.
+The existing hash-checked idempotent bootstrap operations share the same bounded
+transport retry implementation; product failures and partial output do not retry.
+
+Preflight originals are retained outside Queue cleanup under
+`/Volumes/Stash/scratch/effigy/870-native-20261111-ff4cfae8/`.
+The fixed VM was stopped, with Tools 27.1.0-58756 reported installed. The process
+snapshot showed no concurrent `prlctl` job or native smoke; the Parallels service
+had been running for about three days. These facts do not establish Tools
+service health or host-load causality for the earlier failures. They supply no
+evidence requiring a Parallels restart; none was performed. The existing owned
+pre-change snapshot remains the rollback. All observations remain unsealed and
+grant no qualification credit.
+
 ### Native build, engine and complete session
 
 The complete unsealed session passed on 2026-11-10 using native binaries from

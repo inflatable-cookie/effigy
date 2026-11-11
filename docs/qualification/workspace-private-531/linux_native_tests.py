@@ -752,27 +752,91 @@ class SubmissionTests(unittest.TestCase):
             with self.subTest(observed=observed, pids=pids), self.assertRaises(RuntimeError):
                 smoke.verify_engine_stopped(observed, pids)
 
-    def test_existing_unit_refuses_without_launch(self):
-        attempt = unittest.mock.Mock()
-        attempt.admin.return_value = b'LoadState=loaded\n'
-        with self.assertRaises(RuntimeError):
-            native_run.submit_unit(attempt, ['systemd-run', 'payload'], 'owned-unit')
-        self.assertEqual(attempt.admin.call_count, 1)
+    ABSENT = b'{"LoadState":"not-found","ActiveState":"inactive","MainPID":"0","ControlGroup":"","kernel_pids":[]}'
 
-    def test_ambiguous_launch_observes_and_reuses_only_the_same_unit_request(self):
+    def test_only_positive_absence_permits_resubmission(self):
+        import json
+        absent = json.loads(self.ABSENT)
+        states = [dict(absent, **{key: value}) for key, value in
+                  [('LoadState', 'loaded'), ('ActiveState', 'active'), ('MainPID', '123'),
+                   ('ControlGroup', '/system.slice/owned'), ('kernel_pids', [123])]]
+        states += [{}, dict(absent, extra='unknown')]
+        for state in states:
+            with self.subTest(state=state):
+                attempt = unittest.mock.Mock()
+                attempt.admin.return_value = json.dumps(state).encode()
+                with self.assertRaisesRegex(RuntimeError, 'not positively absent'):
+                    native_run.submit_unit(attempt, ['systemd-run', 'payload'], 'owned-unit')
+                self.assertEqual(attempt.admin.call_count, 1)
         attempt = unittest.mock.Mock()
-        attempt.admin.side_effect = [b'LoadState=not-found\n', RuntimeError('transport'),
-                                    b'LoadState=not-found\n', b'']
+        attempt.admin.side_effect = [self.ABSENT, native_run.TransportUnavailable('transport'), self.ABSENT, b'']
         with patch.object(native_run.time, 'sleep'):
             native_run.submit_unit(attempt, ['systemd-run', '--unit=owned-unit', 'payload'], 'owned-unit')
         self.assertEqual(attempt.admin.call_args_list[1], attempt.admin.call_args_list[3])
+        self.assertEqual(len({call.kwargs['deadline'] for call in attempt.admin.call_args_list}), 1)
 
     def test_unknown_unit_state_never_replays_launch(self):
+        import json
+        absent = json.loads(self.ABSENT)
+        states = [b'corrupt', b'null', b'{}', json.dumps(dict(absent, MainPID='123')).encode(),
+                  json.dumps(dict(absent, kernel_pids=[123])).encode(),
+                  native_run.TransportUnavailable('transport-unavailable: observation lost')]
+        for state in states:
+            with self.subTest(state=state):
+                attempt = unittest.mock.Mock()
+                attempt.admin.side_effect = [self.ABSENT, native_run.TransportUnavailable('transport'), state]
+                with self.assertRaises(RuntimeError):
+                    native_run.submit_unit(attempt, ['systemd-run', 'payload'], 'owned-unit')
+                self.assertEqual(attempt.admin.call_count, 3)
+
+    def test_loaded_after_lost_reply_is_observed_without_replay(self):
         attempt = unittest.mock.Mock()
-        attempt.admin.side_effect = [b'LoadState=not-found\n', RuntimeError('transport'), b'corrupt']
-        with self.assertRaises(RuntimeError):
-            native_run.submit_unit(attempt, ['systemd-run', 'payload'], 'owned-unit')
+        attempt.admin.side_effect = [self.ABSENT, native_run.TransportUnavailable('transport'), b'{"LoadState":"loaded"}']
+        native_run.submit_unit(attempt, ['systemd-run', 'payload'], 'owned-unit')
         self.assertEqual(attempt.admin.call_count, 3)
+
+    def test_exhausted_submission_is_transport_unavailable(self):
+        attempt = unittest.mock.Mock()
+        attempt.admin.side_effect = [self.ABSENT, native_run.TransportUnavailable('transport'), self.ABSENT]
+        with patch.object(native_run.time, 'monotonic', side_effect=[0, 116]):
+            with self.assertRaisesRegex(native_run.TransportUnavailable, 'transport-unavailable'):
+                native_run.submit_unit(attempt, ['systemd-run', 'payload'], 'owned-unit')
+        self.assertEqual(attempt.admin.call_count, 3)
+
+    def test_product_failure_never_replays_launch(self):
+        attempt = unittest.mock.Mock()
+        attempt.admin.side_effect = [self.ABSENT, RuntimeError('guest program failed')]
+        with self.assertRaisesRegex(RuntimeError, 'guest program failed'):
+            native_run.submit_unit(attempt, ['systemd-run', 'payload'], 'owned-unit')
+        self.assertEqual(attempt.admin.call_count, 2)
+
+    def test_native_command_transport_classification_and_bounds(self):
+        for stdout, code, repeatable, error in [(b'', 255, False, native_run.TransportUnavailable),
+                                               (b'partial', 255, True, RuntimeError),
+                                               (b'', 1, True, RuntimeError)]:
+            with self.subTest(stdout=stdout, code=code), tempfile.TemporaryDirectory() as root:
+                with patch.object(native_run.diagnostic, 'private_root'):
+                    attempt = native_run.Attempt(Path(root))
+                child = unittest.mock.Mock(returncode=code, pid=123)
+                def launch(*args, **kwargs):
+                    kwargs['stdout'].write(stdout)
+                    return child
+                with patch.object(native_run.subprocess, 'Popen', side_effect=launch) as popen:
+                    with self.assertRaises(error) as caught:
+                        attempt.command([native_run.diagnostic.PRLCTL, 'exec'], repeatable=repeatable)
+                self.assertEqual(popen.call_count, 1)
+                self.assertIs(type(caught.exception), error)
+        with tempfile.TemporaryDirectory() as root:
+            with patch.object(native_run.diagnostic, 'private_root'):
+                attempt = native_run.Attempt(Path(root))
+            children = [unittest.mock.Mock(returncode=n, pid=123) for n in (255, 0)]
+            with patch.object(native_run.subprocess, 'Popen', side_effect=children) as popen, \
+                 patch.object(native_run.time, 'monotonic', side_effect=[0, 1, 114, 116]), \
+                 patch.object(native_run.time, 'sleep'):
+                attempt.admin('read-only probe', read_only=True)
+            self.assertEqual(popen.call_count, 2)
+            self.assertEqual(children[0].communicate.call_args.kwargs['timeout'], 45)
+            self.assertEqual(children[1].communicate.call_args.kwargs['timeout'], 4)
 
     def test_sealed_input_cannot_enter_the_exploratory_session(self):
         with self.assertRaises(RuntimeError):
