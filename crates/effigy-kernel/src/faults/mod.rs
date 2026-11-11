@@ -48,9 +48,12 @@ pub(super) fn observe() -> ObserveContext {
         .observe()
         .expect("observe context")
 }
-/// A scenario's cleanup budget. Under injected `Unknown` a settle cannot
-/// prove release and waits out this whole bound, so it stays short.
+/// Unfaulted prefixes need recovery time to reach their armed boundary.
+/// After delivery, `Unknown` waits out the bound, so keep it short.
 pub(super) fn cleanup(cx: &EffectContext) -> CleanupContext {
+    if !crate::fault::fired() {
+        return recovery_cleanup(cx);
+    }
     cx.operation()
         .cleanup(Duration::from_secs(1))
         .expect("cleanup context")

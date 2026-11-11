@@ -137,7 +137,8 @@ fn cell(front: Front, prior: Prior, stop: Stop, attachment: Option<AttachMode>) 
             Prior::Interrupted => drop(previous),
             Prior::ClosedWithResidue => {
                 previous.finish(WorkloadOutcome::Succeeded).expect("finish");
-                let outcome = previous.settle(&cleanup(&cx), &mut fake).expect("settle");
+                let wait_out = cx.operation().cleanup(Duration::from_secs(1)).unwrap();
+                let outcome = previous.settle(&wait_out, &mut fake).expect("settle");
                 assert_eq!(outcome.cleanup(), CleanupOutcome::Incomplete, "{label}");
                 // Residue blocks an unacknowledged successor (K5).
                 assert!(
@@ -161,7 +162,12 @@ fn cell(front: Front, prior: Prior, stop: Stop, attachment: Option<AttachMode>) 
     }
 
     // The current managed run: admitted, attached, its workload applied.
+    if prior == Prior::Interrupted && std::env::var_os("EFFIGY_KERNEL_FAULT_SLOW_PREFIX").is_some()
+    {
+        slow_release();
+    }
     let mut run = begin(&cx, &root, task(OWNER), 2, None, acknowledge, &mut fake).expect("admit");
+    crate::fault::hook(None);
     attach(&mut run);
     apply(&mut run, &fake, "work").expect("workload");
     if front == Front::Detached {
