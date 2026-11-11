@@ -25,10 +25,7 @@ impl<'de> Deserialize<'de> for TaskManifest {
         reject_retired_tables(&value).map_err(serde::de::Error::custom)?;
         retired.merge(crate::retired_bootstrap::translate(&mut value));
         let mut manifest = TaskManifest::deserialize(value).map_err(serde::de::Error::custom)?;
-        // `start_after_ms` still delays its entry for the v0.15 line, but it no
-        // longer orders a managed session: workloads start once the
-        // environment is observed ready. The notice names the replacement
-        // (`retired.toml`, `managed-start-after-ordering`).
+        // Keep legacy delays and use the existing once-per-manifest notice.
         let retired_timers = manifest.retired_start_after_entries();
         if !retired_timers.is_empty() {
             let declared = retired_timers
@@ -39,7 +36,7 @@ impl<'de> Deserialize<'de> for TaskManifest {
                 .collect::<Vec<_>>()
                 .join(", ");
             retired.record(format!(
-                "`start_after_ms` no longer orders a managed session ({declared}): workloads start after observed environment readiness, so replace it with `after = [\"environment\"]` (host processes order by `depends_on`)"
+                "`start_after_ms` is deprecated and will be removed in v0.16 ({declared}); the configured delay still runs in v0.15. Express the prerequisite through readiness with `after = [\"environment\"]` (host processes order by `depends_on`)"
             ));
         }
         manifest.retired_config = retired;
@@ -123,8 +120,7 @@ fn reject_draft_in_task(value: &Value) -> Result<(), String> {
 mod tests {
     use crate::TaskManifest;
 
-    /// effigy#322: the ordering timer still loads for the v0.15 line and its
-    /// one notice names the replacement.
+    /// effigy#322: legacy delays load and the notice names their replacement.
     #[test]
     fn start_after_ms_still_loads_and_names_its_replacement() {
         let manifest = toml::from_str::<TaskManifest>(
@@ -135,24 +131,21 @@ mod tests {
             .retired_config
             .notice(std::path::Path::new("effigy.toml"))
             .expect("one notice");
-        assert!(
-            notice.contains("`start_after_ms` no longer orders a managed session"),
-            "{notice}"
+        for expected in [
+            "`start_after_ms` is deprecated and will be removed in v0.16",
+            "the configured delay still runs in v0.15",
+            "task `dev` profile `default` entry `api`",
+            "task `dev` profile `admin` entry `admin`",
+            "after = [\"environment\"]",
+            "depends_on",
+        ] {
+            assert!(notice.contains(expected), "{notice}");
+        }
+        assert!(!notice.contains("entry `jobs`"), "{notice}");
+        assert_eq!(
+            manifest.tasks["dev"].concurrent[0].start_after_ms,
+            Some(1500)
         );
-        assert!(
-            notice.contains("task `dev` profile `default` entry `api`"),
-            "{notice}"
-        );
-        assert!(
-            notice.contains("task `dev` profile `admin` entry `admin`"),
-            "{notice}"
-        );
-        assert!(
-            !notice.contains("entry `jobs`"),
-            "only declarations are named: {notice}"
-        );
-        assert!(notice.contains("after = [\"environment\"]"), "{notice}");
-        assert!(notice.contains("depends_on"), "{notice}");
     }
 
     /// A manifest that does not declare the timer gets no notice for it.

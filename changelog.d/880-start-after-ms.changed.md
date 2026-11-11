@@ -1,0 +1,1 @@
+The `start_after_ms` deprecation notice now names removal in v0.16 and directs manifest and bundle users to express prerequisites through readiness and dependencies. Configured delays continue to run throughout v0.15.
