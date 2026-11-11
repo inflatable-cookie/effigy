@@ -25,6 +25,7 @@ use effigy_kernel::supervise::{
 
 use super::control::{self, Addressed};
 use super::host_tabs::{HostFollower, HostProcessTab};
+use super::output::{Cursor, Output, READ_MAX};
 use super::wire::{self, EngineEvent, Front, Payload};
 use crate::runner::error::RunnerError;
 use crate::runner::task_engine::{self, read_run_log};
@@ -32,7 +33,6 @@ use effigy_core::managed_waits::EntryState;
 
 /// How long a client waits for one supervisor event before its next turn.
 const TURN: Duration = Duration::from_millis(50);
-const READ_MAX: usize = 64 * 1024;
 
 /// What the client knows when it starts a run's supervisor.
 pub(in crate::runner) struct ClientStart<'a> {
@@ -250,9 +250,7 @@ fn refusal(addressed: &Addressed<'_>, error: RunError) -> RunnerError {
 pub(in crate::runner) struct OutputFollower {
     root: effigy_kernel::root::StateRoot,
     run: RunId,
-    offsets: [u64; 2],
-    failed: [bool; 2],
-    warned: [bool; 2],
+    cursors: [Cursor; 2],
 }
 
 impl OutputFollower {
@@ -260,9 +258,7 @@ impl OutputFollower {
         Self {
             root,
             run,
-            offsets: [0, 0],
-            failed: [false; 2],
-            warned: [false; 2],
+            cursors: Default::default(),
         }
     }
 
@@ -275,32 +271,11 @@ impl OutputFollower {
                 self.run,
                 OUTPUT_SEQUENCE,
                 stream,
-                self.offsets[slot],
+                self.cursors[slot].offset,
                 READ_MAX,
             ) {
-                let mut bytes = Vec::new();
-                if read.from != self.offsets[slot] {
-                    bytes.extend_from_slice(
-                        b"\n[effigy] output gap: older canonical bytes expired\n",
-                    );
-                }
-                self.offsets[slot] = read.from + read.bytes.len() as u64;
-                if read.truncated && !self.warned[slot] {
-                    self.warned[slot] = true;
-                    bytes.extend_from_slice(
-                        b"\n[effigy] capture truncated: inspect the run before restarting\n",
-                    );
-                }
-                if !self.failed[slot] {
-                    if std::str::from_utf8(&read.bytes)
-                        .is_ok_and(|text| !text.chars().any(|ch| ch.is_control() && ch != '\n'))
-                    {
-                        bytes.extend_from_slice(&read.bytes);
-                    } else {
-                        self.failed[slot] = true;
-                        bytes.extend_from_slice(b"\n[effigy] output follow stopped: invalid plain text; inspect the run before reopening\n");
-                    }
-                }
+                let output = self.cursors[slot].consume(&read, false);
+                let bytes = render_output(&output).into_bytes();
                 if slot == 0 {
                     out.0 = bytes;
                 } else {
@@ -332,69 +307,56 @@ struct TextFollower {
 struct FollowedWorkload {
     name: String,
     sequence: i64,
-    lines: [FollowedLines; 2],
+    lines: [Cursor; 2],
 }
 
-#[derive(Default)]
-pub(super) struct FollowedLines {
-    pub(super) offset: u64,
-    partial: String,
-    failed: bool,
-    warned: bool,
+pub(super) fn render_followed(
+    cursor: &mut Cursor,
+    name: &str,
+    read: Option<&effigy_kernel::run::LogRead>,
+    finish: bool,
+) -> String {
+    let mut output = read
+        .map(|read| cursor.consume(read, false))
+        .unwrap_or_default();
+    let lines = cursor.lines(&mut output, finish);
+    render_lines(name, &output, lines)
 }
-impl FollowedLines {
-    pub(super) fn render(
-        &mut self,
-        name: &str,
-        read: Option<&effigy_kernel::run::LogRead>,
-        finish: bool,
-    ) -> String {
-        let mut rendered = String::new();
-        if let Some(read) = read {
-            if read.from != self.offset {
-                self.partial.clear();
-                rendered.push_str(&format!(
-                    "\n[{name}] [effigy] output gap: older canonical bytes expired\n"
-                ));
-            }
-            self.offset = read.from + read.bytes.len() as u64;
-            if read.truncated && !self.warned {
-                self.warned = true;
-                rendered.push_str(&format!(
-                    "\n[{name}] [effigy] capture truncated: inspect the run before restarting\n"
-                ));
-            }
-            if !self.failed {
-                let text = std::str::from_utf8(&read.bytes)
-                    .ok()
-                    .filter(|text| !text.chars().any(|ch| ch.is_control() && ch != '\n'));
-                if let Some(text) = text {
-                    for piece in text.split_inclusive('\n') {
-                        if self.partial.len() + piece.len() > READ_MAX {
-                            self.failed = true;
-                            break;
-                        }
-                        self.partial.push_str(piece);
-                        if self.partial.ends_with('\n') {
-                            rendered.push_str(&format!("[{name}] {}", self.partial));
-                            self.partial.clear();
-                        }
-                    }
-                } else {
-                    self.failed = true;
-                }
-                if self.failed {
-                    self.partial.clear();
-                    rendered.push_str(&format!("\n[{name}] [effigy] output follow stopped: invalid plain text or line exceeds 64 KiB; inspect the canonical log\n"));
-                }
-            }
-        }
-        if finish && !self.partial.is_empty() {
-            rendered.push_str(&format!("[{name}] {}\n", self.partial));
-            self.partial.clear();
-        }
-        rendered
+
+pub(super) fn render_lines(name: &str, output: &Output, lines: Vec<String>) -> String {
+    let mut rendered = String::new();
+    if output.gap {
+        rendered.push_str(&format!(
+            "\n[{name}] [effigy] output gap: older canonical bytes expired\n"
+        ));
     }
+    if output.truncated {
+        rendered.push_str(&format!(
+            "\n[{name}] [effigy] capture truncated: inspect the run before restarting\n"
+        ));
+    }
+    for line in lines {
+        rendered.push_str(&format!("[{name}] {line}\n"));
+    }
+    if output.failed {
+        rendered.push_str(&format!("\n[{name}] [effigy] output follow stopped: invalid plain text or line exceeds 64 KiB; inspect the canonical log\n"));
+    }
+    rendered
+}
+
+pub(super) fn render_output(output: &Output) -> String {
+    let mut text = String::new();
+    if output.gap {
+        text.push_str("\n[effigy] output gap: older canonical bytes expired\n");
+    }
+    if output.truncated {
+        text.push_str("\n[effigy] capture truncated: inspect the run before restarting\n");
+    }
+    if output.failed {
+        text.push_str("\n[effigy] output follow stopped: invalid plain text; inspect the run before reopening\n");
+    }
+    text.push_str(&output.text);
+    text
 }
 
 impl TextFollower {
@@ -490,7 +452,8 @@ impl TextFollower {
                     workload.lines[slot].offset,
                     READ_MAX,
                 );
-                rendered[slot].push_str(&workload.lines[slot].render(
+                rendered[slot].push_str(&render_followed(
+                    &mut workload.lines[slot],
                     &workload.name,
                     read.verified(),
                     finish,
@@ -803,54 +766,20 @@ mod tests {
         }
     }
     #[test]
-    fn expired_text_never_completes_a_previous_partial_value() {
-        let mut lines = FollowedLines::default();
-        assert!(lines
-            .render("api", Some(&read(0, "super")), false)
-            .is_empty());
-        let text = lines.render("api", Some(&read(100, "secret\n")), false);
-        assert!(text.contains("output gap") && text.ends_with("[api] secret\n"));
-        assert!(!text.contains("supersecret") && lines.partial.is_empty());
-        assert!(lines.render("api", Some(&read(107, "")), false).is_empty());
-    }
-    #[test]
-    fn independent_sources_keep_split_writes_in_one_line_and_flush_at_close() {
-        let mut api = FollowedLines::default();
-        let mut jobs = FollowedLines::default();
-        assert!(api.render("api", Some(&read(0, "hel")), false).is_empty());
+    fn text_adapters_preserve_prefixes_and_diagnostics() {
+        let mut lines = Cursor::default();
+        assert!(render_followed(&mut lines, "api", Some(&read(0, "super")), false).is_empty());
+        let text = render_followed(&mut lines, "api", Some(&read(100, "secret\n\nlast")), false);
         assert_eq!(
-            jobs.render("jobs", Some(&read(0, "work\n")), false),
-            "[jobs] work\n"
+            text,
+            "\n[api] [effigy] output gap: older canonical bytes expired\n[api] secret\n[api] \n"
         );
         assert_eq!(
-            api.render("api", Some(&read(3, "lo\nlast")), false),
-            "[api] hello\n"
+            render_followed(&mut lines, "api", None, true),
+            "[api] last\n"
         );
-        assert_eq!(api.render("api", None, true), "[api] last\n");
-    }
-    #[test]
-    fn headless_partial_lines_are_bounded_and_invalid_text_fails_closed_once() {
-        for invalid in ["x".repeat(READ_MAX + 1), "super\x1b[31msecret".to_owned()] {
-            let mut lines = FollowedLines::default();
-            let text = lines.render("api", Some(&read(0, &invalid)), false);
-            assert!(text.contains("output follow stopped"));
-            assert!(lines.failed && lines.partial.is_empty());
-            assert!(!text.contains("supersecret") && !text.contains('\x1b'));
-            assert!(lines
-                .render("api", Some(&read(invalid.len() as u64, "late\n")), true)
-                .is_empty());
-        }
-    }
-    #[test]
-    fn partial_plain_text_keeps_spaces_blank_lines_and_utf8() {
-        let mut lines = FollowedLines::default();
-        assert!(lines
-            .render("api", Some(&read(0, "  café")), false)
-            .is_empty());
-        assert_eq!(
-            lines.render("api", Some(&read(7, "\n\nlast")), false),
-            "[api]   café\n[api] \n"
-        );
-        assert_eq!(lines.render("api", None, true), "[api] last\n");
+        let text = render_followed(&mut lines, "api", Some(&read(112, "bad\x1btext")), false);
+        assert!(text.contains("output follow stopped") && !text.contains('\x1b'));
+        assert!(render_followed(&mut lines, "api", Some(&read(120, "late\n")), true).is_empty());
     }
 }

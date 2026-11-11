@@ -31,11 +31,10 @@ use super::client::{Closed, Started, StopSender};
 use super::control::Addressed;
 use super::engine::SETTLE_BUDGET;
 use super::host_tabs::{HostFollower, HostProcessTab};
+use super::output::{Cursor, READ_MAX};
 use super::wire::{self, ClientFrame, EngineEvent};
 use crate::runner::error::RunnerError;
 use crate::runner::task_engine::{self, read_run_log};
-
-const READ_MAX: usize = 64 * 1024;
 
 /// One tab's source: the run's own output, an environment host process's
 /// status and log, a workload's log, or a local interactive shell.
@@ -57,9 +56,7 @@ pub(in crate::runner) struct ManagedTab {
 
 struct Follower {
     sequence: i64,
-    offsets: [u64; 2],
-    failed: bool,
-    capture_warned: bool,
+    cursors: [Cursor; 2],
 }
 
 struct Shared {
@@ -151,9 +148,7 @@ impl Shared {
                             process.clone(),
                             Follower {
                                 sequence,
-                                offsets: [0, 0],
-                                failed: false,
-                                capture_warned: false,
+                                cursors: Default::default(),
                             },
                         );
                         self.exits.remove(&process);
@@ -243,60 +238,39 @@ impl Shared {
 
     fn read_logs(&mut self) {
         for (name, follower) in &mut self.followers {
-            if follower.failed {
-                continue;
-            }
             for (slot, stream) in [Stream::Stdout, Stream::Stderr].into_iter().enumerate() {
-                let Observed::Verified(mut read, _) = read_run_log(
+                let Observed::Verified(read, _) = read_run_log(
                     &self.root,
                     self.run,
                     follower.sequence,
                     stream,
-                    follower.offsets[slot],
+                    follower.cursors[slot].offset,
                     READ_MAX,
                 ) else {
                     continue;
                 };
-                if read.truncated && !follower.capture_warned {
-                    follower.capture_warned = true;
+                let output = follower.cursors[slot].consume(&read, false);
+                if output.truncated {
                     self.queue.push_back(event(name, ProcessEventKind::Stdout, "[effigy] capture truncated: log append failed; inspect this run before restarting"));
                 }
-                match std::str::from_utf8(&read.bytes) {
-                    Ok(text) if text.chars().any(|ch| ch.is_control() && ch != '\n') => {
-                        follower.failed = true;
-                        self.queue.push_back(event(name, ProcessEventKind::Stdout, "[effigy] output follow stopped: control bytes in plain capture; restart the producer"));
-                        break;
-                    }
-                    Ok(_) => {}
-                    Err(error) if error.error_len().is_none() => {
-                        read.bytes.truncate(error.valid_up_to())
-                    }
-                    Err(_) => {
-                        follower.failed = true;
-                        self.queue.push_back(event(name, ProcessEventKind::Stdout, "[effigy] output follow stopped: invalid plain UTF-8; restart the producer"));
-                        break;
-                    }
+                if output.failed {
+                    self.queue.push_back(event(name, ProcessEventKind::Stdout, "[effigy] output follow stopped: invalid plain UTF-8 or control bytes; restart the producer"));
                 }
-                if read.from > follower.offsets[slot] {
+                if output.gap {
                     self.queue.push_back(event(name, ProcessEventKind::Stdout, "[effigy] output gap: older canonical bytes expired; resuming the retained log"));
                 }
-                follower.offsets[slot] = read.from + read.bytes.len() as u64;
-                if read.bytes.is_empty() {
+                if output.text.is_empty() {
                     continue;
                 }
-                // Managed workloads persist merged plain bytes in stdout.
-                // Rendering receives typed spans; no reader interprets ANSI.
-                let spans = effigy_kernel::custody::read_styles(
-                    &self.root,
-                    self.run,
-                    follower.sequence,
-                    read.from,
-                    &read.bytes,
-                );
-                let chunk = effigy_core::terminal_text::StyledChunk {
-                    offset: read.from,
-                    spans,
-                };
+                let chunk = output.styled(|from, bytes| {
+                    effigy_kernel::custody::read_styles(
+                        &self.root,
+                        self.run,
+                        follower.sequence,
+                        from,
+                        bytes,
+                    )
+                });
                 self.queue.push_back(event(
                     name,
                     ProcessEventKind::Styled,
@@ -523,9 +497,7 @@ pub(in crate::runner) fn attach_tui(
                     tab.name.clone(),
                     Follower {
                         sequence: OUTPUT_SEQUENCE,
-                        offsets: [0, 0],
-                        failed: false,
-                        capture_warned: false,
+                        cursors: Default::default(),
                     },
                 );
                 queue.push_back(event(&tab.name, ProcessEventKind::Started, ""));
