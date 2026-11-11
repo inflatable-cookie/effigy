@@ -7,6 +7,7 @@ use toml::Value;
 use super::TaskManifest;
 use crate::bundles::apply_bundle_defaults;
 use crate::config_sections::{ManifestBundleConfig, ManifestDocsPolicyGraphConfig};
+use crate::ingress::{record_value_sources, ManifestInput};
 use crate::manifest_section::{
     resolve_include_path, validate_minimum_effigy_version, ManifestIncludeEntry,
     ManifestSectionConfig,
@@ -84,20 +85,12 @@ struct ManifestIncludeSpec {
     local_overlay: bool,
 }
 
-#[derive(Debug, Clone)]
-struct ComposedValue {
-    value: Value,
-    source_map: BTreeMap<String, PathBuf>,
-    extend_paths: Vec<String>,
-}
-
 #[derive(Debug, Default)]
 struct CompositionSession {
     stack: Vec<PathBuf>,
     evaluation_order: Vec<PathBuf>,
     include_graph: Vec<ManifestCompositionEdge>,
     overridden_paths: Vec<ManifestCompositionOverride>,
-    legacy_compat: crate::retired_config::RetiredConfigDeclaration,
 }
 
 pub fn load_docs_policy_graph_config(
@@ -108,12 +101,7 @@ pub fn load_docs_policy_graph_config(
     }
     let mut session = CompositionSession::default();
     let mut composed = load_composed_value(manifest_path, &mut session)?;
-    apply_bundle_defaults(
-        manifest_path,
-        &mut composed.value,
-        &composed.extend_paths,
-        None,
-    )?;
+    apply_bundle_defaults(manifest_path, &mut composed, None)?;
     let Some(graph_value) = composed
         .value
         .get("docs_policy")
@@ -138,44 +126,9 @@ pub fn load_task_manifest_with_inspection(
 ) -> Result<LoadedTaskManifest, ManifestError> {
     let mut session = CompositionSession::default();
     let mut composed = load_composed_value(manifest_path, &mut session)?;
-    let bundle_defaults = apply_bundle_defaults(
-        manifest_path,
-        &mut composed.value,
-        &composed.extend_paths,
-        None,
-    )?;
-    if let Some(bundle_defaults) = bundle_defaults.as_ref() {
-        record_missing_bundle_sources(
-            "",
-            &composed.value,
-            &bundle_defaults.source_path,
-            &mut composed.source_map,
-        );
-    }
+    let bundle_defaults = apply_bundle_defaults(manifest_path, &mut composed, None)?;
     reject_retired_sequence_keys(&composed.value, manifest_path, "manifest")?;
-    let mut manifest: TaskManifest =
-        composed
-            .value
-            .clone()
-            .try_into()
-            .map_err(|error| ManifestError::Parse {
-                path: manifest_path.to_path_buf(),
-                error,
-            })?;
-    if let Some(bundle_defaults) = bundle_defaults.as_ref() {
-        // `apply_bundle_defaults` already translated the retired `[bootstrap]`
-        // spelling it merged in, so its statements reach the same notice.
-        manifest
-            .retired_config
-            .merge(bundle_defaults.retired_config.clone());
-    }
-    session
-        .legacy_compat
-        .merge(crate::legacy_compat::scan(&composed.value));
-    manifest
-        .retired_config
-        .merge(std::mem::take(&mut session.legacy_compat));
-    manifest.validate(manifest_path)?;
+    let manifest = composed.deserialize(manifest_path)?;
     crate::retired_notice::emit(manifest_path, &manifest.retired_config);
     let effective_manifest =
         toml::to_string_pretty(&composed.value).map_err(|error| ManifestError::Render {
@@ -197,7 +150,7 @@ pub fn load_task_manifest_with_inspection(
         overridden_paths: session.overridden_paths,
         value_sources,
         effective_manifest,
-        bundle_root: bundle_defaults.map(|defaults| defaults.bundle_root),
+        bundle_root: bundle_defaults,
     })
 }
 
@@ -206,21 +159,8 @@ pub(crate) fn validate_source_snapshot(
     source: &Path,
 ) -> Result<(), ManifestError> {
     let mut composed = load_composed_value(manifest_path, &mut CompositionSession::default())?;
-    apply_bundle_defaults(
-        manifest_path,
-        &mut composed.value,
-        &composed.extend_paths,
-        Some(source),
-    )?;
-    let manifest: TaskManifest =
-        composed
-            .value
-            .try_into()
-            .map_err(|error| ManifestError::Parse {
-                path: manifest_path.into(),
-                error,
-            })?;
-    manifest.validate(manifest_path)
+    apply_bundle_defaults(manifest_path, &mut composed, Some(source))?;
+    composed.deserialize(manifest_path).map(|_| ())
 }
 
 pub(crate) fn load_manifest_source_declarations(
@@ -260,7 +200,7 @@ pub(crate) fn load_manifest_source_declarations(
 fn load_composed_value(
     manifest_path: &Path,
     session: &mut CompositionSession,
-) -> Result<ComposedValue, ManifestError> {
+) -> Result<ManifestInput, ManifestError> {
     let identity = canonical_manifest_identity(manifest_path);
     if let Some(cycle_start) = session.stack.iter().position(|path| path == &identity) {
         let cycle = session.stack[cycle_start..]
@@ -286,28 +226,23 @@ fn load_composed_value(
         path: manifest_path.to_path_buf(),
         error,
     })?;
-    session
-        .legacy_compat
-        .merge(crate::legacy_compat::scan(&raw));
     crate::config_sections::reject_retired_vault_keys(manifest_path, &source, &raw)?;
-    let mut table = raw
-        .as_table()
-        .cloned()
+    let mut input = ManifestInput::new(raw, Some(manifest_path));
+    let table = input
+        .value
+        .as_table_mut()
         .ok_or_else(|| ManifestError::Compose {
             path: manifest_path.to_path_buf(),
             detail: "manifest root must be a TOML table".to_owned(),
         })?;
 
-    let (mut includes, manifest_extend_paths) = take_include_specs(manifest_path, &mut table)?;
+    let (mut includes, manifest_extend_paths) = take_include_specs(manifest_path, table)?;
+    remove_source_entries("manifest", &mut input.source_map);
     if session.stack.len() == 1 {
         append_local_overlay_include(manifest_path, &mut includes);
     }
-    let mut composed = ComposedValue {
-        value: Value::Table(table),
-        source_map: BTreeMap::new(),
-        extend_paths: manifest_extend_paths,
-    };
-    record_value_sources("", &composed.value, manifest_path, &mut composed.source_map);
+    input.extend_paths = manifest_extend_paths;
+    let mut composed = input;
 
     for include in includes {
         if include.optional && !include.resolved_path.exists() {
@@ -342,6 +277,7 @@ fn load_composed_value(
             current_sources: &mut composed.source_map,
             root_manifest_path: manifest_path,
         })?;
+        composed.retired_config.merge(child.retired_config);
         for path in child.extend_paths {
             if !composed.extend_paths.contains(&path) {
                 composed.extend_paths.push(path);
@@ -742,22 +678,6 @@ fn value_kind(value: &Value) -> &'static str {
     }
 }
 
-fn record_value_sources(
-    path: &str,
-    value: &Value,
-    source: &Path,
-    out: &mut BTreeMap<String, PathBuf>,
-) {
-    if !path.is_empty() {
-        out.insert(path.to_owned(), source.to_path_buf());
-    }
-    if let Some(table) = value.as_table() {
-        for (key, child) in table {
-            record_value_sources(&join_path(path, key), child, source, out);
-        }
-    }
-}
-
 fn remove_source_entries(path: &str, source_map: &mut BTreeMap<String, PathBuf>) {
     let prefix = format!("{path}.");
     source_map.retain(|key, _| key != path && !key.starts_with(&prefix));
@@ -780,23 +700,6 @@ fn copy_source_entries(
     }
     if !copied_any {
         record_value_sources(path, incoming_value, fallback_source, current_sources);
-    }
-}
-
-fn record_missing_bundle_sources(
-    path: &str,
-    value: &Value,
-    source: &Path,
-    out: &mut BTreeMap<String, PathBuf>,
-) {
-    if !path.is_empty() {
-        out.entry(path.to_owned())
-            .or_insert_with(|| source.to_path_buf());
-    }
-    if let Some(table) = value.as_table() {
-        for (key, child) in table {
-            record_missing_bundle_sources(&join_path(path, key), child, source, out);
-        }
     }
 }
 
@@ -1827,6 +1730,13 @@ default-currentness = "current"
 "#,
         );
         let loaded = load_task_manifest_with_inspection(&root).expect("load");
+        let direct: TaskManifest = toml::from_str(&std::fs::read_to_string(&root).expect("source"))
+            .expect("direct manifest");
+        assert_eq!(
+            direct.retired_config.compat_statements(),
+            loaded.manifest.retired_config.compat_statements()
+        );
+
         let contracts = loaded.manifest.contracts.as_ref().expect("contracts");
         assert_eq!(contracts.schema_index.as_deref(), Some("index.json"));
         assert_eq!(

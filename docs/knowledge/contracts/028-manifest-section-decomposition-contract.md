@@ -45,7 +45,11 @@ catch-all modules.
   workspaces/services/DNS/exec aliases/lifecycle/host/data, docs policy,
   bootstrap, distribution, and release config.
 - `composition.rs`: manifest import/root semantics, local overlay discovery,
-  source-map recording, conflict handling, and bundle default composition.
+  conflict handling, and bundle default composition.
+- `ingress.rs`: source values, provenance and compatibility notices shared by
+  fragments, bundle defaults and direct deserialisation. Includes compose before
+  bootstrap translation; both bundle merge inputs translate before merging.
+  User-global configuration remains a separate schema and load path.
 - `lib.rs`: public facade and `TaskManifest` aggregate.
 
 The first implementation split should target bundle source materialization and

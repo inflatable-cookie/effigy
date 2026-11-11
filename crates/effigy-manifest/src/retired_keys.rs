@@ -20,11 +20,18 @@ impl<'de> Deserialize<'de> for TaskManifest {
     where
         D: serde::Deserializer<'de>,
     {
-        let mut value = Value::deserialize(deserializer)?;
-        let mut retired = crate::retired_sections::strip(&mut value);
-        reject_retired_tables(&value).map_err(serde::de::Error::custom)?;
-        retired.merge(crate::retired_bootstrap::translate(&mut value));
-        let mut manifest = TaskManifest::deserialize(value).map_err(serde::de::Error::custom)?;
+        let input = crate::ingress::ManifestInput::new(Value::deserialize(deserializer)?, None);
+        input.into_manifest().map_err(serde::de::Error::custom)
+    }
+}
+
+impl crate::ingress::ManifestInput {
+    pub(crate) fn into_manifest(mut self) -> Result<TaskManifest, toml::de::Error> {
+        self.retired_config
+            .merge(crate::retired_sections::strip(&mut self.value));
+        reject_retired_tables(&self.value).map_err(serde::de::Error::custom)?;
+        self.normalize();
+        let mut manifest = TaskManifest::deserialize(self.value)?;
         // `start_after_ms` still delays its entry for the v0.15 line, but it no
         // longer orders a managed session: workloads start once the
         // environment is observed ready. The notice names the replacement
@@ -38,11 +45,11 @@ impl<'de> Deserialize<'de> for TaskManifest {
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
-            retired.record(format!(
+            self.retired_config.record(format!(
                 "`start_after_ms` no longer orders a managed session ({declared}): workloads start after observed environment readiness, so replace it with `after = [\"environment\"]` (host processes order by `depends_on`)"
             ));
         }
-        manifest.retired_config = retired;
+        manifest.retired_config = self.retired_config;
         Ok(manifest)
     }
 }
