@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""ONE Queue proof invocation; all backends, no partial-success result."""
+"""One scoped backend invocation; aggregate verification is a separate offline entry."""
 import argparse
 import hashlib
 import json
 import os
 from pathlib import Path
-import shlex
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (BACKENDS, PACKET, SCRATCH, artifact, digest, exclusive, exclusive_bytes, load, require, run,
@@ -22,7 +21,7 @@ def main():
     parser.add_argument('--sha256', required=True)
     parser.add_argument('--go-bindings', required=True)
     parser.add_argument('--go-sha256', required=True)
-    parser.add_argument('--backend', choices=list(BACKENDS),
+    parser.add_argument('--backend', required=True, choices=list(BACKENDS),
                         help='independently execute exactly one backend under its own scoped GO')
     args = parser.parse_args()
     os.umask(0o077)
@@ -33,12 +32,11 @@ def main():
             'input must be a scratch artifact')
     require(digest(inputs) == args.sha256, 'Queue-bound input hash mismatch')
     value = validate_inputs(load(inputs), head)
-    # The selected entry validates exactly its own scoped authority; the single
-    # all-backend invocation still validates every GO before any native window.
+    # Each entry validates exactly its own scoped authority.
     go_bindings = Path(args.go_bindings)
     require(digest(go_bindings) == args.go_sha256, 'Queue-bound GO receipt index differs')
     go_index = load(go_bindings)
-    selected = value['backends'] if args.backend is None else [
+    selected = [
         cell for cell in value['backends'] if cell['backend'] == args.backend]
     goes = {}
     for cell in selected:
@@ -56,7 +54,6 @@ def main():
     evidence.mkdir(mode=0o700)
     exclusive(evidence / 'started.json', {'source_head': head, 'inputs_sha256': args.sha256,
                                          'backends': [cell['backend'] for cell in selected]})
-    results = []
     for cell in selected:
         command = ['python3', '-I', '-B', str(PACKET / 'runtime.py'), '--inputs', str(inputs),
                    '--sha256', args.sha256, '--go-bindings', str(go_bindings), '--go-sha256', args.go_sha256, '--backend', cell['backend']]
@@ -129,22 +126,12 @@ def main():
         if linux is not None:
             receipt.update(linux_capacity_originals=linux['linux_capacity_originals'],linux_allocation=linux['linux_allocation'])
         exclusive(evidence / (cell['backend'] + '.json'), receipt)
-        results.append(receipt)
         require(result.returncode == 0, 'native backend failed; no retry or partial qualification credit')
         require(unchanged, 'proof source changed during execution')
-    if args.backend is None:
-        # Only the single all-backend invocation writes this aggregate record;
-        # an independent backend entry never implies packet qualification. The
-        # authoritative aggregate remains the read-only verifier's judgment.
-        exclusive(evidence / 'complete.json', {'source_head': head, 'inputs_sha256': args.sha256,
-                                             'backends': results, 'consumer': 'separate-owner-evidence-required',
-                                             'production_enablement': False})
-        print(json.dumps({'evidence': str(evidence), 'native_backends': results, 'production_enablement': False}))
-    else:
-        entry = evidence / (args.backend + '.json')
-        print(json.dumps({'backend': args.backend, 'invocation': str(entry),
-                          'aggregate': 'verify:workspace:private-qualification:aggregate',
-                          'qualified': False, 'production_enablement': False}))
+    entry = evidence / (args.backend + '.json')
+    print(json.dumps({'backend': args.backend, 'invocation': str(entry),
+                      'aggregate': 'verify:workspace:private-qualification:aggregate',
+                      'qualified': False, 'production_enablement': False}))
 
 
 if __name__ == '__main__':

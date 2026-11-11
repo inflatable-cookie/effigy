@@ -1,6 +1,6 @@
 # macOS 4f6a5ed3 preparation: Colima and Desktop stages
 
-## Current route (effigy#830)
+## Current route (effigy#830, effigy#879)
 
 The C2–C6 sealed preparation is one chain request, consumed in one owner-launched
 proof occurrence. It uses the existing C1 receipt; every stage still gets its own
@@ -8,7 +8,8 @@ launch-time activation, exclusive claim, unchanged budget/reserve/caps and origi
 receipt. A failed or unknown stage stops all successors. The chain verifies each
 receipt before continuing, holds the original root identities throughout, and
 refuses source or machine-input drift between stages. Desktop windows are unchanged.
-The older revision notes below describe the historical preparation sequence.
+The older revision notes below describe the historical preparation sequence,
+including retired individual C2–C6 commands; they grant no new execution route.
 
 Runtime input prefetch reuses HTTPS connections only within its single bounded
 helper. Every payload still has its original length/hash checks and exclusive
@@ -21,7 +22,9 @@ OPTIONS contains only `activation_id` (at most 60 characters), `evidence_root` a
 `prior_receipt` (the original C1 stage/path/sha256). Freeze the resulting request
 read-only and bind its SHA-256 to the later owner-launched proof occurrence.
 Execution uses `qualification:macos:chain-proof-only -- REQUEST SHA256`.
-No individual C2–C6 packet preparation is needed. The chain's total window is the
+Individual C2–C6 plans and plain/window launches are retired (Tom, 2026-11-10;
+effigy#879); the chain is the only new C2–C6 execution. Historical receipts
+remain readable offline. The chain's total window is the
 sum of its stage windows; each stage retains its smaller deadline and reserve.
 
 `qualification:macos:colima-smoke` is deliberately **unsealed**. It requires an

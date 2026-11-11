@@ -57,7 +57,8 @@ independent backend packet bindings, each of the three native backend proofs,
 aggregate receipt judgment, actual Acow/CBS consumer continuity and final
 production enablement. All backend receipts must name the same final candidate
 and inputs; every required backend and consumer gate must pass before Tom's
-separate production-enable GO. The current all-backend launcher is not yet split.
+separate production-enable GO. Each launcher invocation requires one explicit
+backend; the independent offline aggregate judges the three retained receipts.
 Source delivery transfers these obligations; it does not satisfy them. The
 [owned follow-up map](contracts/release.md#source-delivery-and-separate-proof-tasks--2026-11-03)
 is effigy#619 (source controls), #620 (candidate/bindings), #621–#623 (Colima,

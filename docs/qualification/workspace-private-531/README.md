@@ -26,9 +26,8 @@ pinned root, old baseline, window budget and input-hash one-use marker, and
 retaining the exact original complete/failed receipt bytes as a hash-bound
 export inside that authorized proof turn. Positivity is recorded only after
 the post-run source check, so a mid-window source edit yields honest,
-nonqualifying evidence. The single all-backend
-invocation remains available and still validates every GO before any native
-window. Backend receipts must still match the same final source, features and
+nonqualifying evidence. `--backend` is required; new all-backend launches are
+retired (Tom, 2026-11-10; effigy#879). Backend receipts must still match the same final source, features and
 common contract — each platform's actual artifact bytes stay bound to their
 own producer receipts — and the read-only offline aggregate verifier refuses
 anything less before any aggregate judgment, which additionally requires the
@@ -50,6 +49,23 @@ leaf size differs from both pinned public references. The separate untrusted
 snapshot proposal remains UNAPPLIED. No consumed allowance is reusable, and
 `noAutomaticRetry` remains in force. This integration grants no new observation,
 signal, cleanup, install, consumer or release authority.
+
+## Launch-mode retirement inventory (effigy#879)
+
+The 2026-11-11 read-only inventory found no unspent request for all-backend
+launches, individual C2–C6, or quota/project administration. Scratch contained
+only unarmed all-backend input examples. The retained individual requests are
+`C2.request.json`, `C3.request.json` and `C4.request.json` below
+`/Volumes/Stash/scratch/effigy/mac-4f6a-11a01580/earlier-exploration/explore-uxl5vie0/`:
+all three activation IDs have exclusive claims and terminal stage receipts
+(C2/C3 closed; C4 refused). Their archived bytes retain old paths and differ from
+the original proof-request hashes; they cannot be replayed. No C5/C6 individual
+or quota/project request was found. The current macOS record requires a future
+chain; the Linux quota packet remains unarmed. The older unspent build/check in
+[colima-setup.md](colima-setup.md) uses its separate image helper and stays intact.
+Full paths and hashes are retained in
+`/Volumes/Stash/scratch/effigy/879-retirement-f13c85de2183/inventory.json`.
+Historical receipt readers and the independent offline aggregate remain available.
 
 ## Subject and immutable inputs
 
@@ -146,8 +162,9 @@ Stash-hosted Ubuntu VM's Stage1 read-only probe, Stage2 setup and Recipe E route
 It is preparation only; it arms nothing.
 The Linux setup adapter (`linux_setup.py`, `linux_supervisor.py`, `linux-setup-probe.sh`,
 `linux-setup-stages.json`, `linux_transfer.py`, `linux_receipts.py`,
-`linux_stage1.py`, `linux_observation_caller.py`, `linux_disk_identity.py`, `linux_disk_association.py`) holds the v2 probe parser, the documented Parallels writable-top selection, Stage1 request, setup rows
-E3–E9/E19 and the guest supervisor. Exact root requests and nonces are one-use;
+`linux_stage1.py`, `linux_observation_caller.py`, `linux_disk_identity.py`, `linux_disk_association.py`) holds the v2 probe parser, the documented Parallels writable-top selection, Stage1 request, historical setup readers and the guest supervisor. The quota
+administration and project-assignment effect roles are retired; physical
+preparation is the current Linux route. Exact root requests and nonces are one-use;
 Stage1 requires a separately signed fresh occurrence with retained post-state.
 The actual observation caller binds VM identity and SSH terminal observations.
 It is source-only: `test:qualification:linux-setup`
@@ -224,29 +241,12 @@ operator authority.
 A separate GO index maps `colima`, `desktop`, `linux` to each receipt's
 `{ "path": "<absolute receipt>", "sha256": "<actual receipt hash>" }`.
 Keeping this index separate avoids a circular input-hash/GO-hash dependency.
-Queue binds **both** the runtime-input and GO-index hashes. When the invocation
-omits `--backend`, all three GOs are validated before a native window starts;
-with `--backend`, exactly the selected backend's GO is validated. No backend
-subset is a passing aggregate result.
+Queue binds **both** the runtime-input and GO-index hashes. `--backend` is
+required: each invocation validates exactly the selected backend's GO and runs
+that backend alone. No backend subset is a passing aggregate result.
 
-The all-backend selector to bind, after replacing the four arguments with reviewed
-absolute input paths and actual hashes, is:
-
-```sh
-effigy proof:workspace:private-qualification -- --inputs <inputs.json> --sha256 <inputs-sha256> --go-bindings <go-index.json> --go-sha256 <go-index-sha256>
-```
-
-The single invocation executes Colima, Desktop and Linux sequentially. The
-Linux driver, probe, common module, inputs and GO index must already be placed
-and hash verified on the approved Linux host; the launcher verifies those hashes
-over SSH before executing its reviewed runtime there. No mutable remote command
-body is supplied by the input. If the supported Queue route, host mapping or
-exact native GOs cannot execute all three cells, name that concrete seam to the
-planner before native action. Do not spend the one proof allowance on the old
-subset launcher, split off another product route, or retry a failed proof.
-
-An independently executable backend entry binds exactly one cell of the same
-frozen inputs:
+Bind one backend cell of the frozen inputs with the selector below, replacing
+the paths, hashes and backend with their reviewed values:
 
 ```sh
 effigy proof:workspace:private-qualification -- --inputs <inputs.json> --sha256 <inputs-sha256> --go-bindings <go-index.json> --go-sha256 <go-index-sha256> --backend <colima|desktop|linux>
@@ -263,6 +263,14 @@ nonqualifying evidence. One entry is one positive native receipt: it is never
 an aggregate result and never writes an aggregate `complete.json`. Separate
 backend entries may bind different inputs and GO receipts; the common
 candidate contract must still compare exactly.
+
+For Linux, the driver, probe, common module, inputs and GO index must already
+be placed and hash verified on the approved Linux host; the native runner
+verifies the bound inputs before executing the reviewed runtime there. No
+mutable remote command body is supplied by the input. If the supported Queue
+route, host mapping or scoped GO cannot execute the selected backend, name that
+concrete seam to the planner before native action. Do not spend the allowance
+on the old subset launcher or retry a failed proof.
 
 After #621/#622/#623, effigy#624's independent judgment runs the read-only
 offline aggregate verifier over the three invocation receipts:

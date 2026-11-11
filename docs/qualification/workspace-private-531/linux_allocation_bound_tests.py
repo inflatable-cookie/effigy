@@ -5,9 +5,7 @@ copied from the retained root dumpe2fs original. The helper runs with injected k
 the tree walk runs on a real fixture under TMPDIR (lstat-only, removed afterwards). No VM, SSH,
 mount, quota, tune2fs, account or service is touched. A passing control is source evidence only.
 """
-import ctypes
 import hashlib
-import inspect
 import io
 import json
 import os
@@ -19,7 +17,6 @@ import tempfile
 import time
 import unittest
 import uuid
-from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -115,15 +112,6 @@ def replace_original(witness, route, text=None, **changes):
     item.update(changes)
     observations[route] = item
     return dict(witness, observations=observations)
-
-
-def census_of(root):
-    """The owned tree census the F2 equality compares: lstat blocks over the fixture, like the helper."""
-    root = Path(root)
-    total = os.lstat(root).st_blocks * 512
-    for child in sorted(root.rglob('*')):
-        total += os.lstat(child).st_blocks * 512
-    return total
 
 
 # ---------------------------------------------------------------- fresh-project accounting witness
@@ -334,18 +322,6 @@ class VerifierChecks(unittest.TestCase):
                 bound.inspect_candidate_superblock(bytes(changed))
         with self.assertRaises(Refusal):
             bound.inspect_candidate_superblock(bytes(raw[:-1]))
-
-    def test_fixed_setter_builds_only_the_project_block_limit(self):
-        record = bound.quota_limit_record(CHARGED, 64 << 20)
-        self.assertEqual(record.bhard, (CHARGED + (64 << 20)) // probe.QB_UNIT_BYTES)
-        self.assertEqual((record.bsoft, record.valid), (0, bound.QIF_BLIMITS))
-        for charged, row in ((0, 0), (-1, LIMIT), (CHARGED, True), (1, LIMIT), (1 << 90, LIMIT)):
-            with self.subTest(charged=charged, row=row), self.assertRaises(Refusal):
-                bound.quota_limit_record(charged, row)
-        self.assertEqual(bound.quota_row_reservation('E19'), 1 << 20)
-        self.assertIn('E19', bound.QUOTA_GROUP_ROWS)
-        with self.assertRaises(Refusal):
-            bound.quota_row_reservation('E19.0')
 
     def test_complete_witness_is_admitted_and_missing_enforcement_refuses(self):
         witness = render()
@@ -663,232 +639,10 @@ class HelperChecks(unittest.TestCase):
         self.assertEqual(bound.verify(witness, LIMIT, fx, {MECH})['mechanism'], MECH)
 
 
-class FixedPathChecks(unittest.TestCase):
-    """The retained installed entry and verifier agree on each fixed path and reservation."""
-
-    def test_fixed_paths_and_the_reservation_table_cannot_drift(self):
-        self.assertEqual(bound.ROW_RESERVATIONS, supervisor.QUOTA_ROWS)
-        self.assertEqual(bound.QUOTA_ROOT, supervisor.QUOTA_ROOT)
-        self.assertEqual(bound.PROJECT_ID, supervisor.QUOTA_PROJECT)
-        self.assertEqual(bound.QB_UNIT_BYTES, supervisor.QB_UNIT_BYTES)
-        self.assertEqual(bound.QUOTA_ROOT_PROBE,
-                         supervisor.QUOTA_ROOT + '/' + supervisor.QUOTA_PROBE_NAME)
+class InventoryChecks(unittest.TestCase):
+    def test_forced_transfer_entry_matches_the_offline_witness_reader(self):
         self.assertEqual(bound._forced_command(), supervisor.forced_command())
 
-
-class QuotaAdminChecks(unittest.TestCase):
-    """The fixed root quota-administration role, with every kernel/syscall boundary injected."""
-
-    def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix='quota-admin-', dir=os.environ.get('TMPDIR')))
-        self.addCleanup(shutil.rmtree, self.root, True)
-        (self.root / 'inputs').mkdir()
-        (self.root / 'inputs' / 'archive.tar').write_bytes(b'x' * 4096)
-        self.boot = '12345678-1234-1234-1234-123456789abc'
-        patcher = patch.object(supervisor, 'QUOTA_ROOT', str(self.root))
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        patcher = patch.object(bound, 'QUOTA_ROOT_PROBE', str(self.root) + '/' + supervisor.QUOTA_PROBE_NAME)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        patcher = patch.object(supervisor, '_project_attributes',
-                               lambda fd: (bound.PROJECT_ID, probe.FS_XFLAG_PROJINHERIT))
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        patcher = patch.object(supervisor, 'device_numbers', lambda device: '8:2')
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        patcher = patch.object(supervisor, 'device_pair', lambda info: (8, 2))
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
-    def state(self, **over):
-        state = {'hard': 0, 'cur': census_of(self.root), 'fmt': 4, 'rc_fmt': 0, 'rc_get': 0,
-                 'rc_set': 0, 'probe': 'edquot'}
-        state.update(over)
-        return state
-
-    def ops(self, state, writes=None):
-        calls = []
-
-        def runner(argv, timeout):
-            calls.append(list(argv))
-            if argv[-1] == '/proc/self/mountinfo':
-                text = b'36 1 8:2 / / rw,relatime shared:1 - ext4 /dev/sda2 rw\n'
-            elif argv[0].endswith('readlink'):
-                text = b'../../sda2\n'
-            else:
-                text = ('Filesystem UUID:          d488be7b-682f-41ac-b79b-57bbf495a01d\n'
-                        'Filesystem features:      has_journal orphan_file project quota\n').encode()
-            return {'returncode': 0, 'stdout': text, 'stderr': b'', 'timed_out': False}
-
-        def quotactl(cmd, device, project, addr):
-            calls.append((cmd, device, project))
-            block = addr._obj
-            if cmd == probe.Q_SETQUOTA:
-                if state['rc_set'] != 0:
-                    return state['rc_set'], 122
-                state['hard'] = block.bhard * probe.QB_UNIT_BYTES
-                if writes is not None:
-                    writes.append(block.bhard)
-                return 0, 0
-            if cmd == probe.Q_GETFMT:
-                addr._obj.value = state['fmt']
-                return state['rc_fmt'], 0
-            block.bhard = state['hard'] // probe.QB_UNIT_BYTES
-            block.bsoft = 0
-            block.cur = state['cur'] // probe.QB_UNIT_BYTES
-            block.valid = bound.QIF_BLIMITS | bound.QIF_SPACE
-            return state['rc_get'], 0
-
-        def enforce(root, name, reservation, uid, gid):
-            calls.append(('enforce', name, reservation))
-            if state['probe'] == 'edquot':
-                return {'argv': ['--enforce', root + '/' + name, str(reservation)], 'exit': 3,
-                        'bytes_allocated': reservation, 'phase': 'edquot',
-                        'reservation_bytes': reservation, 'stdout': '',
-                        'stderr': 'status=refused phase=edquot bytes=%d\n' % reservation,
-                        'stdout_sha256': hashlib.sha256(b'').hexdigest(),
-                        'stderr_sha256': hashlib.sha256(
-                            ('status=refused phase=edquot bytes=%d\n' % reservation).encode()).hexdigest()}
-            return {'argv': ['--enforce', root + '/' + name, str(reservation)], 'exit': 5,
-                    'bytes_allocated': reservation, 'phase': 'no-edquot',
-                    'reservation_bytes': reservation, 'stdout': '',
-                    'stderr': 'status=failed phase=no-edquot\n',
-                    'stdout_sha256': hashlib.sha256(b'').hexdigest(),
-                    'stderr_sha256': hashlib.sha256(b'status=failed phase=no-edquot\n').hexdigest()}
-
-        ops = supervisor.QuotaOps(runner=runner, quotactl=quotactl, probe=enforce)
-        ops.account = lambda: (UID, UID)
-        return ops, calls
-
-    def request(self, row='E9a'):
-        return {'row': row, 'nonce': NONCE, 'boot_id': self.boot}
-
-    def test_the_fixed_role_sets_the_exact_row_headroom_and_emits_an_admissible_witness(self):
-        ops, calls = self.ops(self.state())
-        witness = supervisor.quota_admin(self.request(), ops, 'f' * 64)
-        self.assertEqual(witness['row'], 'E9a')
-        self.assertEqual(witness['limit_bytes'], bound.ROW_RESERVATIONS['E9a'])
-        self.assertEqual(witness['charged_bytes'], census_of(self.root))
-        self.assertEqual(witness['enforcement']['phase'], 'edquot')
-        self.assertEqual(set(witness['observations']), set(bound.ROUTES))
-        self.assertEqual((probe.Q_SETQUOTA, '/dev/sda2', 531) in calls, True)
-        fx = facts(boot_id=self.boot, root=str(self.root), uid=os.getuid(),
-                   entries={'.', 'inputs', 'inputs/archive.tar'})
-        result = bound.verify(witness, bound.ROW_RESERVATIONS['E9a'], fx, {MECH})
-        self.assertEqual(result['headroom_bytes'], bound.ROW_RESERVATIONS['E9a'])
-
-    def test_the_role_refuses_unknown_row_or_boot_and_a_failed_setter(self):
-        ops, calls = self.ops(self.state())
-        for request in (self.request('E19.0'), self.request('foreign'),
-                        dict(self.request(), boot_id='not-a-boot'),
-                        dict(self.request(), device='/dev/sdb2'),
-                        dict(self.request(), limit=1 << 20), {'row': 'E9a'}):
-            with self.subTest(request=request), self.assertRaises(Refusal):
-                supervisor.quota_admin(request, ops, 'f' * 64)
-        self.assertEqual(calls, [])
-        failing, calls = self.ops(self.state(rc_set=5))
-        with self.assertRaisesRegex(Refusal, 'setter failed'):
-            supervisor.quota_admin(self.request(), failing, 'f' * 64)
-        self.assertEqual([c for c in calls if c == 'enforce'], [])
-
-    def test_a_concurrent_charge_or_a_missing_edquot_never_credit_the_row(self):
-        ops, _ = self.ops(self.state())
-        inner = ops._quotactl
-        seen = {'gets': 0}
-
-        def moving_quota(cmd, device, project, addr):
-            result = inner(cmd, device, project, addr)
-            if cmd == probe.Q_GETQUOTA:
-                seen['gets'] += 1
-                if seen['gets'] >= 2:
-                    addr._obj.cur = (census_of(self.root) + 4096) // probe.QB_UNIT_BYTES
-            return result
-        ops._quotactl = moving_quota
-        with self.assertRaisesRegex(Refusal, 'charge moved|headroom is not exactly'):
-            supervisor.quota_admin(self.request(), ops, 'f' * 64)
-        refused, _ = self.ops(self.state(probe='no-edquot'))
-        with self.assertRaisesRegex(Refusal, 'not refused with EDQUOT|row ceiling'):
-            supervisor.quota_admin(self.request(), refused, 'f' * 64)
-
-    def test_an_interrupted_probe_is_not_an_enforcement_observation(self):
-        for detail in ({'phase': 'no-edquot', 'bytes': bound.ROW_RESERVATIONS['E9a']},
-                       {'phase': 'edquot', 'bytes': bound.ROW_RESERVATIONS['E9a'] - 1},
-                       {'phase': 'edquot'}, None):
-            with self.subTest(detail=detail), self.assertRaises(Refusal):
-                supervisor.enforcement_probe(str(self.root), supervisor.QUOTA_PROBE_NAME,
-                                             bound.ROW_RESERVATIONS['E9a'], UID, UID,
-                                             writer=lambda reservation, d=detail: d)
-        with self.assertRaisesRegex(Refusal, 'test seams are refused for root runs'), \
-                patch.object(supervisor.os, 'geteuid', return_value=0):
-            supervisor.enforcement_probe(str(self.root), supervisor.QUOTA_PROBE_NAME, 4096, 0, 0,
-                                         writer=lambda reservation: {'phase': 'edquot', 'bytes': reservation})
-
-    def test_the_first_quota_read_requires_the_exact_census_in_both_directions(self):
-        census = census_of(self.root)
-        writes = []
-        under, under_calls = self.ops(self.state(cur=census - 4096), writes=writes)
-        with self.assertRaisesRegex(Refusal, 'below the tree bytes; accounting does not cover the tree'):
-            supervisor.quota_admin(self.request(), under, 'f' * 64)
-        over, _ = self.ops(self.state(cur=census + 4096))
-        with self.assertRaisesRegex(Refusal, 'exceeds the owned tree census'):
-            supervisor.quota_admin(self.request(), over, 'f' * 64)
-        self.assertEqual([c for c in under_calls if c[0] == probe.Q_SETQUOTA], [],
-                         'an inexact first read must refuse before any limit is set')
-
-    def test_the_post_enforcement_reread_requires_the_exact_census_too(self):
-        census = census_of(self.root)
-
-        def growing_probe(root, name, reservation, uid, gid):
-            # The probe must leave the tree exactly as it found it; here it legitimately extends an
-            # existing entry instead, so the entry set is unchanged but the census is not.
-            with open(Path(root) / 'inputs' / 'archive.tar', 'ab') as handle:
-                handle.write(b'z' * 4096)
-            return {'argv': ['--enforce', str(Path(root) / name), str(reservation)], 'exit': 3,
-                    'bytes_allocated': reservation, 'phase': 'edquot', 'reservation_bytes': reservation,
-                    'stdout': '', 'stderr': 'status=refused phase=edquot bytes=%d\n' % reservation,
-                    'stdout_sha256': hashlib.sha256(b'').hexdigest(),
-                    'stderr_sha256': hashlib.sha256(
-                        ('status=refused phase=edquot bytes=%d\n' % reservation).encode()).hexdigest()}
-        ops, _ = self.ops(self.state())
-        ops._probe = growing_probe
-        with self.assertRaisesRegex(Refusal, 'post-enforcement kernel charge'):
-            supervisor.quota_admin(self.request(), ops, 'f' * 64)
-        self.assertGreater(census_of(self.root), census, 'the probe extended the tree in this control')
-
-    def test_e7c_legitimate_nonzero_charge_passes_the_exact_first_row_equality(self):
-        # After the genuine E7p zero anchor, E7c creates the eleven directories under BASE; they
-        # allocate before the first quota set, so the census is nonzero and must still be exact.
-        for name in HISTORICAL_BASE_DIRS:
-            (self.root / name).mkdir(mode=0o700, exist_ok=True)
-        census = census_of(self.root)
-        self.assertGreater(census, 0)
-        ops, _ = self.ops(self.state(cur=census))
-        witness = supervisor.quota_admin(self.request(), ops, 'f' * 64)
-        self.assertEqual(witness['charged_bytes'], census)
-        entries = {'.', 'inputs', 'inputs/archive.tar'} | set(HISTORICAL_BASE_DIRS)
-        fx = facts(boot_id=self.boot, root=str(self.root), uid=os.getuid(), entries=entries)
-        admitted = bound.verify(witness, bound.ROW_RESERVATIONS['E9a'], fx, {MECH})
-        self.assertEqual(admitted['tree_bytes'], census)
-        texts = witness['observations']
-        limit = bound.ROW_RESERVATIONS['E9a']
-        for drift in (census - 1024, census + 1024):   # KB-aligned: keeps the headroom exact
-            # Keep the exact row headroom while drifting the charge, so the census equality is the
-            # gate that refuses (not the headroom arithmetic).
-            quota = '\n'.join(
-                line.replace('curspace_bytes=%d' % census, 'curspace_bytes=%d' % drift)
-                    .replace('bhard_qb=%d' % ((census + limit) // 1024),
-                             'bhard_qb=%d' % ((drift + limit) // 1024))
-                for line in texts['quota']['text'].splitlines()) + '\n'
-            sha = hashlib.sha256(quota.encode('utf-8')).hexdigest()
-            tampered = dict(witness, observations={**texts, 'quota': dict(texts['quota'], text=quota,
-                                                                         sha256=sha)})
-            with self.subTest(drift=drift), self.assertRaisesRegex(Refusal, 'tree census|below the tree bytes'):
-                bound.verify(tampered, limit, fx, {MECH})
-
-
-class InventoryChecks(unittest.TestCase):
     def test_allocation_modules_are_in_the_request_closure(self):
         import preparation_requests as requests
         for name in ('linux_allocation_bound.py', 'linux_allocation_probe.py'):
@@ -897,214 +651,34 @@ class InventoryChecks(unittest.TestCase):
 
 
 class ProjectAssignmentChecks(unittest.TestCase):
-    """The fixed project-assignment role, run through the uninjected production dispatcher.
-
-    Only the kernel and transport boundaries are faked: the subprocess runner, quotactl and the two
-    fsxattr ioctls. Approval consumption, request validation, the role body, the retained witness, its
-    admission and the plan's expectation are the production code paths.
-    """
+    """Archived project-assignment witnesses remain independently verifiable offline."""
 
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix='project-assign-', dir=os.environ.get('TMPDIR')))
-        self.addCleanup(shutil.rmtree, self.root, True)
-        self.base = self.root / 'BASE'
-        self.base.mkdir()
-        self.approvals = self.root / 'approvals'
-        self.approvals.mkdir(mode=0o700)
-        self.attributes = {}
-        self.sets = []
-        info = self.base.stat()
-        self.device = '%d:%d' % (os.major(info.st_dev), os.minor(info.st_dev))
-        self.mount_source = bound.ROOT_DEVICE
-        self.features = 'has_journal ext_attr 64bit project quota'
-        self.quota = {'fmt': 4, 'fmt_rc': 0, 'rc': 0, 'cur': 0, 'curinodes': 0,
-                      'bhard': 0, 'bsoft': 0, 'ihard': 0, 'isoft': 0}
-        self.during_set = None
-        patchers = [patch.object(supervisor, 'PROJECT_ROOT', str(self.base)),
-                    patch.object(bound, 'PROJECT_ROOT', str(self.base)),
-                    patch.object(supervisor, '_subprocess_runner', self.runner),
-                    patch.object(supervisor.QuotaOps, 'read', lambda ops_self, path: BOOT_ID + '\n'),
-                    patch.object(supervisor.QuotaOps, 'quotactl', self.quotactl),
-                    patch.object(supervisor.fcntl, 'ioctl', self.ioctl)]
-        for patcher in patchers:
-            patcher.start()
-            self.addCleanup(patcher.stop)
-
-    def runner(self, argv, timeout):
-        if argv == ['/bin/cat', '/proc/self/mountinfo']:
-            text = '36 1 %s / / rw,relatime shared:1 - ext4 %s rw\n' % (self.device, self.mount_source)
-        elif argv == ['/usr/sbin/dumpe2fs', '-h', bound.ROOT_DEVICE]:
-            text = 'Filesystem UUID:          %s\nFilesystem features:      %s\n' % (bound.ROOT_UUID, self.features)
-        elif argv == ['/usr/bin/readlink', '/dev/disk/by-uuid/' + bound.ROOT_UUID]:
-            text = self.mount_source + '\n'
-        else:
-            raise AssertionError('unexpected fixed route: %r' % (argv,))
-        return {'returncode': 0, 'stdout': text.encode(), 'stderr': b''}
-
-    def quotactl(self, cmd, device, project, addr):
-        self.assertEqual(device, bound.ROOT_DEVICE)
-        self.assertEqual(project, bound.PROJECT_ID)
-        if cmd == supervisor.Q_GETFMT:
-            addr._obj.value = self.quota['fmt']
-            return self.quota['fmt_rc'], 0
-        record = addr._obj
-        for name in ('bhard', 'bsoft', 'cur', 'ihard', 'isoft', 'curinodes'):
-            setattr(record, name, self.quota[name])
-        record.valid = 3
-        return self.quota['rc'], 0
-
-    def ioctl(self, fd, request, data):
-        key = os.fstat(fd).st_ino
-        if request == supervisor.FS_IOC_FSGETXATTR:
-            data[:] = self.attributes.get(key, supervisor.FSXATTR.pack(0, 0, 0, 0, 0, bytes(8)))
-            return 0
-        if request == supervisor.FS_IOC_FSSETXATTR:
-            if self.during_set is not None:
-                self.during_set()
-            self.sets.append(key)
-            self.attributes[key] = bytes(data)
-            return 0
-        raise AssertionError('unexpected ioctl %#x' % request)
-
-    def dispatch(self, request=None):
-        body = json.dumps({'nonce': os.urandom(32).hex(), 'boot_id': BOOT_ID} if request is None else request,
-                          sort_keys=True)
-        digest = hashlib.sha256(body.encode()).hexdigest()
-        record = self.approvals / (digest + '.json')
-        record.write_text(body)
-        record.chmod(0o600)
-        out, err = io.StringIO(), io.StringIO()
-        with patch.dict(os.environ, {'EFFIGY_APPROVAL_ROOT': str(self.approvals)}), \
-                redirect_stdout(out), redirect_stderr(err):
-            code = supervisor.main(['--approved-project', digest])
-        return code, out.getvalue(), err.getvalue(), digest
+        self.base = Path(bound.PROJECT_ROOT)
 
     def witness(self):
-        code, out, err, digest = self.dispatch()
-        self.assertEqual(code, 0, err)
-        return json.loads(out.strip().splitlines()[-1]), digest
+        texts = render(boot=BOOT_ID)['observations']
+        project = ('boot_id=%s device=/dev/sda2 dev=8:2 project_id=531\n'
+                   'getfmt_rc=0 fmt=4 getquota_rc=0 bhard_qb=0 bsoft_qb=0 curspace_bytes=0 '
+                   'curinodes=0 ihard=0 isoft=0 valid=3\n') % BOOT_ID
+        return dict(mechanism=bound.PROJECT_MECHANISM, assigned=True, nonce=NONCE,
+                    boot_id=BOOT_ID, device=bound.ROOT_DEVICE, project=531,
+                    projinherit=probe.FS_XFLAG_PROJINHERIT, root=str(self.base), abi=bound.fsxattr_abi(),
+                    base=dict(dev='8:2', ino=42, uid=os.geteuid(), gid=0, mode=0o700, nlink=2, entries=[]),
+                    attributes=dict(before=probe.FSXATTR.pack(0, 0, 0, 0, 0, bytes(8)).hex(),
+                                    after=probe.FSXATTR.pack(probe.FS_XFLAG_PROJINHERIT, 0, 0, 531, 0, bytes(8)).hex()),
+                    setter=dict(ioctl='FS_IOC_FSSETXATTR', count=1, exit=0),
+                    custody=dict(entry_sha256=hashlib.sha256(Path(supervisor.__file__).read_bytes()).hexdigest(),
+                                 approval_digest='e' * 64, device=bound.ROOT_DEVICE, project=531),
+                    observations={**{k: texts[k] for k in ('mountinfo', 'dumpe2fs', 'by-uuid')},
+                                  'project': original(project)}), 'e' * 64
 
-    def test_the_uninjected_dispatcher_assigns_only_the_fixed_project(self):
-        witness, digest = self.witness()
-        admitted = bound.verify_project_assignment(
-            witness, {'boot_id': BOOT_ID, 'root': str(self.base), 'device': bound.ROOT_DEVICE,
-                      'uid': os.geteuid()})
-        self.assertTrue(admitted['assigned'])
-        self.assertEqual(admitted['approval_digest'], digest)
-        self.assertEqual(self.sets, list(self.attributes))
-        flags, extent, count, project, cowextent, padding = supervisor.FSXATTR.unpack(
-            self.attributes[self.sets[0]])
-        self.assertEqual(project, bound.PROJECT_ID)
-        self.assertEqual(flags, probe.FS_XFLAG_PROJINHERIT)
-        self.assertEqual((extent, count, cowextent, padding), (0, 0, 0, bytes(8)))
-        self.assertEqual(os.listdir(self.base), [], 'the assignment must not create an object')
-
-    def test_the_role_refuses_a_nonempty_base_and_leaves_it_unchanged(self):
-        (self.base / 'inputs').mkdir()
-        code, _out, err, _digest = self.dispatch()
-        self.assertEqual(code, 3)
-        self.assertIn('not empty', err)
-        self.assertEqual(self.sets, [])
-
-    def test_an_already_assigned_or_inheriting_prestate_refuses(self):
-        for original in (supervisor.FSXATTR.pack(0, 0, 0, bound.PROJECT_ID, 0, bytes(8)),
-                         supervisor.FSXATTR.pack(probe.FS_XFLAG_PROJINHERIT, 0, 0, 0, 0, bytes(8))):
-            with self.subTest(original=original.hex()):
-                self.attributes.clear()
-                self.sets = []
-                self.attributes[self.base.stat().st_ino] = original
-                code, _out, err, _digest = self.dispatch()
-                self.assertEqual(code, 3)
-                self.assertIn('empty pre-state', err)
-                self.assertEqual(self.sets, [])
-
-    def test_an_unavailable_or_charged_project_record_refuses_before_the_set(self):
-        for change, message in (({'rc': -1}, 'project record'), ({'cur': 4096}, 'already charged'),
-                                ({'bhard': 8}, 'already carries a quota limit'),
-                                ({'fmt': 0}, 'quota format is not active')):
-            with self.subTest(change=change):
-                self.quota = {'fmt': 4, 'fmt_rc': 0, 'rc': 0, 'cur': 0, 'curinodes': 0,
-                              'bhard': 0, 'bsoft': 0, 'ihard': 0, 'isoft': 0}
-                self.quota.update(change)
-                self.attributes.clear()
-                self.sets = []
-                code, _out, err, _digest = self.dispatch()
-                self.assertEqual(code, 3)
-                self.assertIn(message, err)
-                self.assertEqual(self.sets, [], 'no attribute may change without the unused proof')
-
-    def test_a_partial_ioctl_refuses_and_keeps_no_witness(self):
-        def refuse(fd, request, data):
-            self.assertEqual(request, supervisor.FS_IOC_FSSETXATTR)
-            raise OSError(25, 'inappropriate ioctl')
-        self.attributes.clear()
-        with patch.object(supervisor.fcntl, 'ioctl',
-                          lambda fd, request, data: refuse(fd, request, data) if
-                          request == supervisor.FS_IOC_FSSETXATTR else
-                          self.ioctl(fd, request, data)):
-            code, out, err, _digest = self.dispatch()
-        self.assertEqual(code, 3)
-        self.assertIn('inappropriate ioctl', err)
-        self.assertEqual(out, '')
-
-    def test_a_replaced_base_descriptor_is_refused(self):
-        def replace():
-            os.rename(str(self.base), str(self.root / 'BASE-moved'))
-            self.base.mkdir()
-        self.during_set = replace
-        code, _out, err, _digest = self.dispatch()
-        self.assertEqual(code, 3)
-        self.assertIn('replaced, aliased or recreated', err)
-
-    def test_wrong_boot_device_or_medium_refuses_before_the_set(self):
-        code, _out, err, _digest = self.dispatch({'nonce': os.urandom(32).hex(), 'boot_id': OTHER_BOOT})
-        self.assertEqual(code, 3)
-        self.assertIn('boot identity differs', err)
-        self.mount_source = '/dev/sda1'
-        code, _out, err, _digest = self.dispatch()
-        self.assertEqual(code, 3)
-        self.assertIn('not the native ext4 device', err)
-        self.mount_source = bound.ROOT_DEVICE
-        self.features = 'has_journal ext_attr 64bit'
-        code, _out, err, _digest = self.dispatch()
-        self.assertEqual(code, 3)
-        self.assertIn('offline activation has not happened', err)
-        self.assertEqual(self.sets, [])
-
-    def test_a_foreign_or_aliased_root_refuses(self):
-        alias = self.root / 'alias'
-        alias.symlink_to(self.base)
-        with patch.object(supervisor, 'PROJECT_ROOT', str(alias)), \
-                patch.object(bound, 'PROJECT_ROOT', str(alias)):
-            code, _out, err, _digest = self.dispatch()
-        self.assertEqual(code, 3)
-        self.assertIn('not canonical', err)
-
-    def test_the_request_cannot_name_a_path_project_device_or_limit(self):
-        code, _out, err, _digest = self.dispatch({'nonce': os.urandom(32).hex(), 'boot_id': BOOT_ID,
-                                                  'project': 77, 'device': '/dev/sdb1'})
-        self.assertEqual(code, 3)
-        self.assertIn('only a nonce and boot identity', err)
-        self.assertEqual(self.sets, [])
-
-    def test_the_role_requires_its_arguments_and_a_usable_kernel_abi(self):
-        request = {'nonce': os.urandom(32).hex(), 'boot_id': BOOT_ID}
-        signature = inspect.signature(supervisor.project_assign)
-        for name in ('request', 'ops', 'approval_digest'):
-            with self.subTest(name=name):
-                self.assertIs(signature.parameters[name].default, inspect.Parameter.empty)
-        with self.assertRaises(TypeError):
-            supervisor.project_assign(request, supervisor.QuotaOps())
-        verifier = inspect.signature(bound.verify_project_assignment)
-        self.assertEqual(set(verifier.parameters), {'witness', 'facts'})
-        for name in ('witness', 'facts'):
-            self.assertIs(verifier.parameters[name].default, inspect.Parameter.empty)
-        self.assertEqual(bound.fsxattr_abi(), supervisor.fsxattr_abi())
-        with patch.object(supervisor, 'FSXATTR', struct.Struct('=4I8s')), \
-                self.assertRaises(Refusal):
-            supervisor.fsxattr_abi()
-        self.assertEqual(supervisor.FS_IOC_FSGETXATTR, 0x801C581F)
-        self.assertEqual(supervisor.FS_IOC_FSSETXATTR, 0x401C5820)
+    def test_retired_roles_refuse_before_consuming_an_approval(self):
+        for role in ('--approved-quota', '--approved-project'):
+            with self.subTest(role=role), patch.object(supervisor, 'consume_approved_request') as consume:
+                with self.assertRaisesRegex(Refusal, 'usage:'):
+                    supervisor.main([role, 'e' * 64])
+                consume.assert_not_called()
 
     def test_the_witness_is_refused_when_any_fact_drifts(self):
         witness, _digest = self.witness()
@@ -1127,12 +701,12 @@ class ProjectAssignmentChecks(unittest.TestCase):
             ('base-uid', 1001, {'base': dict(witness['base'], uid=1001)}),
             ('facts-uid', 0, {'uid': 0}),
             ('base-mode', 0o777, {'base': dict(witness['base'], mode=0o777)}),
-            ('before', supervisor.FSXATTR.pack(0, 4, 0, 0, 0, bytes(8)).hex(),
-             {'attributes': {'before': supervisor.FSXATTR.pack(0, 4, 0, 0, 0, bytes(8)).hex(),
+            ('before', probe.FSXATTR.pack(0, 4, 0, 0, 0, bytes(8)).hex(),
+             {'attributes': {'before': probe.FSXATTR.pack(0, 4, 0, 0, 0, bytes(8)).hex(),
                              'after': witness['attributes']['after']}}),
-            ('after', supervisor.FSXATTR.pack(probe.FS_XFLAG_PROJINHERIT, 0, 0, 531, 4, bytes(8)).hex(),
+            ('after', probe.FSXATTR.pack(probe.FS_XFLAG_PROJINHERIT, 0, 0, 531, 4, bytes(8)).hex(),
              {'attributes': {'before': witness['attributes']['before'],
-                             'after': supervisor.FSXATTR.pack(probe.FS_XFLAG_PROJINHERIT, 0, 0, 531, 4,
+                             'after': probe.FSXATTR.pack(probe.FS_XFLAG_PROJINHERIT, 0, 0, 531, 4,
                                                               bytes(8)).hex()}}),
             ('extra', 1, {'extra': 1}),
         )

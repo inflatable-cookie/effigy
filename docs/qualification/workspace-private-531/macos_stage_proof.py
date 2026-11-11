@@ -30,15 +30,14 @@ def unique_object(pairs):
 
 # D1 is reached only through a window request, which names the original D0 receipt it consumes.
 # D2, D3 and D4 are the same form, naming the original D1, D2 and D3 receipt they consume (each binds the chain below).
-# C1-C6 windows name their original executor predecessor; their plain requests
+# C1 windows name their original executor predecessor; their plain requests
 # (pre-created absolute-time activations) stay supported.
-PROOF_STAGES = ('C0', 'D0', 'D1', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'D2', 'D3', 'D4')
+PROOF_STAGES = ('C0', 'D0', 'D1', 'C1', 'D2', 'D3', 'D4')
 WINDOW_PRIOR = {'C1': 'C0', 'C2': 'C1', 'C3': 'C2', 'C4': 'C3', 'C5': 'C4', 'C6': 'C5', 'D1': 'D0', 'D2': 'D1', 'D3': 'D2', 'D4': 'D3'}
 # The stages the plain proof entry refuses: every window stage whose plain request is not reviewed.
 # C1 keeps its plain request, so it is not window-only.
 WINDOW_ONLY = ('D1', 'D2', 'D3', 'D4')
-PROOF_STAGE_NAMES = 'C0, D0, D1, C1, C2, C3, C4, C5, C6, D2, D3 or D4'
-PROOF_STAGE_REFUSAL = 'proof entry supports only ' + PROOF_STAGE_NAMES
+PROOF_STAGE_REFUSAL = 'individual proof stages are C0/C1 and D0-D4; C2-C6 require plan-chain and a chain request'
 
 DESKTOP_DISK = '/Users/tom/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw'
 DESKTOP_GROWTH_CAP = 512 * 1024 * 1024
@@ -387,9 +386,7 @@ def execute_ready(request, request_sha):
 
 
 def prospective(stage_id, bindings):
-    """Read-only binding data for a later externally authorised proof launch."""
-    if stage_id not in PROOF_STAGES:
-        raise executor.Refusal(PROOF_STAGE_REFUSAL)
+    """Read-only stage binding shared by the chain and the remaining individual entries."""
     manifest = executor.load_manifest()
     plan = executor.resolve_stage(stage_id, bindings, manifest)
     if plan['static_admission']:
@@ -537,6 +534,9 @@ def main(argv):
         options = json.loads(Path(argv[3]).read_text(), object_pairs_hook=unique_object)
         print(json.dumps(ready_recipe(bindings, options), indent=2, sort_keys=True))
         return 0
+    if ((len(argv) == 5 and argv[1] == 'plan-window') or
+            (len(argv) == 4 and argv[1] == 'plan')) and argv[2] not in PROOF_STAGES:
+        raise executor.Refusal(PROOF_STAGE_REFUSAL)
     if len(argv) == 5 and argv[1] == 'plan-window':
         bindings = json.loads(Path(argv[3]).read_text(), object_pairs_hook=unique_object)
         options = json.loads(Path(argv[4]).read_text(), object_pairs_hook=unique_object)

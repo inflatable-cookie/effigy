@@ -620,25 +620,21 @@ class Boundaries(unittest.TestCase):
             file.write_text(json.dumps(value))
             self.assertNotEqual(approved, digest(file))
             with patch.object(sys, 'argv', ['launch.py', '--inputs', str(file), '--sha256', approved,
-                              '--go-bindings', str(Path(directory) / 'not-created'), '--go-sha256', 'e' * 64]), \
+                              '--go-bindings', str(Path(directory) / 'not-created'), '--go-sha256', 'e' * 64, '--backend', 'colima']), \
                  patch.object(launch, 'source_head', return_value=HEAD), \
                  patch.object(launch, 'run', side_effect=AssertionError('native call for changed root')):
                 with self.assertRaisesRegex(RuntimeError, 'input hash mismatch'):
                     launch.main()
 
-    def test_every_backend_go_is_checked_before_window_creation(self):
+    def test_launcher_requires_a_backend_before_reading_inputs_or_creating_evidence(self):
         import launch
-        value = inputs()
-        value['evidence'] = str(SCRATCH / 'must-never-be-created')
-        with patch.object(sys, 'argv', ['launch.py', '--inputs', str(SCRATCH / 'input.json'),
-                          '--sha256', 'f' * 64, '--go-bindings', str(SCRATCH / 'go.json'), '--go-sha256', 'e' * 64]), \
-             patch.object(launch, 'source_head', return_value=HEAD), \
-             patch.object(launch, 'digest', side_effect=['f' * 64, 'e' * 64]), \
-             patch.object(launch, 'load', side_effect=[value, {name: {'path': name} for name in BACKENDS}, go(value['backends'][0]), go(value['backends'][1])]), \
-             patch.object(launch, 'artifact', side_effect=[Path('colima'), RuntimeError('Desktop GO absent')]), \
-             patch.object(Path, 'mkdir', side_effect=AssertionError('effect before all native GOs')):
-            with self.assertRaisesRegex(RuntimeError, 'Desktop GO absent'):
+        with patch.object(sys, 'argv', ['launch.py', '--inputs', 'unread', '--sha256', 'f' * 64,
+                          '--go-bindings', 'unread', '--go-sha256', 'e' * 64]), \
+             patch.object(launch, 'source_head', side_effect=AssertionError('source read without a backend')), \
+             patch.object(Path, 'mkdir', side_effect=AssertionError('effect without a backend')):
+            with self.assertRaises(SystemExit) as refused:
                 launch.main()
+            self.assertEqual(refused.exception.code, 2)
 
     def test_launcher_refuses_a_receipt_outside_the_bound_root(self):
         import launch
@@ -649,7 +645,7 @@ class Boundaries(unittest.TestCase):
             result = SimpleNamespace(returncode=0, stderr=b'',
                                      stdout=json.dumps({'receipt': str(Path(directory) / 'foreign.json')}).encode())
             with patch.object(sys, 'argv', ['launch.py', '--inputs', str(Path(directory) / 'input.json'),
-                              '--sha256', 'f' * 64, '--go-bindings', str(Path(directory) / 'go.json'), '--go-sha256', 'e' * 64]), \
+                              '--sha256', 'f' * 64, '--go-bindings', str(Path(directory) / 'go.json'), '--go-sha256', 'e' * 64, '--backend', 'colima']), \
                  patch.object(launch, 'source_head', return_value=HEAD), \
                  patch.object(launch, 'digest', side_effect=['f' * 64, 'e' * 64]), \
                  patch.object(launch, 'load', side_effect=[value, {name: {'path': name} for name in BACKENDS}]

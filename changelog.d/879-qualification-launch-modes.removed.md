@@ -1,0 +1,1 @@
+Retired all-backend private qualification launches, individual C2–C6 preparation launches, and the Linux quota/project administration roles. Select one backend explicitly, use the Colima preparation chain, and aggregate receipts offline. Historical receipt readers remain available.

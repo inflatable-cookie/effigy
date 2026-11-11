@@ -1,7 +1,0 @@
-{
-  "native_session_root_empty": true,
-  "reason": "PATH docker was a symlink; common.digest uses O_NOFOLLOW",
-  "correction": "real copied Docker CLI on owned PATH",
-  "cli_sha256": "4fb51be4a4e9389b942ecbf52901a962bdccdaa38275e6de4d353df33981d600",
-  "proof": false
-}

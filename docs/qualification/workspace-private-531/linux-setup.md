@@ -1,5 +1,14 @@
 # Linux transport and Vault-backed placement proposal — unarmed
 
+Current route: physical preparation and the native full session. Tom retired the
+`--approved-quota` and `--approved-project` supervisor roles on 2026-11-10
+(effigy#879), after the retained-request inventory found no unspent request.
+The quota executor and its root setters are removed from source. The historical
+quota/activation descriptions below explain retained evidence only; they are
+not current commands or an activation plan to execute. Offline witness readers,
+active systemd custody, receipt and transfer helpers remain. Installed root
+helpers and VM quota metadata are outside this source retirement.
+
 This document grants no VM, SSH or storage authority. Task 829's Queue-held brief
 separately authorizes the exploration recorded below; the legacy sealed packet
 remains unarmed. Keep the reviewed **SSH** transport; Parallels authenticates

@@ -28,9 +28,14 @@ or nonmatching process identities. `backend-observation.json` records the exact
 session window and zero matching backend lock lines;
 `desktop-backend-session.txt` is consequently empty.
 
+The full byte-for-byte evidence set is retained durably at
+`/Volumes/Stash/scratch/effigy/879-retirement-f13c85de2183/desktop-865/`.
+`SHA256SUMS.json` covers those original files. This directory keeps the summary,
+hashes and the two key stderr logs. The raw failed-child stderr was unavailable;
+the Compose diagnosis remains an inference, not a recovered stream.
+
 Original working evidence was below
 `/Volumes/Stash/scratch/effigy/93cdd743/desktop-865-iZAktisO`; preparation was its
-sibling `desktop-smoke-qa78knc6`. Nucleus owns removal of that run root after
-release. These copies preserve original bytes, paths and hashes; they do not
-replace missing original dependencies or constitute a reusable proof chain.
-`SHA256SUMS.json` covers the copied evidence files.
+sibling `desktop-smoke-qa78knc6`. These archives preserve original bytes, paths
+and hashes; they do not replace missing dependencies or constitute a reusable
+proof chain.
