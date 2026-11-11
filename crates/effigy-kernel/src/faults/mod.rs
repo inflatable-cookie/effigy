@@ -61,6 +61,15 @@ pub(super) fn recovery_cleanup(cx: &EffectContext) -> CleanupContext {
         .cleanup(Duration::from_secs(20))
         .expect("cleanup context")
 }
+/// Controlled adapter latency: exercise a real cleanup deadline without a
+/// delayed-adapter wrapper or a fake clock.
+fn slow_release() {
+    crate::fault::hook(Some(Box::new(|point| {
+        if point == crate::fault::Point::AdapterBefore {
+            std::thread::sleep(Duration::from_millis(1200));
+        }
+    })));
+}
 /// The engine's recovery grammar stand-in: exactly `recover` parses.
 pub(super) fn valid_next(argv: &[std::ffi::OsString]) -> bool {
     argv == ["recover"]
