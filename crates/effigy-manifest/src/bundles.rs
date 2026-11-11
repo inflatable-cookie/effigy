@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use toml::Value;
 
+use crate::ingress::{record_value_sources, ManifestInput};
 use crate::manifest_section::{validate_minimum_effigy_version, ManifestSectionConfig};
-use crate::retired_config::RetiredConfigDeclaration;
 use crate::ManifestError;
 use crate::TASK_MANIFEST_FILE;
 
@@ -56,11 +56,11 @@ pub enum BundleSourceType {
 
 pub(crate) fn apply_bundle_defaults(
     manifest_path: &Path,
-    current: &mut Value,
-    extend_paths: &[String],
+    input: &mut ManifestInput,
     materialized: Option<&Path>,
-) -> Result<Option<AppliedBundleDefaults>, ManifestError> {
-    let Some(bundle): Option<crate::config_sections::ManifestBundleConfig> = current
+) -> Result<Option<PathBuf>, ManifestError> {
+    let Some(bundle): Option<crate::config_sections::ManifestBundleConfig> = input
+        .value
         .as_table()
         .and_then(|table| table.get("bundle"))
         .cloned()
@@ -93,42 +93,29 @@ pub(crate) fn apply_bundle_defaults(
         &normalized_inputs,
     )?;
     let bundle_extend_paths = take_bundle_extend_paths(manifest_path, &mut defaults)?;
-    // Retired `[bootstrap]` spelling is normalised on both sides before the
-    // merge. A bundle that still writes `run` (or `children`) must be read as
-    // the consumer-facing `setup` shape first, or the merge fills the bundle's
-    // retired `run` in beside a consumer's declared `setup` and both run.
-    // Translating the consumer side too keeps one shape for the merge: a
-    // consumer `setup` (or a retired `run` read as one) replaces the bundle's,
-    // while `start` still inherits from the bundle when unset.
-    let mut retired_config = crate::retired_bootstrap::translate(current);
-    retired_config.merge(crate::retired_bootstrap::translate(&mut defaults));
-    let existing_extend_paths = combined_bundle_extend_paths(extend_paths, &bundle_extend_paths);
+    // Both sides use the same bootstrap shape before defaults are filled, so
+    // a consumer setup replaces the bundle setup instead of running both.
+    input.normalize();
+    let current = &mut input.value;
+    let mut defaults = ManifestInput::new(defaults, Some(&source_path));
+    defaults.normalize();
+    let existing_extend_paths =
+        combined_bundle_extend_paths(&input.extend_paths, &bundle_extend_paths);
     let existing_bundle_values = existing_extend_paths
         .iter()
         .map(|path| (path.clone(), lookup_value_at_path(current, path).is_some()))
         .collect::<BTreeMap<_, _>>();
-    merge_missing_values(current, &defaults);
+    merge_missing_values(current, &defaults.value);
     apply_bundle_extend_paths(
         manifest_path,
         current,
-        &defaults,
+        &defaults.value,
         &existing_extend_paths,
         &existing_bundle_values,
     )?;
-    Ok(Some(AppliedBundleDefaults {
-        source_path,
-        bundle_root: resolved_source.local_path,
-        retired_config,
-    }))
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct AppliedBundleDefaults {
-    pub source_path: PathBuf,
-    pub bundle_root: PathBuf,
-    /// What retired v0.15 spelling the bundle defaults and the consumer
-    /// manifest used. It reaches the manifest's one deprecation notice.
-    pub retired_config: RetiredConfigDeclaration,
+    record_value_sources("", current, &source_path, &mut input.source_map);
+    input.retired_config.merge(defaults.retired_config);
+    Ok(Some(resolved_source.local_path))
 }
 
 #[derive(Debug, serde::Deserialize)]

@@ -326,3 +326,60 @@ fn copy_dir(source: &Path, destination: &Path) {
         }
     }
 }
+
+#[test]
+fn included_compat_notices_survive_local_setup_replacement_and_bundle_normalisation() {
+    let (root, manifest_path) = bundle_consumer(
+        "ingress",
+        r#"
+[manifest]
+include = [{ path = "setup.toml", optional = true }]
+"#,
+    );
+    std::fs::write(
+        root.path().join("setup.toml"),
+        r#"
+[bootstrap]
+setup = ["bundle:setup"]
+[contracts]
+schema-index = "index.json"
+"#,
+    )
+    .expect("included setup");
+    let overlay = root.path().join("effigy.local.toml");
+    std::fs::write(&overlay, "[bootstrap]\nsetup = ['dev']\n").expect("local setup");
+    let loaded = load_task_manifest_with_inspection(&manifest_path).expect("manifest");
+    assert_eq!(
+        loaded.manifest.bootstrap.as_ref().expect("bootstrap").setup,
+        ["dev"]
+    );
+    assert!(loaded
+        .manifest
+        .bootstrap
+        .as_ref()
+        .expect("bootstrap")
+        .start
+        .is_some());
+    assert_eq!(
+        loaded
+            .value_sources
+            .iter()
+            .find(|source| source.path == "bootstrap.setup")
+            .expect("setup provenance")
+            .source,
+        overlay
+    );
+    assert_eq!(loaded.manifest.retired_config.compat_statements().len(), 2);
+    let notice = loaded
+        .manifest
+        .retired_config
+        .notice(&manifest_path)
+        .expect("notice");
+    for declaration in [
+        "`optional`",
+        "`schema-index`",
+        "`[bootstrap].run` is read as `setup`",
+    ] {
+        assert_eq!(notice.matches(declaration).count(), 1, "{notice}");
+    }
+}

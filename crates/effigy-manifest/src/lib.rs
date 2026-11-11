@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 mod bundles;
 mod composition;
+mod ingress;
 pub mod config_sections;
 mod lifecycle_date;
 pub use lifecycle_date::ManifestLifecycleDate;
