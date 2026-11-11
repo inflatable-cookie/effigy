@@ -4621,6 +4621,13 @@ v0.15 imports nothing (effigy#307, effigy#373).
   oracles. Each scenario uses six owned shard processes, with at most two
   scenarios active together. The driver reaps every sibling before reporting
   a failed shard, so a failure cannot orphan the rest of its proof.
+  Environment transitions and holders use the recovery fixture budget for
+  cleanup entered before fault delivery; cleanup entered after delivery keeps
+  the short injected-fault budget. This prevents an unfaulted prefix timing
+  out before a later target. Product deadlines and per-point delivery assertions
+  are unchanged. `EFFIGY_KERNEL_FAULT_SLOW_PREFIX=1` adds 1.2 seconds of
+  adapter latency in the `AppliedBefore#5 Enospc` job to reproduce prefix
+  truncation without relying on host load to cause a long disk flush.
 - Scenarios: plain task; sequence; multi-child test; detached managed run
   with an environment attachment; environment up, down and handover on the
   strict fake backend, with a concurrent attach; a `Closed` predecessor

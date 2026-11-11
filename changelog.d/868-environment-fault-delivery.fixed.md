@@ -1,0 +1,1 @@
+Fixed load-sensitive environment fault-injection delivery by keeping unfaulted transition and holder cleanup on the recovery fixture budget until a fault has fired. Product deadlines and deterministic delivery assertions remain unchanged.

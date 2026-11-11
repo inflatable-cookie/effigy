@@ -342,7 +342,14 @@ fn run_job(scenario: &dyn Scenario, job: Job, baseline: Option<i32>, tally: &mut
         Job::Point(point, n, fault) => {
             scenario.warm();
             fault::arm_nth(point, n, fault);
+            if scenario.name() == "environment"
+                && job == Job::Point(Point::AppliedBefore, 5, Fault::Enospc)
+                && std::env::var_os("EFFIGY_KERNEL_FAULT_SLOW_PREFIX").is_some()
+            {
+                slow_release();
+            }
             let exit = scenario.run(&home.home());
+            fault::hook(None);
             (fault::fired(), exit, "in-process")
         }
         Job::Observation(index) => {

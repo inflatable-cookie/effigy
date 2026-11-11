@@ -685,6 +685,16 @@ fn faults_detached_managed_run_with_environment_attachment() {
 
 #[derive(Debug)]
 struct Environment;
+/// Before delivery, holder cleanup must not spend the short injected-fault
+/// budget and truncate the scenario before its armed boundary. Once a fault
+/// has fired, keep the one-second budget used by injected cleanup.
+fn environment_cleanup(cx: &EffectContext) -> CleanupContext {
+    if crate::fault::fired() {
+        cleanup(cx)
+    } else {
+        recovery_cleanup(cx)
+    }
+}
 /// One environment transition under its own gate: permit, intent, backend.
 pub(super) fn transition(
     home: &Path,
@@ -720,7 +730,7 @@ pub(super) fn transition(
         }
         run.finish(WorkloadOutcome::Succeeded).map_err(drop)
     })();
-    let settled = run.settle(&cleanup(&cx), fake);
+    let settled = run.settle(&environment_cleanup(&cx), fake);
     match (result, settled) {
         (Ok(()), Ok(_)) => Ok(Some(fence)),
         // A transition refused while held is the correct outcome (R4).
@@ -748,7 +758,7 @@ fn held_transition(home: &Path, holder: u8, at: &Fence, refused: u8, op: &str) -
     // The concurrent transition: its permit sees the attachment.
     let _ = transition(home, refused, op, Settlement::Retain, false);
     attempt!(run, &cx, fake, run.finish(WorkloadOutcome::Succeeded));
-    settle(run, &cx, fake).map(drop)
+    run.settle(&environment_cleanup(&cx), fake).ok().map(drop)
 }
 impl Scenario for Environment {
     fn name(&self) -> &'static str {
@@ -1518,95 +1528,57 @@ fn faults_objects_reset_is_atomic_and_preserves_sibling() {
 
 // --- Controlled discriminators for the effigy#618 failure classes. ---
 
-/// A strict fake whose adapter release is proved only after a fixed delay, so
-/// a settle's budget is observable without touching the shared fake.
-struct DelayedRelease {
-    fake: Fake,
-    delay: Duration,
-}
-impl DelayedRelease {
-    fn new(home: &Path, delay: Duration) -> Self {
-        Self {
-            fake: Fake::new(home),
-            delay,
-        }
-    }
-    fn apply(&self, key: &str, fence: &Fence) {
-        self.fake.apply(key, fence);
-    }
-}
-impl SettlementAdapter for DelayedRelease {
-    fn observe(&mut self, effect: &Effect, cx: &CleanupContext) -> Observed<Fence> {
-        self.fake.observe(effect, cx)
-    }
-    fn release(&mut self, effect: &Effect, cx: &CleanupContext) -> Observed<()> {
-        std::thread::sleep(self.delay);
-        self.fake.release(effect, cx)
-    }
-    fn reconcile(&mut self, effect: &Effect, cx: &CleanupContext) -> Observed<Reconciled> {
-        std::thread::sleep(self.delay);
-        self.fake.reconcile(effect, cx)
-    }
-}
-
-/// The recovery-context discriminator (effigy#618): a settle whose first
-/// release is proved only after 1.2 s runs past the one-second
-/// injected-scenario budget, and the next effect's settle-phase check refuses
-/// it as `Interrupted(TimedOut)` — the recorded failure class, with the
-/// injected budget itself unchanged — while the recovery budget settles the
-/// very same run. The rerun that refused in the QA record rode the injected
-/// budget by accident; it now receives the recovery one.
+/// A slow release exhausts injected cleanup before the next effect (effigy#618).
+/// Recovery and an unfaulted environment prefix must finish that same work;
+/// otherwise a later armed boundary disappears under load (effigy#868).
 #[test]
 fn faults_recovery_budget_settles_a_slow_release_the_injected_budget_refuses() {
+    use crate::fault::{self, Fault};
     let home = home();
     let cx = mutate();
     let root = StateRoot::effects(&cx, &home.home()).expect("root");
-    let mut delayed = DelayedRelease::new(&home.home(), Duration::from_millis(1200));
-    let mut refused = begin(&cx, &root, task(10), 70, None, vec![], &mut delayed).expect("begin");
-    for key in ["slow-70", "next-70"] {
-        let ticket = refused
-            .intend(spec(
-                refused.fence().clone(),
-                key,
-                Settlement::Release(Value::Null),
-            ))
-            .expect("intend");
-        delayed.apply(key, refused.fence());
-        refused
-            .applied(&ticket, Value::Bool(true))
-            .expect("applied");
-        refused
-            .completed(&ticket, RequiredObligation::Applied)
-            .expect("completed");
+    let mut fake = Fake::new(&home.home());
+    slow_release();
+    for n in 70..=73 {
+        let acknowledge = if n == 71 { vec![id(70)] } else { vec![] };
+        let mut run = begin(&cx, &root, task(10), n, None, acknowledge, &mut fake)
+            .expect("begin, acknowledging the first run's residue");
+        for key in [format!("slow-{n}"), format!("next-{n}")] {
+            apply(&mut run, &fake, &key).expect("apply");
+        }
+        run.finish(WorkloadOutcome::Succeeded).expect("finish");
+        fault::arm_point(Point::RequestBefore, Fault::Unknown);
+        if n == 73 {
+            fault::point(Point::RequestBefore).expect("deliver Unknown");
+            assert!(
+                fault::injected::<()>().is_some(),
+                "consume injected Unknown"
+            );
+        }
+        let budget = match n {
+            70 => cleanup(&cx),
+            71 => recovery_cleanup(&cx),
+            _ => environment_cleanup(&cx),
+        };
+        if n == 70 || n == 73 {
+            assert!(budget.operation().remaining().unwrap() <= Duration::from_secs(1));
+            assert!(
+                matches!(
+                    run.settle(&budget, &mut fake),
+                    Err(RunError::Interrupted(Interrupt::TimedOut { .. }))
+                ),
+                "injected cleanup must still refuse the slow release"
+            );
+        } else {
+            run.settle(&budget, &mut fake)
+                .expect("unfaulted cleanup reaches the next boundary");
+            assert!(!fault::fired(), "the later target is still armed");
+            fault::point(Point::RequestBefore).expect("later boundary");
+            assert!(fault::fired(), "the later fault must be delivered");
+        }
+        fault::arm(None);
     }
-    refused.finish(WorkloadOutcome::Succeeded).expect("finish");
-    match refused.settle(&cleanup(&cx), &mut delayed) {
-        Err(RunError::Interrupted(Interrupt::TimedOut { .. })) => {}
-        other => panic!("the injected budget must still refuse: {other:?}"),
-    }
-    // Acknowledged residue admits a successor that touches nothing (K5).
-    let mut settled = begin(&cx, &root, task(10), 71, None, vec![id(70)], &mut delayed)
-        .expect("acknowledged begin");
-    for key in ["slow-71", "next-71"] {
-        let ticket = settled
-            .intend(spec(
-                settled.fence().clone(),
-                key,
-                Settlement::Release(Value::Null),
-            ))
-            .expect("intend");
-        delayed.apply(key, settled.fence());
-        settled
-            .applied(&ticket, Value::Bool(true))
-            .expect("applied");
-        settled
-            .completed(&ticket, RequiredObligation::Applied)
-            .expect("completed");
-    }
-    settled.finish(WorkloadOutcome::Succeeded).expect("finish");
-    settled
-        .settle(&recovery_cleanup(&cx), &mut delayed)
-        .expect("the recovery budget settles the same releases");
+    fault::hook(None);
 }
 
 /// Positive pin evidence: this launch's *recorded* anchor generation is alive
