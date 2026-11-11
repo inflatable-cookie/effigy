@@ -4645,10 +4645,12 @@ v0.15 imports nothing (effigy#307, effigy#373).
   scenarios active together. The driver reaps every sibling before reporting
   a failed shard, so a failure cannot orphan the rest of its proof.
   All fault fixtures, including the supervisor matrix, use the recovery fixture
-  budget for cleanup entered before fault delivery; cleanup entered after
-  delivery and deliberate stuck-effect wait-outs keep the short injected-fault
-  budget. This prevents an unfaulted prefix timing
-  out before a later target. Product deadlines and per-point delivery assertions
+  budget for unfaulted, non-waiting prefix cleanup. Cleanup entered after fault
+  delivery and intentional waits that exhaust an armed fault's bound keep short
+  contexts, as do deliberate stuck-effect wait-outs. A pre-delivery context must
+  not turn an intentional one-second fault wait into a twenty-second wait.
+  This prevents an unfaulted prefix timing out before a later target while
+  preserving fault wait-outs. Product deadlines and per-point delivery assertions
   are unchanged. `EFFIGY_KERNEL_FAULT_SLOW_PREFIX=1` adds 1.2 seconds of
   adapter latency in the environment `AppliedBefore#5 Enospc` job and matrix
   interrupted-predecessor admission to reproduce prefix truncation without
