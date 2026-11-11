@@ -282,7 +282,7 @@ def association_transport(dispatch, pin=None):
 
 
 def observe_association(boot_id, read_boot_id, config, descriptor, extents, writer_bound,
-                        transport=None):
+                        transport=None, deadline=None):
     """The production disk-association handoff for one already observed boot.
 
     No caller constant is a reading here. The pinned reader is the supported CLI configuration read
@@ -293,7 +293,13 @@ def observe_association(boot_id, read_boot_id, config, descriptor, extents, writ
     reader's own output; the registered config, descriptor and extent inventory are the originals
     this occurrence retained; and the guest block observations are the writer-bound reads of this
     same boot. The complete record then goes through production setup.verify_disk_association. A
-    refusal is raised, never softened into a status.
+    decided refusal is raised, never softened into a status.
+
+    A dispatch that never reached the helper's own exact refusal is transport, not a finding:
+    the same shared bounded policy as the read-only probe routes (TRANSPORT_PAUSE between
+    attempts inside the one occurrence window) retries it, and an exhausted window returns
+    status transport-unavailable with no facts and no finding. Without a deadline there is no
+    window to share, so one attempt runs and a transport failure raises as before.
     """
     if not disk_association.reader_executable():
         # Defensive seam: the accessor returns 'none' on the supported CLI route. If a limitation
@@ -305,13 +311,27 @@ def observe_association(boot_id, read_boot_id, config, descriptor, extents, writ
             or guest_probe.status_of(rows, 'block-lsblk') != guest_probe.OBSERVED):
         return {'status': 'not attempted: the guest block observations did not complete for this boot',
                 'facts': None, 'result': None}
-    facts = disk_association.association_facts(
-        boot_id=boot_id, read_boot_id=read_boot_id, config=config, descriptor=descriptor,
-        extents=extents, block=guest_probe.facts_of(rows, 'block-sysfs'),
-        lsblk=guest_probe.facts_of(rows, 'block-lsblk'),
-        root=(writer_bound.get('facts') or {}).get('root') or {}, transport=transport)
-    return {'status': 'verified', 'facts': facts,
-            'result': setup.verify_disk_association(facts)}
+    attempts = []
+    while True:
+        try:
+            facts = disk_association.association_facts(
+                boot_id=boot_id, read_boot_id=read_boot_id, config=config, descriptor=descriptor,
+                extents=extents, block=guest_probe.facts_of(rows, 'block-sysfs'),
+                lsblk=guest_probe.facts_of(rows, 'block-lsblk'),
+                root=(writer_bound.get('facts') or {}).get('root') or {}, transport=transport)
+        except disk_inventory.Refused as exc:
+            if exc.phase not in disk_inventory.TRANSPORT_PHASES:
+                raise
+            attempts.append({'phase': exc.phase, 'reason': exc.reason})
+            if deadline is None:
+                raise
+            if deadline - time.monotonic() < PAUSE + TRANSPORT_FLOOR:
+                return {'status': 'transport-unavailable', 'facts': None, 'result': None,
+                        'attempts': attempts}
+            time.sleep(min(PAUSE, max(0, deadline - time.monotonic())))
+            continue
+        return {'status': 'verified', 'facts': facts,
+                'result': setup.verify_disk_association(facts), 'attempts': attempts}
 
 
 def stored_association(handoff):
@@ -811,8 +831,13 @@ def execute(request, request_path, request_hash, selector_streams=None, *, explo
                 (destination / 'before-config').read_bytes(),
                 (destination / 'before-descriptor').read_bytes(),
                 outcome.get('before_extents') or {}, writer_bound,
-                transport=association_transport(association_dispatch))
+                transport=association_transport(association_dispatch),
+                deadline=start_end)
             outcome['guest_association'] = handoff['status']
+            # A transport-unavailable handoff carries no facts and no finding: the
+            # inventory route never reached a decided refusal inside the window.
+            if handoff.get('attempts'):
+                outcome['disk_association_attempts'] = handoff['attempts']
             outcome.update(stored_association(handoff))
         except (stage.Refusal, disk_association.Refusal, disk_inventory.Refused, OSError) as exc:
             outcome['guest_association'] = 'refused: ' + str(exc)
