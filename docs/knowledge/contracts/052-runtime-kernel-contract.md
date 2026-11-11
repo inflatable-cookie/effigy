@@ -1602,6 +1602,11 @@ only where identity, byte offset and text exactly match its canonical read;
 missing, stale or expired style data renders plain. TUI typed ingest renders
 those spans directly, without ANSI interpretation or a second redactor.
 
+Host supervisors resolve project/child schemas once at their child boundary, union
+sensitivity, and retain typed environment provenance for replacement generations.
+The pure runner secret-environment policy classifies generated facts at that same
+boundary; wrapper literals and dependency/listener precedence remain unchanged.
+
 Ambient host-process values without schema or literal provenance qualify for
 secret protection only at eight or more bytes, excluding ASCII decimal integers
 (an optional `+` or `-` followed by digits). Short switches and numeric settings
