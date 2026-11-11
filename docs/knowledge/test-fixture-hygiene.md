@@ -470,27 +470,29 @@ remaining-binary cohorts through `scripts/ci-shared-process.py`:
 | `library-runner` | Remaining `runner::` tests (including their fixture hooks and registries) |
 | `library-other` | All other Effigy library tests |
 
-The runner lists the real compiled library, then lists each family's exact
-libtest filter selection. Every name, including existing ignored names, must
-appear in exactly one family and agree with the namespace map. Missing,
-overlapping or misrouted names fail CI. Test bodies, default libtest threads,
-ignored status, assertions and deadlines are unchanged on both operating
-systems. `test:ci:inventory` proves the real map without executing test bodies;
-`test:ci:scheduling` proves the missing/overlap refusal controls.
+The runner checks the real compiled library against each family's libtest
+selection: every name, including ignored tests, must appear exactly once and
+agree with the namespace map. `test:ci:inventory` lists this map without running
+test bodies; `test:ci:scheduling` covers missing, overlapping and misrouted names.
 
-Planner ruling (2026-11-10, Nucleus question
-`5b794989f6fa2d96927bf233121bc6a8e17ec529a7da8b2af7b1af89acd6bbd3`)
-admits these hosted families within the duration brief: related fixture/hook
-families stay together, while generic EnvGuard/HOME/PATH use can be isolated
-between processes. The release gate remains full, unpartitioned
-`cargo test --workspace`, retaining cross-family shared-process interference
-coverage. Ordinary `effigy qa` and milestone QA retain full unpartitioned
-nextest; they do not use the hosted family filters.
+`tests/ambient-state-filters.txt` owns the additional `library-ambient` selection:
+the existing ambient guard regressions plus explicit cwd, environment, descriptor
+and umask families. Both the partitioner and
+`shared_process_ambient_guard_regressions` read this list. Inventory checks reject
+stale filters and verify the real libtest selection. The cohort excludes its
+outer harness to avoid recursion. Generic guarded fixtures remain in their
+original families; exhaustive EnvGuard membership is not required (planner
+ruling, 2026-11-11, Nucleus question
+`15ae13e406d020a52000e67fc4d17d4a0d6f86b5b128a30985aff9c0b0ddbec9`).
+The deferral cwd fixture uses the common reentrant guard and owned scratch to
+coordinate with other guarded library fixtures.
 
-The initial remaining-runner cohort passed on Linux in 13m20s but reached the
-20-minute cap on macOS with 1,952 of 1,953 tests complete. Separating the intact
-`runner::tests::runner_core_tests::` family bounds that tail while retaining the same
-inventory checks, default threads and unpartitioned release coverage.
+Hosted workflows still use the four original library families. The ambient
+selection prepares the separate CI narrowing; it does not remove existing
+coverage. Libtest concurrency, ignored status, assertions and deadlines remain
+unchanged; the focused ambient harness uses eight threads. Release retains full
+unpartitioned `cargo test --workspace`; normal nextest, examples and doc tests
+remain covered on both operating systems.
 
 Non-library cohorts discover every compiled workspace target; new binaries enter
 the remaining cohort. Library jobs build workspace libraries and the small

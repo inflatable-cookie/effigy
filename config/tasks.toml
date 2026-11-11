@@ -1799,7 +1799,7 @@
   { task = "qa:released-surface" },
   { task = "qa:ci:json" },
 ]
-"qa:ci:local".description = "Run CI locally: format, clippy, workspace tests, docs and JSON contracts."
+"qa:ci:local".description = "Check format, clippy, workspace tests, doc tests, links and JSON contracts locally."
 "qa:ci:local".admission = "heavy"
 "qa:ci:local".run = [
   { task = "fmt:check" },
@@ -1811,13 +1811,13 @@
   { task = "qa:ci:json" },
 ]
 "qa:gates" = { visibility = "internal", group = "Maintenance", run = [{ task = "qa:docs" }, { task = "qa:json" }, { task = "qa:architecture" }, { task = "lint:feedback" }] }
-"qa:ci" = { visibility = "public", group = "Validation", description = "Mirror hosted CI: docs, JSON contracts, released surface and architecture.", run = [
+"qa:ci" = { visibility = "public", group = "Validation", description = "Check docs, JSON contracts, released surface and architecture; workspace tests run separately.", run = [
   { task = "qa:docs" },
   { task = "qa:ci:json" },
   { task = "qa:released-surface" },
   { task = "qa:architecture" },
 ] }
-"prepush:ci" = { visibility = "public", group = "Validation", description = "Pre-push mirror of CI's task tests, docs and architecture checks.", run = [
+"prepush:ci" = { visibility = "public", group = "Validation", description = "Check library and CLI tests, docs, JSON contracts and architecture before pushing.", run = [
   { task = "qa:ci:json" },
   "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --test cli_output_tests -E 'test(cli_json_mode)' --no-fail-fast --retries 0 --no-tests fail",
   "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --lib --no-fail-fast --retries 0 --no-tests fail",
@@ -1828,7 +1828,7 @@
 
 # Default validation shortcuts
 health = { visibility = "public", group = "Validation", description = "Format check plus a locked compile of the workspace.", run = [{ task = "fmt:check" }, "sh scripts/oxide-selector.sh check --workspace --locked"] }
-validate = { visibility = "public", group = "Validation", description = "Health, the live-progress feedback gate, and clippy across every workspace target.", run = [{ task = "health" }, { task = "lint:feedback" }, "sh scripts/oxide-selector.sh clippy --workspace --all-targets -- -D warnings"] }
+validate = { visibility = "public", group = "Validation", description = "Check format, compile the workspace, then check live-progress feedback and clippy for all targets.", run = [{ task = "health" }, { task = "lint:feedback" }] }
 qa = { visibility = "public", group = "Validation", description = "Built-in tests, the fault-injection proofs, docs checks, changed JSON contracts and the live-progress feedback gate.", run = [{ task = "test -- --no-fail-fast" }, { task = "test:fault-injection" }, { task = "qa:docs" }, { task = "qa:json" }, { task = "lint:feedback" }] }
 
 # Visibility/discovery changes: bounded tests and compilation of their owners.

@@ -489,33 +489,10 @@ pub(super) fn run_in_isolated_test_process(test_name: &str) -> bool {
 #[test]
 fn shared_process_ambient_guard_regressions() {
     use effigy_test_support::process::FixtureCommandExt;
-    const FILTERS: &[&str] = &[
-        "runner::secret_session::tests::",
-        "runner::task_engine::tests::reserved_child_receives_grant_at_handoff_fd",
-        "runner::run_control::tests::each_observation_owns_its_deadline",
-        "runner::run_control::tests::retry_budget_is_local_to_its_thread",
-        "runner::tests::runner_core_tests::scoped_host_database_alias_tests::a_suite_alias_in_prose_or_in_unselected_suite_is_not_proved",
-        "runner::tests::runner_core_tests::scoped_host_database_alias_tests::a_task_targeting_an_unrelated_server_keeps_its_url",
-        "runner::tests::runner_core_tests::scoped_host_database_alias_tests::each_scoped_host_task_connects_to_only_its_own_test_database",
-        "runner::container_runtime_prep::tests::the_production_predecessor_adapter",
-        "runner::container_command::reserved_input::tests::a_publication_never_plans_past_its_deadline_composing_pins",
-        "runner::container_command::reserved_input::tests::a_successor_reservation_keeps_absent_until_the_apply_receipt",
-        "runner::container_command::reserved_input::tests::a_tampered_artifact_that_disagrees_with_its_receipt_refuses",
-        "runner::container_command::reserved_input::tests::a_stalled_fragment_stops_the_closure_at_the_deadline",
-        "runner::bootstrap_command::tests::a_failing_setup_selector_fails_bootstrap",
-        "runner::container_command::lifecycle::tests::the_creation_load_captures_a_mount",
-        "runner::container_command::lifecycle::tests::container_up_preparation_",
-        "runner::container_command::data_custody_tests::every_data_command_route",
-        "runner::gateway_command::tests::gateway_identity_legacy",
-        "runner::workspace_command::tests::artifact_acquisition::release_acquisition_refuses_corrupt_or_missing_sidecars_over_private_http",
-        "runner::workspace_command::tests::artifact_acquisition::cold_release_acquisition_consumes_the_publisher_sidecar_over_private_http",
-        "runner::workspace_command::provisioning::reserved_guest::tests::workspace_reserved_owner_publishes_one_full_v2_through_real_commit_and_selection",
-        "runner::workspace_command::provisioning::reserved_guest::tests::workspace_reserved_unsettled_apply_refuses_without_any_guest_effect",
-    ];
     let child = {
         let _environment = lock_test();
         std::process::Command::new(std::env::current_exe().expect("test image"))
-            .args(FILTERS)
+            .args(include_str!("../../tests/ambient-state-filters.txt").lines())
             .args(["--test-threads=8", "--nocapture"])
             .env_remove("EFFIGY_TEST_ISOLATED_CASE")
             .env_remove("EFFIGY_INTERNAL_SECRET_GRANT")

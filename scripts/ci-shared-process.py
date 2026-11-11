@@ -15,7 +15,9 @@ LIBRARY_COHORTS = {
                        "--skip", "runner::tests::runner_core_tests::"],
     "library-other": ["--skip", "runner::"],
 }
-SUITES = {*LIBRARY_COHORTS, "cli", "gateway", "rest"}
+LIBRARY_SELECTIONS = {**LIBRARY_COHORTS, "library-ambient":
+    (Path(__file__).resolve().parents[1] / "tests/ambient-state-filters.txt").read_text().splitlines()}
+SUITES = {*LIBRARY_SELECTIONS, "cli", "gateway", "rest"}
 
 
 def library_family(name):
@@ -53,8 +55,14 @@ def verify_library_inventory(binary, args):
         expected = {name for name in full if library_family(name) == suite}
         if names != expected:
             raise RuntimeError(f"library filter disagrees with family map: {suite}")
+    filters = LIBRARY_SELECTIONS["library-ambient"]
+    ambient = listed_tests(binary, [*args, *filters])
+    if (any(not any(f in name for name in full) for f in filters)
+            or ambient != {name for name in full if any(f in name for f in filters)}):
+        raise RuntimeError("ambient library filters missing tests or disagree with inventory")
     print(f"library inventory: {len(full)} names, exactly once; "
           + ", ".join(f"{suite}={len(names)}" for suite, names in parts.items()), flush=True)
+    print(f"ambient library selection: {len(ambient)} names", flush=True)
     return parts
 
 
@@ -64,11 +72,11 @@ def run_binary(suite, binary, args):
     # the default rest selection runs docs; execute those generated tests whole.
     # Other cohorts still refuse an executable outside their compiled inventory.
     group = partitions.get(binary, "rest") if suite == "rest" else partitions[binary]
-    if group == "library" and suite in LIBRARY_COHORTS:
+    if group == "library" and suite in LIBRARY_SELECTIONS:
         verify_library_inventory(binary, args)
         if os.environ["EFFIGY_CI_INVENTORY_ONLY"] == "1":
             return 0
-        args = [*args, *LIBRARY_COHORTS[suite]]
+        args = [*args, *LIBRARY_SELECTIONS[suite]]
     elif group != suite:
         return 0
     start = time.monotonic()
@@ -88,7 +96,7 @@ def main(argv):
     # This small integration target makes Cargo supply the real CLI without
     # compiling every integration binary for a library-only execution cohort.
     selection = (["--workspace", "--lib", "--test", "bootstrap_cli_tests"]
-                 if suite in LIBRARY_COHORTS else ["--workspace", "--tests"])
+                 if suite in LIBRARY_SELECTIONS else ["--workspace", "--tests"])
     if suite == "rest":
         # Keep Cargo's original default example builds and doc tests on both
         # operating systems; --tests would silently omit example compilation.
@@ -117,7 +125,7 @@ def main(argv):
             binaries[message["executable"]] = group
     if build.wait():
         return build.returncode
-    group = "library" if suite in LIBRARY_COHORTS else suite
+    group = "library" if suite in LIBRARY_SELECTIONS else suite
     if group not in binaries.values():
         raise SystemExit(f"empty shared-process suite: {suite}")
 

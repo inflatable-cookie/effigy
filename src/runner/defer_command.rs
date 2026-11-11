@@ -55,12 +55,7 @@ fn flag_present_before_passthrough(args: &[String], flag: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
-
-    fn test_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
+    use crate::contract_test_support::{temp_workspace, with_cwd};
 
     #[test]
     fn normalize_defer_task_applies_top_level_flags() {
@@ -109,34 +104,24 @@ mod tests {
 
     #[test]
     fn run_defer_executes_configured_host_deferral() {
-        let _guard = test_lock().lock().expect("lock test");
-        let root = std::env::temp_dir().join(format!(
-            "effigy-defer-command-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("time")
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).expect("mkdir root");
-        std::fs::write(root.join("package.json"), "{}\n").expect("write package marker");
+        let root = temp_workspace("effigy-defer-command");
         std::fs::write(
             root.join("effigy.toml"),
             "[defer]\nrun = \"printf deferred\"\n",
         )
         .expect("write manifest");
 
-        let original = effigy_core::repo::current_working_dir().expect("current dir");
-        std::env::set_current_dir(&root).expect("set cwd");
-        let out = run_defer(DeferArgs {
-            task: TaskInvocation {
-                name: "prep".to_owned(),
-                args: vec![],
-            },
-            repo_override: None,
-            output_json: false,
+        let out = with_cwd(&root, || {
+            run_defer(DeferArgs {
+                task: TaskInvocation {
+                    name: "prep".to_owned(),
+                    args: vec![],
+                },
+                repo_override: None,
+                output_json: false,
+            })
         })
         .expect("run defer");
-        std::env::set_current_dir(original).expect("restore cwd");
 
         assert_eq!(out, "");
     }
