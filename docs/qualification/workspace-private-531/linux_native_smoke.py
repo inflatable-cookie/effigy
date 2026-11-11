@@ -20,6 +20,8 @@ import common
 import linux_native_assets as assets
 import linux_native_build as build
 import linux_native_run as native_run
+import linux_native_lifecycle as lifecycle
+import os
 
 
 def diagnostic_run(root):
@@ -48,41 +50,13 @@ def ssh_prefix(root, attempt):
                                      build.file_input(control / 'ssh_known_hosts'), control, attempt.root)
 
 
-def root_operation(root, attempt, ssh, entry, files, arguments=(), *, runtime_seconds=45, file_limit='8M', expected=None, memory_limit='256M'):
-    import base64
-    data = {name: base64.b64encode((Path(__file__).parent / name).read_bytes()).decode() for name in files}
-    pins = {name: common.digest(Path(__file__).parent / name) for name in files}
-    code = ('import os,hashlib,tempfile,runpy,base64,sys; from pathlib import Path; '
-            'p=Path("/var/lib/effigy-829/helpers"); '
-            'assert p.resolve()==p and p.stat().st_uid==0 and p.stat().st_mode&0o777==0o700; '
-            'd=Path(tempfile.mkdtemp(prefix="modules-",dir=p)); '
-            'data=' + repr(data) + '; pins=' + repr(pins) + '; '
-            'decoded={n:base64.b64decode(b) for n,b in data.items()}; '
-            'assert all(hashlib.sha256(b).hexdigest()==pins[n] for n,b in decoded.items()); '
-            '[(d/n).write_bytes(b) for n,b in decoded.items()]; '
-            'sys.argv=[' + repr(entry) + ']+' + repr(list(arguments)) + '; '
-            'runpy.run_path(str(d/' + repr(entry) + '),run_name="__main__")')
-    unit = expected['observer_unit'].removesuffix('.service') if expected else None
-    output, errors, state, unit = native_run.admin_operation(
-        attempt, code.encode(), seconds=runtime_seconds, memory=memory_limit, file_limit=file_limit, unit=unit)
-    result = json.loads(output)
-    if expected is not None:
-        import linux_capacity_contract as capacity
-        witness = {'schema': capacity.SCHEMA, 'mechanism': capacity.MECHANISM,
-                   'origin': expected['origin'], 'unit': dict(state, name=unit + '.service'),
-                   'stdout': output.decode('utf-8'), 'stderr': errors.decode('utf-8'),
-                   'stdout_sha256': hashlib.sha256(output).hexdigest(),
-                   'stderr_sha256': hashlib.sha256(errors).hexdigest(), 'exit': 0}
-        common.exclusive(attempt.root / (unit + '.original.json'), witness)
-        capacity.verify_observation(witness, expected)
-    common.exclusive(attempt.root / ('resume-' + uuid.uuid4().hex + '.json'), result)
-    return result
-
-
 def root_resume(root, attempt, ssh):
     native_run.bootstrap_preparation(attempt)
-    files = ('linux_loop_bound.py', 'linux_native_storage.py', 'linux_native_writers.py', 'linux_native_resume.py')
-    result = root_operation(root, attempt, ssh, 'linux_native_resume.py', files)
+    directory, _ = collector_identity(attempt, allow_install=True)
+    output, errors, _, _ = native_run.admin_program(attempt,
+        ['/usr/bin/python3', '-I', '-B', directory + '/linux_native_resume.py'])
+    common.require(not errors, 'native resume reported stderr')
+    result = json.loads(output)
     common.require(result['writer_closure']['complete'],
                    'native writer closure refused; inspect the retained actors and findings')
     return result
@@ -92,10 +66,10 @@ COLLECTOR_FILES = ('linux_loop_bound.py', 'linux_native_storage.py', 'linux_nati
                    'linux_native_resume.py', 'linux_native_collect.py')
 
 
-def collector_identity(attempt, *, allow_install):
+def collector_identity(attempt, *, allow_install, files=COLLECTOR_FILES):
     """Deploy once during preparation; proof execution only verifies these bytes."""
     import base64
-    pins = {name: common.digest(Path(__file__).parent/name) for name in COLLECTOR_FILES}
+    pins = {name: common.digest(Path(__file__).parent/name) for name in files}
     identity = hashlib.sha256(json.dumps(pins,sort_keys=True,separators=(',', ':')).encode()).hexdigest()
     directory = '/var/lib/effigy-829/helpers/observer-' + identity
     inspect = ('import json,hashlib,stat; from pathlib import Path; p=Path(' + repr(directory) + '); '
@@ -103,11 +77,11 @@ def collector_identity(attempt, *, allow_install):
                'assert p.parent.resolve()==p.parent and p.parent.stat().st_uid==0 and p.parent.stat().st_mode&0o777==0o700; '
                'exec(' + repr('if exists:\n assert p.resolve()==p and p.stat().st_uid==0 and p.stat().st_mode&0o777==0o700\n assert {f.name for f in p.iterdir()}==set(pins)\n for name,digest in pins.items():\n  f=p/name; i=f.lstat()\n  assert i.st_uid==0 and i.st_mode==0o100400 and i.st_nlink==1\n  assert hashlib.sha256(f.read_bytes()).hexdigest()==digest') + '); '
                'print(json.dumps({"exists":exists}))')
-    # Keep one bounded VM command; the source map has only five fixed names.
+    # Keep one bounded VM command for the explicit, hash-bound source map.
     present = json.loads(attempt.admin('python3 -I -B -c '+shlex.quote(inspect),read_only=True))['exists']
     if not present:
         common.require(allow_install, 'prepared observer is absent; full execution cannot install it')
-        modules = {name:base64.b64encode((Path(__file__).parent/name).read_bytes()).decode() for name in COLLECTOR_FILES}
+        modules = {name:base64.b64encode((Path(__file__).parent/name).read_bytes()).decode() for name in files}
         code = ('import os,base64,hashlib; from pathlib import Path; p=Path(' + repr(directory) + '); '
                 'data=' + repr(modules) + '; pins=' + repr(pins) + '; '
                 'p.mkdir(mode=0o700); '
@@ -182,8 +156,12 @@ def initialize_images(root, seed):
     stop_engine(attempt)
     files = ('linux_loop_bound.py', 'linux_native_storage.py', 'linux_native_writers.py',
              'linux_native_resume.py', 'linux_native_initialize.py')
-    result = root_operation(root, attempt, ssh, 'linux_native_initialize.py', files, (),
-                            runtime_seconds=300, file_limit='3G', memory_limit='256M')
+    directory, _ = collector_identity(attempt, allow_install=True, files=files)
+    output, errors, _, _ = native_run.admin_program(attempt,
+        ['/usr/bin/python3', '-I', '-B', directory + '/linux_native_initialize.py'],
+        seconds=300, file_limit='3G', memory='256M')
+    common.require(not errors, 'image initialization reported stderr')
+    result = json.loads(output)
     common.exclusive(attempt.root / 'initialized.json', result)
     print(json.dumps({'evidence': str(attempt.root), 'initialized': True, 'exploratory': True,
                       'qualification_credit': False}))
@@ -215,7 +193,7 @@ def capacity_probe(attempt, ssh, root, size, *, image=None):
                 '/usr/bin/python3', '-I', '-B', '-', root, str(size)]
     code = ('import subprocess,base64; subprocess.run(' + repr(argv)
             + ',input=base64.b64decode(' + repr(base64.b64encode(payload).decode()) + '),check=True)')
-    output, errors, _, _ = native_run.admin_operation(attempt, code.encode(), seconds=180,
+    output, errors, _, _ = native_run.admin_operation(attempt, code.encode(), seconds=600 if lifecycle.ACTIVE else 180,
                                                     memory='128M', file_limit=str(size))
     common.require(not errors, 'capacity control reported stderr')
     result = json.loads(output)
@@ -223,6 +201,9 @@ def capacity_probe(attempt, ssh, root, size, *, image=None):
                    and (not image or result['seccomp'] == '2'), 'physical ENOSPC control differs')
     path=attempt.root/('capacity-'+uuid.uuid4().hex+'.json')
     common.exclusive(path,result)
+    if lifecycle.ACTIVE and not Path(result['path']).is_relative_to(lifecycle.ACTIVE.temporary):
+        lifecycle.ACTIVE.operation('remove', records=[dict(path=str(Path(result['path']).parent),
+            device=result['device'], inode=result['directory_inode'])])
     return build.file_input(path)
 
 
@@ -270,48 +251,79 @@ def full_chain(root, seed):
                    and value.get('qualification_credit') is False, 'exploratory native asset seed required')
     attempt = native_run.Attempt(root)
     ssh = ssh_prefix(root, attempt)
-    # Completed smoke runs leave this VM stopped. An interrupted run is kept
-    # for diagnosis and must be reconciled before beginning another window.
     raw = attempt.command([diagnostic.PRLCTL, 'list', '--info', setup.VM_UUID, '--json'], read_only=True)
     diagnostic.check_vm(raw, 'stopped')
+    processes = subprocess.check_output(['ps', '-axo', 'pid=,comm=,args='], text=True)
+    common.require(not any('python' in line.split()[1] and 'linux_native_smoke.py' in line
+                           and int(line.split()[0]) != os.getpid() for line in processes.splitlines()),
+                   'another linux_native_smoke.py is running')
+    attempt.command([diagnostic.PRLCTL, 'snapshot', setup.VM_UUID, '--name',
+                     'effigy-native-before-' + uuid.uuid4().hex], timeout=120)
     common.require(diagnostic_run(root) == 0, 'native diagnostic has findings')
     attempt.command([diagnostic.PRLCTL, 'start', setup.VM_UUID], timeout=90)
-    attempt.admin('cat /proc/sys/kernel/random/boot_id', read_only=True)
-    key = attempt.command([diagnostic.PRLCTL, 'exec', setup.VM_UUID, '/bin/cat',
-                           '/etc/ssh/ssh_host_ed25519_key.pub'], read_only=True).decode().split()
-    known = (root / 'control/ssh_known_hosts').read_text().split()
-    common.require(len(key) >= 2 and key[:2] == known[1:3], 'fixed VM SSH identity differs')
-    root_resume(root, attempt, ssh)
-    native_run.authorize_channel(root, attempt)
-    ssh = ssh_prefix(root, attempt)
-    stage1_observation(attempt)
-    stop_engine(attempt)
-    capacity_probe(attempt, ssh, '/var/lib/effigy-829/rootful/client/tmp', 3221225472)
-    root_resume(root, attempt, ssh)
-    capacity_probe(attempt, ssh, build.BASE + '/qualification', 1073741824,
-                   image=value['cell']['runtime_image'])
-    capacity_probe(attempt,ssh,build.BASE+'/artifact-tmp',42949672960)
-    binding = build.build(root, 'HEAD')
-    value['cell']['source_head'] = binding['source_pin']
-    prepared = assets.prepare(root, binding, value)
-    import linux_native_contract as contract
-    current = common.load(prepared)
-    packet = contract.prepare(root, attempt, ssh, current['cell'])
-    current['cell']['linux_capacity_preparation'] = build.file_input(packet)
-    prepared = attempt.root / 'assets-with-capacity.json'
-    common.exclusive(prepared, current)
-    common.require(native_run.execute(root, prepared, 'acquire') == 0, 'native acquisition failed')
-    common.require(native_run.execute(root, prepared, 'full') == 0, 'native full session failed')
-    final = root_resume(root, attempt, ssh)
-    stop_engine(attempt)
-    attempt.command([diagnostic.PRLCTL, 'stop', setup.VM_UUID], timeout=90)
-    raw = attempt.command([diagnostic.PRLCTL, 'list', '--info', setup.VM_UUID, '--json'], read_only=True)
-    diagnostic.check_vm(raw, 'stopped')
+    scope = lifecycle.Scope(attempt)
+    lifecycle.ACTIVE = scope
+    baseline, after, binding, prepared, final = None, None, None, None, None
+    try:
+        attempt.admin('cat /proc/sys/kernel/random/boot_id', read_only=True)
+        key = attempt.command([diagnostic.PRLCTL, 'exec', setup.VM_UUID, '/bin/cat',
+                               '/etc/ssh/ssh_host_ed25519_key.pub'], read_only=True).decode().split()
+        known = (root / 'control/ssh_known_hosts').read_text().split()
+        common.require(len(key) >= 2 and key[:2] == known[1:3], 'fixed VM SSH identity differs')
+        native_run.bootstrap_preparation(attempt)
+        # Admit before the census, ENOSPC controls or any compilation. Retained
+        # output can exhaust the census observer's cgroup as well as the disk.
+        admission = scope.operation('preflight', preparation_only=True)
+        common.require(not admission['missing'], 'guest-capacity: ' + json.dumps(admission['missing']))
+        root_resume(root, attempt, ssh)
+        admission = scope.operation('preflight')
+        common.require(not admission['missing'], 'guest-capacity: ' + json.dumps(admission['missing']))
+        baseline = admission['observation']
+        native_run.authorize_channel(root, attempt)
+        ssh = ssh_prefix(root, attempt)
+        native_run.channel_directory(attempt, scope.temporary)
+        stage1_observation(attempt)
+        stop_engine(attempt)
+        capacity_probe(attempt, ssh, '/var/lib/effigy-829/rootful/client/tmp', 3221225472)
+        root_resume(root, attempt, ssh)
+        capacity_probe(attempt, ssh, build.BASE + '/qualification', 1073741824,
+                       image=value['cell']['runtime_image'])
+        capacity_probe(attempt, ssh, str(scope.temporary), 42949672960)
+        binding = build.build(root, 'HEAD')
+        scope.operation('evict')
+        value['cell']['source_head'] = binding['source_pin']
+        prepared = assets.prepare(root, binding, value)
+        scope.operation('evict')
+        import linux_native_contract as contract
+        current = common.load(prepared)
+        packet = contract.prepare(root, attempt, ssh, current['cell'])
+        current['cell']['linux_capacity_preparation'] = build.file_input(packet)
+        prepared = attempt.root / 'assets-with-capacity.json'
+        common.exclusive(prepared, current)
+        common.require(native_run.execute(root, prepared, 'acquire') == 0, 'native acquisition failed')
+        common.require(native_run.execute(root, prepared, 'full') == 0, 'native full session failed')
+        final = root_resume(root, attempt, ssh)
+    finally:
+        try:
+            stop_engine(attempt)
+            if scope.records:
+                after = scope.finish(ssh)
+        finally:
+            lifecycle.ACTIVE = None
+            attempt.command([diagnostic.PRLCTL, 'stop', setup.VM_UUID], timeout=90)
+            raw = attempt.command([diagnostic.PRLCTL, 'list', '--info', setup.VM_UUID, '--json'], read_only=True)
+            diagnostic.check_vm(raw, 'stopped')
+    tolerance = 128 * 1024 ** 2
+    deltas = {path: row['free'] - after['mounts'][path]['free'] for path, row in baseline['mounts'].items()}
     result = {'exploratory': True, 'qualification_credit': False, 'source_head': binding['source_pin'],
               'assets': str(prepared), 'final_physical_bounds': final, 'vm_terminal': 'stopped',
+              'capacity_before': baseline, 'capacity_after': after, 'consumed_bytes': deltas,
+              'space_tolerance_bytes': tolerance,
               'chain': ['diagnostic', 'resume', 'engine-enospc', 'workspace-enospc', 'preparation-enospc',
                         'native-build', 'gnu-artifact', 'ordinary-acquisition', 'full-session']}
     common.exclusive(attempt.root / 'native-smoke-complete.json', result)
+    common.require(all(abs(delta) <= tolerance for delta in deltas.values()),
+                   'guest-capacity: run did not restore free space within tolerance')
     print(json.dumps(result, indent=2))
     return 0
 

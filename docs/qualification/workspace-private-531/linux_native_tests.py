@@ -19,10 +19,115 @@ import linux_native_run as native_run
 import linux_native_session as session
 import linux_native_assets as assets
 import linux_native_smoke as smoke
+import linux_native_lifecycle as lifecycle
 import runtime
 import linux_native_window
 import subprocess
 import time
+
+
+class NativeLifecycleTests(unittest.TestCase):
+    def test_cleanup_rejects_shared_roots_toolchain_aliases_and_traversal(self):
+        for path in (lifecycle.BASE, lifecycle.BASE / 'qualification', lifecycle.BASE / 'build-cache',
+                     lifecycle.BASE / 'toolchain/rustup', lifecycle.BASE / 'builds/../toolchain'):
+            with self.subTest(path=path), self.assertRaisesRegex(RuntimeError, 'guest-capacity'):
+                lifecycle.checked(path)
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            root = Path(directory)
+            (root / 'builds').symlink_to(root)
+            with patch.object(lifecycle, 'BASE', root), self.assertRaisesRegex(RuntimeError, 'ancestor aliases'):
+                lifecycle.checked(root / 'builds/output')
+
+    def test_preflight_names_each_short_mount_without_building(self):
+        mounts = {str(path): dict(available=0) for path in
+                  (lifecycle.BASE, lifecycle.BASE / 'qualification', Path('/var/lib/effigy-829/rootful'))}
+        with patch.object(lifecycle, 'inspect', return_value=dict(mounts=mounts)), \
+             patch.object(lifecycle, 'evict_cache', return_value={}):
+            self.assertEqual(set(lifecycle.preflight()['missing']), set(mounts))
+
+    def test_preparation_probe_defers_to_its_recorded_parent_cleanup(self):
+        from unittest.mock import Mock
+        import json
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            attempt = Mock(root=Path(directory))
+            scope = Mock(temporary=lifecycle.BASE / 'run-tmp-owned')
+            result = dict(errno=28, retained_empty_inode=True,
+                          path=str(scope.temporary / 'enospc-owned/payload'), device=1, directory_inode=2)
+            with patch.object(lifecycle, 'ACTIVE', scope), patch.object(native_run, 'admin_operation',
+                    return_value=(json.dumps(result).encode(), b'', {}, 'unit')) as operation:
+                smoke.capacity_probe(attempt, [], str(scope.temporary), 42949672960)
+            scope.operation.assert_not_called()
+            self.assertEqual(operation.call_args.kwargs['seconds'], 600)
+
+    def test_failed_export_retains_outputs_and_success_exports_before_removal(self):
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            attempt = Mock(root=Path(directory))
+            scope = lifecycle.Scope(attempt)
+            scope.record(str(lifecycle.BASE / 'builds/native-build-owned'), device=1, inode=2)
+            events = []
+            scope.operation = lambda action, **args: events.append(action) or {}
+            def transfer(*args, **kwargs):
+                events.append('host-copy')
+                raise RuntimeError('transfer failed')
+            with patch.object(native_run, 'channel_read', side_effect=transfer), self.assertRaisesRegex(RuntimeError, 'transfer failed'):
+                scope.finish(['ssh'])
+            self.assertEqual(events, ['export', 'host-copy'])
+            events.clear()
+            with patch.object(native_run, 'channel_read', return_value=b'original evidence'):
+                scope.finish(['ssh'])
+            self.assertEqual(events, ['export', 'remove', 'evict', 'inspect'])
+            self.assertEqual((attempt.root / 'outputs.tar').read_bytes(), b'original evidence')
+
+    def test_referenced_outputs_are_retained_before_archive_creation(self):
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            archive = Path(directory) / 'evidence.tar'
+            with patch.object(lifecycle, 'output_identity', return_value=Path(directory)), \
+                 patch.object(lifecycle, 'references', return_value=[123]), self.assertRaisesRegex(RuntimeError, 'resident references'):
+                lifecycle.dispose([dict(path='owned')], archive)
+            self.assertFalse(archive.exists())
+
+    def test_explicit_stream_owner_and_exclusive_archive_custody(self):
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            root = Path(directory)
+            (root / 'qualification').mkdir()
+            path = root / 'qualification/owned.stdout'
+            path.write_bytes(b'original')
+            real_stat = os.stat
+            from types import SimpleNamespace
+            with patch.object(lifecycle, 'BASE', root), patch.object(lifecycle, 'ENGINE_TMP', root), \
+                 patch.object(lifecycle, 'no_mounts'), patch.object(lifecycle, 'references', return_value=[]), \
+                 patch.object(os, 'stat', side_effect=lambda p, **kw: SimpleNamespace(st_dev=-1) if p == '/' else real_stat(p, **kw)):
+                record = dict(path=str(path), uid=os.geteuid(), device=path.stat().st_dev, inode=path.stat().st_ino)
+                self.assertEqual(lifecycle.output_identity(record), path)
+                with self.assertRaisesRegex(RuntimeError, 'custody differs'):
+                    lifecycle.output_identity(dict(record, uid=os.geteuid() + 1))
+                archive = root / 'qualification/export.tar'
+                archive.symlink_to(path)
+                with self.assertRaises(FileExistsError):
+                    lifecycle.dispose([record], archive)
+                self.assertEqual(path.read_bytes(), b'original')
+                self.assertEqual(lifecycle.dispose([record]), [str(path)])
+                self.assertFalse(path.exists())
+                temporary = root / 'run-tmp-owned'
+                temporary.mkdir()
+                with (temporary / 'payload').open('wb') as stream: stream.truncate(9 * 1024 ** 2)
+                target = root / 'qualification/metadata.tar'
+                lifecycle.dispose([dict(path=str(temporary), uid=os.geteuid())], target)
+                import tarfile, json
+                with tarfile.open(target) as evidence:
+                    self.assertNotIn('run-tmp-owned/payload', evidence.getnames())
+                    self.assertEqual(json.load(evidence.extractfile('rebuildable-outputs.json'))[0]['bytes'], 9 * 1024 ** 2)
+
+    def test_large_inventory_uses_staged_metadata_not_the_vm_command_line(self):
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            scope = lifecycle.Scope(Mock(root=Path(directory)))
+            with patch.object(native_run, 'stage_admin_script', return_value='/helpers/owned') as stage, \
+                 patch.object(native_run, 'admin_program', return_value=(b'{}', b'', {}, 'unit')) as run:
+                scope.operation('remove', records=[dict(path='owned-' + str(i)) for i in range(200)])
+            self.assertGreater(len(stage.call_args.args[1]), 2891)
+            self.assertLess(len(str(run.call_args.args[1])), 1000)
 
 
 class PhysicalImportBoundaryTests(unittest.TestCase):

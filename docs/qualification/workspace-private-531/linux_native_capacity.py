@@ -51,6 +51,7 @@ def probe(root, capacity):
                   'uid': os.geteuid(), 'cap_eff': status['CapEff'].strip(),
                   'seccomp': status['Seccomp'].strip(), 'path': str(path),
                   'device': allocated.st_dev, 'inode': allocated.st_ino,
+                  'directory_inode': directory.stat().st_ino,
                   'written_bytes': allocated.st_size, 'allocated_bytes': allocated.st_blocks * 512,
                   'capacity_bytes': capacity, 'filesystem_bytes': before.f_blocks * before.f_frsize}
     finally:
