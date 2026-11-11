@@ -112,7 +112,6 @@ pub(super) fn run_workspace_container_session(
         container_name.as_deref(),
         repo_override.clone(),
         initial_command,
-        routes_were_ready_before_handoff,
     )?;
     let ownership = classify_workspace_session_ownership(
         session_intent,

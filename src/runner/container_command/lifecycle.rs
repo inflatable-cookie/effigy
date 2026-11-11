@@ -85,6 +85,7 @@ struct ContainerUpPlan {
     up_plan: ContainerComposeInvocationPlan,
 }
 
+#[derive(Default)]
 struct ContainerUpRuntimeIntegrations {
     gateway_routes: Vec<super::gateway_registration::RegisteredGatewayRoute>,
     managed_host_listeners: Vec<crate::runner::host_process::ManagedHostListenerResult>,
@@ -948,6 +949,146 @@ fn gateway_port_wait_stage(
     });
 }
 
+/// The effects are shared; their owner decides what a failure leaves behind.
+#[derive(Clone, Copy)]
+enum IntegrationOutcomePolicy {
+    Attached,
+    Detached,
+    Workspace,
+}
+
+impl IntegrationOutcomePolicy {
+    fn failure(
+        self,
+        policy: &EffectiveContainerPolicy,
+        error: RunnerError,
+        cleanup: impl FnOnce() -> Result<(), RunnerError>,
+    ) -> RunnerError {
+        match self {
+            Self::Attached => finish_container_up_failure(error, cleanup()),
+            Self::Detached => detached_activation_error(policy, error),
+            // The journal adapter redacts the diagnostic and retains custody.
+            Self::Workspace => error,
+        }
+    }
+}
+
+#[derive(Default)]
+struct RuntimeIntegrationState {
+    binding: Option<effigy_containers::exec::VerifiedComposeContainer>,
+    report: ContainerUpRuntimeIntegrations,
+}
+
+struct RuntimeIntegrationContext<'a> {
+    root: &'a Path,
+    policy: &'a EffectiveContainerPolicy,
+    secrets: &'a ResolvedContainerSecretRuntime,
+    container_name: Option<&'a str>,
+    outcome: IntegrationOutcomePolicy,
+    progress: Option<&'a ProgressSource>,
+    publisher: &'a crate::runner::managed_wait::WaitPublisher,
+}
+
+impl RuntimeIntegrationContext<'_> {
+    fn stage(&self, finished: u64, label: &str) {
+        if let Some(progress) = self.progress {
+            integration_stage(progress, finished, label);
+        }
+    }
+
+    fn reconcile(
+        &self,
+        state: &mut RuntimeIntegrationState,
+        step: super::workspace_integrations::WorkspaceIntegrationStep,
+        deadline: std::time::Instant,
+    ) -> Result<(), RunnerError> {
+        use super::workspace_integrations::WorkspaceIntegrationStep as Step;
+        let Self {
+            root,
+            policy,
+            secrets,
+            ..
+        } = *self;
+        if step == Step::Readiness {
+            // Readiness has already decided Running and health. Binding shares
+            // its observation budget rather than asking a fresh question.
+            self.stage(0, "reading the primary service binding");
+            state.binding = Some(
+                crate::runner::container_runtime_prep::ensure_primary_service_binding(
+                    root,
+                    policy,
+                    Some(deadline),
+                )?,
+            );
+            return Ok(());
+        }
+        let binding = state.binding.as_ref().ok_or_else(|| {
+            RunnerError::task_invocation("runtime integrations have no verified primary binding")
+        })?;
+        match step {
+            Step::Readiness => unreachable!("binding was handled above"),
+            Step::Permissions => {
+                // Repair disposable cache/build volume ownership before secrets
+                // or exposure, on first creation, reuse and handover alike.
+                self.stage(1, "preparing workspace permissions");
+                let prepare = || {
+                    crate::runner::workspace_command::ensure_workspace_permissions_ready(
+                        root,
+                        policy,
+                        self.container_name,
+                        None,
+                    )
+                };
+                match self.outcome {
+                    IntegrationOutcomePolicy::Workspace => prepare()?,
+                    _ => ensure_up_workspace_permissions(policy, prepare)?,
+                }
+            }
+            Step::Secrets => {
+                self.stage(2, "materializing secrets");
+                materialize_container_secret_runtime(root, policy, secrets, binding)?;
+            }
+            Step::Routes => {
+                self.stage(3, "checking pinned host ports");
+                super::support::ensure_pinned_host_ports_available(root, policy, Some(deadline))?;
+                self.stage(4, "starting the gateway");
+                super::gateway_registration::ensure_gateway_running_for_container(policy)?;
+                self.stage(5, "registering gateway routes");
+                let mut observe = |wait: super::gateway_registration::GatewayPortWait<'_>| {
+                    if let Some(progress) = self.progress {
+                        gateway_port_wait_stage(progress, wait);
+                    }
+                };
+                state.report.gateway_routes =
+                    super::gateway_registration::register_gateway_routes_for_verified_container_observed(
+                        root, policy, Some(binding), &mut observe,
+                    )?;
+            }
+            Step::HostIntegrations => {
+                self.stage(6, "reconciling tcp alias hosts");
+                state.report.tcp_alias_host_notes = reconcile_primary_service_tcp_alias_hosts(
+                    root,
+                    policy,
+                    binding,
+                    Some(deadline),
+                )?;
+                // A late listener withholds only its own route. A supervisor
+                // start failure is fatal in every mode, including non-listeners.
+                self.stage(7, "starting host listeners");
+                let report = crate::runner::host_process::start_host_processes_in_activation(
+                    root,
+                    policy,
+                    Some(deadline),
+                    self.publisher,
+                )?;
+                state.report.managed_host_listeners = report.ready;
+                state.report.managed_host_listener_failures = report.failures;
+            }
+        }
+        Ok(())
+    }
+}
+
 fn complete_container_up_runtime_integrations(
     repo_root: &Path,
     plan: &ContainerUpPlan,
@@ -955,152 +1096,30 @@ fn complete_container_up_runtime_integrations(
     progress: &ProgressSource,
     publisher: &crate::runner::managed_wait::WaitPublisher,
 ) -> Result<ContainerUpRuntimeIntegrations, RunnerError> {
-    let policy = &plan.policy;
-    // Readiness is Running plus the service's own health check, decided by the
-    // bring-up wait. This only proves the binding the later stages target, and
-    // it shares the bring-up's one observation budget: a runtime that already
-    // did not answer is refused here rather than asked a fresh question.
-    integration_stage(progress, 0, "reading the primary service binding");
-    let binding = match crate::runner::container_runtime_prep::ensure_primary_service_binding(
-        repo_root,
-        policy,
-        Some(deadline),
-    ) {
-        Ok(binding) => binding,
-        Err(error) => {
-            if plan.attach_mode == EffectiveAttachMode::Detached {
-                return Err(detached_activation_error(policy, error));
-            }
-            let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
-            return Err(finish_container_up_failure(error, cleanup_result));
-        }
+    let context = RuntimeIntegrationContext {
+        root: repo_root,
+        policy: &plan.policy,
+        secrets: &plan.secret_runtime,
+        container_name: plan.requested_container.as_deref(),
+        outcome: match plan.attach_mode {
+            EffectiveAttachMode::Attached => IntegrationOutcomePolicy::Attached,
+            EffectiveAttachMode::Detached => IntegrationOutcomePolicy::Detached,
+        },
+        progress: Some(progress),
+        publisher,
     };
-    // Managed cache and build volumes (Cargo registry/git, target dirs) are
-    // owned-disposable mounts: repair their workspace-user ownership now
-    // that exec is verified, before secrets, gateway exposure or readiness
-    // reporting. `container up` is the one stage every first creation,
-    // reuse and handover passes through; managed children and `container
-    // shell` enter through exec without their own preparation.
-    integration_stage(progress, 1, "preparing workspace permissions");
-    if let Err(error) = ensure_up_workspace_permissions(policy, || {
-        crate::runner::workspace_command::ensure_workspace_permissions_ready(
-            repo_root,
-            policy,
-            plan.requested_container.as_deref(),
-            None,
-        )
-    }) {
-        if plan.attach_mode == EffectiveAttachMode::Detached {
-            return Err(detached_activation_error(policy, error));
-        }
-        let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
-        return Err(finish_container_up_failure(error, cleanup_result));
+    let mut state = RuntimeIntegrationState::default();
+    for step in super::workspace_integrations::STEPS {
+        context
+            .reconcile(&mut state, step, deadline)
+            .map_err(|error| {
+                context.outcome.failure(&plan.policy, error, || {
+                    lifecycle_cleanup_failed_container_up(repo_root, &plan.policy)
+                })
+            })?;
     }
-    integration_stage(progress, 2, "materializing secrets");
-    if let Err(error) =
-        materialize_container_secret_runtime(repo_root, policy, &plan.secret_runtime, &binding)
-    {
-        if plan.attach_mode == EffectiveAttachMode::Detached {
-            return Err(detached_activation_error(policy, error));
-        }
-        let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
-        return Err(finish_container_up_failure(error, cleanup_result));
-    }
-    integration_stage(progress, 3, "checking pinned host ports");
-    if let Err(error) =
-        super::support::ensure_pinned_host_ports_available(repo_root, policy, Some(deadline))
-    {
-        if plan.attach_mode == EffectiveAttachMode::Detached {
-            return Err(detached_activation_error(policy, error));
-        }
-        let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
-        return Err(finish_container_up_failure(error, cleanup_result));
-    }
-    // A gateway stopped by a reboot comes back here: `up` starts or reconciles
-    // it and prints one line naming it.
-    integration_stage(progress, 4, "starting the gateway");
-    if let Err(error) = super::gateway_registration::ensure_gateway_running_for_container(policy) {
-        if plan.attach_mode == EffectiveAttachMode::Detached {
-            return Err(detached_activation_error(policy, error));
-        }
-        let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
-        return Err(finish_container_up_failure(error, cleanup_result));
-    }
-    integration_stage(progress, 5, "registering gateway routes");
-    // The registration polls the runtime for the declared gateway service
-    // ports, so the stage names the read in flight and the blocker it reported
-    // rather than holding the stage label for the whole wait (effigy#460,
-    // Q-017).
-    let mut route_wait = |wait: super::gateway_registration::GatewayPortWait<'_>| {
-        gateway_port_wait_stage(progress, wait);
-    };
-    let gateway_routes =
-        match super::gateway_registration::register_gateway_routes_for_verified_container_observed(
-            repo_root,
-            policy,
-            Some(&binding),
-            &mut route_wait,
-        ) {
-            Ok(routes) => routes,
-            Err(error) => {
-                return Err(gateway_registration_failure(
-                    plan.attach_mode,
-                    policy,
-                    error,
-                    || lifecycle_cleanup_failed_container_up(repo_root, policy),
-                ));
-            }
-        };
-    integration_stage(progress, 6, "reconciling tcp alias hosts");
-    let tcp_alias_host_notes = match reconcile_primary_service_tcp_alias_hosts(
-        repo_root,
-        policy,
-        &binding,
-        Some(deadline),
-    ) {
-        Ok(notes) => notes,
-        Err(error) => {
-            if plan.attach_mode == EffectiveAttachMode::Detached {
-                return Err(detached_activation_error(policy, error));
-            }
-            let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
-            return Err(finish_container_up_failure(error, cleanup_result));
-        }
-    };
-
-    let warnings = plan.warnings.clone();
-    // Listener startup shares this bring-up's one observation budget: a
-    // listener that has not opened its port when it is spent withholds its
-    // own route instead of holding the activation open (effigy#455,
-    // effigy#411). A host-process supervisor that fails to start is a
-    // failed activation in every mode, listener or not: the environment
-    // would otherwise report success while its declared workload never
-    // started, with nothing durable naming the failure (effigy#559).
-    integration_stage(progress, 7, "starting host listeners");
-    let (managed_host_listeners, managed_host_listener_failures) =
-        match crate::runner::host_process::start_host_processes_in_activation(
-            repo_root,
-            policy,
-            Some(deadline),
-            publisher,
-        ) {
-            Ok(report) => (report.ready, report.failures),
-            Err(error) => {
-                if plan.attach_mode == EffectiveAttachMode::Detached {
-                    return Err(detached_activation_error(policy, error));
-                }
-                let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
-                return Err(finish_container_up_failure(error, cleanup_result));
-            }
-        };
-
-    Ok(ContainerUpRuntimeIntegrations {
-        gateway_routes,
-        managed_host_listeners,
-        managed_host_listener_failures,
-        tcp_alias_host_notes,
-        warnings,
-    })
+    state.report.warnings = plan.warnings.clone();
+    Ok(state.report)
 }
 
 /// Run workspace permission preparation as a `container up` integration
@@ -1121,24 +1140,6 @@ fn ensure_up_workspace_permissions(
             policy.name
         ))
     })
-}
-
-/// Decides what a failed route registration does to the started scope.
-///
-/// Attached bring-up tears the started scope down. Detached bring-up keeps the
-/// Compose services `up` already started, so the next activation reconciles
-/// routes from what is running. The `cleanup` closure runs only on the
-/// attached path.
-fn gateway_registration_failure(
-    attach_mode: EffectiveAttachMode,
-    policy: &EffectiveContainerPolicy,
-    error: RunnerError,
-    cleanup: impl FnOnce() -> Result<(), RunnerError>,
-) -> RunnerError {
-    if attach_mode == EffectiveAttachMode::Detached {
-        return detached_activation_error(policy, error);
-    }
-    finish_container_up_failure(error, cleanup())
 }
 
 fn detached_activation_error(policy: &EffectiveContainerPolicy, error: RunnerError) -> RunnerError {
@@ -1998,10 +1999,9 @@ fn emit_ssh_agent_socket_warning(policy: &EffectiveContainerPolicy, repo_root: &
 mod tests {
     use super::{
         annotate_workspace_extra_mount_decisions, detached_activation_failure,
-        detached_activation_identity, ensure_up_workspace_permissions,
-        gateway_registration_failure, lifecycle_operation_plan, prepare_container_up,
-        run_container_down_command, sanitized_failure_cause, DetachedOperationState, ProgressFrame,
-        ProgressSource, RunnerError,
+        detached_activation_identity, ensure_up_workspace_permissions, lifecycle_operation_plan,
+        prepare_container_up, run_container_down_command, sanitized_failure_cause,
+        DetachedOperationState, ProgressFrame, ProgressSource, RunnerError,
     };
     use crate::runner::container_command::handover::hand_over_conflicting_environments;
     use crate::runner::container_command::support::{
@@ -2009,7 +2009,6 @@ mod tests {
     };
     use crate::runner::container_command::test_support::temp_repo;
     use effigy_containers::policy::restart::RestartPolicyStage;
-    use effigy_containers::EffectiveAttachMode;
     use effigy_containers::{
         down_report, load_container_policy, load_container_policy_for_creation, up_detached_report,
         ContainerAction, CreationPolicyStage, EffectiveComposeSource, EffectiveContainerPolicy,
@@ -2987,8 +2986,7 @@ primary_service = "app"
         let (temp, _lease_home) = isolated_lease_home();
         let policy = prepared_marker_policy(temp.path());
         let cleaned = std::cell::Cell::new(false);
-        let error = gateway_registration_failure(
-            EffectiveAttachMode::Detached,
+        let error = super::IntegrationOutcomePolicy::Detached.failure(
             &policy,
             RunnerError::task_invocation("timed out waiting for declared gateway services"),
             || {
@@ -3011,12 +3009,25 @@ primary_service = "app"
     }
 
     #[test]
+    fn workspace_integration_failure_retains_owner_without_lifecycle_cleanup() {
+        let policy = test_policy(Vec::new());
+        let error = super::IntegrationOutcomePolicy::Workspace.failure(
+            &policy,
+            RunnerError::task_invocation("integration effects unsettled; re-run up"),
+            || panic!("workspace recovery owns cleanup"),
+        );
+        assert_eq!(
+            error.to_string(),
+            "integration effects unsettled; re-run up"
+        );
+    }
+
+    #[test]
     fn attached_gateway_registration_failure_still_tears_scope_down() {
         let (temp, _lease_home) = isolated_lease_home();
         let policy = prepared_marker_policy(temp.path());
         let cleaned = std::cell::Cell::new(false);
-        let error = gateway_registration_failure(
-            EffectiveAttachMode::Attached,
+        let error = super::IntegrationOutcomePolicy::Attached.failure(
             &policy,
             RunnerError::task_invocation("gateway registration failed"),
             || {
@@ -3033,8 +3044,7 @@ primary_service = "app"
     fn attached_gateway_registration_failure_reports_cleanup_failure() {
         let (temp, _lease_home) = isolated_lease_home();
         let policy = prepared_marker_policy(temp.path());
-        let error = gateway_registration_failure(
-            EffectiveAttachMode::Attached,
+        let error = super::IntegrationOutcomePolicy::Attached.failure(
             &policy,
             RunnerError::task_invocation("gateway registration failed"),
             || Err(RunnerError::task_invocation("docker compose down failed")),
@@ -3884,12 +3894,8 @@ pub(in crate::runner) struct WorkspaceUpEffects {
     target: effigy_kernel::workspace_session::ContainerIdentity,
     policy: EffectiveContainerPolicy,
     secrets: ResolvedContainerSecretRuntime,
-    binding: Option<effigy_containers::exec::VerifiedComposeContainer>,
+    runtime: RuntimeIntegrationState,
     health: Option<&'static str>,
-    routes: Vec<super::gateway_registration::RegisteredGatewayRoute>,
-    listeners: Vec<crate::runner::host_process::ManagedHostListenerResult>,
-    listener_failures: Vec<crate::runner::host_process::ManagedHostListenerFailure>,
-    tcp_alias_notes: Vec<String>,
     secrets_attempted: bool,
     routes_attempted: bool,
     waits: Option<crate::runner::managed_wait::ActivationWaits>,
@@ -3921,12 +3927,8 @@ impl WorkspacePreparedEffects {
             target,
             policy: self.policy,
             secrets: self.secrets,
-            binding: None,
+            runtime: RuntimeIntegrationState::default(),
             health: None,
-            routes: Vec::new(),
-            listeners: Vec::new(),
-            listener_failures: Vec::new(),
-            tcp_alias_notes: Vec::new(),
             secrets_attempted: false,
             routes_attempted: false,
             waits: None,
@@ -3939,9 +3941,9 @@ impl WorkspaceUpEffects {
         &self,
     ) -> crate::runner::workspace_client::serving_host::ContainerStartupReport {
         let mut report = up_detached_report(&self.policy, false, self.health);
-        annotate_registered_gateway_routes(&mut report, &self.routes);
-        annotate_managed_host_listeners(&mut report, &self.listeners);
-        annotate_tcp_alias_host_notes(&mut report, &self.tcp_alias_notes);
+        annotate_registered_gateway_routes(&mut report, &self.runtime.report.gateway_routes);
+        annotate_managed_host_listeners(&mut report, &self.runtime.report.managed_host_listeners);
+        annotate_tcp_alias_host_notes(&mut report, &self.runtime.report.tcp_alias_host_notes);
         annotate_warning_lines(&mut report, &self.secrets.warnings);
         crate::runner::workspace_client::serving_host::ContainerStartupReport {
             json: report.json,
@@ -3953,7 +3955,7 @@ impl WorkspaceUpEffects {
         &self,
     ) -> Result<&effigy_containers::exec::VerifiedComposeContainer, effigy_kernel::run::RunError>
     {
-        self.binding.as_ref().ok_or_else(|| {
+        self.runtime.binding.as_ref().ok_or_else(|| {
             effigy_kernel::run::RunError::refused(
                 "workspace integrations have no verified primary binding",
             )
@@ -3988,118 +3990,78 @@ impl crate::runner::workspace_client::container_up::integrations::IntegrationEff
                 .map_err(|_| RunError::unavailable("workspace integration target changed"))?;
         }
         let root = &self.policy.repo_root;
-        match step {
-            Step::Readiness => {
-                let waits = crate::runner::managed_wait::ActivationWaits::begin(
-                    root,
-                    &self.policy.name,
-                    crate::runner::environment::requested_holder(),
-                )
-                .map_err(failed)?;
-                let mut graph = crate::runner::host_process::HostWaitGraph::for_environment_phase(
-                    &self.policy,
-                    waits.publisher(),
-                    std::time::Instant::now(),
-                );
-                let mut observe_phase = |state: &effigy_core::managed_waits::EntryState| {
-                    graph.observe_environment_phase(state, std::time::Instant::now());
-                };
-                self.health = wait_for_container_ready(
-                    &self.policy,
-                    None,
-                    Some(deadline),
-                    Some(&mut observe_phase),
-                )
-                .map_err(failed)?;
-                graph.environment_ready(std::time::Instant::now());
-                self.waits = Some(waits);
-                if self.health == Some("interrupted") {
-                    return Err(RunError::refused("workspace readiness interrupted"));
-                }
-                self.binding = Some(
-                    crate::runner::container_runtime_prep::ensure_primary_service_binding(
-                        root,
-                        &self.policy,
-                        Some(deadline),
-                    )
-                    .map_err(failed)?,
-                );
-                if self.binding()?.id() != self.target.container_id {
-                    return Err(RunError::refused(
-                        "workspace integration primary target changed",
-                    ));
-                }
-            }
-            Step::Permissions => {
-                crate::runner::workspace_command::ensure_workspace_permissions_ready(
-                    root,
-                    &self.policy,
-                    Some(&self.policy.name),
-                    None,
-                )
-                .map_err(failed)?;
-            }
-            Step::Secrets => {
-                self.secrets_attempted = !self.secrets.env.is_empty()
-                    && self.secrets.delivery
-                        == effigy_manifest::ManifestContainerSecretDelivery::RuntimeFiles;
-                materialize_container_secret_runtime(
-                    root,
-                    &self.policy,
-                    &self.secrets,
-                    self.binding()?,
-                )
-                .map_err(failed)?;
-            }
-            Step::Routes => {
-                self.routes_attempted =
-                    crate::runner::container_runtime_prep::container_policy_uses_gateway_surface(
-                        &self.policy,
-                    );
-                super::support::ensure_pinned_host_ports_available(
-                    root,
-                    &self.policy,
-                    Some(deadline),
-                )
-                .map_err(failed)?;
-                super::gateway_registration::ensure_gateway_running_for_container(&self.policy)
-                    .map_err(failed)?;
-                self.routes =
-                    super::gateway_registration::register_gateway_routes_for_verified_container(
-                        root,
-                        &self.policy,
-                        Some(self.binding()?),
-                    )
-                    .map_err(failed)?;
-            }
-            Step::HostIntegrations => {
-                self.tcp_alias_notes = reconcile_primary_service_tcp_alias_hosts(
-                    root,
-                    &self.policy,
-                    self.binding()?,
-                    Some(deadline),
-                )
-                .map_err(failed)?;
-                let waits = self.waits.as_mut().ok_or_else(|| {
-                    RunError::unavailable("workspace activation observations are unavailable")
-                })?;
-                let report = crate::runner::host_process::start_host_processes_in_activation(
-                    root,
-                    &self.policy,
-                    Some(deadline),
-                    waits.publisher(),
-                )
-                .map_err(failed)?;
-                waits.finish(report.failures.is_empty()).map_err(failed)?;
-                self.listeners = report.ready;
-                self.listener_failures = report.failures;
-                if !self.listener_failures.is_empty() {
-                    return Err(RunError::unavailable(
-                        "workspace host listener exposure is incomplete",
-                    ));
-                }
+        if step == Step::Readiness {
+            let waits = crate::runner::managed_wait::ActivationWaits::begin(
+                root,
+                &self.policy.name,
+                crate::runner::environment::requested_holder(),
+            )
+            .map_err(failed)?;
+            let mut graph = crate::runner::host_process::HostWaitGraph::for_environment_phase(
+                &self.policy,
+                waits.publisher(),
+                std::time::Instant::now(),
+            );
+            let mut observe_phase = |state: &effigy_core::managed_waits::EntryState| {
+                graph.observe_environment_phase(state, std::time::Instant::now());
+            };
+            self.health = wait_for_container_ready(
+                &self.policy,
+                None,
+                Some(deadline),
+                Some(&mut observe_phase),
+            )
+            .map_err(failed)?;
+            graph.environment_ready(std::time::Instant::now());
+            self.waits = Some(waits);
+            if self.health == Some("interrupted") {
+                return Err(RunError::refused("workspace readiness interrupted"));
             }
         }
+        if step == Step::Secrets {
+            self.secrets_attempted = !self.secrets.env.is_empty()
+                && self.secrets.delivery
+                    == effigy_manifest::ManifestContainerSecretDelivery::RuntimeFiles;
+        }
+        if step == Step::Routes {
+            self.routes_attempted =
+                crate::runner::container_runtime_prep::container_policy_uses_gateway_surface(
+                    &self.policy,
+                );
+        }
+        let waits = self.waits.as_mut().ok_or_else(|| {
+            RunError::unavailable("workspace activation observations are unavailable")
+        })?;
+        RuntimeIntegrationContext {
+            root,
+            policy: &self.policy,
+            secrets: &self.secrets,
+            container_name: Some(&self.policy.name),
+            outcome: IntegrationOutcomePolicy::Workspace,
+            progress: None,
+            publisher: waits.publisher(),
+        }
+        .reconcile(&mut self.runtime, step, deadline)
+        .map_err(failed)?;
+        if step == Step::HostIntegrations {
+            let complete = self
+                .runtime
+                .report
+                .managed_host_listener_failures
+                .is_empty();
+            waits.finish(complete).map_err(failed)?;
+            if !complete {
+                return Err(RunError::unavailable(
+                    "workspace host listener exposure is incomplete",
+                ));
+            }
+        }
+        if step == Step::Readiness && self.binding()?.id() != self.target.container_id {
+            return Err(RunError::refused(
+                "workspace integration primary target changed",
+            ));
+        }
+
         Ok(())
     }
 

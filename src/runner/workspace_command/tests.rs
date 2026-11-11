@@ -1190,50 +1190,18 @@ fn effective_workspace_repo_override_falls_back_to_repo_root() {
 }
 
 #[test]
-fn workspace_handoff_preparation_runs_gateway_and_permissions_in_shared_order() {
+fn workspace_handoff_preparation_provisions_before_transition() {
     let repo_root = Path::new("/tmp/demo-repo");
     let policy = test_policy();
     let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
 
-    let routes_were_ready_before_handoff = prepare_workspace_handoff_using(
+    prepare_workspace_handoff_using(
         WorkspaceHandoffRequest {
             repo_root,
             policy: &policy,
             container_name: Some("web"),
             repo_override: Some(PathBuf::from("/tmp/demo-repo")),
             initial_command: Some("effigy dev"),
-        },
-        {
-            let events = std::sync::Arc::clone(&events);
-            move |repo_root, policy| {
-                events.lock().expect("events lock").push(format!(
-                    "routes-ready:{}:{}",
-                    repo_root.display(),
-                    policy.name
-                ));
-                Ok(false)
-            }
-        },
-        {
-            let events = std::sync::Arc::clone(&events);
-            move |policy| {
-                events
-                    .lock()
-                    .expect("events lock")
-                    .push(format!("start-gateway:{}", policy.name));
-                Ok(())
-            }
-        },
-        {
-            let events = std::sync::Arc::clone(&events);
-            move |repo_root, policy| {
-                events.lock().expect("events lock").push(format!(
-                    "register-routes:{}:{}",
-                    repo_root.display(),
-                    policy.name
-                ));
-                Ok(())
-            }
         },
         {
             let events = std::sync::Arc::clone(&events);
@@ -1259,12 +1227,9 @@ fn workspace_handoff_preparation_runs_gateway_and_permissions_in_shared_order() 
     )
     .expect("prepare workspace handoff");
 
-    assert!(!routes_were_ready_before_handoff);
     assert_eq!(
         *events.lock().expect("events lock"),
         vec![
-            "routes-ready:/tmp/demo-repo:stack".to_owned(),
-            "start-gateway:stack".to_owned(),
             "ensure-provisioning:/tmp/demo-repo:stack:Some(\"web\"):Some(\"/tmp/demo-repo\")"
                 .to_owned(),
             "render-transition:stack:Some(\"effigy dev\")".to_owned(),
@@ -1287,9 +1252,6 @@ fn workspace_handoff_preparation_preserves_explicit_repo_override() {
             repo_override: Some(std::path::PathBuf::from("/tmp/cloned-target")),
             initial_command: Some("effigy dev"),
         },
-        |_repo_root, _policy| Ok(true),
-        |_policy| Ok(()),
-        |_repo_root, _policy| Ok(()),
         move |repo_root, policy, container_name, repo_override| {
             *captured_clone.lock().expect("capture lock") = Some((
                 repo_root.to_path_buf(),
@@ -1311,84 +1273,6 @@ fn workspace_handoff_preparation_preserves_explicit_repo_override() {
             Some("web".to_owned()),
             Some(std::path::PathBuf::from("/tmp/cloned-target")),
         ))
-    );
-}
-
-#[test]
-fn workspace_handoff_preparation_registers_routes_when_gateway_surface_is_active() {
-    let repo_root = Path::new("/tmp/demo-repo");
-    let mut policy = test_policy();
-    policy.dns_routes = vec![effigy_containers::EffectiveDnsRoute {
-        domain: "clientname.test".to_owned(),
-        declared_domain: "clientname.test".to_owned(),
-        tls: false,
-        port: None,
-        service: None,
-        target_host: None,
-    }];
-    let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::<&'static str>::new()));
-
-    prepare_workspace_handoff_using(
-        WorkspaceHandoffRequest {
-            repo_root,
-            policy: &policy,
-            container_name: Some("web"),
-            repo_override: Some(PathBuf::from("/tmp/demo-repo")),
-            initial_command: None,
-        },
-        {
-            let events = std::sync::Arc::clone(&events);
-            move |_, _| {
-                events.lock().expect("events lock").push("routes-ready");
-                Ok(true)
-            }
-        },
-        {
-            let events = std::sync::Arc::clone(&events);
-            move |_| {
-                events.lock().expect("events lock").push("start-gateway");
-                Ok(())
-            }
-        },
-        {
-            let events = std::sync::Arc::clone(&events);
-            move |_, _| {
-                events.lock().expect("events lock").push("register-routes");
-                Ok(())
-            }
-        },
-        {
-            let events = std::sync::Arc::clone(&events);
-            move |_, _, _, _| {
-                events
-                    .lock()
-                    .expect("events lock")
-                    .push("ensure-provisioning");
-                Ok(())
-            }
-        },
-        {
-            let events = std::sync::Arc::clone(&events);
-            move |_, _| {
-                events
-                    .lock()
-                    .expect("events lock")
-                    .push("render-transition");
-                Ok(())
-            }
-        },
-    )
-    .expect("prepare workspace handoff");
-
-    assert_eq!(
-        *events.lock().expect("events lock"),
-        vec![
-            "routes-ready",
-            "start-gateway",
-            "register-routes",
-            "ensure-provisioning",
-            "render-transition",
-        ]
     );
 }
 

@@ -386,6 +386,11 @@ A transition waits up to 10 minutes for the gate; idle stop does not wait.
   creator attribution and reserved target/platform binding, then parks the
   same run and releases Env. The same reservation owner journals and runs
   readiness, permissions, secrets, routes and declared host integrations.
+  Ordinary `container up` uses the same ordered runtime effects. Attached
+  failures run lifecycle cleanup; detached failures preserve Compose and partial
+  exposure; workspace failures retain the journal and exact reservation owner.
+  Workspace handoff then provisions the guest and renders the transition without
+  repeating gateway startup or route registration.
   Gate-free integrations have a separate explicit budget (generous internal
   default: ten minutes), checked before each step and after it returns.
   Supported helper timeouts are capped to remaining budget; an overrun by a

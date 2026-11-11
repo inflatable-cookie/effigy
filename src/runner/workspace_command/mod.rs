@@ -272,8 +272,7 @@ pub(super) fn finish_workspace_handoff_after_activation(
     container_name: Option<&str>,
     repo_override: Option<PathBuf>,
     initial_command: Option<&str>,
-    routes_were_ready_before_handoff: bool,
-) -> Result<bool, RunnerError> {
+) -> Result<(), RunnerError> {
     prepare_workspace_handoff_using(
         WorkspaceHandoffRequest {
             repo_root,
@@ -282,9 +281,6 @@ pub(super) fn finish_workspace_handoff_after_activation(
             repo_override,
             initial_command,
         },
-        |_repo_root, _policy| Ok(routes_were_ready_before_handoff),
-        |_policy| Ok(()),
-        |_repo_root, _policy| Ok(()),
         provisioning::ensure_workspace_provisioning_ready,
         render_workspace_handoff_transition,
     )
@@ -300,12 +296,6 @@ struct WorkspaceHandoffRequest<'a> {
 
 fn prepare_workspace_handoff_using(
     request: WorkspaceHandoffRequest<'_>,
-    gateway_ready_before_handoff: impl FnOnce(
-        &Path,
-        &EffectiveContainerPolicy,
-    ) -> Result<bool, RunnerError>,
-    start_gateway: impl FnOnce(&EffectiveContainerPolicy) -> Result<(), RunnerError>,
-    register_routes: impl FnOnce(&Path, &EffectiveContainerPolicy) -> Result<(), RunnerError>,
     ensure_provisioning_ready: impl FnOnce(
         &Path,
         &EffectiveContainerPolicy,
@@ -313,7 +303,7 @@ fn prepare_workspace_handoff_using(
         Option<PathBuf>,
     ) -> Result<(), RunnerError>,
     render_transition: impl FnOnce(&EffectiveContainerPolicy, Option<&str>) -> Result<(), RunnerError>,
-) -> Result<bool, RunnerError> {
+) -> Result<(), RunnerError> {
     let WorkspaceHandoffRequest {
         repo_root,
         policy,
@@ -321,14 +311,9 @@ fn prepare_workspace_handoff_using(
         repo_override,
         initial_command,
     } = request;
-    let routes_were_ready_before_handoff = gateway_ready_before_handoff(repo_root, policy)?;
-    start_gateway(policy)?;
-    if container_policy_uses_gateway_surface(policy) {
-        register_routes(repo_root, policy)?;
-    }
     ensure_provisioning_ready(repo_root, policy, container_name, repo_override)?;
     render_transition(policy, initial_command)?;
-    Ok(routes_were_ready_before_handoff)
+    Ok(())
 }
 
 fn render_workspace_handoff_transition(

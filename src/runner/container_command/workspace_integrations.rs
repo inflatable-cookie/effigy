@@ -1,7 +1,7 @@
-//! Gate-free integration orchestration scaffold for reserved workspace activation.
+//! Ordered runtime integrations and reserved workspace recovery.
 //!
-//! This is not wired to the lifecycle. The caller must retain the original
-//! parked owner and provide reconcilable effects against its frozen inputs.
+//! Ordinary up and workspace activation share this order. The latter retains
+//! the original parked owner and reconciles effects against its frozen inputs.
 //! An attempt is recorded before an effect, so recovery must reconcile even
 //! an interrupted, partially completed step. Records are not effect receipts.
 
@@ -16,7 +16,7 @@ pub enum WorkspaceIntegrationStep {
     HostIntegrations,
 }
 
-const STEPS: [WorkspaceIntegrationStep; 5] = [
+pub(super) const STEPS: [WorkspaceIntegrationStep; 5] = [
     WorkspaceIntegrationStep::Readiness,
     WorkspaceIntegrationStep::Permissions,
     WorkspaceIntegrationStep::Secrets,
