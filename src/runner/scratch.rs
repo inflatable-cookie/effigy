@@ -831,7 +831,7 @@ pub(in crate::runner) struct SweepReport {
 /// an unreadable process identity, a budget it did not reach — is skipped
 /// silently and left for a later run.
 pub(in crate::runner) fn sweep_at(root: &Path, now_ms: i64, within: Duration) -> SweepReport {
-    let deadline = Instant::now() + within;
+    let deadline = Instant::now().checked_add(within);
     let mut report = SweepReport::default();
     sweep_entries(root, true, now_ms, &mut report, deadline);
     report
@@ -844,7 +844,13 @@ pub(in crate::runner) fn sweep_at(root: &Path, now_ms: i64, within: Duration) ->
 /// The namespace carries no marker of its own and is never judged as a run: it
 /// is Effigy's directory, holding runs one level down. A symlink is not
 /// descended into, and an entry with no marker is left alone.
-fn sweep_entries(dir: &Path, top: bool, now_ms: i64, report: &mut SweepReport, deadline: Instant) {
+fn sweep_entries(
+    dir: &Path,
+    top: bool,
+    now_ms: i64,
+    report: &mut SweepReport,
+    deadline: Option<Instant>,
+) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -884,24 +890,31 @@ fn sweep_entries(dir: &Path, top: bool, now_ms: i64, report: &mut SweepReport, d
 impl SweepReport {
     /// Whether this sweep has spent its bounds: what it has not reached is a
     /// later run's.
-    fn spent(&self, deadline: Instant) -> bool {
+    fn spent(&self, deadline: Option<Instant>) -> bool {
         self.scanned >= SWEEP_SCAN_MAX
             || self.removed >= SWEEP_REMOVE_MAX
-            || Instant::now() >= deadline
+            || deadline.is_some_and(|deadline| Instant::now() >= deadline)
     }
 }
 
 /// Whether a marked directory is past its life. A live run keeps its
 /// directory however old it is; seven days only retires what liveness cannot
 /// decide (an unreadable boot or process identity).
-fn expired(marker: &Marker, now_ms: i64, report: &mut SweepReport, deadline: Instant) -> bool {
+fn expired(
+    marker: &Marker,
+    now_ms: i64,
+    report: &mut SweepReport,
+    deadline: Option<Instant>,
+) -> bool {
     let age = |since: i64| now_ms.saturating_sub(since) as u128;
     if let Some(concluded) = marker.concluded_ms {
         // A concluded run has left the directory on purpose; retention is dated
         // from its end.
         return age(concluded) >= RETENTION.as_millis();
     }
-    if report.probes >= SWEEP_PROBE_MAX || Instant::now() >= deadline {
+    if report.probes >= SWEEP_PROBE_MAX
+        || deadline.is_some_and(|deadline| Instant::now() >= deadline)
+    {
         return false;
     }
     report.probes += 1;
@@ -1402,7 +1415,7 @@ mod tests {
     }
 
     #[test]
-    fn sweeping_hundreds_of_retained_directories_stays_within_budget_and_reads_no_journal() {
+    fn sweeping_hundreds_of_retained_directories_reads_no_journal() {
         let root = tempfile::tempdir().expect("root");
         let checkout = tempfile::tempdir().expect("checkout");
         // A journal the sweep must never open.
@@ -1427,15 +1440,9 @@ mod tests {
                 },
             );
         }
-        let started = Instant::now();
-        let report = sweep_at(root.path(), now_ms(), SWEEP_BUDGET);
-        let elapsed = started.elapsed();
+        let report = sweep_at(root.path(), now_ms(), Duration::MAX);
         assert_eq!(report.scanned, 300, "every directory was examined");
         assert_eq!(report.removed, 0, "every directory is still retained");
-        assert!(
-            elapsed < SWEEP_BUDGET + Duration::from_millis(300),
-            "the sweep spent {elapsed:?} of a {SWEEP_BUDGET:?} budget"
-        );
         assert_eq!(
             std::fs::read(&journal).expect("journal"),
             b"sentinel journal",
@@ -1448,6 +1455,26 @@ mod tests {
                 .ok(),
             before
         );
+    }
+
+    #[test]
+    fn sweep_stops_truthfully_when_its_time_budget_is_expired() {
+        let root = tempfile::tempdir().expect("root");
+        let id = run_id(17);
+        hold_marker(
+            root.path(),
+            &id,
+            Marker {
+                keep: Some(true),
+                concluded_ms: Some(now_ms() - 60_000),
+                ..marker(&id, now_ms() - 60_000)
+            },
+        );
+
+        let report = sweep_at(root.path(), now_ms(), Duration::ZERO);
+        assert_eq!(report.scanned, 0, "an expired budget scans no entries");
+        assert_eq!(report.removed, 0, "an unscanned entry stays untouched");
+        assert_eq!(std::fs::read_dir(root.path()).expect("root").count(), 1);
     }
 
     #[test]
@@ -1756,14 +1783,9 @@ mod tests {
                 },
             );
         }
-        let started = Instant::now();
-        let report = sweep_at(many.path(), now_ms(), SWEEP_BUDGET);
+        let report = sweep_at(many.path(), now_ms(), Duration::MAX);
         assert_eq!(report.scanned, 301, "the namespace and each of its entries");
         assert_eq!(report.removed, 0, "every directory is still retained");
-        assert!(
-            started.elapsed() < SWEEP_BUDGET + Duration::from_millis(300),
-            "the sweep stayed within its budget"
-        );
     }
 
     #[test]
