@@ -749,16 +749,11 @@ fn successive_loopback_clients_do_not_inherit_owner_on_replay() {
         1,
         RequestBody::Invoke(body()),
     )));
+    let mut second = first.clone();
     first.push(Frame::Request(request(
         session.session(),
         9,
         RequestBody::Detach(RunBody { run: id(10) }),
-    )));
-    let mut second = authenticated(session.session());
-    second.push(Frame::Request(request(
-        session.session(),
-        1,
-        RequestBody::Invoke(body()),
     )));
     second.push(Frame::Request(request(
         session.session(),
@@ -803,6 +798,8 @@ fn successive_loopback_clients_do_not_inherit_owner_on_replay() {
                 Err(error) => panic!("loopback accept failed: {error}"),
             }
         };
+        // Accepted sockets inherit nonblocking mode on macOS.
+        socket.set_nonblocking(false).expect("blocking connection");
         socket
             .set_read_timeout(Some(std::time::Duration::from_secs(10)))
             .expect("read timeout");
@@ -856,7 +853,8 @@ fn successive_loopback_clients_do_not_inherit_owner_on_replay() {
     host.assert_foreign();
     assert!(
         served.iter().all(Result::is_ok),
-        "both connections must complete"
+        "both connections must complete: {:#?}",
+        served.iter().enumerate().collect::<Vec<_>>()
     );
     assert!(
         initial_accepted,
