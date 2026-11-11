@@ -11,7 +11,8 @@
   "decisions": [
     "Accept one distinct address per family, prefer IPv4 consistently in the shared qualification/serving decoder, and retain conflict, malformed-address, TLS pin and target checks.",
     "Derive undeclared permission and host integration absence from frozen policy; real declared or attempted mutations retain the existing refusal. Remove the two unconditional flags.",
-    "Use only fresh isolated Colima controls under the planner-sanctioned short root (answer 65595e810bb412c2ee888ebd03094172c3f80e794fe4d74c2224996dc9ff6d28); keep socket pins."
+    "Use only fresh isolated Colima controls under the planner-sanctioned short root (answer 65595e810bb412c2ee888ebd03094172c3f80e794fe4d74c2224996dc9ff6d28); keep socket pins.",
+    "Planner b2317729 identified optimized hash-bound artifacts as a required session precondition. Produce a fresh C0-C5 runtime and run the corrected optimized Colima session; do not repeat passing focused/docs checks or the already-completed C0-C6 validation selector."
   ],
   "validation": {
     "build": "build:workspace:private-qualification passed; touched CLI/library compiled",
@@ -24,7 +25,8 @@
       "selector": "qa:docs",
       "status": "passed"
     },
-    "production_line_delta": 0
+    "production_line_delta": 0,
+    "optimized_build": "build:workspace:private-qualification:optimized passed"
   },
   "native": {
     "reproduction": {
@@ -45,16 +47,6 @@
       "stages": "C0-C6",
       "exit": 0,
       "seconds": 129.93886804580688
-    },
-    "colima_session": {
-      "selector": "qualification:macos:colima-session-smoke",
-      "status": "failed",
-      "stage": "bind/reacquire; exact owner cleanup settled",
-      "all_four_runs_closed": true,
-      "required_passing_proof_missing": true,
-      "planner_question": "b231772984f0b892dbf86d854f2849fc9588784473aa0bcb6256e088380edaf3",
-      "exit": 1,
-      "seconds": 32.90801930427551
     },
     "desktop_final": {
       "selector": "qualification:macos:desktop-session-smoke",
@@ -92,13 +84,63 @@
       },
       "exit": 1,
       "seconds": 144.70533299446106
+    },
+    "colima_debug_session": {
+      "selector": "qualification:macos:colima-session-smoke",
+      "status": "failed",
+      "stage": "bind/reacquire; exact owner cleanup settled",
+      "all_four_runs_closed": true,
+      "planner_question": "b231772984f0b892dbf86d854f2849fc9588784473aa0bcb6256e088380edaf3",
+      "exit": 1,
+      "seconds": 32.90801930427551,
+      "superseded_by": "colima_optimized_session"
+    },
+    "colima_optimized_session": {
+      "selector": "qualification:macos:colima-session-smoke",
+      "status": "passed",
+      "source_head": "38440b071b033b60c1d537d04278788cfffc5c16",
+      "candidate": {
+        "path": "/Volumes/Stash/scratch/effigy/88311477/869-GvBzd1AT/artifacts-optimized/candidate",
+        "sha256": "0c919cc0005d7b3e612bdae82ec4ce0c300693421b5e94e38f498a6da6a1c1ef"
+      },
+      "utility": {
+        "path": "/Volumes/Stash/scratch/effigy/88311477/869-GvBzd1AT/artifacts-optimized/utility",
+        "sha256": "260c4cb5a5947d8feb5294a17ddc2cbf7d3d0722dbeb53e5ac735bda7af57930"
+      },
+      "request_sha256": "ac13e8e995bdb5c881f051593b187d19b975e847e721113c6f33363d26a8dc01",
+      "completed_cells": [
+        "production-refusal",
+        "positive-session",
+        "native-identity-and-tls",
+        "exploration-level-one-client",
+        "level-one-stream",
+        "exploration-signal-client",
+        "real-signal",
+        "credential-refusal",
+        "exploration-caller-drop-client",
+        "caller-drop",
+        "exploration-gap-client",
+        "exploration-truncated-client",
+        "gap-and-truncation",
+        "kernel-custody",
+        "down",
+        "positive-session",
+        "session-crash-recovery",
+        "down",
+        "positive-session",
+        "down",
+        "baseline-and-cleanup"
+      ],
+      "exit": 0,
+      "seconds": 333.4864320755005
     }
   },
   "setup_events": [
     "Initial Desktop preparation stopped at D2 because its already-exited docker info process lost the identity probe (exit 0, ProcessLookupError). Its exact labelled volume was removed; the next fresh D0-D3 and final D4 closed.",
     "An early Desktop fixture lacked the source-recognition manifests and stopped at bind/reacquire with complete cleanup. The source fixture was corrected. A subsequent private-config freshness refusal performed no session action.",
     "The fresh Colima bridge was initialized by one labelled disposable container, removed by exact ID, before recording the canonical session inventory.",
-    "A first guest producer route using containerd refused before native work because the source was under TMPDIR. The supported Docker producer then built the dedicated read-only source fixture; the final candidate exported the matching 0.14.1 guest artifact."
+    "A first guest producer route using containerd refused before native work because the source was under TMPDIR. The supported Docker producer then built the dedicated read-only source fixture; the final candidate exported the matching 0.14.1 guest artifact.",
+    "The first Colima full-session fixture used a debug candidate. After the planner precondition ruling, a fresh owned runtime and writable share with optimized pinned artifacts completed the full session. No unchanged-main comparison was needed because the corrected run passed."
   ],
   "cleanup": {
     "desktop_global_inventory_difference": {
@@ -120,12 +162,13 @@
       }
     },
     "all_final_desktop_runs_closed": true,
-    "recorded_owner_identities_checked": 66,
+    "recorded_owner_identities_checked": 104,
     "recorded_live_owners": 0,
     "colima_owned_roots_removed": true,
     "fixture_checkouts_removed": true,
     "shared_engine_settings_or_context_changed": false,
-    "sealed_profiles_touched": false
+    "sealed_profiles_touched": false,
+    "colima_optimized_profile_stopped_and_root_removed": true
   },
   "artifacts": {
     "cause-evidence-index.json": {
@@ -219,6 +262,43 @@
     "desktop-final-agq4qn2m7aj7aymkpt3ntkkw4a-stop.json": {
       "sha256": "42b4f43dc58e556e74f930bbdbddfa8c0d0ecc3f588c1cae7553294bea474d08",
       "bytes": 1186
+    },
+    "optimized-build-exit.json": {
+      "sha256": "a5ea15d0719ea1c2355e0763f7741a2ddb5bf7040da78652477c3e8543838801",
+      "bytes": 42
+    },
+    "corrected-colima-preparation-exit.json": {
+      "sha256": "940a04470dcc8d01fa8c91ce8ef62138749ab217d2ab97dab5372837789a19cf",
+      "bytes": 41
+    },
+    "colima-optimized-request.json": {
+      "sha256": "ac13e8e995bdb5c881f051593b187d19b975e847e721113c6f33363d26a8dc01",
+      "bytes": 5643
+    },
+    "colima-optimized-session-exit.json": {
+      "sha256": "a88a25fc60eb84674a62470330cfd67a80b03d208139e2c788f8a7132f5091dd",
+      "bytes": 41
+    },
+    "colima-optimized-session-evidence/exploration-complete.json": {
+      "sha256": "ba05711b893221225710497f5a9ed522d8768043911bd2e0b523d10906825ded",
+      "bytes": 3896
+    },
+    "colima-optimized-session-evidence/kernel-preserved.db": {
+      "sha256": "fe9b73154ed1baa56169a5a22129a493efad7a4a6073a6714a6295077bab813d",
+      "bytes": 421888
+    },
+    "colima-optimized-final-stop-exit.json": {
+      "sha256": "44649727f5b31dc5662cd6378baff836f61c9c0a646946d3ad722bd53db00952",
+      "bytes": 42
+    },
+    "colima-optimized-owner-checks.json": {
+      "sha256": "04d1d1ecf9e22f659c24b049c6413e9b9f11be7e7583c45a8b1da908b899f315",
+      "bytes": 10896
+    },
+    "colima-optimized-cleanup.json": {
+      "sha256": "d073efc911cdb0dd427598b1eefe926491debf9270e58ba9b23f0c0ad4ef9cea",
+      "bytes": 381
     }
-  }
+  },
+  "required_passing_proof_missing": false
 }
