@@ -10,7 +10,7 @@ It does not bound writers outside the tree, such as root-owned system paths or D
 Observed 2026-11-08 (747 originals): root ext4 with neither feature and no quota tools. That is
 absence. The verifier refuses it, and nothing here enables, mounts, or provisions anything.
 Historical witnesses remain readable offline. Reading a witness grants no execution authority;
-the separately retained `--approved-quota` administration role still requires its one-use approval.
+the quota and project-assignment execution roles are retired.
 
 A witness carries the five route originals (text, sha256, waited exit). It is verified against exact
 request facts: boot id, owned uid, stage root, and the exact entry set. Originals are hashed and
@@ -29,10 +29,15 @@ import struct
 import uuid
 from pathlib import Path
 
-from linux_supervisor import Refusal, QUOTA_ROWS as ROW_RESERVATIONS, QUOTA_GROUP_ROWS, \
-    quota_row_reservation, quota_limit_record, PROJECT_MECHANISM, PROJECT_ROUTES, PROJECT_ROOT
+from linux_supervisor import Refusal
 import linux_allocation_probe as probe
 
+# Historical witness policy; no quota executor imports or calls this table.
+ROW_RESERVATIONS = {'E8': 64 << 20, 'E9a': 40 << 20, 'E9b': 500 << 20, 'E9c': 40 << 20,
+                    'E19': 1 << 20, 'EGO': 1 << 20}
+PROJECT_MECHANISM = 'ext4-project-attribute'
+PROJECT_ROUTES = ('mountinfo', 'dumpe2fs', 'by-uuid', 'project')
+PROJECT_ROOT = '/Volumes/Stash/scratch/effigy/linux-4f6a5ed3'
 MECHANISM = 'ext4-project-quota'
 ROOT_UUID = 'd488be7b-682f-41ac-b79b-57bbf495a01d'
 ROOT_DEVICE = '/dev/sda2'

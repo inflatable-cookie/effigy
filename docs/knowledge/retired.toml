@@ -1856,7 +1856,7 @@ allow = ["CHANGELOG.md"]
 [[retired]]
 id = "linux-quota-preparation-executor"
 retired = "2026-11-10; R2i simplification (effigy#854)"
-replacement = "Use native physical preparation and the full-session runner. Historical quota witness readers, the refusing old entry and externally invoked root administration roles remain; no quota preparation plan can be constructed or executed."
+replacement = "Use native physical preparation and the full-session runner. Historical quota witness readers and the refusing old entry remain; root administration roles were subsequently retired by effigy#879; no quota preparation plan can be constructed or executed."
 owner = "docs/qualification/workspace-private-531/linux-setup.md"
 terms = ["def setup_plan(", "def execute_plan(", "def default_quota_runner("]
 paths = []
@@ -1882,3 +1882,13 @@ terms = ["enum WaitOwner", "fn committed_namespace("]
 paths = []
 config_keys = []
 allow = ["CHANGELOG.md"]
+
+[[retired]]
+id = "qualification-launch-modes-and-quota-roles"
+retired = "2026-11-11; Tom approved cuts 4–6 on 2026-11-10 (effigy#879)"
+replacement = "Require one explicit backend per launch.py invocation and use the independent offline aggregate. New C2–C6 execution uses one chain; C0/C1 and Desktop stages retain their entries. Linux preparation uses the physical runner. The retained-request inventory found no unspent request for these modes. Historical receipt verification, all three backends, stage budgets and closure rules, systemd custody, receipt and transfer helpers remain."
+owner = "docs/qualification/workspace-private-531/README.md"
+terms = ["def quota_admin(", "def project_assign(", "def quota_admin_main(", "def project_admin_main(", "if args.backend is None:"]
+paths = []
+config_keys = []
+allow = []
