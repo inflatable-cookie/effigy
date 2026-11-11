@@ -70,7 +70,7 @@ path and the milestone QA path both fail on a reintroduced bare spinner.
   spinner of its own.
 
 The same operation state reaches text, JSON and the TUI. A managed entry's
-wait is one `effigy_tui::waits::EntryState`: the tab, the `--headless` text and
+wait is one `effigy_core::managed_waits::EntryState`: the tab, the `--headless` text and
 `status --json` render `EntryState::status_line()` and publish the same
 machine-readable `waiting_on` (`kind`, and `name`/`phase`, `healthy`/`total`,
 `probe` or delay) plus the scoped `waits` list, so no surface derives a label

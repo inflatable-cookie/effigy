@@ -557,31 +557,25 @@ Every withheld listener start is settled before the command returns, including
 a retrying failure before its first child. Only successful starts are detached;
 the withheld supervisor cannot publish a late route.
 
-The run's own owner publishes the environment identity and the whole host graph
-before its environment phase can block; every host entry waits for that phase
-first, and the planner takes the same records over once readiness is observed.
-Within the planner the graph is published before the first process can block,
-so a dependent's tab names its reader while that reader is still becoming
-ready. It then publishes what each process waits
-for — its `depends_on` reader and that reader's phase, or its own declared
-readiness request with elapsed time — as an `effigy.managed.entry-wait.v1`
-record under the checkout's `.effigy/runtime/waits/<scope>/`, and records each
-wait as settled when it ends. A prerequisite failure is published as
-`not_started` with the failing entry and its report, no dependent starts, and
-the plan returns the failure. A record is written once when its meaning changes
-and refreshed only while it is a live wait, so a settled entry is never
-rewritten on an owner-loop tick. Exactly one publisher owns the scope: the run's
-owner publishes it before the phase can block, and the host planner takes it over
-before it starts any listener. Each publisher stages a complete snapshot in its
-own directory and commits it by replacing one record, so a reader always resolves
-a whole snapshot — the previous publisher's until the new one is complete — and a
-write that races the handoff cannot replace an authoritative entry or failure.
-The environment phase keeps its own reserved record, never an entry name, so a
-host process an operator names `environment` keeps its own wait; the run's owner
-reads that record for the container counts every phase-dependent entry names. A
-read accepts a snapshot only while it is still the visible one — a listing a
-commit retires mid-read is re-resolved — so an in-flight front end never observes
-a missing or partial snapshot across the handoff. The host plan launches entries
+The managed owner records its environment identity and complete prelaunch host
+graph on its existing run before the environment can block. The activation
+operation then records phase counts and the host graph together in its checkout
+journal, using the same operation through readiness and ordered host startup.
+Its own gate never holds `Env` across readiness, so `down` can interrupt a child
+that never binds. Activation operations for one environment are serialized by
+that operation's kernel gate.
+
+Each `managed:waits` effect contains one complete snapshot. Readers match the
+exact managed parent run; an unrelated activation cannot replace its waits, and
+an unobserved child graph leaves the complete parent graph visible. The phase
+and host entries are separate fields, so a host named `environment` never
+collides with its phase. Changed waits and live elapsed time refresh on the
+owner's existing cadence; settled observations are not rewritten on each tick.
+A failed prerequisite remains terminal and attributed, and no dependent starts.
+Status, text and panes read these journal observations; best-effort events only
+wake them. New owners write no wait directories, session files or owner pointers.
+
+The host plan launches entries
 one at a time in its resolved dependency order, so each queued entry names the
 launch the plan is performing now, with that entry's actual phase, as its own
 wait (`launch`) — distinct from a declared `depends_on` edge and never

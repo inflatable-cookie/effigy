@@ -36,7 +36,6 @@ use crate::runner::environment;
 use crate::runner::exec_command::{
     append_color_exec_env, probe_container_capabilities, run_compose_exec_plan_with_options,
 };
-use crate::runner::host_process::start_host_processes_for_container;
 use effigy_containers::environment::{BackendError, Operation, Retention};
 use effigy_containers::ContainerAction;
 use effigy_containers::{
@@ -410,155 +409,169 @@ fn run_container_up_inner(
         });
     }
 
-    // A new bring-up owns its environment's published waits: a record left by
-    // an earlier session is never read as this one's (effigy#458). A run that
-    // holds this environment published its host graph before this `up` could
-    // block, so it owns that ledger and this child never clears it.
-    let waits = crate::runner::managed_wait::WaitLedger::environment(repo_root, &plan.policy.name);
-    if crate::runner::environment::requested_holder().is_none() {
-        waits.clear();
-    }
-    // Whether or not a run holds this environment, this bring-up's readiness
-    // phase begins settled and count-free: a previous run's counts are never
-    // reported while this one is still composing (effigy#458).
-    waits.settle_phase();
-    operation.active = plan.attach_mode == EffectiveAttachMode::Detached;
-    operation.identity = Some(detached_activation_identity(&plan.policy));
-
-    if container_up_stop_requested(&plan) {
-        return render_container_up_interrupted(repo_root, &plan);
-    }
-
-    operation.stage = Some("environment_handover");
-    let handed_over = super::handover::hand_over_conflicting_environments(
+    let mut activation_waits = crate::runner::managed_wait::ActivationWaits::begin(
         repo_root,
+        &plan.policy.name,
+        crate::runner::environment::requested_holder(),
+    )?;
+    let publisher = activation_waits.publisher().clone();
+    let mut host_waits = crate::runner::host_process::HostWaitGraph::for_environment_phase(
         &plan.policy,
-        deregister_runtime_gateway_routes,
-    )?;
-    if plan.attach_mode == EffectiveAttachMode::Attached {
-        for note in &handed_over {
-            println!("{note}");
-        }
-    }
-    plan.handover_notes.extend(handed_over);
+        &publisher,
+        std::time::Instant::now(),
+    );
+    let result = (|| {
+        operation.active = plan.attach_mode == EffectiveAttachMode::Detached;
+        operation.identity = Some(detached_activation_identity(&plan.policy));
 
-    // The reconcile run journals the one Compose apply under Gate(Env).
-    operation.stage = Some("compose_activation");
-    let attached_end = std::cell::RefCell::new(None);
-    let detached_failure = std::cell::RefCell::new(None);
-    // The one budget this bring-up's runtime observations share, started when
-    // Compose returned: the restart-policy read and the readiness wait spend it
-    // together instead of each waiting out a hung runtime (effigy#411).
-    let observation = std::cell::Cell::new(None);
-    let compose_steps =
-        std::cell::RefCell::new(ComposeSteps::new(plan.policy.project_name.clone()));
-    let reconciled = environment::reconcile(repo_root, &plan.policy, retention, || {
-        match run_container_up_compose(&plan, &mut compose_steps.borrow_mut(), &observation) {
-            Ok(None) => {}
-            Ok(Some(end)) => {
-                let message = match &end {
-                    AttachedComposeEnd::Interrupted => "compose up interrupted".to_owned(),
-                    AttachedComposeEnd::Failed(status) => {
-                        format!("compose up exited with {status}")
-                    }
-                };
-                *attached_end.borrow_mut() = Some(end);
-                return Err(BackendError::Uncertain(message));
+        if container_up_stop_requested(&plan) {
+            return render_container_up_interrupted(repo_root, &plan);
+        }
+
+        operation.stage = Some("environment_handover");
+        let handed_over = super::handover::hand_over_conflicting_environments(
+            repo_root,
+            &plan.policy,
+            deregister_runtime_gateway_routes,
+        )?;
+        if plan.attach_mode == EffectiveAttachMode::Attached {
+            for note in &handed_over {
+                println!("{note}");
             }
+        }
+        plan.handover_notes.extend(handed_over);
+
+        // The reconcile run journals the one Compose apply under Gate(Env).
+        operation.stage = Some("compose_activation");
+        let attached_end = std::cell::RefCell::new(None);
+        let detached_failure = std::cell::RefCell::new(None);
+        // The one budget this bring-up's runtime observations share, started when
+        // Compose returned: the restart-policy read and the readiness wait spend it
+        // together instead of each waiting out a hung runtime (effigy#411).
+        let observation = std::cell::Cell::new(None);
+        let compose_steps =
+            std::cell::RefCell::new(ComposeSteps::new(plan.policy.project_name.clone()));
+        let reconciled = environment::reconcile(repo_root, &plan.policy, retention, || {
+            match run_container_up_compose(&plan, &mut compose_steps.borrow_mut(), &observation) {
+                Ok(None) => {}
+                Ok(Some(end)) => {
+                    let message = match &end {
+                        AttachedComposeEnd::Interrupted => "compose up interrupted".to_owned(),
+                        AttachedComposeEnd::Failed(status) => {
+                            format!("compose up exited with {status}")
+                        }
+                    };
+                    *attached_end.borrow_mut() = Some(end);
+                    return Err(BackendError::Uncertain(message));
+                }
+                Err(error) => {
+                    let message = error.to_string();
+                    *detached_failure.borrow_mut() = Some(error);
+                    return Err(BackendError::Uncertain(message));
+                }
+            }
+            Ok(())
+        });
+        let bring_up = match reconciled {
+            Ok(bring_up) => bring_up,
             Err(error) => {
-                let message = error.to_string();
-                *detached_failure.borrow_mut() = Some(error);
-                return Err(BackendError::Uncertain(message));
-            }
-        }
-        Ok(())
-    });
-    let bring_up = match reconciled {
-        Ok(bring_up) => bring_up,
-        Err(error) => {
-            return match attached_end.into_inner() {
-                Some(AttachedComposeEnd::Interrupted) => {
-                    render_container_up_interrupted(repo_root, &plan)
-                }
-                Some(AttachedComposeEnd::Failed(status)) => {
-                    let startup_error = RunnerError::task_invocation(format!(
-                        "docker compose up exited with status {status}"
-                    ));
-                    // A detached activation withholds teardown, exactly as an
-                    // interrupted one does: the operator inspects what started
-                    // and the next activation reconciles from it.
-                    if plan.attach_mode == EffectiveAttachMode::Detached {
-                        return Err(startup_error);
+                return match attached_end.into_inner() {
+                    Some(AttachedComposeEnd::Interrupted) => {
+                        render_container_up_interrupted(repo_root, &plan)
                     }
-                    let cleanup_result =
-                        lifecycle_cleanup_failed_container_up(repo_root, &plan.policy);
-                    Err(finish_container_up_failure(startup_error, cleanup_result))
-                }
-                None => Err(detached_failure.into_inner().unwrap_or(error)),
-            };
+                    Some(AttachedComposeEnd::Failed(status)) => {
+                        let startup_error = RunnerError::task_invocation(format!(
+                            "docker compose up exited with status {status}"
+                        ));
+                        // A detached activation withholds teardown, exactly as an
+                        // interrupted one does: the operator inspects what started
+                        // and the next activation reconciles from it.
+                        if plan.attach_mode == EffectiveAttachMode::Detached {
+                            return Err(startup_error);
+                        }
+                        let cleanup_result =
+                            lifecycle_cleanup_failed_container_up(repo_root, &plan.policy);
+                        Err(finish_container_up_failure(startup_error, cleanup_result))
+                    }
+                    None => Err(detached_failure.into_inner().unwrap_or(error)),
+                };
+            }
+        };
+        compose_steps
+            .borrow()
+            .finish_unfinished(true, "the runtime reported the stack as reconciled");
+
+        if container_up_stop_requested(&plan) {
+            return render_container_up_interrupted(repo_root, &plan);
         }
-    };
-    compose_steps
-        .borrow()
-        .finish_unfinished(true, "the runtime reported the stack as reconciled");
 
-    if container_up_stop_requested(&plan) {
-        return render_container_up_interrupted(repo_root, &plan);
-    }
-
-    operation.stage = Some("readiness");
-    let health = wait_for_container_ready(&plan.policy, Some(&plan.stop_flag), observation.get())?;
-    if container_up_stop_requested(&plan) {
-        return render_container_up_interrupted(repo_root, &plan);
-    }
-
-    operation.stage = Some("runtime_integrations");
-    let integrations = steps::during(
-        ProgressSource::waiting_for("the runtime integrations of this environment"),
-        "routes and host listeners registered",
-        |progress| {
-            complete_container_up_runtime_integrations(
-                repo_root,
-                &plan,
-                observation
-                    .get()
-                    .unwrap_or_else(|| super::readiness::observation_deadline(&plan.policy)),
-                progress,
-            )
-        },
-    )?;
-
-    // Activation promotes the generation and attaches any requesting runs.
-    // The stage keeps its documented name (closed JSON vocabulary).
-    operation.stage = Some("persistent_owner");
-    // The environment transition already owns a live step (`EnvRun`, #461): it
-    // names the owner gate it waits behind, the record it reads and the holders
-    // it attaches, and ends with the settle. A second fixed label here would
-    // only repeat that wait with no state of its own (effigy#460, Q-017).
-    environment::activate(&bring_up, &plan.policy, holders)?;
-
-    if !integrations.managed_host_listener_failures.is_empty() {
-        // The environment is settled and every verified route is published;
-        // only the failing listeners' own routes are withheld. An attached
-        // session cannot leave a half-exposed stack open, so it keeps its
-        // existing closeout; a detached activation reports exactly which
-        // routes are exposed and which are not (effigy#455).
-        let failure = listener_exposure_failure(&plan.policy, &integrations);
-        if plan.attach_mode == EffectiveAttachMode::Detached {
-            return Err(failure);
+        operation.stage = Some("readiness");
+        let mut observe_phase = |state: &effigy_core::managed_waits::EntryState| {
+            host_waits.observe_environment_phase(state, std::time::Instant::now());
+        };
+        let health = wait_for_container_ready(
+            &plan.policy,
+            Some(&plan.stop_flag),
+            observation.get(),
+            Some(&mut observe_phase),
+        )?;
+        host_waits.environment_ready(std::time::Instant::now());
+        if container_up_stop_requested(&plan) {
+            return render_container_up_interrupted(repo_root, &plan);
         }
-        let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, &plan.policy);
-        return Err(finish_container_up_failure(failure, cleanup_result));
-    }
 
-    render_container_up_result(
-        repo_root,
-        &plan,
-        health,
-        integrations,
-        bring_up.creation.as_ref(),
-        output_json,
-    )
+        operation.stage = Some("runtime_integrations");
+        let integrations = steps::during(
+            ProgressSource::waiting_for("the runtime integrations of this environment"),
+            "routes and host listeners registered",
+            |progress| {
+                complete_container_up_runtime_integrations(
+                    repo_root,
+                    &plan,
+                    observation
+                        .get()
+                        .unwrap_or_else(|| super::readiness::observation_deadline(&plan.policy)),
+                    progress,
+                    &publisher,
+                )
+            },
+        )?;
+
+        // Activation promotes the generation and attaches any requesting runs.
+        // The stage keeps its documented name (closed JSON vocabulary).
+        operation.stage = Some("persistent_owner");
+        // The environment transition already owns a live step (`EnvRun`, #461): it
+        // names the owner gate it waits behind, the record it reads and the holders
+        // it attaches, and ends with the settle. A second fixed label here would
+        // only repeat that wait with no state of its own (effigy#460, Q-017).
+        environment::activate(&bring_up, &plan.policy, holders)?;
+
+        if !integrations.managed_host_listener_failures.is_empty() {
+            // The environment is settled and every verified route is published;
+            // only the failing listeners' own routes are withheld. An attached
+            // session cannot leave a half-exposed stack open, so it keeps its
+            // existing closeout; a detached activation reports exactly which
+            // routes are exposed and which are not (effigy#455).
+            let failure = listener_exposure_failure(&plan.policy, &integrations);
+            if plan.attach_mode == EffectiveAttachMode::Detached {
+                return Err(failure);
+            }
+            let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, &plan.policy);
+            return Err(finish_container_up_failure(failure, cleanup_result));
+        }
+
+        activation_waits.finish(true)?;
+        render_container_up_result(
+            repo_root,
+            &plan,
+            health,
+            integrations,
+            bring_up.creation.as_ref(),
+            output_json,
+        )
+    })();
+    activation_waits.finish(result.is_ok())?;
+    result
 }
 
 fn reject_conflicting_container_up_modes(attach: bool, detach: bool) -> Result<(), RunnerError> {
@@ -940,6 +953,7 @@ fn complete_container_up_runtime_integrations(
     plan: &ContainerUpPlan,
     deadline: std::time::Instant,
     progress: &ProgressSource,
+    publisher: &crate::runner::managed_wait::WaitPublisher,
 ) -> Result<ContainerUpRuntimeIntegrations, RunnerError> {
     let policy = &plan.policy;
     // Readiness is Running plus the service's own health check, decided by the
@@ -1064,7 +1078,12 @@ fn complete_container_up_runtime_integrations(
     // started, with nothing durable naming the failure (effigy#559).
     integration_stage(progress, 7, "starting host listeners");
     let (managed_host_listeners, managed_host_listener_failures) =
-        match start_host_processes_for_container(repo_root, policy, Some(deadline)) {
+        match crate::runner::host_process::start_host_processes_in_activation(
+            repo_root,
+            policy,
+            Some(deadline),
+            publisher,
+        ) {
             Ok(report) => (report.ready, report.failures),
             Err(error) => {
                 if plan.attach_mode == EffectiveAttachMode::Detached {
@@ -2422,7 +2441,6 @@ mod tests {
                 declared_route_domain: "api.test".to_owned(),
                 route_domain: "api.test".to_owned(),
                 route_tls: false,
-                state_file: "/checkout/.effigy/runtime/api.listener.json".to_owned(),
             }],
             managed_host_listener_failures: vec![
                 crate::runner::host_process::ManagedHostListenerFailure {
@@ -3831,6 +3849,7 @@ pub(in crate::runner) struct WorkspaceUpEffects {
     secrets_attempted: bool,
     routes_attempted: bool,
     host_attempted: bool,
+    waits: Option<crate::runner::managed_wait::ActivationWaits>,
 }
 
 /// Secret values remain in this process, resolved once for both apply and
@@ -3869,6 +3888,7 @@ impl WorkspacePreparedEffects {
             secrets_attempted: false,
             routes_attempted: false,
             host_attempted: false,
+            waits: None,
         }
     }
 }
@@ -3929,8 +3949,29 @@ impl crate::runner::workspace_client::container_up::integrations::IntegrationEff
         let root = &self.policy.repo_root;
         match step {
             Step::Readiness => {
-                self.health =
-                    wait_for_container_ready(&self.policy, None, Some(deadline)).map_err(failed)?;
+                let waits = crate::runner::managed_wait::ActivationWaits::begin(
+                    root,
+                    &self.policy.name,
+                    crate::runner::environment::requested_holder(),
+                )
+                .map_err(failed)?;
+                let mut graph = crate::runner::host_process::HostWaitGraph::for_environment_phase(
+                    &self.policy,
+                    waits.publisher(),
+                    std::time::Instant::now(),
+                );
+                let mut observe_phase = |state: &effigy_core::managed_waits::EntryState| {
+                    graph.observe_environment_phase(state, std::time::Instant::now());
+                };
+                self.health = wait_for_container_ready(
+                    &self.policy,
+                    None,
+                    Some(deadline),
+                    Some(&mut observe_phase),
+                )
+                .map_err(failed)?;
+                graph.environment_ready(std::time::Instant::now());
+                self.waits = Some(waits);
                 if self.health == Some("interrupted") {
                     return Err(RunError::refused("workspace readiness interrupted"));
                 }
@@ -4000,8 +4041,17 @@ impl crate::runner::workspace_client::container_up::integrations::IntegrationEff
                     Some(deadline),
                 )
                 .map_err(failed)?;
-                let report = start_host_processes_for_container(root, &self.policy, Some(deadline))
-                    .map_err(failed)?;
+                let waits = self.waits.as_mut().ok_or_else(|| {
+                    RunError::unavailable("workspace activation observations are unavailable")
+                })?;
+                let report = crate::runner::host_process::start_host_processes_in_activation(
+                    root,
+                    &self.policy,
+                    Some(deadline),
+                    waits.publisher(),
+                )
+                .map_err(failed)?;
+                waits.finish(report.failures.is_empty()).map_err(failed)?;
                 self.listeners = report.ready;
                 self.listener_failures = report.failures;
                 if !self.listener_failures.is_empty() {

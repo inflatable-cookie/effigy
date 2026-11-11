@@ -150,12 +150,14 @@ pub(super) fn wait_for_container_ready(
     policy: &EffectiveContainerPolicy,
     stop_requested: Option<&std::sync::atomic::AtomicBool>,
     deadline: Option<std::time::Instant>,
+    waits: super::readiness::PhaseObserver<'_>,
 ) -> Result<Option<&'static str>, RunnerError> {
     let readiness = super::readiness::await_services_ready(
         &policy.repo_root,
         policy,
         stop_requested,
         deadline,
+        waits,
     )?;
     match readiness.end {
         super::readiness::ReadinessEnd::Interrupted => return Ok(Some("interrupted")),
@@ -2102,7 +2104,7 @@ mod tests {
         policy.repo_root = root.clone();
         policy.health_check = Some(check.clone());
         policy.health_timeout_secs = 60;
-        let error = super::wait_for_container_ready(&policy, None, None)
+        let error = super::wait_for_container_ready(&policy, None, None, None)
             .expect_err("a definite 500 is a terminal refusal");
         // The readiness probe already reported the primary service's container,
         // so the declared wait carries that identity instead of asking the
@@ -2241,7 +2243,7 @@ mod tests {
             super::primary_service_container_observed(&policy, None),
             None
         );
-        let error = super::wait_for_container_ready(&policy, None, None)
+        let error = super::wait_for_container_ready(&policy, None, None, None)
             .expect_err("a definite 500 is a terminal refusal");
         let message = error.to_string();
         assert!(

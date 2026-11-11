@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use effigy_core::managed_waits::EntryState;
 use effigy_kernel::ctx::Deadline;
 use effigy_kernel::custody::Stream;
 use effigy_kernel::id::RunId;
@@ -25,7 +26,6 @@ use effigy_tui::multiprocess::{
     run_multiprocess_tui_with_source, MultiProcessTuiControl, MultiProcessTuiOptions,
     SessionEntryState, SessionProcesses, SessionTab,
 };
-use effigy_tui::waits::EntryState;
 
 use super::client::{Closed, Started, StopSender};
 use super::control::Addressed;
@@ -69,13 +69,11 @@ struct Shared {
     root: effigy_kernel::root::StateRoot,
     run: RunId,
     followers: BTreeMap<String, Follower>,
-    /// The environment's host processes: their status and live log come from
-    /// the files their own supervisors write, not from the run's journal.
+    /// The environment's host processes, with generation-bound observations
+    /// and live canonical logs from their own supervisors.
     hosts: BTreeMap<String, HostFollower>,
     queue: VecDeque<ProcessEvent>,
     exits: BTreeMap<String, String>,
-    /// Every entry's own wait, as the run publishes it (effigy#458).
-    entries: BTreeMap<String, EntryState>,
     startup_finished: bool,
     closed: Option<Closed>,
     stop: StopSender,
@@ -91,7 +89,6 @@ struct RunSource {
     /// Where the run's workloads publish their waits, and which tabs they
     /// are, so a front end that attached late still names every wait.
     wait_ledger: crate::runner::managed_wait::WaitLedger,
-    workload_tabs: Vec<String>,
 }
 
 impl RunSource {
@@ -110,11 +107,12 @@ impl RunSource {
     /// after its event.
     fn wait_states(&self) -> Vec<EntryState> {
         let shared = self.shared();
-        let mut states = shared.entries.values().cloned().collect::<Vec<_>>();
-        let mut named = states
-            .iter()
-            .map(|state| state.entry.clone())
-            .collect::<std::collections::BTreeSet<_>>();
+        let mut states = self
+            .wait_ledger
+            .read_all()
+            .into_iter()
+            .filter(EntryState::holds_a_wait)
+            .collect::<Vec<_>>();
         for (tab_name, host) in &shared.hosts {
             let Some(state) = host.wait_state() else {
                 continue;
@@ -122,18 +120,6 @@ impl RunSource {
             let mut state = state.clone();
             // The tab may be renamed beside a workload of the same name.
             state.entry = tab_name.clone();
-            named.insert(tab_name.clone());
-            states.push(state);
-        }
-        for tab in &self.workload_tabs {
-            if named.contains(tab) {
-                continue;
-            }
-            let Some(mut state) = self.wait_ledger.read(tab).filter(EntryState::holds_a_wait)
-            else {
-                continue;
-            };
-            state.entry = tab.clone();
             states.push(state);
         }
         states
@@ -171,8 +157,6 @@ impl Shared {
                             },
                         );
                         self.exits.remove(&process);
-                        // The entry started: whatever it waited for is over.
-                        self.entries.remove(&process);
                         self.queue
                             .push_back(event(&process, ProcessEventKind::Started, ""));
                     }
@@ -184,16 +168,7 @@ impl Shared {
                         self.queue
                             .push_back(event(&process, ProcessEventKind::Exit, &payload));
                     }
-                    Some(EngineEvent::Entry { state }) => {
-                        // The map holds waits only: an entry that started is
-                        // rendered from its own process state, so a settled
-                        // wait never lingers on its tab (effigy#458).
-                        if state.holds_a_wait() {
-                            self.entries.insert(state.entry.clone(), state);
-                        } else {
-                            self.entries.remove(&state.entry);
-                        }
-                    }
+                    Some(EngineEvent::WaitsChanged) => {}
                     Some(EngineEvent::StartupFinished) => self.startup_finished = true,
                     Some(EngineEvent::Outcome { error, code }) => {
                         self.closed = Some(Closed { error, code });
@@ -527,10 +502,7 @@ fn stdin_hung_up() -> bool {
 }
 
 /// Runs the TUI over a started run until it closes.
-///
-/// `initial_waits` is the session's ordering graph projected before the
-/// supervisor's first event: the tabs name their own wait from the first frame
-/// instead of showing a generic one (effigy#458).
+/// The initial complete wait snapshot is in the admitted run's journal.
 pub(in crate::runner) fn attach_tui(
     started: Started,
     addressed: &Addressed<'_>,
@@ -538,7 +510,6 @@ pub(in crate::runner) fn attach_tui(
     tabs: Vec<ManagedTab>,
     tab_order: Vec<String>,
     shells: Vec<ProcessSpec>,
-    initial_waits: Vec<EntryState>,
 ) -> Result<Option<String>, RunnerError> {
     task_engine::install_client_router()?;
     let Started { client, run, root } = started;
@@ -560,15 +531,13 @@ pub(in crate::runner) fn attach_tui(
                 queue.push_back(event(&tab.name, ProcessEventKind::Started, ""));
             }
             TabSource::HostProcess(host) => {
-                hosts.insert(tab.name.clone(), HostFollower::new((**host).clone()));
+                let mut host = (**host).clone();
+                host.wait_ledger = host.wait_ledger.for_parent(run);
+                hosts.insert(tab.name.clone(), HostFollower::new(host));
             }
             TabSource::Workload | TabSource::Shell => {}
         }
     }
-    let entries = initial_waits
-        .into_iter()
-        .map(|state| (state.entry.clone(), state))
-        .collect();
     let shared = Arc::new(Mutex::new(Shared {
         client,
         root,
@@ -577,32 +546,19 @@ pub(in crate::runner) fn attach_tui(
         hosts,
         queue,
         exits: BTreeMap::new(),
-        entries,
         startup_finished: false,
         closed: None,
         stop: StopSender::new(),
     }));
     let shell_names = shells.iter().map(|shell| shell.name.clone()).collect();
     let ending = Arc::new(AtomicBool::new(false));
-    let workload_tabs = tabs
-        .iter()
-        .filter(|tab| matches!(tab.source, TabSource::Workload))
-        .map(|tab| tab.name.clone())
-        .collect();
     let source = RunSource {
         shared: shared.clone(),
         shells: (!shells.is_empty())
             .then(|| ProcessSupervisor::spawn_progressively(repo_root.clone(), shells)),
         shell_names,
         ending: ending.clone(),
-        // The supervisor publishes its workload waits under the task and
-        // profile it runs, in this checkout.
-        wait_ledger: crate::runner::managed_wait::WaitLedger::task(
-            &addressed.target.root,
-            addressed.task,
-            addressed.profile,
-        ),
-        workload_tabs,
+        wait_ledger: crate::runner::managed_wait::WaitLedger::run(&addressed.target.root, run),
     };
     hangup_watchdog(ending.clone());
     let session_tabs = tabs

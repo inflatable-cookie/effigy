@@ -119,8 +119,8 @@ when the real cause was two named services failing their health checks.
   the scheduler's own hold names the launch being performed now and that
   entry's actual phase (never a queued neighbour, never an invented dependency),
   an aborted plan leaves every unstarted entry terminal with the plan's own
-  attribution, and each publisher of the environment's entries stages a
-  complete snapshot and commits it atomically. The same state reaches the tab, the
+  attribution, and the environment's phase and host entries share one complete kernel-run
+  snapshot, selected by exact parent run. The same state reaches the tab, the
   `--headless` text and `status --json` (`waiting_on`, and a `waits` list scoped
   `workload`, `host` or `environment`), published before the environment phase
   can block; nothing derives a label from screen or tab order, and no wait

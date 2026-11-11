@@ -46,12 +46,9 @@ pub(in crate::runner) enum EngineEvent {
     Started { process: String, sequence: i64 },
     /// A workload's process ended with `code`.
     Exited { process: String, code: i32 },
-    /// One entry's own wait, as the run derived it from the ordering graph.
-    /// `waiting_on` names the exact dependency, phase, probe or delay, so a
-    /// front end never renders a generic wait (effigy#458).
-    Entry {
-        state: effigy_tui::waits::EntryState,
-    },
+    /// Wake readers after a complete wait snapshot was journalled. A lost
+    /// event does not change what the polling front ends observe.
+    WaitsChanged,
     /// Every workload has started.
     StartupFinished,
     /// The run is stopping: workloads, then the environment, are settling.
@@ -98,19 +95,7 @@ mod tests {
                 code: 7,
             },
             EngineEvent::StartupFinished,
-            EngineEvent::Entry {
-                state: effigy_tui::waits::EntryState {
-                    entry: "front".into(),
-                    phase: effigy_tui::waits::EntryPhase::Waiting,
-                    waiting_on: Some(effigy_tui::waits::WaitOn::Entry {
-                        name: "api".into(),
-                        phase: effigy_tui::waits::EntryPhase::Starting,
-                    }),
-                    not_started_because: None,
-                    detail: None,
-                    elapsed_ms: 4_200,
-                },
-            },
+            EngineEvent::WaitsChanged,
         ] {
             assert_eq!(decode::<EngineEvent>(&encode(&event)), Some(event));
         }
@@ -126,8 +111,8 @@ mod tests {
     /// carries the dependency, its phase and the elapsed wait, and a dependent
     /// that never started carries the prerequisite's report (effigy#458).
     #[test]
-    fn the_event_json_names_each_entry_s_own_wait() {
-        use effigy_tui::waits::{Attribution, EntryPhase, EntryState, WaitOn};
+    fn the_snapshot_json_names_each_entry_s_own_wait() {
+        use effigy_core::managed_waits::{Attribution, EntryPhase, EntryState, WaitOn};
 
         let state = |entry: &str, phase, waiting_on, not_started_because| EntryState {
             entry: entry.into(),
@@ -146,14 +131,14 @@ mod tests {
             }),
             None,
         );
-        let json = serde_json::to_value(EngineEvent::Entry { state: waiting }).expect("event json");
-        assert_eq!(json["entry"]["state"]["entry"], "front");
-        assert_eq!(json["entry"]["state"]["phase"], "waiting");
-        assert_eq!(json["entry"]["state"]["waiting_on"]["kind"], "entry");
-        assert_eq!(json["entry"]["state"]["waiting_on"]["name"], "api");
-        assert_eq!(json["entry"]["state"]["waiting_on"]["phase"], "starting");
-        assert_eq!(json["entry"]["state"]["elapsed_ms"], 12_000);
-        assert!(json["entry"]["state"].get("not_started_because").is_none());
+        let json = serde_json::to_value(waiting).expect("event json");
+        assert_eq!(json["entry"], "front");
+        assert_eq!(json["phase"], "waiting");
+        assert_eq!(json["waiting_on"]["kind"], "entry");
+        assert_eq!(json["waiting_on"]["name"], "api");
+        assert_eq!(json["waiting_on"]["phase"], "starting");
+        assert_eq!(json["elapsed_ms"], 12_000);
+        assert!(json.get("not_started_because").is_none());
 
         let probe = state(
             "api",
@@ -163,12 +148,9 @@ mod tests {
             }),
             None,
         );
-        let json = serde_json::to_value(EngineEvent::Entry { state: probe }).expect("event json");
-        assert_eq!(json["entry"]["state"]["waiting_on"]["kind"], "probe");
-        assert_eq!(
-            json["entry"]["state"]["waiting_on"]["probe"],
-            "GET / -> 200"
-        );
+        let json = serde_json::to_value(probe).expect("event json");
+        assert_eq!(json["waiting_on"]["kind"], "probe");
+        assert_eq!(json["waiting_on"]["probe"], "GET / -> 200");
 
         let failed = state(
             "admin",
@@ -179,11 +161,11 @@ mod tests {
                 "failed: readiness probe GET / returned 500",
             )),
         );
-        let json = serde_json::to_value(EngineEvent::Entry { state: failed }).expect("event json");
-        assert_eq!(json["entry"]["state"]["phase"], "not_started");
-        assert_eq!(json["entry"]["state"]["not_started_because"]["name"], "api");
+        let json = serde_json::to_value(failed).expect("event json");
+        assert_eq!(json["phase"], "not_started");
+        assert_eq!(json["not_started_because"]["name"], "api");
         assert_eq!(
-            json["entry"]["state"]["not_started_because"]["detail"],
+            json["not_started_because"]["detail"],
             "failed: readiness probe GET / returned 500"
         );
 

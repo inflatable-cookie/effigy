@@ -288,7 +288,7 @@ pub(in crate::runner) fn effects_root(checkout: &Path) -> Result<&'static StateR
 
 /// A read-only checkout view never creates state, falls back to another
 /// checkout or opens the legacy machine journal.
-pub(super) fn observe_root(cx: &ObserveContext, checkout: &Path) -> Observed<StateRoot> {
+pub(in crate::runner) fn observe_root(cx: &ObserveContext, checkout: &Path) -> Observed<StateRoot> {
     let location = checkout_location(checkout);
     match state_home() {
         Some(home) => StateRoot::checkout_observe_in(cx, &home, &location),

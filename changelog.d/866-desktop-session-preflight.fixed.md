@@ -1,0 +1,1 @@
+Unsealed Desktop qualification now resolves and records the real Docker CLI behind its symlink, discovers Compose through Desktop's existing plugin directory in a fresh private config, and checks both versions before creating a checkout or native resources. Failed preflights name their cause; session activation retains its raw CLI stderr for diagnosis.

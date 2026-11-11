@@ -13,6 +13,7 @@ sys.path.insert(0, str(HERE))
 import macos_stage_executor as executor
 import macos_stage_proof as proof
 import macos_colima_chain as chain
+import macos_desktop_readiness as readiness
 
 
 def inventory():
@@ -75,6 +76,15 @@ def main():
             or not scratch.startswith(executor.prep.STASH + '/')):
         raise executor.Refusal('TMPDIR must be an existing canonical Stash scratch directory')
     root = tempfile.mkdtemp(prefix='desktop-smoke-', dir=scratch)
+    # Before D0 or any native resource, use the same isolated policy as the
+    # session. Desktop's plugin directory is referenced read-only, never copied.
+    home = Path(root) / 'preflight-home'
+    home.mkdir(mode=0o700)
+    env = {k: os.environ[k] for k in ('PATH', 'USER', 'LOGNAME', 'LANG', 'TMPDIR', 'TMP', 'TEMP') if k in os.environ}
+    env.update(HOME=str(home), DOCKER_CONFIG=root + '/preflight-docker-config',
+               DOCKER_HOST=executor.prep.DESKTOP_HOST)
+    readiness.preflight(env, Path(root) / 'desktop-preflight.json', item=dict(
+        path=executor.prep.DOCKER, sha256=readiness.digest(Path(executor.prep.DOCKER).resolve(strict=True))))
     for name in ('activations', 'claims', 'evidence'):
         os.mkdir(root + '/' + name, 0o700)
     executor.ACTIVATIONS_DIR, executor.CLAIMS_DIR = root + '/activations', root + '/claims'

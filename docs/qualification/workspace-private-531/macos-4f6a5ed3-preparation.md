@@ -1433,7 +1433,38 @@ remains live. No shared setting, context, engine lifecycle or Colima profile
 changed. Evidence originals remain under this run's scratch until its release;
 the [retained evidence](desktop-865/README.md) survives that cleanup.
 
-For a future authorized attempt, prepare a real Docker CLI on PATH and verify
-Compose discovery with the exact private HOME/config before starting the cell.
-This result provides no full-session or sealed qualification credit; successful
-Desktop full-session exploration remains outstanding.
+Task #866 below supersedes the manual CLI-copy workaround. This result provides
+no full-session or sealed qualification credit.
+
+### Desktop CLI/Compose preflight and single session (effigy#866)
+
+The unsealed Desktop preparation and full-session entries now resolve the real
+Docker CLI behind its PATH symlink and record the link, target and original
+content hash. They reference the existing bundle's Compose directory through
+`cliPluginsExtraDirs` in a fresh private config, without reading or changing
+Desktop's own config. Both Docker and Compose versions must succeed before
+native preparation resources or the session checkout are created. Session
+checks use the exact private HOME/config carried into activation; failures have
+named causes. Sealed artifact rules, Discard custody and all original bounds
+remain in force. The readiness fixture selector is
+`test:qualification:workspace-private:macos-desktop-readiness`.
+
+Fresh D0–D3 and both version preflights passed. The one 2026-11-11 session at
+`e66ba085c` applied Compose with exit 0 and reached a running owned container,
+then failed during publication/selection with no selected session committed.
+No matching lock-directory/backend lines were observed. The retained owner's
+stop request remained pending for 30 seconds; after two identity checks its
+exact supervisor PID was killed. Exact-ID session cleanup and D4 then completed.
+Final shared-engine inventories equal task start, all four owners are closed
+with complete cleanup, and none of twelve process identities remains live.
+The [retained result and hashes](desktop-866/README.md) distinguish the empty raw
+activation CLI stderr from the apply child's intentionally unavailable Discard
+stream. There was no session retry or engine restart. Successful Desktop
+full-session exploration remains outstanding; this run gives no sealed credit.
+
+After review `5851771381`, the operator amended task #866's held brief to
+version 2: Discard remains a custody pin, and the recorded apply receipt,
+caller/selector stderr, preflight receipts and backend-window observation
+replace raw apply-child stderr. An apply failure additionally requires a
+labelled read-only reproduction; this apply exited 0. The amendment changes
+evidence acceptance for the original attempt, with no replay or custody change.

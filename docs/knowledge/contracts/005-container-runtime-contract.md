@@ -475,7 +475,7 @@ the same bounded child-output tail, and the declared budget is not spent on a
 question the child has already answered: a `500` where `200` is required ends
 the start, it does not wait out `timeout_secs`.
 
-A terminal `stopped` listener record ends an in-flight readiness wait immediately.
+A terminal `stopped` lifecycle observation ends an in-flight readiness wait immediately.
 The supervisor's process identity can remain observable as a Linux zombie after
 stop; that does not make the listener still starting or spend its readiness budget.
 
@@ -501,7 +501,7 @@ is never phrased as an activation whose readiness and exposure are unverified,
 because the activation settled. A process whose `depends_on` listener was
 withheld does not start and withholds its own route too, naming the dependency
 that never became ready. That decision is this activation's own: a dependent
-reads it before any listener state file, so a chain `A -> B -> C` settles with
+reads it before observing a listener generation, so a chain `A -> B -> C` settles with
 every route withheld instead of waiting for a record a skipped process never
 wrote, and a non-listener at the end of the chain is not started either. A retry
 after the listener recovers publishes that listener's own route and leaves the
@@ -714,7 +714,7 @@ chain already names that child.
 
 Dependencies use `depends_on` and must name a declared managed listener. They
 start after that listener is ready. A dependent process receives
-`EFFIGY_MANAGED_HOST_<NAME>_INTERNAL_URL`, `_PUBLIC_URL`, `_STATE_FILE`, and
+`EFFIGY_MANAGED_HOST_<NAME>_INTERNAL_URL`, `_PUBLIC_URL`, and
 `_GENERATION`; `<NAME>` is ASCII-uppercased with punctuation converted to
 `_`. Effigy reserves the `EFFIGY_MANAGED_HOST_` prefix. If a dependency
 restarts or loses readiness, Effigy stops the dependent generation and starts

@@ -135,7 +135,12 @@ class Window:
         self.env['HOME'] = str(self.home)
         if cell['engine_kind'] == 'docker':
             endpoint = '://' in cell['engine_identity']
-            self.engine = [str(artifact(cell['engine_binary'])), '--host' if endpoint else '--context', cell['engine_identity']]
+            engine_item = cell['engine_binary']
+            if self.exploratory and cell['backend'] == 'desktop':
+                from macos_desktop_readiness import resolve_cli
+                resolved_cli = resolve_cli(engine_item)
+                engine_item = dict(path=resolved_cli['target'], sha256=resolved_cli['sha256'])
+            self.engine = [str(artifact(engine_item)), '--host' if endpoint else '--context', cell['engine_identity']]
             self.env.update(EFFIGY_COMPOSE_BACKEND='docker', DOCKER_CONFIG=cell['docker_config'])
             self.env['DOCKER_HOST' if endpoint else 'DOCKER_CONTEXT'] = cell['engine_identity']
         else:
@@ -144,6 +149,8 @@ class Window:
         require(not any(key.startswith(('EFFIGY_TEST', 'EFFIGY_WORKSPACE_ACTIVATION_FAKE')) for key in self.env), 'native fake environment')
         tool = 'colima' if cell['engine_kind'] == 'colima' else 'docker'
         resolved = shutil.which(tool, path=self.env.get('PATH'))
+        if self.exploratory and cell['backend'] == 'desktop' and resolved:
+            resolved = Path(resolved).resolve(strict=True)
         require(resolved and digest(resolved) == cell['engine_binary']['sha256'], 'candidate PATH selects another engine executable')
         self.container = None
         self.base, self.root_fd = open_qualification_root(cell['qualification_root'])
@@ -152,8 +159,14 @@ class Window:
             if self.external_checkout is not None:
                 self.external_checkout_fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
                 require(not os.listdir(self.external_checkout_fd), 'external checkout is not fresh')
-            for name in (('tmp', 'home', 'home/.effigy') if exploration_checkout else ('checkout', 'tmp', 'home', 'home/.effigy')):
+            for name in ('tmp', 'home', 'home/.effigy'):
                 os.mkdir(name, mode=0o700, dir_fd=self.root_fd)
+            if self.exploratory and cell['backend'] == 'desktop':
+                from macos_desktop_readiness import preflight
+                self.env.update(TMP=str(self.temp), TEMP=str(self.temp))
+                preflight(self.env, self.base / 'desktop-preflight.json', item=cell['engine_binary'])
+            if exploration_checkout is None:
+                os.mkdir('checkout', mode=0o700, dir_fd=self.root_fd)
             backend = 'containerd' if cell['engine_kind'] == 'colima' else 'docker'
             files = {'source.toml': 'repo_root = ' + json.dumps(cell['source_root']) + '\n',
                      'config.toml': '[containers]\nbackend = ' + json.dumps(backend) +
@@ -203,12 +216,15 @@ class Window:
         phase_seconds = timeout if timeout is not None else (300 if self.exploratory and activation else 60)
         try:
             result = run(args, cwd=cwd or self.root, env=self.env if env is None else env, timeout=min(phase_seconds, remaining), check=False, data=data)
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
             if self.exploratory and activation and self.cell['backend'] == 'desktop':
+                self.retain_activation_stderr(exc.stderr or b'')
                 self.record('exploration-activation-timeout', proof=False, bind_source=str(self.root),
                             phase_bound_seconds=min(phase_seconds, remaining),
                             diagnostic='Check Docker Desktop bind mounting and file sharing for this owned source; no engine restart or settings change is authorized.')
             raise
+        if self.exploratory and activation and self.cell['backend'] == 'desktop':
+            self.retain_activation_stderr(result.stderr)
         if check and result.returncode != 0 and self.exploratory and Path(args[0]) == self.candidate:
             # The qualification fixture has one synthetic canary. Only an
             # already-public, structured CLI error is retained for exploration;
@@ -226,6 +242,14 @@ class Window:
                 pass
         require(not check or result.returncode == 0, 'required command failed: ' + Path(args[0]).name)
         return result
+
+    def retain_activation_stderr(self, data):
+        # Unsealed Desktop diagnostics only. Discard still prevents retaining
+        # the apply child's original stream; this is the caller's raw stderr.
+        fd = os.open('activation-stderr-' + os.urandom(4).hex() + '.bin',
+                     os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=self.root_fd)
+        with os.fdopen(fd, 'wb') as out:
+            out.write(data)
 
     def engine_command(self, *args, **kwargs):
         return self.command(self.engine + list(args), **kwargs)
