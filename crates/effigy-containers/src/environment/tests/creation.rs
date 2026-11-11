@@ -206,6 +206,24 @@ pub(in crate::environment) fn render(services: &[&str]) -> Closure {
     )
     .unwrap()
 }
+/// The one render whose service image is a bare content digest.
+pub(in crate::environment) fn digest_render(image: &str) -> Closure {
+    let services: BTreeMap<_, _> = [(
+        PRIMARY,
+        serde_json::json!({"image": image, "labels": labels()}),
+    )]
+    .into_iter()
+    .collect();
+    Closure::new(
+        [(
+            "compose.yml".into(),
+            serde_json::to_vec(&serde_json::json!({"services":services})).unwrap(),
+        )]
+        .into_iter()
+        .collect(),
+    )
+    .unwrap()
+}
 pub(in crate::environment) fn request(render: &Closure) -> CreationRequest<'_> {
     CreationRequest {
         workdir: Path::new("."),
@@ -518,6 +536,64 @@ fn unreadable_inventory_or_changed_attached_image_refuses() {
     let mut fake = Fake::new(vec![row(PRIMARY, 'a')], vec![row(PRIMARY, 'a')]);
     fake.images = [verified(image()), verified(format!("sha256:{}", id('d')))].into();
     assert!(infer(&mut fake, &render).is_err());
+}
+
+/// The frozen render names content, never a repository. Nerdctl answers
+/// `import@sha256:<digest>` for the OCI layout it imported without a reference
+/// name, while the container's own image field is the exact resolved id. That
+/// is the same immutable content and must bind; a tag, another digest, or the
+/// same spelling against a tagged render never does.
+#[test]
+fn a_created_row_may_report_the_frozen_digest_under_another_repository() {
+    let digest = format!("sha256:{}", id('e'));
+    let resolved = image();
+    let digest_only = digest_render(&digest);
+    let reported = format!("import@{digest}");
+    let mut created = row(PRIMARY, 'a');
+    created.image = resolved.clone();
+    created.image_reference = reported.clone();
+    let mut fake = Fake::new(vec![], vec![created]);
+    fake.image_references
+        .insert(digest.clone(), resolved.clone());
+    let (rows, _) = infer(&mut fake, &digest_only).expect("the same immutable digest binds");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].image_id(), resolved.as_str());
+    assert_eq!(rows[0].image_reference(), reported.as_str());
+    assert_eq!(
+        rows[0].image_capability(),
+        ImageCapability::ContainerImageId
+    );
+}
+
+#[test]
+fn a_tag_or_another_digest_never_binds_a_digest_render() {
+    let digest = format!("sha256:{}", id('e'));
+    let resolved = image();
+    let digest_only = digest_render(&digest);
+    for wrong in [
+        "fixture:latest".to_owned(),
+        format!("import@sha256:{}", id('f')),
+        format!("import@{resolved}"),
+    ] {
+        let mut attached = row(PRIMARY, 'a');
+        attached.image = resolved.clone();
+        attached.image_reference = wrong.clone();
+        let mut fake = Fake::new(vec![], vec![attached]);
+        fake.image_references
+            .insert(digest.clone(), resolved.clone());
+        assert!(
+            infer(&mut fake, &digest_only).is_err(),
+            "{wrong} is not the frozen content"
+        );
+    }
+    // The binding belongs to a bare-digest render only: a tagged render keeps
+    // refusing that repository spelling of the digest.
+    let mut tagged = row(PRIMARY, 'a');
+    tagged.image = resolved.clone();
+    tagged.image_reference = format!("import@{digest}");
+    let mut fake = Fake::new(vec![], vec![tagged]);
+    fake.image_references.insert(digest, resolved);
+    assert!(infer(&mut fake, &render(&[PRIMARY])).is_err());
 }
 
 #[test]

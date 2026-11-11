@@ -3,6 +3,7 @@
 //! A same-user actor forging identical labels within that window is outside
 //! the v0.15 threat model. Labels are expectations, not actor authentication.
 use super::*;
+use crate::environment::creation::image::digest_reference_binds;
 use crate::runtime::scope::{CHECKOUT_LABEL, MANAGED_LABEL, SCOPE_LABEL};
 use effigy_kernel::objects::Closure;
 use std::collections::{BTreeMap, BTreeSet};
@@ -527,7 +528,8 @@ fn validate(
             .image
             .as_deref()
             .ok_or_else(|| CreationRefusal::ImageMismatch(row.name.clone()))?;
-        let same = same_reference(&row.image_reference, reference);
+        let same = same_reference(&row.image_reference, reference)
+            || digest_reference_binds(reference, &row.image_reference);
         // ImageIdentity::observe performs the final reference/alias binding
         // with the guarded window's created-ID evidence.
         if row.image_reference.is_empty() {
