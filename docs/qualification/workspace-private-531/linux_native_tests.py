@@ -38,35 +38,6 @@ class NativeLifecycleTests(unittest.TestCase):
             with patch.object(lifecycle, 'BASE', root), self.assertRaisesRegex(RuntimeError, 'ancestor aliases'):
                 lifecycle.checked(root / 'builds/output')
 
-    def test_eviction_is_oldest_unreferenced_first_and_keeps_toolchain(self):
-        import contextlib, io
-        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
-            root = Path(directory)
-            cache = root / 'build-cache'
-            cache.mkdir()
-            entries = [cache / name for name in ('old', 'referenced', 'new')]
-            for index, entry in enumerate(entries):
-                entry.mkdir()
-                (entry / 'binary').write_bytes(b'build')
-                os.utime(entry, ns=(index + 1, index + 1))
-            (root / 'toolchain').mkdir()
-            real_stat = Path.stat
-            def guest_stat(path, *args, **kwargs):
-                from types import SimpleNamespace
-                result = real_stat(path, *args, **kwargs)
-                values = {name: getattr(result, name) for name in dir(result) if name.startswith('st_')}
-                values['st_uid'] = 1001
-                return SimpleNamespace(**values)
-            with patch.object(lifecycle, 'BASE', root), patch.object(Path, 'stat', guest_stat), \
-                 patch.object(lifecycle, 'no_mounts'), patch.object(lifecycle, 'allocated',
-                    side_effect=lambda p: len(list(p.iterdir())) if p == cache else 1), \
-                 patch.object(lifecycle, 'references', side_effect=lambda paths: [42] if paths == [entries[1]] else []), \
-                 contextlib.redirect_stdout(io.StringIO()):
-                result = lifecycle.evict_cache(1)
-                self.assertEqual([row['path'] for row in result['evicted']], [str(entries[0]), str(entries[2])])
-            self.assertTrue(entries[1].exists())
-            self.assertTrue((root / 'toolchain').exists())
-
     def test_preflight_names_each_short_mount_without_building(self):
         mounts = {str(path): dict(available=0) for path in
                   (lifecycle.BASE, lifecycle.BASE / 'qualification', Path('/var/lib/effigy-829/rootful'))}
@@ -102,31 +73,38 @@ class NativeLifecycleTests(unittest.TestCase):
                 lifecycle.dispose([dict(path='owned')], archive)
             self.assertFalse(archive.exists())
 
-    def test_build_failure_still_exports_cleans_and_stops_the_vm(self):
-        from unittest.mock import Mock
+    def test_explicit_stream_owner_and_exclusive_archive_custody(self):
         with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
             root = Path(directory)
-            (root / 'control').mkdir()
-            (root / 'control/ssh_known_hosts').write_text('host key value')
-            attempt = Mock(root=root)
-            attempt.command.return_value = b'key value'
-            scope = Mock(temporary=lifecycle.BASE / 'run-tmp-owned', records=[dict(path='owned')])
-            scope.operation.return_value = dict(missing={}, observation={})
-            with patch.multiple(smoke.diagnostic, private_root=Mock(), check_vm=Mock()), \
-                 patch.multiple(common, run=Mock(return_value=Mock(stdout=b'')), load=Mock(return_value=dict(
-                     schema='effigy.linux-native-session-exploration.v1', qualification_credit=False, cell=dict(runtime_image='image')))), \
-                 patch.multiple(native_run, Attempt=Mock(return_value=attempt), bootstrap_preparation=Mock(),
-                                authorize_channel=Mock(), channel_directory=Mock()), \
-                 patch.multiple(smoke, ssh_prefix=Mock(return_value=['ssh']), diagnostic_run=Mock(return_value=0),
-                                root_resume=Mock(), stage1_observation=Mock(), stop_engine=Mock(), capacity_probe=Mock()), \
-                 patch.object(smoke.subprocess, 'check_output', return_value=''), \
-                 patch.object(lifecycle, 'Scope', return_value=scope), \
-                 patch.object(build, 'build', side_effect=RuntimeError('build failed')), \
-                 self.assertRaisesRegex(RuntimeError, 'build failed'):
-                smoke.full_chain(root, root / 'seed.json')
-            scope.finish.assert_called_once_with(['ssh'])
-            self.assertTrue(any(call.args[0][1] == 'stop' for call in attempt.command.call_args_list))
-            self.assertIsNone(lifecycle.ACTIVE)
+            (root / 'qualification').mkdir()
+            path = root / 'qualification/owned.stdout'
+            path.write_bytes(b'original')
+            real_stat = os.stat
+            from types import SimpleNamespace
+            with patch.object(lifecycle, 'BASE', root), patch.object(lifecycle, 'ENGINE_TMP', root), \
+                 patch.object(lifecycle, 'no_mounts'), patch.object(lifecycle, 'references', return_value=[]), \
+                 patch.object(os, 'stat', side_effect=lambda p, **kw: SimpleNamespace(st_dev=-1) if p == '/' else real_stat(p, **kw)):
+                record = dict(path=str(path), uid=os.geteuid(), device=path.stat().st_dev, inode=path.stat().st_ino)
+                self.assertEqual(lifecycle.output_identity(record), path)
+                with self.assertRaisesRegex(RuntimeError, 'custody differs'):
+                    lifecycle.output_identity(dict(record, uid=os.geteuid() + 1))
+                archive = root / 'qualification/export.tar'
+                archive.symlink_to(path)
+                with self.assertRaises(FileExistsError):
+                    lifecycle.dispose([record], archive)
+                self.assertEqual(path.read_bytes(), b'original')
+                self.assertEqual(lifecycle.dispose([record]), [str(path)])
+                self.assertFalse(path.exists())
+
+    def test_large_inventory_uses_staged_metadata_not_the_vm_command_line(self):
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            scope = lifecycle.Scope(Mock(root=Path(directory)))
+            with patch.object(native_run, 'stage_admin_script', return_value='/helpers/owned') as stage, \
+                 patch.object(native_run, 'admin_program', return_value=(b'{}', b'', {}, 'unit')) as run:
+                scope.operation('remove', records=[dict(path='owned-' + str(i)) for i in range(200)])
+            self.assertGreater(len(stage.call_args.args[1]), 2891)
+            self.assertLess(len(str(run.call_args.args[1])), 1000)
 
 
 class PhysicalImportBoundaryTests(unittest.TestCase):

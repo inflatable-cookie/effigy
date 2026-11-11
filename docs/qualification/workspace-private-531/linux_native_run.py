@@ -280,7 +280,7 @@ def submit_unit(attempt, argv, unit):
         for arg in argv:
             for prefix in ('--property=StandardOutput=append:', '--property=StandardError=append:'):
                 if arg.startswith(prefix) and Path(arg[len(prefix):]).is_relative_to(lifecycle.BASE):
-                    lifecycle.ACTIVE.record(arg[len(prefix):])
+                    lifecycle.ACTIVE.record(arg[len(prefix):], uid=0)
     while True:
         try:
             attempt.admin(shlex.join(argv), deadline=deadline)

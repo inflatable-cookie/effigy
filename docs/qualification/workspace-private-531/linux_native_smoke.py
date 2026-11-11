@@ -83,8 +83,11 @@ def root_operation(root, attempt, ssh, entry, files, arguments=(), *, runtime_se
 
 def root_resume(root, attempt, ssh):
     native_run.bootstrap_preparation(attempt)
-    files = ('linux_loop_bound.py', 'linux_native_storage.py', 'linux_native_writers.py', 'linux_native_resume.py')
-    result = root_operation(root, attempt, ssh, 'linux_native_resume.py', files)
+    directory, _ = collector_identity(attempt, allow_install=True)
+    output, errors, _, _ = native_run.admin_program(attempt,
+        ['/usr/bin/python3', '-I', '-B', directory + '/linux_native_resume.py'])
+    common.require(not errors, 'native resume reported stderr')
+    result = json.loads(output)
     common.require(result['writer_closure']['complete'],
                    'native writer closure refused; inspect the retained actors and findings')
     return result
@@ -225,6 +228,9 @@ def capacity_probe(attempt, ssh, root, size, *, image=None):
                    and (not image or result['seccomp'] == '2'), 'physical ENOSPC control differs')
     path=attempt.root/('capacity-'+uuid.uuid4().hex+'.json')
     common.exclusive(path,result)
+    if lifecycle.ACTIVE:
+        lifecycle.ACTIVE.operation('remove', records=[dict(path=str(Path(result['path']).parent),
+            device=result['device'], inode=result['directory_inode'])])
     return build.file_input(path)
 
 

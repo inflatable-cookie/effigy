@@ -11,6 +11,7 @@ import tarfile
 BASE = Path('/Volumes/Stash/scratch/effigy/linux-native-829')
 GIB = 1024 ** 3
 CACHE_LIMIT = 8 * GIB
+ENGINE_TMP = Path('/var/lib/effigy-829/rootful/client/tmp')
 ACTIVE = None
 
 def require(ok, message):
@@ -98,7 +99,8 @@ def checked(path):
     allowed = (BASE / 'builds', BASE / 'artifacts', BASE / 'metadata', BASE / 'qualification', BASE / 'proof-claims')
     require(path.is_absolute() and '..' not in path.parts and path != BASE
             and (any(path.is_relative_to(p) and path != p for p in allowed)
-                 or path.parent == BASE and path.name.startswith(('driver-native-session-', 'run-tmp-'))),
+                 or path.parent == BASE and path.name.startswith(('driver-native-session-', 'run-tmp-'))
+                 or path.parent == ENGINE_TMP and path.name.startswith('enospc-')),
             'cleanup path is outside per-run outputs: ' + str(path))
     require(path.parent.resolve(strict=True) == path.parent, 'cleanup ancestor aliases')
     return path
@@ -108,9 +110,10 @@ def output_identity(record):
     if not path.exists() and not path.is_symlink():
         return None
     info = path.lstat()
-    require(not stat.S_ISLNK(info.st_mode) and info.st_uid == 1001, 'output custody differs')
-    require(info.st_dev in (BASE.stat().st_dev, (BASE / 'qualification').stat().st_dev),
-            'output is on a foreign mount')
+    require(not stat.S_ISLNK(info.st_mode) and info.st_uid == record.get('uid', 1001), 'output custody differs')
+    bounded = BASE / 'qualification' if path.is_relative_to(BASE / 'qualification') else (
+        ENGINE_TMP if path.is_relative_to(ENGINE_TMP) else BASE)
+    require(info.st_dev == bounded.stat().st_dev != os.stat('/').st_dev, 'output is on a foreign mount')
     if 'inode' in record:
         require((info.st_dev, info.st_ino) == (record['device'], record['inode']), 'output identity changed')
     no_mounts(path)
@@ -133,7 +136,8 @@ def dispose(records, archive=None):
         return [str(path) for path in roots]
     # Keep scripts, metadata, streams and failure fixtures. Build source/binary
     # bytes are already bound by the host bundle and build/asset originals.
-    with tarfile.open(archive, 'w') as output:
+    fd = os.open(checked(archive), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'wb') as stream, tarfile.open(fileobj=stream, mode='w') as output:
         for path in roots:
             def evidence(member):
                 relative = Path(member.name).relative_to(path.relative_to(BASE))
@@ -143,6 +147,9 @@ def dispose(records, archive=None):
                 require(not member.isdev() and not member.isfifo(), 'unexpected output inode')
                 return member
             output.add(path, arcname=str(path.relative_to(BASE)), recursive=True, filter=evidence)
+        output.close()
+        stream.flush()
+        os.fsync(stream.fileno())
     return [str(path) for path in roots]
 
 class Scope:
@@ -167,8 +174,9 @@ class Scope:
         import linux_native_run as native
         if self.helper is None:
             self.helper = native.stage_admin_script(self.attempt, Path(__file__).read_bytes())
+        request = native.stage_admin_script(self.attempt, json.dumps(args).encode())
         output, errors, _, _ = native.admin_program(self.attempt,
-            ['/usr/bin/python3', '-I', '-B', self.helper, action, json.dumps(args)],
+            ['/usr/bin/python3', '-I', '-B', self.helper, action, request],
             seconds=180, memory='256M', file_limit='1G')
         require(not errors, 'lifecycle operation reported stderr')
         result = json.loads(output.splitlines()[-1])
@@ -191,7 +199,7 @@ class Scope:
 
 
 if __name__ == '__main__':
-    action, args = sys.argv[1], json.loads(sys.argv[2])
+    action, args = sys.argv[1], json.loads(Path(sys.argv[2]).read_bytes())
     result = {'inspect': inspect, 'preflight': preflight, 'evict': evict_cache,
               'export': dispose, 'remove': dispose}[action](**args)
     if action == 'export':
