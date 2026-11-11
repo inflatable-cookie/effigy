@@ -1,6 +1,51 @@
 use super::*;
 
 #[test]
+fn argument_loop_preserves_assignments_and_checks_scope_after_all_pairs() {
+    let root = temp_root("argument-loop");
+    let context = script_context(&root);
+    let args = ["--scope-kind", "area", "--scope-key", "unknown"].map(str::to_owned);
+    // Reduced from Bovine's validator: moving the loop's closing brace past
+    // the required-scope check makes it refuse after only the first pair.
+    for (loop_end, check_end) in [("", "}"), ("}", "")] {
+        let script = format!(
+            r#"
+let argv = args;
+let scope_kind = "";
+let scope_key = "";
+let index = 0;
+while index < argv.len() {{
+    let arg = argv[index];
+    let value = argv[index + 1];
+    if arg == "--scope-kind" {{ scope_kind = value; }}
+    else if arg == "--scope-key" {{ scope_key = value; }}
+    index += 2;
+{loop_end}
+if scope_kind == "" || scope_key == "" {{
+    throw("scope_required kind=" + scope_kind + " key=[" + scope_key + "] index=" + index);
+}}
+{check_end}
+if scope_kind != "area" || scope_key != "unknown" || index != 4 {{
+    throw("argument assignments did not persist");
+}}
+"#
+        );
+        let result = execute_rhai_script(&context, &script, &args, &callbacks());
+        if loop_end.is_empty() {
+            let error = result.expect_err("the check inside the loop runs before the second pair");
+            assert!(
+                error
+                    .to_string()
+                    .contains("scope_required kind=area key=[] index=2"),
+                "unexpected error: {error}"
+            );
+        } else {
+            result.expect("the check after the loop sees both pairs and persistent assignments");
+        }
+    }
+}
+
+#[test]
 fn execute_rhai_script_exposes_runtime_context_helper() {
     let root = temp_root("runtime-context");
     fs::write(root.join("Cargo.toml"), "[package]\nname = \"ctx\"\n").expect("manifest");

@@ -355,6 +355,28 @@ helper when one exists. First-party shipped Rhai scripts currently use neither
 escape hatch; a regression test keeps that true. The maintained coverage matrix is in
 [`068-rhai-host-surface-audit.md`](068-rhai-host-surface-audit.md).
 
+### Validate arguments after parsing every pair
+
+Keep required-argument checks outside the parsing loop. A check inside the
+loop sees only the pairs parsed so far; it can refuse after `--scope-kind`
+before reaching `--scope-key`. Assignments to outer variables persist:
+
+```rhai
+let scope_kind = "";
+let scope_key = "";
+let index = 0;
+while index < args.len() {
+    if index + 1 >= args.len() { throw("argument needs a value"); }
+    let arg = args[index];
+    let value = args[index + 1];
+    if arg == "--scope-kind" { scope_kind = value; }
+    else if arg == "--scope-key" { scope_key = value; }
+    else { throw("unsupported argument: " + arg); }
+    index += 2;
+}
+if scope_kind == "" || scope_key == "" { throw("scope_required"); }
+```
+
 ### Host paths inside script functions
 
 `args`, `cwd`, `repo_root`, `catalog_root` and `invocation_cwd` are script-
