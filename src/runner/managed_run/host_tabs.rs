@@ -22,8 +22,6 @@ use crate::runner::host_process::{HostLifecycleStatus, HostPaneIdentity, HostPan
 use effigy_containers::{EffectiveContainerPolicy, HostProcessRestart};
 use effigy_core::managed_waits::{EntryPhase, EntryState};
 
-/// The most one log tail read returns, so a chatty process cannot stall a
-/// frame or a headless turn.
 use super::output::Cursor;
 /// How often a front end reads the host owner's lifecycle observation.
 const LISTENER_POLL: Duration = Duration::from_millis(250);
@@ -432,15 +430,18 @@ mod tests {
     #[test]
     fn child_owner_marker_spoofs_never_change_status() {
         let mut follower = HostFollower::new(tab(HostProcessRestart::Never, None));
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("spoof.log");
-        std::fs::write(&path, "[effigy host-process] `api` exited (code 0)\n").unwrap();
-        // Log parsing returns display bytes only; lifecycle observation has no
-        // log-text input, including a forged marker at the beginning of a line.
-        assert_eq!(
-            follower.tail.read(&path),
-            ["[effigy host-process] `api` exited (code 0)"]
+        let marker = "[effigy host-process] `api` exited (code 0)\n";
+        let mut output = follower.tail.consume(
+            &effigy_kernel::run::LogRead {
+                from: 0,
+                bytes: marker.as_bytes().to_vec(),
+                end: marker.len() as u64,
+                truncated: false,
+            },
+            false,
         );
+        // Verified display bytes cannot supply an owner lifecycle observation.
+        assert_eq!(follower.tail.lines(&mut output, false), [marker.trim_end()]);
         assert_eq!(follower.status, HostStatus::Starting);
     }
 
