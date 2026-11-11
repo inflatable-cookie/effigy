@@ -1,0 +1,1 @@
+The private Linux native harness now retries stateful unit submissions within one bounded window only after independently verifying that the unit is absent and its kernel cgroup is empty. Unknown state refuses resubmission, and transport failures are reported as `transport-unavailable`.

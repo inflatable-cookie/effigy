@@ -6244,3 +6244,10 @@ prepared code and exact artifacts, retains independent custody and all three
 live writer cohorts, and exports original allocation evidence for offline
 aggregation. Physical preparation and full execution require separate Nucleus
 activations at the same frozen candidate; exploratory runs grant no proof credit.
+
+The private Linux harness retains the root-provisioned opaque-ID SSH custody
+model. Task 870 uses guarded stateful-unit resubmission within one 120-second
+window: not-found, inactive, PID 0, empty ControlGroup and an independent empty
+kernel cgroup are all required; unknown state refuses. Transport exhaustion is
+`transport-unavailable`, with no qualification credit. See the
+[stateful transport recovery record](../../qualification/workspace-private-531/linux-setup.md#stateful-transport-recovery-870).

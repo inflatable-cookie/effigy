@@ -125,32 +125,15 @@ def stage_admin_script(attempt, data):
                 'assert hashlib.sha256(os.pread(f,' + str(offset) + ',0)).hexdigest()=='
                 + repr(hashlib.sha256(data[:offset]).hexdigest()) + '; '
                 'assert os.pwrite(f,b,' + str(offset) + ')==len(b); os.fsync(f); os.close(f)')
-        for trial in range(8):
-            try:
-                attempt.admin('python3 -I -B -c ' + shlex.quote(code))
-                break
-            except RuntimeError:
-                # Rewriting the SAME bytes at the SAME offset is idempotent.
-                # Each invocation verifies the complete prior prefix and size;
-                # it cannot append a duplicate or change an existing prefix.
-                if trial == 7:
-                    raise
-                time.sleep(5)
+        attempt.admin('python3 -I -B -c ' + shlex.quote(code), repeatable=True)
     digest = hashlib.sha256(data).hexdigest()
     code = ('import os,hashlib; from pathlib import Path; p=Path(' + repr(path) + '); '
             'assert hashlib.sha256(p.read_bytes()).hexdigest()==' + repr(digest)
             + '; os.chmod(p,0o400); print(' + repr(digest) + ')')
     # A chmod to the one fixed final mode is idempotent, and no payload executes
     # until the complete immutable root-owned source passes this readback.
-    for trial in range(8):
-        try:
-            actual = attempt.admin('python3 -I -B -c ' + shlex.quote(code))
-            common.require(actual.decode().strip() == digest, 'root source readback differs')
-            break
-        except RuntimeError:
-            if trial == 7:
-                raise
-            time.sleep(5)
+    actual = attempt.admin('python3 -I -B -c ' + shlex.quote(code), repeatable=True)
+    common.require(actual.decode().strip() == digest, 'root source readback differs')
     common.exclusive(attempt.root / (Path(path).name + '.source.json'),
                      {'path': path, 'sha256': digest, 'bytes': len(data)})
     return path
@@ -162,13 +145,7 @@ def install_channel(attempt):
     target = '/usr/local/libexec/effigy829-native-channel'
     # Reinstalling the same checked bytes at this task-owned guest entry is
     # idempotent. The source is immutable and root controlled before install.
-    for trial in range(4):
-        try:
-            attempt.admin('install -m 0555 ' + shlex.quote(staged) + ' ' + target)
-            break
-        except RuntimeError:
-            if trial == 3:
-                raise
+    attempt.admin('install -m 0555 ' + shlex.quote(staged) + ' ' + target, repeatable=True)
     actual = attempt.admin('sha256sum -- ' + target, read_only=True).decode().split()[0]
     common.require(actual == hashlib.sha256(source).hexdigest(), 'installed fixed SSH entry differs')
 
@@ -232,14 +209,7 @@ def channel_request(attempt, operation, path, *, data=None, size=None, digest=No
     encoded = base64.b64encode(json.dumps(value, separators=(',', ':')).encode()).decode()
     command = ('/usr/bin/python3 -I -B /usr/local/libexec/effigy829-native-channel --provision '
                + identifier + ' ' + shlex.quote(encoded))
-    for trial in range(4):
-        try:
-            result = json.loads(attempt.admin(command))
-            break
-        except (RuntimeError, ValueError):
-            if trial == 3:
-                raise
-            time.sleep(.2)
+    result = json.loads(attempt.admin(command, repeatable=True))
     common.exclusive(attempt.root / ('channel-' + identifier + '.json'), result)
     return identifier, result
 
@@ -278,23 +248,38 @@ def channel_directory(attempt, path):
 
 
 def submit_unit(attempt, argv, unit):
-    observe = 'systemctl show ' + unit + '.service -p LoadState'
-    common.require(attempt.admin(observe, read_only=True).strip() == b'LoadState=not-found',
-                   'fresh unit already exists')
-    for trial in range(4):
+    """Retry one retained name only after positive absence, inside one window."""
+    deadline = time.monotonic() + 120
+    code = ('import json,subprocess; from pathlib import Path; '
+            's=dict(line.split("=",1) for line in subprocess.check_output('
+            + repr(['systemctl', 'show', '--all', unit + '.service',
+                    '--property=LoadState,ActiveState,MainPID,ControlGroup'])
+            + ',text=True,timeout=10).splitlines()); '
+            'p=Path(' + repr('/sys/fs/cgroup/system.slice/' + unit + '.service') + '); '
+            's["kernel_pids"]=[int(n) for f in p.rglob("cgroup.procs") for n in f.read_text().split()]; '
+            'print(json.dumps(s))')
+    absent = dict(LoadState='not-found', ActiveState='inactive', MainPID='0', ControlGroup='', kernel_pids=[])
+    def observe():
         try:
-            attempt.admin(shlex.join(argv))
+            return json.loads(attempt.admin('python3 -I -B -c ' + shlex.quote(code),
+                                            read_only=True, deadline=deadline))
+        except ValueError as error:
+            raise RuntimeError('unit submission custody is unknown') from error
+    common.require(observe() == absent, 'fresh unit is not positively absent')
+    while True:
+        try:
+            attempt.admin(shlex.join(argv), deadline=deadline)
             return
-        except RuntimeError:
-            state = attempt.admin(observe, read_only=True).strip()
-            if state == b'LoadState=loaded':
+        except TransportUnavailable:
+            state = observe()
+            if isinstance(state, dict) and state.get('LoadState') == 'loaded':
                 return
-            common.require(state == b'LoadState=not-found' and trial < 3,
-                           'unit submission remains unknown or unavailable')
-            # This is the sole repeatable mutation: systemd atomically owns
-            # the unique name. RemainAfterExit + CollectMode=inactive retain
-            # both successful and failed units. A late duplicate submission
-            # therefore refuses rather than executing a second payload.
+            if state != absent:
+                raise TransportUnavailable('transport-unavailable: unit custody unknown; refusing resubmission')
+            if time.monotonic() + 5 >= deadline:
+                raise TransportUnavailable('transport-unavailable: unit remained absent through submission window')
+            # A late duplicate refuses the SAME atomic systemd name. Existing
+            # callers retain successful/failed units; no payload is run twice.
             time.sleep(5)
 
 
@@ -394,6 +379,10 @@ class SSHRun:
         return result
 
 
+class TransportUnavailable(RuntimeError):
+    pass
+
+
 class Attempt:
     def __init__(self, root, *, label='native-session'):
         diagnostic.private_root(str(root))
@@ -401,12 +390,17 @@ class Attempt:
         self.root.mkdir(mode=0o700)
         self.count = 0
 
-    def command(self, argv, *, data=None, stdin=None, timeout=30, read_only=False):
-        for trial in range(12 if read_only else 1):
+    def command(self, argv, *, data=None, stdin=None, timeout=30, read_only=False, repeatable=False, deadline=None):
+        deadline = deadline if deadline is not None else time.monotonic() + (120 if read_only or repeatable else timeout)
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TransportUnavailable('transport-unavailable: native command window exhausted')
+            timeout = min(timeout, remaining)
             self.count += 1
             stem = self.root / ('command-%04d' % self.count)
             intent = {'argv': [str(arg) for arg in argv], 'timeout_seconds': timeout,
-                      'started_at': time.time(), 'read_only': read_only,
+                      'started_at': time.time(), 'read_only': read_only, 'repeatable': repeatable,
                       'stdin_file': str(stdin.name) if stdin is not None else None,
                       'input_sha256': hashlib.sha256(data).hexdigest() if data is not None else None}
             common.exclusive(stem.with_suffix('.intent.json'), intent)
@@ -420,23 +414,29 @@ class Attempt:
                     child.kill()
                     child.communicate()
                     common.exclusive(stem.with_suffix('.terminal.json'), {
-                        'local_exit': child.returncode, 'timeout': True, 'remote_closure': 'unknown'})
-                    raise RuntimeError('native client timed out: ' + str(stem))
-            common.exclusive(stem.with_suffix('.terminal.json'), {
-                'local_exit': child.returncode, 'elapsed_seconds': time.time() - intent['started_at']})
+                        'local_exit': child.returncode, 'timeout': True, 'remote_closure': 'unknown',
+                        'status': 'transport-unavailable'})
+                    raise TransportUnavailable('transport-unavailable: native client timed out; remote closure unknown: ' + str(stem))
             stdout = stem.with_suffix('.stdout').read_bytes()
+            unavailable = (not stdout and child.returncode == 255 and
+                           (argv[0] == diagnostic.PRLCTL or Path(argv[0]).name == 'ssh'))
+            common.exclusive(stem.with_suffix('.terminal.json'), {
+                'local_exit': child.returncode, 'elapsed_seconds': time.time() - intent['started_at'],
+                'status': 'transport-unavailable' if unavailable else 'exited'})
             if child.returncode == 0:
                 return stdout
-            if not read_only or stdout or trial == 11:
+            if not unavailable:
                 raise RuntimeError('native command failed: ' + str(stem))
+            if not (read_only or repeatable) or time.monotonic() + 5 >= deadline:
+                raise TransportUnavailable('transport-unavailable: ' + str(stem))
             time.sleep(5)
 
-    def admin(self, script, *, read_only=False):
+    def admin(self, script, *, read_only=False, repeatable=False, deadline=None):
         # Parallels re-parses guest arguments. Retain one explicitly quoted
         # command, and refuse oversized transport before any guest effect.
         argv = [diagnostic.PRLCTL, 'exec', setup.VM_UUID, '/bin/sh', '-c', shlex.quote(script)]
         common.require(len(' '.join(argv[3:]).encode()) <= 2891, 'Parallels command exceeds observed safe cap')
-        return self.command(argv, timeout=45, read_only=read_only)
+        return self.command(argv, timeout=45, read_only=read_only, repeatable=repeatable, deadline=deadline)
 
 
 class CheckedSSH:
