@@ -242,8 +242,8 @@ class ExplorationTests(unittest.TestCase):
         self.assertFalse(errors)
 
     def test_journal_reader_recovers_wal_when_shm_is_missing(self):
-        live = self.control / 'live.db'
-        private = self.control / 'crashed-copy.db'
+        live = self.control / 'live ?# journal.db'
+        private = self.control / 'crashed ?# copy.db'
         with contextlib.closing(smoke.sqlite3.connect(live)) as writer:
             writer.execute('PRAGMA journal_mode=WAL')
             writer.execute('PRAGMA wal_autocheckpoint=0')

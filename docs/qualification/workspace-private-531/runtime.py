@@ -119,10 +119,39 @@ def read_journal_rows(path, sql, args=()):
             with tempfile.TemporaryDirectory(prefix='journal-snapshot-', dir=os.environ['TMPDIR']) as private:
                 private_db = Path(private) / path.name
                 shutil.copyfile(path, private_db)
-                if wal.exists():
+                copied_wal = wal.is_file()
+                if copied_wal:
                     shutil.copyfile(wal, Path(str(private_db) + '-wal'))
-                with closing(sqlite3.connect(str(private_db))) as private_source:
-                    return snapshot_from(private_source)
+                require(private_db.is_file() and private_db.stat().st_size > 0,
+                        'private journal copy is missing or empty')
+
+                def describe(candidate):
+                    try:
+                        info = candidate.stat()
+                    except OSError:
+                        return f'{candidate}: missing'
+                    return '%s: mode=%#o uid=%d size=%d' % (
+                        candidate, info.st_mode & 0o777, info.st_uid, info.st_size)
+
+                try:
+                    private_source = sqlite3.connect(str(private_db), uri=False)
+                except sqlite3.Error as open_error:
+                    raise RuntimeError(
+                        'private journal open failed; source=%s; source_wal=%s; source_shm=%s; '
+                        'copy=%s; copied_wal=%s; parent=%s; sqlite_errorcode=%s; error=%s' % (
+                            describe(path), describe(wal), describe(shm), describe(private_db),
+                            copied_wal, describe(Path(private)),
+                            getattr(open_error, 'sqlite_errorcode', None), open_error)) from open_error
+                with closing(private_source):
+                    try:
+                        return snapshot_from(private_source)
+                    except sqlite3.Error as snapshot_error:
+                        raise RuntimeError(
+                            'private journal backup failed; source=%s; source_wal=%s; source_shm=%s; '
+                            'copy=%s; copied_wal=%s; parent=%s; sqlite_errorcode=%s; error=%s' % (
+                                describe(path), describe(wal), describe(shm), describe(private_db),
+                                copied_wal, describe(Path(private)),
+                                getattr(snapshot_error, 'sqlite_errorcode', None), snapshot_error)) from snapshot_error
 
         try:
             if missing_shm:
