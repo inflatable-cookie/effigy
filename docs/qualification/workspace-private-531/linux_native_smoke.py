@@ -263,7 +263,7 @@ def full_chain(root, seed):
     attempt.command([diagnostic.PRLCTL, 'start', setup.VM_UUID], timeout=90)
     scope = lifecycle.Scope(attempt)
     lifecycle.ACTIVE = scope
-    baseline, after, binding, prepared, final = None, None, None, None, None
+    baseline, after, binding, prepared, final, guest_artifact = None, None, None, None, None, None
     try:
         attempt.admin('cat /proc/sys/kernel/random/boot_id', read_only=True)
         key = attempt.command([diagnostic.PRLCTL, 'exec', setup.VM_UUID, '/bin/cat',
@@ -300,6 +300,7 @@ def full_chain(root, seed):
         current['cell']['linux_capacity_preparation'] = build.file_input(packet)
         prepared = attempt.root / 'assets-with-capacity.json'
         common.exclusive(prepared, current)
+        guest_artifact = current['cell']
         common.require(native_run.execute(root, prepared, 'acquire') == 0, 'native acquisition failed')
         common.require(native_run.execute(root, prepared, 'full') == 0, 'native full session failed')
         final = root_resume(root, attempt, ssh)
@@ -307,7 +308,7 @@ def full_chain(root, seed):
         try:
             stop_engine(attempt)
             if scope.records:
-                after = scope.finish(ssh)
+                after = scope.finish(ssh, guest_artifact=guest_artifact)
         finally:
             lifecycle.ACTIVE = None
             attempt.command([diagnostic.PRLCTL, 'stop', setup.VM_UUID], timeout=90)
@@ -318,9 +319,12 @@ def full_chain(root, seed):
     result = {'exploratory': True, 'qualification_credit': False, 'source_head': binding['source_pin'],
               'assets': str(prepared), 'final_physical_bounds': final, 'vm_terminal': 'stopped',
               'capacity_before': baseline, 'capacity_after': after, 'consumed_bytes': deltas,
+              'gnu_artifact_export': scope.gnu_export,
               'space_tolerance_bytes': tolerance,
               'chain': ['diagnostic', 'resume', 'engine-enospc', 'workspace-enospc', 'preparation-enospc',
                         'native-build', 'gnu-artifact', 'ordinary-acquisition', 'full-session']}
+    common.require(scope.gnu_export is not None,
+                   'completed native smoke is missing its exported GNU artifact family')
     common.exclusive(attempt.root / 'native-smoke-complete.json', result)
     common.require(all(abs(delta) <= tolerance for delta in deltas.values()),
                    'guest-capacity: run did not restore free space within tolerance')

@@ -1,7 +1,9 @@
 """Owned output disposal and capacity admission for unsealed native smokes only."""
 import json
 import io
+import hashlib
 import os
+import re
 from pathlib import Path
 import shutil
 import stat
@@ -167,6 +169,7 @@ class Scope:
         self.records = []
         self.units = []
         self.helper = None
+        self.gnu_export = None
         import uuid
         self.temporary = BASE / ('run-tmp-' + uuid.uuid4().hex)
 
@@ -193,11 +196,13 @@ class Scope:
         common.exclusive(self.attempt.root / (action + '-' + uuid.uuid4().hex + '.json'), result)
         return result
 
-    def finish(self, ssh):
+    def finish(self, ssh, guest_artifact=None):
         import linux_native_run as native
         import common
         for unit in self.units:
             native.stop_owned_unit(self.attempt, unit, BASE / 'qualification')
+        if guest_artifact is not None:
+            self.gnu_export = export_guest_artifact(self.attempt, ssh, guest_artifact)
         archive = str(BASE / 'metadata' / (self.attempt.root.name + '-outputs.tar'))
         self.operation('export', records=self.records, archive=archive)
         data = native.channel_read(self.attempt, ssh, archive, limit=GIB)
@@ -205,6 +210,42 @@ class Scope:
         self.operation('remove', records=self.records + [dict(path=archive)])
         self.operation('evict', limit=0)
         return self.operation('inspect')
+
+
+def export_guest_artifact(attempt, ssh, bindings):
+    """Copy the pinned guest GNU artifact family into host evidence before cleanup."""
+    import common
+    import linux_native_run as native
+    evidence_root = attempt.root
+    source_item = bindings['guest_artifact']
+    require(isinstance(source_item, dict) and isinstance(source_item.get('path'), str),
+            'GNU artifact binding is missing its guest path')
+    source = Path(source_item['path'])
+    require(source.is_absolute() and '..' not in source.parts and str(source) == source_item['path']
+            and source.is_relative_to(BASE / 'builds') and source.name == 'effigy-aarch64-unknown-linux-gnu',
+            'GNU artifact path is outside the owned guest build tree')
+    destination = Path(evidence_root) / 'gnu-artifact'
+    destination.mkdir(mode=0o700)
+    exported = {}
+    for key, suffix in (('guest_artifact', None), ('guest_producer_receipt', '.receipt'),
+                        ('guest_active_version', '.active-version'),
+                        ('guest_install_identity', '.install-identity')):
+        item = bindings[key]
+        require(isinstance(item, dict) and isinstance(item.get('path'), str)
+                and isinstance(item.get('sha256'), str) and re.fullmatch(r'[0-9a-f]{64}', item['sha256']),
+                'GNU producer binding is malformed: ' + key)
+        original = Path(item['path'])
+        require(original.is_absolute() and '..' not in original.parts and str(original) == item['path']
+                and original.is_relative_to(BASE / 'builds'), 'GNU producer path is outside the owned guest build tree')
+        if suffix is not None:
+            require(original == source.with_suffix(suffix), 'GNU producer sidecar path differs')
+        data = native.channel_read(attempt, ssh, str(original), limit=GIB)
+        digest = hashlib.sha256(data).hexdigest()
+        require(digest == item['sha256'], 'pinned GNU artifact input changed: ' + key)
+        target = destination / original.name
+        common.exclusive_bytes(target, data)
+        exported[key] = {'path': str(target.relative_to(evidence_root)), 'sha256': digest}
+    return {'path': str(destination.relative_to(evidence_root)), 'files': exported}
 
 
 if __name__ == '__main__':
