@@ -1,0 +1,1 @@
+Container up and workspace activation now share their integration order, preserving attached cleanup, detached partial exposure and workspace recovery. Workspace handoff no longer carries redundant gateway startup and route registration plumbing.
