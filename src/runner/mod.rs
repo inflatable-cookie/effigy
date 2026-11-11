@@ -45,6 +45,7 @@ mod scratch;
 mod script_command;
 #[cfg(test)]
 mod scripted_doctor;
+mod secret_environment;
 mod secret_session;
 mod secret_vault;
 mod secrets_command;

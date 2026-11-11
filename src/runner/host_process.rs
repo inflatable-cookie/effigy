@@ -9,7 +9,7 @@
 //! checkout's runtime directory. Shutdown withdraws the route before stopping
 //! the recorded child process group.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsString;
 use std::fs;
 use std::io::Read;
@@ -34,6 +34,7 @@ use nix::sys::signal::Signal;
 use super::error::RunnerError;
 
 use super::managed_listener_readiness::{probe_http_readiness, HttpReadinessOutcome};
+use effigy_kernel::custody::{EnvValue, SpawnError};
 use effigy_kernel::human::Category;
 use effigy_kernel::run::RunError;
 use effigy_kernel::supervise::EngineSession;
@@ -1264,21 +1265,14 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
         effigy_kernel::custody::MergedLog::prepare(&mut run, &spec.log_file).map_err(|error| {
             effigy_kernel::run::RunError::step_failed("host log legacy cutover", error)
         })?;
-    let environment = classify_child_environment(
-        &spec,
-        child_environment(
-            crate::runner::secret_session::workload_ambient_environment(),
-            &spec,
-            &[],
-            None,
-        ),
-        &[],
-    )
-    .map_err(|error| {
+    let environment = HostEnvironment::resolve(&spec).map_err(|error| {
         effigy_kernel::run::RunError::step_failed("host output environment provenance", error)
     })?;
+    let classified = environment.generation(&spec, &[], None).map_err(|error| {
+        effigy_kernel::run::RunError::step_failed("host output environment classification", error)
+    })?;
     let output =
-        effigy_kernel::custody::CanonicalOutput::new(log, &environment, cx.operation().limits())
+        effigy_kernel::custody::CanonicalOutput::new(log, &classified, cx.operation().limits())
             .map_err(|error| {
                 effigy_kernel::run::RunError::step_failed("host canonical output", error)
             })?;
@@ -1291,6 +1285,7 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
         &cx,
         &session,
         &spec,
+        &environment,
         supervisor_pid,
         watch.as_ref(),
     );
@@ -1394,6 +1389,7 @@ fn supervise_generations(
     cx: &effigy_kernel::ctx::EffectContext,
     session: &EngineSession,
     spec: &HostProcessRuntimeSpec,
+    environment: &HostEnvironment,
     supervisor_pid: u32,
     watch: Option<&effigy_kernel::supervise::OwnerWatch>,
 ) -> Result<
@@ -1424,6 +1420,7 @@ fn supervise_generations(
                 cx,
                 session,
                 spec,
+                environment,
                 supervisor_pid,
                 watch,
                 &mut active,
@@ -1436,6 +1433,7 @@ fn supervise_generations(
                 cx,
                 session,
                 spec,
+                environment,
                 watch,
                 &mut active,
                 &shutdown,
@@ -1553,6 +1551,7 @@ fn supervise_plain_host_process(
     cx: &effigy_kernel::ctx::EffectContext,
     session: &EngineSession,
     spec: &HostProcessRuntimeSpec,
+    environment: &HostEnvironment,
     watch: Option<&effigy_kernel::supervise::OwnerWatch>,
     active: &mut bool,
     shutdown: &std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -1571,7 +1570,7 @@ fn supervise_plain_host_process(
     let dependency_env = dependency_env
         .into_iter()
         .collect::<Vec<(String, String)>>();
-    let mut child = match spawn_generation(run, cx, spec, &dependency_env, None) {
+    let mut child = match spawn_generation(run, cx, spec, environment, &dependency_env, None) {
         Ok(child) => child,
         Err(error) => {
             // The generation never ran: every spawn error is decided before
@@ -1705,20 +1704,12 @@ fn spawn_generation(
     run: &mut effigy_kernel::run::Run<'_>,
     cx: &effigy_kernel::ctx::EffectContext,
     spec: &HostProcessRuntimeSpec,
+    environment: &HostEnvironment,
     dependency_env: &[(String, String)],
     listener: Option<(&str, &Path, &str)>,
 ) -> Result<effigy_kernel::custody::OwnedProcess, effigy_kernel::custody::SpawnError> {
     use effigy_kernel::custody::{Custody, Lifetime, ProcessSpec, Terminal};
-    // A user application is a workload: the ambient environment it inherits
-    // carries no session vault access, whatever this supervisor was started
-    // with (effigy#338, K12).
-    let environment = child_environment(
-        crate::runner::secret_session::workload_ambient_environment(),
-        spec,
-        dependency_env,
-        listener,
-    );
-    let environment = classify_child_environment(spec, environment, dependency_env)?;
+    let environment = environment.generation(spec, dependency_env, listener)?;
     let process = ProcessSpec {
         argv: vec![
             OsString::from("/bin/sh"),
@@ -1738,218 +1729,87 @@ fn spawn_generation(
     Custody::spawn_logged_auxiliary(run, process, cx, output)
 }
 
-/// Preserve schema provenance across the detached boundary by loading the
-/// producer's schema before spawn. A malformed schema refuses the producer.
-/// Ambient values without provenance are conservatively secret: a name that
-/// merely looks harmless cannot declassify a credential.
-fn classify_child_environment(
-    spec: &HostProcessRuntimeSpec,
-    environment: BTreeMap<OsString, effigy_kernel::custody::EnvValue>,
-    generated: &[(String, String)],
-) -> Result<BTreeMap<OsString, effigy_kernel::custody::EnvValue>, effigy_kernel::custody::SpawnError>
-{
-    let mut declared = BTreeMap::new();
-    for root in [Path::new(&spec.project_path), spec.cwd.as_path()] {
-        let schema = effigy_env::load_env_schema_if_present(root).map_err(|_| {
-            effigy_kernel::custody::SpawnError::Refused(
-                "host-process environment provenance schema could not be read".into(),
-            )
-        })?;
-        if let Some(schema) = schema {
-            for entry in schema.entries {
-                // Sensitivity cannot be undone by a second schema.
-                let sensitive = declared.entry(entry.key).or_insert(false);
-                *sensitive |= entry.annotations.sensitive;
+/// Schema facts and typed inputs captured once at the supervisor's child boundary.
+/// Infer ambient values afresh from these original inputs: promoting an inference
+/// into known-secret provenance would change the policy for literal aliases.
+struct HostEnvironment {
+    values: BTreeMap<OsString, EnvValue>,
+    schema: BTreeMap<String, bool>,
+}
+
+impl HostEnvironment {
+    fn resolve(spec: &HostProcessRuntimeSpec) -> Result<Self, SpawnError> {
+        let mut schema = BTreeMap::new();
+        for root in [Path::new(&spec.project_path), spec.cwd.as_path()] {
+            if let Some(declared) = effigy_env::load_env_schema_if_present(root).map_err(|_| {
+                SpawnError::Refused(
+                    "host-process environment provenance schema could not be read".into(),
+                )
+            })? {
+                for entry in declared.entries {
+                    *schema.entry(entry.key).or_insert(false) |= entry.annotations.sensitive;
+                }
             }
         }
+        // Workloads inherit no session vault access (effigy#338, K12).
+        let values = crate::runner::secret_session::workload_ambient_environment()
+            .chain(
+                spec.env
+                    .iter()
+                    .map(|(key, value)| (key.into(), value.into())),
+            )
+            .map(|(key, value)| (key, EnvValue::Plain(value)))
+            .collect();
+        Ok(Self { values, schema })
     }
-    let mut literals = spec.env.clone();
-    literals.extend(generated.iter().cloned());
-    let mut classified = classify_environment(environment, &literals, &declared)?;
-    crate::runner::managed_color::apply(&mut classified, spec.ansi_front);
-    Ok(classified)
+
+    fn generation(
+        &self,
+        spec: &HostProcessRuntimeSpec,
+        generated: &[(String, String)],
+        listener: Option<(&str, &Path, &str)>,
+    ) -> Result<BTreeMap<OsString, EnvValue>, SpawnError> {
+        let environment = child_environment(self.values.clone(), spec, generated, listener);
+        let mut literals = spec.env.clone();
+        literals.extend(generated.iter().cloned());
+        let mut classified =
+            super::secret_environment::classify(environment, &literals, &self.schema)?;
+        crate::runner::managed_color::apply(&mut classified, spec.ansi_front);
+        Ok(classified)
+    }
 }
 
-fn classify_environment(
-    environment: BTreeMap<OsString, effigy_kernel::custody::EnvValue>,
-    literals: &BTreeMap<String, String>,
-    schema: &BTreeMap<String, bool>,
-) -> Result<BTreeMap<OsString, effigy_kernel::custody::EnvValue>, effigy_kernel::custody::SpawnError>
-{
-    use effigy_kernel::custody::{EnvValue, SecretValue};
-    use std::os::unix::ffi::OsStrExt as _;
-    let secret_names = schema
-        .iter()
-        .filter(|(_, secret)| **secret)
-        .map(|(key, _)| key.as_str())
-        .collect::<BTreeSet<_>>();
-    let known: Vec<SecretValue> = environment
-        .iter()
-        .filter_map(|(key, value)| match value {
-            EnvValue::Secret(value) => Some(Ok(value.clone())),
-            EnvValue::Plain(value) if secret_names.contains(key.to_str()?) && !value.is_empty() => {
-                Some(SecretValue::new(value.as_bytes().to_vec()))
-            }
-            EnvValue::Plain(_) => None,
-        })
-        .collect::<Result<_, _>>()?;
-    environment
-        .into_iter()
-        .map(|(key, value)| {
-            let EnvValue::Plain(value) = value else {
-                return Ok((key, value));
-            };
-            let name = key.to_str().unwrap_or("");
-            let contains_secret = known
-                .iter()
-                .any(|secret| secret.occurs_in(value.as_bytes()));
-            let plain = schema.get(name).map(|secret| !secret).unwrap_or_else(|| {
-                literals.contains_key(name)
-                    || nonsecret_host_environment(name)
-                    || !ambient_credential_candidate(value.as_bytes())
-            });
-            let value = if value.is_empty() || (plain && !contains_secret) {
-                EnvValue::Plain(value)
-            } else {
-                EnvValue::Secret(SecretValue::new(value.as_bytes().to_vec())?)
-            };
-            Ok((key, value))
-        })
-        .collect()
-}
-
-/// Ambient settings are evidence of a credential only beyond the short-value
-/// and decimal-integer domains. Explicit sensitivity and known aliases always
-/// override this heuristic; the custody guard never relaxes classified secrets.
-fn ambient_credential_candidate(value: &[u8]) -> bool {
-    let digits = value
-        .strip_prefix(b"+")
-        .or_else(|| value.strip_prefix(b"-"))
-        .unwrap_or(value);
-    value.len() >= 8 && !(!digits.is_empty() && digits.iter().all(u8::is_ascii_digit))
-}
-
-/// Transport/session facts with established non-secret meaning. Other inherited
-/// values use the ambient credential rule unless declared by schema or literal.
-fn nonsecret_host_environment(name: &str) -> bool {
-    matches!(
-        name,
-        "EFFIGY_MANAGED_HOST_LISTENER_BIND"
-            | "EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE"
-            | "EFFIGY_MANAGED_HOST_LISTENER_GENERATION"
-            | "NEXTEST_RUN_ID"
-            | "NEXTEST_TEST_GROUP"
-            | "NEXTEST_PROFILE"
-            | "NEXTEST_TEST_NAME"
-            | "NEXTEST_BINARY_ID"
-            | "NEXTEST_EXECUTION_MODE"
-            | "CARGO_MANIFEST_DIR"
-            | "CARGO_MANIFEST_PATH"
-            | "CARGO_PKG_NAME"
-            | "CARGO_PKG_VERSION"
-            | "CARGO_PKG_VERSION_PRE"
-            | "CARGO_PKG_AUTHORS"
-            | "CARGO_PKG_DESCRIPTION"
-            | "CARGO_PKG_HOMEPAGE"
-            | "CARGO_PKG_REPOSITORY"
-            | "CARGO_PKG_LICENSE"
-            | "CARGO_PKG_LICENSE_FILE"
-            | "CARGO_PKG_RUST_VERSION"
-            | "XPC_SERVICE_NAME"
-            | "LESS"
-            | "PASEO_AGENT_CWD"
-            | "PASEO_AGENT_ID"
-            | "PASEO_CLI"
-            | "PASEO_HOME"
-            | "LC_ALL"
-            | "LC_CTYPE"
-            | "LC_MESSAGES"
-            | "LC_COLLATE"
-            | "LC_NUMERIC"
-            | "LC_TIME"
-            | "LC_MONETARY"
-            | "PATH"
-            | "HOME"
-            | "USER"
-            | "LOGNAME"
-            | "SHELL"
-            | "PWD"
-            | "OLDPWD"
-            | "_"
-            | "LANG"
-            | "TMPDIR"
-            | "TMP"
-            | "TEMP"
-            | "TERM"
-            | "COLORTERM"
-            | "TERM_PROGRAM"
-            | "TERM_PROGRAM_VERSION"
-            // A host process's own output is followed as plain lines from its
-            // log, so a nested Effigy there is in a pane too (effigy#729).
-            | "HOST"
-            | "PORT"
-            | "EFFIGY_HOST_PROCESS_CONTAINER"
-            | "EFFIGY_HOST_PROCESS_NAME"
-            | "EFFIGY_HOST_PROCESS_LISTENER_BIND"
-            | "EFFIGY_HOST_PROCESS_LISTENER_REPORT"
-            | "EFFIGY_HOST_PROCESS_LISTENER_GENERATION"
-    )
-}
-
-/// The complete environment one generation receives, with its two inputs
-/// supplied so the precedence is provable without mutating this process's
-/// environment.
-///
-/// Highest first: the process's declared `env`, its dependency endpoints, the
-/// reserved listener `HOST`/`PORT`, Effigy's listener and process identity
-/// variables, then the ambient environment the supervisor was started with.
-/// `HOST`/`PORT` from a reserved bind replace an ambient value because the
-/// process must serve the port Effigy reserved; only a value the manifest
-/// itself declares outranks them.
+/// Overlay generation facts on the typed snapshot. Dependency endpoints precede
+/// process identity and listener transport; declared HOST/PORT keep precedence
+/// over the reserved listener address. Schema sensitivity is applied afterward.
 fn child_environment(
-    ambient: impl Iterator<Item = (OsString, OsString)>,
+    mut environment: BTreeMap<OsString, EnvValue>,
     spec: &HostProcessRuntimeSpec,
     dependency_env: &[(String, String)],
     listener: Option<(&str, &Path, &str)>,
-) -> BTreeMap<OsString, effigy_kernel::custody::EnvValue> {
-    use effigy_kernel::custody::EnvValue;
-    let mut environment: BTreeMap<OsString, EnvValue> = ambient
-        .map(|(key, value)| (key, EnvValue::Plain(value)))
-        .collect();
-    for (key, value) in &spec.env {
-        environment.insert(OsString::from(key), EnvValue::Plain(OsString::from(value)));
+) -> BTreeMap<OsString, EnvValue> {
+    for (key, value) in dependency_env
+        .iter()
+        .map(|(key, value)| (key.as_str(), OsString::from(value)))
+        .chain([
+            (
+                "EFFIGY_HOST_PROCESS_CONTAINER",
+                spec.container_name.clone().into(),
+            ),
+            ("EFFIGY_HOST_PROCESS_NAME", spec.process_name.clone().into()),
+        ])
+    {
+        environment.insert(key.into(), EnvValue::Plain(value));
     }
-    for (key, value) in dependency_env {
-        environment.insert(OsString::from(key), EnvValue::Plain(OsString::from(value)));
-    }
-    environment.insert(
-        OsString::from("EFFIGY_HOST_PROCESS_CONTAINER"),
-        EnvValue::Plain(OsString::from(spec.container_name.clone())),
-    );
-    environment.insert(
-        OsString::from("EFFIGY_HOST_PROCESS_NAME"),
-        EnvValue::Plain(OsString::from(spec.process_name.clone())),
-    );
     if let Some((bind, report_path, generation)) = listener {
-        environment.insert(
-            OsString::from(HOST_LISTENER_BIND_ENV),
-            EnvValue::Plain(OsString::from(bind)),
-        );
-        // A shipped adapter reads these two. Effigy never reads the report
-        // back: it is a write-only courtesy path for existing adapters.
-        environment.insert(
-            OsString::from(HOST_LISTENER_REPORT_ENV),
-            EnvValue::Plain(report_path.as_os_str().to_owned()),
-        );
-        environment.insert(
-            OsString::from(HOST_LISTENER_GENERATION_ENV),
-            EnvValue::Plain(OsString::from(generation)),
-        );
-        // Effigy assigned this listener its concrete port (the OS picked it),
-        // so the process receives it as `HOST`/`PORT` (effigy#321, effigy#346).
-        // That address outranks an ambient value, because the process must
-        // serve the port Effigy bound on its behalf; only a value the manifest
-        // itself declares is the process's own decision and wins.
+        // The report is a write-only courtesy path for shipped adapters.
+        for (key, value) in [
+            (HOST_LISTENER_BIND_ENV, OsString::from(bind)),
+            (HOST_LISTENER_REPORT_ENV, report_path.as_os_str().to_owned()),
+            (HOST_LISTENER_GENERATION_ENV, OsString::from(generation)),
+        ] {
+            environment.insert(key.into(), EnvValue::Plain(value));
+        }
         if let Ok(address) = bind.parse::<SocketAddr>() {
             for (key, value) in [
                 ("HOST", address.ip().to_string()),
@@ -2135,6 +1995,7 @@ fn supervise_managed_host_listener(
     cx: &effigy_kernel::ctx::EffectContext,
     session: &EngineSession,
     spec: &HostProcessRuntimeSpec,
+    environment: &HostEnvironment,
     supervisor_pid: u32,
     watch: Option<&effigy_kernel::supervise::OwnerWatch>,
     active: &mut bool,
@@ -2190,6 +2051,7 @@ fn supervise_managed_host_listener(
         run,
         cx,
         spec,
+        environment,
         &dependency_env,
         Some((listener.bind.as_str(), &report.0, generation.as_str())),
     ) {
@@ -2775,133 +2637,6 @@ fn wait_or_break(
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn host_environment_provenance_preserves_secrets_and_plain_values() {
-        use effigy_kernel::custody::EnvValue;
-        let values = [
-            ("PATH", "/bin"),
-            ("NEXTEST_ATTEMPT", "1"),
-            ("NEXTEST_TOTAL_ATTEMPTS", "1"),
-            ("RUST_RECURSION_COUNT", "1"),
-            ("XPC_SERVICE_NAME", "0"),
-            ("XPC_FLAGS", "0x0"),
-            ("EFFIGY_ADMITTED", "1"),
-            ("CARGO_INCREMENTAL", "1"),
-            ("CARGO_PKG_VERSION_PATCH", "1"),
-            ("TOKEN", "hidden-value"),
-            ("ALIAS", "prefix-hidden-value-suffix"),
-            ("UNKNOWN", "opaque-value"),
-            ("MODE", "dev"),
-            ("PUBLIC", "hello"),
-            ("LC_TOKEN", "opaque-too"),
-        ]
-        .into_iter()
-        .map(|(key, value)| (key.into(), EnvValue::Plain(value.into())))
-        .collect();
-        let literals = [
-            ("ALIAS".into(), "prefix-hidden-value-suffix".into()),
-            ("MODE".into(), "dev".into()),
-        ]
-        .into_iter()
-        .collect();
-        let schema = [("TOKEN".into(), true), ("PUBLIC".into(), false)]
-            .into_iter()
-            .collect();
-        let classified = super::classify_environment(values, &literals, &schema).unwrap();
-        for key in ["TOKEN", "ALIAS", "UNKNOWN", "LC_TOKEN"] {
-            assert!(
-                matches!(
-                    classified.get(std::ffi::OsStr::new(key)),
-                    Some(EnvValue::Secret(_))
-                ),
-                "{key}"
-            );
-        }
-        for key in [
-            "PATH",
-            "MODE",
-            "PUBLIC",
-            "NEXTEST_ATTEMPT",
-            "NEXTEST_TOTAL_ATTEMPTS",
-            "RUST_RECURSION_COUNT",
-            "XPC_SERVICE_NAME",
-            "XPC_FLAGS",
-            "EFFIGY_ADMITTED",
-            "CARGO_INCREMENTAL",
-            "CARGO_PKG_VERSION_PATCH",
-        ] {
-            assert!(
-                matches!(
-                    classified.get(std::ffi::OsStr::new(key)),
-                    Some(EnvValue::Plain(_))
-                ),
-                "{key}"
-            );
-        }
-    }
-
-    #[test]
-    fn ambient_values_qualify_without_name_exceptions() {
-        use effigy_kernel::custody::{EnvValue, SecretValue};
-        use std::ffi::OsStr;
-        let values = [
-            ("ACCEPT_EULA", "Y"),
-            ("DOTNET_MULTILEVEL_LOOKUP", "0"),
-            ("FOO", "1"),
-            ("AGENT", "pi"),
-            ("BOOLEAN", "false"),
-            ("SEVEN", "abcdefg"),
-            ("EIGHT", "abcdefgh"),
-            ("DECIMAL", "+12345678901234567890"),
-            ("NEGATIVE", "-123456789"),
-            ("MIXED", "1234567x"),
-            ("SHORT_SECRET", "Y"),
-            ("ALIAS", "prefix-Y-suffix"),
-            ("OWN_ALIAS", "prefix-Z-suffix"),
-        ]
-        .into_iter()
-        .map(|(k, v)| (k.into(), EnvValue::Plain(v.into())))
-        .chain([(
-            "OWN".into(),
-            EnvValue::Secret(SecretValue::new(b"Z".to_vec()).unwrap()),
-        )])
-        .collect();
-        let classified = super::classify_environment(
-            values,
-            &Default::default(),
-            &[("SHORT_SECRET".into(), true)].into_iter().collect(),
-        )
-        .unwrap();
-        for key in [
-            "DOTNET_MULTILEVEL_LOOKUP",
-            "FOO",
-            "AGENT",
-            "BOOLEAN",
-            "SEVEN",
-            "DECIMAL",
-            "NEGATIVE",
-        ] {
-            assert!(
-                matches!(classified.get(OsStr::new(key)), Some(EnvValue::Plain(_))),
-                "{key}"
-            );
-        }
-        for key in [
-            "ACCEPT_EULA",
-            "EIGHT",
-            "MIXED",
-            "SHORT_SECRET",
-            "ALIAS",
-            "OWN",
-            "OWN_ALIAS",
-        ] {
-            assert!(
-                matches!(classified.get(OsStr::new(key)), Some(EnvValue::Secret(_))),
-                "{key}"
-            );
-        }
-    }
-
     /// The replace step waits for the predecessor's gate flock, not just its
     /// journal closure: the supervisor drops its guard after settle journals
     /// the run closed, and a successor admitted in that window is refused by
@@ -5869,6 +5604,42 @@ while True:
         assert!(dependency_transition(&spec, &expected).expect("transition"));
     }
 
+    #[test]
+    fn host_environment_replacements_retain_schema_and_typed_secrets() {
+        use effigy_kernel::custody::EnvValue;
+        let fixture = fixture();
+        let schema_path = fixture.checkout.join(".env.schema");
+        fs::write(&schema_path, "# @sensitive\nTOKEN=\n").unwrap();
+        let mut spec = runtime_spec(&[("TOKEN", "Q"), ("MODE", "wrapper-value")]);
+        spec.project_path = fixture.checkout.to_string_lossy().into_owned();
+        spec.cwd = fixture.checkout.clone();
+        let mut environment = HostEnvironment::resolve(&spec).unwrap();
+        environment.values.insert(
+            "TYPED".into(),
+            EnvValue::Secret(effigy_kernel::custody::SecretValue::new(b"Z".to_vec()).unwrap()),
+        );
+        // Schema edits after the boundary cannot declassify a replacement.
+        fs::write(&schema_path, "TOKEN=\n").unwrap();
+        for port in ["4321", "5432"] {
+            let generated = [
+                ("PORT".into(), port.into()),
+                ("ALIAS".into(), "prefix-Q-suffix".into()),
+            ];
+            let generation = environment.generation(&spec, &generated, None).unwrap();
+            for key in ["TOKEN", "ALIAS", "TYPED"] {
+                assert!(matches!(
+                    generation[std::ffi::OsStr::new(key)],
+                    EnvValue::Secret(_)
+                ));
+            }
+            assert_eq!(
+                plain_env(generation.clone(), "MODE").as_deref(),
+                Some("wrapper-value")
+            );
+            assert_eq!(plain_env(generation, "PORT").as_deref(), Some(port));
+        }
+    }
+
     /// The reserved listener port reaches the child as `HOST`/`PORT` even when
     /// the supervisor's own environment exports a value for them; only a value
     /// the manifest declares outranks the reserved address (effigy#321). A
@@ -5879,38 +5650,40 @@ while True:
         let bind = "127.0.0.1:8311";
         let report = Path::new("/checkout/api.gen.listener-report.json");
         let adapter = |bind: &'static str| Some((bind, report, "gen"));
-        let ambient = vec![
-            (OsString::from("HOST"), OsString::from("0.0.0.0")),
-            (OsString::from("PORT"), OsString::from("9999")),
-        ];
+        let values = |pairs: &[(&str, &str)]| {
+            pairs
+                .iter()
+                .map(|(key, value)| (OsString::from(key), EnvValue::Plain(value.into())))
+                .collect::<BTreeMap<_, _>>()
+        };
+        let ambient = values(&[("HOST", "0.0.0.0"), ("PORT", "9999")]);
         let spec = runtime_spec(&[]);
-        let environment = child_environment(ambient.clone().into_iter(), &spec, &[], adapter(bind));
-        assert_eq!(
-            plain_env(environment.clone(), "HOST").as_deref(),
-            Some("127.0.0.1")
-        );
-        assert_eq!(
-            plain_env(environment.clone(), "PORT").as_deref(),
-            Some("8311")
-        );
-        // The adapter contract is still absolute: the reserved address, the
-        // report path and this generation's token.
-        assert_eq!(
-            plain_env(environment.clone(), HOST_LISTENER_BIND_ENV).as_deref(),
-            Some(bind)
-        );
-        assert_eq!(
-            plain_env(environment.clone(), HOST_LISTENER_REPORT_ENV).as_deref(),
-            Some("/checkout/api.gen.listener-report.json")
-        );
-        assert_eq!(
-            plain_env(environment, HOST_LISTENER_GENERATION_ENV).as_deref(),
-            Some("gen")
-        );
+        let environment = child_environment(ambient.clone(), &spec, &[], adapter(bind));
+        for (key, value) in [
+            ("HOST", "127.0.0.1"),
+            ("PORT", "8311"),
+            (HOST_LISTENER_BIND_ENV, bind),
+            (
+                HOST_LISTENER_REPORT_ENV,
+                "/checkout/api.gen.listener-report.json",
+            ),
+            (HOST_LISTENER_GENERATION_ENV, "gen"),
+        ] {
+            assert_eq!(
+                plain_env(environment.clone(), key).as_deref(),
+                Some(value),
+                "{key}"
+            );
+        }
 
         // A declared value is the process's own decision and wins.
         let declared = runtime_spec(&[("HOST", "0.0.0.0"), ("PORT", "3000")]);
-        let environment = child_environment(ambient.into_iter(), &declared, &[], adapter(bind));
+        let environment = child_environment(
+            values(&[("HOST", "0.0.0.0"), ("PORT", "3000")]),
+            &declared,
+            &[],
+            adapter(bind),
+        );
         assert_eq!(
             plain_env(environment.clone(), "HOST").as_deref(),
             Some("0.0.0.0")
@@ -5918,16 +5691,7 @@ while True:
         assert_eq!(plain_env(environment, "PORT").as_deref(), Some("3000"));
 
         // A process without a listener keeps the ambient environment untouched.
-        let environment = child_environment(
-            vec![
-                (OsString::from("HOST"), OsString::from("0.0.0.0")),
-                (OsString::from("PORT"), OsString::from("9999")),
-            ]
-            .into_iter(),
-            &runtime_spec(&[]),
-            &[],
-            None,
-        );
+        let environment = child_environment(ambient, &spec, &[], None);
         assert_eq!(
             plain_env(environment.clone(), "HOST").as_deref(),
             Some("0.0.0.0")
@@ -5948,7 +5712,9 @@ while True:
             ("EFFIGY_INTERNAL_CONTAINER_HANDOFF", Some("1".to_owned())),
         ]);
         let environment = child_environment(
-            crate::runner::secret_session::workload_ambient_environment(),
+            crate::runner::secret_session::workload_ambient_environment()
+                .map(|(key, value)| (key, effigy_kernel::custody::EnvValue::Plain(value)))
+                .collect(),
             &runtime_spec(&[]),
             &[],
             None,
