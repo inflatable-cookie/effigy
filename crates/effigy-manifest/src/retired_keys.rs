@@ -20,11 +20,18 @@ impl<'de> Deserialize<'de> for TaskManifest {
     where
         D: serde::Deserializer<'de>,
     {
-        let mut value = Value::deserialize(deserializer)?;
-        let mut retired = crate::retired_sections::strip(&mut value);
-        reject_retired_tables(&value).map_err(serde::de::Error::custom)?;
-        retired.merge(crate::retired_bootstrap::translate(&mut value));
-        let mut manifest = TaskManifest::deserialize(value).map_err(serde::de::Error::custom)?;
+        let input = crate::ingress::ManifestInput::new(Value::deserialize(deserializer)?, None);
+        input.into_manifest().map_err(serde::de::Error::custom)
+    }
+}
+
+impl crate::ingress::ManifestInput {
+    pub(crate) fn into_manifest(mut self) -> Result<TaskManifest, toml::de::Error> {
+        self.retired_config
+            .merge(crate::retired_sections::strip(&mut self.value));
+        reject_retired_tables(&self.value).map_err(serde::de::Error::custom)?;
+        self.normalize();
+        let mut manifest = TaskManifest::deserialize(self.value)?;
         // Keep legacy delays and use the existing once-per-manifest notice.
         let retired_timers = manifest.retired_start_after_entries();
         if !retired_timers.is_empty() {
@@ -35,11 +42,11 @@ impl<'de> Deserialize<'de> for TaskManifest {
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
-            retired.record(format!(
+            self.retired_config.record(format!(
                 "`start_after_ms` is deprecated and will be removed in v0.16 ({declared}); the configured delay still runs in v0.15. Express the prerequisite through readiness with `after = [\"environment\"]` (host processes order by `depends_on`)"
             ));
         }
-        manifest.retired_config = retired;
+        manifest.retired_config = self.retired_config;
         Ok(manifest)
     }
 }
