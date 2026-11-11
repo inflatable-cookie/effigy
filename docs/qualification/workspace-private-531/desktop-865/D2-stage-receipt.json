@@ -1,0 +1,406 @@
+{
+  "activation_id": "smoke-27985a4c-d2",
+  "chain_key": "46566b45d01dff40423c547fd48b31f74ab37eebababb01fc7476e3e5d071f76",
+  "claim": {
+    "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/claims/smoke-27985a4c-d2.claim",
+    "sha256": "ddd1daae81e7eb5564be788ecf03d4ced142c22ad4992ee2f17463abebac8fe0"
+  },
+  "closure": "closed",
+  "closure_simulated": false,
+  "control": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c",
+  "desktop_host": "unix:///Users/tom/.docker/run/docker.sock",
+  "engine_id": "ef9cc944-30a9-4df6-b4e5-0d8b56ee9ecd",
+  "error": null,
+  "go_sha256": "983e970bba111656694b8b00f50e6dec5afc5c07f784b971d78a42964238f80c",
+  "guest_closure": "not-applicable",
+  "inputs": {
+    "/Applications/Docker.app/Contents/Info.plist": "ca8573011856c7a20f33b2dfed4eaae10bad4c9c7450e55f7643a2202ae0f075",
+    "/Applications/Docker.app/Contents/Resources/bin/docker": "4fb51be4a4e9389b942ecbf52901a962bdccdaa38275e6de4d353df33981d600",
+    "/Applications/Docker.app/Contents/Resources/cli-plugins/docker-buildx": "a8638d2188cfd8bdfce7c1be2ce16aeeaf02c57b51443e9860799de5cf5ee105",
+    "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9": "c5a13e37785524fbc0384539d3c99aa4f888cb7c89e13e0bf0018436378b13bc",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/config/tasks.toml": "a650b21c5592896b8757b0123543ff741b01d3c8c0026a4dfd610f8a9ace992f",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/guest_inputs.py": "d2d0ea050f6d8b5ede4dcf07fbd3a7be65241b5b35d88830513cd07e76361af2",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/macos-4f6a5ed3-stages.json": "f2238a67891c8dc5baa811609df4c3235ee7c3a0b28288c69cb76cd6a4eb4c46",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/macos_colima_chain.py": "be9a467a6edf272951311b643ea4aa2d96f0d9bca30b858e031aa1f36aa1eb21",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/macos_colima_smoke.py": "37eb408fa068d4a0d16b84d47406bd61b2452017efa835ef3e0c7b1ef01173aa",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/macos_guest_context.py": "b249da71cb3c211006f90047b8dc743a5e82e3dfe6967470f4f7a7ae0c68bbd8",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/macos_guest_helper.py": "45fc7d75360706edf2aa944d670bde41615f92522c9adbe6f4108202d9526296",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/macos_preparation.py": "ebe0ee014d2a3cd5b4ccf0fe6ca8934c5e277f24bd79a4d253046fd527f74803",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/macos_stage_executor.py": "00a55c440877b95f7494c830e07dca235860da18069afd49720da6dbd9f47779",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/macos_stage_helper.py": "a8ed496229b0be5d11f5edf0bffe1bfb5c70a12a7714bcaa6af03fce891f6c5e",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/macos_stage_proof.py": "a5b7cf7e0678ce8769a0446b1a43da466da3a7f7a3153b3c9221f975cc12cfb7",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/preparation_resources.py": "fc0201e5710445f6eaf9e20d8b521a67ba8357b1edc480172b69138424ebb2cf",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/preparation_stage.py": "7bcbdc52510c64fcbd92c724d5e96c5ef57db65d0c0cbd983fc6d7a9eed67b90",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/runtime.Dockerfile": "8f1fa681851648430543cc0d0cd3573bfef191b3809cc447846de10821af2cc2",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/runtime_image_inputs.py": "18e214f4b1ea64c6b51a2fa1bd78cd0f8a403bd67a03cf0c36104e12e9a5baca",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/effigy.toml": "2dfdcbbeaa1c9f4a91c22cdb2dbd5a372baa7a8c8294245c678f2f193e3d66b2",
+    "/opt/homebrew/Cellar/colima/0.10.3/bin/colima": "55278419bd4288e4ab11eb30be13f5e655f3886c0979b68e435df910dbc9bbdf"
+  },
+  "origin": null,
+  "pinned": [
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2",
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-buildx-metadata",
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-check-buildx-custody",
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-check-buildx-metadata",
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-check-image-identity",
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-docker-build",
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-engine-info",
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-host-stage",
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-link-buildx-plugin",
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-make-context-dir",
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-make-input-dir",
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-prefetch-runtime-inputs",
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-read-iidfile",
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-readback",
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c",
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c/d/ctx",
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c/d/ctx-f930cf5da8bbb0c8",
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c/d/docker-config",
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c/d/docker-config-f930cf5da8bbb0c8",
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c/d/inputs-f930cf5da8bbb0c8"
+  ],
+  "prior": {
+    "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D1-smoke-27985a4c-d1/stage-receipt.json",
+    "sha256": "b85e5740d03c07d847da50580ab820ca64213574c53e6aa059a3502e33188fad",
+    "stage": "D1"
+  },
+  "receipts": [
+    {
+      "created_at": "2026-11-10T23:38:58Z",
+      "driver": "local",
+      "engine_id": "ef9cc944-30a9-4df6-b4e5-0d8b56ee9ecd",
+      "evidence": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D1-smoke-27985a4c-d1/d1-volume-inspect/receipt.json",
+        "sha256": "045a67819f9ca9fd1b709b331f83f76650ecd22cbf0347bbd3e6f243002635ae"
+      },
+      "id": "0a809f42aef486902a37c2bda2728da363354049038e05f10b32475d5af2dc6f",
+      "kind": "volume",
+      "label": "effigy.qual=27985a4c",
+      "labels": {
+        "com.docker.volume.anonymous": "",
+        "effigy.qual": "27985a4c"
+      },
+      "mountpoint": "/var/lib/docker/volumes/0a809f42aef486902a37c2bda2728da363354049038e05f10b32475d5af2dc6f/_data",
+      "name": "0a809f42aef486902a37c2bda2728da363354049038e05f10b32475d5af2dc6f",
+      "scope": "local"
+    },
+    {
+      "architecture": "arm64",
+      "created": "2026-11-09T09:45:25.241441627Z",
+      "engine_id": "ef9cc944-30a9-4df6-b4e5-0d8b56ee9ecd",
+      "evidence": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-check-image-identity/helper.json",
+        "sha256": "b87b15fb7e1549844e8df17ac3a3ac7d1ea51d148bcdd2c5ffefeabeaaf41163"
+      },
+      "id": "sha256:e14906c5943ae3935c24aafbef7c0c6f53325382c1e330f93c29078eb0669f7c",
+      "kind": "image",
+      "label": "effigy.qual=27985a4c",
+      "labels": {
+        "effigy.qual": "27985a4c",
+        "org.opencontainers.image.version": "22.04"
+      },
+      "name": "effigy-4f6a-desktop-runtime:27985a4c",
+      "os": "linux",
+      "repo_tags": [
+        "effigy-4f6a-desktop-runtime:27985a4c"
+      ]
+    }
+  ],
+  "schema": "macos-stage-executor-receipt/2",
+  "stage": "D2",
+  "stage_root": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2",
+  "steps": [
+    {
+      "argv": [
+        "/usr/local/bin/docker",
+        "info",
+        "--format",
+        "{{json .}}"
+      ],
+      "closure": "closed",
+      "closure_simulated": false,
+      "disposition": "exited",
+      "env_keys": [
+        "DOCKER_CONFIG",
+        "DOCKER_HOST",
+        "LANG",
+        "PATH"
+      ],
+      "evidence": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-engine-info/receipt.json",
+        "sha256": "5d2ad574905d6e767c902e003629f5d83a962f22e74463e143c18843e3f1df17"
+      },
+      "guest": false,
+      "guest_closure": "not-applicable",
+      "id": "d2-engine-info",
+      "kind": "exec",
+      "observations": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-engine-info/observations.json",
+        "sha256": "b413f12c54a865c36434e8355392ca496e19fb4eff49b5449de36d15e43e7243"
+      },
+      "process": {
+        "deadline_monotonic": 34.238009333,
+        "pgid": 97583,
+        "pid": 97583,
+        "session_id": 97583,
+        "start_identity": "spawn-time monotonic; kernel start time not observed",
+        "start_monotonic": 4.403430333,
+        "start_utc": "2026-11-10T23:38:58.907477+00:00"
+      },
+      "streams": {
+        "stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "stdout": {
+          "bytes": 10179,
+          "sha256": "665253bcec3ecb04c709be0b6120217a57629b363f269765a244c0e8394c47ca"
+        }
+      },
+      "waited_exit": 0
+    },
+    {
+      "closure": "closed",
+      "evidence": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-link-buildx-plugin/helper.json",
+        "sha256": "15382c232028f1cdbac8aea1d9e56126fffe79105b8522cd99d1f953b41dfba6"
+      },
+      "id": "d2-link-buildx-plugin",
+      "kind": "helper"
+    },
+    {
+      "argv": [
+        "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c/d/docker-config-f930cf5da8bbb0c8/cli-plugins/docker-buildx",
+        "docker-cli-plugin-metadata"
+      ],
+      "closure": "closed",
+      "closure_simulated": false,
+      "disposition": "exited",
+      "env_keys": [
+        "DOCKER_CONFIG",
+        "DOCKER_HOST",
+        "LANG",
+        "PATH"
+      ],
+      "evidence": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-buildx-metadata/receipt.json",
+        "sha256": "435dce09400cee9a96013ac39142b2ec8471031175c3cdd42d25e271d80a93b7"
+      },
+      "guest": false,
+      "guest_closure": "not-applicable",
+      "id": "d2-buildx-metadata",
+      "kind": "exec",
+      "observations": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-buildx-metadata/observations.json",
+        "sha256": "b413f12c54a865c36434e8355392ca496e19fb4eff49b5449de36d15e43e7243"
+      },
+      "process": {
+        "deadline_monotonic": 14.525194208,
+        "pgid": 97613,
+        "pid": 97613,
+        "session_id": 97613,
+        "start_identity": "spawn-time monotonic; kernel start time not observed",
+        "start_monotonic": 4.684341666,
+        "start_utc": "2026-11-10T23:38:59.188383+00:00"
+      },
+      "streams": {
+        "stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "stdout": {
+          "bytes": 133,
+          "sha256": "8d0544bf69d94000830a90ab1697092441be7b57a7d6ba8dd74bb854ed8c13c1"
+        }
+      },
+      "waited_exit": 0
+    },
+    {
+      "closure": "closed",
+      "evidence": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-check-buildx-metadata/helper.json",
+        "sha256": "68a0aa30832d7d0ae0e6b4817b9f87415190fe2754d34b730c5f0afb5733700e"
+      },
+      "id": "d2-check-buildx-metadata",
+      "kind": "helper"
+    },
+    {
+      "closure": "closed",
+      "evidence": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-make-input-dir/helper.json",
+        "sha256": "19fc06064dcf57e5377584bd4197843aa781bf9aa5c75fad642f824b07bbefca"
+      },
+      "id": "d2-make-input-dir",
+      "kind": "helper"
+    },
+    {
+      "closure": "closed",
+      "evidence": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-make-context-dir/helper.json",
+        "sha256": "ae7f6672449be54f867a05ddc5e08ce0ad3520f29b5c053542e05f2d3a5855b0"
+      },
+      "id": "d2-make-context-dir",
+      "kind": "helper"
+    },
+    {
+      "closure": "closed",
+      "evidence": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-prefetch-runtime-inputs/helper.json",
+        "sha256": "11cf2030e614b56ff9635478db34291d1cef939919ddca508dcee2d4cec54b20"
+      },
+      "id": "d2-prefetch-runtime-inputs",
+      "kind": "helper"
+    },
+    {
+      "closure": "closed",
+      "evidence": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-host-stage/helper.json",
+        "sha256": "e17087596619ea929f131388e4bf7457cf761c04b482e96cef816c645f567730"
+      },
+      "id": "d2-host-stage",
+      "kind": "helper"
+    },
+    {
+      "closure": "closed",
+      "evidence": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-check-buildx-custody/helper.json",
+        "sha256": "ec5625c6c4e87074053cb6bda586c18586211c5f9eee093e5d5c86c16bf169e3"
+      },
+      "id": "d2-check-buildx-custody",
+      "kind": "helper"
+    },
+    {
+      "argv": [
+        "/usr/local/bin/docker",
+        "build",
+        "--platform",
+        "linux/arm64",
+        "--provenance=false",
+        "--label",
+        "effigy.qual=27985a4c",
+        "--tag",
+        "effigy-4f6a-desktop-runtime:27985a4c",
+        "--iidfile",
+        "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c/d/image-id-f930cf5da8bbb0c8",
+        "--network",
+        "none",
+        "--build-context",
+        "ubuntu=oci-layout:///Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c/d/inputs-f930cf5da8bbb0c8/oci",
+        "--build-context",
+        "debs=/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c/d/inputs-f930cf5da8bbb0c8/debs",
+        "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c/d/ctx-f930cf5da8bbb0c8"
+      ],
+      "closure": "closed",
+      "closure_simulated": false,
+      "disposition": "exited",
+      "env_keys": [
+        "DOCKER_CONFIG",
+        "DOCKER_HOST",
+        "LANG",
+        "PATH"
+      ],
+      "evidence": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-docker-build/receipt.json",
+        "sha256": "b5dab1d36803896188fe1a66c152bd035897233d072c9951e8b4b315f8210be3"
+      },
+      "guest": false,
+      "guest_closure": "not-applicable",
+      "id": "d2-docker-build",
+      "kind": "exec",
+      "observations": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-docker-build/observations.json",
+        "sha256": "5cd283f3c2eec47d47e36da8c412b49e9360c8836fd0f210068878c58da4b5d1"
+      },
+      "process": {
+        "deadline_monotonic": 850.98276725,
+        "pgid": 98683,
+        "pid": 98683,
+        "session_id": 98683,
+        "start_identity": "spawn-time monotonic; kernel start time not observed",
+        "start_monotonic": 11.452634041,
+        "start_utc": "2026-11-10T23:39:05.956719+00:00"
+      },
+      "streams": {
+        "stderr": {
+          "bytes": 3038,
+          "sha256": "caa206c00f90a23e3920f711c442972893e0f137723c6b9e12a3f4e381e6e96a"
+        },
+        "stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      "waited_exit": 0
+    },
+    {
+      "closure": "closed",
+      "evidence": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-read-iidfile/helper.json",
+        "sha256": "10797b95e90c4560daf7b65b7b52f128d3b9fd4901e6a535838f2101a5a9906c"
+      },
+      "id": "d2-read-iidfile",
+      "kind": "helper"
+    },
+    {
+      "argv": [
+        "/usr/local/bin/docker",
+        "image",
+        "inspect",
+        "--format",
+        "{{json .}}",
+        "sha256:e14906c5943ae3935c24aafbef7c0c6f53325382c1e330f93c29078eb0669f7c"
+      ],
+      "closure": "closed",
+      "closure_simulated": false,
+      "disposition": "exited",
+      "env_keys": [
+        "DOCKER_CONFIG",
+        "DOCKER_HOST",
+        "LANG",
+        "PATH"
+      ],
+      "evidence": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-readback/receipt.json",
+        "sha256": "aa5b6a544ab5ddb490b1661475905ebc54c6ba7292958382a875d6652e8483f4"
+      },
+      "guest": false,
+      "guest_closure": "not-applicable",
+      "id": "d2-readback",
+      "kind": "exec",
+      "observations": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-readback/observations.json",
+        "sha256": "a77899c93ca46b0a6959f127608f69261b23c50d9e719b7e839b19f35e099f35"
+      },
+      "process": {
+        "deadline_monotonic": 72.3203335,
+        "pgid": 99331,
+        "pid": 99331,
+        "session_id": 99331,
+        "start_identity": "spawn-time monotonic; kernel start time not observed",
+        "start_monotonic": 12.664550333,
+        "start_utc": "2026-11-10T23:39:07.168653+00:00"
+      },
+      "streams": {
+        "stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "stdout": {
+          "bytes": 1379,
+          "sha256": "292d8ef4afe4e6c47fbb10d0806f1af2bcbb4a7f483c0ef6d8bf876e34d16474"
+        }
+      },
+      "waited_exit": 0
+    },
+    {
+      "closure": "closed",
+      "evidence": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D2-smoke-27985a4c-d2/d2-check-image-identity/helper.json",
+        "sha256": "b87b15fb7e1549844e8df17ac3a3ac7d1ea51d148bcdd2c5ffefeabeaaf41163"
+      },
+      "id": "d2-check-image-identity",
+      "kind": "helper"
+    }
+  ],
+  "token": "27985a4c"
+}

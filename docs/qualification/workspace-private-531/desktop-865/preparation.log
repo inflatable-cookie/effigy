@@ -1,0 +1,11 @@
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ EFFIGY  /Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03 │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── v0.14.1+local.446cbe7 ╯
+
+/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6
+D0: closed
+D1-D3: closed
+inventory differences: {"container": {"removed": [], "added": []}, "image": {"removed": [], "added": ["sha256:e14906c5943ae3935c24aafbef7c0c6f53325382c1e330f93c29078eb0669f7c effigy-4f6a-desktop-runtime:27985a4c"]}, "volume": {"removed": [], "added": ["0a809f42aef486902a37c2bda2728da363354049038e05f10b32475d5af2dc6f com.docker.volume.anonymous=,effigy.qual=27985a4c"]}, "network": {"removed": [], "added": []}}
+
+exit=0
