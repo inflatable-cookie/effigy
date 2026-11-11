@@ -1138,13 +1138,13 @@ mod tests {
 
         // Within the window nothing removes it, on either side of the decision.
         assert_eq!(
-            sweep_at(root.path(), concluded + 60_000, SWEEP_BUDGET).removed,
+            sweep_at(root.path(), concluded + 60_000, Duration::MAX).removed,
             0
         );
         assert!(dir.exists(), "a fresh failure keeps its directory");
         // A day later: gone.
         assert_eq!(
-            sweep_at(root.path(), concluded + retention_ms() + 1, SWEEP_BUDGET).removed,
+            sweep_at(root.path(), concluded + retention_ms() + 1, Duration::MAX).removed,
             1
         );
         assert!(!dir.exists());
@@ -1191,7 +1191,7 @@ mod tests {
                 ..marker(&id, now_ms())
             },
         );
-        assert_eq!(sweep_at(root.path(), now_ms(), SWEEP_BUDGET).removed, 1);
+        assert_eq!(sweep_at(root.path(), now_ms(), Duration::MAX).removed, 1);
         assert!(!dir.exists());
     }
 
@@ -1210,7 +1210,7 @@ mod tests {
                 ..marker(&run_id(7), now_ms())
             },
         );
-        let report = sweep_at(root.path(), now_ms(), SWEEP_BUDGET);
+        let report = sweep_at(root.path(), now_ms(), Duration::MAX);
         assert_eq!(report.removed, 0);
         assert!(report.probes >= 1, "the live directory was checked");
         assert!(live.exists(), "a live run keeps its directory");
@@ -1241,7 +1241,7 @@ mod tests {
         std::os::unix::fs::symlink(outside.path(), root.path().join(name_of(&run_id(10))))
             .expect("symlink");
 
-        let report = sweep_at(root.path(), now_ms(), SWEEP_BUDGET);
+        let report = sweep_at(root.path(), now_ms(), Duration::MAX);
         assert_eq!(report.removed, 1);
         assert!(!expired.exists());
         assert!(unmarked.join("work.txt").exists());
@@ -1273,7 +1273,7 @@ mod tests {
                 ..marker(&run_id(12), old)
             },
         );
-        let report = sweep_at(root.path(), now_ms(), SWEEP_BUDGET);
+        let report = sweep_at(root.path(), now_ms(), Duration::MAX);
         assert_eq!(report.removed, 1);
         assert!(live.exists(), "a live run keeps its directory");
         assert!(!legacy.exists());
@@ -1331,7 +1331,7 @@ mod tests {
                 read_marker(&dir).is_some(),
                 "a tree left behind stays marked"
             );
-            assert_eq!(sweep_at(root.path(), now_ms(), SWEEP_BUDGET).removed, 1);
+            assert_eq!(sweep_at(root.path(), now_ms(), Duration::MAX).removed, 1);
         }
         assert!(!dir.exists(), "the tree is gone, not leaked unmarked");
     }
@@ -1376,7 +1376,7 @@ mod tests {
         let dir = root.path().join(name_of(&id));
         std::fs::create_dir(&dir).expect("dir");
         std::fs::write(dir.join(MARKER), b"not json").expect("marker");
-        assert_eq!(sweep_at(root.path(), now_ms(), SWEEP_BUDGET).removed, 0);
+        assert_eq!(sweep_at(root.path(), now_ms(), Duration::MAX).removed, 0);
         assert!(dir.exists());
     }
 
@@ -1394,7 +1394,7 @@ mod tests {
                 },
             );
         }
-        assert_eq!(sweep_at(root.path(), now_ms(), SWEEP_BUDGET).removed, 3);
+        assert_eq!(sweep_at(root.path(), now_ms(), Duration::MAX).removed, 3);
 
         // Beyond the removal bound, the rest is a later run's.
         for n in 0..SWEEP_REMOVE_MAX + 2 {
@@ -1409,7 +1409,7 @@ mod tests {
                 },
             );
         }
-        let report = sweep_at(root.path(), now_ms(), SWEEP_BUDGET);
+        let report = sweep_at(root.path(), now_ms(), Duration::MAX);
         assert_eq!(report.removed, SWEEP_REMOVE_MAX, "{report:?}");
         assert_eq!(std::fs::read_dir(root.path()).expect("root").count(), 2);
     }
@@ -1490,7 +1490,7 @@ mod tests {
                 ..marker(&id, now_ms() - retention_ms() - 1)
             },
         );
-        assert_eq!(sweep_at(root.path(), now_ms(), SWEEP_BUDGET).removed, 1);
+        assert_eq!(sweep_at(root.path(), now_ms(), Duration::MAX).removed, 1);
         assert!(!dir.exists());
     }
 
@@ -1627,11 +1627,11 @@ mod tests {
             .concluded_ms
             .expect("conclusion recorded");
         assert_eq!(
-            sweep_at(root.path(), concluded + 60_000, SWEEP_BUDGET).removed,
+            sweep_at(root.path(), concluded + 60_000, Duration::MAX).removed,
             0
         );
         assert_eq!(
-            sweep_at(root.path(), concluded + retention_ms() + 1, SWEEP_BUDGET).removed,
+            sweep_at(root.path(), concluded + retention_ms() + 1, Duration::MAX).removed,
             1
         );
         assert!(
@@ -1689,13 +1689,13 @@ mod tests {
         assert!(legacy.exists() && namespaced.exists());
 
         // Nothing is moved or bulk-cleaned: both are still retained.
-        assert_eq!(sweep_at(root.path(), now_ms(), SWEEP_BUDGET).removed, 0);
+        assert_eq!(sweep_at(root.path(), now_ms(), Duration::MAX).removed, 0);
         assert!(legacy.exists(), "a legacy run is swept where it stands");
         assert!(namespaced.exists());
 
         // Both expire by the same rule, in place.
         assert_eq!(
-            sweep_at(root.path(), now_ms() + retention_ms(), SWEEP_BUDGET).removed,
+            sweep_at(root.path(), now_ms() + retention_ms(), Duration::MAX).removed,
             2
         );
         assert!(!legacy.exists());
@@ -1729,7 +1729,7 @@ mod tests {
         std::fs::write(namespace.join("notes.txt"), b"keep me").expect("file");
         std::os::unix::fs::symlink(outside.path(), namespace.join("linked")).expect("symlink");
 
-        let report = sweep_at(root.path(), now_ms(), SWEEP_BUDGET);
+        let report = sweep_at(root.path(), now_ms(), Duration::MAX);
         assert_eq!(report.removed, 0, "{report:?}");
         assert!(
             namespace.exists(),
@@ -1759,7 +1759,7 @@ mod tests {
                 hold_marker(root.path(), &id, expired(&id));
             }
         }
-        let report = sweep_at(root.path(), now_ms(), SWEEP_BUDGET);
+        let report = sweep_at(root.path(), now_ms(), Duration::MAX);
         assert_eq!(report.removed, SWEEP_REMOVE_MAX, "{report:?}");
         let left = std::fs::read_dir(namespace_for_tests(root.path()))
             .expect("namespace")
