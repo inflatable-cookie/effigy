@@ -161,7 +161,10 @@ def read_journal_rows(path, sql, args=()):
                     with closing(connect()) as source:
                         rows = snapshot_from(source)
                 except sqlite3.OperationalError as source_error:
-                    if getattr(source_error, 'sqlite_errorcode', 0) & 0xff != 14:
+                    error_code = getattr(source_error, 'sqlite_errorcode', None)
+                    cant_open = (isinstance(error_code, int) and error_code & 0xff == 14) or (
+                        'unable to open database file' in str(source_error).lower())
+                    if not cant_open:
                         raise
                     rows = snapshot_from_private_copy()
         except (sqlite3.Error, RuntimeError) as snapshot_error:
