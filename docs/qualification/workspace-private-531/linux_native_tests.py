@@ -79,6 +79,45 @@ class NativeLifecycleTests(unittest.TestCase):
             self.assertEqual(events, ['export', 'remove', 'evict', 'inspect'])
             self.assertEqual((attempt.root / 'outputs.tar').read_bytes(), b'original evidence')
 
+    def test_gnu_artifact_family_is_hash_bound_before_guest_removal(self):
+        import hashlib
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            root = Path(directory)
+            source = root / 'source' / 'effigy-aarch64-unknown-linux-gnu'
+            source.parent.mkdir()
+            names = {
+                'guest_artifact': source,
+                'guest_producer_receipt': source.with_suffix('.receipt'),
+                'guest_active_version': source.with_suffix('.active-version'),
+                'guest_install_identity': source.with_suffix('.install-identity'),
+            }
+            bindings = {}
+            for key, path in names.items():
+                data = ('original ' + key).encode()
+                path.write_bytes(data)
+                bindings[key] = {'path': str(path), 'sha256': hashlib.sha256(data).hexdigest()}
+            attempt = type('Attempt', (), {'root': root / 'evidence'})()
+            attempt.root.mkdir()
+            scope = lifecycle.Scope(attempt)
+            scope.records.append({'path': str(lifecycle.BASE / 'builds/native-build-owned')})
+            events = []
+            operation = lambda action, **args: events.append(action) or {}
+            with patch.object(scope, 'operation', side_effect=operation), \
+                 patch.object(native_run, 'channel_read', side_effect=lambda *a, **k: events.append('host-copy') or b'archive'):
+                original_export = lifecycle.export_guest_artifact
+                def export(*args):
+                    events.append('gnu-export')
+                    return original_export(*args)
+                with patch.object(lifecycle, 'export_guest_artifact', side_effect=export):
+                    scope.finish(['ssh'], guest_artifact=bindings)
+            self.assertEqual(events, ['gnu-export', 'export', 'host-copy', 'remove', 'evict', 'inspect'])
+            self.assertEqual(scope.gnu_export['path'], 'gnu-artifact')
+            for key, original in names.items():
+                exported = attempt.root / scope.gnu_export['files'][key]['path']
+                self.assertEqual(exported.read_bytes(), original.read_bytes())
+                self.assertEqual(scope.gnu_export['files'][key]['sha256'], hashlib.sha256(original.read_bytes()).hexdigest())
+
     def test_referenced_outputs_are_retained_before_archive_creation(self):
         with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
             archive = Path(directory) / 'evidence.tar'

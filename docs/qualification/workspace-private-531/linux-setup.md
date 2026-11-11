@@ -905,6 +905,15 @@ and fixtures to the host, then removes only its recorded outputs. A failed expor
 or uncertain custody retains originals for reconciliation. `--diagnostic-only` runs just the original
 diagnostic cycle. Neither route accepts a sealed GO or grants qualification credit.
 
+The #871 session-smoke recipe takes the GNU guest artifact at
+`<OWNED_EVIDENCE_ROOT>/gnu-artifact/effigy-aarch64-unknown-linux-gnu`, with its
+producer receipt, active-version marker and install identity copied before
+guest-output removal. The `native-smoke-complete.json` record names that directory
+as `gnu_artifact_export.path`
+and records each exported file's SHA-256 in `gnu_artifact_export.files`. Session
+smokes use that exported pair and sidecars unchanged; the copy is evidence from
+this run, not a substitute for the frozen Recipe E inputs.
+
 Task 883 adds `guest-capacity` admission before compilation: 12 GiB available on
 preparation storage, 640 MiB on workspace storage and 1 GiB on engine storage.
 The shared rebuildable Cargo cache has an 8 GiB bound between build stages;
