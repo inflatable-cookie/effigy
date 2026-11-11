@@ -13,7 +13,6 @@ mod managed_matrix;
 #[path = "gateway_private/adapterless_listener.rs"]
 mod adapterless_listener;
 
-
 #[path = "gateway_private/fixture_sweep.rs"]
 mod fixture_sweep;
 
@@ -3444,6 +3443,10 @@ fn managed_host_readiness_terminal_failure_names_the_reserved_port() {
     let state = read_json_file(&state_path);
     assert_eq!(state["status"], "failed", "{state}");
     assert!(
+        state["custody_nonce"].is_string(),
+        "a spawned generation retains its custody reference after failure: {state}"
+    );
+    assert!(
         state["address"].is_null()
             && state["route_owner"].is_null()
             && state["process"]["identity"]["pid"].is_null(),
@@ -3454,6 +3457,7 @@ fn managed_host_readiness_terminal_failure_names_the_reserved_port() {
     assert!(down.status.success(), "explicit teardown failed");
     let after_down = read_json_file(&state_path);
     assert_eq!(after_down["status"], "failed", "{after_down}");
+    assert_eq!(after_down["custody_nonce"], state["custody_nonce"]);
     assert_eq!(
         after_down["diagnostic"], state["diagnostic"],
         "teardown preserves the failure that explains the generation"

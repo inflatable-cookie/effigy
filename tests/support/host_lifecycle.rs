@@ -81,15 +81,13 @@ pub(crate) fn snapshots(repo: &Path) -> Option<Vec<(PathBuf, Value)>> {
             Some("failed" | "stopped" | "owner_gone")
         );
         if state["custody_nonce"].is_string() && !terminal {
-            let effect = effects
-                .iter()
-                .rev()
-                .find(|effect| {
-                    effect.spec.kind == "kernel:process"
-                        && effect.receipt.as_ref().is_some_and(|receipt| {
-                            receipt["nonce"] == state["custody_nonce"]
-                        })
-                })?;
+            let effect = effects.iter().rev().find(|effect| {
+                effect.spec.kind == "kernel:process"
+                    && effect
+                        .receipt
+                        .as_ref()
+                        .is_some_and(|receipt| receipt["nonce"] == state["custody_nonce"])
+            })?;
             let process = effect.receipt.clone()?;
             let receipt: effigy_kernel::custody::ProcessReceipt =
                 serde_json::from_value(process.clone()).ok()?;

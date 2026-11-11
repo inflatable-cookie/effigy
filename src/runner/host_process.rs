@@ -1968,7 +1968,8 @@ impl Drop for ListenerReportPath {
 /// A completed teardown makes no endpoint or child claim: the terminal record
 /// must not retain a generation an explicit start would have to reconcile.
 ///
-/// A generation that failed keeps its diagnostic. Settlement stop of an
+/// A generation that failed keeps its diagnostic and recorded custody nonce.
+/// Its terminal status makes no live-child claim. Settlement stop of an
 /// unpublished successor of the same supervisor must not replace that
 /// evidence with a blank `stopped` record (contract 005). A later activation
 /// has a different supervisor pid and writes its own `starting` record.
@@ -2115,7 +2116,6 @@ fn supervise_managed_host_listener(
             write_terminal_listener_state(run, spec, supervisor_pid)?;
             return Ok(GenerationEnd::Stopped);
         }
-        state.custody_nonce = None;
         state.diagnostic = Some(error.to_string());
         state.observed_status = observed_status;
         state.write(run, HostLifecycleStatus::Failed)?;

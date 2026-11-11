@@ -1548,8 +1548,9 @@ them on closure. Host activation, dependencies, status and panes read typed life
 readiness observations from the host owner's run effects, bound to the current
 run and custody nonce. Child text cannot forge them, and unavailable, failed,
 stopped or stale generations clear Ready. A failed generation keeps its
-readiness diagnostic while a retry waits for dependencies; only a new child
-custody generation supersedes that failure. New supervisors write no listener
+readiness diagnostic and recorded child custody nonce while a retry waits for
+dependencies; only a new child custody generation supersedes that failure.
+New supervisors write no listener
 state file. An already-running older supervisor keeps its file reader until
 it is stopped; installing a new CLI neither dual-writes nor replaces it.
 A known host run whose journal or owner gate cannot be observed reports
