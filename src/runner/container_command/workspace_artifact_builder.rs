@@ -1226,6 +1226,19 @@ mod tests {
             (ProbePhase::After, after_output(&[])),
         ] {
             let probe = parse_probe(&raw, phase).expect("complete probe");
+            for line in raw.lines() {
+                let (key, value) = line.split_once(' ').expect("probe field");
+                if key == "export_unexpected_kind" {
+                    assert_eq!(probe.unexpected(), value);
+                } else {
+                    assert_eq!(
+                        probe.values.get(key),
+                        Some(&value.parse::<u64>().expect("numeric fixture")),
+                        "{key}"
+                    );
+                }
+            }
+            assert_eq!(probe.phase, phase);
             check_probe(&probe).expect("within the declared boundary");
         }
     }
@@ -1334,36 +1347,6 @@ mod tests {
 
     /// The scripts are pure text over the constants, and the export name is the
     /// only value that comes from the requested target.
-    #[test]
-    fn the_probe_scripts_census_the_whole_build_service_tree() {
-        // A staged bind's `.effigy` is a write through the source bind: the
-        // after-probe names it, and the obsolete cargo tree path is its own case.
-        let after = probe_script(
-            ProbePhase::After,
-            "effigy-aarch64-unknown-linux-gnu",
-            ".effigy-builder-source.inventory",
-            "b".repeat(64).as_str(),
-            2134,
-        );
-        assert!(after.contains("./.effigy/linux-release/target"));
-        assert!(after.contains("source_bind_ro"));
-        assert!(after.contains("export_unexpected_kind"));
-        assert!(after.contains("export_unexpected=$((export_unexpected + 1))"));
-        assert!(after.contains(BUILD_TREE_ROOT));
-        assert!(after.contains("release_dir=\"$tree/target/"));
-        // The before-probe reports pre-existing build output instead of assuming
-        // the bind starts clean, and requires the source bind to be read-only.
-        let before = probe_script(
-            ProbePhase::Before,
-            "effigy-aarch64-unknown-linux-gnu",
-            ".effigy-builder-source.inventory",
-            "b".repeat(64).as_str(),
-            2134,
-        );
-        assert!(before.contains("build_output_entries="));
-        assert!(before.contains("find ./.effigy"));
-        assert!(before.contains("source_bind_ro"));
-    }
 
     #[test]
     fn probes_name_the_declared_boundary_and_carry_no_caller_input() {
@@ -1382,9 +1365,15 @@ mod tests {
             assert!(script.contains("expected_files=2134"));
             assert!(script.contains("source_bind_ro"));
             match phase {
-                ProbePhase::Before => assert!(!script.contains("export_binary_bytes")),
+                ProbePhase::Before => {
+                    assert!(!script.contains("export_binary_bytes"));
+                    assert!(script.contains("build_output_entries="));
+                    assert!(script.contains("find ./.effigy"));
+                }
                 ProbePhase::After => {
                     assert!(script.contains("export_binary_bytes"));
+                    assert!(script.contains("export_unexpected_kind"));
+                    assert!(script.contains("export_unexpected=$((export_unexpected + 1))"));
                     assert!(script.contains("build_tree_open_writers"));
                     assert!(script.contains("./.effigy/linux-release/target"));
                     assert!(script.contains("release_dir=\"$tree/target/"));

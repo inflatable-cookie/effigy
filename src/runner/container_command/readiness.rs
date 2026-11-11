@@ -1264,12 +1264,15 @@ mod tests {
             Some("app: database is not ready"),
             "the diagnostic is keyed by the service its log line belongs to"
         );
+        assert_eq!(
+            logs.len(),
+            1,
+            "only the failed service contributes evidence"
+        );
         let calls = std::fs::read_to_string(fixture.path().join("calls")).unwrap_or_default();
-        assert!(
-            calls
-                .lines()
-                .any(|call| call == "logs --tail 20 custom-container"),
-            "the read targets the runtime container: {calls:?}"
+        assert_eq!(
+            calls.lines().collect::<Vec<_>>(),
+            ["logs --tail 20 custom-container"]
         );
         assert_eq!(
             parent.detailed_frame_at(Duration::from_secs(5)),
@@ -1310,6 +1313,9 @@ mod tests {
         ) else {
             panic!("a readiness failure is an error");
         };
+        assert!(
+            matches!(error, RunnerError::ContainerWaitRefused { ref environment, .. } if environment == &policy.name)
+        );
         let message = error.to_string();
         assert!(message.contains("db exited"), "{message}");
     }

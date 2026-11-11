@@ -899,14 +899,15 @@ databases = ["app"]
         )
         .expect("write manifest");
 
-        let rendered = run_container_data_dump_with_hooks(
+        for push in [false, true] {
+            let rendered = run_container_data_dump_with_hooks(
             &root,
             None,
             &[ContainerDbDumpInput {
                 target: Some("app".to_owned()),
                 path: PathBuf::from("oci://ghcr.io/acme/uat-content:2026-05-07"),
             }],
-            false,
+            push,
             true,
             |_, _, _| {
                 Ok(Output {
@@ -923,7 +924,7 @@ databases = ["app"]
                         "source": destination,
                         "planned": !push,
                         "pushed": push,
-                        "digest": serde_json::Value::Null,
+                        "digest": if push { serde_json::json!("sha256:pushdigest") } else { serde_json::Value::Null },
                     },
                     "metadata": {
                         "source": source,
@@ -932,76 +933,23 @@ databases = ["app"]
             },
         )
         .expect("dump");
-        let report: serde_json::Value = serde_json::from_str(&rendered).expect("json");
-        let dump = &report["dumps"][0];
-        assert_eq!(dump["path"], "oci://ghcr.io/acme/uat-content:2026-05-07");
-        assert!(dump["local_path"]
-            .as_str()
-            .is_some_and(|value| value.contains(".effigy/local/data-dumps")));
-        assert_eq!(dump["artifact_capture"]["destination"]["planned"], true);
-        assert_eq!(dump["artifact_capture"]["destination"]["pushed"], false);
-    }
-
-    #[test]
-    fn run_container_data_dump_reports_pushed_oci_artifact_capture() {
-        let root = temp_repo("data-dump-oci-pushed");
-        setup_workspace_app_path_bundle(&root);
-        let home = temp_repo("data-dump-oci-pushed-home");
-        let _home = GatewayHomeGuard::set(&home);
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[bundle]
-base = { type = "path", dir = "bundles/workspace-app" }
-host = "app.test"
-project_name = "data-dump-oci-pushed-dev"
-workspace_subdir = "data-dump-oci-pushed"
-databases = ["app"]
-"#,
-        )
-        .expect("write manifest");
-
-        let rendered = run_container_data_dump_with_hooks(
-            &root,
-            None,
-            &[ContainerDbDumpInput {
-                target: Some("app".to_owned()),
-                path: PathBuf::from("oci://ghcr.io/acme/uat-content:2026-05-07"),
-            }],
-            true,
-            true,
-            |_, _, _| {
-                Ok(Output {
-                    status: std::os::unix::process::ExitStatusExt::from_raw(0),
-                    stdout: b"select 1;".to_vec(),
-                    stderr: Vec::new(),
-                })
-            },
-            |_, _, _, _| unreachable!("this environment declares no shared service"),
-            |source, destination, _, push| {
-                Ok(serde_json::json!({
-                    "schema": "effigy.artifact.capture.v1",
-                    "destination": {
-                        "source": destination,
-                        "planned": !push,
-                        "pushed": push,
-                        "digest": "sha256:pushdigest",
-                    },
-                    "metadata": {
-                        "source": source,
-                    }
-                }))
-            },
-        )
-        .expect("dump");
-        let report: serde_json::Value = serde_json::from_str(&rendered).expect("json");
-        let dump = &report["dumps"][0];
-        assert_eq!(dump["artifact_capture"]["destination"]["planned"], false);
-        assert_eq!(dump["artifact_capture"]["destination"]["pushed"], true);
-        assert_eq!(
-            dump["artifact_capture"]["destination"]["digest"],
-            "sha256:pushdigest"
-        );
+            let report: serde_json::Value = serde_json::from_str(&rendered).expect("json");
+            let dump = &report["dumps"][0];
+            assert_eq!(dump["path"], "oci://ghcr.io/acme/uat-content:2026-05-07");
+            assert!(dump["local_path"]
+                .as_str()
+                .is_some_and(|value| value.contains(".effigy/local/data-dumps")));
+            assert_eq!(dump["artifact_capture"]["destination"]["planned"], !push);
+            assert_eq!(dump["artifact_capture"]["destination"]["pushed"], push);
+            assert_eq!(
+                dump["artifact_capture"]["destination"]["digest"],
+                if push {
+                    serde_json::json!("sha256:pushdigest")
+                } else {
+                    serde_json::Value::Null
+                }
+            );
+        }
     }
 
     /// effigy#487: the database password travels by variable name, never in a
@@ -1160,7 +1108,7 @@ database = "acowtancy"
 "#,
         )
         .expect("manifest");
-        let root = temp_repo("data-dump-explicit-target");
+        let root = PathBuf::from("/fixture/data-dump-explicit-target");
 
         let plans = resolve_db_dump_plans(
             &root,
@@ -1176,6 +1124,11 @@ database = "acowtancy"
 
         assert_eq!(plans.len(), 1);
         assert_eq!(plans[0].command.service, "mysql");
+        assert_eq!(
+            plans[0].command.kind,
+            effigy_data::DatabaseServiceKind::MariaDb
+        );
+        assert_eq!(plans[0].command.database, "acowtancy");
         assert_eq!(plans[0].resolved_target.database, "acowtancy");
         assert_eq!(
             plans[0].input.target.as_ref().map(|target| target.as_str()),
@@ -1216,6 +1169,18 @@ database = "acowtancy"
         assert!(rendered.contains("Archive: /tmp/backup.tar.gz"));
         assert!(rendered.contains("This may overwrite local generated-compose data."));
         assert!(rendered.contains("Continue? [y/N]: "));
+        let err = confirm_container_data_import_from_io(
+            "web",
+            "demo-web-dev-db-data",
+            Path::new("/tmp/backup.tar.gz"),
+            &mut Cursor::new(b"\n".to_vec()),
+            &mut Vec::new(),
+        )
+        .expect_err("empty response should cancel");
+
+        assert!(err
+            .to_string()
+            .contains("container data import cancelled during confirmation"));
     }
 
     #[test]
@@ -1230,22 +1195,6 @@ database = "acowtancy"
         assert!(err
             .to_string()
             .contains("container data pull-production cancelled during confirmation"));
-    }
-
-    #[test]
-    fn prompt_container_data_import_defaults_to_no() {
-        let err = confirm_container_data_import_from_io(
-            "web",
-            "demo-web-dev-db-data",
-            Path::new("/tmp/backup.tar.gz"),
-            &mut Cursor::new(b"\n".to_vec()),
-            &mut Vec::new(),
-        )
-        .expect_err("empty response should cancel");
-
-        assert!(err
-            .to_string()
-            .contains("container data import cancelled during confirmation"));
     }
 
     #[test]
@@ -1328,53 +1277,27 @@ database = "acowtancy"
     }
     #[test]
     fn resolve_db_dump_output_paths_expands_tilde() {
-        let Ok(home) = std::env::var("HOME") else {
-            return;
-        };
-        let cwd = PathBuf::from("/repo");
-        let resolved = resolve_db_dump_output_paths(
-            &cwd,
-            &[ContainerDbDumpInput {
-                target: Some("app".to_owned()),
-                path: PathBuf::from("~/Downloads/file.sql"),
-            }],
-        );
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(
-            resolved[0].path,
-            PathBuf::from(format!("{home}/Downloads/file.sql"))
-        );
-    }
-
-    #[test]
-    fn resolve_db_dump_output_paths_leaves_bare_tilde_as_home() {
-        let Ok(home) = std::env::var("HOME") else {
-            return;
-        };
-        let cwd = PathBuf::from("/repo");
-        let resolved = resolve_db_dump_output_paths(
-            &cwd,
-            &[ContainerDbDumpInput {
-                target: None,
-                path: PathBuf::from("~"),
-            }],
-        );
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].path, PathBuf::from(&home));
-    }
-
-    #[test]
-    fn resolve_db_dump_output_paths_still_joins_relative_paths() {
-        let cwd = PathBuf::from("/repo");
-        let resolved = resolve_db_dump_output_paths(
-            &cwd,
-            &[ContainerDbDumpInput {
-                target: None,
-                path: PathBuf::from("./dump.sql"),
-            }],
-        );
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].path, PathBuf::from("/repo/dump.sql"));
+        let _lock = crate::contract_test_support::lock_test();
+        let _home = crate::contract_test_support::EnvGuard::set_many(&[(
+            "HOME",
+            Some("/fixture-home".into()),
+        )]);
+        for (input, expected) in [
+            ("~/Downloads/file.sql", "/fixture-home/Downloads/file.sql"),
+            ("~", "/fixture-home"),
+            ("./dump.sql", "/repo/dump.sql"),
+        ] {
+            let resolved = resolve_db_dump_output_paths(
+                Path::new("/repo"),
+                &[ContainerDbDumpInput {
+                    target: Some("app".into()),
+                    path: PathBuf::from(input),
+                }],
+            );
+            assert_eq!(resolved.len(), 1, "{input}");
+            assert_eq!(resolved[0].path, Path::new(expected), "{input}");
+            assert_eq!(resolved[0].target.as_deref(), Some("app"), "{input}");
+        }
     }
 
     #[test]

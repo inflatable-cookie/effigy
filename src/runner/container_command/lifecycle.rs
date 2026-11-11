@@ -2123,6 +2123,7 @@ mod tests {
             ))
         })
         .expect_err("preparation failure should surface");
+        assert!(matches!(error, RunnerError::TaskInvocation(_)));
         let rendered = error.to_string();
         assert!(
             rendered.contains("container `web` workspace permission preparation failed"),
@@ -2195,12 +2196,6 @@ mod tests {
             progress.frame_at(Duration::from_secs(21)),
             "Starting web stack · 21s"
         );
-        println!("container up lifecycle fixture:");
-        println!(
-            "Before: {}",
-            progress.detailed_frame_at(Duration::from_secs(21))
-        );
-        println!("After: {}", progress.frame_at(Duration::from_secs(21)));
         super::steps::restart_policy_stage(
             &progress,
             "the `web` stack",
@@ -2211,11 +2206,6 @@ mod tests {
             progress.frame_at(Duration::from_secs(21)),
             "Setting restart policy · 21s"
         );
-        println!(
-            "Before: {}",
-            progress.detailed_frame_at(Duration::from_secs(21))
-        );
-        println!("After: {}", progress.frame_at(Duration::from_secs(21)));
         let (_, failure) = effigy_ui::steps::capture_lines(|| {
             super::steps::during(progress, "routes registered", |_| {
                 Err::<(), _>(RunnerError::task_invocation(
@@ -2223,8 +2213,8 @@ mod tests {
                 ))
             })
         });
+        assert_eq!(failure.len(), 1, "one terminal error line");
         assert!(failure[0].starts_with("✗ gateway port 443 is already in use ("));
-        println!("Failure: {}", failure[0]);
     }
 
     #[test]
@@ -2706,31 +2696,33 @@ services:
     /// extra-mount decisions that render recorded (effigy#371).
     #[test]
     fn container_up_preparation_renders_once_and_runs_no_apply() {
-        let _environment = crate::contract_test_support::clean_fixture_environment();
-        let root = temp_repo("container-up-one-render", "one-render");
-        let home = root.join("home");
-        let bin = root.join("bin");
-        fs::create_dir_all(&home).expect("mkdir home");
-        fs::create_dir_all(&bin).expect("mkdir bin");
-        let log = root.join("docker-calls");
-        let docker = bin.join("docker");
-        fs::write(
-            &docker,
-            format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{log}'\nexit 0\n",
-                log = log.display()
-            ),
-        )
-        .expect("write fake docker");
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut permissions = fs::metadata(&docker).expect("metadata").permissions();
-            permissions.set_mode(0o755);
-            fs::set_permissions(&docker, permissions).expect("chmod fake docker");
-        }
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
+        crate::contract_test_support::assert_waits_for_path_mutator(|boundary| {
+            boundary();
+            let _environment = crate::contract_test_support::clean_fixture_environment();
+            let root = temp_repo("container-up-one-render", "one-render");
+            let home = root.join("home");
+            let bin = root.join("bin");
+            fs::create_dir_all(&home).expect("mkdir home");
+            fs::create_dir_all(&bin).expect("mkdir bin");
+            let log = root.join("docker-calls");
+            let docker = bin.join("docker");
+            fs::write(
+                &docker,
+                format!(
+                    "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{log}'\nexit 0\n",
+                    log = log.display()
+                ),
+            )
+            .expect("write fake docker");
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut permissions = fs::metadata(&docker).expect("metadata").permissions();
+                permissions.set_mode(0o755);
+                fs::set_permissions(&docker, permissions).expect("chmod fake docker");
+            }
+            fs::write(
+                root.join("effigy.toml"),
+                r#"
 [containers]
 default = "web"
 
@@ -2738,52 +2730,45 @@ default = "web"
 compose_file = "compose.yml"
 primary_service = "app"
 "#,
-        )
-        .expect("write manifest");
-        fs::write(
-            root.join("compose.yml"),
-            "services:\n  app:\n    image: alpine:latest\n",
-        )
-        .expect("write compose");
+            )
+            .expect("write manifest");
+            fs::write(
+                root.join("compose.yml"),
+                "services:\n  app:\n    image: alpine:latest\n",
+            )
+            .expect("write compose");
 
-        let _runtime = crate::contract_test_support::EnvGuard::set_many(&[
-            (
-                "PATH",
-                Some(format!(
-                    "{}:{}",
-                    bin.display(),
-                    std::env::var("PATH").unwrap_or_default()
-                )),
-            ),
-            ("HOME", Some(home.display().to_string())),
-            ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
-        ]);
+            let _runtime = crate::contract_test_support::EnvGuard::set_many(&[
+                (
+                    "PATH",
+                    Some(format!(
+                        "{}:{}",
+                        bin.display(),
+                        std::env::var("PATH").unwrap_or_default()
+                    )),
+                ),
+                ("HOME", Some(home.display().to_string())),
+                ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
+            ]);
 
-        let mut operation = DetachedOperationState::default();
-        let prepared = prepare_container_up(&root, Some("web"), false, true, &mut operation);
+            let mut operation = DetachedOperationState::default();
+            let prepared = prepare_container_up(&root, Some("web"), false, true, &mut operation);
 
-        let plan = prepared.expect("container up prepares");
-        let objects = root.join(".effigy/state/objects");
-        let published = fs::read_dir(&objects)
-            .map(|entries| entries.filter_map(Result::ok).count())
-            .unwrap_or(0);
-        assert_eq!(
-            published, 1,
-            "one `up` publishes one generation: {objects:?}"
-        );
-        let calls = fs::read_to_string(&log).unwrap_or_default();
-        assert!(
-            !calls.lines().any(|call| call.contains("compose")),
-            "preparation runs no apply: {calls}"
-        );
-        assert!(plan.workspace_mount_decisions.is_empty());
-    }
-
-    #[test]
-    fn container_up_preparation_waits_for_environment_before_runtime_discovery() {
-        crate::contract_test_support::assert_waits_for_path_mutator(|boundary| {
-            boundary();
-            container_up_preparation_renders_once_and_runs_no_apply();
+            let plan = prepared.expect("container up prepares");
+            let objects = root.join(".effigy/state/objects");
+            let published = fs::read_dir(&objects)
+                .map(|entries| entries.filter_map(Result::ok).count())
+                .unwrap_or(0);
+            assert_eq!(
+                published, 1,
+                "one `up` publishes one generation: {objects:?}"
+            );
+            let calls = fs::read_to_string(&log).unwrap_or_default();
+            assert!(
+                !calls.lines().any(|call| call.contains("compose")),
+                "preparation runs no apply: {calls}"
+            );
+            assert!(plan.workspace_mount_decisions.is_empty());
         });
     }
 
@@ -2930,9 +2915,9 @@ primary_service = "app"
             true,
             true,
             false,
-            |_| Ok(Vec::new()),
-            |_, _, _| Ok(()),
-            |_, _, effect| effect(),
+            |_| panic!("conflicting flags must not reconcile shared services"),
+            |_, _, _| panic!("conflicting flags must not apply"),
+            |_, _, _| panic!("conflicting flags must not enter a transition"),
         )
         .expect_err("should fail");
         assert!(error
@@ -3026,34 +3011,31 @@ primary_service = "app"
     fn attached_gateway_registration_failure_still_tears_scope_down() {
         let (temp, _lease_home) = isolated_lease_home();
         let policy = prepared_marker_policy(temp.path());
-        let cleaned = std::cell::Cell::new(false);
-        let error = super::IntegrationOutcomePolicy::Attached.failure(
-            &policy,
-            RunnerError::task_invocation("gateway registration failed"),
-            || {
-                cleaned.set(true);
-                Ok(())
-            },
-        );
-
-        assert!(cleaned.get(), "attached bring-up keeps its cleanup path");
-        assert_eq!(error.to_string(), "gateway registration failed");
-    }
-
-    #[test]
-    fn attached_gateway_registration_failure_reports_cleanup_failure() {
-        let (temp, _lease_home) = isolated_lease_home();
-        let policy = prepared_marker_policy(temp.path());
-        let error = super::IntegrationOutcomePolicy::Attached.failure(
-            &policy,
-            RunnerError::task_invocation("gateway registration failed"),
-            || Err(RunnerError::task_invocation("docker compose down failed")),
-        );
-
-        assert_eq!(
-            error.to_string(),
-            "gateway registration failed\ncontainer up cleanup also failed: docker compose down failed"
-        );
+        for cleanup_fails in [false, true] {
+            let cleaned = std::cell::Cell::new(0);
+            let error = super::IntegrationOutcomePolicy::Attached.failure(
+                &policy,
+                RunnerError::task_invocation("gateway registration failed"),
+                || {
+                    cleaned.set(cleaned.get() + 1);
+                    if cleanup_fails {
+                        Err(RunnerError::task_invocation("docker compose down failed"))
+                    } else {
+                        Ok(())
+                    }
+                },
+            );
+            assert_eq!(cleaned.get(), 1);
+            assert_eq!(
+                error.to_string(),
+                if cleanup_fails {
+                    "gateway registration failed
+container up cleanup also failed: docker compose down failed"
+                } else {
+                    "gateway registration failed"
+                }
+            );
+        }
     }
 
     #[test]
@@ -3197,36 +3179,26 @@ primary_service = "app"
 
     #[test]
     fn global_container_down_is_one_stop_transition_per_environment() {
-        let fixture = FakeDownFixture::new();
-        let policy = fixture.policy();
-
-        run_container_down_command(None, None, true, false).expect("global down succeeds");
-
-        fixture.assert_stopped(&policy);
-        assert!(
-            fixture.docker_log().contains("compose"),
-            "the fake stack was actually torn down: {}",
-            fixture.docker_log()
-        );
-        assert_eq!(policy.project_name, fixture.project);
-    }
-
-    #[test]
-    fn cwd_scoped_container_down_is_one_stop_transition() {
-        let fixture = FakeDownFixture::new();
-        let policy = fixture.policy();
-
-        crate::contract_test_support::with_cwd(&fixture.parent, || {
-            run_container_down_command(None, None, false, false)
-        })
-        .expect("cwd-scoped down succeeds");
-
-        fixture.assert_stopped(&policy);
-        assert!(
-            fixture.docker_log().contains("compose"),
-            "the fake stack was actually torn down: {}",
-            fixture.docker_log()
-        );
+        for global in [true, false] {
+            let fixture = FakeDownFixture::new();
+            let policy = fixture.policy();
+            crate::contract_test_support::with_cwd(&fixture.parent, || {
+                run_container_down_command(None, None, global, false)
+            })
+            .expect("down succeeds");
+            fixture.assert_stopped(&policy);
+            let log = fixture.docker_log();
+            let down = log
+                .lines()
+                .filter(|line| line.split_whitespace().any(|arg| arg == "down"))
+                .collect::<Vec<_>>();
+            assert_eq!(down.len(), 1, "global={global}: {log}");
+            assert!(
+                down[0].contains(&policy.project_name),
+                "global={global}: {log}"
+            );
+            assert_eq!(policy.project_name, fixture.project);
+        }
     }
 
     /// Two catalog-driven environments, `dev` and `hybrid` (which declares
@@ -3360,6 +3332,15 @@ catalog = "postgres"
             !log.contains(" down -v"),
             "the handover never removes volumes: {log}"
         );
+        let downs = log
+            .lines()
+            .filter(|line| line.split_whitespace().any(|arg| arg == "down"))
+            .collect::<Vec<_>>();
+        assert_eq!(downs.len(), 1, "one peer environment transition: {log}");
+        assert!(
+            !downs[0].split_whitespace().any(|arg| arg == "-v"),
+            "peer volumes stay: {log}"
+        );
     }
 
     #[test]
@@ -3386,6 +3367,15 @@ catalog = "postgres"
         assert!(
             log.contains("-p acowtancy-hybrid") && log.contains(" down"),
             "the borrower environment comes down whole in its own project: {log}"
+        );
+        let downs = log
+            .lines()
+            .filter(|line| line.split_whitespace().any(|arg| arg == "down"))
+            .collect::<Vec<_>>();
+        assert_eq!(downs.len(), 1, "one peer environment transition: {log}");
+        assert!(
+            !downs[0].split_whitespace().any(|arg| arg == "-v"),
+            "peer volumes stay: {log}"
         );
     }
 
@@ -3431,7 +3421,8 @@ catalog = "postgres"
         let log = fixture.docker_log();
         assert!(notes.is_empty(), "no handover line without a running peer");
         assert!(
-            !log.contains(" down "),
+            !log.lines()
+                .any(|line| line.split_whitespace().any(|arg| arg == "down")),
             "no teardown runs for an already-stopped peer: {log}"
         );
         assert!(
@@ -3629,12 +3620,20 @@ catalog = "postgres"
             .expect("the failed start's cleanup succeeds");
 
         let log = fixture.docker_log();
-        assert!(
-            fixture
-                .compose_invocations()
+        let calls = fixture.compose_invocations();
+        assert_eq!(
+            calls
                 .iter()
-                .any(|line| line.contains(" down")),
-            "the cleanup stopped the stack: {log}"
+                .filter(|line| line.split_whitespace().any(|arg| arg == "down"))
+                .count(),
+            1,
+            "{log}"
+        );
+        assert!(
+            calls
+                .iter()
+                .all(|line| !line.split_whitespace().any(|arg| arg == "up")),
+            "{log}"
         );
     }
 

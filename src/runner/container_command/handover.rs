@@ -978,6 +978,13 @@ esac
             !log.contains(" down -v"),
             "the handover keeps volumes: {log}"
         );
+        assert_eq!(
+            log.lines()
+                .filter(|line| line.split_whitespace().any(|arg| arg == "down"))
+                .count(),
+            1,
+            "{log}"
+        );
     }
 
     #[test]

@@ -397,9 +397,17 @@ esac
             _ => false,
         };
         if !success {
-            let text = prepared
-                .expect_err("unproved successor cannot reach publication")
-                .to_string();
+            let error = prepared.expect_err("unproved successor cannot reach publication");
+            let text = if matches!(case, Case::WrongRun) {
+                refused_reason(error)
+            } else {
+                unavailable_reason(error)
+            };
+            assert_eq!(
+                external.guest_calls.get(),
+                0,
+                "refused creator evidence opens no guest"
+            );
             match case {
                 Case::WrongRun => {
                     assert!(text.contains("not created by this activation"), "{text}")

@@ -151,18 +151,43 @@ fn published_rows(
 
 #[test]
 fn resolves_gateway_route_from_the_published_host_port() {
-    let policy = test_policy();
-    let rows = published_rows(&policy, &[(41001, 80)], None);
-
-    let routes = resolve_gateway_routes_against_rows(Path::new("/tmp/repo"), &policy, &rows)
-        .expect("routes")
-        .expect("a published port resolves the route");
-    let route = routes.first().expect("some route");
-    assert_eq!(route.domain, "clientname.test");
-    assert_eq!(route.target.as_deref(), Some("127.0.0.1:41001"));
-    assert_eq!(route.dns_ip, None);
-    assert!(route.tls);
-    assert_eq!(route.service, None);
+    for (label, explicit, service, bindings, expected) in [
+        ("declared", true, None, vec![80], 41001),
+        ("ephemeral", false, None, vec![80], 41001),
+        (
+            "service-specific ephemeral",
+            false,
+            Some("web"),
+            vec![80, 9001],
+            41002,
+        ),
+    ] {
+        let mut policy = test_policy();
+        policy.ports_declared_explicitly = explicit;
+        policy.declared_ports = bindings
+            .iter()
+            .map(|port| format!("{}:{port}", if explicit { 8080 } else { 0 }))
+            .collect();
+        policy.dns_routes[0].service = service.map(str::to_owned);
+        let mut rows = published_rows(&policy, &[(41001, 80)], service.map(|_| "admin"));
+        if service.is_some() {
+            rows.extend(published_rows(&policy, &[(41002, 80)], service));
+        }
+        let routes = resolve_gateway_routes_against_rows(Path::new("/tmp/repo"), &policy, &rows)
+            .expect(label)
+            .expect("published");
+        assert_eq!(routes.len(), 1, "{label}");
+        let route = &routes[0];
+        assert_eq!(route.domain, "clientname.test", "{label}");
+        assert_eq!(
+            route.target,
+            Some(format!("127.0.0.1:{expected}")),
+            "{label}"
+        );
+        assert_eq!(route.dns_ip, None, "{label}");
+        assert!(route.tls, "{label}");
+        assert_eq!(route.service.as_deref(), service, "{label}");
+    }
 }
 
 #[test]
@@ -416,19 +441,38 @@ fn registered_gateway_routes_match_project_requires_exact_project_owned_routes()
     )
     .expect("registered routes should match"));
 
-    table.upsert(effigy_gateway::routes::Route {
-        project: other_repo_root.display().to_string(),
-        ..table
-            .lookup(&desired.domain)
-            .expect("existing route")
-            .clone()
-    });
-    assert!(!registered_gateway_routes_match_project(
-        &table,
-        &repo_root,
-        std::slice::from_ref(&desired)
-    )
-    .expect("mismatched project should fail"));
+    let original = table.lookup(&desired.domain).unwrap().clone();
+    for field in [
+        "project",
+        "source",
+        "target",
+        "dns_ip",
+        "tcp_port",
+        "tcp_target",
+        "tls",
+    ] {
+        let mut changed = original.clone();
+        match field {
+            "project" => changed.project = other_repo_root.display().to_string(),
+            "source" => changed.source = RouteSource::Manual,
+            "target" => changed.target = Some("127.0.0.1:1".into()),
+            "dns_ip" => changed.dns_ip = Some(std::net::Ipv4Addr::LOCALHOST),
+            "tcp_port" => changed.tcp_port = Some(5432),
+            "tcp_target" => changed.tcp_target = Some("127.0.0.1:5432".into()),
+            "tls" => changed.tls = !changed.tls,
+            _ => unreachable!(),
+        }
+        table.upsert(changed);
+        assert!(
+            !registered_gateway_routes_match_project(
+                &table,
+                &repo_root,
+                std::slice::from_ref(&desired)
+            )
+            .expect("compare routes"),
+            "{field}"
+        );
+    }
 }
 
 #[test]
@@ -476,6 +520,11 @@ fn prune_stale_container_routes_removes_old_domains_for_same_project() {
 
     let table = RouteTable::load(&route_table_path).expect("load pruned route table");
     assert!(table.lookup("db.legacy.test").is_none());
+    let current = table
+        .lookup("db.contact-patch.legacy.test")
+        .expect("replacement route persists");
+    assert_eq!(current.project, repo_root.display().to_string());
+    assert_eq!(current.tcp_target.as_deref(), Some("127.0.0.1:21306"));
 }
 
 #[test]
@@ -518,6 +567,12 @@ fn validates_gateway_route_against_matching_runtime_port() {
 
     validate_gateway_routes_against_rows(&repo_root, &policy, &routes, &rows)
         .expect("matching published port should validate");
+    let mut wrong = routes.clone();
+    wrong[0].target = Some("127.0.0.1:1".into());
+    assert!(matches!(
+        validate_gateway_routes_against_rows(&repo_root, &policy, &wrong, &rows),
+        Err(RunnerError::GatewayRuntimeTarget { .. })
+    ));
 }
 
 #[test]
@@ -548,7 +603,12 @@ fn gateway_readiness_waits_for_declared_service_ports_before_returning_rows() {
     .expect("published service ports should eventually become ready");
 
     assert_eq!(calls, 2);
-    assert_eq!(rows.len(), 2);
+    assert_eq!(
+        rows.iter()
+            .map(|row| row.container_name.as_str())
+            .collect::<Vec<_>>(),
+        ["demo-web-dev-app-1", "demo-web-dev-db-1"]
+    );
 }
 
 /// One observed gateway-port wait, as a stable string for assertions.
@@ -608,7 +668,12 @@ fn gateway_readiness_reports_a_blocked_poll_then_the_ready_one() {
         },
     )
     .expect("published service ports become ready");
-    assert_eq!(rows.len(), 2);
+    assert_eq!(
+        rows.iter()
+            .map(|row| row.container_name.as_str())
+            .collect::<Vec<_>>(),
+        ["demo-web-dev-app-1", "demo-web-dev-db-1"]
+    );
     assert_eq!(observed[0], "reading 1", "{observed:?}");
     assert!(
         observed[1].starts_with("blocked 1: "),
@@ -652,7 +717,14 @@ fn route_registration_reports_its_post_poll_stages() {
             },
         )
         .expect("published ports register their declared routes");
-        assert!(!routes.is_empty());
+        assert!(registered_gateway_routes_match_project(
+            &RouteTable::load(&route_table_path).expect("persisted routes"),
+            &policy.repo_root,
+            &routes
+        )
+        .expect("owned exact routes"));
+        assert!(routes.iter().any(|route| route.domain == "clientname.test"
+            && route.target.as_deref() == Some("127.0.0.1:8080")));
         assert_eq!(certificates, ["clientname.test"]);
         assert_eq!(
             observed,
@@ -701,6 +773,9 @@ fn gateway_readiness_reports_each_poll_and_its_blocker() {
         },
     )
     .expect_err("ports that never publish are a timeout");
+    assert!(
+        matches!(error, RunnerError::GatewayRuntimeTarget { ref phase, .. } if phase == "readiness")
+    );
 
     assert!(
         waits.len() >= 2,
@@ -746,6 +821,9 @@ fn gateway_readiness_reports_a_declared_service_exit() {
         |_| {},
     )
     .expect_err("an exited declared service must fail readiness");
+    assert!(
+        matches!(error, RunnerError::GatewayRuntimeTarget { ref phase, .. } if phase == "readiness")
+    );
 
     let detail = error.to_string();
     assert!(detail.contains("service `app`"), "got: {detail}");
@@ -806,6 +884,9 @@ fn gateway_readiness_permanent_port_failure_is_bounded_and_diagnostic() {
         |_| {},
     )
     .expect_err("missing published ports must time out");
+    assert!(
+        matches!(error, RunnerError::GatewayRuntimeTarget { ref phase, .. } if phase == "readiness")
+    );
     let elapsed = started.elapsed();
 
     assert!(elapsed < std::time::Duration::from_millis(250));
@@ -829,6 +910,12 @@ fn validates_gateway_route_against_matching_runtime_service_when_declared() {
 
     validate_gateway_routes_against_rows(&repo_root, &policy, &routes, &rows)
         .expect("matching service should validate");
+    let mut wrong = routes.clone();
+    wrong[0].target = Some("127.0.0.1:1".into());
+    assert!(matches!(
+        validate_gateway_routes_against_rows(&repo_root, &policy, &wrong, &rows),
+        Err(RunnerError::GatewayRuntimeTarget { .. })
+    ));
 }
 
 #[test]
@@ -888,36 +975,6 @@ fn listener_command_runtime_detection_is_narrow() {
     assert!(listener_command_looks_runtime_managed("docker-proxy"));
     assert!(listener_command_looks_runtime_managed("colima"));
     assert!(!listener_command_looks_runtime_managed("Python"));
-}
-
-#[test]
-fn resolves_gateway_routes_from_runtime_ephemeral_host_port() {
-    let mut policy = test_policy();
-    policy.ports_declared_explicitly = false;
-    policy.declared_ports = vec!["0:80".to_owned()];
-    let repo_root = PathBuf::from("/tmp/repo");
-    let rows = published_rows(&policy, &[(41001, 80)], None);
-
-    let routes = resolve_gateway_routes_against_rows(&repo_root, &policy, &rows)
-        .expect("routes")
-        .expect("published");
-    assert_eq!(routes[0].target.as_deref(), Some("127.0.0.1:41001"));
-}
-
-#[test]
-fn resolves_gateway_routes_from_runtime_service_specific_ephemeral_host_port() {
-    let mut policy = test_policy();
-    policy.ports_declared_explicitly = false;
-    policy.declared_ports = vec!["0:80".to_owned(), "0:9001".to_owned()];
-    policy.dns_routes[0].service = Some("web".to_owned());
-    let repo_root = PathBuf::from("/tmp/repo");
-    let mut rows = published_rows(&policy, &[(41001, 80)], Some("admin"));
-    rows.extend(published_rows(&policy, &[(41002, 80)], Some("web")));
-
-    let routes = resolve_gateway_routes_against_rows(&repo_root, &policy, &rows)
-        .expect("routes")
-        .expect("published");
-    assert_eq!(routes[0].target.as_deref(), Some("127.0.0.1:41002"));
 }
 
 #[test]
@@ -1160,6 +1217,8 @@ fn expected_alias_route_counts_drop_domains_shadowed_by_explicit_dns_routes() {
         5432,
         5432,
     )];
+    assert_eq!(expected_project_alias_route_count(&policy), 1);
+    assert_eq!(expected_shared_service_alias_route_count(&policy, &[]), 1);
     policy
         .dns_routes
         .push(effigy_containers::EffectiveDnsRoute {
@@ -1201,6 +1260,12 @@ fn explicit_dns_routes_win_over_derived_service_alias_domains() {
             resolve_gateway_service_alias_routes(Path::new("/tmp/repo"), &policy, true, None)
                 .expect("service alias routes");
         assert!(routes.is_empty());
+        policy.dns_routes.pop();
+        let unshadowed =
+            resolve_gateway_service_alias_routes(Path::new("/tmp/repo"), &policy, true, None)
+                .expect("unshadowed alias");
+        assert_eq!(unshadowed.len(), 1);
+        assert_eq!(unshadowed[0].domain, "postgres.clientname.test");
     });
 }
 
@@ -1317,6 +1382,12 @@ fn explicit_dns_routes_win_over_derived_shared_service_alias_domains() {
         )
         .expect("shared routes");
         assert!(routes.is_empty());
+        policy.dns_routes.pop();
+        let unshadowed =
+            resolve_gateway_shared_service_alias_routes(Path::new("/tmp/repo"), &policy, true, &[])
+                .expect("unshadowed alias");
+        assert_eq!(unshadowed.len(), 1);
+        assert_eq!(unshadowed[0].domain, "postgres.clientname.test");
     });
 }
 
@@ -1661,66 +1732,33 @@ fn rejects_tcp_alias_bind_tuple_collision_with_different_upstream() {
     )
     .expect("seed conflicting route");
 
-    let error = validate_gateway_tcp_alias_bindings(
-        &route_table_path,
-        &repo_root,
-        &[RegisteredGatewayRoute {
-            domain: "postgres.clientname.test".to_owned(),
-            target: None,
-            dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, 1)),
-            tcp_port: Some(5432),
-            tcp_target: Some("127.0.0.1:22432".to_owned()),
-            tls: false,
-            service: Some("db".to_owned()),
-            external_target: false,
-        }],
-    )
-    .expect_err("conflicting bind tuple should fail");
-
-    assert!(error
-        .to_string()
-        .contains("raw TCP listeners cannot dispatch by hostname"));
-}
-
-#[test]
-fn allows_tcp_alias_bind_tuple_reuse_when_upstream_matches() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let route_table_path = dir.path().join("routes.json");
-    let repo_root = dir.path().join("repo");
-    std::fs::create_dir_all(&repo_root).expect("mkdir repo");
-    let other_checkout = dir.path().join("other");
-    std::fs::create_dir_all(&other_checkout).expect("mkdir other checkout");
-
-    register_route(
-        &route_table_path,
-        &RouteRegistration {
-            domain: "postgres.app1.test".to_owned(),
-            target: None,
-            dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, 1)),
-            tcp_port: Some(5432),
-            tcp_target: Some("127.0.0.1:22132".to_owned()),
-            tls: false,
-            project_path: other_checkout.display().to_string(),
-            source: RouteSource::Container,
-        },
-    )
-    .expect("seed reusable route");
-
-    validate_gateway_tcp_alias_bindings(
-        &route_table_path,
-        &repo_root,
-        &[RegisteredGatewayRoute {
-            domain: "postgres.app2.test".to_owned(),
-            target: None,
-            dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, 1)),
-            tcp_port: Some(5432),
-            tcp_target: Some("127.0.0.1:22132".to_owned()),
-            tls: false,
-            service: Some("db".to_owned()),
-            external_target: false,
-        }],
-    )
-    .expect("matching upstream should be reusable");
+    for (label, upstream, accepts) in [
+        ("same upstream", "127.0.0.1:22132", true),
+        ("different upstream", "127.0.0.1:22432", false),
+    ] {
+        let result = validate_gateway_tcp_alias_bindings(
+            &route_table_path,
+            &repo_root,
+            &[RegisteredGatewayRoute {
+                domain: "postgres.clientname.test".into(),
+                target: None,
+                dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, 1)),
+                tcp_port: Some(5432),
+                tcp_target: Some(upstream.into()),
+                tls: false,
+                service: Some("db".into()),
+                external_target: false,
+            }],
+        );
+        if accepts {
+            result.expect(label);
+        } else {
+            let error = result.expect_err(label);
+            assert!(error
+                .to_string()
+                .contains("raw TCP listeners cannot dispatch by hostname"));
+        }
+    }
 }
 
 #[test]
@@ -1805,48 +1843,25 @@ fn service_alias_claims_use_the_inferred_apex_not_the_front_route() {
         },
     ];
 
-    let claims = declared_route_claims(&policy);
-    assert!(
-        claims
-            .iter()
-            .any(|claim| claim.domain == "postgres.acme.test"),
-        "the alias claim uses the shallowest route host: {claims:?}"
-    );
-    assert!(
-        !claims
-            .iter()
-            .any(|claim| claim.domain == "postgres.s3.acme.test"),
-        "the front route is not the apex: {claims:?}"
-    );
-}
-
-#[test]
-fn a_declared_base_domain_wins_for_service_alias_claims() {
-    let mut policy = test_policy();
-    policy.dns_domain = Some("s3.acme.test".to_owned());
-    policy.dns_base_domain = Some("acme.test".to_owned());
-    policy.dns_routes = vec![effigy_containers::EffectiveDnsRoute {
-        domain: "s3.acme.test".to_owned(),
-        declared_domain: "s3.acme.test".to_owned(),
-        tls: true,
-        port: None,
-        service: None,
-        target_host: None,
-    }];
-
-    let claims = declared_route_claims(&policy);
-    assert!(
-        claims
-            .iter()
-            .any(|claim| claim.domain == "postgres.acme.test"),
-        "a declared apex is never inferred over: {claims:?}"
-    );
-    assert!(
-        !claims
-            .iter()
-            .any(|claim| claim.domain == "postgres.s3.acme.test"),
-        "{claims:?}"
-    );
+    for declared in [false, true] {
+        if declared {
+            policy.dns_base_domain = Some("acme.test".into());
+            policy.dns_routes.truncate(1);
+        }
+        let claims = declared_route_claims(&policy);
+        assert!(
+            claims
+                .iter()
+                .any(|claim| claim.domain == "postgres.acme.test"),
+            "the alias claim uses the shallowest route host: {claims:?}"
+        );
+        assert!(
+            !claims
+                .iter()
+                .any(|claim| claim.domain == "postgres.s3.acme.test"),
+            "the front route is not the apex: {claims:?}"
+        );
+    }
 }
 
 /// `container up` for a stopped machine gateway, end to end through the

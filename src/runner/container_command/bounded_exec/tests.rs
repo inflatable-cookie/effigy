@@ -996,7 +996,7 @@ fn guarded_public_entry_child() {
                 assert!(!json.contains(marker), "json error leaked {marker}");
             }
         }
-        _ => {
+        "runtime-hang" | "runtime-flood" | "workspace-hang" | "workspace-flood" => {
             let error = result.expect_err("bounded preparation must refuse");
             let details = failure_details(&error);
             let expected_phase = if mode.starts_with("runtime-") {
@@ -1019,6 +1019,7 @@ fn guarded_public_entry_child() {
                 "failed preparation must not spawn the command"
             );
         }
+        _ => panic!("unknown public fixture mode: {mode}"),
     }
 }
 
@@ -1311,10 +1312,19 @@ fn expired_public_entry_refuses_before_the_first_discovery_spawn() {
 }
 
 fn failure_details(error: &RunnerError) -> serde_json::Value {
+    assert!(
+        matches!(error, RunnerError::BoundedExecFailure { .. }),
+        "{error:?}"
+    );
     let details = error
         .json_error_details()
         .expect("bounded failure must carry json details");
-    serde_json::from_str(details).expect("parse bounded failure details")
+    let value: serde_json::Value =
+        serde_json::from_str(details).expect("parse bounded failure details");
+    assert_eq!(value["schema"], "effigy.container.bounded-exec.v1");
+    assert_eq!(value["schema_version"], 1);
+    assert_eq!(value["ok"], false);
+    value
 }
 
 fn with_fake_backend<T>(bin_dir: &Path, backend: &str, f: impl FnOnce() -> T) -> T {
@@ -1333,32 +1343,21 @@ fn with_fake_backend<T>(bin_dir: &Path, backend: &str, f: impl FnOnce() -> T) ->
 fn complete_command_returns_bounded_json_success() {
     let (_dir, bin_dir, repo) = fixture("complete");
     let policy = policy();
-    with_fake_backend(&bin_dir, "docker", || {
-        let output = run_json(&repo, &policy, "plain", &limits(30_000, 64, 64), 30_000)
-            .expect("bounded command succeeds");
-        let value: serde_json::Value = serde_json::from_str(&output).expect("json");
-        assert_eq!(value["schema"], "effigy.container.bounded-exec.v1");
-        assert_eq!(value["ok"], true);
-        assert_eq!(value["code"], 0);
-        assert_eq!(value["stdout"], "ok");
-        assert_eq!(value["stdout_bytes"], 2);
-        assert_eq!(value["stderr_bytes"], 0);
-        assert_eq!(value["attempts"], 1);
-        assert_eq!(value["workspace_user_fallback"], false);
-        assert_eq!(value["remote_cancellation"], "unverified");
-    });
-}
-
-#[test]
-fn docker_and_colima_backend_transport_paths_both_execute() {
-    let (_dir, bin_dir, repo) = fixture("both-backends");
-    let policy = policy();
     for backend in ["docker", "colima"] {
         with_fake_backend(&bin_dir, backend, || {
             let output = run_json(&repo, &policy, "plain", &limits(30_000, 64, 64), 30_000)
-                .unwrap_or_else(|error| panic!("{backend} backend failed: {error}"));
+                .expect("bounded command succeeds");
             let value: serde_json::Value = serde_json::from_str(&output).expect("json");
-            assert_eq!(value["ok"], true, "{backend} backend");
+            assert_eq!(value["schema"], "effigy.container.bounded-exec.v1");
+            assert!(value.get("refusal_observations").is_none());
+            assert_eq!(value["ok"], true);
+            assert_eq!(value["code"], 0);
+            assert_eq!(value["stdout"], "ok");
+            assert_eq!(value["stdout_bytes"], 2);
+            assert_eq!(value["stderr_bytes"], 0);
+            assert_eq!(value["attempts"], 1);
+            assert_eq!(value["workspace_user_fallback"], false);
+            assert_eq!(value["remote_cancellation"], "unverified");
         });
     }
 }
@@ -1443,7 +1442,12 @@ fn missing_workspace_user_falls_back_when_the_total_budget_holds() {
         assert_eq!(value["attempts"], 2);
         assert_eq!(value["workspace_user_fallback"], true);
         // The first attempt's retained stderr still counts against the total.
-        assert!(value["retained"]["stderr_bytes"].as_u64().unwrap_or(0) > 0);
+        assert_eq!(
+            value["retained"]["stderr_bytes"],
+            "unable to find user dev: no matching entries in passwd file".len()
+        );
+        assert_eq!(value["retained"]["stdout_bytes"], "root-out".len());
+        assert_eq!(value["code"], 0);
     });
 }
 
@@ -1475,61 +1479,6 @@ fn inner_nonzero_exit_is_distinct_from_a_bounds_failure() {
             assert!(!error.to_string().contains(marker));
             assert!(!details.to_string().contains(marker));
         }
-    });
-}
-
-#[test]
-fn expired_deadline_refuses_without_spawning_the_backend() {
-    let (_dir, bin_dir, repo) = fixture("expired");
-    let policy = policy();
-    let marker = repo.join("spawned");
-    {
-        let _lock = lock_test();
-        let current = std::env::var("PATH").unwrap_or_default();
-        let path = format!("{}:{}", bin_dir.display(), current);
-        let _env = EnvGuard::set_many(&[
-            ("PATH", Some(path)),
-            ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
-            ("FAKE_BOUNDED_MARKER", Some(marker.display().to_string())),
-        ]);
-        let started = Instant::now();
-        let error = run_bounded_command_with_deadline(
-            BoundedCommandRequest {
-                repo_root: &repo,
-                policy: &policy,
-                service: "app",
-                target_id: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-                working_dir: Some(Path::new("/workspace")),
-                command: "plain",
-                output_json: true,
-            },
-            &limits(30_000, 64, 64),
-            started
-                .checked_sub(Duration::from_secs(1))
-                .expect("expired deadline"),
-        )
-        .expect_err("expired deadline must refuse before spawn");
-        let details = failure_details(&error);
-        assert_eq!(details["failure"], "deadline");
-        assert_eq!(details["attempts"], 0);
-    }
-    assert!(
-        !marker.exists(),
-        "an expired deadline must not spawn the backend"
-    );
-}
-
-#[test]
-fn slow_command_hits_the_deadline_without_partial_success() {
-    let (_dir, bin_dir, repo) = fixture("slow");
-    let policy = policy();
-    with_fake_backend(&bin_dir, "docker", || {
-        let started = Instant::now();
-        let error = run_json(&repo, &policy, "sleep-30", &limits(300, 64, 64), 300)
-            .expect_err("slow command must hit the deadline");
-        assert!(started.elapsed() < Duration::from_secs(10));
-        let details = failure_details(&error);
-        assert_eq!(details["failure"], "deadline");
     });
 }
 
@@ -1576,7 +1525,9 @@ fn assert_count_semantics(count: &serde_json::Value, semantics: &str) -> u64 {
         count["semantics"], semantics,
         "count semantics must be explicit: {count}"
     );
-    count["bytes"].as_u64().unwrap_or(0)
+    count["bytes"]
+        .as_u64()
+        .expect("observation carries a numeric byte count")
 }
 
 #[test]
@@ -1611,6 +1562,7 @@ fn refusal_accounting_pre_spawn_expiry_reports_not_attempted_with_unknown_stream
         )
         .expect_err("an expired deadline refuses before any spawn");
         let details = failure_details(&error);
+        assert_eq!(details["failure"], "deadline");
         let observations = observations_of(&details);
         assert_version_and_unknown_leader(observations);
         assert_eq!(observations["spawn_disposition"], "not_attempted");
@@ -1640,50 +1592,57 @@ fn refusal_accounting_deadline_pending_streams_report_lower_bounds() {
     let (_dir, bin_dir, repo) = fixture("refusal-pending");
     let policy = policy();
     with_fake_backend(&bin_dir, "docker", || {
-        let error = run_json(&repo, &policy, "sleep-30", &limits(5_000, 64, 64), 5_000)
-            .expect_err("slow command must hit the deadline");
-        let details = failure_details(&error);
-        assert_eq!(details["failure"], "deadline");
-        let observations = observations_of(&details);
-        assert_version_and_unknown_leader(observations);
-        assert_eq!(observations["spawn_disposition"], "spawned");
-        // A pending reader is a lower bound, never a zero claim or proof of
-        // no effect; end-of-stream is not established either.
-        for stream in ["stdout", "stderr"] {
-            assert_eq!(observations[stream]["state"], "pending");
-            assert_count_semantics(
-                &observations[stream]["retained_prefix_bytes"],
-                "lower_bound",
+        for budget in [300, 5_000] {
+            let started = Instant::now();
+            let error = run_json(&repo, &policy, "sleep-30", &limits(budget, 64, 64), budget)
+                .expect_err("slow command must hit the deadline");
+            assert!(started.elapsed() < Duration::from_secs(10));
+            let details = failure_details(&error);
+            assert_eq!(details["failure"], "deadline");
+            if budget == 300 {
+                continue;
+            }
+            let observations = observations_of(&details);
+            assert_version_and_unknown_leader(observations);
+            assert_eq!(observations["spawn_disposition"], "spawned");
+            // A pending reader is a lower bound, never a zero claim or proof of
+            // no effect; end-of-stream is not established either.
+            for stream in ["stdout", "stderr"] {
+                assert_eq!(observations[stream]["state"], "pending");
+                assert_count_semantics(
+                    &observations[stream]["retained_prefix_bytes"],
+                    "lower_bound",
+                );
+                assert_count_semantics(&observations[stream]["read_bytes"], "lower_bound");
+            }
+            // Clock attribution from the original operation origin: the attempt
+            // consumed the budget, and preparation plus attempt make the whole.
+            let attempt_elapsed = observations["attempt_elapsed_ms"]
+                .as_u64()
+                .expect("attempt clock");
+            let preparation_elapsed = observations["preparation_elapsed_ms"]
+                .as_u64()
+                .expect("preparation clock");
+            let operation_elapsed = observations["operation_elapsed_ms"]
+                .as_u64()
+                .expect("operation clock");
+            assert!(
+                attempt_elapsed >= budget * 3 / 4,
+                "attempt ran to the deadline: {observations}"
             );
-            assert_count_semantics(&observations[stream]["read_bytes"], "lower_bound");
+            assert_eq!(
+                observations["remaining_budget_ms"], 0,
+                "an expired budget has no remaining time"
+            );
+            assert!(
+                preparation_elapsed.saturating_add(attempt_elapsed) <= operation_elapsed + 5,
+                "clocks must attribute one coherent operation timeline: {observations}"
+            );
+            // Completed-capture accounting stays separate and unchanged: a
+            // refused command contributes nothing to `retained`.
+            assert_eq!(details["retained"]["stdout_bytes"], 0);
+            assert_eq!(details["retained"]["stderr_bytes"], 0);
         }
-        // Clock attribution from the original operation origin: the attempt
-        // consumed the budget, and preparation plus attempt make the whole.
-        let attempt_elapsed = observations["attempt_elapsed_ms"]
-            .as_u64()
-            .expect("attempt clock");
-        let preparation_elapsed = observations["preparation_elapsed_ms"]
-            .as_u64()
-            .expect("preparation clock");
-        let operation_elapsed = observations["operation_elapsed_ms"]
-            .as_u64()
-            .expect("operation clock");
-        assert!(
-            attempt_elapsed >= 3_750,
-            "attempt ran to the deadline: {observations}"
-        );
-        assert_eq!(
-            observations["remaining_budget_ms"], 0,
-            "an expired budget has no remaining time"
-        );
-        assert!(
-            preparation_elapsed.saturating_add(attempt_elapsed) <= operation_elapsed + 5,
-            "clocks must attribute one coherent operation timeline: {observations}"
-        );
-        // Completed-capture accounting stays separate and unchanged: a
-        // refused command contributes nothing to `retained`.
-        assert_eq!(details["retained"]["stdout_bytes"], 0);
-        assert_eq!(details["retained"]["stderr_bytes"], 0);
     });
 }
 
@@ -1857,7 +1816,10 @@ fn refusal_accounting_overflow_snapshot_is_exact_for_the_failing_stream() {
         assert_eq!(observations["stdout"]["state"], "overflow");
         let retained =
             assert_count_semantics(&observations["stdout"]["retained_prefix_bytes"], "exact");
-        assert!(retained <= 4, "retention stays bounded: {observations}");
+        assert_eq!(
+            retained, 4,
+            "overflow keeps the exact capped prefix: {observations}"
+        );
         let read = assert_count_semantics(&observations["stdout"]["read_bytes"], "lower_bound");
         assert!(
             read >= retained,
@@ -1924,6 +1886,8 @@ fn refusal_accounting_success_and_inner_failures_carry_no_observation_block() {
         let output = run_json(&repo, &policy, "plain", &limits(30_000, 64, 64), 30_000)
             .expect("bounded command succeeds");
         let value: serde_json::Value = serde_json::from_str(&output).expect("json");
+        assert_eq!(value["stdout"], "ok");
+        assert_eq!(value["code"], 0);
         assert!(
             value.get("refusal_observations").is_none(),
             "a complete capture is not a refusal: {value}"
@@ -1938,6 +1902,7 @@ fn refusal_accounting_success_and_inner_failures_carry_no_observation_block() {
         .expect_err("inner nonzero exit must fail");
         let details = failure_details(&error);
         assert_eq!(details["failure"], "inner_command_failed");
+        assert_eq!(details["inner_code"], 7);
         assert!(
             details.get("refusal_observations").is_none(),
             "an inner failure is a complete in-budget capture, not a refusal: {details}"
@@ -2217,6 +2182,7 @@ mod handoff_local_tests {
         fs::create_dir_all(&home).unwrap();
         let _lock = lock_test();
         let _env = handoff_env(&bin_dir, &home);
+        let before = guest_tree(dir.path());
         let target = crate::runner::container_runtime::resolve_handoff_local_execution(
             &repo_root,
             Some("web"),
@@ -2224,6 +2190,11 @@ mod handoff_local_tests {
         )
         .unwrap()
         .unwrap();
+        assert_eq!(
+            guest_tree(dir.path()),
+            before,
+            "resolution writes no host state"
+        );
         assert_eq!(target.service, "sidecar");
         assert_eq!(target.working_dir, repo_root);
         assert!(!repo_root.join(".effigy").exists());

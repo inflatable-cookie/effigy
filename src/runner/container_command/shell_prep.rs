@@ -368,35 +368,47 @@ mod tests {
 
     #[test]
     fn non_primary_service_exec_does_not_force_primary_working_dir() {
-        let root = temp_repo("container-shell-prep", "non-primary-service-exec-no-cwd");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
+        for (service, catalog, directory, ports) in [
+            ("db", "mariadb", "/var/www/contact-patch", "13306:3306"),
+            (
+                "postgres",
+                "postgres",
+                "/workspace-root/acowtancy",
+                "15432:5432",
+            ),
+        ] {
+            let root = temp_repo("container-shell-prep", "non-primary-service-exec-no-cwd");
+            fs::write(
+                root.join("effigy.toml"),
+                format!(
+                    r#"
 [containers.web]
 primary_service = "app"
-working_dir = "/var/www/contact-patch"
+working_dir = "{directory}"
 
 [containers.web.host]
-ports = ["13306:3306"]
+ports = ["{ports}"]
 
 [containers.web.services.app]
 catalog = "php-fpm"
 
-[containers.web.services.db]
-catalog = "mariadb"
-"#,
-        )
-        .expect("write manifest");
+[containers.web.services.{service}]
+catalog = "{catalog}"
+"#
+                ),
+            )
+            .expect("write manifest");
 
-        let policy = load_container_policy(&root, Some("web")).expect("load policy");
-        let working_dir = super::resolve_container_exec_working_dir_for_service(
-            &root,
-            Some("web"),
-            &policy,
-            "db",
-        )
-        .expect("resolve working dir");
-        assert_eq!(working_dir, None);
+            let policy = load_container_policy(&root, Some("web")).expect("load policy");
+            let working_dir = super::resolve_container_exec_working_dir_for_service(
+                &root,
+                Some("web"),
+                &policy,
+                service,
+            )
+            .expect("resolve working dir");
+            assert_eq!(working_dir, None);
+        }
     }
 
     #[test]
@@ -427,40 +439,6 @@ catalog = "php-fpm"
     }
 
     #[test]
-    fn non_primary_shell_session_omits_working_dir() {
-        let root = temp_repo("container-shell-prep", "non-primary-shell-session-no-cwd");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[containers.web]
-primary_service = "app"
-working_dir = "/workspace-root/acowtancy"
-
-[containers.web.host]
-ports = ["15432:5432"]
-
-[containers.web.services.app]
-catalog = "php-fpm"
-
-[containers.web.services.postgres]
-catalog = "postgres"
-"#,
-        )
-        .expect("write manifest");
-
-        let policy = load_container_policy(&root, Some("web")).expect("load policy");
-        let working_dir = super::resolve_container_exec_working_dir_for_service(
-            &root,
-            Some("web"),
-            &policy,
-            "postgres",
-        )
-        .expect("resolve working dir");
-
-        assert_eq!(working_dir, None);
-    }
-
-    #[test]
     fn explicit_exec_working_dir_overrides_service_default() {
         let root = temp_repo("container-shell-prep", "explicit-exec-working-dir");
         fs::write(
@@ -481,92 +459,33 @@ working_dir = "/var/www/contact-patch"
         let policy = load_container_policy(&root, Some("web")).expect("load policy");
         fs::create_dir_all(root.join("db/migrations")).expect("create host cwd");
 
-        let working_dir = resolve_container_exec_working_dir_for_operation(
-            &root,
-            Some("web"),
-            &policy,
-            "app",
-            Some(&root.join("db/migrations")),
-        )
-        .expect("working dir");
-
-        assert_eq!(
-            working_dir,
-            Some(PathBuf::from("/var/www/contact-patch/db/migrations"))
-        );
-    }
-
-    #[test]
-    fn explicit_exec_working_dir_maps_nonexistent_repo_relative_subpaths() {
-        let root = temp_repo(
-            "container-shell-prep",
-            "explicit-exec-working-dir-nonexistent",
-        );
-        fs::write(
-            root.join("docker-compose.yml"),
-            "services:\n  app:\n    image: example\n",
-        )
-        .expect("write compose");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[containers.web]
-compose_file = "docker-compose.yml"
-primary_service = "app"
-working_dir = "/var/www/contact-patch"
-"#,
-        )
-        .expect("write manifest");
-        let policy = load_container_policy(&root, Some("web")).expect("load policy");
-
-        let working_dir = resolve_container_exec_working_dir_for_operation(
-            &root,
-            Some("web"),
-            &policy,
-            "app",
-            Some(&root.join("db/future-migrations")),
-        )
-        .expect("working dir");
-
-        assert_eq!(
-            working_dir,
-            Some(PathBuf::from("/var/www/contact-patch/db/future-migrations"))
-        );
-    }
-
-    #[test]
-    fn explicit_exec_working_dir_preserves_container_native_paths() {
-        let root = temp_repo(
-            "container-shell-prep",
-            "explicit-exec-working-dir-container-native",
-        );
-        fs::write(
-            root.join("docker-compose.yml"),
-            "services:\n  app:\n    image: example\n",
-        )
-        .expect("write compose");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[containers.web]
-compose_file = "docker-compose.yml"
-primary_service = "app"
-working_dir = "/var/www/contact-patch"
-"#,
-        )
-        .expect("write manifest");
-        let policy = load_container_policy(&root, Some("web")).expect("load policy");
-
-        let working_dir = resolve_container_exec_working_dir_for_operation(
-            &root,
-            Some("web"),
-            &policy,
-            "app",
-            Some(Path::new("/workspace/custom")),
-        )
-        .expect("working dir");
-
-        assert_eq!(working_dir, Some(PathBuf::from("/workspace/custom")));
+        for (label, input, expected) in [
+            (
+                "existing repo subpath",
+                root.join("db/migrations"),
+                "/var/www/contact-patch/db/migrations",
+            ),
+            (
+                "future repo subpath",
+                root.join("db/future-migrations"),
+                "/var/www/contact-patch/db/future-migrations",
+            ),
+            (
+                "container-native path",
+                PathBuf::from("/workspace/custom"),
+                "/workspace/custom",
+            ),
+        ] {
+            let working_dir = resolve_container_exec_working_dir_for_operation(
+                &root,
+                Some("web"),
+                &policy,
+                "app",
+                Some(&input),
+            )
+            .expect(label);
+            assert_eq!(working_dir.as_deref(), Some(Path::new(expected)), "{label}");
+        }
     }
 
     #[test]

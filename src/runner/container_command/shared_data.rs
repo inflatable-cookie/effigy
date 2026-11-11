@@ -934,8 +934,14 @@ shared = true
         // parse here, without executing a container.
         let missing = refusal(&binding_fixture(), &[]);
         assert!(missing.contains("`effigy container stack up`"), "{missing}");
-        effigy_cli::parse_command(["container", "stack", "up"].into_iter().map(str::to_owned))
-            .expect("the suggested shared-service up command parses");
+        let parsed =
+            effigy_cli::parse_command(["container", "stack", "up"].into_iter().map(str::to_owned))
+                .expect("the suggested shared-service up command parses");
+        assert!(
+            matches!(parsed, effigy_cli::Command::Container(effigy_cli::ContainerArgs {
+            subcommand: effigy_cli::ContainerSubcommand::Up { name: Some(ref name), .. }, ..
+        }) if name == "stack")
+        );
     }
 
     /// The complete shared render must be the bytes this declaration resolves:
@@ -1201,6 +1207,10 @@ shared = true
             },
         )
         .expect_err("unpublished render must refuse");
+        assert!(matches!(
+            error,
+            crate::runner::error::RunnerError::TaskInvocation(_)
+        ));
         assert!(error.to_string().contains("is missing"), "{error}");
         assert!(
             error.to_string().contains("to publish the shared render"),
@@ -1228,6 +1238,10 @@ shared = true
             },
         )
         .expect_err("stopped shared service must refuse");
+        assert!(matches!(
+            error,
+            crate::runner::error::RunnerError::TaskInvocation(_)
+        ));
         assert!(error.to_string().contains("is stopped"), "{error}");
         assert!(!repo.calls().contains(" exec "), "{}", repo.calls());
 
@@ -1249,6 +1263,10 @@ shared = true
             },
         )
         .expect_err("stale shared render must refuse");
+        assert!(matches!(
+            error,
+            crate::runner::error::RunnerError::TaskInvocation(_)
+        ));
         assert!(
             error.to_string().contains("not the declared render"),
             "{error}"
@@ -1289,6 +1307,10 @@ shared = true
             true,
         )
         .expect_err("a stopped shared service must refuse the public seed");
+        assert!(matches!(
+            error,
+            crate::runner::error::RunnerError::TaskInvocation(_)
+        ));
         assert!(error.to_string().contains("is stopped"), "{error}");
         let calls = repo.calls();
         assert!(
@@ -1336,6 +1358,7 @@ shared = true
         let report: serde_json::Value = serde_json::from_str(&rendered).expect("json report");
         assert_eq!(report["container"], "hybrid");
         assert_eq!(report["ok"], true);
+        assert!(!rendered.contains("secret"));
 
         let calls = repo.calls();
         let exec_calls = calls
@@ -1354,6 +1377,14 @@ shared = true
                 "the credential must travel by name: {line}"
             );
         }
+        assert!(
+            calls.contains("stdin select 1;"),
+            "hybrid seed imports its source: {calls}"
+        );
+        assert!(
+            calls.contains("DROP DATABASE IF EXISTS"),
+            "hybrid seed resets its target: {calls}"
+        );
         assert!(calls.contains("credential-env=present"), "{calls}");
         assert!(
             !calls.contains(" up ") && !calls.contains(" start "),
@@ -1462,19 +1493,31 @@ shared = true
             true,
         );
         let calls = repo.calls();
-        if let Err(error) = &result {
-            let message = error.to_string();
-            assert!(
-                !message.contains("must not start it because bringing it up would reconcile"),
-                "an environment with no shared services must not be refused: {message}"
-            );
-        }
+        let error = result.expect_err("the fake runtime never makes the local stack ready");
+        assert!(
+            !error
+                .to_string()
+                .contains("must not start it because bringing it up would reconcile"),
+            "{error}"
+        );
         // Prior behaviour: the seed's activation brings the stopped local
         // stack up. The fake runtime starts nothing, so the seed then fails at
         // readiness, which is the point: it was never refused for sharing.
         assert!(
             calls.contains(&format!("-p {} up -d", stack.project_name)),
             "the seed must activate the stopped local environment: {calls}"
+        );
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|line| line.contains(&format!("-p {} up -d", stack.project_name)))
+                .count(),
+            1,
+            "{calls}"
+        );
+        assert!(
+            !calls.contains(" exec "),
+            "unready local environment cannot seed: {calls}"
         );
     }
 
@@ -1521,6 +1564,10 @@ shared = true
             true,
         )
         .expect_err("a stopped environment must refuse instead of reconciling shared services");
+        assert!(matches!(
+            error,
+            crate::runner::error::RunnerError::TaskInvocation(_)
+        ));
         let message = error.to_string();
         assert!(message.contains("is not running"), "{message}");
         assert!(message.contains("effigy container stack up"), "{message}");
@@ -1637,6 +1684,10 @@ run = "true"
             true,
         )
         .expect_err("a routed step into another catalog must not start its shared service");
+        assert!(matches!(
+            error,
+            crate::runner::error::RunnerError::TaskInvocation(_)
+        ));
         let message = error.to_string();
         assert!(
             message.contains("must not start it because bringing it up would reconcile"),
@@ -1668,7 +1719,7 @@ run = "true"
     fn public_app_defined_seed_never_touches_an_unrelated_shared_service() {
         let _lock = lock_test();
         let manifest =
-            format!("{UNSHARED_TARGET_MANIFEST}\n[tasks.\"data:seed\"]\nrun = \"true\"\n");
+            format!("{UNSHARED_TARGET_MANIFEST}\n[tasks.\"data:seed\"]\nrun = \"printf executed > seed-ran\"\n");
         let repo = FixtureRepo::new("effigy-shared-data-unshared-app-task-", &manifest);
         repo.install_fake_runtime();
         let _env = repo.env();
@@ -1701,6 +1752,10 @@ run = "true"
             true,
         )
         .expect("the app-defined seed task runs without shared reconciliation");
+        assert_eq!(
+            fs::read_to_string(repo.root.join("seed-ran")).expect("app seed ran"),
+            "executed"
+        );
         assert_no_shared_activity("app-task", &repo, &shared, &render_before);
     }
 
@@ -1734,11 +1789,26 @@ run = "true"
             ],
         )
         .credential("MYSQL_PWD", "secret");
+        let script_path = repo.bin.join("docker");
+        let mut script = fs::read_to_string(&script_path).unwrap();
+        let mut receipt = String::from("case \"$MYSQL_PWD\" in\n");
+        for index in 0..4 {
+            receipt.push_str(&format!(
+                "secret-{index}) printf '%s\\n' \"$*\" > '{}';;\n",
+                repo.root.join(format!("credential-{index}")).display()
+            ));
+        }
+        receipt.push_str("esac\n");
+        script = script.replacen("#!/bin/sh\n", &format!("#!/bin/sh\n{receipt}"), 1);
+        repo.write_runtime(&script);
         let handles = (0..4)
-            .map(|_| {
+            .map(|index| {
                 let policy = stack.clone();
                 let binding = binding.clone();
-                let command = command.clone();
+                let mut command = command
+                    .clone()
+                    .credential("MYSQL_PWD", format!("secret-{index}"));
+                command.argv = vec!["mysql".into(), "-e".into(), format!("SELECT {index}")];
                 std::thread::spawn(move || {
                     run_shared_data_command(&policy, &binding, &command, None)
                         .expect("concurrent shared exec")
@@ -1747,6 +1817,14 @@ run = "true"
             .collect::<Vec<_>>();
         for handle in handles {
             handle.join().expect("thread");
+        }
+        for index in 0..4 {
+            let receipt = fs::read_to_string(repo.root.join(format!("credential-{index}")))
+                .expect("each private credential reached a child");
+            assert!(
+                receipt.contains(&format!("SELECT {index}")),
+                "credential crossed commands: {receipt}"
+            );
         }
         let calls = repo.calls();
         assert_eq!(
@@ -1796,6 +1874,10 @@ run = "true"
             |_, _, _, _| Ok(serde_json::Value::Null),
         )
         .expect_err("unreadable shared runtime must refuse");
+        assert!(matches!(
+            error,
+            crate::runner::error::RunnerError::TaskInvocation(_)
+        ));
         assert!(
             error.to_string().contains("cannot read the runtime"),
             "{error}"
@@ -1853,6 +1935,8 @@ database = "acowtancy"
         .expect("local dump");
         let report: serde_json::Value = serde_json::from_str(&rendered).expect("json");
         assert_eq!(report["ok"], true);
+        assert_eq!(report["dumps"][0]["service"], "mysql");
+        assert_eq!(report["dumps"][0]["path"], dump_path.display().to_string());
         assert_eq!(
             fs::read_to_string(&dump_path).expect("dump artifact"),
             "local-body\n"

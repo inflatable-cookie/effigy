@@ -1,0 +1,1 @@
+Strengthened container tests to check typed refusals, exact routing and lifecycle outcomes, secret delivery, and isolated host-file updates. Consolidated repeated fixtures while preserving process, custody, deadline and handoff checks.

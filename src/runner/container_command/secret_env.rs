@@ -535,6 +535,8 @@ catalog = "php-fpm"
         assert_eq!(runtime.env.len(), 1);
         assert_eq!(runtime.env[0].0, "DATABASE_URL");
         assert_eq!(runtime.env[0].1.expose(), "postgres://secret-value");
+        assert!(runtime.warnings.is_empty());
+        assert!(writes_runtime_secret_files(&runtime));
     }
 
     #[test]
@@ -577,10 +579,11 @@ catalog = "php-fpm"
 
     #[test]
     fn container_secret_env_forced_unlock_loads_optional_container_values() {
-        let root = temp_repo("container-secret-force-required");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
+        for present in [false, true] {
+            let root = temp_repo("container-secret-force-required");
+            fs::write(
+                root.join("effigy.toml"),
+                r#"
 [secrets]
 backend = "effigy-vault"
 
@@ -600,53 +603,38 @@ primary_service = "app"
 [containers.web.services.app]
 catalog = "php-fpm"
 "#,
-        )
-        .expect("write manifest");
-        write_test_vault(&root, "vault-passphrase", &[("api_token", "tok_secret")]);
-        let _env = ScopedEnvVar::set("EFFIGY_TEST_SECRETS_PASSPHRASE", "vault-passphrase");
+            )
+            .expect("write manifest");
+            write_test_vault(
+                &root,
+                "vault-passphrase",
+                if present {
+                    &[("api_token", "tok_secret")]
+                } else {
+                    &[]
+                },
+            );
+            let _env = ScopedEnvVar::set("EFFIGY_TEST_SECRETS_PASSPHRASE", "vault-passphrase");
 
-        let runtime = resolve_container_secret_runtime(&root, &test_runtime_files_policy(), true)
-            .expect("resolve secrets");
+            let runtime =
+                resolve_container_secret_runtime(&root, &test_runtime_files_policy(), true)
+                    .expect("resolve secrets");
 
-        assert_eq!(runtime.env.len(), 1);
-        assert_eq!(runtime.env[0].0, "API_TOKEN");
-        assert_eq!(runtime.env[0].1.expose(), "tok_secret");
-    }
-
-    #[test]
-    fn container_secret_env_forced_unlock_honors_optional_container_values() {
-        let root = temp_repo("container-secret-force-required-missing");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[secrets]
-backend = "effigy-vault"
-
-[secrets.vault]
-path = ".effigy/secrets/local.vault"
-
-[secrets.keys.api_token]
-required = false
-targets = ["containers"]
-
-[containers]
-default = "web"
-
-[containers.web]
-primary_service = "app"
-
-[containers.web.services.app]
-catalog = "php-fpm"
-"#,
-        )
-        .expect("write manifest");
-        write_test_vault(&root, "vault-passphrase", &[]);
-        let _env = ScopedEnvVar::set("EFFIGY_TEST_SECRETS_PASSPHRASE", "vault-passphrase");
-
-        let runtime = resolve_container_secret_runtime(&root, &test_runtime_files_policy(), true)
-            .expect("optional missing value should not fail");
-
-        assert!(runtime.env.is_empty());
+            assert_eq!(
+                runtime
+                    .env
+                    .iter()
+                    .map(|(key, value)| (key.as_str(), value.expose()))
+                    .collect::<Vec<_>>(),
+                if present {
+                    vec![("API_TOKEN", "tok_secret")]
+                } else {
+                    vec![]
+                }
+            );
+            assert_eq!(writes_runtime_secret_files(&runtime), present);
+            assert_eq!(runtime.warnings.is_empty(), present);
+        }
     }
 
     /// An optional-only project must still receive its values: the vault a dev
@@ -677,15 +665,18 @@ catalog = "php-fpm"
             "unexpected warnings: {}",
             runtime.warnings.join(" | ")
         );
-        assert_eq!(runtime.env.len(), 3);
-        assert!(runtime
-            .env
-            .iter()
-            .any(|(key, value)| key == "OPENAI_API_KEY" && value.expose() == "sk-dev-value"));
-        assert!(runtime
-            .env
-            .iter()
-            .any(|(key, value)| key == "RECAPTCHA_SECRET" && value.expose() == "rc-dev-value"));
+        assert_eq!(
+            runtime
+                .env
+                .iter()
+                .map(|(key, value)| (key.as_str(), value.expose()))
+                .collect::<std::collections::BTreeMap<_, _>>(),
+            std::collections::BTreeMap::from([
+                ("OPENAI_API_KEY", "sk-dev-value"),
+                ("RECAPTCHA_SECRET", "rc-dev-value"),
+                ("MAILCHIMP_API_KEY", "mc-dev-value"),
+            ])
+        );
         assert!(
             writes_runtime_secret_files(&runtime),
             "a delivered runtime must be written"
@@ -752,22 +743,26 @@ catalog = "php-fpm"
             "{}",
             runtime.warnings.join(" | ")
         );
-        assert!(runtime
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("openai_api_key")
+        for key in ["openai_api_key", "recaptcha_secret", "mailchimp_api_key"] {
+            assert!(runtime.warnings.iter().any(|warning| warning.contains(key)
                 && warning.contains("not stored in the vault")
-                && warning.contains("effigy secrets set openai_api_key")));
+                && warning.contains(&format!("effigy secrets set {key}"))));
+        }
     }
 
     #[test]
     fn container_secret_runtime_env_path_is_opt_in() {
-        let policy = test_runtime_files_policy();
+        let mut policy = test_runtime_files_policy();
 
         assert_eq!(
             container_secret_runtime_env_path(&policy).as_deref(),
             Some("/run/effigy/secrets/runtime.env")
         );
+        policy.source_secret_runtime_for_deferrals = false;
+        assert_eq!(container_secret_runtime_env_path(&policy), None);
+        policy.source_secret_runtime_for_deferrals = true;
+        policy.secret_runtime_dir = None;
+        assert_eq!(container_secret_runtime_env_path(&policy), None);
     }
 
     #[test]
