@@ -1,0 +1,1 @@
+Kernel fault fixtures now give unfaulted cleanup steps the recovery budget, preventing slow predecessor settlement from truncating the supervisor matrix. Injected faults and deliberate stuck-effect wait-outs retain their short budget; product deadlines are unchanged.

@@ -685,16 +685,6 @@ fn faults_detached_managed_run_with_environment_attachment() {
 
 #[derive(Debug)]
 struct Environment;
-/// Before delivery, holder cleanup must not spend the short injected-fault
-/// budget and truncate the scenario before its armed boundary. Once a fault
-/// has fired, keep the one-second budget used by injected cleanup.
-fn environment_cleanup(cx: &EffectContext) -> CleanupContext {
-    if crate::fault::fired() {
-        cleanup(cx)
-    } else {
-        recovery_cleanup(cx)
-    }
-}
 /// One environment transition under its own gate: permit, intent, backend.
 pub(super) fn transition(
     home: &Path,
@@ -730,7 +720,7 @@ pub(super) fn transition(
         }
         run.finish(WorkloadOutcome::Succeeded).map_err(drop)
     })();
-    let settled = run.settle(&environment_cleanup(&cx), fake);
+    let settled = run.settle(&cleanup(&cx), fake);
     match (result, settled) {
         (Ok(()), Ok(_)) => Ok(Some(fence)),
         // A transition refused while held is the correct outcome (R4).
@@ -758,7 +748,7 @@ fn held_transition(home: &Path, holder: u8, at: &Fence, refused: u8, op: &str) -
     // The concurrent transition: its permit sees the attachment.
     let _ = transition(home, refused, op, Settlement::Retain, false);
     attempt!(run, &cx, fake, run.finish(WorkloadOutcome::Succeeded));
-    run.settle(&environment_cleanup(&cx), fake).ok().map(drop)
+    run.settle(&cleanup(&cx), fake).ok().map(drop)
 }
 impl Scenario for Environment {
     fn name(&self) -> &'static str {
@@ -866,7 +856,8 @@ impl Scenario for Residue {
         let mut run = begin(&cx, &root, task(7), 30, None, vec![], &mut fake).expect("begin");
         apply(&mut run, &fake, "stuck").expect("apply");
         run.finish(WorkloadOutcome::Succeeded).expect("finish");
-        let outcome = run.settle(&cleanup(&cx), &mut fake).expect("settle");
+        let wait_out = cx.operation().cleanup(Duration::from_secs(1)).unwrap();
+        let outcome = run.settle(&wait_out, &mut fake).expect("settle");
         assert_eq!(
             outcome.cleanup(),
             crate::outcome::CleanupOutcome::Incomplete
@@ -1529,7 +1520,7 @@ fn faults_objects_reset_is_atomic_and_preserves_sibling() {
 // --- Controlled discriminators for the effigy#618 failure classes. ---
 
 /// A slow release exhausts injected cleanup before the next effect (effigy#618).
-/// Recovery and an unfaulted environment prefix must finish that same work;
+/// Recovery and an unfaulted prefix must finish that same work;
 /// otherwise a later armed boundary disappears under load (effigy#868).
 #[test]
 fn faults_recovery_budget_settles_a_slow_release_the_injected_budget_refuses() {
@@ -1548,17 +1539,17 @@ fn faults_recovery_budget_settles_a_slow_release_the_injected_budget_refuses() {
         }
         run.finish(WorkloadOutcome::Succeeded).expect("finish");
         fault::arm_point(Point::RequestBefore, Fault::Unknown);
-        if n == 73 {
+        if n == 70 || n == 73 {
             fault::point(Point::RequestBefore).expect("deliver Unknown");
             assert!(
                 fault::injected::<()>().is_some(),
                 "consume injected Unknown"
             );
         }
-        let budget = match n {
-            70 => cleanup(&cx),
-            71 => recovery_cleanup(&cx),
-            _ => environment_cleanup(&cx),
+        let budget = if n == 71 {
+            recovery_cleanup(&cx)
+        } else {
+            cleanup(&cx)
         };
         if n == 70 || n == 73 {
             assert!(budget.operation().remaining().unwrap() <= Duration::from_secs(1));
