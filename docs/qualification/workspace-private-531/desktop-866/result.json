@@ -198,7 +198,11 @@
   },
   "ruling": {
     "ask_id": "d6041dfcc335764da3f4b3448541e920158b64b71d286fc28bdf34bafe996305",
-    "decision": "Planner: preserve Discard and pins; retain CLI/backend stderr and label any read-only reproduction separately."
+    "decision": "Operator-amended held brief v2 preserves Terminal::Discard. The apply exit receipt, exact activation-caller stderr bytes, selector stderr, CLI/Compose preflight receipts and Desktop backend-window observation replace raw apply-child stderr for the original attempt. An apply failure also requires a labelled read-only reproduction; this apply exited 0. No replay or custody change is authorized or performed.",
+    "brief_version": 2,
+    "brief_sha256": "ff8cb7e59ecbb42e654436d1a7dda156ca2fb6fb5703b3f264286953ff73ec29",
+    "review_id": 5851771381,
+    "earlier_ask_role": "Earlier implementation advice; the formal held-brief amendment is the evidence-scope authority."
   },
   "bulk_evidence_hashes": {
     "session-request.json": "686859759f87aadbb2bcfb2484ec191e6467fd18555d79362d46b0f28069bc82",
@@ -209,5 +213,14 @@
     "process-audit-final.json": "137c56c814dd4d83d7363eba598f6b35e5e70b67d7512bef546ce295fe96aacf",
     "backend-observation.json": "fa3cec0aaab8056bc90235b8485a45bff44d9cef9f88294ff278e7db714d1340",
     "desktop-backend-session.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "revision_validation": {
+    "review_id": 5851771381,
+    "changed": "Documentation and evidence-scope ruling only; harness source and historical attempt records unchanged.",
+    "selector": "qa:docs",
+    "exit": 0,
+    "log": "/Volumes/Stash/scratch/effigy/d2bad9c1/desktop-866-ruling-T3ZVjkoe/qa-docs.log",
+    "log_sha256": "dbbfa38ab54ba19156b032484096498d0614a498fc3ca8a091673af7e98bdaea",
+    "native_replay": false
   }
 }

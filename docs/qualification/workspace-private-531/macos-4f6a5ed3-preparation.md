@@ -1461,3 +1461,10 @@ The [retained result and hashes](desktop-866/README.md) distinguish the empty ra
 activation CLI stderr from the apply child's intentionally unavailable Discard
 stream. There was no session retry or engine restart. Successful Desktop
 full-session exploration remains outstanding; this run gives no sealed credit.
+
+After review `5851771381`, the operator amended task #866's held brief to
+version 2: Discard remains a custody pin, and the recorded apply receipt,
+caller/selector stderr, preflight receipts and backend-window observation
+replace raw apply-child stderr. An apply failure additionally requires a
+labelled read-only reproduction; this apply exited 0. The amendment changes
+evidence acceptance for the original attempt, with no replay or custody change.

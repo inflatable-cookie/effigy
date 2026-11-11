@@ -16,10 +16,17 @@ environments. No Docker CLI copy, global config edit or context change was used.
 hashes, test/build results, failure stage and cleanup summary. The original
 apply-child stderr is unavailable because its required `Terminal::Discard`
 closes the stream before exec. The retained activation CLI stderr is empty;
-`selector-stderr.txt` preserves the entry's failure. Planner ruling
-`d6041dfc` confirmed preserving Discard and retaining CLI/backend diagnostics.
-No read-only failure reproduction was needed: apply succeeded. No matching
-Desktop lock-directory/backend lines occurred in the session window.
+`selector-stderr.txt` preserves the entry's failure. After review `5851771381`,
+the operator amended the Nucleus-held brief to version 2
+(`ff8cb7e59ecbb42e654436d1a7dda156ca2fb6fb5703b3f264286953ff73ec29`).
+It explicitly preserves Discard and replaces raw apply-child stderr with the
+apply exit receipt, exact caller stderr, selector stderr, CLI/Compose preflight
+receipts and backend-window observation. Those records describe the original
+attempt; the empty caller file is never presented as the child's stream.
+The additional read-only reproduction applies to an apply failure; apply
+succeeded here, and the later publication/selection failure is recorded
+separately. No matching Desktop lock-directory/backend lines occurred in the
+session window. This amendment authorizes no replay; none was performed.
 
 The exact retained supervisor's stop request remained pending after 30 seconds
 (`stop-refusal.json`). Its boot/PID/start identity was checked twice before
