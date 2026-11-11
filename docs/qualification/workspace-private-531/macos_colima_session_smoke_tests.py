@@ -6,6 +6,7 @@ import json
 import os
 import signal
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import unittest
@@ -239,6 +240,51 @@ class ExplorationTests(unittest.TestCase):
             thread.join(5)
         self.assertFalse(thread.is_alive())
         self.assertFalse(errors)
+
+    def test_journal_reader_recovers_wal_when_shm_is_missing(self):
+        live = self.control / 'live ?# journal.db'
+        private = self.control / 'crashed ?# copy.db'
+        with contextlib.closing(smoke.sqlite3.connect(live)) as writer:
+            writer.execute('PRAGMA journal_mode=WAL')
+            writer.execute('PRAGMA wal_autocheckpoint=0')
+            writer.execute('CREATE TABLE observations(value INTEGER)')
+            writer.execute('INSERT INTO observations VALUES (41)')
+            writer.commit()
+            self.assertTrue(Path(str(live) + '-wal').is_file())
+            shutil.copyfile(live, private)
+            shutil.copyfile(str(live) + '-wal', str(private) + '-wal')
+        self.assertFalse(Path(str(private) + '-shm').exists())
+        self.assertEqual(smoke.runtime.read_journal_rows(private,
+            'SELECT value FROM observations'), [(41,)])
+        self.assertFalse(Path(str(private) + '-shm').exists())
+
+    def test_journal_reader_snapshots_cantopen_without_sqlite_error_codes(self):
+        path = self.control / 'crashed-without-sidecars.db'
+        with contextlib.closing(smoke.sqlite3.connect(path)) as writer:
+            writer.execute('CREATE TABLE observations(value INTEGER)')
+            writer.execute('INSERT INTO observations VALUES (43)')
+            writer.commit()
+        original = smoke.sqlite3.connect
+        live = mock.MagicMock()
+        live.execute.side_effect = [None, smoke.sqlite3.OperationalError('unable to open database file')]
+        blocked_source = mock.MagicMock()
+        blocked_source.execute.side_effect = smoke.sqlite3.OperationalError('unable to open database file')
+        calls = []
+
+        def connect(target, **kwargs):
+            calls.append((target, kwargs))
+            if len(calls) == 1:
+                return live
+            if len(calls) == 2:
+                return blocked_source
+            return original(target, **kwargs)
+
+        with mock.patch.object(smoke.sqlite3, 'connect', side_effect=connect):
+            rows = smoke.runtime.read_journal_rows(path, 'SELECT value FROM observations')
+        self.assertEqual(rows, [(43,)])
+        self.assertEqual(calls[:2], [(path.as_uri() + '?mode=ro', dict(uri=True))] * 2)
+        self.assertFalse(Path(str(path) + '-wal').exists())
+        self.assertFalse(Path(str(path) + '-shm').exists())
 
     def test_journal_reader_rechecks_live_corruption_against_backup(self):
         path = self.control / 'journal.db'
