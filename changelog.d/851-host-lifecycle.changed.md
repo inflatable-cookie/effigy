@@ -1,0 +1,1 @@
+Host readiness and managed waits now use complete journal observations shared by activation, dependencies, status and panes. Missing event notifications cannot erase a wait or announce a workload that never started. Exact child generations, readiness budgets and running older supervisors retain their existing guarantees.

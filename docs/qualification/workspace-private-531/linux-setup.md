@@ -941,6 +941,43 @@ The local readiness fixtures use a two-second shared window, with ten seconds
 for the four-launch #817 reproduction under host contention; their state transition is published atomically so a reader
 cannot mistake a truncate/write interval for a terminal systemd state.
 
+### Diagnostic transport refusals (#862)
+
+The 2026-11-10 originals and installed `prlctl.8` are retained outside Queue run
+cleanup at `/Volumes/Stash/effigy-evidence/862-transport-20261110/`:
+`native-r1-smoke.log`, `native-r1b-smoke.log`, `native-summary.json`,
+`linux-evidence/` and `linux-retry-evidence/`. These are unsealed observations,
+with no qualification credit. The manual SHA-256 is the #817 value above.
+
+The failed planner run at `bddb24bf2` has three empty-stdout exit-255 attempts
+on `engine-units` (steps 026–028), all with `PrlJob_GetRetCode: Invalid argument`.
+The same occurrence recovered earlier `cgroup-limits` and `engine-packages`
+refusals. Its passing fresh-root run recovered `block-sysfs` after two failures
+(`PrlJob_GetRetCode` then `PrlJob_GetResult`). The #858 retry at `1793f455`
+failed `block-lsblk` with the same three-empty-attempt shape; its first diagnostic
+recovered three routes before the later resume unit was not found. That later
+unit failure is separate evidence: a shared cause is unknown.
+
+The harness waits for each exec before starting the next, so it does not create
+concurrent exec jobs. The retained evidence does not establish other callers'
+concurrency, a Parallels Tools restart, or host-load causality. Tools being
+installed and a successful sentinel do not prove continued session availability.
+The manual documents Tools as a prerequisite and nonzero failures, not a
+positive stable-session signal or the meaning of these particular errors.
+The supported cause is intermittent Tools-mediated exec unavailability plus a
+harness defect: a three-attempt cutoff and marker decoding of empty failures.
+
+Fixed read-only routes now use the sentinel's bounded empty-output policy
+through their caller's already-derived absolute window. Each attempt retains
+its existing timeout; retries consume the shared window and decreasing output
+budget. Neither readiness nor observation nor the occurrence deadline restarts
+or extends. Exhausted empty-output nonzero waited failures report
+`transport-unavailable`, with distinct bounded `stderr_classes` and no facts.
+Classification uses the original stderr bytes before UTF-8 replacement decoding.
+This policy does not prove whether the guest command began. Partial or duplicate
+markers, wrapper shell stderr, caps, timeout and unknown disposition still
+refuse without retry. No SSH authority or guest configuration changes are added.
+
 ### Native build, engine and complete session
 
 The complete unsealed session passed on 2026-11-10 using native binaries from

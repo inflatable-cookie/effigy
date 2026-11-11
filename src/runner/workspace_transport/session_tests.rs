@@ -412,7 +412,10 @@ fn backend_qualification(backend: Backend, dual_stack: bool) {
         assert!(effigy_kernel::workspace_channel::read_frame(&mut client).is_err());
         client.operation_timeout = Duration::from_millis(100);
         let started = Instant::now();
-        assert!(client.write_all(&vec![0; 8 << 20]).is_err());
+        let payload = vec![0; 8 << 20];
+        while client.write_all(&payload).is_ok() {
+            assert!(started.elapsed() < Duration::from_secs(2));
+        }
         assert!(started.elapsed() < Duration::from_secs(2));
         launch.abandon_owner();
         assert_eq!(launch.phase(), ListenerPhase::Stopped);

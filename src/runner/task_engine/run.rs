@@ -780,6 +780,15 @@ impl TaskRun {
         self.keyed
     }
 
+    /// Observe on this run without extending its ownership past closeout.
+    pub(in crate::runner) fn journal_handle(
+        &self,
+    ) -> Result<std::sync::Weak<Mutex<Run<'static>>>, RunnerError> {
+        self.run.as_ref().map(Arc::downgrade).ok_or_else(|| {
+            RunnerError::task_invocation("managed observations require a journal run")
+        })
+    }
+
     pub(in crate::runner) fn run_mut(
         &mut self,
     ) -> Result<MutexGuard<'_, Run<'static>>, RunnerError> {

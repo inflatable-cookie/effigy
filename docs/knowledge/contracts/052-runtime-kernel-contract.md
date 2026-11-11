@@ -1513,6 +1513,10 @@ is bounded to 500 ms; a stalled reader cannot hold cleanup indefinitely.
 Failure syncing removal of a pending record after data and extent are durable
 does not uncommit those bytes: capture reports truncation and stops further
 appends, while recovery may require handling a resurrected pending record.
+Managed front ends share one verified-output cursor for offsets, gaps, cutovers,
+UTF-8 boundaries and bounded partial lines. Host followers read through canonical
+provenance directly; text prefixes, CLI logs and pane style events adapt those
+validated ranges without reopening raw payloads.
 Managed Standard workloads opt into `Terminal::Styled`, which uses the same
 writer with a journal destination and persists merged plain output in stdout
 (the stderr log is empty). The managed supervisor's own sequence-0 pipe capture
@@ -1536,9 +1540,16 @@ plain UTF-8 without lossy repair or terminal normalization. Listener excerpts
 select the last nonempty contiguous child block without joining across owner
 messages or letting a later blank frame hide an earlier error.
 Multi-source log following keeps separate bounded partial lines and flushes
-them on closure. Pane lifecycle status comes from the owner journal and a
-listener record bound to the current run and custody nonce. Child text cannot
-forge it, and unavailable, failed, stopped or stale generations clear Ready.
+them on closure. Host activation, dependencies, status and panes read typed lifecycle and
+readiness observations from the host owner's run effects, bound to the current
+run and custody nonce. Child text cannot forge them, and unavailable, failed,
+stopped or stale generations clear Ready. New supervisors write no listener
+state file. An already-running older supervisor keeps its file reader until
+it is stopped; installing a new CLI neither dual-writes nor replaces it.
+A known host run whose journal or owner gate cannot be observed reports
+`unknown` in status; that observation never proves absence or readiness.
+The neutral ordering and wait-clock model lives in `effigy-core`; panes render
+the same entry states as the scheduler and status readers.
 
 Tom's 2026-10-30 one-time cutover ruling accepts that safe appends cannot make
 an untrusted historical prefix safe. Under the newly admitted host owner gate,
@@ -3882,9 +3893,7 @@ distinguish those addresses. The bounded `/etc/hosts` decoder accepts one distin
 when both families are present, independent of row order. Qualification and serving use the same decoder; this covers
 Desktop's paired IPv4/IPv6 `host-gateway` entries. Conflicts within either family, unspecified/multicast or malformed
 addresses, unknown aliases, and unbindable or unreachable selected addresses publish no locator. Proxy addresses are not
-assumed host-bindable. Rootless Linux and Apple Containers remain unqualified. Journalled integration steps whose frozen policy declares no
-workspace user or host/gateway integration carry no mutation to withdraw; they do not prevent cleanup settlement.
-Declared permission/host mutations and attempted route or runtime-secret mutations still require absence evidence. Q-017 still requires the three required backends
+assumed host-bindable. Rootless Linux and Apple Containers remain unqualified. Q-017 still requires the three required backends
 before v0.15; refusing safely is not backend qualification.
 
 **Actual session/publication seam — #482 (C), consuming #484.** These types exist in
@@ -4617,6 +4626,13 @@ v0.15 imports nothing (effigy#307, effigy#373).
   oracles. Each scenario uses six owned shard processes, with at most two
   scenarios active together. The driver reaps every sibling before reporting
   a failed shard, so a failure cannot orphan the rest of its proof.
+  Environment transitions and holders use the recovery fixture budget for
+  cleanup entered before fault delivery; cleanup entered after delivery keeps
+  the short injected-fault budget. This prevents an unfaulted prefix timing
+  out before a later target. Product deadlines and per-point delivery assertions
+  are unchanged. `EFFIGY_KERNEL_FAULT_SLOW_PREFIX=1` adds 1.2 seconds of
+  adapter latency in the `AppliedBefore#5 Enospc` job to reproduce prefix
+  truncation without relying on host load to cause a long disk flush.
 - Scenarios: plain task; sequence; multi-child test; detached managed run
   with an environment attachment; environment up, down and handover on the
   strict fake backend, with a concurrent attach; a `Closed` predecessor

@@ -4362,24 +4362,39 @@ fn cli_managed_headless_streams_workload_output_by_name() {
         r#"[tasks.dev]
 mode = "tui"
 concurrent = [
-  { name = "api", run = "printf 'api one\\napi two\\n'", start = 1 },
+  { name = "api", run = "printf 'api one\\n'; while [ ! -f release-api ]; do sleep 0.02; done; printf 'api two\\n'", start = 1 },
   { name = "front", run = "printf 'front one\\n'", start = 2 },
 ]
 "#,
     )
     .expect("write manifest");
-    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+    let live = home.path().join("live.log");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("--repo")
         .arg(&root)
         .args(["dev", "--headless"])
         .env("HOME", home.path())
         .env("NO_COLOR", "1")
         .stdin(Stdio::null())
-        .output()
+        .stdout(fs::File::create(&live).expect("live output"))
+        .stderr(Stdio::piped())
+        .spawn_owned()
         .expect("run headless dev");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !fs::read_to_string(&live).unwrap().contains("[api] api one") {
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "producer exited before delivery"
+        );
+        assert!(Instant::now() < deadline, "no live workload output");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(child.try_wait().unwrap().is_none());
+    fs::write(root.join("release-api"), b"release").unwrap();
+    let output = child.wait_with_output().expect("headless completion");
     let text = format!(
         "{}{}",
-        String::from_utf8_lossy(&output.stdout),
+        fs::read_to_string(&live).unwrap(),
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(output.status.success(), "{text}");

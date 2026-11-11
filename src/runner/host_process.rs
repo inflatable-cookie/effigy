@@ -4,10 +4,10 @@
 //! `EffectiveHostProcess`. Effigy runs one detached supervisor per entry.
 //! A listener process serves a reserved loopback address. The supervisor waits
 //! until that address answers its readiness request, publishes the route, and
-//! keeps it published while the address answers and the child is alive. State,
-//! logs and specs live under the checkout's runtime directory, with listener
-//! state separated by container profile. Shutdown withdraws the route before
-//! stopping the recorded child process group.
+//! keeps it published while the address answers and the child is alive. Typed
+//! lifecycle observations live on the owner's kernel run; logs stay under the
+//! checkout's runtime directory. Shutdown withdraws the route before stopping
+//! the recorded child process group.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ffi::OsString;
@@ -26,7 +26,7 @@ use effigy_containers::{
     EffectiveContainerPolicy, EffectiveHostProcess, EffectiveManagedHostListener,
     HostProcessRestart, HostProcessSignal,
 };
-use effigy_gateway::identity::{read_live_process_identity, GatewayStartIdentity};
+use effigy_gateway::identity::read_live_process_identity;
 use effigy_gateway::registration::deregister_managed_listener_route;
 use effigy_gateway::routes::{ManagedListenerRouteOwner, RouteTable};
 use nix::sys::signal::Signal;
@@ -46,13 +46,21 @@ mod waits;
 pub(in crate::runner) use kernel_run::{
     host_process_listener_state_path, host_process_log_path, host_process_status,
     owns_supervise_payload, restart_host_processes_for_container,
-    start_host_processes_for_container, stop_host_processes_for_container, CustodyStop,
+    start_host_processes_in_activation, stop_host_processes_for_container, CustodyStop,
     HostPaneIdentity, HostPaneObservation, HostProcessStopReport,
 };
 pub(in crate::runner) use waits::{
-    attributed_environment_failure, begin_environment_phase, run_host_activation, HostActivation,
-    HostWaitGraph, ReadinessOutcome,
+    attributed_environment_failure, run_host_activation, HostActivation, HostWaitGraph,
+    ReadinessOutcome,
 };
+
+#[cfg(test)]
+pub(in crate::runner) fn listener_observation_for_test(path: &Path) -> serde_json::Value {
+    serde_json::to_value(
+        kernel_run::lifecycle_at_path(path).expect("journaled listener observation"),
+    )
+    .expect("listener observation JSON")
+}
 
 const HOST_PROCESS_DIR: &str = ".effigy/runtime/host-processes";
 const HOST_PROCESS_SPEC_SCHEMA: &str = "effigy.managed.host-process-spec.v1";
@@ -148,51 +156,46 @@ struct HostProcessStopRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct HostProcessDependency {
+    #[serde(default)]
+    source: Option<kernel_run::HostLifecycleSource>,
     name: String,
     owner: String,
     state_file: PathBuf,
 }
 
-/// A host-process supervisor's event for its owning client, on the kernel's
-/// engine-event channel (`supervise::Event::Engine`). Delivery is best
-/// effort: the same fact is also in the run journal and the process log, so
-/// a lost frame costs the bring-up its latency, never the record. Both ends
-/// are the same verified binary, so the shapes carry no version history
-/// (the managed run's wire precedent).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Typed observations carried by the host owner's run effects. The wire names
+/// also decode the records of an already-running older supervisor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum HostProcessEvent {
-    /// A generation was refused or failed before any process ran, with the
-    /// spawn's own explanation as `detail`. A kernel pre-exec refusal — an
-    /// ambient value classified secret whose bytes occur in the run string,
-    /// for example — arrives here with its redacted key-only message. A
-    /// plain workload declares no readiness of its own and keeps no listener
-    /// state, so this event is the only channel that carries the failed
-    /// launch to the activation before the run settles (effigy#574).
-    LaunchFailed { process: String, detail: String },
+pub(in crate::runner) enum HostLifecycleStatus {
+    Starting,
+    Running,
+    Ready,
+    Unavailable,
+    /// Derived from the owner gate, never written as a supervisor snapshot.
+    #[serde(skip)]
+    OwnerGone,
+    Failed,
+    Stopped,
 }
 
-/// Reports a plain workload's failed launch to the owning client before the
-/// run settles (effigy#574). Every `spawn_generation` error is decided
-/// before any process ran — the kernel reaps a blocked pre-exec child — so
-/// the detail never describes a workload that existed. The activation reads
-/// this event as its launch barrier; without it a workload that never
-/// started could only settle failed behind a bring-up that reported
-/// success.
-fn report_launch_failed(session: &EngineSession, process: &str, detail: &str) {
-    if let Ok(bytes) = serde_json::to_vec(&HostProcessEvent::LaunchFailed {
-        process: process.to_owned(),
-        detail: detail.to_owned(),
-    }) {
-        session.event(bytes);
+impl HostLifecycleStatus {
+    pub(in crate::runner) fn as_str(self) -> &'static str {
+        match self {
+            Self::Starting => "starting",
+            Self::Running => "running",
+            Self::Ready => "ready",
+            Self::Unavailable | Self::OwnerGone => "unavailable",
+            Self::Failed => "failed",
+            Self::Stopped => "stopped",
+        }
     }
 }
 
-/// One supervisor's latest listener observation. Unknown fields stay readable
-/// so a record written by an earlier build is read once and rewritten without
-/// its retired identity proofs.
+/// One host supervisor's typed observation. The legacy schema remains
+/// readable for an already-running older supervisor, without rewriting it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct HostListenerState {
+struct HostLifecycleObservation {
     schema: String,
     owner: String,
     #[serde(default)]
@@ -201,17 +204,12 @@ struct HostListenerState {
     custody_nonce: Option<String>,
     runtime_generation: String,
     generation: String,
-    status: String,
+    status: HostLifecycleStatus,
     address: Option<String>,
     internal_url: Option<String>,
     public_url: Option<String>,
     route_domain: Option<String>,
     supervisor_pid: u32,
-    /// The child generation's leader, so a stop that outlives its supervisor
-    /// can still settle the group it started.
-    child_pid: Option<u32>,
-    child_boot_identity: Option<String>,
-    child_start_identity: Option<GatewayStartIdentity>,
     route_owner: Option<ManagedListenerRouteOwner>,
     /// Why the last generation failed, in one line.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -237,7 +235,6 @@ pub(in crate::runner) struct ManagedHostListenerResult {
     pub(in crate::runner) declared_route_domain: String,
     pub(in crate::runner) route_domain: String,
     pub(in crate::runner) route_tls: bool,
-    pub(in crate::runner) state_file: String,
 }
 
 /// One managed listener whose own route was withheld: the process, the route
@@ -607,6 +604,7 @@ pub(in crate::runner) fn write_private_json(
 /// previous activation of the same process keeps its own
 /// `runtime_generation`, so a stale record never satisfies the wait.
 fn wait_for_listener_activation(
+    source: Option<&kernel_run::HostLifecycleSource>,
     path: &Path,
     process_name: &str,
     runtime_generation: &str,
@@ -614,14 +612,10 @@ fn wait_for_listener_activation(
 ) -> Result<(), RunnerError> {
     let deadline = Instant::now() + timeout;
     loop {
-        if let Ok(raw) = fs::read(path) {
-            if let Ok(state) = serde_json::from_slice::<HostListenerState>(&raw) {
-                if state.schema == HOST_LISTENER_STATE_SCHEMA
-                    && state.runtime_generation == runtime_generation
-                {
-                    return Ok(());
-                }
-            }
+        if kernel_run::read_lifecycle(source, path)?
+            .is_some_and(|state| state.runtime_generation == runtime_generation)
+        {
+            return Ok(());
         }
         if Instant::now() >= deadline {
             return Err(RunnerError::task_invocation(format!(
@@ -814,7 +808,7 @@ fn listener_start_progress(
 /// What a caller's wait for one listener's published state concluded.
 enum ListenerWait {
     /// The listener published this generation's verified state.
-    Ready(Box<HostListenerState>),
+    Ready(Box<HostLifecycleObservation>),
     /// Nothing verified was published, so only this listener's own route is
     /// withheld. `budget_expired` says the enclosing activation's observation
     /// budget ended the wait rather than the listener's own readiness.
@@ -841,6 +835,7 @@ enum ListenerWait {
 /// can publish what it waits for: the entry's own tab names the probe and its
 /// elapsed time instead of a generic spinner (effigy#458).
 fn wait_for_listener_state(
+    source: Option<&kernel_run::HostLifecycleSource>,
     path: &Path,
     process_name: &str,
     owner: &str,
@@ -849,7 +844,6 @@ fn wait_for_listener_state(
     mut on_wait: impl FnMut(Instant),
 ) -> Result<ListenerWait, RunnerError> {
     let mut last_probe = None;
-    let mut next_liveness_check = Instant::now();
     let started = Instant::now();
     let mut next_progress = started + listener_progress_interval();
     let mut next_wait_report = started;
@@ -859,30 +853,15 @@ fn wait_for_listener_state(
             next_wait_report = now + Duration::from_secs(1);
             on_wait(now);
         }
-        if let Ok(metadata) = fs::symlink_metadata(path) {
-            if metadata.file_type().is_symlink() || !metadata.is_file() {
-                return Err(RunnerError::task_invocation(format!(
-                    "managed host listener state for `{process_name}` is not a regular file"
-                )));
-            }
-            let raw = fs::read(path)
-                .map_err(|error| RunnerError::task_invocation_failed_read(path, error))?;
-            let state: HostListenerState = serde_json::from_slice(&raw)
-                .map_err(|error| RunnerError::task_invocation_failed_parse(path, error))?;
-            if state.schema != HOST_LISTENER_STATE_SCHEMA {
-                return Err(RunnerError::task_invocation(format!(
-                    "managed host listener state for `{process_name}` has unsupported schema `{}`",
-                    state.schema
-                )));
-            }
+        if let Some(state) = kernel_run::read_lifecycle(source, path)? {
             if state.owner != owner {
                 return Err(RunnerError::task_invocation(format!(
                     "managed host listener state for `{process_name}` belongs to a different checkout/profile owner"
                 )));
             }
             last_probe = state.probe;
-            match state.status.as_str() {
-                "ready" => {
+            match state.status {
+                HostLifecycleStatus::Ready => {
                     let route_owner = state.route_owner.as_ref().ok_or_else(|| {
                         RunnerError::task_invocation(format!(
                             "managed host listener state for `{process_name}` is ready without a published route"
@@ -912,12 +891,18 @@ fn wait_for_listener_state(
                         return Ok(ListenerWait::Ready(Box::new(state)));
                     }
                 }
-                "stopped" => {
+                HostLifecycleStatus::Stopped => {
                     return Err(RunnerError::task_invocation(format!(
                         "managed host listener `{process_name}` was stopped before readiness"
                     )));
                 }
-                "failed" => {
+                HostLifecycleStatus::OwnerGone => {
+                    return Err(RunnerError::task_invocation(format!(
+                        "managed host listener `{process_name}` stopped starting: {}; its log names what it did",
+                        state.diagnostic.as_deref().unwrap_or("its supervisor exited before publishing readiness")
+                    )));
+                }
+                HostLifecycleStatus::Failed => {
                     return Ok(ListenerWait::Withheld {
                         diagnostic: state.diagnostic.clone().unwrap_or_default(),
                         observed_status: state.observed_status,
@@ -936,39 +921,6 @@ fn wait_for_listener_state(
                             &path.with_file_name(format!("{}.log", sanitize(process_name))),
                             last_probe,
                         ));
-                    }
-                    if Instant::now() >= next_liveness_check {
-                        next_liveness_check = Instant::now() + Duration::from_secs(1);
-                        if let Err(error) = read_live_process_identity(state.supervisor_pid) {
-                            // Only a vanished supervisor proves nothing more
-                            // will be published. An identity this user cannot
-                            // read leaves the wait running.
-                            if error.kind() == std::io::ErrorKind::NotFound
-                                || error.raw_os_error() == Some(libc::ESRCH)
-                            {
-                                // The supervisor may have written its final
-                                // `failed` state just before it exited. That
-                                // diagnostic is the answer, not the vanished
-                                // supervisor's bare exit.
-                                if let Some(final_state) = fs::read(path)
-                                    .ok()
-                                    .and_then(|raw| {
-                                        serde_json::from_slice::<HostListenerState>(&raw).ok()
-                                    })
-                                    .filter(|final_state| final_state.status == "failed")
-                                {
-                                    return Ok(ListenerWait::Withheld {
-                                        diagnostic: final_state.diagnostic.unwrap_or_default(),
-                                        observed_status: final_state.observed_status,
-                                        budget_expired: false,
-                                    });
-                                }
-                                return Err(RunnerError::task_invocation(format!(
-                                    "managed host listener `{process_name}` stopped starting: its supervisor (pid {}) exited before publishing readiness; its log names what it did",
-                                    state.supervisor_pid
-                                )));
-                            }
-                        }
                     }
                 }
             }
@@ -990,7 +942,7 @@ fn wait_for_listener_state(
 
 /// What one dependency's published listener record says right now.
 enum DependencyRecord {
-    Present(Box<HostListenerState>),
+    Present(Box<HostLifecycleObservation>),
     /// The record is gone: the dependency was stopped or never started.
     Missing,
     /// The record is there but cannot be read as this owner's state.
@@ -998,24 +950,18 @@ enum DependencyRecord {
 }
 
 fn read_dependency_record(dependency: &HostProcessDependency) -> DependencyRecord {
-    match fs::read(&dependency.state_file) {
-        Ok(raw) => match serde_json::from_slice::<HostListenerState>(&raw) {
-            Ok(state)
-                if state.schema == HOST_LISTENER_STATE_SCHEMA
-                    && state.owner == dependency.owner =>
-            {
-                DependencyRecord::Present(Box::new(state))
-            }
-            Ok(_) | Err(_) => DependencyRecord::Unreadable,
-        },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => DependencyRecord::Missing,
-        Err(_) => DependencyRecord::Unreadable,
+    match kernel_run::read_lifecycle(dependency.source.as_ref(), &dependency.state_file) {
+        Ok(Some(state)) if state.owner == dependency.owner => {
+            DependencyRecord::Present(Box::new(state))
+        }
+        Ok(None) => DependencyRecord::Missing,
+        _ => DependencyRecord::Unreadable,
     }
 }
 
 fn managed_route_matches(
     route_table_path: &Path,
-    state: &HostListenerState,
+    state: &HostLifecycleObservation,
     stable_owner: &str,
 ) -> Result<bool, RunnerError> {
     let Some(owner) = state.route_owner.as_ref() else {
@@ -1038,7 +984,10 @@ fn managed_route_matches(
 type DependencyEnvironment = (BTreeMap<String, String>, Vec<String>);
 
 /// A dependent's view of one dependency generation.
-fn dependency_generation(dependency: &HostProcessDependency, state: &HostListenerState) -> String {
+fn dependency_generation(
+    dependency: &HostProcessDependency,
+    state: &HostLifecycleObservation,
+) -> String {
     format!(
         "{}:{}:{}",
         dependency.name, state.runtime_generation, state.generation
@@ -1047,7 +996,7 @@ fn dependency_generation(dependency: &HostProcessDependency, state: &HostListene
 
 fn dependency_environment(
     spec: &HostProcessRuntimeSpec,
-    states: &[HostListenerState],
+    states: &[HostLifecycleObservation],
 ) -> DependencyEnvironment {
     let mut env = BTreeMap::new();
     let mut generations = Vec::with_capacity(states.len());
@@ -1060,10 +1009,6 @@ fn dependency_environment(
         env.insert(
             format!("{prefix}_PUBLIC_URL"),
             state.public_url.clone().unwrap_or_default(),
-        );
-        env.insert(
-            format!("{prefix}_STATE_FILE"),
-            dependency.state_file.display().to_string(),
         );
         env.insert(format!("{prefix}_GENERATION"), state.generation.clone());
         generations.push(dependency_generation(dependency, state));
@@ -1104,7 +1049,8 @@ fn wait_for_dependency_environment(
         for dependency in &spec.dependencies {
             match read_dependency_record(dependency) {
                 DependencyRecord::Present(state)
-                    if state.status == "ready" && state.route_owner.is_some() =>
+                    if state.status == HostLifecycleStatus::Ready
+                        && state.route_owner.is_some() =>
                 {
                     states.push(*state);
                 }
@@ -1516,7 +1462,7 @@ fn supervise_generations(
             GenerationEnd::Exited(code) => {
                 if !spec.restart.restarts_after(code) {
                     if spec.listener.is_some() {
-                        write_terminal_listener_state(spec, supervisor_pid)?;
+                        write_terminal_listener_state(run, spec, supervisor_pid)?;
                     }
                     outcome = Some(if code == 0 {
                         effigy_kernel::outcome::WorkloadOutcome::Succeeded
@@ -1612,6 +1558,8 @@ fn supervise_plain_host_process(
     shutdown: &std::sync::Arc<std::sync::atomic::AtomicBool>,
     last: &mut Option<CustodyStop>,
 ) -> Result<GenerationEnd, RunnerError> {
+    let mut state = HostGeneration::new(spec, std::process::id(), &spec.runtime_generation);
+    state.write(run, HostLifecycleStatus::Starting)?;
     let dependencies = {
         let mut stop = || stop_requested(run, watch, spec);
         wait_for_dependency_environment(spec, &mut stop)?
@@ -1634,7 +1582,8 @@ fn supervise_plain_host_process(
             // instead of reporting a workload that never started
             // (effigy#574). The plain exit record the restart policy reads
             // is unchanged.
-            report_launch_failed(session, &spec.process_name, &error.to_string());
+            state.diagnostic = Some(error.to_string());
+            state.write(run, HostLifecycleStatus::Failed)?;
             append_log_line(
                 spec.output.as_ref(),
                 &format!(
@@ -1645,6 +1594,8 @@ fn supervise_plain_host_process(
             return Ok(GenerationEnd::Exited(127));
         }
     };
+    state.custody_nonce = Some(child.identity().nonce.clone());
+    state.write(run, HostLifecycleStatus::Running)?;
     activate_once(active, run, session)?;
     append_log_line(
         spec.output.as_ref(),
@@ -2013,13 +1964,6 @@ fn child_environment(
     environment
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ChildProcessIdentity {
-    pid: u32,
-    boot_identity: String,
-    start_identity: GatewayStartIdentity,
-}
-
 /// Fixture barrier for proofs about the activation-publication seam. Debug
 /// builds only, and inert unless the suite asks for it, so production startup
 /// never sleeps here.
@@ -2037,12 +1981,11 @@ fn hold_start_publication() {
 /// One child generation's published listener state. Every write is one of
 /// these, so a generation's address, route claim and child identity cannot
 /// drift apart between writes.
-struct ListenerGeneration<'a> {
+struct HostGeneration<'a> {
     spec: &'a HostProcessRuntimeSpec,
     supervisor_pid: u32,
     generation: String,
     custody_nonce: Option<String>,
-    child: Option<ChildProcessIdentity>,
     address: Option<SocketAddr>,
     route_owner: Option<ManagedListenerRouteOwner>,
     diagnostic: Option<String>,
@@ -2052,14 +1995,13 @@ struct ListenerGeneration<'a> {
     probe: Option<ListenerProbeState>,
 }
 
-impl<'a> ListenerGeneration<'a> {
+impl<'a> HostGeneration<'a> {
     fn new(spec: &'a HostProcessRuntimeSpec, supervisor_pid: u32, generation: &str) -> Self {
         Self {
             spec,
             supervisor_pid,
             generation: generation.to_owned(),
             custody_nonce: None,
-            child: None,
             address: None,
             route_owner: None,
             diagnostic: None,
@@ -2068,7 +2010,7 @@ impl<'a> ListenerGeneration<'a> {
         }
     }
 
-    fn record(&self, status: &str) -> HostListenerState {
+    fn record(&self, status: HostLifecycleStatus) -> HostLifecycleObservation {
         let route_domain = self
             .spec
             .listener
@@ -2085,25 +2027,19 @@ impl<'a> ListenerGeneration<'a> {
             )),
             _ => None,
         };
-        HostListenerState {
+        HostLifecycleObservation {
             schema: HOST_LISTENER_STATE_SCHEMA.to_owned(),
             owner: self.spec.owner.clone(),
             run: self.spec.run_id.map(|run| run.to_string()),
             custody_nonce: self.custody_nonce.clone(),
             runtime_generation: self.spec.runtime_generation.clone(),
             generation: self.generation.clone(),
-            status: status.to_owned(),
+            status,
             address: self.address.map(|address| address.to_string()),
             internal_url: self.address.map(|address| format!("http://{address}")),
             public_url,
             route_domain,
             supervisor_pid: self.supervisor_pid,
-            child_pid: self.child.as_ref().map(|child| child.pid),
-            child_boot_identity: self.child.as_ref().map(|child| child.boot_identity.clone()),
-            child_start_identity: self
-                .child
-                .as_ref()
-                .map(|child| child.start_identity.clone()),
             route_owner: self.route_owner.clone(),
             diagnostic: self.diagnostic.clone(),
             observed_status: self.observed_status,
@@ -2113,8 +2049,12 @@ impl<'a> ListenerGeneration<'a> {
 
     /// Write this generation's observation under `status`. The only statuses a
     /// generation writes are its start, readiness, withdrawal and failure.
-    fn write(&self, status: &str) -> Result<(), RunnerError> {
-        write_listener_state(&self.spec.listener_state_file, self.record(status))
+    fn write(
+        &self,
+        run: &mut effigy_kernel::run::Run<'_>,
+        status: HostLifecycleStatus,
+    ) -> Result<(), RunnerError> {
+        kernel_run::publish_lifecycle(run, &self.record(status))
     }
 }
 
@@ -2158,17 +2098,35 @@ impl Drop for ListenerReportPath {
 /// evidence with a blank `stopped` record (contract 005). A later activation
 /// has a different supervisor pid and writes its own `starting` record.
 fn write_terminal_listener_state(
+    run: &mut effigy_kernel::run::Run<'_>,
     spec: &HostProcessRuntimeSpec,
     supervisor_pid: u32,
 ) -> Result<(), RunnerError> {
-    if fs::read(&spec.listener_state_file)
-        .ok()
-        .and_then(|raw| serde_json::from_slice::<HostListenerState>(&raw).ok())
-        .is_some_and(|state| state.status == "failed" && state.supervisor_pid == supervisor_pid)
-    {
-        return Ok(());
+    let effects = run
+        .effects()
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let state = terminal_listener_state(
+        spec,
+        supervisor_pid,
+        kernel_run::lifecycle_from_effects(&effects),
+    );
+    kernel_run::publish_lifecycle(run, &state)
+}
+
+fn terminal_listener_state(
+    spec: &HostProcessRuntimeSpec,
+    supervisor_pid: u32,
+    previous: Option<HostLifecycleObservation>,
+) -> HostLifecycleObservation {
+    match previous {
+        Some(state)
+            if state.status == HostLifecycleStatus::Failed
+                && state.supervisor_pid == supervisor_pid =>
+        {
+            state
+        }
+        _ => HostGeneration::new(spec, supervisor_pid, "").record(HostLifecycleStatus::Stopped),
     }
-    ListenerGeneration::new(spec, supervisor_pid, "").write("stopped")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2198,7 +2156,7 @@ fn supervise_managed_host_listener(
         // This generation has not published `starting` yet. Settlement of a
         // withheld start walks this path while a retrying supervisor is still
         // in admission, and must not blank a prior `failed` record.
-        write_terminal_listener_state(spec, supervisor_pid)?;
+        write_terminal_listener_state(run, spec, supervisor_pid)?;
         return Ok(GenerationEnd::Stopped);
     }
     // Publish this activation's record before waiting on dependencies or
@@ -2206,14 +2164,14 @@ fn supervise_managed_host_listener(
     // admission and readiness, so the dependency wait is not charged to it.
     let generation = random_token()?;
     let report = ListenerReportPath::for_generation(spec, &generation)?;
-    let mut state = ListenerGeneration::new(spec, supervisor_pid, &generation);
-    state.write("starting")?;
+    let mut state = HostGeneration::new(spec, supervisor_pid, &generation);
+    state.write(run, HostLifecycleStatus::Starting)?;
     let dependencies = {
         let mut stop = || stop_requested(run, watch, spec);
         wait_for_dependency_environment(spec, &mut stop)?
     };
     let Some((dependency_env, dependency_generations)) = dependencies else {
-        state.write("stopped")?;
+        state.write(run, HostLifecycleStatus::Stopped)?;
         shutdown.store(true, Ordering::SeqCst);
         return Ok(GenerationEnd::Stopped);
     };
@@ -2221,7 +2179,12 @@ fn supervise_managed_host_listener(
         .into_iter()
         .collect::<Vec<(String, String)>>();
     if let Err(error) = reserved_port_is_free(&listener.bind) {
-        return finish_failed_generation(&mut state, spec.process_name.as_str(), error.to_string());
+        return finish_failed_generation(
+            run,
+            &mut state,
+            spec.process_name.as_str(),
+            error.to_string(),
+        );
     }
     let mut child = match spawn_generation(
         run,
@@ -2233,6 +2196,7 @@ fn supervise_managed_host_listener(
         Ok(child) => child,
         Err(error) => {
             return finish_failed_generation(
+                run,
                 &mut state,
                 spec.process_name.as_str(),
                 format!("managed listener could not start: {error}"),
@@ -2242,25 +2206,7 @@ fn supervise_managed_host_listener(
     activate_once(active, run, session)?;
     let pid = child.identity().identity.pid;
     state.custody_nonce = Some(child.identity().nonce);
-    // The leader's exact identity lets a stop that outlives this supervisor
-    // settle the group it started. An identity that cannot be read here only
-    // costs that guard; the generation still serves.
-    match read_live_process_identity(pid) {
-        Ok(live) => {
-            state.child = Some(ChildProcessIdentity {
-                pid,
-                boot_identity: live.boot_identity,
-                start_identity: live.start_identity,
-            });
-        }
-        Err(error) => append_log_line(
-            spec.output.as_ref(),
-            &format!(
-                "[effigy host-process] managed listener child identity is unavailable: {error}"
-            ),
-        ),
-    }
-    state.write("starting")?;
+    state.write(run, HostLifecycleStatus::Starting)?;
     append_log_line(
         spec.output.as_ref(),
         &format!(
@@ -2270,9 +2216,11 @@ fn supervise_managed_host_listener(
     );
 
     let ready = {
-        let mut stop = || stop_requested(run, watch, spec) || shutdown.load(Ordering::SeqCst);
+        let mut stop = |run: &effigy_kernel::run::Run<'_>| {
+            stop_requested(run, watch, spec) || shutdown.load(Ordering::SeqCst)
+        };
         wait_for_ready_listener(
-            address, listener, &log_path, &mut stop, &mut child, &mut state,
+            run, address, listener, &log_path, &mut stop, &mut child, &mut state,
         )
     };
     if let Err(error) = ready {
@@ -2281,32 +2229,30 @@ fn supervise_managed_host_listener(
         if let Some(report) = stop_generation(run, spec, &mut child, true) {
             *last = Some(report);
         }
-        state.child = None;
         append_log_line(
             spec.output.as_ref(),
             &format!("[effigy host-process] listener failed: {error}"),
         );
         if stopped {
             shutdown.store(true, Ordering::SeqCst);
-            write_terminal_listener_state(spec, supervisor_pid)?;
+            write_terminal_listener_state(run, spec, supervisor_pid)?;
             return Ok(GenerationEnd::Stopped);
         }
         state.diagnostic = Some(error.to_string());
         state.observed_status = observed_status;
-        state.write("failed")?;
+        state.write(run, HostLifecycleStatus::Failed)?;
         return Ok(GenerationEnd::Exited(1));
     }
 
     // A dependency may have been replaced while this generation was becoming
     // ready; the dependent is replaced before it publishes.
     if dependency_transition(spec, &dependency_generations)? {
-        state.write("unavailable")?;
+        state.write(run, HostLifecycleStatus::Unavailable)?;
         if let Some(report) = stop_generation(run, spec, &mut child, true) {
             *last = Some(report);
         }
-        state.child = None;
         if stop_requested(run, watch, spec) {
-            write_terminal_listener_state(spec, supervisor_pid)?;
+            write_terminal_listener_state(run, spec, supervisor_pid)?;
             shutdown.store(true, Ordering::SeqCst);
             return Ok(GenerationEnd::Stopped);
         }
@@ -2314,8 +2260,8 @@ fn supervise_managed_host_listener(
     }
     if let Err(error) = prepare_managed_listener_route(spec, listener) {
         let _ = stop_generation(run, spec, &mut child, true);
-        state.child = None;
         return finish_failed_generation(
+            run,
             &mut state,
             spec.process_name.as_str(),
             format!("listener route preparation failed: {error}"),
@@ -2332,15 +2278,15 @@ fn supervise_managed_host_listener(
     state.route_owner = Some(owner.clone());
     if let Err(error) = publish_managed_listener_route(spec, listener, &owner) {
         let _ = stop_generation(run, spec, &mut child, true);
-        state.child = None;
         state.route_owner = None;
         return finish_failed_generation(
+            run,
             &mut state,
             spec.process_name.as_str(),
             format!("route publication failed: {error}"),
         );
     }
-    state.write("ready")?;
+    state.write(run, HostLifecycleStatus::Ready)?;
     append_log_line(
         spec.output.as_ref(),
         &format!(
@@ -2375,7 +2321,7 @@ fn supervise_managed_host_listener(
                 match publish_managed_listener_route(spec, listener, &owner) {
                     Ok(()) => {
                         state.route_owner = Some(owner.clone());
-                        state.write("ready")?;
+                        state.write(run, HostLifecycleStatus::Ready)?;
                         append_log_line(
                             spec.output.as_ref(),
                             &format!(
@@ -2389,7 +2335,7 @@ fn supervise_managed_host_listener(
                         // of the still-answering port is the retry.
                         liveness.publication_failed();
                         state.route_owner = None;
-                        state.write("unavailable")?;
+                        state.write(run, HostLifecycleStatus::Unavailable)?;
                         append_log_line(
                             spec.output.as_ref(),
                             &format!(
@@ -2405,7 +2351,7 @@ fn supervise_managed_host_listener(
                 // child running. A later answer republishes it.
                 withdraw_managed_listener_route(spec, listener, &owner)?;
                 state.route_owner = None;
-                state.write("unavailable")?;
+                state.write(run, HostLifecycleStatus::Unavailable)?;
                 append_log_line(
                     spec.output.as_ref(),
                     &format!(
@@ -2423,13 +2369,12 @@ fn supervise_managed_host_listener(
     // generation it replaces.
     withdraw_managed_listener_route(spec, listener, &owner)?;
     state.route_owner = None;
-    state.write("unavailable")?;
+    state.write(run, HostLifecycleStatus::Unavailable)?;
     if let Some(report) = stop_generation(run, spec, &mut child, stopping) {
         *last = Some(report);
     }
-    state.child = None;
     if stopping {
-        write_terminal_listener_state(spec, supervisor_pid)?;
+        write_terminal_listener_state(run, spec, supervisor_pid)?;
         return Ok(GenerationEnd::Stopped);
     }
 
@@ -2449,7 +2394,7 @@ fn supervise_managed_host_listener(
         )));
     }
     if shutdown.load(Ordering::SeqCst) {
-        write_terminal_listener_state(spec, supervisor_pid)?;
+        write_terminal_listener_state(run, spec, supervisor_pid)?;
         return Ok(GenerationEnd::Stopped);
     }
     // A generation that may be replaced leaves `unavailable`; the supervisor
@@ -2463,7 +2408,8 @@ fn supervise_managed_host_listener(
 /// Record one generation that failed before it could serve, and report the
 /// generation as a failed exit so the declared restart policy applies.
 fn finish_failed_generation(
-    state: &mut ListenerGeneration<'_>,
+    run: &mut effigy_kernel::run::Run<'_>,
+    state: &mut HostGeneration<'_>,
     process_name: &str,
     message: String,
 ) -> Result<GenerationEnd, RunnerError> {
@@ -2472,7 +2418,7 @@ fn finish_failed_generation(
         &format!("[effigy host-process] listener `{process_name}` failed: {message}"),
     );
     state.diagnostic = Some(message);
-    state.write("failed")?;
+    state.write(run, HostLifecycleStatus::Failed)?;
     Ok(GenerationEnd::Exited(1))
 }
 
@@ -2502,19 +2448,20 @@ fn reserved_port_is_free(bind: &str) -> Result<(), RunnerError> {
 /// the child exiting is the failure. Once the port first accepts a connection,
 /// `readiness_timeout_secs` bounds reaching the declared status.
 fn wait_for_ready_listener(
+    run: &mut effigy_kernel::run::Run<'_>,
     address: SocketAddr,
     config: &EffectiveManagedHostListener,
     log_path: &Path,
-    stop: &mut dyn FnMut() -> bool,
+    stop: &mut dyn FnMut(&effigy_kernel::run::Run<'_>) -> bool,
     child: &mut effigy_kernel::custody::OwnedProcess,
-    state: &mut ListenerGeneration<'_>,
+    state: &mut HostGeneration<'_>,
 ) -> Result<(), ListenerStartupFailure> {
     let timeout = Duration::from_secs(config.readiness_timeout_secs);
     let started = Instant::now();
     let mut answered_at = None;
     let mut next_progress = started + listener_progress_interval();
     loop {
-        if stop() {
+        if stop(run) {
             return Err(ListenerStartupFailure::Stopped);
         }
         if let effigy_kernel::observe::Observed::Verified(exit, _) = child.poll() {
@@ -2544,7 +2491,7 @@ fn wait_for_ready_listener(
         });
         if state.probe != observed {
             state.probe = observed;
-            state.write("starting")?;
+            state.write(run, HostLifecycleStatus::Starting)?;
         }
         if probe.outcome == HttpReadinessOutcome::Ready {
             return Ok(());
@@ -2781,10 +2728,6 @@ fn listener_route_table_path(spec: &HostProcessRuntimeSpec) -> Result<PathBuf, R
         .as_deref()
         .map(|root| root.join("routes.json"))
         .ok_or_else(|| RunnerError::task_invocation("listener gateway root is unavailable"))
-}
-
-fn write_listener_state(path: &Path, state: HostListenerState) -> Result<(), RunnerError> {
-    write_private_json(path, &state)
 }
 
 fn read_private_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, RunnerError> {
@@ -3073,6 +3016,7 @@ mod tests {
             .expect("terminal listener state");
         let started = Instant::now();
         let result = wait_for_listener_state(
+            None,
             &path,
             "app",
             "fixture|web|app",
@@ -3089,6 +3033,34 @@ mod tests {
     }
 
     #[test]
+    fn a_plain_launch_uses_the_journal_when_the_best_effort_event_is_lost() {
+        let observation = |status: &str| {
+            let mut value = published_listener_state("activation", status);
+            value["diagnostic"] = serde_json::json!("credential refused before exec");
+            Some(serde_json::from_value(value).unwrap())
+        };
+        let refused =
+            kernel_run::plain_launch_observation(observation("failed"), "activation", "worker")
+                .expect("the journal decides without an engine event")
+                .unwrap_err();
+        assert!(refused
+            .to_string()
+            .contains("credential refused before exec"));
+        assert!(kernel_run::plain_launch_observation(
+            observation("running"),
+            "activation",
+            "worker",
+        )
+        .expect("a recorded launch needs no engine event")
+        .is_ok());
+        assert!(
+            kernel_run::plain_launch_observation(observation("running"), "successor", "worker",)
+                .is_none(),
+            "a stale activation cannot announce a start"
+        );
+    }
+
+    #[test]
     fn pane_listener_observation_binds_the_owner_run_and_custody_generation() {
         let run = effigy_kernel::id::RunId::new(1, [8; 10]).unwrap();
         let nonce = format!("{run}:4");
@@ -3097,13 +3069,19 @@ mod tests {
             value["run"] = serde_json::json!(run.to_string());
             value["custody_nonce"] = serde_json::json!(nonce);
             value["public_url"] = serde_json::json!("https://api.test");
-            serde_json::from_value::<HostListenerState>(value).unwrap()
+            serde_json::from_value::<HostLifecycleObservation>(value).unwrap()
         };
         assert_eq!(
             kernel_run::pane_listener(make("ready"), run, Some(&nonce)),
-            Some(("ready".into(), Some("https://api.test".into())))
+            Some((HostLifecycleStatus::Ready, Some("https://api.test".into())))
         );
         assert!(kernel_run::pane_listener(make("ready"), run, Some("stale-child:3")).is_none());
+        let mut unbound = make("ready");
+        unbound.custody_nonce = None;
+        assert!(
+            kernel_run::pane_listener(unbound, run, Some(&nonce)).is_none(),
+            "a ready observation needs the current child's exact custody nonce"
+        );
         assert!(kernel_run::pane_listener(
             make("ready"),
             effigy_kernel::id::RunId::new(1, [9; 10]).unwrap(),
@@ -3113,9 +3091,53 @@ mod tests {
         for status in ["unavailable", "failed", "stopped"] {
             assert_eq!(
                 kernel_run::pane_listener(make(status), run, Some(&nonce)),
-                Some((status.into(), None))
+                Some((
+                    serde_json::from_value(serde_json::json!(status)).unwrap(),
+                    None
+                ))
             );
         }
+    }
+
+    #[test]
+    fn lifecycle_effect_payload_is_atomic_and_never_falls_back_to_stale_ready() {
+        use effigy_kernel::run::{Effect, EffectSpec, EffectState, Fence, Settlement};
+        let checkout = effigy_kernel::id::CheckoutId::new(
+            effigy_kernel::id::CheckoutKind::Filesystem,
+            [8; 16],
+        );
+        let resource =
+            effigy_kernel::id::ResourceId::host_process(checkout, "app", "default", "api").unwrap();
+        let effect = |sequence, payload| Effect {
+            sequence,
+            spec: EffectSpec {
+                target: Fence {
+                    resource: resource.clone(),
+                    generation: effigy_kernel::id::Generation::new(1),
+                },
+                kind: "host:lifecycle".to_owned(),
+                payload,
+                settlement: Settlement::Retain,
+                required: false,
+            },
+            state: EffectState::Intended,
+            receipt: None,
+            reason: None,
+        };
+        let ready = effect(1, published_listener_state("activation", "ready"));
+        let starting = effect(2, published_listener_state("activation", "starting"));
+        assert_eq!(
+            kernel_run::lifecycle_from_effects(&[ready.clone(), starting])
+                .unwrap()
+                .status,
+            HostLifecycleStatus::Starting,
+            "the complete intended observation supersedes readiness before its callback"
+        );
+        let malformed = effect(3, serde_json::json!({"status": "ready"}));
+        assert!(
+            kernel_run::lifecycle_from_effects(&[ready, malformed]).is_none(),
+            "an unknown latest observation never revives older readiness"
+        );
     }
 
     /// The activation record is the readiness barrier: a previous activation's
@@ -3130,7 +3152,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            wait_for_listener_activation(&path, "app", "current-activation", Duration::ZERO)
+            wait_for_listener_activation(None, &path, "app", "current-activation", Duration::ZERO)
                 .is_err(),
             "a previous activation's state must not satisfy this activation's barrier"
         );
@@ -3139,8 +3161,14 @@ mod tests {
             &published_listener_state("current-activation", "starting"),
         )
         .unwrap();
-        wait_for_listener_activation(&path, "app", "current-activation", Duration::from_secs(1))
-            .expect("a published activation record satisfies the barrier");
+        wait_for_listener_activation(
+            None,
+            &path,
+            "app",
+            "current-activation",
+            Duration::from_secs(1),
+        )
+        .expect("a published activation record satisfies the barrier");
     }
 
     fn terminal_state_spec(path: PathBuf) -> HostProcessRuntimeSpec {
@@ -3162,10 +3190,8 @@ mod tests {
     /// failed generation: diagnostic, observed status and generation stay.
     #[test]
     fn unpublished_teardown_keeps_this_supervisors_failed_generation() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("app.listener.json");
         let pid = std::process::id();
-        let spec = terminal_state_spec(path.clone());
+        let spec = terminal_state_spec(PathBuf::new());
         let mut failed = published_listener_state("runtime", "failed");
         failed["supervisor_pid"] = serde_json::json!(pid);
         failed["generation"] = serde_json::json!("losing-generation");
@@ -3174,11 +3200,9 @@ mod tests {
             "managed listener at 127.0.0.1:1 answered /health with HTTP 503 where 200 is required (status_mismatch)"
         );
         failed["observed_status"] = serde_json::json!(503);
-        write_private_json(&path, &failed).unwrap();
-
-        write_terminal_listener_state(&spec, pid).unwrap();
-
-        let state = read_json(&path);
+        let previous = serde_json::from_value(failed).unwrap();
+        let state =
+            serde_json::to_value(terminal_listener_state(&spec, pid, Some(previous))).unwrap();
         assert_eq!(state["status"], "failed", "{state}");
         assert_eq!(state["generation"], "losing-generation", "{state}");
         assert_eq!(state["observed_status"], 503, "{state}");
@@ -3191,7 +3215,7 @@ mod tests {
             "{state}"
         );
         assert!(
-            state["route_owner"].is_null() && state["child_pid"].is_null(),
+            state["route_owner"].is_null() && state["custody_nonce"].is_null(),
             "{state}"
         );
     }
@@ -3200,22 +3224,18 @@ mod tests {
     /// record: no diagnostic, no child, no endpoint owner.
     #[test]
     fn unpublished_teardown_settles_a_starting_generation_as_stopped() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("app.listener.json");
         let pid = std::process::id();
-        let spec = terminal_state_spec(path.clone());
+        let spec = terminal_state_spec(PathBuf::new());
         let mut starting = published_listener_state("runtime", "starting");
         starting["supervisor_pid"] = serde_json::json!(pid);
         starting["generation"] = serde_json::json!("starting-generation");
-        write_private_json(&path, &starting).unwrap();
-
-        write_terminal_listener_state(&spec, pid).unwrap();
-
-        let state = read_json(&path);
+        let previous = serde_json::from_value(starting).unwrap();
+        let state =
+            serde_json::to_value(terminal_listener_state(&spec, pid, Some(previous))).unwrap();
         assert_eq!(state["status"], "stopped", "{state}");
         assert_eq!(state["generation"], "", "{state}");
         assert!(
-            state["route_owner"].is_null() && state["child_pid"].is_null(),
+            state["route_owner"].is_null() && state["custody_nonce"].is_null(),
             "{state}"
         );
         assert!(state.get("diagnostic").is_none(), "{state}");
@@ -3226,20 +3246,16 @@ mod tests {
     /// a previous activation's failed record with a blank terminal one.
     #[test]
     fn later_activation_teardown_replaces_a_previous_supervisors_failed_record() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("app.listener.json");
         let previous = std::process::id();
         let successor = previous.wrapping_add(1);
-        let spec = terminal_state_spec(path.clone());
+        let spec = terminal_state_spec(PathBuf::new());
         let mut failed = published_listener_state("runtime", "failed");
         failed["supervisor_pid"] = serde_json::json!(previous);
         failed["generation"] = serde_json::json!("previous-failed");
         failed["diagnostic"] = serde_json::json!("status_mismatch");
-        write_private_json(&path, &failed).unwrap();
-
-        write_terminal_listener_state(&spec, successor).unwrap();
-
-        let state = read_json(&path);
+        let previous = serde_json::from_value(failed).unwrap();
+        let state = serde_json::to_value(terminal_listener_state(&spec, successor, Some(previous)))
+            .unwrap();
         assert_eq!(state["status"], "stopped", "{state}");
         assert_eq!(state["generation"], "", "{state}");
         assert_eq!(
@@ -4282,6 +4298,9 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
     }
 
     fn read_json(path: &Path) -> serde_json::Value {
+        if let Some(state) = kernel_run::lifecycle_at_path(path) {
+            return serde_json::to_value(state).unwrap();
+        }
         serde_json::from_slice(
             &fs::read(path)
                 .unwrap_or_else(|error| panic!("listener state {}: {error}", path.display())),
@@ -4389,6 +4408,10 @@ while True:
         );
         let state = read_json(&listener_state(&policy));
         assert_eq!(state["status"], "ready", "{state}");
+        assert!(
+            !listener_state(&policy).exists(),
+            "a new supervisor journals readiness without a listener-file writer"
+        );
         let report =
             super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
         assert!(report.complete(), "{report:?}");
@@ -5115,10 +5138,8 @@ while True:
             super::kernel_run::start_host_processes_for_container(&checkout, &up_policy, None)
         });
         wait_until("the listener to publish its starting generation", || {
-            fs::read(&state_path)
-                .ok()
-                .and_then(|raw| serde_json::from_slice::<serde_json::Value>(&raw).ok())
-                .is_some_and(|state| state["status"] == "starting")
+            kernel_run::lifecycle_at_path(&state_path)
+                .is_some_and(|state| state.status == HostLifecycleStatus::Starting)
         });
         let started = Instant::now();
         let report =
@@ -5140,6 +5161,72 @@ while True:
             "the waiting up reports the stop, not a deadline: {error}"
         );
         assert_eq!(read_json(&state_path)["status"], "stopped");
+    }
+
+    /// Owner loss ends an unbounded never-bind wait from the kernel gate,
+    /// even while the killed supervisor remains visible as a process/zombie.
+    #[test]
+    fn host_process_owner_crash_before_binding_ends_the_activation() {
+        let fixture = fixture();
+        let domain = "owner-crash-before-bind.host.test";
+        let (_gateway_home, policy) = listener_policy_running(
+            &fixture.checkout,
+            domain,
+            "owner-crash-before-bind",
+            "import time\ntime.sleep(120)",
+            60,
+        );
+        struct Stop<'a>(&'a Path, &'a EffectiveContainerPolicy);
+        impl Drop for Stop<'_> {
+            fn drop(&mut self) {
+                let _ = kernel_run::stop_host_processes_for_container(self.0, self.1);
+            }
+        }
+        let _cleanup = Stop(&fixture.checkout, &policy);
+        let state_path = listener_state(&policy);
+        let checkout = fixture.checkout.clone();
+        let up_policy = policy.clone();
+        let (done, result) = std::sync::mpsc::channel();
+        let up = std::thread::spawn(move || {
+            let _ = done.send(kernel_run::start_host_processes_for_container(
+                &checkout, &up_policy, None,
+            ));
+        });
+        let log = host_process_dir_for_policy(&fixture.checkout, &policy).join("app.log");
+        wait_until(
+            "the never-binding child to start at a committed log boundary",
+            || {
+                kernel_run::lifecycle_at_path(&state_path).is_some_and(|state| {
+                    state.status == HostLifecycleStatus::Starting && state.custody_nonce.is_some()
+                }) && fs::read_to_string(&log)
+                    .is_ok_and(|text| text.contains("started managed listener"))
+                    && effigy_kernel::custody::MergedLog::identity(&log).is_ok_and(|proof| {
+                        fs::metadata(&log).is_ok_and(|file| file.len() == proof.length)
+                    })
+            },
+        );
+        let leader = kernel_run::host_process_status(&fixture.checkout, &policy)[0]
+            .pid
+            .expect("recorded child group");
+        kill_recorded_run(&state_path, leader);
+        let ended = result.recv_timeout(Duration::from_secs(10));
+        // Settle only this fixture's run before any assertion can unwind it.
+        let stopped = kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
+        up.join()
+            .expect("activation thread exits after owner loss or fixture stop");
+        assert!(stopped.complete(), "{stopped:?}");
+        let failure = ended
+            .expect("owner gate loss must end the never-bind activation without a deadline")
+            .expect_err("a crashed owner cannot publish readiness")
+            .to_string();
+        assert!(failure.contains("owner gate"), "{failure}");
+        assert!(
+            RouteTable::load(&route_table_path())
+                .unwrap()
+                .lookup(domain)
+                .is_none(),
+            "a generation whose owner died before binding never publishes its route"
+        );
     }
 
     /// A restart replaces named generations in place, so a listener keeps the
@@ -5735,6 +5822,7 @@ while True:
         let state_file = dir.path().join("app.listener.json");
         let spec = HostProcessRuntimeSpec {
             dependencies: vec![HostProcessDependency {
+                source: None,
                 name: "app".to_owned(),
                 owner: "fixture|web|app".to_owned(),
                 state_file: state_file.clone(),
@@ -6304,8 +6392,8 @@ while True:
             "the restarted listener is a new generation"
         );
         assert_ne!(
-            after["child_pid"], before["child_pid"],
-            "the new generation is a new child"
+            after["custody_nonce"], before["custody_nonce"],
+            "the new generation has a new exact custody identity"
         );
         let route_after = published_owner(domain);
         assert_eq!(
