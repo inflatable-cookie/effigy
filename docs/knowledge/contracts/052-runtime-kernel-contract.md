@@ -1507,8 +1507,12 @@ managed journal writers publish a durable committed extent after syncing data.
 A synced pending record
 retains the prior extent until publication completes; a failed or interrupted
 append bounds reads to that prior extent and refuses a host restart for explicit
-operator recovery. Effigy reads use the existing nonblocking kernel file-lock
-boundary to avoid observing an in-flight publication. Writer lock acquisition
+operator recovery. Managed journal reads cap the first observed extent by the
+current extent and any pending append's prior boundary, retaining the verified
+guard identity. They serve committed bytes while the writer syncs, including
+the final drain, without waiting for its lock or exposing an uncommitted suffix.
+Host canonical reads use the existing nonblocking kernel file-lock boundary.
+Writer lock acquisition
 is bounded to 500 ms; a stalled reader cannot hold cleanup indefinitely.
 Failure syncing removal of a pending record after data and extent are durable
 does not uncommit those bytes: capture reports truncation and stops further

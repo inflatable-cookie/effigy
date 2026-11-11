@@ -269,19 +269,17 @@ fn plain_extent(
     let before = extent_record(dir, sequence, stream)?;
     let name = crate::custody::capture::guard_name(sequence, stream)
         .map_err(|e| bad(format!("guard name: {e}")))?;
-    let Some((guard, stat)) = dir.open_file(&name, libc::O_RDONLY, None, Trust::Private)? else {
+    let Some((_guard, stat)) = dir.open_file(&name, libc::O_RDONLY, None, Trust::Private)? else {
         return Err(bad("capture guard missing".into()));
     };
     if crate::custody::FileIdentity::of(&stat) != before.guard {
         return Err(bad("capture guard identity changed".into()));
     }
-    let _lock = match crate::custody::merged::atomic::FileLock::shared(&guard) {
-        Ok(lock) => lock,
-        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-            return Ok(ReadAttempt::Busy)
-        }
-        Err(error) => return Err(bad(format!("capture guard observation: {error}"))),
-    };
+    // The atomically published pending record precedes every append and keeps
+    // its previous committed end until the new extent is durable. Read that
+    // conservative boundary instead of contending with the writer's fsync.
+    // A commit may advance between observations, but never expands this read
+    // past the first extent or past an unfinished append's recovery boundary.
     let record = extent_record(dir, sequence, stream)?;
     if record.guard != before.guard {
         return Err(bad("capture guard changed during read".into()));
@@ -291,7 +289,10 @@ fn plain_extent(
     let pending = crate::custody::merged::atomic::pending_extent(dir, &name, record.guard)
         .map_err(|e| bad(format!("pending capture: {e}")))?;
     Ok(ReadAttempt::Ready(Some(
-        pending.map_or(record.committed, |old| old.min(record.committed)),
+        pending
+            .unwrap_or(record.committed)
+            .min(record.committed)
+            .min(before.committed),
     )))
 }
 fn extent_record(
