@@ -92,7 +92,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        suite: [library-workspace, library-core, library-runner, library-other, cli, gateway, rest]
+        suite: [library-ambient, gateway]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -108,8 +108,8 @@ jobs:
         with:
           node-version: lts/*
 
-      # Keep default libtest threads within each related library family.
-      # The runner proves the compiled inventory is disjoint and complete.
+      # Replay ambient library fixtures and the gateway process-global family.
+      # Keep default libtest threads and checked compiled inventory.
       # Release still runs full cargo test --workspace; local QA remains full,
       # unpartitioned nextest. Neither route uses these hosted cohort filters.
       - name: Run workspace tests in shared processes
