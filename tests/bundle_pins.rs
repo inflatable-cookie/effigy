@@ -1807,10 +1807,63 @@ fn consumer_effective_manifests_match_after_importing_their_actual_cached_bytes(
             _ => {}
         }
     }
+    fn differing_paths(path: &str, before: &toml::Value, after: &toml::Value) -> Vec<String> {
+        fn kind(value: &toml::Value) -> &'static str {
+            match value {
+                toml::Value::String(_) => "string",
+                toml::Value::Integer(_) => "integer",
+                toml::Value::Float(_) => "float",
+                toml::Value::Boolean(_) => "boolean",
+                toml::Value::Datetime(_) => "datetime",
+                toml::Value::Array(_) => "array",
+                toml::Value::Table(_) => "table",
+            }
+        }
+        match (before, after) {
+            (toml::Value::Table(before), toml::Value::Table(after)) => {
+                let keys: std::collections::BTreeSet<_> =
+                    before.keys().chain(after.keys()).collect();
+                keys.into_iter()
+                    .flat_map(|key| {
+                        let child = if path.is_empty() {
+                            key.clone()
+                        } else {
+                            format!("{path}.{key}")
+                        };
+                        match (before.get(key), after.get(key)) {
+                            (Some(before), Some(after)) => differing_paths(&child, before, after),
+                            (None, Some(after)) => {
+                                vec![format!("{child}: missing -> {}", kind(after))]
+                            }
+                            (Some(before), None) => {
+                                vec![format!("{child}: {} -> missing", kind(before))]
+                            }
+                            _ => Vec::new(),
+                        }
+                    })
+                    .collect()
+            }
+            (toml::Value::Array(before), toml::Value::Array(after)) => {
+                if before.len() != after.len() {
+                    return vec![path.to_owned()];
+                }
+                before
+                    .iter()
+                    .zip(after)
+                    .enumerate()
+                    .flat_map(|(index, (before, after))| {
+                        differing_paths(&format!("{path}[{index}]"), before, after)
+                    })
+                    .collect()
+            }
+            _ if before != after => vec![format!("{path}: {} -> {}", kind(before), kind(after))],
+            _ => Vec::new(),
+        }
+    }
     let roots =
         std::env::var_os("EFFIGY_BUNDLE_CONSUMERS").expect("consumer roots required by selector");
     let roots: Vec<_> = std::env::split_paths(&roots).collect();
-    assert_eq!(roots.len(), 3);
+    assert_eq!(roots.len(), 4);
     for root in roots {
         let root = fs::canonicalize(root).unwrap();
         let before =
@@ -1874,7 +1927,12 @@ fn consumer_effective_manifests_match_after_importing_their_actual_cached_bytes(
             after.bundle_root.as_ref().unwrap(),
             &fs::canonicalize(&fixture.repo).unwrap(),
         );
-        assert!(new == old, "consumer changed: {}", root.display());
+        assert!(
+            new == old,
+            "consumer changed: {}; fields: {:?}",
+            root.display(),
+            differing_paths("", &old, &new)
+        );
         eprintln!("consumer pinned-byte parity: {}", root.display());
     }
 }

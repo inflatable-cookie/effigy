@@ -128,7 +128,14 @@ pub fn load_task_manifest_with_inspection(
     let mut composed = load_composed_value(manifest_path, &mut session)?;
     let bundle_defaults = apply_bundle_defaults(manifest_path, &mut composed, None)?;
     reject_retired_sequence_keys(&composed.value, manifest_path, "manifest")?;
-    let manifest = composed.deserialize(manifest_path)?;
+    let manifest = composed
+        .clone()
+        .into_manifest()
+        .map_err(|error| ManifestError::Parse {
+            path: manifest_path.to_path_buf(),
+            error,
+        })?;
+    manifest.validate(manifest_path)?;
     crate::retired_notice::emit(manifest_path, &manifest.retired_config);
     let effective_manifest =
         toml::to_string_pretty(&composed.value).map_err(|error| ManifestError::Render {
@@ -160,7 +167,13 @@ pub(crate) fn validate_source_snapshot(
 ) -> Result<(), ManifestError> {
     let mut composed = load_composed_value(manifest_path, &mut CompositionSession::default())?;
     apply_bundle_defaults(manifest_path, &mut composed, Some(source))?;
-    composed.deserialize(manifest_path).map(|_| ())
+    let manifest = composed
+        .into_manifest()
+        .map_err(|error| ManifestError::Parse {
+            path: manifest_path.to_path_buf(),
+            error,
+        })?;
+    manifest.validate(manifest_path)
 }
 
 pub(crate) fn load_manifest_source_declarations(
