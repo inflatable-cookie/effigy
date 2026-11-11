@@ -759,6 +759,18 @@ fn actual_selected_handoff_failure_retains_owner_until_fresh_cleanup_recovery() 
 
 fn guarded_effect_failure_retains_exact_gate_free_custody(case: &str) {
     let fixture = BackendFixture::new();
+    // Keep the two-second revalidation budget free of host process startup.
+    // Publication exercises Unknown host effects; revalidation exercises the
+    // known-absent host step alongside Unknown workspace permissions.
+    let host_effect_declared = case == "fail_publication";
+    if host_effect_declared {
+        let manifest = fixture.project.join("effigy.toml");
+        let mut declaration = std::fs::read_to_string(&manifest).expect("manifest");
+        declaration.push_str(
+            "\n[[containers.web.host_processes]]\nname = 'unsettled'\nrun = 'true'\nrestart = 'never'\n",
+        );
+        std::fs::write(manifest, declaration).expect("declared host effect");
+    }
     effigy_core::worktree_scope::prepare_checkout_token(&fixture.project)
         .expect("prepared identity");
     let mut config: serde_json::Value =
@@ -880,13 +892,21 @@ fn guarded_effect_failure_retains_exact_gate_free_custody(case: &str) {
         "all five effects completed before failure"
     );
     assert!(
-        records.iter().all(|r| r.payload["state"] != "cleared"
-            || !matches!(
-                r.payload["step"].as_str(),
-                Some("permissions" | "host_integrations")
-            )),
+        records.iter().all(|r| {
+            let unknown = r.payload["step"] == "permissions"
+                || (host_effect_declared && r.payload["step"] == "host_integrations");
+            r.payload["state"] != "cleared" || !unknown
+        }),
         "Unknown mutations must retain their journal markers"
     );
+    if !host_effect_declared {
+        assert!(
+            records.iter().any(
+                |r| r.payload["state"] == "cleared" && r.payload["step"] == "host_integrations"
+            ),
+            "undeclared host integration is known absent"
+        );
+    }
     assert_no_durable_error_bytes(&fixture.project.join(".effigy"));
     assert_no_durable_error_bytes(&fixture.home);
     let cx = super::super::effects();
