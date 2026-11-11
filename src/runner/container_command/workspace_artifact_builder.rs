@@ -949,7 +949,7 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
         retained.is_some(),
         no_change,
     )? {
-        WorkspaceBuilderPreparation::Reuse(binding) => binding,
+        WorkspaceBuilderPreparation::Reuse(binding) => *binding,
         WorkspaceBuilderPreparation::Activate(observed) => {
             // Mutation still requires the same exact identity and source at its
             // boundary. The pure preparation decision grants no lasting lease.

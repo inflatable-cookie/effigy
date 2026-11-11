@@ -160,11 +160,7 @@ fn render_bundle_template_tokens(value: &str, bundle_root: Option<&Path>) -> Str
 }
 
 fn resolve_effigy_invocation_prefix() -> Result<String, ManagedError> {
-    effigy_core::effigy_invocation::resolve_effigy_invocation_prefix(&format!(
-        "{}/../../Cargo.toml",
-        env!("CARGO_MANIFEST_DIR")
-    ))
-    .map_err(ManagedError::Cwd)
+    effigy_core::effigy_invocation::resolve_effigy_invocation_prefix().map_err(ManagedError::Cwd)
 }
 
 fn resolve_internal_effigy_invocation_prefix(repo_root: &Path) -> Result<String, ManagedError> {

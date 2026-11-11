@@ -3393,6 +3393,14 @@ fn managed_host_readiness_terminal_failure_names_the_reserved_port() {
         readiness_timeout_secs: 1,
         never_ready: true,
     });
+    // This proof observes one terminal generation, without a restart racing teardown.
+    let manifest = checkout.join("effigy.toml");
+    let body = fs::read_to_string(&manifest).expect("listener manifest");
+    fs::write(
+        &manifest,
+        body.replace("restart = \"on-failure\"", "restart = \"never\""),
+    )
+    .expect("terminal listener policy");
     let cleanup = ManagedContainerCleanup {
         checkouts: vec![checkout.clone()],
         home: home.clone(),

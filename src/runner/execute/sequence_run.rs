@@ -663,11 +663,8 @@ fn execute_step(
                     format!("effigy {}", argv.join(" "))
                 }
                 StepAction::Rhai { path } => {
-                    argv = effigy_core::effigy_invocation::resolve_effigy_invocation_argv(concat!(
-                        env!("CARGO_MANIFEST_DIR"),
-                        "/Cargo.toml"
-                    ))
-                    .map_err(RunnerError::Cwd)?;
+                    argv = effigy_core::effigy_invocation::resolve_effigy_invocation_argv()
+                        .map_err(RunnerError::Cwd)?;
                     let path = live_source_command(selection, &path.display().to_string());
                     argv.extend([
                         "script".to_owned(),
@@ -1028,11 +1025,8 @@ fn helper_step(
     cwd: PathBuf,
     foreground: bool,
 ) -> Result<StepAction, RunnerError> {
-    let mut argv = effigy_core::effigy_invocation::resolve_effigy_invocation_argv(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/Cargo.toml"
-    ))
-    .map_err(RunnerError::Cwd)?;
+    let mut argv = effigy_core::effigy_invocation::resolve_effigy_invocation_argv()
+        .map_err(RunnerError::Cwd)?;
     if let Some(repo) = repo {
         // Leading globals never enter a builtin's trailing payload or grammar.
         argv.extend(["--repo".to_owned(), repo.display().to_string()]);

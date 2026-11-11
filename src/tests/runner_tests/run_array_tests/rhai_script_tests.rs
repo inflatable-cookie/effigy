@@ -11,6 +11,8 @@ use std::os::unix::fs::PermissionsExt;
 #[test]
 fn rhai_task_run_supports_prefixed_catalog_children_without_parent_lock_conflict() {
     let _guard = lock_test();
+    // Exercise the built CLI without borrowing the outer run's executable.
+    let _env = EnvGuard::set_many(&[("EFFIGY_EXECUTABLE", None)]);
 
     let root = temp_workspace("rhai-prefixed-catalog-child-task");
     fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
