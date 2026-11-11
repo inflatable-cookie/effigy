@@ -1536,9 +1536,16 @@ plain UTF-8 without lossy repair or terminal normalization. Listener excerpts
 select the last nonempty contiguous child block without joining across owner
 messages or letting a later blank frame hide an earlier error.
 Multi-source log following keeps separate bounded partial lines and flushes
-them on closure. Pane lifecycle status comes from the owner journal and a
-listener record bound to the current run and custody nonce. Child text cannot
-forge it, and unavailable, failed, stopped or stale generations clear Ready.
+them on closure. Host activation, dependencies, status and panes read typed lifecycle and
+readiness observations from the host owner's run effects, bound to the current
+run and custody nonce. Child text cannot forge them, and unavailable, failed,
+stopped or stale generations clear Ready. New supervisors write no listener
+state file. An already-running older supervisor keeps its file reader until
+it is stopped; installing a new CLI neither dual-writes nor replaces it.
+A known host run whose journal or owner gate cannot be observed reports
+`unknown` in status; that observation never proves absence or readiness.
+The neutral ordering and wait-clock model lives in `effigy-core`; panes render
+the same entry states as the scheduler and status readers.
 
 Tom's 2026-10-30 one-time cutover ruling accepts that safe appends cannot make
 an untrusted historical prefix safe. Under the newly admitted host owner gate,
