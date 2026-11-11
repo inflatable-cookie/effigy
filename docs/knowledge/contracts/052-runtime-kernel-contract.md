@@ -1513,6 +1513,10 @@ is bounded to 500 ms; a stalled reader cannot hold cleanup indefinitely.
 Failure syncing removal of a pending record after data and extent are durable
 does not uncommit those bytes: capture reports truncation and stops further
 appends, while recovery may require handling a resurrected pending record.
+Managed front ends share one verified-output cursor for offsets, gaps, cutovers,
+UTF-8 boundaries and bounded partial lines. Host followers read through canonical
+provenance directly; text prefixes, CLI logs and pane style events adapt those
+validated ranges without reopening raw payloads.
 Managed Standard workloads opt into `Terminal::Styled`, which uses the same
 writer with a journal destination and persists merged plain output in stdout
 (the stderr log is empty). The managed supervisor's own sequence-0 pipe capture

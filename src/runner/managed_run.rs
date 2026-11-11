@@ -17,6 +17,7 @@ mod environment;
 #[path = "managed_run/tests/faults.rs"]
 mod faults;
 mod host_tabs;
+mod output;
 mod settlement;
 mod tui;
 mod wire;
