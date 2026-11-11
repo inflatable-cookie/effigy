@@ -3,6 +3,7 @@ import json
 import io
 import hashlib
 import os
+import re
 from pathlib import Path
 import shutil
 import stat
@@ -201,7 +202,7 @@ class Scope:
         for unit in self.units:
             native.stop_owned_unit(self.attempt, unit, BASE / 'qualification')
         if guest_artifact is not None:
-            self.gnu_export = export_guest_artifact(self.attempt.root, guest_artifact)
+            self.gnu_export = export_guest_artifact(self.attempt, ssh, guest_artifact)
         archive = str(BASE / 'metadata' / (self.attempt.root.name + '-outputs.tar'))
         self.operation('export', records=self.records, archive=archive)
         data = native.channel_read(self.attempt, ssh, archive, limit=GIB)
@@ -211,10 +212,18 @@ class Scope:
         return self.operation('inspect')
 
 
-def export_guest_artifact(evidence_root, bindings):
-    """Copy the pinned GNU artifact family into host evidence before guest cleanup."""
+def export_guest_artifact(attempt, ssh, bindings):
+    """Copy the pinned guest GNU artifact family into host evidence before cleanup."""
     import common
-    source = common.artifact(bindings['guest_artifact'])
+    import linux_native_run as native
+    evidence_root = attempt.root
+    source_item = bindings['guest_artifact']
+    require(isinstance(source_item, dict) and isinstance(source_item.get('path'), str),
+            'GNU artifact binding is missing its guest path')
+    source = Path(source_item['path'])
+    require(source.is_absolute() and '..' not in source.parts and str(source) == source_item['path']
+            and source.is_relative_to(BASE / 'builds') and source.name == 'effigy-aarch64-unknown-linux-gnu',
+            'GNU artifact path is outside the owned guest build tree')
     destination = Path(evidence_root) / 'gnu-artifact'
     destination.mkdir(mode=0o700)
     exported = {}
@@ -222,10 +231,15 @@ def export_guest_artifact(evidence_root, bindings):
                         ('guest_active_version', '.active-version'),
                         ('guest_install_identity', '.install-identity')):
         item = bindings[key]
-        original = common.artifact(item)
+        require(isinstance(item, dict) and isinstance(item.get('path'), str)
+                and isinstance(item.get('sha256'), str) and re.fullmatch(r'[0-9a-f]{64}', item['sha256']),
+                'GNU producer binding is malformed: ' + key)
+        original = Path(item['path'])
+        require(original.is_absolute() and '..' not in original.parts and str(original) == item['path']
+                and original.is_relative_to(BASE / 'builds'), 'GNU producer path is outside the owned guest build tree')
         if suffix is not None:
             require(original == source.with_suffix(suffix), 'GNU producer sidecar path differs')
-        data = original.read_bytes()
+        data = native.channel_read(attempt, ssh, str(original), limit=GIB)
         digest = hashlib.sha256(data).hexdigest()
         require(digest == item['sha256'], 'pinned GNU artifact input changed: ' + key)
         target = destination / original.name
