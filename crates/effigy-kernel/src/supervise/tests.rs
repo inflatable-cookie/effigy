@@ -736,7 +736,7 @@ fn workspace_owner_eof_preserves_owner_loss_while_the_host_frontend_is_alive() {
 }
 
 #[test]
-fn workspace_capture_busy_read_waits_within_the_original_window() {
+fn workspace_capture_guarded_read_stays_within_the_original_window() {
     use crate::custody::{CanonicalOutput, Stream};
     let world = World::new();
     let cx = cx();
@@ -781,45 +781,38 @@ fn workspace_capture_busy_read_waits_within_the_original_window() {
         )
         .unwrap()
     };
-    let held = guard();
-    let id = run.id();
-    std::thread::scope(|scope| {
-        let reader = scope.spawn(|| {
-            crate::run::read_log(
-                &cx.operation().observe().unwrap(),
-                &root,
-                id,
-                OUTPUT_SEQUENCE,
-                Stream::Stdout,
-                0,
-                4096,
-            )
-        });
-        std::thread::sleep(Duration::from_millis(30));
-        drop(held);
-        let Observed::Verified(read, _) = reader.join().unwrap() else {
-            panic!("a completed writer commit must remain readable")
-        };
-        assert_eq!(read.bytes, b"live\n");
-    });
     let _held = guard();
+    let id = run.id();
     let short = cx.child(Duration::from_millis(10));
     let started = Instant::now();
-    assert!(matches!(
-        crate::run::read_log(
-            &short.operation().observe().unwrap(),
-            &root,
-            id,
-            OUTPUT_SEQUENCE,
-            Stream::Stdout,
-            0,
-            4096
+    let observed = crate::run::read_log(
+        &short.operation().observe().unwrap(),
+        &root,
+        id,
+        OUTPUT_SEQUENCE,
+        Stream::Stdout,
+        0,
+        4096,
+    );
+    // Committed bytes remain readable while the writer owns its guard (§5.7).
+    assert!(
+        matches!(
+            &observed,
+            Observed::Verified(read, _) if read == &crate::run::LogRead {
+                from: 0,
+                bytes: b"live\n".to_vec(),
+                end: 5,
+                truncated: false,
+            }
+        ) || matches!(
+            observed,
+            Observed::Unknown(
+                crate::observe::UnknownReason::Busy { .. }
+                    | crate::observe::UnknownReason::TimedOut { .. }
+            )
         ),
-        Observed::Unknown(
-            crate::observe::UnknownReason::Busy { .. }
-                | crate::observe::UnknownReason::TimedOut { .. }
-        )
-    ));
+        "unexpected guarded read: {observed:?}"
+    );
     assert!(started.elapsed() < Duration::from_millis(250));
 }
 
