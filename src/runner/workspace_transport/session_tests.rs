@@ -300,11 +300,11 @@ impl Drop for PrivateProxy {
     }
 }
 
-fn backend_qualification(backend: Backend) {
+fn backend_qualification(backend: Backend, dual_stack: bool) {
     with_session(|run, session| {
         let target = target();
         let ip = "127.0.0.1".parse().unwrap();
-        let guest_ip = if backend == Backend::LinuxDocker {
+        let guest_ip = if backend == Backend::LinuxDocker || dual_stack {
             ip
         } else {
             "::1".parse().unwrap()
@@ -327,7 +327,8 @@ fn backend_qualification(backend: Backend) {
         let (listener, key, mut acceptor) =
             SessionTlsListener::bind(bind.listen, Duration::from_secs(1)).unwrap();
         let endpoint = listener.endpoint().unwrap();
-        let _proxy = (backend != Backend::LinuxDocker).then(|| PrivateProxy::start(endpoint));
+        let _proxy =
+            (backend != Backend::LinuxDocker && !dual_stack).then(|| PrivateProxy::start(endpoint));
         let guest_endpoint = SocketAddr::new(guest_ip, endpoint.port());
         let pin = key.pin();
         let mut launch =
@@ -385,7 +386,14 @@ fn backend_qualification(backend: Backend) {
             Duration::from_secs(2),
             1,
             locator.channel(),
-            || Ok(format!("{guest_ip} effigy-host\n").into_bytes()),
+            || {
+                let other_family = if dual_stack {
+                    "fdc4:f303:9324::254 effigy-host\n"
+                } else {
+                    ""
+                };
+                Ok(format!("{other_family}{guest_ip} effigy-host\n").into_bytes())
+            },
         )
         .unwrap();
         let until = Instant::now() + Duration::from_secs(2);
@@ -419,15 +427,16 @@ fn backend_qualification(backend: Backend) {
 }
 #[test]
 fn colima_private_channel() {
-    backend_qualification(Backend::Colima);
+    backend_qualification(Backend::Colima, false);
 }
 #[test]
 fn docker_desktop_private_channel() {
-    backend_qualification(Backend::DockerDesktop);
+    backend_qualification(Backend::DockerDesktop, false);
+    backend_qualification(Backend::DockerDesktop, true);
 }
 #[test]
 fn linux_docker_fresh_channel() {
-    backend_qualification(Backend::LinuxDocker);
+    backend_qualification(Backend::LinuxDocker, false);
 }
 #[test]
 fn unknown_proxy_and_wrong_target_refuse_before_bind() {
@@ -470,13 +479,41 @@ fn unknown_proxy_and_wrong_target_refuse_before_bind() {
 #[test]
 fn missing_or_ambiguous_hosts_never_trigger_dns_fallback() {
     use super::opener::resolve_hosts;
-    assert!(resolve_hosts(b"127.0.0.1 localhost\n").is_err());
-    assert!(resolve_hosts(b"127.0.0.1 effigy-host\n::1 effigy-host\n").is_err());
-    assert!(resolve_hosts(b"0.0.0.0 effigy-host\n").is_err());
-    assert_eq!(
-        resolve_hosts(b"127.0.0.1 localhost effigy-host # pinned alias\n").unwrap(),
-        "127.0.0.1".parse::<std::net::IpAddr>().unwrap()
-    );
+    for bytes in [
+        &b"127.0.0.1 localhost\n"[..],
+        b"192.168.65.254 effigy-host\n192.168.65.1 effigy-host\n",
+        b"192.168.65.254 effigy-host\nfdc4:f303:9324::254 effigy-host\n::1 effigy-host\n",
+        b"0.0.0.0 effigy-host\n",
+        b"192.168.65.254 effigy-host\n:: effigy-host\n",
+        b"ff02::1 effigy-host\n",
+        b"bad-address effigy-host\n",
+    ] {
+        assert!(resolve_hosts(bytes).is_err(), "{bytes:?}");
+    }
+    for (hosts, expected) in [
+        (
+            "127.0.0.1 localhost effigy-host # Colima alias\n",
+            "127.0.0.1",
+        ),
+        (
+            "192.168.65.254 effigy-host\nfdc4:f303:9324::254 effigy-host\n",
+            "192.168.65.254",
+        ),
+        (
+            "fdc4:f303:9324::254 effigy-host\n192.168.65.254 effigy-host\n",
+            "192.168.65.254",
+        ),
+        ("fdc4:f303:9324::254 effigy-host\n", "fdc4:f303:9324::254"),
+        (
+            "192.168.65.254 effigy-host\n192.168.65.254 effigy-host\n",
+            "192.168.65.254",
+        ),
+    ] {
+        assert_eq!(
+            resolve_hosts(hosts.as_bytes()).unwrap(),
+            expected.parse::<std::net::IpAddr>().unwrap()
+        );
+    }
 }
 
 #[test]
