@@ -228,7 +228,7 @@ def capacity_probe(attempt, ssh, root, size, *, image=None):
                    and (not image or result['seccomp'] == '2'), 'physical ENOSPC control differs')
     path=attempt.root/('capacity-'+uuid.uuid4().hex+'.json')
     common.exclusive(path,result)
-    if lifecycle.ACTIVE:
+    if lifecycle.ACTIVE and not Path(result['path']).is_relative_to(lifecycle.ACTIVE.temporary):
         lifecycle.ACTIVE.operation('remove', records=[dict(path=str(Path(result['path']).parent),
             device=result['device'], inode=result['directory_inode'])])
     return build.file_input(path)

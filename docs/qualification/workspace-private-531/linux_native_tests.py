@@ -45,6 +45,19 @@ class NativeLifecycleTests(unittest.TestCase):
              patch.object(lifecycle, 'evict_cache', return_value={}):
             self.assertEqual(set(lifecycle.preflight()['missing']), set(mounts))
 
+    def test_preparation_probe_defers_to_its_recorded_parent_cleanup(self):
+        from unittest.mock import Mock
+        import json
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            attempt = Mock(root=Path(directory))
+            scope = Mock(temporary=lifecycle.BASE / 'run-tmp-owned')
+            result = dict(errno=28, retained_empty_inode=True,
+                          path=str(scope.temporary / 'enospc-owned/payload'), device=1, directory_inode=2)
+            with patch.object(lifecycle, 'ACTIVE', scope), patch.object(native_run, 'admin_operation',
+                    return_value=(json.dumps(result).encode(), b'', {}, 'unit')):
+                smoke.capacity_probe(attempt, [], str(scope.temporary), 42949672960)
+            scope.operation.assert_not_called()
+
     def test_failed_export_retains_outputs_and_success_exports_before_removal(self):
         from unittest.mock import Mock
         with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
