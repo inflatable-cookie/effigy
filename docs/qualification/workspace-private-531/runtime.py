@@ -74,33 +74,67 @@ def restarted_inventory(engine_command, prior):
 
 def read_journal_rows(path, sql, args=()):
     """Observe the live WAL journal without granting database write access."""
-    uri = Path(path).resolve(strict=True).as_uri() + '?mode=ro'
+    path = Path(path).resolve(strict=True)
+    uri = path.as_uri() + '?mode=ro'
 
     def connect():
         db = sqlite3.connect(uri, uri=True)
         db.execute('PRAGMA query_only=ON')
         return db
 
+    wal = Path(str(path) + '-wal')
+    shm = Path(str(path) + '-shm')
+    missing_shm = wal.is_file() and not shm.exists()
+
     try:
+        if missing_shm:
+            raise sqlite3.OperationalError('unable to open database file: WAL shared-memory sidecar is missing')
         with closing(connect()) as db:
             return db.execute(sql, args).fetchall()
     except sqlite3.DatabaseError as live_error:
         code = getattr(live_error, 'sqlite_errorcode', 0) & 0xff
-        if code not in (11, 26) and not any(
-                text in str(live_error).lower() for text in ('malformed', 'not a database')):
+        if code not in (11, 14, 26) and not any(
+                text in str(live_error).lower() for text in (
+                    'malformed', 'not a database', 'unable to open database file')):
             raise
         # Reopen with the WAL/SHM siblings visible. Never copy kernel.db alone
         # or use immutable=1: either can lose committed WAL state on a live file.
         deadline = time.monotonic() + 5
         def progress(status, remaining, total):
             require(time.monotonic() < deadline, 'journal snapshot exceeded five seconds')
-        try:
-            with closing(connect()) as source, closing(sqlite3.connect(':memory:')) as snapshot:
+
+        def snapshot_from(source):
+            with closing(sqlite3.connect(':memory:')) as snapshot:
                 source.backup(snapshot, pages=256, progress=progress, sleep=.01)
                 integrity = snapshot.execute('PRAGMA integrity_check').fetchall()
                 require(integrity == [('ok',)], 'consistent journal snapshot confirms corruption: ' + str(integrity))
                 snapshot.execute('PRAGMA query_only=ON')
-                rows = snapshot.execute(sql, args).fetchall()
+                return snapshot.execute(sql, args).fetchall()
+
+        def snapshot_from_private_copy():
+            # SQLite cannot open a WAL database read-only when -shm is absent.
+            # Copy the database and WAL into this run's private scratch, then
+            # let SQLite create/recover private sidecars. No operation here
+            # writes to the live journal.
+            with tempfile.TemporaryDirectory(prefix='journal-snapshot-', dir=os.environ['TMPDIR']) as private:
+                private_db = Path(private) / path.name
+                shutil.copyfile(path, private_db)
+                if wal.exists():
+                    shutil.copyfile(wal, Path(str(private_db) + '-wal'))
+                with closing(sqlite3.connect(str(private_db))) as private_source:
+                    return snapshot_from(private_source)
+
+        try:
+            if missing_shm:
+                rows = snapshot_from_private_copy()
+            else:
+                try:
+                    with closing(connect()) as source:
+                        rows = snapshot_from(source)
+                except sqlite3.OperationalError as source_error:
+                    if getattr(source_error, 'sqlite_errorcode', 0) & 0xff != 14:
+                        raise
+                    rows = snapshot_from_private_copy()
         except (sqlite3.Error, RuntimeError) as snapshot_error:
             raise RuntimeError('live journal read reported %s; consistent snapshot recheck failed: %s'
                                % (live_error, snapshot_error)) from snapshot_error

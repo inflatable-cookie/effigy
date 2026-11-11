@@ -6,6 +6,7 @@ import json
 import os
 import signal
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import unittest
@@ -239,6 +240,23 @@ class ExplorationTests(unittest.TestCase):
             thread.join(5)
         self.assertFalse(thread.is_alive())
         self.assertFalse(errors)
+
+    def test_journal_reader_recovers_wal_when_shm_is_missing(self):
+        live = self.control / 'live.db'
+        private = self.control / 'crashed-copy.db'
+        with contextlib.closing(smoke.sqlite3.connect(live)) as writer:
+            writer.execute('PRAGMA journal_mode=WAL')
+            writer.execute('PRAGMA wal_autocheckpoint=0')
+            writer.execute('CREATE TABLE observations(value INTEGER)')
+            writer.execute('INSERT INTO observations VALUES (41)')
+            writer.commit()
+            self.assertTrue(Path(str(live) + '-wal').is_file())
+            shutil.copyfile(live, private)
+            shutil.copyfile(str(live) + '-wal', str(private) + '-wal')
+        self.assertFalse(Path(str(private) + '-shm').exists())
+        self.assertEqual(smoke.runtime.read_journal_rows(private,
+            'SELECT value FROM observations'), [(41,)])
+        self.assertFalse(Path(str(private) + '-shm').exists())
 
     def test_journal_reader_rechecks_live_corruption_against_backup(self):
         path = self.control / 'journal.db'
