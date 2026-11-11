@@ -17,6 +17,7 @@ Current product truth is owned by topic. User documentation remains in [guides](
 | Release procedure | [Release](contracts/release.md) |
 | Test fixture ownership | [Fixture hygiene](test-fixture-hygiene.md) |
 | Test assurance and whole-suite census | [Test assurance](test-assurance.md) |
+| Test and code quality ratings | [Quality tables](quality/README.md) |
 | Cargo routing and its recorded exceptions | [Cargo routes](cargo-routes.md) |
 | Domain vocabulary | [Domain](domain/README.md) |
 | Retired concepts | [Retirements](retired.toml) |

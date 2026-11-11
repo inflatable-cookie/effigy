@@ -1,6 +1,6 @@
 # Test assurance and suite census
 
-Status: active. Owner: this file. Route: `effigy test:inventory` proves the census helper; `effigy test:qa:static-guards` proves the Cargo-route and mktemp detectors on owned synthetic trees; `effigy qa:docs` guards this document.
+Status: active. Owner: this file. Route: `effigy test:inventory` proves the census helper; `effigy test:qa:static-guards` proves the Cargo-route and mktemp detectors on owned synthetic trees; `effigy qa:docs` guards this document. The [test and code quality tables](quality/README.md) are maintained as long-horizon ratings.
 
 This file states what the Rust test suite promises, how the whole suite is
 counted reproducibly, and the rules a pruning wave must follow when it removes
