@@ -241,29 +241,12 @@ operator authority.
 A separate GO index maps `colima`, `desktop`, `linux` to each receipt's
 `{ "path": "<absolute receipt>", "sha256": "<actual receipt hash>" }`.
 Keeping this index separate avoids a circular input-hash/GO-hash dependency.
-Queue binds **both** the runtime-input and GO-index hashes. When the invocation
-omits `--backend`, all three GOs are validated before a native window starts;
-with `--backend`, exactly the selected backend's GO is validated. No backend
-subset is a passing aggregate result.
+Queue binds **both** the runtime-input and GO-index hashes. `--backend` is
+required: each invocation validates exactly the selected backend's GO and runs
+that backend alone. No backend subset is a passing aggregate result.
 
-The all-backend selector to bind, after replacing the four arguments with reviewed
-absolute input paths and actual hashes, is:
-
-```sh
-effigy proof:workspace:private-qualification -- --inputs <inputs.json> --sha256 <inputs-sha256> --go-bindings <go-index.json> --go-sha256 <go-index-sha256>
-```
-
-The single invocation executes Colima, Desktop and Linux sequentially. The
-Linux driver, probe, common module, inputs and GO index must already be placed
-and hash verified on the approved Linux host; the launcher verifies those hashes
-over SSH before executing its reviewed runtime there. No mutable remote command
-body is supplied by the input. If the supported Queue route, host mapping or
-exact native GOs cannot execute all three cells, name that concrete seam to the
-planner before native action. Do not spend the one proof allowance on the old
-subset launcher, split off another product route, or retry a failed proof.
-
-An independently executable backend entry binds exactly one cell of the same
-frozen inputs:
+Bind one backend cell of the frozen inputs with the selector below, replacing
+the paths, hashes and backend with their reviewed values:
 
 ```sh
 effigy proof:workspace:private-qualification -- --inputs <inputs.json> --sha256 <inputs-sha256> --go-bindings <go-index.json> --go-sha256 <go-index-sha256> --backend <colima|desktop|linux>
@@ -280,6 +263,14 @@ nonqualifying evidence. One entry is one positive native receipt: it is never
 an aggregate result and never writes an aggregate `complete.json`. Separate
 backend entries may bind different inputs and GO receipts; the common
 candidate contract must still compare exactly.
+
+For Linux, the driver, probe, common module, inputs and GO index must already
+be placed and hash verified on the approved Linux host; the native runner
+verifies the bound inputs before executing the reviewed runtime there. No
+mutable remote command body is supplied by the input. If the supported Queue
+route, host mapping or scoped GO cannot execute the selected backend, name that
+concrete seam to the planner before native action. Do not spend the allowance
+on the old subset launcher or retry a failed proof.
 
 After #621/#622/#623, effigy#624's independent judgment runs the read-only
 offline aggregate verifier over the three invocation receipts:
