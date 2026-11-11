@@ -41,7 +41,7 @@ def build_resident(iid):
     if sys.platform != 'linux' or os.geteuid() != 1001:
         raise RuntimeError('native dedicated build account required')
     client = Path('/var/lib/effigy-829/rootful/client')
-    work = Path(tempfile.mkdtemp(prefix='runtime-', dir=Path('/Volumes/Stash/scratch/effigy/linux-native-829/artifact-tmp')))
+    work = Path(tempfile.mkdtemp(prefix='runtime-', dir=os.environ.get('TMPDIR', '/Volumes/Stash/scratch/effigy/linux-native-829/artifact-tmp')))
     source = client / 'inputs'
     pin = inputs.production_pin()
 

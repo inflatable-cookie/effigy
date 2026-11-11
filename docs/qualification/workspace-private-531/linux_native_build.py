@@ -191,7 +191,8 @@ def build(root, source_ref=SOURCE_REF):
     native.channel_directory(attempt, remote)
     native.channel_receive_file(attempt, ssh, remote + '/source.bundle', bundle)
     temporary = str(native.lifecycle.ACTIVE.temporary) if native.lifecycle.ACTIVE else BASE + '/build-tmp'
-    binding['guest_tmp'] = temporary
+    if native.lifecycle.ACTIVE:
+        binding['guest_tmp'] = temporary
     script = guest_script(pin, remote, binding['bundle']['sha256'], source_ref, temporary).encode()
     (run_root / 'build.sh').write_bytes(script)
     output = run_script(attempt, root, ssh, remote, script, seconds=1800)

@@ -101,6 +101,7 @@ def checked(path):
     require(path.is_absolute() and '..' not in path.parts and path != BASE
             and (any(path.is_relative_to(p) and path != p for p in allowed)
                  or path.parent == BASE and path.name.startswith(('driver-native-session-', 'run-tmp-'))
+                 or path.parent == BASE / 'artifact-tmp' and path.name.startswith('runtime-')
                  or path.parent == ENGINE_TMP and path.name.startswith('enospc-')),
             'cleanup path is outside per-run outputs: ' + str(path))
     require(path.parent.resolve(strict=True) == path.parent, 'cleanup ancestor aliases')
