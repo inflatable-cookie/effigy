@@ -61,9 +61,7 @@ pub(crate) fn snapshots(repo: &Path) -> Option<Vec<(PathBuf, Value)>> {
             continue;
         };
         let owner = &invocation.spec().owner;
-        if owner.kind() != effigy_kernel::id::ResourceKind::HostProcess
-            || !seen.insert(owner.key().to_vec())
-        {
+        if !seen.insert(owner.key().to_vec()) {
             continue;
         }
         let [Some(environment), Some(profile), Some(process)] = owner.key() else {
