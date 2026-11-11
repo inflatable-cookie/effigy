@@ -296,7 +296,7 @@ def observe_association(boot_id, read_boot_id, config, descriptor, extents, writ
     decided refusal is raised, never softened into a status.
 
     A dispatch that never reached the helper's own exact refusal is transport, not a finding:
-    the same shared bounded policy as the read-only probe routes (TRANSPORT_PAUSE between
+    the same shared bounded policy as the read-only probe routes (a bounded pause between
     attempts inside the one occurrence window) retries it, and an exhausted window returns
     status transport-unavailable with no facts and no finding. Without a deadline there is no
     window to share, so one attempt runs and a transport failure raises as before.
