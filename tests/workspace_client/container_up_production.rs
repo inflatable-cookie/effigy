@@ -1021,6 +1021,71 @@ fn actual_binding_staging_and_liveness_errors_are_private_at_all_diagnostic_sink
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "workspace-private-qualification"),
+    ignore = "production private apply remains refused; qualified route owns this proof"
+)]
+fn a_settled_activation_cleanup_never_hides_owned_residue() {
+    // effigy#901: custody settling is not resource removal. The reported
+    // sentence may claim "settled" only when the owned project's inventory is
+    // verifiably empty; otherwise it names the residue and the one recovery.
+    for configured in [
+        None,
+        Some(serde_json::json!(["checkout-dev-ec-746e15dc40d7-app-1"])),
+    ] {
+        let fixture = BackendFixture::new();
+        effigy_core::worktree_scope::prepare_checkout_token(&fixture.project)
+            .expect("prepared identity");
+        let mut config: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&fixture.config).expect("config")).expect("JSON");
+        config["fail_binding"] = true.into();
+        if let Some(residue) = &configured {
+            config["residue"] = residue.clone();
+        }
+        std::fs::write(
+            &fixture.config,
+            serde_json::to_vec(&config).expect("fault input"),
+        )
+        .expect("fault");
+        let output = fixture
+            .workspace_command()
+            .args(["--detach", "--json"])
+            .output()
+            .expect("actual CLI");
+        assert!(
+            !output.status.success(),
+            "no Serving on a failed activation"
+        );
+        let public = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            public.contains("workspace activation failed during bind/reacquire"),
+            "{public}"
+        );
+        match configured {
+            None => assert!(
+                public.contains("exact owner cleanup settled"),
+                "a verified empty owned inventory is settled: {public}"
+            ),
+            Some(_) => {
+                assert!(!public.contains("cleanup settled"), "{public}");
+                assert!(
+                    public.contains(
+                        "1 owned container(s) remain: checkout-dev-ec-746e15dc40d7-app-1"
+                    ),
+                    "{public}"
+                );
+                assert!(public.contains("effigy container down"), "{public}");
+            }
+        }
+        fixture.assert_settled();
+    }
+}
+
+#[test]
 fn actual_cli_refuses_unqualified_private_preparation_before_any_prepare_or_apply() {
     let fixture = BackendFixture::new();
     let output = fixture

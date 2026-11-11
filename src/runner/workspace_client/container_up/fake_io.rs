@@ -56,6 +56,11 @@ struct Config {
     fail_liveness: bool,
     #[serde(default)]
     fail_binary_staging: bool,
+    /// The owned project's post-cleanup inventory this double reports.
+    #[serde(default)]
+    residue: Vec<String>,
+    #[serde(default)]
+    residue_unverified: bool,
 }
 
 pub(super) fn configured() -> bool {
@@ -66,6 +71,17 @@ pub(super) fn fail_handoff() -> bool {
 }
 pub(super) fn fail_adoption_cleanup() -> bool {
     configured() && config().is_ok_and(|config| config.fail_adoption_cleanup)
+}
+/// The post-cleanup residue answer this double reports. An unconfigured
+/// double reports the empty owned inventory, so existing expectations hold.
+pub(super) fn residue() -> super::residue::CleanupResidue {
+    match config() {
+        Ok(config) if config.residue_unverified => super::residue::CleanupResidue::Unverified,
+        Ok(config) if !config.residue.is_empty() => {
+            super::residue::CleanupResidue::Containers(config.residue)
+        }
+        _ => super::residue::CleanupResidue::Absent,
+    }
 }
 pub(super) fn binding_failure() -> bool {
     config().is_ok_and(|c| c.fail_binding)

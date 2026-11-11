@@ -97,6 +97,9 @@ pub(super) fn activate_with(
     let mut publication_observation = plan::prepare_observation(planned.plan.policy())
         .map_err(|_| RunError::unavailable("workspace publication observation unavailable"))?;
     let supervisor_id = host_run.id().to_string();
+    // The residue report after a failed cleanup needs the same frozen plan and
+    // policy, not a second activation or a fresh backend selection.
+    let residue_plan = Arc::clone(&planned.plan);
     let request = PhaseARequest {
         plan: Arc::clone(&planned.plan),
         retention: request.retention,
@@ -138,9 +141,10 @@ pub(super) fn activate_with(
             loop {
                 match recover(failure) {
                     Ok(()) => {
-                        return Err(RunError::unavailable(format!(
-                        "workspace activation failed during {stage}; exact owner cleanup settled"
-                    )))
+                        return Err(RunError::unavailable(super::residue::message(
+                            stage,
+                            super::residue::CleanupResidue::observe(&residue_plan),
+                        )))
                     }
                     Err(retained) => failure = retained,
                 }

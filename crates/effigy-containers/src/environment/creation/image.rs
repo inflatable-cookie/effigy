@@ -57,7 +57,9 @@ impl ImageIdentity {
     ) -> Result<Self, CreationRefusal> {
         let resolved_id = exact_image_id(resolved_id)
             .ok_or_else(|| CreationRefusal::ReferenceOnlyImage(reference.into()))?;
-        if !same_reference(reference, &row.image_reference) {
+        if !same_reference(reference, &row.image_reference)
+            && !digest_reference_binds(reference, &row.image_reference)
+        {
             // Nerdctl can replace even a digest reference with a local tag in
             // both inspect image fields. Only a new ID in this guarded create
             // window may bind that spelling through an independent lookup.
@@ -133,6 +135,25 @@ pub(super) fn same_reference(left: &str, right: &str) -> bool {
         (Some(left), Some(right)) => left == right,
         _ => false,
     }
+}
+
+/// A bare-digest render names content, never a repository. When the frozen
+/// reference is `sha256:<digest>`, an engine may report the same immutable
+/// digest under the repository spelling it imported the image with (nerdctl
+/// answers `import@sha256:<digest>` for an OCI layout it loaded without a
+/// reference name). That is the same content: the container's own image id is
+/// still checked against this backend's lookup for the declared digest, so the
+/// binding stays content-addressed. A tag, another digest, or a reference-only
+/// spelling of this form for a tagged render never binds.
+pub(super) fn digest_reference_binds(declared: &str, reported: &str) -> bool {
+    let Some(declared) = exact_image_id(declared) else {
+        return false;
+    };
+    reported
+        .split_once('@')
+        .map(|(_, digest)| digest)
+        .and_then(exact_image_id)
+        .is_some_and(|reported| reported == declared)
 }
 
 /// Expand only Docker's familiar-name spelling, never a different repository,

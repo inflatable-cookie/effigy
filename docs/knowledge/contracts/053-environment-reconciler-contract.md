@@ -149,6 +149,27 @@ port facts use the machine store. No legacy family is imported (Q-012 §3).
 The later workflows named in §9 remain separate from
 this relocation.
 
+### Attribution and cleanup claims (effigy#901, 2026-11-11)
+
+A frozen render may name its image by content digest (`image: sha256:<digest>`) rather
+than by repository. A bare digest names content, so an engine that reports that same
+immutable digest under the repository spelling it imported the image with still names
+the declared content: nerdctl answers `import@sha256:<digest>` for an OCI layout it
+loaded without a reference name, while the container's own `Image` field is the exact
+resolved id. `ImageIdentity::observe` and the window's row validation therefore bind a
+created row whose reported reference carries the declared digest, and still address the
+identity by id — the container's image id must equal this backend's lookup for the
+declared digest. A tag, another digest, or that spelling against a tagged render
+refuses exactly as before.
+
+Settling a failed activation's Env run releases process custody and journalled effects;
+it does not remove the Compose project the apply may already have created. The failure
+sentence may therefore claim "exact owner cleanup settled" only when a fresh bounded
+read-only inventory of the owned project answers empty. Otherwise it reports the exact
+number and names of the owned containers that remain (or that their absence is
+unproven) and names the one down authority, `effigy container down`. Custody settlement
+is never reported as resource removal.
+
 Owner: environment reconciler (Queue lane `v015-environment`)
 Kernel: [052](052-runtime-kernel-contract.md) §5.9, §11
 Supersedes: the lease, lifecycle-marker and per-site holder-check sections of
