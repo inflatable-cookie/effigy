@@ -1,3 +1,8 @@
+# Released changelog fragments are frozen history: each names the retired
+# spelling to record its replacement, so no retirement scans them. Pending
+# (non-`legacy-`) fragments under changelog.d/ stay scanned.
+frozen = ["changelog.d/legacy-*.md"]
+
 [[retired]]
 id = "manifest-legacy-include-and-kebab-aliases"
 retired = "2026-10-28; accepted through v0.15, removed in v0.16 (effigy#434)"
@@ -86,6 +91,7 @@ allow = [
   "docs/guides/085-v0.15.0-consumer-migration.md",
   "docs/knowledge/questions.md",
   "tests/cli_output_tests/retirement_tests.rs",
+  "docs/knowledge/quality/tests/",
 ]
 
 [[retired]]
@@ -139,6 +145,7 @@ allow = [
   "src/tests/runner_tests/tasks_listing_tests/status_query_tests.rs",
   "tests/cli_output_tests/qa_groups_tests.rs",
   "tests/cli_output_tests/visibility_tests.rs",
+  "docs/knowledge/quality/tests/",
 ]
 
 [[retired]]
@@ -367,12 +374,14 @@ id = "effigy-owned-run-control-proposal"
 retired = "2026-10-18"
 replacement = "Contract 052 is now the runtime kernel contract. Run identity, the run journal, stop, signals and deadlines are kernel primitives (Run, OwnedProcess, SignalRouter, OperationContext); engines own any command surface on top. That surface is Q-006 run control (effigy runs, effigy run status|logs|stop, --run-id; contract 049). The proposed tasks-run CLI, its JSON schemas and refusal codes, the opt-in witness placement and its workflow guide are not planned."
 owner = "docs/knowledge/contracts/052-runtime-kernel-contract.md"
+# `effigy.run-status.v1` now names the live Q-006 run-control payload
+# (src/runner/task_engine/control.rs); the retired proposal's other
+# schemas below still trip this entry.
 terms = [
   "tasks run status",
   "tasks run logs",
   "tasks run stop",
   "tasks run capabilities",
-  "effigy.run-status.v1",
   "effigy.run-stop.v1",
   "effigy.run-logs.v1",
   "effigy.run-capabilities.v1",
@@ -433,7 +442,9 @@ id = "effigy-strict-planning-lane"
 retired = "2026-09-26"
 replacement = "Effigy intent lives in Queue lanes, lane documents and plan order."
 owner = "docs/knowledge/README.md"
-terms = ["strict planning lane", "Next Task"]
+# Bare "next task" is ordinary prose (workspace admission, changelog
+# fixtures); the specific "strict planning lane" spelling still trips here.
+terms = ["strict planning lane"]
 paths = ["docs/specs/", "docs/scripts/fixtures/vision-next-task/"]
 config_keys = ["docs_policy.next_actions.vision"]
 # `task_description_tests.rs` says "next task" in an assertion label, not as a
@@ -560,7 +571,7 @@ owner = "docs/knowledge/contracts/043-feature-placement-and-surface-migration-co
 terms = ["tasks migrate", "effigy.migrate.v1"]
 paths = ["crates/effigy-builtin/src/migrate.rs", "crates/effigy-builtin/src/migrate/", "crates/effigy-cli/src/help/topics/migrate.rs"]
 config_keys = []
-allow = ["CHANGELOG.md", "docs/guides/085-v0.15.0-consumer-migration.md", "crates/effigy-cli/src/command_parsing.rs", "crates/effigy-builtin/src/init/inventory/tests.rs", "src/tests/lib_tests_help_render_tests.rs"]
+allow = ["CHANGELOG.md", "docs/guides/085-v0.15.0-consumer-migration.md", "crates/effigy-cli/src/command_parsing.rs", "crates/effigy-builtin/src/init/inventory/tests.rs", "src/tests/lib_tests_help_render_tests.rs", "src/tests/lib_tests_parse_tests/help_and_flag_tests.rs"]
 
 [[retired]]
 id = "effigy-managed-stream"
@@ -570,7 +581,7 @@ owner = "docs/knowledge/contracts/043-feature-placement-and-surface-migration-co
 terms = ["EFFIGY_MANAGED_STREAM"]
 paths = ["crates/effigy-managed/src/runtime/stream.rs", "crates/effigy-managed/src/runtime/stream/", "src/tests/runner_tests/managed_and_locking_tests/managed_stream_tests.rs"]
 config_keys = []
-allow = ["CHANGELOG.md", "docs/guides/085-v0.15.0-consumer-migration.md", "crates/effigy-managed/src/presentation.rs", "src/tests/runner_tests/managed_and_locking_tests/managed_headless_tests.rs"]
+allow = ["CHANGELOG.md", "docs/guides/085-v0.15.0-consumer-migration.md", "crates/effigy-managed/src/presentation.rs", "src/tests/runner_tests/managed_and_locking_tests/managed_headless_tests.rs", "docs/knowledge/test-fixture-hygiene.md"]
 
 [[retired]]
 id = "effigy-transition-receipts"
@@ -620,7 +631,7 @@ owner = "docs/knowledge/contracts/043-feature-placement-and-surface-migration-co
 terms = []
 paths = []
 config_keys = ["[manifest].root"]
-allow = ["CHANGELOG.md", "docs/guides/085-v0.15.0-consumer-migration.md", "crates/effigy-manifest/src/composition.rs", "crates/effigy-core/src/resolver.rs"]
+allow = ["CHANGELOG.md", "docs/guides/085-v0.15.0-consumer-migration.md", "crates/effigy-manifest/src/composition.rs", "crates/effigy-core/src/resolver.rs", "docs/knowledge/quality/tests/"]
 
 [[retired]]
 id = "effigy-user-global-catalog"
@@ -669,6 +680,7 @@ allow = [
   "src/runner/entrypoints/dispatch.rs",
   "tests/cli_output_tests/command_behavior_tests.rs",
   "tests/gateway_private/managed_matrix.rs",
+  "scripts/release/secret-audit-allowlist.tsv",
 ]
 
 [[retired]]
@@ -939,6 +951,7 @@ allow = [
   "docs/knowledge/retired.toml",
   "src/tests/lib_tests_parse_tests/bootstrap_option_tests.rs",
   "tests/bootstrap_cli_tests.rs",
+  "docs/qualification/acow-ordinary-compose-5f466914/common.py",
 ]
 
 [[retired]]
@@ -1297,6 +1310,7 @@ allow = [
   "docs/guides/080-host-wide-validation-admission.md",
   "docs/guides/085-v0.15.0-consumer-migration.md",
   "docs/knowledge/questions.md",
+  "scripts/release/secret-audit-allowlist.tsv",
 ]
 
 [[retired]]
@@ -1322,12 +1336,13 @@ owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
 terms = [
   "runtime scope journal",
   "effigy.runtime-scope.v1",
-  "com.effigy.checkout-generation",
-  "com.effigy.checkout-fence",
   "dead-retire generation comparison",
   "legacy bind-mount ownership proof",
   "admits_legacy_unlabelled",
 ]
+# The workspace builder still labels generations/fences on its own
+# containers (crates/effigy-containers/src/exec/implementation.rs), so those
+# label spellings no longer trip this entry; the journal paths still do.
 paths = [
   "crates/effigy-containers/src/runtime/scope/journal.rs",
   "crates/effigy-containers/src/runtime/scope/",
@@ -1390,6 +1405,7 @@ allow = [
   "crates/effigy-kernel/tests/support/custody-fixture.rs",
   "crates/effigy-kernel/tests/custody.rs",
   "tests/run_control_cli.rs",
+  "docs/knowledge/quality/tests/",
 ]
 
 [[retired]]
@@ -1434,6 +1450,7 @@ allow = [
   "src/runner/container_command/support.rs",
   "tests/cli_output_tests/reset_generation_tests.rs",
   "tests/scripts/container-render-consumers.py",
+  "docs/knowledge/quality/tests/",
 ]
 
 [[retired]]
@@ -1490,9 +1507,9 @@ terms = [
   "machine-format.json",
   "MachineFormat",
   "RetainedCheckout",
-  "verify_binding",
-  "binding_identity",
 ]
+# `verify_binding`/`binding_identity` now name live staged-source and
+# workspace-context checks, so those bare identifiers no longer trip here.
 paths = []
 config_keys = []
 allow = [
@@ -1649,6 +1666,7 @@ allow = [
   "crates/effigy-cli/src/command_parsing_runtime.rs",
   "docs/guides/063-container-system-guide.md",
   "src/tests/lib_tests_parse_tests/gateway_option_tests.rs",
+  "docs/knowledge/quality/tests/",
 ]
 
 [[retired]]
@@ -1761,12 +1779,15 @@ terms = [
   "ImagePin",
   "startup image",
   "StartupIdentity",
-  "executable_identity",
 ]
+# `executable_identity` now names the recovery-backend binding in
+# environment/remote/recovery_binding.rs, so it no longer trips here.
 paths = []
 config_keys = []
 allow = [
   "CHANGELOG.md",
+  "docs/qualification/workspace-private-531/macos_stage_executor_tests.py",
+  "docs/knowledge/quality/tests/",
 ]
 
 [[retired]]
