@@ -23,12 +23,17 @@ pub fn resolve_effigy_invocation_argv() -> Result<Vec<String>, std::io::Error> {
         .filter(|parent| parent.file_name().is_some_and(|name| name == "deps"))
         .and_then(std::path::Path::parent)
     {
-        // Cargo builds the CLI beside `deps`; custody needs that absolute image.
-        return Ok(vec![profile
-            .join("effigy")
-            .canonicalize()?
-            .display()
-            .to_string()]);
+        let binary = profile.join("effigy");
+        let binary = if binary.is_file() {
+            binary
+        } else {
+            // Oxide uplifts the CLI to this checkout's profile output.
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../target")
+                .join(profile.file_name().unwrap_or_default())
+                .join("effigy")
+        };
+        return Ok(vec![binary.canonicalize()?.display().to_string()]);
     }
 
     Ok(vec![executable.display().to_string()])
