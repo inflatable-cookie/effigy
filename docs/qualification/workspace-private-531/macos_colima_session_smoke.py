@@ -133,28 +133,25 @@ def sqlite_readiness(scratch):
     try:
         writer = sqlite3.connect(path)
         try:
+            writer.execute('PRAGMA journal_mode=WAL')
             writer.execute('CREATE TABLE readiness(value INTEGER)')
             writer.execute('INSERT INTO readiness VALUES (1)')
             writer.commit()
-        finally:
-            writer.close()
-        reader = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)
-        try:
-            require(reader.execute('SELECT value FROM readiness').fetchall() == [(1,)],
-                    'read-only SQLite observation differs')
+            require(runtime.read_journal_rows(path, 'SELECT value FROM readiness') == [(1,)],
+                    'read-only SQLite WAL observation differs')
             try:
-                reader.execute('INSERT INTO readiness VALUES (2)')
+                runtime.read_journal_rows(path, 'INSERT INTO readiness VALUES (2)')
             except sqlite3.OperationalError:
                 pass
             else:
                 raise RuntimeError('read-only SQLite observation permits writes')
         finally:
-            reader.close()
+            writer.close()
     except sqlite3.Error as exc:
         raise RuntimeError('selected Python cannot observe scratch SQLite read-only; select a capable Python on PATH') from exc
     interpreter = Path(sys.executable).resolve(strict=True)
     return dict(interpreter=str(interpreter), interpreter_sha256=digest(interpreter),
-                sqlite_version=sqlite3.sqlite_version, fixture=str(directory), read_only=True)
+                sqlite_version=sqlite3.sqlite_version, fixture=str(directory), read_only=True, live_wal=True)
 
 
 def main():

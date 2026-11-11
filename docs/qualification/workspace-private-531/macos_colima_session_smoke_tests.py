@@ -12,6 +12,7 @@ import unittest
 from unittest import mock
 import subprocess
 import time
+import threading
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import macos_colima_session_smoke as smoke
@@ -200,6 +201,82 @@ class ExplorationTests(unittest.TestCase):
              mock.patch.object(smoke.subprocess, 'run', side_effect=subprocess.TimeoutExpired([], 30)):
             with self.assertRaisesRegex(RuntimeError, 'already running owned profile.*share'):
                 smoke.colima_readiness(cell, str(self.control))
+
+    def test_journal_reader_with_concurrent_wal_writer(self):
+        path = self.control / 'live ?# journal.db'
+        ready, stop = threading.Event(), threading.Event()
+        errors = []
+        def writer():
+            try:
+                with contextlib.closing(smoke.sqlite3.connect(path)) as db:
+                    db.execute('PRAGMA journal_mode=WAL')
+                    db.execute('PRAGMA wal_autocheckpoint=0')
+                    db.execute('CREATE TABLE observations(value INTEGER)')
+                    db.execute('INSERT INTO observations VALUES (0)')
+                    db.commit()
+                    ready.set()
+                    while not stop.wait(.001):
+                        db.execute('UPDATE observations SET value=value+1')
+                        db.commit()
+            except BaseException as exc:
+                errors.append(exc)
+                ready.set()
+        thread = threading.Thread(target=writer)
+        thread.start()
+        try:
+            self.assertTrue(ready.wait(5))
+            self.assertFalse(errors)
+            self.assertTrue(Path(str(path) + '-wal').is_file())
+            for _ in range(50):
+                rows = smoke.runtime.read_journal_rows(path, 'SELECT value FROM observations')
+                self.assertEqual(len(rows), 1)
+                self.assertGreaterEqual(rows[0][0], 0)
+            with self.assertRaises(smoke.sqlite3.OperationalError):
+                smoke.runtime.read_journal_rows(path, 'INSERT INTO observations VALUES (999)')
+            self.assertEqual(smoke.runtime.read_journal_rows(path, 'SELECT count(*) FROM observations'), [(1,)])
+        finally:
+            stop.set()
+            thread.join(5)
+        self.assertFalse(thread.is_alive())
+        self.assertFalse(errors)
+
+    def test_journal_reader_rechecks_live_corruption_against_backup(self):
+        path = self.control / 'journal.db'
+        with contextlib.closing(smoke.sqlite3.connect(path)) as writer:
+            writer.execute('PRAGMA journal_mode=WAL')
+            writer.execute('CREATE TABLE observations(value INTEGER)')
+            writer.execute('INSERT INTO observations VALUES (42)')
+            writer.commit()
+            original = smoke.sqlite3.connect
+            for message in ('database disk image is malformed', 'file is not a database'):
+                with self.subTest(message=message):
+                    failed = mock.MagicMock()
+                    failed.execute.side_effect = [None, smoke.sqlite3.DatabaseError(message)]
+                    calls = []
+                    def connect(target, **kwargs):
+                        calls.append((target, kwargs))
+                        return failed if len(calls) == 1 else original(target, **kwargs)
+                    stderr = io.StringIO()
+                    with mock.patch.object(smoke.sqlite3, 'connect', side_effect=connect), contextlib.redirect_stderr(stderr):
+                        self.assertEqual(smoke.runtime.read_journal_rows(path,
+                            'SELECT value FROM observations WHERE value=?', (42,)), [(42,)])
+                    self.assertEqual(calls[:2], [(path.as_uri() + '?mode=ro', dict(uri=True))] * 2)
+                    self.assertEqual(calls[2][0], ':memory:')
+                    self.assertIn('consistent snapshot integrity_check=ok, read recovered', stderr.getvalue())
+                    failed.close.assert_called_once()
+
+    def test_journal_reader_refuses_real_corruption_and_missing_files(self):
+        for content in (b'not a database' * 100, b'SQLite format 3\0' + b'\0' * 4096):
+            with self.subTest(header=content[:16]):
+                path = self.control / 'corrupt.db'
+                path.write_bytes(content)
+                with self.assertRaisesRegex(RuntimeError, 'consistent snapshot recheck failed'):
+                    smoke.runtime.read_journal_rows(path, 'SELECT * FROM runs')
+                self.assertEqual(path.read_bytes(), content)
+        missing = self.control / 'missing.db'
+        with self.assertRaises(FileNotFoundError):
+            smoke.runtime.read_journal_rows(missing, 'SELECT 1')
+        self.assertFalse(missing.exists())
 
     def test_sqlite_readiness_refuses_an_incapable_interpreter(self):
         with mock.patch.object(smoke.sqlite3, 'connect', side_effect=smoke.sqlite3.OperationalError('fixture refusal')):

@@ -1,0 +1,254 @@
+{
+  "task": 872,
+  "main_head": "12dd546a230cbe2dc857d1f817345acc8e464769",
+  "implementation_head": "627619651ed73e00a7f8f6414ef2755e8fd26040",
+  "proof": false,
+  "qualification_credit": false,
+  "decisions": [
+    "Canonical mode=ro URI with WAL/SHM siblings visible and query-only enforcement.",
+    "On a live corruption report, reopen read-only and use the SQLite backup API into private memory, verify integrity, then repeat the query; failed rechecks retain both errors.",
+    "Use current-main product artifacts and original GNU producer receipt; preserve the real freshness anchor.",
+    "Planner 0edfb305 directed a single fresh Colima-native recipe attempt after the imported Desktop runtime failed creator observation."
+  ],
+  "validation": {
+    "reader_controls": {
+      "selector": "test:qualification:workspace-private:colima-session-smoke",
+      "passed": 24,
+      "failed": 0
+    },
+    "packet_boundaries": {
+      "selector": "test:qualification:workspace-private",
+      "passed": 50,
+      "failed": 0,
+      "log": {
+        "path": "/Volumes/Stash/scratch/effigy/5d412494/872-native-4omkDGY8/packet-boundaries.log",
+        "sha256": "7ca6b63ce7f8905a350ceac37db11370489d495e05f66da9f325db0f51a84223",
+        "bytes": 9828
+      }
+    },
+    "python_compile": {
+      "selector": "check:qualification:workspace-private:macos-desktop-readiness:compile",
+      "exit": 0
+    },
+    "docs": {
+      "selector": "qa:docs",
+      "exit": 0,
+      "log": {
+        "path": "/Volumes/Stash/scratch/effigy/5d412494/872-native-4omkDGY8/docs-check.log",
+        "sha256": "7945077f2af2c63016aa3f65b2d2254808d1320916b331c87e6ac1cef1ed29b4",
+        "bytes": 7785
+      }
+    }
+  },
+  "native": {
+    "desktop": {
+      "selector": "qualification:macos:desktop-session-smoke",
+      "exit": 0,
+      "request": {
+        "path": "/Volumes/Stash/scratch/effigy/5d412494/872-native-4omkDGY8/desktop-session-request.json",
+        "sha256": "e8fd82d08b3d100ff9ea4fc3cc12b139cff8493edff9192509725c44afd9cc7a",
+        "bytes": 6328
+      },
+      "cells": [
+        "production-refusal",
+        "positive-session",
+        "native-identity-and-tls",
+        "exploration-level-one-client",
+        "level-one-stream",
+        "exploration-signal-client",
+        "real-signal",
+        "credential-refusal",
+        "exploration-caller-drop-client",
+        "caller-drop",
+        "exploration-gap-client",
+        "exploration-truncated-client",
+        "gap-and-truncation",
+        "kernel-custody",
+        "down",
+        "positive-session",
+        "session-crash-recovery",
+        "down",
+        "positive-session",
+        "down",
+        "baseline-and-cleanup"
+      ],
+      "runtime_image": "sha256:c2477c058c084a7de946f6b05b73f3b16a1de60a8354539b62aabf6de9b35446",
+      "receipt": {
+        "path": "/Volumes/Stash/scratch/effigy/5d412494/872-native-4omkDGY8/desktop-session/exploration-complete.json",
+        "sha256": "8b60fb4872cebbde31b9834f3e8b1112ec017f030f7b7795232328fc00b06d41",
+        "bytes": 4429
+      },
+      "runs": [
+        [
+          "closed",
+          "complete",
+          28
+        ]
+      ],
+      "sqlite_readiness": {
+        "fixture": "/Volumes/Stash/scratch/effigy/5d412494/session-sqlite-k_6za1z5",
+        "interpreter": "/opt/homebrew/Cellar/python@3.11/3.11.17/Frameworks/Python.framework/Versions/3.11/bin/python3.11",
+        "interpreter_sha256": "a2524da3e0247184d8c0635912f6be3c7b444fb97470a6bf655f06885ddb4876",
+        "live_wal": true,
+        "read_only": true,
+        "sqlite_version": "3.53.4"
+      }
+    },
+    "colima": {
+      "selector": "qualification:macos:colima-session-smoke",
+      "exit": 0,
+      "request": {
+        "path": "/Volumes/Stash/scratch/effigy/5d412494/872-native-4omkDGY8/native-colima-session-request.json",
+        "sha256": "fdddaa1c53b5ad79d82bc0ae0b75853826a216d75b242a45693455a8ca46a894",
+        "bytes": 5846
+      },
+      "cells": [
+        "production-refusal",
+        "positive-session",
+        "native-identity-and-tls",
+        "exploration-level-one-client",
+        "level-one-stream",
+        "exploration-signal-client",
+        "real-signal",
+        "credential-refusal",
+        "exploration-caller-drop-client",
+        "caller-drop",
+        "exploration-gap-client",
+        "exploration-truncated-client",
+        "gap-and-truncation",
+        "kernel-custody",
+        "down",
+        "positive-session",
+        "session-crash-recovery",
+        "down",
+        "positive-session",
+        "down",
+        "baseline-and-cleanup"
+      ],
+      "runtime_image": "sha256:480d469af6872fd527cb442e0420f7969f1e284851a07464cc757769a18a5c37",
+      "receipt": {
+        "path": "/Volumes/Stash/scratch/effigy/mac-4f6a-9kvatkyl/s/session872-zzmd0tp3/exploration-complete.json",
+        "sha256": "25c8996aaa3d48ed1610e9ef99315292d0004d7bb7b765c9fdf7e6e21828cd94",
+        "bytes": 3896
+      },
+      "runs": [
+        [
+          "closed",
+          "complete",
+          28
+        ]
+      ],
+      "sqlite_readiness": {
+        "fixture": "/Volumes/Stash/scratch/effigy/5d412494/session-sqlite-0tzcf437",
+        "interpreter": "/opt/homebrew/Cellar/python@3.11/3.11.17/Frameworks/Python.framework/Versions/3.11/bin/python3.11",
+        "interpreter_sha256": "a2524da3e0247184d8c0635912f6be3c7b444fb97470a6bf655f06885ddb4876",
+        "live_wal": true,
+        "read_only": true,
+        "sqlite_version": "3.53.4"
+      }
+    }
+  },
+  "earlier_colima": {
+    "imported_runtime": {
+      "exit": 1,
+      "stage": "sealed apply before publication; apply process exit 0; creator observation refused",
+      "attribution": "Runtime preparation differs from #871; no product defect established.",
+      "log": {
+        "path": "/Volumes/Stash/scratch/effigy/5d412494/872-native-4omkDGY8/colima-session.log",
+        "sha256": "83fce9ba2f771b4cd4e48321b8763210038e6acbe00a5a04570da7fa382d09a4",
+        "bytes": 1345
+      },
+      "down_exit": 0,
+      "retire_exit": 0
+    },
+    "config_id_diagnostic": {
+      "exit": 1,
+      "stage": "image inspect before production refusal or activation",
+      "log": {
+        "path": "/Volumes/Stash/scratch/effigy/5d412494/872-native-4omkDGY8/colima-config-session.log",
+        "sha256": "ae1113f32ab434c838cbfd1020e14462f33b7082a31aaeb8bd77fc55c4a1dee6",
+        "bytes": 1341
+      }
+    }
+  },
+  "cleanup": {
+    "desktop_final_inventory_difference": {
+      "container": {
+        "added": [],
+        "removed": []
+      },
+      "image": {
+        "added": [],
+        "removed": []
+      },
+      "network": {
+        "added": [],
+        "removed": []
+      },
+      "volume": {
+        "added": [],
+        "removed": []
+      }
+    },
+    "desktop_d4_exit": 0,
+    "owned_profiles_stopped": [
+      "r872",
+      "r8"
+    ],
+    "earlier_matching_live_processes": 0,
+    "earlier_process_identities_checked": 100,
+    "native_matching_live_processes": 0,
+    "native_process_identities_checked": 88,
+    "shared_settings_context_or_lifecycle_changed": false,
+    "existing_colima_profiles_touched": false,
+    "fixtures_retained": true
+  },
+  "artifacts": {
+    "candidate": {
+      "path": "/Volumes/Stash/scratch/effigy/5d412494/872-native-4omkDGY8/artifacts/candidate",
+      "sha256": "8f3fd1e9f57508777ceada3f5bc843cbcb6d3433289024b648723e7f380770e0"
+    },
+    "production": {
+      "path": "/Volumes/Stash/scratch/effigy/5d412494/872-native-4omkDGY8/artifacts/production",
+      "sha256": "44c61bfba0a1e3b8cad0b107362eccdbeb628fdce574e165b4dbbf4f2b60769c"
+    },
+    "utility": {
+      "path": "/Volumes/Stash/scratch/effigy/5d412494/872-native-4omkDGY8/artifacts/utility",
+      "sha256": "5e16ec104ec8980277a900c5e4d7f9bfdc98e13c013fd3da16888f51c7c6e1b2"
+    },
+    "kernel_fixture": {
+      "path": "/Volumes/Stash/scratch/effigy/5d412494/872-native-4omkDGY8/artifacts/kernel-fixture",
+      "sha256": "1ac19c5578cddf1f27de168ef323ae50d6640f9f4583a1c0550d4697959adc81"
+    },
+    "kernel_tests": {
+      "path": "/Volumes/Stash/scratch/effigy/5d412494/872-native-4omkDGY8/artifacts/kernel-tests",
+      "sha256": "11c37e3d68f60ee0028797cb1def24b1263af9e689802ae8444feddd12da5a72"
+    },
+    "custody_tests": {
+      "path": "/Volumes/Stash/scratch/effigy/5d412494/872-native-4omkDGY8/artifacts/custody-tests",
+      "sha256": "5f95e913e5d9d91835b9b4f368b27ae3f15a889b5f874e8979768c3664c5c5a3"
+    },
+    "old_binary": {
+      "path": "/Volumes/Stash/scratch/effigy/5d412494/872-native-4omkDGY8/artifacts/old",
+      "sha256": "a603c82a9c98d499ea83ea79b403127274cc87d179adcb197dd4478524b117aa"
+    },
+    "guest_artifact": {
+      "path": "/Volumes/Stash/scratch/effigy/5d412494/872-native-4omkDGY8/source/.effigy/linux-release/artifacts/effigy-aarch64-unknown-linux-gnu",
+      "sha256": "58f92a81736ab09bda4044382e25ef150076997c1671254294b63232e129f6d6"
+    },
+    "guest_producer_receipt": {
+      "path": "/Volumes/Stash/scratch/effigy/5d412494/872-native-4omkDGY8/source/.effigy/linux-release/artifacts/effigy-aarch64-unknown-linux-gnu.receipt",
+      "sha256": "e17b9c9950164ad07c70b6374c2780ea1f7537a7a47a40a6d95a90bd9bd47202"
+    },
+    "guest_active_version": {
+      "path": "/Volumes/Stash/scratch/effigy/5d412494/872-native-4omkDGY8/source/.effigy/linux-release/artifacts/effigy-aarch64-unknown-linux-gnu.active-version",
+      "sha256": "c6fb87657a4ee72e2b549cdd39c12854fdbecbdfef033c04f523d4bfcb02aa4c"
+    },
+    "guest_install_identity": {
+      "path": "/Volumes/Stash/scratch/effigy/5d412494/872-native-4omkDGY8/source/.effigy/linux-release/artifacts/effigy-aarch64-unknown-linux-gnu.install-identity",
+      "sha256": "4c6aea113ff0b68975d5036dea23ef644afd7bd55f27320e13e2b4ef2f778075"
+    }
+  },
+  "required_passing_proof_missing": false,
+  "private_evidence_archive": "/Volumes/Stash/scratch/effigy/mac-4f6a-9kvatkyl/evidence/task-872"
+}

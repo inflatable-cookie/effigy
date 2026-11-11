@@ -111,11 +111,17 @@ each projection is redacted again after the merged sanitize/redact pass. Signal
 exits keep ordinary shell outcome classification. Standard sequences, container
 placement and schema `exec()` retain their pre-fallback refusal boundaries.
 Before creating the session checkout, the unsealed entry checks that its Python
-can open an actual scratch SQLite database read-only and that writes refuse.
+can read an actual scratch SQLite database with a live WAL writer and that writes refuse.
 On this host, system Python 3.9.6/SQLite 3.51.0 failed that read-only open;
 Homebrew Python 3.11.17/SQLite 3.53.4 passed. Select a capable interpreter on
 PATH and retain its canonical path/hash; do not bypass locking with
-`immutable=1`. The full-session baseline also binds the producer's real
+`immutable=1`. All backend session reads use a canonical `mode=ro` URI with
+WAL/SHM siblings visible and query-only enforcement. A live corruption report
+gets one fresh read-only connection and a backup-API snapshot in private memory;
+only an integrity-checked snapshot can recover the query. Recovery is explicitly
+reported on stderr. A failed snapshot recheck retains the live error separately,
+so an inconclusive observation cannot be presented as proven corruption. No
+journal or WAL bytes are copied by hand or written by the reader. The full-session baseline also binds the producer's real
 `.install-identity` sidecar, alongside its binary, receipt and active version.
 The fixture's private HOME explicitly selects its backend/profile for retirement.
 After the final down, it retires only that synthetic checkout's owned data before

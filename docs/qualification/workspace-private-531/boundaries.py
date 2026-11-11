@@ -546,7 +546,7 @@ class Boundaries(unittest.TestCase):
                     with self.assertRaises(RuntimeError):
                         window.spawn(['/must-not-run'])
                     with self.assertRaises(RuntimeError):
-                        window.db()
+                        window.rows("SELECT 1")
                     # Failure evidence stays on the held original directory, never the alias.
                     exclusive('retained.json', {'unit-only': True}, dir_fd=window.root_fd)
                     self.assertTrue((moved / 'retained.json').is_file())

@@ -72,6 +72,43 @@ def restarted_inventory(engine_command, prior):
     return observed
 
 
+def read_journal_rows(path, sql, args=()):
+    """Observe the live WAL journal without granting database write access."""
+    uri = Path(path).resolve(strict=True).as_uri() + '?mode=ro'
+
+    def connect():
+        db = sqlite3.connect(uri, uri=True)
+        db.execute('PRAGMA query_only=ON')
+        return db
+
+    try:
+        with closing(connect()) as db:
+            return db.execute(sql, args).fetchall()
+    except sqlite3.DatabaseError as live_error:
+        code = getattr(live_error, 'sqlite_errorcode', 0) & 0xff
+        if code not in (11, 26) and not any(
+                text in str(live_error).lower() for text in ('malformed', 'not a database')):
+            raise
+        # Reopen with the WAL/SHM siblings visible. Never copy kernel.db alone
+        # or use immutable=1: either can lose committed WAL state on a live file.
+        deadline = time.monotonic() + 5
+        def progress(status, remaining, total):
+            require(time.monotonic() < deadline, 'journal snapshot exceeded five seconds')
+        try:
+            with closing(connect()) as source, closing(sqlite3.connect(':memory:')) as snapshot:
+                source.backup(snapshot, pages=256, progress=progress, sleep=.01)
+                integrity = snapshot.execute('PRAGMA integrity_check').fetchall()
+                require(integrity == [('ok',)], 'consistent journal snapshot confirms corruption: ' + str(integrity))
+                snapshot.execute('PRAGMA query_only=ON')
+                rows = snapshot.execute(sql, args).fetchall()
+        except (sqlite3.Error, RuntimeError) as snapshot_error:
+            raise RuntimeError('live journal read reported %s; consistent snapshot recheck failed: %s'
+                               % (live_error, snapshot_error)) from snapshot_error
+        print('live journal read reported %s; consistent snapshot integrity_check=ok, read recovered'
+              % live_error, file=sys.stderr, flush=True)
+        return rows
+
+
 class Window:
     def __init__(self, cell, inputs_hash, go, *, exploration_authority=None, exploration_checkout=None):
         require((go is None) != (exploration_authority is None), "one execution authority record required")
@@ -295,13 +332,9 @@ class Window:
         require(len(volumes) == len(set(volumes)), 'ambiguous volume inventory')
         return {'containers': sorted(containers), 'networks': networks, 'volumes': sorted(volumes)}
 
-    def db(self):
-        self.verify_root()
-        return sqlite3.connect('file:' + str(self.root / '.effigy/state/kernel.db') + '?mode=ro', uri=True)
-
     def rows(self, sql, args=()):
-        with closing(self.db()) as db:
-            return db.execute(sql, args).fetchall()
+        self.verify_root()
+        return read_journal_rows(self.root / '.effigy/state/kernel.db', sql, args)
 
     def task_runs(self, selector):
         found = []
