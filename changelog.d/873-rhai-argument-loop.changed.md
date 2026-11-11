@@ -1,1 +1,0 @@
-Document required-scope checks after Rhai argument parsing and cover misplaced loop braces with a reduced regression test. Bovine's early `scope_required` refusal comes from a check inside its parsing loop; Effigy preserves the arguments and variable assignments.
