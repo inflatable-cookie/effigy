@@ -225,42 +225,30 @@ fn began_at_or_after(process: &LiveProcessIdentity, leader: &Record) -> bool {
     }
 }
 
-/// The generation records under one checkout's listener state, and the gateway
-/// daemon records under `gateway_root`. Reads state only.
+/// Host custody in checkout journals, plus legacy listener and private gateway
+/// records. Reads state only.
 fn read_records(checkouts: &[PathBuf], gateway_root: &Path) -> Vec<Record> {
     let mut found = Vec::new();
     for checkout in checkouts {
-        listener_records(&checkout.join(".effigy/runtime/host-processes"), &mut found);
-    }
-    gateway_records(gateway_root, &mut found);
-    found
-}
-
-fn listener_records(dir: &Path, found: &mut Vec<Record>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for path in entries.flatten().map(|entry| entry.path()) {
-        if path.is_dir() {
-            listener_records(&path, found);
-        } else if path.to_string_lossy().ends_with(".listener.json") {
-            let Some(state) = fs::read_to_string(&path)
-                .ok()
-                .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-            else {
-                continue;
-            };
+        for (_, state) in super::host_lifecycle::snapshots(checkout).unwrap_or_default() {
             push_record(
-                found,
+                &mut found,
                 state["child_pid"].as_u64(),
                 state["child_boot_identity"].as_str(),
                 state["child_start_identity"].clone(),
             );
         }
+        identity_records(
+            &checkout.join(".effigy/runtime/host-processes"),
+            &mut found,
+            "child_",
+        );
     }
+    identity_records(gateway_root, &mut found, "");
+    found
 }
 
-fn gateway_records(dir: &Path, found: &mut Vec<Record>) {
+fn identity_records(dir: &Path, found: &mut Vec<Record>, prefix: &str) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
@@ -269,11 +257,17 @@ fn gateway_records(dir: &Path, found: &mut Vec<Record>) {
             if path.file_name().is_some_and(|name| name == ".git") {
                 continue;
             }
-            gateway_records(&path, found);
-        } else if path
-            .file_name()
-            .is_some_and(|name| name == "gateway.identity")
-        {
+            identity_records(&path, found, prefix);
+        } else {
+            let matches = if prefix.is_empty() {
+                path.file_name()
+                    .is_some_and(|name| name == "gateway.identity")
+            } else {
+                path.to_string_lossy().ends_with(".listener.json")
+            };
+            if !matches {
+                continue;
+            }
             let Some(record) = fs::read_to_string(&path)
                 .ok()
                 .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
@@ -282,9 +276,9 @@ fn gateway_records(dir: &Path, found: &mut Vec<Record>) {
             };
             push_record(
                 found,
-                record["pid"].as_u64(),
-                record["boot_identity"].as_str(),
-                record["start_identity"].clone(),
+                record[format!("{prefix}pid")].as_u64(),
+                record[format!("{prefix}boot_identity")].as_str(),
+                record[format!("{prefix}start_identity")].clone(),
             );
         }
     }

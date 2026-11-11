@@ -20,10 +20,7 @@ const OWNER_OUT_ENV: &str = "EFFIGY_ADAPTERLESS_OWNER_OUT";
 const LISTENER_NAME: &str = "web";
 
 fn listener_state_path(checkout: &Path, profile: &str, process: &str) -> PathBuf {
-    checkout
-        .join(".effigy/runtime/host-processes/web")
-        .join(profile)
-        .join(format!("{process}.listener.json"))
+    host_lifecycle::path(checkout, "web", profile, process)
 }
 
 fn listener_log_path(checkout: &Path, profile: &str, process: &str) -> PathBuf {

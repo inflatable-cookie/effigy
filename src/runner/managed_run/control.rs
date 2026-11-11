@@ -706,43 +706,44 @@ mod tests {
         task.settle("api");
 
         let environment = WaitPublisher::fixture_child(repo, "app", task.run_id());
-        let mut hosts = Vec::new();
-        hosts.push(waiting(
-            "front",
-            WaitOn::Entry {
-                name: "api".to_owned(),
-                phase: EntryPhase::Starting,
+        let hosts = vec![
+            waiting(
+                "front",
+                WaitOn::Entry {
+                    name: "api".to_owned(),
+                    phase: EntryPhase::Starting,
+                },
+            ),
+            EntryState {
+                entry: "admin".to_owned(),
+                phase: EntryPhase::NotStarted,
+                waiting_on: None,
+                not_started_because: Some(Attribution::new(
+                    "api",
+                    "failed: readiness probe GET / returned 500",
+                )),
+                detail: None,
+                elapsed_ms: 0,
             },
-        ));
-        hosts.push(EntryState {
-            entry: "admin".to_owned(),
-            phase: EntryPhase::NotStarted,
-            waiting_on: None,
-            not_started_because: Some(Attribution::new(
-                "api",
-                "failed: readiness probe GET / returned 500",
-            )),
-            detail: None,
-            elapsed_ms: 0,
-        });
-        hosts.push(EntryState {
-            entry: "api".to_owned(),
-            phase: EntryPhase::Starting,
-            waiting_on: Some(WaitOn::Probe {
-                probe: "GET / -> 200".to_owned(),
-            }),
-            not_started_because: None,
-            detail: None,
-            elapsed_ms: 12_000,
-        });
-        hosts.push(EntryState {
-            entry: "stale-host".into(),
-            phase: EntryPhase::Ready,
-            waiting_on: None,
-            not_started_because: None,
-            detail: None,
-            elapsed_ms: 0,
-        });
+            EntryState {
+                entry: "api".to_owned(),
+                phase: EntryPhase::Starting,
+                waiting_on: Some(WaitOn::Probe {
+                    probe: "GET / -> 200".to_owned(),
+                }),
+                not_started_because: None,
+                detail: None,
+                elapsed_ms: 12_000,
+            },
+            EntryState {
+                entry: "stale-host".into(),
+                phase: EntryPhase::Ready,
+                waiting_on: None,
+                not_started_because: None,
+                detail: None,
+                elapsed_ms: 0,
+            },
+        ];
         environment.publish_hosts(&hosts);
 
         let views = wait_views(repo, task.run_id(), Some("app"));

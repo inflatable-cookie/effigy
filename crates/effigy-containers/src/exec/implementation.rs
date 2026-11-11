@@ -1510,7 +1510,7 @@ pub fn verify_workspace_artifact_builder(
 ) -> Result<VerifiedComposeContainer, ContainerExecError> {
     let inspected = inspect_workspace_artifact_builder(repo_root, policy, row, deadline)?;
     match builder_preparation(Some(inspected), false, false)? {
-        WorkspaceBuilderPreparation::Reuse(binding) => Ok(binding),
+        WorkspaceBuilderPreparation::Reuse(binding) => Ok(*binding),
         WorkspaceBuilderPreparation::Activate(_) => Err(ContainerExecError::refused(
             "inspect workspace builder",
             "workspace builder requires preparation; no execution binding granted",
@@ -1534,7 +1534,7 @@ pub struct ObservedWorkspaceArtifactBuilder {
 /// and rechecks the exact observed target immediately before it mutates anything.
 #[derive(Debug)]
 pub enum WorkspaceBuilderPreparation {
-    Reuse(VerifiedComposeContainer),
+    Reuse(Box<VerifiedComposeContainer>),
     Activate(Option<ObservedWorkspaceArtifactBuilder>),
 }
 
@@ -1590,7 +1590,9 @@ fn builder_preparation(
     }
     let observed = inspected.observed;
     if !observed.never_started && inspected.matching {
-        return Ok(WorkspaceBuilderPreparation::Reuse(inspected.binding));
+        return Ok(WorkspaceBuilderPreparation::Reuse(Box::new(
+            inspected.binding,
+        )));
     }
     if !inspected.source_owned {
         return Err(refuse("workspace builder source bind is not this checkout's own; its source bind is not adopted"));

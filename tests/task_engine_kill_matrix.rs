@@ -46,7 +46,7 @@ fn matrix_binary() -> &'static Path {
         let dir = effigy_test_support::Fixture::process_lifetime("effigy-kill-matrix-image-")
             .expect("private candidate image");
         let path = dir.as_path().join("effigy");
-        fs::copy(env!("CARGO_BIN_EXE_effigy"), &path).expect("snapshot candidate binary");
+        copy_binary(Path::new(env!("CARGO_BIN_EXE_effigy")), &path);
         // Let the platform load this fresh image before starting a workload's
         // readiness deadline. No task or state mutation happens here.
         let version = Command::new(&path)
@@ -59,6 +59,16 @@ fn matrix_binary() -> &'static Path {
     })
 }
 
+// Isolate the writable image descriptor from concurrent libtest forks. A child
+// that inherited it could otherwise hold Linux's ETXTBSY past `fs::copy`.
+fn copy_binary(source: &Path, target: &Path) {
+    let copy = Command::new("/bin/cp")
+        .args([source, target])
+        .output_owned()
+        .expect("copy binary");
+    assert!(copy.status.success(), "copy binary: {copy:?}");
+}
+
 struct Fixture {
     _home: effigy_test_support::Fixture,
     home: PathBuf,
@@ -68,11 +78,7 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        // Short: a managed run's control socket lives under this home and a
-        // Unix socket path is bounded (SUN_LEN). `/tmp` is short enough for the
-        // socket; macOS's default `TMPDIR` is not.
-        let home =
-            effigy_test_support::Fixture::in_parent("ekm-", Path::new("/tmp")).expect("home");
+        let home = effigy_test_support::Fixture::short_home("ekm-").expect("home");
         let repo = effigy_test_support::Fixture::workspace("effigy-kill-matrix-repo-")
             .expect("external task fixture");
         fs::write(repo.path().join("effigy.toml"), TASK).expect("manifest");
@@ -475,7 +481,7 @@ fn task_engine_runs_after_the_running_binary_is_replaced_on_disk() {
     let bin = fixture.home.join("bin");
     fs::create_dir_all(&bin).expect("bin dir");
     let copy = bin.join("effigy");
-    fs::copy(matrix_binary(), &copy).expect("copy binary");
+    copy_binary(matrix_binary(), &copy);
     fs::write(
         fixture.repo.join("effigy.toml"),
         r#"[tasks.rebuild]

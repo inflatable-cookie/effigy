@@ -1,3 +1,5 @@
+#[path = "support/host_lifecycle.rs"]
+mod host_lifecycle;
 #[path = "support/route_table_fixture.rs"]
 mod route_table_fixture;
 use effigy_test_support::process::{FixtureCommandExt, OwnedChild};
@@ -1314,12 +1316,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
                             .is_some_and(|owner| owner.owner.ends_with("|app"))
                 })
                 .expect("each cold scope committed its app endpoint");
-            let state = read_json_file(
-                &checkout
-                    .join(".effigy/runtime/host-processes/web")
-                    .join(profile)
-                    .join("app.listener.json"),
-            );
+            let state = read_json_file(&host_lifecycle::path(checkout, "web", profile, "app"));
             let response = wait_for_listener_https(
                 https_address,
                 &ca_path,
@@ -2664,12 +2661,8 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
         linked_token
     );
 
-    let state_path = |checkout: &Path, profile: &str| {
-        checkout
-            .join(".effigy/runtime/host-processes/web")
-            .join(profile)
-            .join("app.listener.json")
-    };
+    let state_path =
+        |checkout: &Path, profile: &str| host_lifecycle::path(checkout, "web", profile, "app");
     let effective = reports
         .iter()
         .map(|report| {
@@ -2805,7 +2798,7 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
         "explicit shared identity must not take the primary's declared host"
     );
     assert!(
-        !state_path(shared_checkout, "scoped-shared").exists(),
+        host_lifecycle::read(&state_path(shared_checkout, "scoped-shared")).is_none(),
         "a refused shared-identity listener must leave no runtime state"
     );
     assert_eq!(
@@ -3393,6 +3386,14 @@ fn managed_host_readiness_terminal_failure_names_the_reserved_port() {
         readiness_timeout_secs: 1,
         never_ready: true,
     });
+    // This proof observes one terminal generation, without a restart racing teardown.
+    let manifest = checkout.join("effigy.toml");
+    let body = fs::read_to_string(&manifest).expect("listener manifest");
+    fs::write(
+        &manifest,
+        body.replace("restart = \"on-failure\"", "restart = \"never\""),
+    )
+    .expect("terminal listener policy");
     let cleanup = ManagedContainerCleanup {
         checkouts: vec![checkout.clone()],
         home: home.clone(),
@@ -3423,10 +3424,7 @@ fn managed_host_readiness_terminal_failure_names_the_reserved_port() {
         message.contains("/health") && message.contains("status_mismatch"),
         "the failure names the readiness request and what it answered: {message}"
     );
-    let state_path = checkout
-        .join(".effigy/runtime/host-processes/web")
-        .join(profile)
-        .join("app.listener.json");
+    let state_path = host_lifecycle::path(&checkout, "web", profile, "app");
     let state = read_json_file(&state_path);
     assert_eq!(state["status"], "failed", "{state}");
     assert!(
@@ -4777,9 +4775,7 @@ fn assert_generation_withdrawn(
 }
 
 fn read_json_file(path: &Path) -> Value {
-    let bytes = fs::read(path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
-    serde_json::from_slice(&bytes)
-        .unwrap_or_else(|error| panic!("parse {}: {error}", path.display()))
+    host_lifecycle::read(path).unwrap_or_else(|| panic!("state {} is unavailable", path.display()))
 }
 
 fn wait_for_listener_generation(
@@ -4797,20 +4793,18 @@ fn wait_for_listener_generation(
     );
     let deadline = Instant::now() + timeout;
     loop {
-        if let Ok(bytes) = fs::read(path) {
-            if let Ok(state) = serde_json::from_slice::<Value>(&bytes) {
-                if state["status"] == "ready" && state["generation"] != previous {
-                    if let Ok(routes) = RouteTable::load(route_table_path) {
-                        if routes.lookup(route_domain).is_some_and(|route| {
-                            route.target.as_deref() == state["address"].as_str()
-                                && route.managed_listener.as_ref().is_some_and(|owner| {
-                                    Some(owner.generation.as_str()) == state["generation"].as_str()
-                                        && serde_json::to_value(owner).ok().as_ref()
-                                            == Some(&state["route_owner"])
-                                })
-                        }) {
-                            return state;
-                        }
+        if let Some(state) = host_lifecycle::read(path) {
+            if state["status"] == "ready" && state["generation"] != previous {
+                if let Ok(routes) = RouteTable::load(route_table_path) {
+                    if routes.lookup(route_domain).is_some_and(|route| {
+                        route.target.as_deref() == state["address"].as_str()
+                            && route.managed_listener.as_ref().is_some_and(|owner| {
+                                Some(owner.generation.as_str()) == state["generation"].as_str()
+                                    && serde_json::to_value(owner).ok().as_ref()
+                                        == Some(&state["route_owner"])
+                            })
+                    }) {
+                        return state;
                     }
                 }
             }
@@ -4818,7 +4812,7 @@ fn wait_for_listener_generation(
         assert!(
             Instant::now() < deadline,
             "successor generation did not become ready: state={:?}; log={:?}; routes={:?}",
-            fs::read_to_string(path),
+            host_lifecycle::read(path),
             fs::read_to_string(&log_path),
             RouteTable::load(route_table_path)
         );
@@ -4846,7 +4840,7 @@ fn wait_for_file_contains(path: &Path, expected: &str, timeout: Duration) {
 
 fn wait_for_path_exists(path: &Path, timeout: Duration, label: &str) {
     let deadline = Instant::now() + timeout;
-    while !path.exists() {
+    while !path.exists() && host_lifecycle::at_path(path).is_none() {
         assert!(Instant::now() < deadline, "timed out waiting for {label}");
         thread::sleep(Duration::from_millis(25));
     }
@@ -7966,10 +7960,7 @@ fn environment_owned_supervisor_outlives_the_task_that_started_it() {
         mkcert_calls: effects.mkcert_calls.clone(),
         docker_log: docker_log.clone(),
     };
-    let state_path = checkout
-        .join(".effigy/runtime/host-processes/web")
-        .join(profile)
-        .join("app.listener.json");
+    let state_path = host_lifecycle::path(&checkout, "web", profile, "app");
     let log_path = state_path.with_file_name("app.log");
 
     // The task's step is the only thing that starts the environment. The task
@@ -8018,40 +8009,13 @@ fn environment_owned_supervisor_outlives_the_task_that_started_it() {
     );
     fs::write(control.join("continue-exit"), "exit\n").expect("let the generation exit");
     let deadline = Instant::now() + Duration::from_secs(60);
-    let successor = loop {
-        let state = fs::read(&state_path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
-        if let Some(state) = &state {
-            let ready = state["status"] == "ready"
-                && state["generation"] != first["generation"]
-                && state["address"] == first["address"];
-            if ready {
-                if let Ok(routes) = RouteTable::load(&routes_path) {
-                    if routes.lookup(domain).is_some_and(|route| {
-                        route.target.as_deref() == state["address"].as_str()
-                            && route.managed_listener.as_ref().is_some_and(|owner| {
-                                Some(owner.generation.as_str()) == state["generation"].as_str()
-                                    && serde_json::to_value(owner).ok().as_ref()
-                                        == Some(&state["route_owner"])
-                            })
-                    }) {
-                        break state.clone();
-                    }
-                }
-            }
-        }
-        if Instant::now() >= deadline {
-            panic!(
-                "the environment-owned supervisor did not restart its listener after the \
-                 starting task's lease ended: state={:?} routes={:?} log={}",
-                fs::read_to_string(&state_path).unwrap_or_default(),
-                fs::read_to_string(&routes_path).unwrap_or_default(),
-                fs::read_to_string(&log_path).unwrap_or_default()
-            );
-        }
-        thread::sleep(Duration::from_millis(50));
-    };
+    let successor = wait_for_listener_generation(
+        &state_path,
+        &routes_path,
+        domain,
+        first["generation"].as_str().unwrap(),
+        deadline.saturating_duration_since(Instant::now()),
+    );
     assert_eq!(
         successor["address"], first["address"],
         "a restart reuses the port Effigy reserved"
@@ -8705,11 +8669,7 @@ fn hung_listener_does_not_block_down_from_another_shell() {
         &hung_listener_manifest("hung.host.test"),
     );
 
-    let state_now = || {
-        fs::read(&state_path)
-            .ok()
-            .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok())
-    };
+    let state_now = || host_lifecycle::read(&state_path);
     let mut up = spawn_container_cli(&checkout, &cleanup, &["up", "--detach"]);
     let deadline = Instant::now() + Duration::from_secs(90);
     while state_now().is_none_or(|state| state["status"] != "starting") {
@@ -8789,11 +8749,7 @@ fn hung_restart_does_not_block_down_from_another_shell() {
         hung_listener_manifest("hung-restart.host.test"),
     )
     .expect("declare the hung listener before the restart");
-    let state_now = || {
-        fs::read(&state_path)
-            .ok()
-            .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok())
-    };
+    let state_now = || host_lifecycle::read(&state_path);
     let mut restart = spawn_container_cli(&checkout, &cleanup, &["restart", "api"]);
     let deadline = Instant::now() + Duration::from_secs(90);
     while state_now().is_none_or(|state| state["status"] != "starting") {
