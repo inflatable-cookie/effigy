@@ -1,5 +1,6 @@
 """Owned output disposal and capacity admission for unsealed native smokes only."""
 import json
+import io
 import os
 from pathlib import Path
 import shutil
@@ -137,16 +138,23 @@ def dispose(records, archive=None):
     # Keep scripts, metadata, streams and failure fixtures. Build source/binary
     # bytes are already bound by the host bundle and build/asset originals.
     fd = os.open(checked(archive), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    skipped = []
     with os.fdopen(fd, 'wb') as stream, tarfile.open(fileobj=stream, mode='w') as output:
         for path in roots:
             def evidence(member):
                 relative = Path(member.name).relative_to(path.relative_to(BASE))
-                if path.parent in (BASE / 'builds', BASE / 'artifacts') and relative.parts:
-                    if relative.parts[0] in ('source', 'driver') or member.size > 8 * 1024 ** 2:
-                        return None
+                if path.parent in (BASE / 'builds', BASE / 'artifacts') and relative.parts and relative.parts[0] in ('source', 'driver'):
+                    return None
+                if member.size > 8 * 1024 ** 2 and (path.parent in (BASE / 'builds', BASE / 'artifacts') or path.name.startswith('run-tmp-')):
+                    info = (BASE / member.name).lstat()
+                    skipped.append(dict(path=member.name, device=info.st_dev, inode=info.st_ino, bytes=info.st_size, blocks=info.st_blocks))
+                    return None
                 require(not member.isdev() and not member.isfifo(), 'unexpected output inode')
                 return member
             output.add(path, arcname=str(path.relative_to(BASE)), recursive=True, filter=evidence)
+        data = json.dumps(skipped).encode()
+        entry = tarfile.TarInfo('rebuildable-outputs.json'); entry.size = len(data)
+        output.addfile(entry, io.BytesIO(data))
         output.close()
         stream.flush()
         os.fsync(stream.fileno())

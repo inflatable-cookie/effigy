@@ -906,6 +906,8 @@ Each smoke verifies a stopped VM and no competing smoke, takes a snapshot,
 and checks free space after disposal against its admitted baseline with a
 128 MiB tolerance per bounded mount. These changes apply only to unsealed smoke
 windows; frozen preparation and full-session proof resources remain retained.
+Unsealed allocation controls allow up to 600 seconds. Rebuildable temporary
+files over 8 MiB are represented by inode/allocation metadata in the host export.
 During task 883, a preparation control encountered a SATA link reset and a
 read-only guest root. After preserving the stopped failure and kernel evidence,
 planner ruling `8e61bf67` restored owned snapshot `9f8a67a6-2fec-46ae-998f-141b27a82bab`

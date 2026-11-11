@@ -54,9 +54,10 @@ class NativeLifecycleTests(unittest.TestCase):
             result = dict(errno=28, retained_empty_inode=True,
                           path=str(scope.temporary / 'enospc-owned/payload'), device=1, directory_inode=2)
             with patch.object(lifecycle, 'ACTIVE', scope), patch.object(native_run, 'admin_operation',
-                    return_value=(json.dumps(result).encode(), b'', {}, 'unit')):
+                    return_value=(json.dumps(result).encode(), b'', {}, 'unit')) as operation:
                 smoke.capacity_probe(attempt, [], str(scope.temporary), 42949672960)
             scope.operation.assert_not_called()
+            self.assertEqual(operation.call_args.kwargs['seconds'], 600)
 
     def test_failed_export_retains_outputs_and_success_exports_before_removal(self):
         from unittest.mock import Mock
@@ -108,6 +109,15 @@ class NativeLifecycleTests(unittest.TestCase):
                 self.assertEqual(path.read_bytes(), b'original')
                 self.assertEqual(lifecycle.dispose([record]), [str(path)])
                 self.assertFalse(path.exists())
+                temporary = root / 'run-tmp-owned'
+                temporary.mkdir()
+                with (temporary / 'payload').open('wb') as stream: stream.truncate(9 * 1024 ** 2)
+                target = root / 'qualification/metadata.tar'
+                lifecycle.dispose([dict(path=str(temporary), uid=os.geteuid())], target)
+                import tarfile, json
+                with tarfile.open(target) as evidence:
+                    self.assertNotIn('run-tmp-owned/payload', evidence.getnames())
+                    self.assertEqual(json.load(evidence.extractfile('rebuildable-outputs.json'))[0]['bytes'], 9 * 1024 ** 2)
 
     def test_large_inventory_uses_staged_metadata_not_the_vm_command_line(self):
         from unittest.mock import Mock

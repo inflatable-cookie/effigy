@@ -50,37 +50,6 @@ def ssh_prefix(root, attempt):
                                      build.file_input(control / 'ssh_known_hosts'), control, attempt.root)
 
 
-def root_operation(root, attempt, ssh, entry, files, arguments=(), *, runtime_seconds=45, file_limit='8M', expected=None, memory_limit='256M'):
-    import base64
-    data = {name: base64.b64encode((Path(__file__).parent / name).read_bytes()).decode() for name in files}
-    pins = {name: common.digest(Path(__file__).parent / name) for name in files}
-    code = ('import os,hashlib,tempfile,runpy,base64,sys; from pathlib import Path; '
-            'p=Path("/var/lib/effigy-829/helpers"); '
-            'assert p.resolve()==p and p.stat().st_uid==0 and p.stat().st_mode&0o777==0o700; '
-            'd=Path(tempfile.mkdtemp(prefix="modules-",dir=p)); '
-            'data=' + repr(data) + '; pins=' + repr(pins) + '; '
-            'decoded={n:base64.b64decode(b) for n,b in data.items()}; '
-            'assert all(hashlib.sha256(b).hexdigest()==pins[n] for n,b in decoded.items()); '
-            '[(d/n).write_bytes(b) for n,b in decoded.items()]; '
-            'sys.argv=[' + repr(entry) + ']+' + repr(list(arguments)) + '; '
-            'runpy.run_path(str(d/' + repr(entry) + '),run_name="__main__")')
-    unit = expected['observer_unit'].removesuffix('.service') if expected else None
-    output, errors, state, unit = native_run.admin_operation(
-        attempt, code.encode(), seconds=runtime_seconds, memory=memory_limit, file_limit=file_limit, unit=unit)
-    result = json.loads(output)
-    if expected is not None:
-        import linux_capacity_contract as capacity
-        witness = {'schema': capacity.SCHEMA, 'mechanism': capacity.MECHANISM,
-                   'origin': expected['origin'], 'unit': dict(state, name=unit + '.service'),
-                   'stdout': output.decode('utf-8'), 'stderr': errors.decode('utf-8'),
-                   'stdout_sha256': hashlib.sha256(output).hexdigest(),
-                   'stderr_sha256': hashlib.sha256(errors).hexdigest(), 'exit': 0}
-        common.exclusive(attempt.root / (unit + '.original.json'), witness)
-        capacity.verify_observation(witness, expected)
-    common.exclusive(attempt.root / ('resume-' + uuid.uuid4().hex + '.json'), result)
-    return result
-
-
 def root_resume(root, attempt, ssh):
     native_run.bootstrap_preparation(attempt)
     directory, _ = collector_identity(attempt, allow_install=True)
@@ -97,10 +66,10 @@ COLLECTOR_FILES = ('linux_loop_bound.py', 'linux_native_storage.py', 'linux_nati
                    'linux_native_resume.py', 'linux_native_collect.py')
 
 
-def collector_identity(attempt, *, allow_install):
+def collector_identity(attempt, *, allow_install, files=COLLECTOR_FILES):
     """Deploy once during preparation; proof execution only verifies these bytes."""
     import base64
-    pins = {name: common.digest(Path(__file__).parent/name) for name in COLLECTOR_FILES}
+    pins = {name: common.digest(Path(__file__).parent/name) for name in files}
     identity = hashlib.sha256(json.dumps(pins,sort_keys=True,separators=(',', ':')).encode()).hexdigest()
     directory = '/var/lib/effigy-829/helpers/observer-' + identity
     inspect = ('import json,hashlib,stat; from pathlib import Path; p=Path(' + repr(directory) + '); '
@@ -108,11 +77,11 @@ def collector_identity(attempt, *, allow_install):
                'assert p.parent.resolve()==p.parent and p.parent.stat().st_uid==0 and p.parent.stat().st_mode&0o777==0o700; '
                'exec(' + repr('if exists:\n assert p.resolve()==p and p.stat().st_uid==0 and p.stat().st_mode&0o777==0o700\n assert {f.name for f in p.iterdir()}==set(pins)\n for name,digest in pins.items():\n  f=p/name; i=f.lstat()\n  assert i.st_uid==0 and i.st_mode==0o100400 and i.st_nlink==1\n  assert hashlib.sha256(f.read_bytes()).hexdigest()==digest') + '); '
                'print(json.dumps({"exists":exists}))')
-    # Keep one bounded VM command; the source map has only five fixed names.
+    # Keep one bounded VM command for the explicit, hash-bound source map.
     present = json.loads(attempt.admin('python3 -I -B -c '+shlex.quote(inspect),read_only=True))['exists']
     if not present:
         common.require(allow_install, 'prepared observer is absent; full execution cannot install it')
-        modules = {name:base64.b64encode((Path(__file__).parent/name).read_bytes()).decode() for name in COLLECTOR_FILES}
+        modules = {name:base64.b64encode((Path(__file__).parent/name).read_bytes()).decode() for name in files}
         code = ('import os,base64,hashlib; from pathlib import Path; p=Path(' + repr(directory) + '); '
                 'data=' + repr(modules) + '; pins=' + repr(pins) + '; '
                 'p.mkdir(mode=0o700); '
@@ -187,8 +156,12 @@ def initialize_images(root, seed):
     stop_engine(attempt)
     files = ('linux_loop_bound.py', 'linux_native_storage.py', 'linux_native_writers.py',
              'linux_native_resume.py', 'linux_native_initialize.py')
-    result = root_operation(root, attempt, ssh, 'linux_native_initialize.py', files, (),
-                            runtime_seconds=300, file_limit='3G', memory_limit='256M')
+    directory, _ = collector_identity(attempt, allow_install=True, files=files)
+    output, errors, _, _ = native_run.admin_program(attempt,
+        ['/usr/bin/python3', '-I', '-B', directory + '/linux_native_initialize.py'],
+        seconds=300, file_limit='3G', memory='256M')
+    common.require(not errors, 'image initialization reported stderr')
+    result = json.loads(output)
     common.exclusive(attempt.root / 'initialized.json', result)
     print(json.dumps({'evidence': str(attempt.root), 'initialized': True, 'exploratory': True,
                       'qualification_credit': False}))
@@ -220,7 +193,7 @@ def capacity_probe(attempt, ssh, root, size, *, image=None):
                 '/usr/bin/python3', '-I', '-B', '-', root, str(size)]
     code = ('import subprocess,base64; subprocess.run(' + repr(argv)
             + ',input=base64.b64decode(' + repr(base64.b64encode(payload).decode()) + '),check=True)')
-    output, errors, _, _ = native_run.admin_operation(attempt, code.encode(), seconds=180,
+    output, errors, _, _ = native_run.admin_operation(attempt, code.encode(), seconds=600 if lifecycle.ACTIVE else 180,
                                                     memory='128M', file_limit=str(size))
     common.require(not errors, 'capacity control reported stderr')
     result = json.loads(output)
