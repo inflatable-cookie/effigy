@@ -119,6 +119,7 @@ fn private_http_release_fixture(
 }
 
 fn generated_linux_release_assets() -> BTreeMap<String, Vec<u8>> {
+    let _environment = crate::contract_test_support::lock_test();
     let fixture = effigy_test_support::Fixture::thread_lifetime("release-producer-http-")
         .expect("fresh release producer fixture");
     let artifacts = fixture.join("artifacts");

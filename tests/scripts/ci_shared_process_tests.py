@@ -1,4 +1,4 @@
-"""Inventory, scheduling and failure controls for the hosted libtest partitioner."""
+"""Selection, inventory and failure controls for hosted ambient replay."""
 import io
 import json
 import os
@@ -10,22 +10,16 @@ from types import SimpleNamespace
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts/ci-shared-process.py"
 MODULE = runpy.run_path(str(SCRIPT), run_name="ci_partition_tests")
-AMBIENT = MODULE["LIBRARY_SELECTIONS"]["library-ambient"]
-ROOT_NAMES = {"runner::workspace_command::fixture_a", "runner::task_engine::fixture_b",
-              "runner::tests::runner_core_tests::fixture_contract", "cli::fixture_c", *AMBIENT}
-LISTS = {(): ROOT_NAMES}
-for suite, filters in MODULE["LIBRARY_SELECTIONS"].items():
-    skip = filters.index("--skip") if "--skip" in filters else len(filters)
-    LISTS[tuple(filters)] = {name for name in ROOT_NAMES
-                            if (not filters[:skip] or any(f in name for f in filters[:skip]))
-                            and not any(f in name for f in filters[skip:] if f != "--skip")}
-PLAN = {"/synthetic/lib": "library", "/synthetic/cli": "cli",
-        "/synthetic/gateway": "gateway", "/synthetic/future": "rest"}
+AMBIENT = MODULE["AMBIENT_FILTERS"]
+SKIPS = tuple(arg for f in AMBIENT for arg in ("--skip", f))
+REMAINDER = {"runner::unrelated_test", "future_module::new_test"}
+LISTS = {(): {*AMBIENT, *REMAINDER}, tuple(AMBIENT): set(AMBIENT), SKIPS: REMAINDER}
+PLAN = {"/synthetic/lib": "library-ambient", "/synthetic/gateway": "gateway",
+        "/synthetic/cli": None, "/synthetic/future": None}
 
 
 def listing(args, **kwargs):
-    names = LISTS[tuple(args[1:-3])]
-    return "\n".join(f"{name}: test" for name in sorted(names)) + "\n"
+    return "\n".join(f"{name}: test" for name in LISTS[tuple(args[1:-3])]) + "\n"
 
 
 class PartitionTests(unittest.TestCase):
@@ -38,73 +32,50 @@ class PartitionTests(unittest.TestCase):
             code = MODULE["run_binary"](suite, binary, [])
         return code, run.call_args_list
 
-    def test_disjoint_complete_routing_and_original_thread_defaults(self):
+    def test_only_ambient_cohorts_replay_with_original_threads_and_failure_status(self):
         calls = []
-        suites = ["library-workspace", "library-core", "library-runner", "library-other", "cli", "gateway", "rest"]
-        for suite in suites:
+        for suite in MODULE["SUITES"]:
             for binary in PLAN:
-                code, executed = self.runner(suite, binary)
-                self.assertEqual(code, 0)
-                calls.extend(executed)
-        self.assertEqual(len(calls), 7)
-        library_calls = [c.args[0][1:] for c in calls if c.args[0][0] == "/synthetic/lib"]
-        self.assertCountEqual(library_calls, [list(MODULE["LIBRARY_COHORTS"][suite]) for suite in suites if suite.startswith("library-")])
-        self.assertTrue(all(not any("test-threads" in arg for arg in c.args[0]) for c in calls))
-
-    def test_runner_propagates_test_failure(self):
-        self.assertEqual(self.runner("library-runner", "/synthetic/lib", 7)[0], 7)
+                code, executed = self.runner(suite, binary, 7)
+                self.assertEqual(code, 7 if executed else 0)
+                calls.extend(c.args[0] for c in executed)
+        self.assertCountEqual(calls, [["/synthetic/lib", *AMBIENT], ["/synthetic/gateway"]])
 
     def test_unknown_binary_fails_closed(self):
         with self.assertRaises(KeyError):
-            self.runner("cli", "/synthetic/unknown")
+            self.runner("gateway", "/synthetic/unknown")
 
-    def test_cargo_generated_doc_binary_runs_whole_in_rest(self):
-        code, calls = self.runner("rest", "/synthetic/rustdoc-test", 7)
-        self.assertEqual(code, 7)
-        self.assertEqual(calls[0].args[0], ["/synthetic/rustdoc-test"])
+    def test_inventory_lists_every_binary_without_running_tests(self):
+        for binary in PLAN:
+            self.assertEqual(self.runner("inventory", binary, inventory_only="1"), (0, []))
 
-    def test_ambient_selection_shares_filters_without_changing_threads(self):
-        code, calls = self.runner("library-ambient", "/synthetic/lib")
-        self.assertEqual((code, calls[0].args[0]), (0, ["/synthetic/lib", *AMBIENT]))
-        self.assertEqual(self.runner("library-ambient", "/synthetic/lib", inventory_only="1"), (0, []))
-
-    def inventory(self, lists):
-        def output(args, **kwargs):
-            return "\n".join(f"{n}: test" for n in lists[tuple(args[1:-3])])
-        with patch("subprocess.check_output", side_effect=output), \
-                patch("sys.stdout", new_callable=io.StringIO):
-            return MODULE["verify_library_inventory"]("/synthetic/lib", [])
-
-    def test_inventory_rejects_missing_overlapping_and_misrouted_tests(self):
-        for defect in ("missing", "overlapping", "misrouted", "ambient"):
+    def test_inventory_rejects_missing_overlapping_misrouted_stale_and_duplicate_names(self):
+        for defect in ("missing", "overlapping", "misrouted", "stale", "duplicate"):
             with self.subTest(defect=defect):
-                lists = {k: set(v) for k, v in LISTS.items()}
+                lists = {k: list(v) for k, v in LISTS.items()}
                 if defect == "missing":
-                    lists[("--skip", "runner::")] = set()
+                    lists[SKIPS] = []
                 elif defect == "overlapping":
-                    lists[("runner::workspace_command::",)].add("runner::task_engine::fixture_b")
-                elif defect == "ambient":
-                    lists[tuple(AMBIENT)] = set()
+                    lists[SKIPS].append(AMBIENT[0])
+                elif defect == "misrouted":
+                    lists[tuple(AMBIENT)], lists[SKIPS] = lists[SKIPS], lists[tuple(AMBIENT)]
+                elif defect == "stale":
+                    lists[()].remove(AMBIENT[0])
+                    lists[tuple(AMBIENT)].remove(AMBIENT[0])
                 else:
-                    lists[("--skip", "runner::")], lists[("runner::workspace_command::",)] = \
-                        lists[("runner::workspace_command::",)], lists[("--skip", "runner::")]
-                with self.assertRaisesRegex(RuntimeError, {"misrouted": "disagrees with family", "ambient": "ambient library"}.get(defect, "missing/overlapping")):
-                    self.inventory(lists)
+                    lists[()].append(AMBIENT[0])
+                def output(args, **kwargs):
+                    return "\n".join(f"{n}: test" for n in lists[tuple(args[1:-3])])
+                with patch("subprocess.check_output", side_effect=output), \
+                        self.assertRaises(RuntimeError):
+                    MODULE["verify_library_inventory"]("/synthetic/lib", [])
 
-    def test_future_test_is_checked_and_assigned_automatically(self):
-        lists = {k: set(v) for k, v in LISTS.items()}
-        lists[()].add("future_module::new_test")
-        lists[("--skip", "runner::")].add("future_module::new_test")
-        self.assertIn("future_module::new_test", self.inventory(lists)["library-other"])
-
-    def build(self, build_exit=0, test_exit=0, suite="rest"):
-        artifacts = []
-        for name, kind in [("effigy", "lib"), ("effigy", "bin"),
-                           ("cli_output_tests", "test"), ("gateway_private", "test"),
-                           ("new_future_target", "test")]:
-            artifacts.append({"reason": "compiler-artifact", "profile": {"test": True},
-                              "target": {"name": name, "kind": [kind]},
-                              "executable": f"/synthetic/{name}-{kind}"})
+    def build(self, build_exit=0, test_exit=0, suite="gateway"):
+        artifacts = [{"reason": "compiler-artifact", "profile": {"test": True},
+                      "target": {"name": name, "kind": [kind]},
+                      "executable": f"/synthetic/{name}-{kind}"}
+                     for name, kind in [("effigy", "lib"), ("effigy", "bin"),
+                                        ("gateway_private", "test"), ("new_future_target", "test")]]
         build = SimpleNamespace(stdout=io.StringIO("".join(json.dumps(a) + "\n" for a in artifacts)),
                                 wait=lambda: build_exit, returncode=build_exit)
         with patch("subprocess.Popen", return_value=build) as compile_call, \
@@ -114,42 +85,21 @@ class PartitionTests(unittest.TestCase):
         return code, compile_call.call_args, run.call_args_list
 
     def test_build_failure_stops_execution(self):
-        code, _, calls = self.build(build_exit=7)
-        self.assertEqual((code, calls), (7, []))
+        self.assertEqual(self.build(build_exit=7)[::2], (7, []))
 
-    def test_workspace_features_and_future_targets_are_preserved(self):
-        code, compile_call, calls = self.build()
-        self.assertEqual(code, 0)
-        self.assertIn("--workspace", compile_call.args[0])
-        self.assertIn("--workspace", calls[0].args[0])
-        env = calls[0].kwargs["env"]
-        plan = json.loads(env["EFFIGY_CI_TEST_PARTITIONS"])
-        self.assertEqual(len(plan), 5)
-        self.assertEqual(plan["/synthetic/new_future_target-test"], "rest")
-        self.assertEqual(env["EFFIGY_CI_INVENTORY_ONLY"], "0")
-        self.assertEqual(compile_call.args[0][2:3], ["--workspace"])
-        self.assertNotIn("--tests", compile_call.args[0])
-        self.assertNotIn("--tests", calls[0].args[0])
-
-    def test_library_build_supplies_cli_without_unassigned_integration_binaries(self):
-        code, compile_call, calls = self.build(suite="library-ambient")
-        self.assertEqual(code, 0)
-        self.assertEqual(compile_call.args[0][2:6], ["--workspace", "--lib", "--test", "bootstrap_cli_tests"])
-        self.assertEqual(calls[0].args[0][2:6], compile_call.args[0][2:6])
-        self.assertEqual(len(calls), 1)
-
-    def test_failure_is_retained_with_default_examples_and_doc_tests(self):
-        code, _, calls = self.build(test_exit=1)
-        self.assertEqual(code, 1)
-        self.assertEqual(len(calls), 1)
-        self.assertIn("--no-fail-fast", calls[0].args[0])
-        self.assertNotIn("--tests", calls[0].args[0])
-        self.assertNotIn("--lib", calls[0].args[0])
-
-    def test_inventory_mode_is_explicit_and_cannot_run_tests(self):
-        _, _, calls = self.build(suite="inventory")
-        self.assertEqual(calls[0].kwargs["env"]["EFFIGY_CI_INVENTORY_ONLY"], "1")
-        self.assertEqual(len(calls), 1)
+    def test_identical_workspace_selection_includes_examples_and_future_targets(self):
+        for suite in [*MODULE["SUITES"], "inventory"]:
+            with self.subTest(suite=suite):
+                code, compile_call, calls = self.build(test_exit=7, suite=suite)
+                self.assertEqual(code, 1)
+                self.assertEqual(compile_call.args[0][2:4], ["--workspace", "--all-targets"])
+                self.assertEqual(calls[0].args[0][2:4], compile_call.args[0][2:4])
+                self.assertIn("--no-fail-fast", calls[0].args[0])
+                env = calls[0].kwargs["env"]
+                self.assertEqual(json.loads(env["EFFIGY_CI_TEST_PARTITIONS"]), {
+                    "/synthetic/effigy-lib": "library-ambient", "/synthetic/effigy-bin": None,
+                    "/synthetic/gateway_private-test": "gateway", "/synthetic/new_future_target-test": None})
+                self.assertEqual(env["EFFIGY_CI_INVENTORY_ONLY"], "1" if suite == "inventory" else "0")
 
 
 if __name__ == "__main__":

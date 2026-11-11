@@ -460,50 +460,38 @@ cap. No test reserves every runner thread; activation deadlines and assertions
 remain unchanged.
 
 Hosted nextest runs use four hash partitions on each operating system. Shared-
-process CI uses four Effigy library families plus whole CLI, gateway and
-remaining-binary cohorts through `scripts/ci-shared-process.py`:
+process CI replays two ambient-state cohorts per OS through
+`scripts/ci-shared-process.py`: `library-ambient` and the whole `gateway_private`
+binary. Tom approved this narrowing on 2026-11-10 (effigy#881). Normal nextest
+retains every workspace test; its first shard also runs doc tests on each OS.
+Both shared-process jobs compile all workspace targets, including examples,
+with identical build/execution selections to preserve feature unification.
+Cargo retains each package's runtime cwd/environment. Hosted jobs omit debug
+symbols, retaining default debug assertions and optimization levels.
 
-| Library family | Test namespace |
-| --- | --- |
-| `library-workspace` | `runner::workspace_command::` (all builder and provisioning matrices) |
-| `library-core` | `runner::tests::runner_core_tests::` (the core runner fixtures and their hooks) |
-| `library-runner` | Remaining `runner::` tests (including their fixture hooks and registries) |
-| `library-other` | All other Effigy library tests |
+`tests/ambient-state-filters.txt` owns `library-ambient`: the ambient guard
+regressions plus explicit cwd, environment, descriptor and umask families.
+Both the partitioner and `shared_process_ambient_guard_regressions` read this
+list. The partitioner checks the real compiled library's ambient selection and
+its nextest-only remainder are disjoint and complete, including ignored names,
+and rejects stale filters. `test:ci:inventory` lists every compiled workspace
+test without running bodies; `test:ci:scheduling` covers missing, overlapping,
+misrouted and duplicate names. The real `test:ci:partitioner` fixture proves
+example compilation, inventory without execution, workspace feature unification
+and selective replay. Unknown executable paths fail closed; new compiled targets
+remain inventoried and covered by normal nextest without joining ambient replay.
 
-The runner checks the real compiled library against each family's libtest
-selection: every name, including ignored tests, must appear exactly once and
-agree with the namespace map. `test:ci:inventory` lists this map without running
-test bodies; `test:ci:scheduling` covers missing, overlapping and misrouted names.
-
-`tests/ambient-state-filters.txt` owns the additional `library-ambient` selection:
-the existing ambient guard regressions plus explicit cwd, environment, descriptor
-and umask families. Both the partitioner and
-`shared_process_ambient_guard_regressions` read this list. Inventory checks reject
-stale filters and verify the real libtest selection. The cohort excludes its
-outer harness to avoid recursion. Generic guarded fixtures remain in their
-original families; exhaustive EnvGuard membership is not required (planner
-ruling, 2026-11-11, Nucleus question
+The ambient cohort excludes its outer harness to avoid recursion. Generic
+EnvGuard fixtures remain covered by normal nextest; exhaustive EnvGuard
+membership is not required (planner ruling, 2026-11-11, Nucleus question
 `15ae13e406d020a52000e67fc4d17d4a0d6f86b5b128a30985aff9c0b0ddbec9`).
 The deferral cwd fixture uses the common reentrant guard and owned scratch to
-coordinate with other guarded library fixtures.
-
-Hosted workflows still use the four original library families. The ambient
-selection prepares the separate CI narrowing; it does not remove existing
-coverage. Libtest concurrency, ignored status, assertions and deadlines remain
-unchanged; the focused ambient harness uses eight threads. Release retains full
-unpartitioned `cargo test --workspace`; normal nextest, examples and doc tests
-remain covered on both operating systems.
-
-Non-library cohorts discover every compiled workspace target; new binaries enter
-the remaining cohort. Library jobs build workspace libraries and the small
-bootstrap integration target, which supplies the real CLI without compiling
-unassigned integration binaries. Cargo owns runtime cwd/environment and identical
-workspace selections prevent per-package feature rebuilds. Hosted jobs omit
-debug symbols, retaining the default debug assertions and optimization levels.
-The remaining-binary cohort retains Cargo's default whole-workspace selection,
-including normal example compilation and doc tests on both operating systems.
-Its `--no-fail-fast` keeps doc tests running after a binary fails and preserves
-the failure status; `--tests` alone would omit the default example builds.
+coordinate with other guarded library fixtures. The release-sidecar producer
+also holds that guard while launching its checksum script, so a concurrent PATH
+fixture cannot hide `bash`. Libtest concurrency, ignored
+status, assertions and deadlines remain unchanged; the focused ambient harness
+uses eight threads. Release retains full unpartitioned `cargo test --workspace`;
+local QA retains full unpartitioned nextest.
 
 The healthy headless lifecycle fixture retains its 35-second cold engine start,
 but its host window now ends when status positively reports both exec children
