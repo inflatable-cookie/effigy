@@ -522,28 +522,29 @@ def full_chain(root, seed):
             diagnostic.check_vm(raw, 'stopped')
     tolerance = 128 * 1024 ** 2
     deltas = {path: row['free'] - after['mounts'][path]['free'] for path, row in baseline['mounts'].items()}
-    # This point is reached only after every stage succeeded and the finally block
-    # stopped the engine, finished the scope (guest outputs cleaned up and exported)
-    # and stopped the VM: a failure anywhere above keeps the pre-run snapshot for
-    # diagnosis. On success the run's own snapshot is deleted by exact ID and the
-    # deletion is recorded in the completion record.
-    snapshot_deletion = delete_owned_snapshot(attempt, pre_run_snapshot['id'], pre_run_snapshot['name'])
+    # This point is reached only when the try block above raised nothing and the finally
+    # block stopped the engine, finished the scope (guest outputs cleaned up and exported)
+    # and stopped the VM. The final success validations run before the snapshot deletion:
+    # a failed GNU export or capacity check keeps the pre-run snapshot for diagnosis.
+    # Only with every success criterion validated is the run's own snapshot deleted by
+    # exact ID, and the deletion is recorded in the completion record.
     result = {'exploratory': True, 'qualification_credit': False, 'source_head': binding['source_pin'],
               'assets': str(prepared), 'final_physical_bounds': final, 'vm_terminal': 'stopped',
               'capacity_before': baseline, 'capacity_after': after, 'consumed_bytes': deltas,
               'gnu_artifact_export': scope.gnu_export,
               'space_tolerance_bytes': tolerance,
               'pre_run_snapshot': pre_run_snapshot,
-              'pre_run_snapshot_deletion': snapshot_deletion,
               'chain': ['diagnostic', 'resume', 'engine-enospc', 'workspace-enospc', 'preparation-enospc',
                         'native-build', 'gnu-artifact', 'ordinary-acquisition', 'full-session']}
     common.require(scope.gnu_export is not None,
                    'completed native smoke is missing its exported GNU artifact family')
+    common.require(all(abs(delta) <= tolerance for delta in deltas.values()),
+                   'guest-capacity: run did not restore free space within tolerance')
+    snapshot_deletion = delete_owned_snapshot(attempt, pre_run_snapshot['id'], pre_run_snapshot['name'])
+    result['pre_run_snapshot_deletion'] = snapshot_deletion
     common.require(snapshot_deletion['verified_absent'],
                    'pre-run snapshot deletion is not verified')
     common.exclusive(attempt.root / 'native-smoke-complete.json', result)
-    common.require(all(abs(delta) <= tolerance for delta in deltas.values()),
-                   'guest-capacity: run did not restore free space within tolerance')
     print(json.dumps(result, indent=2))
     return 0
 

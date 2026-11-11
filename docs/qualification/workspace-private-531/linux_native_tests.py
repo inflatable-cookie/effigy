@@ -1170,6 +1170,19 @@ class PrerunSnapshotHygieneTests(unittest.TestCase):
             smoke.delete_owned_snapshot(attempt, own, name)
         self.assertEqual(len(attempt.deletes()), 1)
 
+    def test_success_validations_precede_the_snapshot_deletion(self):
+        """Regression guard for the review finding: the pre-run snapshot is deleted only
+        after the final success validations (GNU export present, capacity restored).
+        A failed final check must keep the snapshot for diagnosis, so the deletion
+        call sits after both requires in full_chain."""
+        import inspect
+        source = inspect.getsource(smoke.full_chain)
+        delete_at = source.index('delete_owned_snapshot(attempt')
+        for marker in ('completed native smoke is missing its exported GNU artifact family',
+                       'guest-capacity: run did not restore free space within tolerance'):
+            self.assertLess(source.index(marker), delete_at, marker)
+        self.assertLess(source.index('pre_run_snapshot_deletion'), delete_at)
+
     def test_referenced_literal_covers_every_uuid_in_qualification_sources(self):
         import re
         from pathlib import Path
