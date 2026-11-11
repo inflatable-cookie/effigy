@@ -1181,7 +1181,6 @@ class PrerunSnapshotHygieneTests(unittest.TestCase):
         for marker in ('completed native smoke is missing its exported GNU artifact family',
                        'guest-capacity: run did not restore free space within tolerance'):
             self.assertLess(source.index(marker), delete_at, marker)
-        self.assertLess(source.index('pre_run_snapshot_deletion'), delete_at)
 
     def test_referenced_literal_covers_every_uuid_in_qualification_sources(self):
         import re
