@@ -1,0 +1,1 @@
+Repository validation runs workspace clippy once through `validate`; shortcut descriptions now state their actual coverage. Shared-process ambient regressions use one explicit cohort shared with the CI partitioner, and the deferral fixture restores cwd through the common guard.

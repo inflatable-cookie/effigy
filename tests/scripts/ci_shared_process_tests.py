@@ -10,19 +10,15 @@ from types import SimpleNamespace
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts/ci-shared-process.py"
 MODULE = runpy.run_path(str(SCRIPT), run_name="ci_partition_tests")
-ROOT_NAMES = {
-    "runner::workspace_command::fixture_a",
-    "runner::task_engine::fixture_b",
-    "runner::tests::runner_core_tests::fixture_contract",
-    "cli::fixture_c",
-}
-LISTS = {
-    (): ROOT_NAMES,
-    ("runner::workspace_command::",): {"runner::workspace_command::fixture_a"},
-    ("runner::tests::runner_core_tests::",): {"runner::tests::runner_core_tests::fixture_contract"},
-    ("runner::", "--skip", "runner::workspace_command::", "--skip", "runner::tests::runner_core_tests::"): {"runner::task_engine::fixture_b"},
-    ("--skip", "runner::"): {"cli::fixture_c"},
-}
+AMBIENT = MODULE["LIBRARY_SELECTIONS"]["library-ambient"]
+ROOT_NAMES = {"runner::workspace_command::fixture_a", "runner::task_engine::fixture_b",
+              "runner::tests::runner_core_tests::fixture_contract", "cli::fixture_c", *AMBIENT}
+LISTS = {(): ROOT_NAMES}
+for suite, filters in MODULE["LIBRARY_SELECTIONS"].items():
+    skip = filters.index("--skip") if "--skip" in filters else len(filters)
+    LISTS[tuple(filters)] = {name for name in ROOT_NAMES
+                            if (not filters[:skip] or any(f in name for f in filters[:skip]))
+                            and not any(f in name for f in filters[skip:] if f != "--skip")}
 PLAN = {"/synthetic/lib": "library", "/synthetic/cli": "cli",
         "/synthetic/gateway": "gateway", "/synthetic/future": "rest"}
 
@@ -52,7 +48,7 @@ class PartitionTests(unittest.TestCase):
                 calls.extend(executed)
         self.assertEqual(len(calls), 7)
         library_calls = [c.args[0][1:] for c in calls if c.args[0][0] == "/synthetic/lib"]
-        self.assertCountEqual(library_calls, [list(k) for k in LISTS if k])
+        self.assertCountEqual(library_calls, [list(MODULE["LIBRARY_COHORTS"][suite]) for suite in suites if suite.startswith("library-")])
         self.assertTrue(all(not any("test-threads" in arg for arg in c.args[0]) for c in calls))
 
     def test_runner_propagates_test_failure(self):
@@ -67,8 +63,10 @@ class PartitionTests(unittest.TestCase):
         self.assertEqual(code, 7)
         self.assertEqual(calls[0].args[0], ["/synthetic/rustdoc-test"])
 
-    def test_inventory_only_does_not_execute_tests(self):
-        self.assertEqual(self.runner("library-runner", "/synthetic/lib", inventory_only="1"), (0, []))
+    def test_ambient_selection_shares_filters_without_changing_threads(self):
+        code, calls = self.runner("library-ambient", "/synthetic/lib")
+        self.assertEqual((code, calls[0].args[0]), (0, ["/synthetic/lib", *AMBIENT]))
+        self.assertEqual(self.runner("library-ambient", "/synthetic/lib", inventory_only="1"), (0, []))
 
     def inventory(self, lists):
         def output(args, **kwargs):
@@ -77,30 +75,27 @@ class PartitionTests(unittest.TestCase):
                 patch("sys.stdout", new_callable=io.StringIO):
             return MODULE["verify_library_inventory"]("/synthetic/lib", [])
 
-    def test_inventory_rejects_a_missing_test(self):
-        lists = {k: set(v) for k, v in LISTS.items()}
-        lists[("--skip", "runner::")] = set()
-        with self.assertRaisesRegex(RuntimeError, "missing/overlapping"):
-            self.inventory(lists)
-
-    def test_inventory_rejects_an_overlapping_test(self):
-        lists = {k: set(v) for k, v in LISTS.items()}
-        lists[("runner::workspace_command::",)].add("runner::task_engine::fixture_b")
-        with self.assertRaisesRegex(RuntimeError, "missing/overlapping"):
-            self.inventory(lists)
+    def test_inventory_rejects_missing_overlapping_and_misrouted_tests(self):
+        for defect in ("missing", "overlapping", "misrouted", "ambient"):
+            with self.subTest(defect=defect):
+                lists = {k: set(v) for k, v in LISTS.items()}
+                if defect == "missing":
+                    lists[("--skip", "runner::")] = set()
+                elif defect == "overlapping":
+                    lists[("runner::workspace_command::",)].add("runner::task_engine::fixture_b")
+                elif defect == "ambient":
+                    lists[tuple(AMBIENT)] = set()
+                else:
+                    lists[("--skip", "runner::")], lists[("runner::workspace_command::",)] = \
+                        lists[("runner::workspace_command::",)], lists[("--skip", "runner::")]
+                with self.assertRaisesRegex(RuntimeError, {"misrouted": "disagrees with family", "ambient": "ambient library"}.get(defect, "missing/overlapping")):
+                    self.inventory(lists)
 
     def test_future_test_is_checked_and_assigned_automatically(self):
         lists = {k: set(v) for k, v in LISTS.items()}
         lists[()].add("future_module::new_test")
         lists[("--skip", "runner::")].add("future_module::new_test")
         self.assertIn("future_module::new_test", self.inventory(lists)["library-other"])
-
-    def test_inventory_rejects_wrong_family_even_when_union_is_complete(self):
-        lists = {k: set(v) for k, v in LISTS.items()}
-        lists[("--skip", "runner::")], lists[("runner::workspace_command::",)] = \
-            lists[("runner::workspace_command::",)], lists[("--skip", "runner::")]
-        with self.assertRaisesRegex(RuntimeError, "disagrees with family"):
-            self.inventory(lists)
 
     def build(self, build_exit=0, test_exit=0, suite="rest"):
         artifacts = []
@@ -137,7 +132,7 @@ class PartitionTests(unittest.TestCase):
         self.assertNotIn("--tests", calls[0].args[0])
 
     def test_library_build_supplies_cli_without_unassigned_integration_binaries(self):
-        code, compile_call, calls = self.build(suite="library-workspace")
+        code, compile_call, calls = self.build(suite="library-ambient")
         self.assertEqual(code, 0)
         self.assertEqual(compile_call.args[0][2:6], ["--workspace", "--lib", "--test", "bootstrap_cli_tests"])
         self.assertEqual(calls[0].args[0][2:6], compile_call.args[0][2:6])
