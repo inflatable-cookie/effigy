@@ -738,6 +738,7 @@ fn workspace_owner_eof_preserves_owner_loss_while_the_host_frontend_is_alive() {
 #[test]
 fn workspace_capture_guarded_read_stays_within_the_original_window() {
     use crate::custody::{CanonicalOutput, Stream};
+    use std::io::Write;
     let world = World::new();
     let cx = cx();
     let root = StateRoot::effects(&cx, &world.home()).unwrap();
@@ -771,17 +772,20 @@ fn workspace_capture_guarded_read_stays_within_the_original_window() {
         .join("runs")
         .join(run.id().to_string())
         .join("0.stdout.guard");
-    let guard = || {
-        crate::custody::merged::atomic::FileLock::exclusive(
-            std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(&path)
-                .unwrap(),
-        )
-        .unwrap()
-    };
-    let _held = guard();
+    let _held = crate::custody::merged::atomic::FileLock::exclusive(
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap(),
+    )
+    .unwrap();
+    // Simulate a writer's unfinished suffix without advancing the durable extent.
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(path.with_file_name("0.stdout.0.log"))
+        .unwrap();
+    file.write_all(b"uncommitted\n").unwrap();
     let id = run.id();
     let short = cx.child(Duration::from_millis(10));
     let started = Instant::now();
@@ -795,6 +799,7 @@ fn workspace_capture_guarded_read_stays_within_the_original_window() {
         4096,
     );
     // Committed bytes remain readable while the writer owns its guard (§5.7).
+    eprintln!("guarded read: {observed:?}");
     assert!(
         matches!(
             &observed,
