@@ -334,51 +334,6 @@ pub(super) fn read_lifecycle(
     Ok(Some(state))
 }
 
-#[cfg(test)]
-pub(super) fn lifecycle_at_path(path: &Path) -> Option<HostLifecycleObservation> {
-    let repo = path
-        .ancestors()
-        .find(|part| part.file_name().is_some_and(|name| name == ".effigy"))?
-        .parent()?;
-    let root = match observe_root(repo)? {
-        Observed::Verified(root, _) => root,
-        _ => return None,
-    };
-    let reader = match Store::read(&observe(), &root) {
-        Observed::Verified(reader, _) => reader,
-        _ => return None,
-    };
-    let runs = match effigy_kernel::run::recent(&reader, None, usize::MAX / 2) {
-        Observed::Verified(runs, _) => runs,
-        _ => return None,
-    };
-    for run in runs {
-        let effects = match effigy_kernel::run::effects(&reader, run.id) {
-            Observed::Verified(effects, _) => effects,
-            _ => return None,
-        };
-        let Some(invocation) = run.invocation else {
-            continue;
-        };
-        let owner = &invocation.spec().owner;
-        if owner.kind() != effigy_kernel::id::ResourceKind::HostProcess {
-            continue;
-        }
-        let key = owner.key();
-        let environment = key.first()?.as_deref()?;
-        let profile = key.get(1)?.as_deref()?;
-        let process = key.get(2)?.as_deref()?;
-        let managed = super::managed_host_process_dir(repo, environment, profile);
-        let plain = super::host_process_dir(repo, environment);
-        if path == super::host_process_state_path(&managed, process)
-            || path == super::host_process_state_path(&plain, process)
-        {
-            return lifecycle_from_effects(&effects);
-        }
-    }
-    None
-}
-
 /// What `container status` shows for one declared host process.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub(in crate::runner) struct HostProcessStatus {

@@ -43,6 +43,10 @@ mod kernel_run;
 // graph before it starts polling, and both its own boundary and the plan's
 // bring-up use this one model.
 mod waits;
+
+#[cfg(test)]
+#[path = "../../tests/support/host_lifecycle.rs"]
+mod lifecycle_fixture;
 pub(in crate::runner) use kernel_run::{
     host_process_listener_state_path, host_process_log_path, host_process_status,
     owns_supervise_payload, restart_host_processes_for_container,
@@ -56,10 +60,7 @@ pub(in crate::runner) use waits::{
 
 #[cfg(test)]
 pub(in crate::runner) fn listener_observation_for_test(path: &Path) -> serde_json::Value {
-    serde_json::to_value(
-        kernel_run::lifecycle_at_path(path).expect("journaled listener observation"),
-    )
-    .expect("listener observation JSON")
+    lifecycle_fixture::at_path(path).expect("journaled listener observation")
 }
 
 const HOST_PROCESS_DIR: &str = ".effigy/runtime/host-processes";
@@ -4298,14 +4299,8 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
     }
 
     fn read_json(path: &Path) -> serde_json::Value {
-        if let Some(state) = kernel_run::lifecycle_at_path(path) {
-            return serde_json::to_value(state).unwrap();
-        }
-        serde_json::from_slice(
-            &fs::read(path)
-                .unwrap_or_else(|error| panic!("listener state {}: {error}", path.display())),
-        )
-        .unwrap_or_else(|error| panic!("listener state {} is not JSON: {error}", path.display()))
+        lifecycle_fixture::read(path)
+            .unwrap_or_else(|| panic!("listener state {} is unavailable", path.display()))
     }
 
     fn route_table_path() -> PathBuf {
@@ -5138,8 +5133,8 @@ while True:
             super::kernel_run::start_host_processes_for_container(&checkout, &up_policy, None)
         });
         wait_until("the listener to publish its starting generation", || {
-            kernel_run::lifecycle_at_path(&state_path)
-                .is_some_and(|state| state.status == HostLifecycleStatus::Starting)
+            lifecycle_fixture::at_path(&state_path)
+                .is_some_and(|state| state["status"] == "starting")
         });
         let started = Instant::now();
         let report =
@@ -5196,8 +5191,8 @@ while True:
         wait_until(
             "the never-binding child to start at a committed log boundary",
             || {
-                kernel_run::lifecycle_at_path(&state_path).is_some_and(|state| {
-                    state.status == HostLifecycleStatus::Starting && state.custody_nonce.is_some()
+                lifecycle_fixture::at_path(&state_path).is_some_and(|state| {
+                    state["status"] == "starting" && !state["custody_nonce"].is_null()
                 }) && fs::read_to_string(&log)
                     .is_ok_and(|text| text.contains("started managed listener"))
                     && effigy_kernel::custody::MergedLog::identity(&log).is_ok_and(|proof| {
