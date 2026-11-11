@@ -1,0 +1,43 @@
+{
+  "binary": {
+    "active_version": "0.14.1",
+    "display_version": "v0.14.1",
+    "name": "effigy",
+    "version": "0.14.1"
+  },
+  "command": {
+    "kind": "runs",
+    "name": "runs"
+  },
+  "error": {
+    "details": {
+      "run": {
+        "evidence_source": "checkout-journal",
+        "exit_code": null,
+        "phase": "starting",
+        "pid": 17711,
+        "profile": "unix:///Users/tom/.docker/run/docker.sock",
+        "run_id": "agq4qaozad2fsdpdkya74nnh5m",
+        "started_at_epoch_ms": 1794356926745,
+        "state": "running",
+        "task": "effigy"
+      },
+      "schema": "effigy.run.v1",
+      "schema_version": 1,
+      "stop": "pending"
+    },
+    "human": {
+      "evidence": [],
+      "next_action": "pending",
+      "what_failed": "run agq4qaozad2fsdpdkya74nnh5m did not settle within 30000 ms after the stop request; inspect it with `effigy run status agq4qaozad2fsdpdkya74nnh5m`"
+    },
+    "kind": "unavailable",
+    "message": "run agq4qaozad2fsdpdkya74nnh5m did not settle within 30000 ms after the stop request; inspect it with `effigy run status agq4qaozad2fsdpdkya74nnh5m`",
+    "type": "RunnerError"
+  },
+  "ok": false,
+  "result": null,
+  "schema": "effigy.command.v1",
+  "schema_version": 1,
+  "warnings": []
+}
