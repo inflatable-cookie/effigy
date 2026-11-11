@@ -154,6 +154,15 @@ impl EndpointStore {
         &self,
         edit: impl FnOnce(&mut EndpointSnapshot) -> Result<T, E>,
     ) -> Result<T, E> {
+        self.transaction_with_probe(edit, crate::registration::dead_claim_reason)
+    }
+
+    fn transaction_with_probe<T, E: From<GatewayError>>(
+        &self,
+        edit: impl FnOnce(&mut EndpointSnapshot) -> Result<T, E>,
+        mut probe: impl FnMut(&crate::routes::Route, Instant) -> Result<Option<String>, GatewayError>,
+    ) -> Result<T, E> {
+        let deadline = Instant::now() + OPERATION_BUDGET;
         let op = operator::context(OPERATION_BUDGET, EffectClass::Mutate);
         let cx = op
             .effects()
@@ -162,18 +171,21 @@ impl EndpointStore {
             .cleanup(CLEANUP_BUDGET)
             .map_err(|failure| error(format!("{failure}")))?;
         let root = StateRoot::runtime_machine_effects(&cx, &self.home).map_err(error)?;
-        let mut facts = MachineFacts::begin(
-            &cx,
-            &root,
-            FactOptions {
-                owner: owner(),
-                wait: Wait::Until(Instant::now() + OPERATION_BUDGET),
-                next: operator::next(),
-            },
-            &cleanup,
-            &mut operator::Adapter,
-        )
-        .map_err(error)?;
+        let begin = || {
+            MachineFacts::begin(
+                &cx,
+                &root,
+                FactOptions {
+                    owner: owner(),
+                    wait: Wait::Until(deadline),
+                    next: operator::next(),
+                },
+                &cleanup,
+                &mut operator::Adapter,
+            )
+            .map_err(error)
+        };
+        let mut facts = begin()?;
         let mut snapshot = match facts.state().map_err(error)? {
             Some(value) => EndpointSnapshot::from_value(value)?,
             None => EndpointSnapshot::default(),
@@ -182,6 +194,49 @@ impl EndpointStore {
         let value = edit(&mut snapshot)?;
         if snapshot == before {
             return Ok(value);
+        }
+        let current = before.routes()?;
+        let next = snapshot.routes()?;
+        let competing = next
+            .all_routes()
+            .into_iter()
+            .filter_map(|route| {
+                current
+                    .lookup(&route.domain)
+                    .filter(|existing| existing.project != route.project)
+            })
+            .collect::<Vec<_>>();
+        if !competing.is_empty() {
+            drop(facts);
+            let probe_deadline =
+                deadline.min(Instant::now() + crate::registration::TARGET_PROBE_TIMEOUT);
+            let mut takeovers = Vec::new();
+            for existing in competing {
+                let Some(reason) = probe(existing, probe_deadline)? else {
+                    return Err(GatewayError::ForeignRoute {
+                        domain: existing.domain.clone(),
+                        project: existing.project.clone(),
+                    }
+                    .into());
+                };
+                takeovers.push((existing, reason));
+            }
+            facts = begin()?;
+            let latest = match facts.state().map_err(error)? {
+                Some(value) => EndpointSnapshot::from_value(value)?,
+                None => EndpointSnapshot::default(),
+            };
+            if latest != before {
+                return Err(
+                    error("gateway routes changed during observation; retry registration").into(),
+                );
+            }
+            for (existing, reason) in takeovers {
+                eprintln!(
+                    "[info] gateway domain `{}` taken over from checkout `{}`: {}",
+                    existing.domain, existing.project, reason
+                );
+            }
         }
         let desired = snapshot.claims()?;
         let generation = facts.next_generation().map_err(error)?;

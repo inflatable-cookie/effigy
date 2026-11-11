@@ -1632,7 +1632,7 @@ allow = [
 [[retired]]
 id = "effigy-gateway-repair-owner-checkout"
 retired = "2026-10-26; Q-011 simplification (effigy#340, effigy#369)"
-replacement = "A gateway route is one claim per domain: `domain -> (checkout path, target)`. The same checkout path always replaces its own route, and a different checkout takes the domain over automatically when the recorded path is missing or its target does not accept a TCP connection within 200 ms, naming the takeover in one line. Otherwise the write is refused with one message naming the other checkout and `effigy container down` there. A route write also drops routes whose recorded checkout path is gone, so a dead loopback assignment is collected once at allocation time; there is no repair command, no owner filter and no plan to review."
+replacement = "A gateway route is one claim per domain: `domain -> (checkout path, target)`. The same checkout path always replaces its own route, and a different checkout takes the domain over automatically when the recorded path is missing or its numeric target definitively refuses a TCP connection, naming the takeover in one line. Competing claims share a 200 ms observation deadline outside the store gate; hostname, timeout and observation failures refuse takeover, and the original snapshot is rechecked before publication. Otherwise the write is refused with one message naming the other checkout and `effigy container down` there. A route write also drops routes whose recorded checkout path is gone, so a dead loopback assignment is collected once at allocation time; there is no repair command, no owner filter and no plan to review."
 owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
 terms = [
   "gateway repair",

@@ -30,7 +30,10 @@ State what a route claim is and why there is no separate trust verdict.
 2. **One owner per domain.** The route table holds exactly one owner for a
    domain. A different checkout path takes the domain over only when the
    recorded owner is provably gone: its checkout path no longer exists, or its
-   target does not accept a TCP connection within 200 ms. Otherwise the write
+   numeric target definitively refuses a TCP connection. Probes share one 200 ms
+   deadline outside the store gate; hostnames, timeouts and observation errors
+   are unknown and refuse takeover. The exact original snapshot is checked
+   under the gate before committing a decision made outside it. Otherwise the write
    is refused, naming the other checkout and the command that stops it.
 3. **Route targets name the publishing port.** A container route's target is
    the host port the running container publishes, read back after `up`; a route

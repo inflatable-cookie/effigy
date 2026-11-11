@@ -32,12 +32,6 @@ fn linked_checkout(root: &Path, name: &str) -> (std::path::PathBuf, std::path::P
     let private = root.join("primary/.git/worktrees").join(name);
     std::fs::create_dir_all(&checkout).unwrap();
     std::fs::create_dir_all(&private).unwrap();
-    std::fs::write(
-        checkout.join(".git"),
-        format!("gitdir: {}\n", private.display()),
-    )
-    .unwrap();
-    std::fs::write(private.join("commondir"), "../..\n").unwrap();
     (checkout, private)
 }
 
@@ -66,35 +60,6 @@ fn publication_records_the_owner_generation_and_reserved_address() {
 }
 
 #[test]
-fn register_upserts_existing() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("routes.json");
-    let checkout = dir.path().join("checkout");
-    std::fs::create_dir_all(&checkout).unwrap();
-    let project = checkout.display().to_string();
-
-    let mut reg1 = container_registration(&project, "127.0.0.1:8080");
-    reg1.domain = "myapp.test".to_owned();
-    register_route(&path, &reg1).unwrap();
-
-    let mut reg2 = container_registration(&project, "127.0.0.1:9090");
-    reg2.domain = "myapp.test".to_owned();
-    reg2.tls = true;
-    register_route(&path, &reg2).unwrap();
-
-    let table = RouteTable::load(&path).unwrap();
-    assert_eq!(table.len(), 1);
-    assert_eq!(
-        table.lookup("myapp.test").unwrap().target.as_deref(),
-        Some("127.0.0.1:9090")
-    );
-    assert!(table.lookup("myapp.test").unwrap().tls);
-
-    deregister_route(&path, "myapp.test", &project).unwrap();
-    assert!(RouteTable::load(&path).unwrap().is_empty());
-}
-
-#[test]
 fn deregister_nonexistent_is_idempotent() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("routes.json");
@@ -114,16 +79,8 @@ fn simultaneous_distinct_domains_do_not_lose_updates() {
             let path = path.clone();
             let project = project.clone();
             std::thread::spawn(move || {
-                let registration = RouteRegistration {
-                    domain: format!("app-{index}.test"),
-                    target: Some("127.0.0.1:8100".to_owned()),
-                    dns_ip: None,
-                    tcp_port: None,
-                    tcp_target: None,
-                    tls: false,
-                    project_path: project.clone(),
-                    source: RouteSource::Container,
-                };
+                let mut registration = container_registration(&project, "127.0.0.1:8100");
+                registration.domain = format!("app-{index}.test");
                 register_route(&path, &registration).unwrap();
             })
         })
@@ -134,145 +91,105 @@ fn simultaneous_distinct_domains_do_not_lose_updates() {
     assert_eq!(RouteTable::load(&path).unwrap().len(), 12);
 }
 
-/// The same checkout path always replaces its own route: a new run, a new
-/// generation, or a container-to-listener handover needs no proof.
+/// Table replacement for the same-checkout, live-owner, deleted-checkout,
+/// stopped-target and unknown-target cases: one ownership policy, real writes.
 #[test]
-fn the_same_checkout_path_replaces_its_own_route() {
-    let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("routes.json");
-    let (checkout, _) = linked_checkout(root.path(), "app");
-    let project = checkout.display().to_string();
-
-    register_route(&path, &container_registration(&project, "127.0.0.1:8080")).unwrap();
-    register_route(&path, &container_registration(&project, "127.0.0.1:9090")).unwrap();
-    let route = RouteTable::load(&path)
-        .unwrap()
-        .lookup("app.example.test")
-        .cloned()
-        .unwrap();
-    assert_eq!(route.target.as_deref(), Some("127.0.0.1:9090"));
-    assert_eq!(route.project, project);
-}
-
-/// A live checkout serving the domain refuses a second checkout, and the
-/// message names it and the command that stops it.
-#[test]
-fn a_live_checkout_serving_the_domain_refuses_a_second_checkout() {
-    let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("routes.json");
-    let (one, _) = linked_checkout(root.path(), "one");
-    let (two, _) = linked_checkout(root.path(), "two");
-    let one_path = one.display().to_string();
-    let two_path = two.display().to_string();
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let live = listener.local_addr().unwrap().to_string();
-
-    register_route(&path, &container_registration(&one_path, &live)).unwrap();
-    let refused = register_route(&path, &container_registration(&two_path, &live))
-        .expect_err("a live owner keeps its domain");
-    assert!(matches!(&refused, GatewayError::ForeignRoute { .. }));
-    let rendered = refused.to_string();
-    assert!(rendered.contains(&one_path), "{rendered}");
-    assert!(rendered.contains("effigy container down"), "{rendered}");
-    assert!(!rendered.contains(&two_path), "{rendered}");
-    assert_eq!(
-        RouteTable::load(&path)
-            .unwrap()
-            .lookup("app.example.test")
-            .unwrap()
-            .project,
-        one_path
-    );
-
-    // The owner's own writes are never refused and its removal frees the
-    // domain immediately.
-    register_route(&path, &container_registration(&one_path, &live)).unwrap();
-    assert!(deregister_route(&path, "app.example.test", &one_path).unwrap());
-    register_route(&path, &container_registration(&two_path, &live)).unwrap();
-}
-
-/// Delete a worktree without `down`: the next `up` elsewhere takes the domain
-/// automatically.
-#[test]
-fn a_deleted_checkout_claim_is_taken_over_automatically() {
-    let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("routes.json");
-    let (gone, _) = linked_checkout(root.path(), "gone");
-    let (here, _) = linked_checkout(root.path(), "here");
-    let gone_path = gone.display().to_string();
-    let here_path = here.display().to_string();
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let live = listener.local_addr().unwrap().to_string();
-
-    register_route(&path, &container_registration(&gone_path, &live)).unwrap();
-    std::fs::remove_dir_all(&gone).unwrap();
-    register_route(&path, &container_registration(&here_path, &live))
-        .expect("a deleted checkout's route is reclaimable");
-    let route = RouteTable::load(&path)
-        .unwrap()
-        .lookup("app.example.test")
-        .cloned()
-        .unwrap();
-    assert_eq!(route.project, here_path);
-    assert_eq!(route.target.as_deref(), Some(live.as_str()));
-}
-
-/// A checkout whose target stopped listening no longer holds the domain.
-#[test]
-fn a_recorded_target_that_stopped_listening_releases_the_domain() {
-    let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("routes.json");
-    let (one, _) = linked_checkout(root.path(), "one");
-    let (two, _) = linked_checkout(root.path(), "two");
-    let one_path = one.display().to_string();
-    let two_path = two.display().to_string();
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let dead = listener.local_addr().unwrap().to_string();
-    drop(listener);
-
-    register_route(&path, &container_registration(&one_path, &dead)).unwrap();
-    register_route(&path, &container_registration(&two_path, "127.0.0.1:1"))
-        .expect("a dead target no longer holds its domain");
-    assert_eq!(
-        RouteTable::load(&path)
-            .unwrap()
-            .lookup("app.example.test")
-            .unwrap()
-            .project,
-        two_path
-    );
-    let claimed = RouteTable::load(&path).unwrap();
-    assert!(dead_claim_reason(claimed.lookup("app.example.test").unwrap()).is_some());
-}
-
-/// A route whose target is briefly down is not withdrawn by anything. A
-/// container restart, a Colima restart and a process that has not bound yet
-/// all look like this, and the route has to be there when the target is back.
-#[test]
-fn a_route_whose_target_is_down_survives_every_other_write() {
-    let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("routes.json");
-    let (checkout, _) = linked_checkout(root.path(), "checkout");
-    let (other, _) = linked_checkout(root.path(), "other");
-    let checkout_path = checkout.display().to_string();
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let down = listener.local_addr().unwrap().to_string();
-    drop(listener);
-
-    register_route(&path, &container_registration(&checkout_path, &down)).unwrap();
-    let mut elsewhere = container_registration(&other.display().to_string(), "127.0.0.1:1");
-    elsewhere.domain = "other.test".to_owned();
-    register_route(&path, &elsewhere).unwrap();
-
-    let table = RouteTable::load(&path).unwrap();
-    let route = table
-        .lookup("app.example.test")
-        .expect("a briefly down target keeps its route");
-    assert_eq!(route.project, checkout_path);
-    assert!(
-        dead_claim_reason(route).is_some(),
-        "another checkout may still take the domain over"
-    );
+fn route_observations_preserve_takeover_policy() {
+    for case in [
+        "same",
+        "accepting",
+        "closed",
+        "deleted",
+        "hostname",
+        "alias",
+        "invalid",
+        "zero",
+        "no-target",
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("routes.json");
+        let (one, _) = linked_checkout(root.path(), "one");
+        let (two, _) = linked_checkout(root.path(), "two");
+        let one_path = one.display().to_string();
+        let two_path = two.display().to_string();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let target = match case {
+            "hostname" => "unknown.invalid:80",
+            "alias" => "localhost:80",
+            "invalid" => "invalid",
+            "zero" => "127.0.0.1:0",
+            _ => &address,
+        };
+        let mut original = container_registration(&one_path, target);
+        if case == "alias" {
+            original.tcp_target = original.target.take();
+        }
+        if case == "no-target" {
+            original.target = None;
+        }
+        register_route(&path, &original).unwrap();
+        if case == "closed" {
+            drop(listener);
+            let mut elsewhere = container_registration(&two_path, "127.0.0.1:1");
+            elsewhere.domain = "other.test".into();
+            register_route(&path, &elsewhere).unwrap();
+            let table = RouteTable::load(&path).unwrap();
+            let route = table
+                .lookup("app.example.test")
+                .expect("briefly down targets survive unrelated writes");
+            assert_eq!(route.project, one_path);
+            assert!(
+                dead_claim_reason(route, Instant::now() + TARGET_PROBE_TIMEOUT)
+                    .unwrap()
+                    .is_some()
+            );
+        }
+        let before = RouteTable::load(&path).unwrap();
+        if case == "deleted" {
+            std::fs::remove_dir_all(&one).unwrap();
+        }
+        let project = if case == "same" { &one_path } else { &two_path };
+        let mut replacement = container_registration(project, "127.0.0.1:9090");
+        replacement.tls = true;
+        let result = register_route(&path, &replacement);
+        let after = RouteTable::load(&path).unwrap();
+        let route = after.lookup("app.example.test").unwrap();
+        if matches!(case, "same" | "closed" | "deleted") {
+            result.unwrap();
+            assert_eq!(route.project, *project);
+            assert_eq!(route.target.as_deref(), Some("127.0.0.1:9090"));
+            assert!(route.tls);
+            if case == "same" {
+                assert_eq!(after.len(), 1);
+                assert!(deregister_route(&path, "app.example.test", project).unwrap());
+                assert!(RouteTable::load(&path).unwrap().is_empty());
+            }
+        } else {
+            let refused = result.unwrap_err();
+            assert_eq!(after, before);
+            let message = refused.to_string();
+            assert!(message.contains(&one_path), "{case}: {message}");
+            assert!(!message.contains(&two_path), "{case}: {message}");
+            assert!(
+                message.contains("effigy container down"),
+                "{case}: {message}"
+            );
+            if matches!(case, "accepting" | "no-target") {
+                assert!(matches!(refused, GatewayError::ForeignRoute { .. }));
+            } else {
+                assert!(message.contains("cannot determine"), "{message}");
+            }
+            // Own writes remain unconditional; removal immediately frees it.
+            register_route(&path, &original).unwrap();
+            assert!(deregister_route(&path, "app.example.test", &one_path).unwrap());
+            register_route(&path, &replacement).unwrap();
+        }
+    }
+    assert!(matches!(
+        target_observation("127.0.0.1:1", Instant::now()),
+        TargetObservation::Unknown(_)
+    ));
 }
 
 #[test]
@@ -281,25 +198,15 @@ fn down_withdraws_every_generation_of_one_listeners_routes() {
     let path = dir.path().join("routes.json");
     let project = dir.path().display().to_string();
     for domain in ["app.example.test", "api.example.test"] {
-        let store = EndpointStore::for_routes(&path);
-        store
-            .transaction(|snapshot| {
-                let mut table = snapshot.routes()?;
-                table.upsert(Route {
-                    domain: domain.to_owned(),
-                    target: Some("127.0.0.1:43123".to_owned()),
-                    dns_ip: None,
-                    tcp_port: None,
-                    tcp_target: None,
-                    source: RouteSource::Task,
-                    project: project.clone(),
-                    managed_listener: Some(synthetic_owner("child-1", "127.0.0.1:43123")),
-                    tls: false,
-                    registered: Utc::now(),
-                });
-                snapshot.set_routes(&table)
-            })
-            .unwrap_or_else(|error| panic!("{domain}: {error}"));
+        register_managed_listener_route(
+            &path,
+            &project,
+            domain,
+            "127.0.0.1:43123",
+            false,
+            synthetic_owner("child-1", "127.0.0.1:43123"),
+        )
+        .unwrap();
     }
     let mut other = container_registration(&project, "127.0.0.1:43129");
     other.domain = "other.example.test".to_owned();
@@ -334,24 +241,15 @@ fn deregister_route_removes_a_listener_route_of_the_same_checkout() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("routes.json");
     let project = dir.path().display().to_string();
-    EndpointStore::for_routes(&path)
-        .transaction(|snapshot| {
-            let mut table = snapshot.routes()?;
-            table.upsert(Route {
-                domain: "app.example.test".to_owned(),
-                target: Some("127.0.0.1:43123".to_owned()),
-                dns_ip: None,
-                tcp_port: None,
-                tcp_target: None,
-                source: RouteSource::Task,
-                project: project.clone(),
-                managed_listener: Some(synthetic_owner("child-1", "127.0.0.1:43123")),
-                tls: false,
-                registered: Utc::now(),
-            });
-            snapshot.set_routes(&table)
-        })
-        .unwrap();
+    register_managed_listener_route(
+        &path,
+        &project,
+        "app.example.test",
+        "127.0.0.1:43123",
+        false,
+        synthetic_owner("child-1", "127.0.0.1:43123"),
+    )
+    .unwrap();
     assert!(deregister_route(&path, "app.example.test", &project).unwrap());
     assert!(RouteTable::load(&path)
         .unwrap()
@@ -442,65 +340,40 @@ fn withdraw_owned_routes_removes_every_route_the_path_owns() {
     );
 }
 
-/// An unreadable checkout path is unknown, not gone: a checkout on a volume
-/// whose permissions are wrong, or on a mount that is asleep, keeps its route.
+/// Unreadable paths and missing mount parents remain unknown. This table
+/// replaces both checkout-absence fixtures without changing their assertions.
 #[test]
 #[cfg(unix)]
-fn an_unreadable_checkout_path_keeps_its_route() {
+fn unknown_checkout_paths_keep_their_routes() {
     use std::os::unix::fs::PermissionsExt;
-
-    let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("routes.json");
-    let tight = root.path().join("tight");
-    let checkout = tight.join("checkout");
-    let (other, _) = linked_checkout(root.path(), "other");
-    std::fs::create_dir_all(&checkout).unwrap();
-    let checkout_path = checkout.display().to_string();
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let live = listener.local_addr().unwrap().to_string();
-    register_route(&path, &container_registration(&checkout_path, &live)).unwrap();
-
-    std::fs::set_permissions(&tight, std::fs::Permissions::from_mode(0o000)).unwrap();
-    let mut elsewhere = container_registration(&other.display().to_string(), "127.0.0.1:1");
-    elsewhere.domain = "other.test".to_owned();
-    register_route(&path, &elsewhere).unwrap();
-    let table = RouteTable::load(&path).unwrap();
-    std::fs::set_permissions(&tight, std::fs::Permissions::from_mode(0o755)).unwrap();
-
-    assert!(
-        table.lookup("app.example.test").is_some(),
-        "an unreadable checkout path is not a deleted checkout"
-    );
-}
-
-/// A path whose own parent is gone is unknown too: an unmounted volume looks
-/// exactly like this, so the route waits for the mount rather than being
-/// dropped and never republished.
-#[test]
-fn a_checkout_below_a_missing_parent_keeps_its_route() {
-    let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("routes.json");
-    let volume = root.path().join("volume");
-    let checkout = volume.join("checkout");
-    let (other, _) = linked_checkout(root.path(), "other");
-    std::fs::create_dir_all(&checkout).unwrap();
-    let checkout_path = checkout.display().to_string();
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let live = listener.local_addr().unwrap().to_string();
-    register_route(&path, &container_registration(&checkout_path, &live)).unwrap();
-
-    std::fs::remove_dir_all(&volume).unwrap();
-    let mut elsewhere = container_registration(&other.display().to_string(), "127.0.0.1:1");
-    elsewhere.domain = "other.test".to_owned();
-    register_route(&path, &elsewhere).unwrap();
-
-    assert!(
-        RouteTable::load(&path)
-            .unwrap()
-            .lookup("app.example.test")
-            .is_some(),
-        "a vanished mount root is not a deleted checkout"
-    );
+    for unreadable in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("routes.json");
+        let parent = root.path().join("volume");
+        let checkout = parent.join("checkout");
+        let (other, _) = linked_checkout(root.path(), "other");
+        std::fs::create_dir_all(&checkout).unwrap();
+        let project = checkout.display().to_string();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let live = listener.local_addr().unwrap().to_string();
+        register_route(&path, &container_registration(&project, &live)).unwrap();
+        if unreadable {
+            std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o000)).unwrap();
+        } else {
+            std::fs::remove_dir_all(&parent).unwrap();
+        }
+        let mut elsewhere = container_registration(&other.display().to_string(), "127.0.0.1:1");
+        elsewhere.domain = "other.test".into();
+        register_route(&path, &elsewhere).unwrap();
+        let table = RouteTable::load(&path).unwrap();
+        if unreadable {
+            std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        assert!(
+            table.lookup("app.example.test").is_some(),
+            "unknown checkout paths keep their routes"
+        );
+    }
 }
 
 /// Two checkouts racing for one live domain: exactly one wins and the other is

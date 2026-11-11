@@ -23,8 +23,12 @@ A route is the whole claim on a domain: `domain -> (checkout path, target)`.
 The same checkout path always replaces its own route, which covers a new run, a
 new generation and a container-to-listener handover. A different checkout path
 takes the domain over only when the recorded owner is dead: its checkout path no
-longer exists, or its target address does not accept a TCP connection within
-200 ms. The takeover is logged in one line. Otherwise the write is refused with
+longer exists, or its numeric target definitively refuses a TCP connection. All competing
+claims share one 200 ms observation deadline outside the store gate. Hostnames,
+timeouts, permission errors and other unknown observations refuse takeover with
+a corrective message. After observation, the store reacquires its gate and compares
+the complete original snapshot, including the exact route, before publishing;
+a concurrent write refuses the stale edit and asks the caller to retry. The takeover is logged in one line. Otherwise the write is refused with
 one message naming the other checkout and the command that stops it. Removing the
 route frees the domain immediately, so `down` followed by `up` needs no window.
 The route table is also the whole record of loopback ownership. An address is

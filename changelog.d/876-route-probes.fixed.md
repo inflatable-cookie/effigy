@@ -1,0 +1,1 @@
+Gateway route takeover now uses a shared 200 ms probe deadline outside the endpoint store gate and rechecks the recorded claim before publishing. Only a definitively refused numeric target or a missing checkout permits automatic takeover; hostnames, timeouts and observation errors retain the claim and explain how to retry or stop its owner.

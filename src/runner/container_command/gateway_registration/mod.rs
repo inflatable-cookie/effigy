@@ -16,7 +16,9 @@ use effigy_containers::exec::{
 use effigy_containers::{EffectiveContainerPolicy, EffectiveDnsRoute};
 use effigy_gateway::endpoint_store::EndpointStore;
 use effigy_gateway::loopback;
-use effigy_gateway::registration::{dead_claim_reason, owned_by, withdraw_owned_routes};
+use effigy_gateway::registration::{
+    dead_claim_reason, owned_by, withdraw_owned_routes, TARGET_PROBE_TIMEOUT,
+};
 #[cfg(test)]
 use effigy_gateway::registration::{register_route, RouteRegistration};
 use effigy_gateway::routes::{Route, RouteSource, RouteTable};
@@ -191,14 +193,15 @@ pub(in crate::runner) fn preflight_route_claims(
         let table = EndpointStore::for_routes(&route_table_path)
             .snapshot()?
             .routes()?;
+        let probe_deadline = Instant::now() + TARGET_PROBE_TIMEOUT;
         for claim in &claims {
             let Some(existing) = table.lookup(&claim.domain) else {
                 continue;
             };
-            if dead_claim_reason(existing).is_some() {
-                continue;
-            }
             if !owned_by(existing, &project_path) {
+                if dead_claim_reason(existing, probe_deadline)?.is_some() {
+                    continue;
+                }
                 return Err(RunnerError::gateway_route_registration(
                     "preflight",
                     &claim.domain,
@@ -1156,12 +1159,14 @@ fn validate_gateway_tcp_alias_bindings_in_table(
         return Ok(());
     }
 
+    let probe_deadline = Instant::now() + TARGET_PROBE_TIMEOUT;
     for registered in route_table.all_routes() {
         if registered.source != RouteSource::Container || owned_by(registered, &project_path) {
             continue;
         }
         if routes.iter().any(|route| route.domain == registered.domain)
-            && (owned_by(registered, &project_path) || dead_claim_reason(registered).is_some())
+            && (owned_by(registered, &project_path)
+                || dead_claim_reason(registered, probe_deadline)?.is_some())
         {
             // This domain is this checkout's own route, or a dead owner's, and
             // is replaced in the same locked transaction, so its old listener
