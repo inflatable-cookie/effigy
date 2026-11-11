@@ -1,0 +1,284 @@
+{
+  "activation_id": "smoke-27985a4c-d1",
+  "chain_key": "46566b45d01dff40423c547fd48b31f74ab37eebababb01fc7476e3e5d071f76",
+  "claim": {
+    "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/claims/smoke-27985a4c-d1.claim",
+    "sha256": "39dfb7b8df44d03ce24394711e4c6a844fb61e9a8b81e10f882cc8b4d22543a9"
+  },
+  "closure": "closed",
+  "closure_simulated": false,
+  "control": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c",
+  "desktop_host": "unix:///Users/tom/.docker/run/docker.sock",
+  "engine_id": "ef9cc944-30a9-4df6-b4e5-0d8b56ee9ecd",
+  "error": null,
+  "go_sha256": "3bd0e85ea57ea53b91a4194be7c6188538cd079a267595f8c8a2418f2fe534be",
+  "guest_closure": "not-applicable",
+  "inputs": {
+    "/Applications/Docker.app/Contents/Info.plist": "ca8573011856c7a20f33b2dfed4eaae10bad4c9c7450e55f7643a2202ae0f075",
+    "/Applications/Docker.app/Contents/Resources/bin/docker": "4fb51be4a4e9389b942ecbf52901a962bdccdaa38275e6de4d353df33981d600",
+    "/Applications/Docker.app/Contents/Resources/cli-plugins/docker-buildx": "a8638d2188cfd8bdfce7c1be2ce16aeeaf02c57b51443e9860799de5cf5ee105",
+    "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9": "c5a13e37785524fbc0384539d3c99aa4f888cb7c89e13e0bf0018436378b13bc",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/config/tasks.toml": "a650b21c5592896b8757b0123543ff741b01d3c8c0026a4dfd610f8a9ace992f",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/guest_inputs.py": "d2d0ea050f6d8b5ede4dcf07fbd3a7be65241b5b35d88830513cd07e76361af2",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/macos-4f6a5ed3-stages.json": "f2238a67891c8dc5baa811609df4c3235ee7c3a0b28288c69cb76cd6a4eb4c46",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/macos_colima_chain.py": "be9a467a6edf272951311b643ea4aa2d96f0d9bca30b858e031aa1f36aa1eb21",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/macos_colima_smoke.py": "37eb408fa068d4a0d16b84d47406bd61b2452017efa835ef3e0c7b1ef01173aa",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/macos_guest_context.py": "b249da71cb3c211006f90047b8dc743a5e82e3dfe6967470f4f7a7ae0c68bbd8",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/macos_guest_helper.py": "45fc7d75360706edf2aa944d670bde41615f92522c9adbe6f4108202d9526296",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/macos_preparation.py": "ebe0ee014d2a3cd5b4ccf0fe6ca8934c5e277f24bd79a4d253046fd527f74803",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/macos_stage_executor.py": "00a55c440877b95f7494c830e07dca235860da18069afd49720da6dbd9f47779",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/macos_stage_helper.py": "a8ed496229b0be5d11f5edf0bffe1bfb5c70a12a7714bcaa6af03fce891f6c5e",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/macos_stage_proof.py": "a5b7cf7e0678ce8769a0446b1a43da466da3a7f7a3153b3c9221f975cc12cfb7",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/preparation_resources.py": "fc0201e5710445f6eaf9e20d8b521a67ba8357b1edc480172b69138424ebb2cf",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/preparation_stage.py": "7bcbdc52510c64fcbd92c724d5e96c5ef57db65d0c0cbd983fc6d7a9eed67b90",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/runtime.Dockerfile": "8f1fa681851648430543cc0d0cd3573bfef191b3809cc447846de10821af2cc2",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/docs/qualification/workspace-private-531/runtime_image_inputs.py": "18e214f4b1ea64c6b51a2fa1bd78cd0f8a403bd67a03cf0c36104e12e9a5baca",
+    "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/effigy.toml": "2dfdcbbeaa1c9f4a91c22cdb2dbd5a372baa7a8c8294245c678f2f193e3d66b2",
+    "/opt/homebrew/Cellar/colima/0.10.3/bin/colima": "55278419bd4288e4ab11eb30be13f5e655f3886c0979b68e435df910dbc9bbdf"
+  },
+  "origin": null,
+  "pinned": [
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D1-smoke-27985a4c-d1",
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D1-smoke-27985a4c-d1/d1-engine-info",
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D1-smoke-27985a4c-d1/d1-label-absent",
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D1-smoke-27985a4c-d1/d1-volume-create",
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D1-smoke-27985a4c-d1/d1-volume-inspect",
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c",
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c/d/ctx",
+    "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c/d/docker-config"
+  ],
+  "prior": {
+    "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D0-smoke-27985a4c-d0/stage-receipt.json",
+    "sha256": "153459a0e168cf8a4ab4fb9377c111adf9eed2b8e7dab0375c49e0ee28e42273",
+    "stage": "D0"
+  },
+  "receipts": [
+    {
+      "created_at": "2026-11-10T23:38:58Z",
+      "driver": "local",
+      "engine_id": "ef9cc944-30a9-4df6-b4e5-0d8b56ee9ecd",
+      "evidence": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D1-smoke-27985a4c-d1/d1-volume-inspect/receipt.json",
+        "sha256": "045a67819f9ca9fd1b709b331f83f76650ecd22cbf0347bbd3e6f243002635ae"
+      },
+      "id": "0a809f42aef486902a37c2bda2728da363354049038e05f10b32475d5af2dc6f",
+      "kind": "volume",
+      "label": "effigy.qual=27985a4c",
+      "labels": {
+        "com.docker.volume.anonymous": "",
+        "effigy.qual": "27985a4c"
+      },
+      "mountpoint": "/var/lib/docker/volumes/0a809f42aef486902a37c2bda2728da363354049038e05f10b32475d5af2dc6f/_data",
+      "name": "0a809f42aef486902a37c2bda2728da363354049038e05f10b32475d5af2dc6f",
+      "scope": "local"
+    }
+  ],
+  "schema": "macos-stage-executor-receipt/2",
+  "stage": "D1",
+  "stage_root": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D1-smoke-27985a4c-d1",
+  "steps": [
+    {
+      "argv": [
+        "/usr/local/bin/docker",
+        "info",
+        "--format",
+        "{{json .}}"
+      ],
+      "closure": "closed",
+      "closure_simulated": false,
+      "disposition": "exited",
+      "env_keys": [
+        "DOCKER_CONFIG",
+        "DOCKER_HOST",
+        "LANG",
+        "PATH"
+      ],
+      "evidence": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D1-smoke-27985a4c-d1/d1-engine-info/receipt.json",
+        "sha256": "f87c5d236ec9a2181a43a61c56d9795eb05ef840f74879521142acac4e3d9c32"
+      },
+      "guest": false,
+      "guest_closure": "not-applicable",
+      "id": "d1-engine-info",
+      "kind": "exec",
+      "observations": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D1-smoke-27985a4c-d1/d1-engine-info/observations.json",
+        "sha256": "b413f12c54a865c36434e8355392ca496e19fb4eff49b5449de36d15e43e7243"
+      },
+      "process": {
+        "deadline_monotonic": 33.169214708,
+        "pgid": 97546,
+        "pid": 97546,
+        "session_id": 97546,
+        "start_identity": "spawn-time monotonic; kernel start time not observed",
+        "start_monotonic": 3.334632916,
+        "start_utc": "2026-11-10T23:38:57.838663+00:00"
+      },
+      "streams": {
+        "stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "stdout": {
+          "bytes": 10179,
+          "sha256": "5ba13de21177cd8e81459502f7a87f3e65cfeae00fe94ec3c42b958a85d3d732"
+        }
+      },
+      "waited_exit": 0
+    },
+    {
+      "argv": [
+        "/usr/local/bin/docker",
+        "volume",
+        "ls",
+        "--filter",
+        "label=effigy.qual=27985a4c",
+        "--format",
+        "{{json .}}"
+      ],
+      "closure": "closed",
+      "closure_simulated": false,
+      "disposition": "exited",
+      "env_keys": [
+        "DOCKER_CONFIG",
+        "DOCKER_HOST",
+        "LANG",
+        "PATH"
+      ],
+      "evidence": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D1-smoke-27985a4c-d1/d1-label-absent/receipt.json",
+        "sha256": "4b0d2f5904d9bbdced8c1768db4574d15862867108bcfbb3dce80fffa703452d"
+      },
+      "guest": false,
+      "guest_closure": "not-applicable",
+      "id": "d1-label-absent",
+      "kind": "exec",
+      "observations": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D1-smoke-27985a4c-d1/d1-label-absent/observations.json",
+        "sha256": "b413f12c54a865c36434e8355392ca496e19fb4eff49b5449de36d15e43e7243"
+      },
+      "process": {
+        "deadline_monotonic": 33.371548541,
+        "pgid": 97551,
+        "pid": 97551,
+        "session_id": 97551,
+        "start_identity": "spawn-time monotonic; kernel start time not observed",
+        "start_monotonic": 3.542913791,
+        "start_utc": "2026-11-10T23:38:58.046901+00:00"
+      },
+      "streams": {
+        "stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      "waited_exit": 0
+    },
+    {
+      "argv": [
+        "/usr/local/bin/docker",
+        "volume",
+        "create",
+        "--label",
+        "effigy.qual=27985a4c"
+      ],
+      "closure": "closed",
+      "closure_simulated": false,
+      "disposition": "exited",
+      "env_keys": [
+        "DOCKER_CONFIG",
+        "DOCKER_HOST",
+        "LANG",
+        "PATH"
+      ],
+      "evidence": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D1-smoke-27985a4c-d1/d1-volume-create/receipt.json",
+        "sha256": "0669d8cc3a4d35ceb1e737baa1983fec917a4aac2b5305837476c7b7fea75993"
+      },
+      "guest": false,
+      "guest_closure": "not-applicable",
+      "id": "d1-volume-create",
+      "kind": "exec",
+      "observations": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D1-smoke-27985a4c-d1/d1-volume-create/observations.json",
+        "sha256": "b413f12c54a865c36434e8355392ca496e19fb4eff49b5449de36d15e43e7243"
+      },
+      "process": {
+        "deadline_monotonic": 63.5745305,
+        "pgid": 97555,
+        "pid": 97555,
+        "session_id": 97555,
+        "start_identity": "spawn-time monotonic; kernel start time not observed",
+        "start_monotonic": 3.741201625,
+        "start_utc": "2026-11-10T23:38:58.245240+00:00"
+      },
+      "streams": {
+        "stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "stdout": {
+          "bytes": 65,
+          "sha256": "59b9e0bce172fd4ae4fd5f9c7debf89c343dacb1cc5dcb4ad4e72bcb169af4ba"
+        }
+      },
+      "waited_exit": 0
+    },
+    {
+      "argv": [
+        "/usr/local/bin/docker",
+        "volume",
+        "inspect",
+        "--format",
+        "{{json .}}",
+        "0a809f42aef486902a37c2bda2728da363354049038e05f10b32475d5af2dc6f"
+      ],
+      "closure": "closed",
+      "closure_simulated": false,
+      "disposition": "exited",
+      "env_keys": [
+        "DOCKER_CONFIG",
+        "DOCKER_HOST",
+        "LANG",
+        "PATH"
+      ],
+      "evidence": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D1-smoke-27985a4c-d1/d1-volume-inspect/receipt.json",
+        "sha256": "045a67819f9ca9fd1b709b331f83f76650ecd22cbf0347bbd3e6f243002635ae"
+      },
+      "guest": false,
+      "guest_closure": "not-applicable",
+      "id": "d1-volume-inspect",
+      "kind": "exec",
+      "observations": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D1-smoke-27985a4c-d1/d1-volume-inspect/observations.json",
+        "sha256": "b413f12c54a865c36434e8355392ca496e19fb4eff49b5449de36d15e43e7243"
+      },
+      "process": {
+        "deadline_monotonic": 63.776343625,
+        "pgid": 97560,
+        "pid": 97560,
+        "session_id": 97560,
+        "start_identity": "spawn-time monotonic; kernel start time not observed",
+        "start_monotonic": 3.937791208,
+        "start_utc": "2026-11-10T23:38:58.441835+00:00"
+      },
+      "streams": {
+        "stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "stdout": {
+          "bytes": 338,
+          "sha256": "5f0b0439cd292c726e2469e73ad28486f70d018352879cff3269ff30099fa4e8"
+        }
+      },
+      "waited_exit": 0
+    }
+  ],
+  "token": "27985a4c"
+}

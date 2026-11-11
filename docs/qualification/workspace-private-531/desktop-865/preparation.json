@@ -1,0 +1,25 @@
+{
+  "bindings": {
+    "check_source": "import json,os,signal,ssl,subprocess,sys\nsignal.alarm(120)\ndef first(cmd):\n    out = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=10)\n    return out.stdout.decode().splitlines()[0]\nprint(json.dumps(dict(uid=os.geteuid(), python=sys.version.split()[0],\n    ssl=ssl.OPENSSL_VERSION, loader=first(['ldd', '--version']),\n    coreutils=first(['ls', '--version']))))\n",
+    "colima_cache_home": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c/cache",
+    "colima_docker_config": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c/docker-config",
+    "colima_home": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c/c",
+    "colima_input_dir": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c/runtime-inputs",
+    "control": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c",
+    "desktop_cidfile": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c/d/container-id",
+    "desktop_config": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c/d/docker-config",
+    "desktop_context_dir": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c/d/ctx",
+    "desktop_host": "unix:///Users/tom/.docker/run/docker.sock",
+    "desktop_iidfile": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c/d/image-id",
+    "desktop_input_dir": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c/d/inputs",
+    "qualification_root": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c/s",
+    "route_echo": "a \"b\" 'c' $HOME {x} * ; ( ) \\ = \nd",
+    "token": "27985a4c"
+  },
+  "prior_receipt": {
+    "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D3-smoke-27985a4c-d3/stage-receipt.json",
+    "sha256": "f43cac881b6ddda2d9da2375d210d43a87cc5bff3a73fdca2b270051b9c5a226",
+    "stage": "D3"
+  },
+  "proof": false
+}

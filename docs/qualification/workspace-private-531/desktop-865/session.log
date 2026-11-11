@@ -1,0 +1,13 @@
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ EFFIGY  /Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03 │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── v0.14.1+local.446cbe7 ╯
+
+inventory differences: {"container": {"removed": [], "added": []}, "image": {"removed": [], "added": []}, "volume": {"removed": [], "added": []}, "network": {"removed": [], "added": []}}
+exploration failed: required command failed: candidate
+[error] command `qualification:macos:desktop-session-smoke step `1`` failed
+  cause: exit code 1
+         stderr: full failed-step output: /Volumes/Stash/scratch/effigy/93cdd743/failed-step-1tv6sc.log
+  next: read the output above, fix the cause, then run the command again
+
+exit=1

@@ -1,0 +1,70 @@
+[
+  {
+    "name": "session-private-config",
+    "argv": [
+      "/Volumes/Stash/scratch/effigy/93cdd743/desktop-865-iZAktisO/bin/docker",
+      "--config",
+      "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c/session-docker-config",
+      "--host",
+      "unix:///Users/tom/.docker/run/docker.sock",
+      "compose",
+      "version"
+    ],
+    "exit": 1,
+    "elapsed_seconds": 0.15605962497647852,
+    "stdout": "",
+    "stderr": "docker: unknown command: docker compose\n\nRun 'docker --help' for more information\n"
+  },
+  {
+    "name": "session-private-config",
+    "argv": [
+      "/Volumes/Stash/scratch/effigy/93cdd743/desktop-865-iZAktisO/bin/docker",
+      "--config",
+      "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c/session-docker-config",
+      "--host",
+      "unix:///Users/tom/.docker/run/docker.sock",
+      "compose",
+      "--project-name",
+      "effigy865-readonly-control",
+      "version"
+    ],
+    "exit": 125,
+    "elapsed_seconds": 0.023521709023043513,
+    "stdout": "",
+    "stderr": "unknown flag: --project-name\n\nUsage:  docker [OPTIONS] COMMAND [ARG...]\n\nRun 'docker --help' for more information\n"
+  },
+  {
+    "name": "explicit-plugin-control",
+    "argv": [
+      "/Volumes/Stash/scratch/effigy/93cdd743/desktop-865-iZAktisO/bin/docker",
+      "--config",
+      "/Volumes/Stash/scratch/effigy/93cdd743/desktop-865-iZAktisO/compose-readonly-control",
+      "--host",
+      "unix:///Users/tom/.docker/run/docker.sock",
+      "compose",
+      "version"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.10494541598018259,
+    "stdout": "Docker Compose version v5.5.1\n",
+    "stderr": ""
+  },
+  {
+    "name": "explicit-plugin-control",
+    "argv": [
+      "/Volumes/Stash/scratch/effigy/93cdd743/desktop-865-iZAktisO/bin/docker",
+      "--config",
+      "/Volumes/Stash/scratch/effigy/93cdd743/desktop-865-iZAktisO/compose-readonly-control",
+      "--host",
+      "unix:///Users/tom/.docker/run/docker.sock",
+      "compose",
+      "--project-name",
+      "effigy865-readonly-control",
+      "version"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.05215241597034037,
+    "stdout": "Docker Compose version v5.5.1\n",
+    "stderr": ""
+  }
+]

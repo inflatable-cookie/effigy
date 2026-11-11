@@ -1405,3 +1405,35 @@ same lock API stalls in the next authorized unsealed session, retain its exact
 fixture and logs; Tom can then restart Desktop and retry that small owned
 fixture as a recovery experiment. A restart is not a proven fix, and only Tom
 applies Desktop lifecycle or settings changes.
+
+### Desktop session retry (effigy#865)
+
+The 2026-11-10 retry at main `0d2c58883` did **not pass**. Fresh D0–D3
+preparation closed on owned token `27985a4c`. The session ran at
+23:55:26–23:55:31 UTC and failed in its first activation, at **apply frozen
+workspace render**, with child exit 125. It created no session container,
+volume or network. No matching Desktop lock-directory request was observed;
+this attempt therefore did not exercise the earlier directory-lock stall.
+
+This was a worker preparation error: the empty private Docker config lacked
+Compose plugin discovery. Read-only controls reproduce exit 125 with
+`compose --project-name … version`; a separate owned config naming Desktop's
+existing `cliPluginsExtraDirs` returns Compose v5.5.1 and exit 0. The failed
+child's raw stderr was not retained, so that attribution combines its journalled
+exit with the matching read-only reproduction. No product defect is established.
+An earlier entry refused before creating the checkout because PATH selected a
+symlinked Docker CLI; a same-byte real copy corrected that preflight issue.
+There was one activation attempt and no activation retry.
+
+D4 then closed, removing the preparation image and volume by exact identity;
+D3 had already removed its check container. Complete final container, image,
+volume and network inventories match task start. All four fixture journal runs
+are closed with complete cleanup; none of twelve recorded process identities
+remains live. No shared setting, context, engine lifecycle or Colima profile
+changed. Evidence originals remain under this run's scratch until its release;
+the [retained evidence](desktop-865/README.md) survives that cleanup.
+
+For a future authorized attempt, prepare a real Docker CLI on PATH and verify
+Compose discovery with the exact private HOME/config before starting the cell.
+This result provides no full-session or sealed qualification credit; successful
+Desktop full-session exploration remains outstanding.

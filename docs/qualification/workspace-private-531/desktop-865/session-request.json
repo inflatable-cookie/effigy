@@ -1,0 +1,131 @@
+{
+  "control": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c",
+  "identity": [
+    16777245,
+    259192183,
+    501,
+    448
+  ],
+  "cell": {
+    "backend": "desktop",
+    "engine_kind": "docker",
+    "driver": "local",
+    "engine_identity": "unix:///Users/tom/.docker/run/docker.sock",
+    "source_head": "0d2c58883dae25407a878f0c4e125144e8ff49f7",
+    "source_root": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-865-iZAktisO/guest-source",
+    "old_source_head": "823d859dace2cbaa848c8ad5a0b5bdfd8959fdf1",
+    "runtime_image": "sha256:e14906c5943ae3935c24aafbef7c0c6f53325382c1e330f93c29078eb0669f7c",
+    "budget_seconds": 1800,
+    "baseline": {
+      "containers": [],
+      "networks": [
+        {
+          "name": "bridge",
+          "engine_id": "d731d2007d15509d5c193a1d5d3d3d359ae6b59ed503726615b3c43cfa4f5456",
+          "configuration_sha256": "a38b0c243108bd6b12616c685475d40f709f83bc6a379411060939476d60bb42"
+        },
+        {
+          "name": "host",
+          "engine_id": "27358f17de5a576b47773add97e3ee4c6373ac22768b8ebf214f2990c43d6ada",
+          "configuration_sha256": "05bf7ed70126a708c1309209ab7acb842d413e098817b1ada3af40a95cf8560f"
+        },
+        {
+          "name": "none",
+          "engine_id": "350b389227a7d7b0d01b87de0a6f2973f7953f234f9bd9f7d435e793a468c637",
+          "configuration_sha256": "069d9171a1a1868ab6f03ecc6af943f87f4bc972835d81cde558202705060c53"
+        }
+      ],
+      "volumes": [
+        "0a809f42aef486902a37c2bda2728da363354049038e05f10b32475d5af2dc6f",
+        "186092ad81f79d301e61f2ab84efc1d1af4a57f4523b28d19d9096fbde74a462"
+      ]
+    },
+    "docker_config": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/mac-4f6a-27985a4c/session-docker-config",
+    "qualification_root": {
+      "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-865-iZAktisO/session",
+      "device": 16777245,
+      "inode": 260518575,
+      "uid": 501
+    },
+    "exploration_source": {
+      "host_head": "0d2c58883dae25407a878f0c4e125144e8ff49f7",
+      "guest_head": "a707ad1409b7b0e9fb0ae45e39f54e37eed0339d",
+      "guest_original_evidence": "/Volumes/Stash/scratch/effigy/mac-4f6a-cf21aec6/task-852-evidence",
+      "guest_freshness_anchor": {
+        "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-865-iZAktisO/guest-source/.local-install/bin/effigy",
+        "sha256": "5dfded1945cf937d8f73a286dca05e0c9a00b80edaa4791793d6003b0517cedc"
+      },
+      "proof": false
+    },
+    "candidate": {
+      "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-865-iZAktisO/artifacts/candidate",
+      "sha256": "09706b77216afea56c21a6e5fb91c555c419a15f4ccbababdd7457976e4c1b76"
+    },
+    "production": {
+      "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-865-iZAktisO/artifacts/production",
+      "sha256": "5b22b0f62992f2baa7b269992ef497c47e858f348060ca1ab6a7aadba07999ba"
+    },
+    "utility": {
+      "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-865-iZAktisO/artifacts/utility",
+      "sha256": "260c4cb5a5947d8feb5294a17ddc2cbf7d3d0722dbeb53e5ac735bda7af57930"
+    },
+    "kernel_fixture": {
+      "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-865-iZAktisO/artifacts/kernel-fixture",
+      "sha256": "9fad6cbb06635f558acae637024d63bca4ab38767160b4883e20541ab50603ee"
+    },
+    "kernel_tests": {
+      "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-865-iZAktisO/artifacts/kernel-tests",
+      "sha256": "7cd030e79b6723f083fc665fc7a9f3f473cef77ae8c5188832370906f87697c6"
+    },
+    "custody_tests": {
+      "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-865-iZAktisO/artifacts/custody-tests",
+      "sha256": "0d5ca9ac9caadeb471d23dfe80db25e5bcdb96a3e9b2b3a0a3e80923fcd66d92"
+    },
+    "binaries_metadata": {
+      "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-865-iZAktisO/artifacts/binaries.json",
+      "sha256": "9cf612f66be24eb177fc39f304452f1c79bae6d2a496253ae283347c69f12d5f"
+    },
+    "cargo_metadata": {
+      "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-865-iZAktisO/artifacts/cargo.json",
+      "sha256": "c3b52f376c73f8b87cee441b8bf7a2a6044a7d2df047e587cd6f6ae9ce910e85"
+    },
+    "nextest_binary": {
+      "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-865-iZAktisO/artifacts/cargo-nextest",
+      "sha256": "397065d8ae921e384dd087289e545d6428e1a42451db2bb25b36a08d0c254113"
+    },
+    "old_binary": {
+      "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-865-iZAktisO/artifacts/old",
+      "sha256": "a603c82a9c98d499ea83ea79b403127274cc87d179adcb197dd4478524b117aa"
+    },
+    "engine_binary": {
+      "path": "/Applications/Docker.app/Contents/Resources/bin/docker",
+      "sha256": "4fb51be4a4e9389b942ecbf52901a962bdccdaa38275e6de4d353df33981d600"
+    },
+    "nextest_config": {
+      "path": "/Volumes/Stash/queue/workspaces/0a95477a55a47e8a77ef32eee19e29ecdb90c123737506dca62d66413a2c7b74/ns-5e9a2e28-1cea-48ef-a328-6a9f3b8c3b03/tests/config/gateway-nextest.toml",
+      "sha256": "33a11f7b6e2d898dad00ec66d67fa6e53770e3fe748d3e8f388ecc20c15f0308"
+    },
+    "guest_artifact": {
+      "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-865-iZAktisO/guest-source/.effigy/linux-release/artifacts/effigy-aarch64-unknown-linux-gnu",
+      "sha256": "dbfc4d4264b522947e3031c2790ca8d8d6cc642b1e515e57fd0861a5838f6142"
+    },
+    "guest_producer_receipt": {
+      "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-865-iZAktisO/guest-source/.effigy/linux-release/artifacts/effigy-aarch64-unknown-linux-gnu.receipt",
+      "sha256": "82b9012b3dc9b04fa73f00b417aab1fd73b7899c720424567c6c2db164febc81"
+    },
+    "guest_active_version": {
+      "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-865-iZAktisO/guest-source/.effigy/linux-release/artifacts/effigy-aarch64-unknown-linux-gnu.active-version",
+      "sha256": "c6fb87657a4ee72e2b549cdd39c12854fdbecbdfef033c04f523d4bfcb02aa4c"
+    },
+    "guest_install_identity": {
+      "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-865-iZAktisO/guest-source/.effigy/linux-release/artifacts/effigy-aarch64-unknown-linux-gnu.install-identity",
+      "sha256": "057a9e1769f6c2129a98399efb2c14ad9a75146731dd426b632da29921ab8b72"
+    }
+  },
+  "preparation_receipt": {
+    "path": "/Volumes/Stash/scratch/effigy/93cdd743/desktop-smoke-qa78knc6/evidence/D3-smoke-27985a4c-d3/stage-receipt.json",
+    "sha256": "f43cac881b6ddda2d9da2375d210d43a87cc5bff3a73fdca2b270051b9c5a226",
+    "stage": "D3"
+  },
+  "exploration_authority": "Tom approved effigy#865 brief v1; one unsealed Desktop session on owned resources; no qualification credit"
+}
