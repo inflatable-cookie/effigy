@@ -31,6 +31,9 @@ pub(crate) trait ProcessTable {
 }
 #[derive(Debug)]
 struct Host;
+fn gone(pgid: u32) -> Observed<Closure> {
+    Observed::Absent(AbsenceProof::GroupEmpty { pgid })
+}
 fn group_exists(pgid: u32) -> Observed<()> {
     if pgid == 0 || pgid > i32::MAX as u32 {
         return Observed::Unknown(unknown("invalid process group"));
@@ -122,12 +125,11 @@ pub(super) fn closure_detail(
         result: "positive",
         role: "none",
     };
-    // Resolve disappearance after the census: an anchor can retire between
-    // its membership and identity reads. Only kernel group absence closes that
-    // unproven round; a missing anchor alone grants no closure or signal authority.
-    let inventory = group_membership(pgid);
-    let group = (!verified_anchor).then(|| group_exists(pgid));
-    closure_inventory(inventory, accounted, anchor, leader, detail, group)
+    // The verified-anchor route never performed this probe.
+    if !verified_anchor && matches!(group_exists(pgid), Observed::Absent(_)) {
+        return (gone(pgid), detail);
+    }
+    closure_inventory(group_membership(pgid), accounted, anchor, leader, detail)
 }
 
 pub(super) fn closure_inventory(
@@ -136,11 +138,7 @@ pub(super) fn closure_inventory(
     anchor: Option<&ProcessIdentity>,
     leader: Option<&ProcessIdentity>,
     mut detail: anchor::ClosureDetail,
-    group: Option<Observed<()>>,
 ) -> (Observed<Closure>, anchor::ClosureDetail) {
-    if let Some(Observed::Absent(proof @ AbsenceProof::GroupEmpty { .. })) = group {
-        return (Observed::Absent(proof), detail);
-    }
     let observed = match inventory {
         Ok(rows) => {
             let verdict = classify_round(&rows, accounted);
@@ -549,31 +547,24 @@ pub(crate) fn group_membership(pgid: u32) -> io::Result<Vec<MembershipRow>> {
                 continue;
             }
         }
-        rows.push(membership_row(
-            pid,
-            || ident::process_state(pid),
-            || ident::process_identity(pid),
-        )?);
+        rows.push(membership_row(pid, ident::process_state(pid), || {
+            ident::process_identity(pid)
+        })?);
     }
     Ok(rows)
 }
 
-// Preserve generation-last evidence for live rows. If that read finds an exit,
-// a final positive zombie state can resolve the row; absence alone never does.
+// Keep the two reads distinct: disappearance at either stage is unproven.
 pub(crate) fn membership_row(
     pid: u32,
-    mut state: impl FnMut() -> Observed<ProcessState>,
+    state: Observed<ProcessState>,
     identity: impl FnOnce() -> Observed<ProcessIdentity>,
 ) -> io::Result<MembershipRow> {
-    match state() {
+    match state {
         Observed::Verified(ProcessState::Zombie, _) => Ok(MembershipRow::NotLive(pid)),
         Observed::Verified(_, _) => match identity() {
             Observed::Verified(identity, _) => Ok(MembershipRow::Live(identity)),
-            Observed::Absent(_) => match state() {
-                Observed::Verified(ProcessState::Zombie, _) => Ok(MembershipRow::NotLive(pid)),
-                Observed::Unknown(r) => Err(io::Error::other(format!("{r}"))),
-                _ => Ok(MembershipRow::Unproven(pid)),
-            },
+            Observed::Absent(_) => Ok(MembershipRow::Unproven(pid)),
             Observed::Unknown(r) => Err(io::Error::other(format!("{r}"))),
         },
         Observed::Absent(_) => Ok(MembershipRow::Unproven(pid)),

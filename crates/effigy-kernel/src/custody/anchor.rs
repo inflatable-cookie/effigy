@@ -13,6 +13,15 @@ pub(super) struct VerificationFailure {
     pub category: &'static str,
 }
 
+impl VerificationFailure {
+    fn retired(self) -> bool {
+        matches!(
+            (self.stage, self.category),
+            ("generation", "absent") | ("state", "absent" | "zombie")
+        )
+    }
+}
+
 fn required<T>(stage: &'static str, observation: Observed<T>) -> Result<T, VerificationFailure> {
     match observation {
         Observed::Verified(value, _) => Ok(value),
@@ -187,17 +196,7 @@ pub(super) fn refused_by_retirement(
     reason: &UnknownReason,
     refusal: Option<VerificationFailure>,
 ) -> bool {
-    let retired = matches!(
-        refusal,
-        Some(VerificationFailure {
-            stage: "generation",
-            category: "absent",
-        }) | Some(VerificationFailure {
-            stage: "state",
-            category: "absent" | "zombie",
-        })
-    );
-    retired
+    refusal.is_some_and(VerificationFailure::retired)
         && matches!(reason, UnknownReason::Inconsistent(message) if message == platform::MEMBER_UNVERIFIED)
 }
 
@@ -430,8 +429,17 @@ pub(super) fn recover(
             let (sent, failure) = signal_detail(r, anchor, sig);
             if let Observed::Unknown(reason) = sent {
                 let (closure, detail) = closed_detail(r, Some(anchor), None);
-                if matches!(closure, Observed::Verified(..) | Observed::Absent(_)) {
-                    return stop(r, Some(anchor), cx);
+                // An anchor exit loses signal authority, never the full-group closure requirement.
+                let closed = matches!(closure, Observed::Verified(..) | Observed::Absent(_));
+                if closed
+                    || failure
+                        .verification
+                        .is_some_and(VerificationFailure::retired)
+                {
+                    let closure = stop(r, Some(anchor), cx);
+                    if closed || matches!(closure, Observed::Verified(..) | Observed::Absent(_)) {
+                        return closure;
+                    }
                 }
                 if matches!(&reason, crate::observe::UnknownReason::Inconsistent(message) if message == NO_LIVE_MEMBER)
                 {

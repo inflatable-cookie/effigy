@@ -1,1 +1,1 @@
-Fix custody settlement after owner SIGKILL when the anchor retires during the group census: resolve an exited member only with positive zombie evidence, then check kernel group absence after the census. Unproven or unreadable groups still refuse closure.
+Fix custody residue after owner SIGKILL when the anchor exits during recovery verification. A positively observed anchor exit now reaches the existing bounded full-group closure observation, which still requires positive closure evidence and grants no new signal authority.

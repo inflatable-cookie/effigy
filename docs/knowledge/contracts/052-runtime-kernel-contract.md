@@ -1185,15 +1185,12 @@ have left the group inside the round after forking a member this inventory canno
 see; it is `unproven` and the anchor stays alive. Any other read
 failure makes the inventory an error, never an absence. In both of those cases the
 anchor keeps retrying as the group's evidence and the observing path reports the
-named state `unproven group closure`. If a live row's identity read reports
-absence, one terminal-state observation may resolve it as a positive zombie;
-absence or a live state stays unproven, and a state-read error stays an error.
-Live rows still read generation last, preserving incarnation-exact accounting.
-Without a verified anchor, the observer
-checks kernel group existence **after** its census: an anchor may retire between
-its membership and identity reads. A positive `ESRCH` then proves group closure;
-a present or unreadable group leaves the census verdict intact. Anchor absence
-alone never grants closure or signal authority (effigy#874).
+named state `unproven group closure`. Recovery treats a positively observed
+anchor exit (absent generation/state or zombie state, never a replacement or
+unreadable identity) as loss of signal authority and enters the existing bounded
+full-group stop observation. That observation must still positively resolve every
+row before settlement can close; it retries no signal, changes no deadline and
+never treats the anchor's exit alone as group closure (effigy#874).
 Anchored recovery refusals retain the
 first failed verification category from the existing short-circuit checks and
 the already-computed follow-up closure path, verdict and relevant row role,
