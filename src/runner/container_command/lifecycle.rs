@@ -2070,6 +2070,51 @@ mod tests {
     }
 
     #[test]
+    fn workspace_integration_cleanup_distinguishes_undeclared_effects_from_mutations() {
+        use crate::runner::container_command::secret_env::ResolvedContainerSecretRuntime;
+        use crate::runner::container_command::workspace_integrations::WorkspaceIntegrationStep as Step;
+        use crate::runner::workspace_client::container_up::integrations::IntegrationEffects;
+        use std::time::{Duration, Instant};
+        let mut effects = super::WorkspacePreparedEffects {
+            policy: test_policy(Vec::new()),
+            secrets: ResolvedContainerSecretRuntime {
+                delivery: effigy_manifest::ManifestContainerSecretDelivery::ComposeEnv,
+                env: Vec::new(),
+                warnings: Vec::new(),
+            },
+        }
+        .bind(effigy_kernel::workspace_session::ContainerIdentity {
+            container_id: "a".repeat(64),
+            vm_boot_id: "boot".into(),
+            backend: "docker-compose".into(),
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        for step in [
+            Step::Readiness,
+            Step::Permissions,
+            Step::Secrets,
+            Step::Routes,
+            Step::HostIntegrations,
+        ] {
+            effects
+                .unwind(step, deadline)
+                .expect("undeclared effects have no mutation to withdraw");
+            assert!(effects.unwind(step, Instant::now()).is_err());
+        }
+        effects.policy.workspace_user = Some("nobody".into());
+        assert!(effects.unwind(Step::Permissions, deadline).is_err());
+        effects
+            .policy
+            .shared_services
+            .push(shared_service("db", "postgres", 5432));
+        assert!(effects.unwind(Step::HostIntegrations, deadline).is_err());
+        effects.secrets_attempted = true;
+        effects.routes_attempted = true;
+        assert!(effects.unwind(Step::Secrets, deadline).is_err());
+        assert!(effects.unwind(Step::Routes, deadline).is_err());
+    }
+
+    #[test]
     fn up_workspace_permission_preparation_names_container_on_failure() {
         let policy = test_policy(Vec::new());
 
@@ -3845,10 +3890,8 @@ pub(in crate::runner) struct WorkspaceUpEffects {
     listeners: Vec<crate::runner::host_process::ManagedHostListenerResult>,
     listener_failures: Vec<crate::runner::host_process::ManagedHostListenerFailure>,
     tcp_alias_notes: Vec<String>,
-    permissions_attempted: bool,
     secrets_attempted: bool,
     routes_attempted: bool,
-    host_attempted: bool,
     waits: Option<crate::runner::managed_wait::ActivationWaits>,
 }
 
@@ -3884,10 +3927,8 @@ impl WorkspacePreparedEffects {
             listeners: Vec::new(),
             listener_failures: Vec::new(),
             tcp_alias_notes: Vec::new(),
-            permissions_attempted: false,
             secrets_attempted: false,
             routes_attempted: false,
-            host_attempted: false,
             waits: None,
         }
     }
@@ -3990,7 +4031,6 @@ impl crate::runner::workspace_client::container_up::integrations::IntegrationEff
                 }
             }
             Step::Permissions => {
-                self.permissions_attempted = true;
                 crate::runner::workspace_command::ensure_workspace_permissions_ready(
                     root,
                     &self.policy,
@@ -4033,7 +4073,6 @@ impl crate::runner::workspace_client::container_up::integrations::IntegrationEff
                     .map_err(failed)?;
             }
             Step::HostIntegrations => {
-                self.host_attempted = true;
                 self.tcp_alias_notes = reconcile_primary_service_tcp_alias_hosts(
                     root,
                     &self.policy,
@@ -4076,24 +4115,26 @@ impl crate::runner::workspace_client::container_up::integrations::IntegrationEff
                 "workspace integration cleanup budget exhausted",
             ));
         }
-        // Readiness changes nothing. A definitely skipped effect has nothing
-        // to withdraw. For attempted mutations the ordinary helpers do not yet
+        // Readiness and undeclared permission/host integrations change nothing.
+        // A journalled step alone does not prove its helper mutated anything.
+        // For attempted mutations the ordinary helpers do not yet
         // supply exact-effect absence evidence: retain handles/journal instead
         // of erasing another activation's route, process or secret files.
         let absent = match step {
             Step::Readiness => true,
-            Step::Permissions => !self.permissions_attempted,
+            Step::Permissions => self.policy.workspace_user.is_none(),
             Step::Secrets => !self.secrets_attempted,
             Step::Routes => !self.routes_attempted,
-            Step::HostIntegrations => !self.host_attempted,
+            Step::HostIntegrations => {
+                self.policy.host_processes.is_empty()
+                    && !crate::runner::container_runtime_prep::container_policy_uses_gateway_surface(
+                        &self.policy,
+                    )
+            }
         };
-        if absent {
-            Ok(())
-        } else {
-            Err(RunError::unavailable(
-                "integration effects unsettled; re-run up",
-            ))
-        }
+        absent
+            .then_some(())
+            .ok_or_else(|| RunError::unavailable("integration effects unsettled; re-run up"))
     }
 }
 

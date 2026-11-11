@@ -3745,7 +3745,9 @@ observation verified, so a caller's publication callback returns an input that
 borrows nothing from a local. The plan, the observed
 input and the guest remain in one process, so the durable owner #507 launches can
 plan, freeze, apply once, observe and publish without moving a live handle across
-a process boundary. Rootless Linux and Apple Containers remain unqualified.
+a process boundary. Rootless Linux and Apple Containers remain unqualified. Journalled integration steps whose frozen policy declares no
+workspace user or host/gateway integration carry no mutation to withdraw; they do not prevent cleanup settlement.
+Declared permission/host mutations and attempted route or runtime-secret mutations still require absence evidence.
 
 **Qualified TLS locator — #483 (A).** Historical context and guest transport
 signature sketch; the merged adapter and its paths are described below:
@@ -3887,7 +3889,10 @@ Required qualification routes:
 The fresh Linux order is mandatory: render the alias before service creation; ordinary gated apply creates the project network and
 container; only then resolve and probe from that guest. Never require a project-network read before the apply that creates it.
 `host-gateway` is the daemon's configured/default host address, not the Compose network's IPAM gateway. The bounded test must
-distinguish those addresses. Unknown, multiple, unbindable or unreachable addresses publish no locator. Proxy addresses are not
+distinguish those addresses. The bounded `/etc/hosts` decoder accepts one distinct address per family, preferring IPv4
+when both families are present, independent of row order. Qualification and serving use the same decoder; this covers
+Desktop's paired IPv4/IPv6 `host-gateway` entries. Conflicts within either family, unspecified/multicast or malformed
+addresses, unknown aliases, and unbindable or unreachable selected addresses publish no locator. Proxy addresses are not
 assumed host-bindable. Rootless Linux and Apple Containers remain unqualified. Q-017 still requires the three required backends
 before v0.15; refusing safely is not backend qualification.
 

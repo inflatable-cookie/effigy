@@ -76,11 +76,12 @@ pub(super) fn open_pinned_channel(
             .ok_or_else(|| invalid("workspace TLS deadline expired"))?,
     )
 }
-/// Multiple distinct alias answers are ambiguous, even if one would connect.
+/// One answer per address family is unambiguous. Prefer IPv4 consistently in
+/// qualification and serving; conflicting answers within either family refuse.
 pub(crate) fn resolve_hosts(bytes: &[u8]) -> io::Result<IpAddr> {
     let text =
         std::str::from_utf8(bytes).map_err(|_| invalid("workspace hosts encoding invalid"))?;
-    let mut found = None;
+    let mut found = [None, None];
     for line in text.lines() {
         let mut fields = line.split('#').next().unwrap_or("").split_whitespace();
         let Some(address) = fields.next() else {
@@ -90,14 +91,17 @@ pub(crate) fn resolve_hosts(bytes: &[u8]) -> io::Result<IpAddr> {
             let address: IpAddr = address
                 .parse()
                 .map_err(|_| invalid("workspace host address invalid"))?;
+            let family = &mut found[usize::from(address.is_ipv6())];
             if address.is_unspecified()
                 || address.is_multicast()
-                || found.is_some_and(|previous| previous != address)
+                || family.is_some_and(|previous| previous != address)
             {
                 return Err(invalid("workspace host address ambiguous"));
             }
-            found = Some(address);
+            *family = Some(address);
         }
     }
-    found.ok_or_else(|| invalid("workspace host address unknown"))
+    found[0]
+        .or(found[1])
+        .ok_or_else(|| invalid("workspace host address unknown"))
 }
