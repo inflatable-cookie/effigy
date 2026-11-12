@@ -20,10 +20,9 @@ use effigy_containers::{
     cache_prune_report, data_list_report, data_transfer_report,
     exec::{runtime_backend_is_running, selected_backend_label},
     load_container_policy, load_container_policy_for_creation, validate_compose_backend_runtime,
-    validate_container_policy, volume_list_report,
-    volume_prune_report, ContainerCachePruneEntry, ContainerCacheVolumeEntry,
-    ContainerDataTransferAction, ContainerDataVolumeEntry, ContainerVolumePruneEntry,
-    EffectiveContainerPolicy,
+    validate_container_policy, volume_list_report, volume_prune_report, ContainerCachePruneEntry,
+    ContainerCacheVolumeEntry, ContainerDataTransferAction, ContainerDataVolumeEntry,
+    ContainerVolumePruneEntry, EffectiveContainerPolicy,
 };
 
 use crate::EffigyRuntimeError;

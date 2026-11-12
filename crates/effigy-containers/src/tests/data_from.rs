@@ -407,7 +407,9 @@ fn colima_mount_budget_merges_identical_borrowed_volume_definitions_across_overl
         }
 
         with_colima_nerdctl_preflight(|| crate::validate_compose_backend_runtime(&root, &hybrid))
-            .expect("an identical repeated borrowed-volume definition merges, it does not conflict");
+            .expect(
+                "an identical repeated borrowed-volume definition merges, it does not conflict",
+            );
 
         // The repeat adds no volume identity: the borrowing set is unchanged.
         assert_eq!(borrowed_volume_names(&hybrid), borrowed_before);
