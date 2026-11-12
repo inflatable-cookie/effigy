@@ -51,7 +51,7 @@ pub mod tcp_alias;
 pub mod tls;
 pub mod transition_lock;
 
-pub use error::GatewayError;
+pub use error::{EndpointStoreRefusal, GatewayError};
 pub use routes::{Route, RouteTable};
 pub use server::{GatewayConfig, GatewayMode, PrivateGatewayPolicy};
 

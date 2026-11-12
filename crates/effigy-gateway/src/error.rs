@@ -3,12 +3,39 @@
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
 
+/// What an endpoint store refusal says about the store's own state.
+///
+/// The store answers one of two ways, and the difference decides what a caller
+/// may report: an unknown observation changed nothing, while a refused read or
+/// transaction name a concrete reason. Callers match this type instead of the
+/// message text (effigy#933).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EndpointStoreRefusal {
+    /// The store's state could not be observed, so nothing was read or
+    /// changed and absence is unproven.
+    ObservationUnknown,
+    /// A read or fenced transaction was refused with a concrete reason.
+    Refused,
+}
+
+impl std::fmt::Display for EndpointStoreRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ObservationUnknown => f.write_str("observation unknown: "),
+            Self::Refused => Ok(()),
+        }
+    }
+}
+
 /// Errors that can occur during gateway operations.
 #[derive(Debug, thiserror::Error)]
 pub enum GatewayError {
     /// A fenced endpoint transaction, import or observation was refused.
-    #[error("gateway endpoint store: {reason}")]
-    EndpointStore { reason: String },
+    #[error("gateway endpoint store: {kind}{reason}")]
+    EndpointStore {
+        kind: EndpointStoreRefusal,
+        reason: String,
+    },
     /// The route table file could not be read.
     #[error("failed to read route table at {path}: {reason}")]
     RouteTableReadError { path: PathBuf, reason: String },

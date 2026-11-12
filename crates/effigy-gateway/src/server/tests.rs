@@ -3,6 +3,7 @@ use crate::dns::DnsCache;
 #[cfg(test)]
 use crate::route_table_fixture::RouteTableFixture;
 use crate::routes::{Route, RouteSource, RouteTable};
+use crate::EndpointStoreRefusal;
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::time::Duration;
 use tokio::sync::watch;
@@ -1405,6 +1406,7 @@ fn milestone_130acca8_refused_observation_retries_the_committed_snapshot() {
     let read: RouteRead = Arc::new(move |path: &Path| {
         if refused.fetch_add(1, Ordering::SeqCst) < 3 {
             return Err(GatewayError::EndpointStore {
+                kind: EndpointStoreRefusal::Refused,
                 reason: "fixture refused the observation".to_owned(),
             });
         }
@@ -1469,7 +1471,8 @@ fn milestone_130acca8_unknown_or_invalid_observation_retains_the_applied_table()
     let unknown = RouteReloader {
         read: Arc::new(|_| {
             Err(GatewayError::EndpointStore {
-                reason: "observation unknown: store unreadable".to_owned(),
+                kind: EndpointStoreRefusal::ObservationUnknown,
+                reason: "store unreadable".to_owned(),
             })
         }),
         ..applied.clone()
@@ -1508,7 +1511,8 @@ fn milestone_130acca8_unknown_or_invalid_observation_retains_the_applied_table()
         read: Arc::new(move |_| {
             refused.fetch_add(1, Ordering::SeqCst);
             Err(GatewayError::EndpointStore {
-                reason: "observation unknown: store unreadable".to_owned(),
+                kind: EndpointStoreRefusal::ObservationUnknown,
+                reason: "store unreadable".to_owned(),
             })
         }),
         ..applied

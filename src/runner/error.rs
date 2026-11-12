@@ -131,6 +131,13 @@ pub enum RunnerError {
         phase: &'static str,
         detail: String,
     },
+    /// The gateway's endpoint store refused. `kind` is the store's own answer:
+    /// an unobservable store changed nothing, while a refusal names its reason.
+    /// A caller classifies this without reading the message (effigy#933).
+    GatewayEndpointStore {
+        kind: effigy_gateway::EndpointStoreRefusal,
+        reason: String,
+    },
     ContainerRuntimePolicy {
         phase: &'static str,
         detail: String,
@@ -355,6 +362,7 @@ impl RunnerError {
             | RunnerError::ContainerSurfaceNotRunning { .. }
             | RunnerError::ContainerSurfacePolicy { .. }
             | RunnerError::ContainerRuntimePolicy { .. }
+            | RunnerError::GatewayEndpointStore { .. }
             | RunnerError::GatewayRouteShape { .. }
             | RunnerError::RunSettled { .. }
             | RunnerError::RunSettledJson { .. }
@@ -1122,6 +1130,13 @@ mod tests;
 
 impl From<effigy_gateway::GatewayError> for RunnerError {
     fn from(error: effigy_gateway::GatewayError) -> Self {
-        Self::task_invocation(error.to_string())
+        match error {
+            // The store's own answer travels as a type; its text is only what a
+            // person reads (effigy#933).
+            effigy_gateway::GatewayError::EndpointStore { kind, reason } => {
+                Self::GatewayEndpointStore { kind, reason }
+            }
+            other => Self::task_invocation(other.to_string()),
+        }
     }
 }

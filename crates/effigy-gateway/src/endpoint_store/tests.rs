@@ -335,7 +335,7 @@ fn tradeover_observes_outside_the_gate_and_compares_before_commit() {
                     if let Some(first) = first_deadline {
                         assert_eq!(deadline, first);
                         if !restart {
-                            return Err(error("observation unknown: permission denied"));
+                            return Err(observation_unknown("permission denied"));
                         }
                     } else if restart {
                         // This would deadlock if the probe held the gate. Only the

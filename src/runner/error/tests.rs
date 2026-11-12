@@ -3,6 +3,42 @@ use std::path::Path;
 use super::RunnerError;
 use effigy_containers::exec::ContainerExecError;
 use effigy_core::build_info::StaleLocalInstall;
+use effigy_gateway::EndpointStoreRefusal;
+/// The endpoint store's own answer survives the conversion into a runner
+/// error, so a caller classifies it by type and its text stays what a person
+/// already read (effigy#933).
+#[test]
+fn an_endpoint_store_refusal_keeps_its_typed_kind_and_its_sentence() {
+    for (kind, expected) in [
+        (
+            EndpointStoreRefusal::ObservationUnknown,
+            "gateway endpoint store: observation unknown: store unreadable",
+        ),
+        (
+            EndpointStoreRefusal::Refused,
+            "gateway endpoint store: revision changed",
+        ),
+    ] {
+        let error = RunnerError::from(effigy_gateway::GatewayError::EndpointStore {
+            kind,
+            reason: match kind {
+                EndpointStoreRefusal::ObservationUnknown => "store unreadable".to_owned(),
+                EndpointStoreRefusal::Refused => "revision changed".to_owned(),
+            },
+        });
+        assert!(
+            matches!(error, RunnerError::GatewayEndpointStore { kind: carried, .. } if carried == kind),
+            "the kind travels with the error"
+        );
+        assert_eq!(error.to_string(), expected);
+        assert_eq!(
+            error.category(),
+            effigy_kernel::human::Category::Refused,
+            "a store refusal is still the request being refused"
+        );
+    }
+}
+
 #[test]
 fn task_invocation_path_message_constructors_are_stable() {
     let path = Path::new("/tmp/effigy.toml");

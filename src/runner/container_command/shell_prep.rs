@@ -5,16 +5,14 @@ use std::path::{Path, PathBuf};
 use effigy_containers::{
     exec::{
         owned_service_listing_args, runtime_backend_is_running, selected_backend_label,
-        OwnershipContext,
+        EngineAbsence, OwnershipContext,
     },
     load_container_exec_working_dir, load_container_policy, validate_container_policy,
     ContainerAction, EffectiveContainerPolicy,
 };
 use effigy_exec::CwdMapper;
 
-use crate::runner::container_command::support::{
-    runtime_probe_means_runtime_not_running, validate_running_container_runtime_match,
-};
+use crate::runner::container_command::support::validate_running_container_runtime_match;
 use crate::runner::container_command::{bounded_failure_error, bounded_phase_error};
 use crate::runner::error::RunnerError;
 use crate::runner::exec_command::{
@@ -202,7 +200,9 @@ fn validate_running_container_runtime_match_bounded(
     if !capture.status.success() {
         let stdout = String::from_utf8_lossy(&capture.stdout);
         let stderr = String::from_utf8_lossy(&capture.stderr);
-        if runtime_probe_means_runtime_not_running(&stdout, &stderr) {
+        // The engine's own answer, decoded by the crate that owns its
+        // vocabulary; this command never reads the engine's text (effigy#933).
+        if EngineAbsence::observed_in(&stdout, &stderr).is_some() {
             return Ok(());
         }
         return Err(bounded_phase_error(
