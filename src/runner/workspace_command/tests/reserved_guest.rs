@@ -181,7 +181,7 @@ fn fake_backend(
             Err(_) => {
                 return Err(BackendError::Uncertain(
                     "fixture backend wait unavailable".into(),
-                ))
+                ));
             }
         }
     }
@@ -366,7 +366,7 @@ fn elf() -> Vec<u8> {
     b
 }
 
-fn run(fault: Fault) -> usize {
+fn run(fault: Fault) -> (usize, Option<String>) {
     let _environment = crate::contract_test_support::clean_fixture_environment();
     let fixture = effigy_test_support::Fixture::new("workspace-reserved-").expect("fixture");
     std::fs::create_dir(fixture.path().join("home")).unwrap();
@@ -826,6 +826,7 @@ home = "/home/vscode"
             }
             _ => up_prepared(request, &[], fake_backend, observe),
         };
+        let refusal = result.as_ref().err().map(|error| format!("{error:?}"));
         if matches!(
             fault,
             Fault::None | Fault::LongObservationBudget | Fault::Revalidate
@@ -1123,7 +1124,7 @@ home = "/home/vscode"
                 "actual staging ran before injected fault"
             );
         }
-        io_count.get()
+        (io_count.get(), refusal)
     })
 }
 
@@ -1157,13 +1158,18 @@ fn workspace_reserved_owner_refuses_identity_alias_peer_pin_and_publication_with
         Fault::ContextPin,
         Fault::StaleDocument,
     ] {
-        run(fault);
+        let (_, refusal) = run(fault);
+        let class = match fault {
+            Fault::Identity | Fault::ContextPeer | Fault::ContextPin => "Kernel(Refused(",
+            _ => "Kernel(Unavailable(",
+        };
+        assert_refusal_class(refusal, class, &format!("{fault:?}"));
     }
 }
 
 #[test]
 fn workspace_reserved_every_guest_write_boundary_crash_before_after_preserves_authority() {
-    let count = run(Fault::None);
+    let (count, _) = run(Fault::None);
     assert!(count >= 10, "enumerate real staging and selection effects");
     for index in 1..=count {
         for after in [false, true] {
@@ -1326,7 +1332,7 @@ fn recover_fixture<'a>(
                 custody,
                 channel: Box::new(publication.channel),
                 serving: Box::new(publication.serving),
-            })
+            });
         }
     };
     let mut owner = WorkspaceOwner {
@@ -1436,24 +1442,36 @@ fn workspace_reserved_hybrid_does_not_admit_stage_probe_or_mint() {
     run(Fault::Hybrid);
 }
 
-#[test]
-fn workspace_reserved_gated_reobservation_of_a_replaced_target_refuses() {
-    run(Fault::GatedChangedTarget);
+fn assert_refusal_class(refusal: Option<String>, class: &str, label: &str) {
+    let refusal = refusal.unwrap_or_else(|| panic!("{label} unexpectedly succeeded"));
+    assert!(
+        refusal.contains(class),
+        "{label} must report `{class}`: {refusal}"
+    );
 }
 
 #[test]
-fn workspace_reserved_gated_reobservation_of_another_valid_id_refuses() {
-    run(Fault::GatedIdMismatch);
+fn workspace_reserved_gated_reobservation_of_a_replaced_target_refuses() {
+    for (fault, label) in [
+        (Fault::GatedChangedTarget, "changed target"),
+        (Fault::GatedIdMismatch, "another valid full id"),
+    ] {
+        let (_, refusal) = run(fault);
+        assert_refusal_class(refusal, "Kernel(Refused(", label);
+    }
 }
 
 #[test]
 fn workspace_reserved_gated_reobservation_past_the_deadline_refuses_without_reading() {
-    run(Fault::GatedExpiredDeadline);
+    let (_, refusal) = run(Fault::GatedExpiredDeadline);
+    assert_refusal_class(refusal, "Kernel(Unavailable(", "spent gated deadline");
 }
 
 #[test]
 fn workspace_reserved_expired_publication_deadline_refuses_without_guest_io() {
-    run(Fault::ExpiredDeadline);
+    let (guest_io, refusal) = run(Fault::ExpiredDeadline);
+    assert_eq!(guest_io, 0, "expired publication performs no guest I/O");
+    assert_refusal_class(refusal, "Kernel(Unavailable(", "expired publication");
 }
 
 #[test]

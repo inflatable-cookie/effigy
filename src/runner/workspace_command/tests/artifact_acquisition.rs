@@ -6,9 +6,11 @@
 //! the real HTTP client against a local server populated by release-assets.sh.
 //! No test builds a real artifact or reaches GitHub.
 
-use super::{linux_artifact_fixture, write_linux_artifact};
+use super::{assert_file_text, linux_artifact_fixture, write_linux_artifact};
 use crate::contract_test_support::EnvGuard;
-use crate::runner::workspace_client::context::{sha256_text, WorkspaceContainerIdentity};
+use crate::runner::workspace_client::context::{
+    sha256_text, WorkspaceContainerIdentity, HOST_REPREPARE_COMMAND,
+};
 use crate::runner::workspace_command::provisioning::{
     acquire_linux_workspace_effigy_artifact_with, artifact_plan, check_acquired_artifact,
     ensure_downloaded_linux_workspace_effigy_artifact,
@@ -379,7 +381,19 @@ fn cold_release_acquisition_consumes_the_publisher_sidecar_over_private_http() {
 
 #[test]
 fn release_acquisition_refuses_corrupt_or_missing_sidecars_over_private_http() {
-    for case in ["bad-digest", "wrong-name", "bad-format", "missing", "empty"] {
+    for (case, expected_refusal) in [
+        (
+            "bad-digest",
+            "refusing to install bytes the release does not name",
+        ),
+        (
+            "wrong-name",
+            "does not name `effigy-x86_64-unknown-linux-gnu` with a lowercase SHA-256 digest",
+        ),
+        ("bad-format", "does not use the release sidecar format"),
+        ("missing", "the release publishes no checksum"),
+        ("empty", "is not one newline-terminated asset line"),
+    ] {
         let mut assets = generated_linux_release_assets();
         let sidecar_name = format!("{X86_ARTIFACT}.sha256");
         match case {
@@ -427,7 +441,8 @@ fn release_acquisition_refuses_corrupt_or_missing_sidecars_over_private_http() {
             X86,
         )
         .expect_err("an unauthenticated release body is refused");
-        assert!(error.to_string().contains("checksum"), "{error}");
+        let error = error.to_string();
+        assert!(error.contains(expected_refusal), "{case}: {error}");
         assert!(
             !linux_workspace_effigy_cache_path(X86)
                 .expect("cache path")
@@ -436,12 +451,9 @@ fn release_acquisition_refuses_corrupt_or_missing_sidecars_over_private_http() {
         );
         assert_eq!(build_count(&app), 0, "release hosts do not compile locally");
         assert_eq!(
-            server
-                .join()
-                .expect("private HTTP fixture server exits")
-                .len(),
-            2,
-            "the consumer requests the binary and its checksum"
+            server.join().expect("private HTTP fixture server exits"),
+            vec![X86_ARTIFACT.to_owned(), format!("{X86_ARTIFACT}.sha256")],
+            "each refusal fetches only the artifact and its checksum"
         );
     }
 }
@@ -686,6 +698,7 @@ fn concurrent_preparations_share_one_producer_run() {
         X86,
         &workspace_effigy_local_install_identity(&host).expect("host identity"),
     ));
+    assert_file_text(&root.join(X86.artifact_relative_path()), "fresh-bytes\n");
 }
 
 const CONTAINER_MODE_MANIFEST: &str = r#"[containers]
@@ -836,7 +849,12 @@ fn prepare_refuses_an_image_without_a_provable_libc_before_any_build() {
     })
     .expect_err("an unprovable libc has no artifact to match");
 
-    assert!(error.to_string().contains("C library"), "{error}");
+    assert_eq!(
+        super::task_invocation_detail(error),
+        format!(
+            "the workspace container image reports no provable C library (``), so no guest artifact can be proven to run in it; an artifact matches the image's libc, never a guess. Run `{HOST_REPREPARE_COMMAND}` with an image that ships a glibc or musl loader"
+        )
+    );
     assert_eq!(build_count(&repo), 0);
 }
 
@@ -1018,4 +1036,8 @@ fn concurrent_release_downloads_share_one_fetch() {
         "one caller fetches; the other reuses the verified cache"
     );
     verify_guest_artifact(&cache, X86).expect("the single published cache verifies");
+    assert_eq!(
+        std::fs::read(&cache).expect("verified cache bytes"),
+        bytes.as_bytes()
+    );
 }

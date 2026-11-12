@@ -2862,21 +2862,6 @@ mod tests {
     }
 
     #[test]
-    fn already_correct_ownership_is_idempotent() {
-        let mut backend = MemoryAccessBackend::new(vec![identity("dev", 501, 20)]);
-        backend.add_dir("/usr/local/cargo/registry", 501, 20, 0o755);
-        backend.add_dir("/usr/local/cargo/registry/src", 501, 20, 0o755);
-        let plan = WorkspaceOwnershipPlan {
-            targets: vec![owned_target(
-                "/usr/local/cargo/registry",
-                Some(WorkspaceRustCacheKind::CargoRegistry),
-            )],
-        };
-        prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend).expect("prep");
-        assert!(backend.chown_log.is_empty());
-    }
-
-    #[test]
     fn exec_preparation_batches_three_clean_mounts_and_skips_repeat_repairs() {
         let mut backend = MemoryAccessBackend::new(vec![identity("dev", 501, 20)]);
         backend.add_dir("/cargo/registry", 501, 20, 0o755);
@@ -3178,6 +3163,14 @@ volumes:
                 backend.owner_of("/workspace-root/acowtancy"),
                 Some((501, 20))
             );
+            assert_eq!(
+                backend.bulk_calls, 1,
+                "only the stale target volume is repaired"
+            );
+            assert!(backend.chown_log.iter().all(|path| {
+                path == "/workspace-root/acowtancy/apps/farmyard/target"
+                    || path.starts_with("/workspace-root/acowtancy/apps/farmyard/target/")
+            }));
         }
     }
 
@@ -3399,6 +3392,8 @@ volumes:
             diagnosis.warning
         );
         assert!(diagnosis.evidence.is_none());
+        assert!(diagnosis.identity.is_none());
+        assert!(diagnosis.samples.is_empty());
     }
 
     #[test]
@@ -3557,7 +3552,7 @@ services:
     }
 
     #[test]
-    fn sole_writer_dependency_volumes_are_prepared_for_resolved_numeric_identity() {
+    fn sole_writer_dependency_volumes_are_prepared_once_for_resolved_identity() {
         let root = tempfile::tempdir().expect("fresh private fixture root");
         let policy = dependency_volume_policy(root.path(), "ro");
         // Production plan path: classification comes from the compose source,
@@ -3585,6 +3580,22 @@ services:
             .created_locks
             .iter()
             .any(|path| path == "/var/www/cbs/node_modules/.effigy-write-probe"));
+        assert_eq!(
+            backend.bulk_calls, 2,
+            "both sole-writer volumes are repaired"
+        );
+        assert!(backend.chown_log.iter().all(|path| {
+            path.starts_with("/var/www/cbs/vendor") || path.starts_with("/var/www/cbs/node_modules")
+        }));
+        let chowns_after_first = backend.chown_log.len();
+        ensure_workspace_permissions_ready_with(&policy, None, true, &mut backend)
+            .expect("repeat prep stays ready");
+        assert_eq!(
+            backend.chown_log.len(),
+            chowns_after_first,
+            "idempotent clean prep performs no repair"
+        );
+        assert_eq!(backend.bulk_calls, 2);
     }
 
     #[test]
@@ -3606,27 +3617,6 @@ services:
             .expect("usable paths remain usable when mount observation is unavailable");
         assert!(backend.chown_log.is_empty());
         assert!(backend.created_locks.is_empty());
-    }
-
-    #[test]
-    fn dependency_volume_prep_is_idempotent_without_repair() {
-        let root = tempfile::tempdir().expect("fresh private fixture root");
-        let policy = dependency_volume_policy(root.path(), "ro");
-        let mut backend = root0700_dependency_fixture();
-        ensure_workspace_permissions_ready_with(&policy, None, true, &mut backend)
-            .expect("first prep");
-        let chowns_after_first = backend.chown_log.len();
-        let bulk_after_first = backend.bulk_calls;
-        assert!(chowns_after_first > 0);
-
-        ensure_workspace_permissions_ready_with(&policy, None, true, &mut backend)
-            .expect("clean repeat prep must stay ready");
-        assert_eq!(
-            backend.chown_log.len(),
-            chowns_after_first,
-            "idempotent clean prep performs no repair"
-        );
-        assert_eq!(backend.bulk_calls, bulk_after_first);
     }
 
     #[test]
@@ -3679,64 +3669,56 @@ services:
     }
 
     #[test]
-    fn doctor_reports_unwritable_dependency_volume_before_repair_and_clean_after() {
-        let root = tempfile::tempdir().expect("fresh private fixture root");
-        let policy = dependency_volume_policy(root.path(), "ro");
+    fn doctor_reports_unwritable_dependency_scopes() {
+        for (label, mode) in [("sole writer", "ro"), ("shared writers", "rw")] {
+            let root = tempfile::tempdir().expect("fresh private fixture root");
+            let policy = dependency_volume_policy(root.path(), mode);
+            let mut backend = root0700_dependency_fixture();
+            let finding = diagnose_workspace_ownership(&policy, Ok(true), &[], &mut backend);
+            assert_eq!(
+                finding.status,
+                WorkspaceOwnershipProbeStatus::Finding,
+                "{label}"
+            );
+            for path in ["/var/www/cbs/vendor", "/var/www/cbs/node_modules"] {
+                assert!(
+                    finding.samples.iter().any(|sample| sample.contains(path)),
+                    "{label}: {path}"
+                );
+            }
+            assert_eq!(backend.list_unowned_calls.get(), 0, "{label}");
+            assert!(backend.chown_log.is_empty(), "{label}");
 
-        // Before repair: root0700 volume roots are a finding, not clean.
-        let mut backend = root0700_dependency_fixture();
-        let finding = diagnose_workspace_ownership(&policy, Ok(true), &[], &mut backend);
-        assert_eq!(finding.status, WorkspaceOwnershipProbeStatus::Finding);
-        assert!(finding
-            .samples
-            .iter()
-            .any(|sample| sample.contains("/var/www/cbs/vendor")));
-        assert!(finding
-            .samples
-            .iter()
-            .any(|sample| sample.contains("unwritable-by-uid-501")));
-        assert_eq!(backend.list_unowned_calls.get(), 0);
-        assert!(backend.chown_log.is_empty());
-
-        // After the actual numeric-user repair the same fixture reads clean.
-        let mut repaired = root0700_dependency_fixture();
-        ensure_workspace_permissions_ready_with(&policy, None, true, &mut repaired)
-            .expect("prep repairs the sole-writer volumes");
-        let clean = diagnose_workspace_ownership(&policy, Ok(true), &[], &mut repaired);
-        assert_eq!(clean.status, WorkspaceOwnershipProbeStatus::Clean);
-        assert!(clean.evidence.unwrap_or_default().contains("uid=501"));
-    }
-
-    #[test]
-    fn doctor_reports_unwritable_shared_and_nonrepairable_dependency_volumes() {
-        // Two writers: the volume is forbidden, but an unwritable root must
-        // still be probed and reported rather than omitted into a clean bill.
-        let root = tempfile::tempdir().expect("fresh private fixture root");
-        let policy = dependency_volume_policy(root.path(), "rw");
-        let mut backend = root0700_dependency_fixture();
-        let diagnosis = diagnose_workspace_ownership(&policy, Ok(true), &[], &mut backend);
-        assert_eq!(diagnosis.status, WorkspaceOwnershipProbeStatus::Finding);
-        assert!(diagnosis
-            .samples
-            .iter()
-            .any(|sample| sample.contains("/var/www/cbs/vendor")));
-        assert_eq!(backend.list_unowned_calls.get(), 0);
-        assert!(backend.chown_log.is_empty());
+            if mode == "ro" {
+                assert!(finding
+                    .samples
+                    .iter()
+                    .any(|sample| sample.contains("unwritable-by-uid-501")));
+                let mut repaired = root0700_dependency_fixture();
+                ensure_workspace_permissions_ready_with(&policy, None, true, &mut repaired)
+                    .expect("prep repairs sole-writer volumes");
+                let clean = diagnose_workspace_ownership(&policy, Ok(true), &[], &mut repaired);
+                assert_eq!(clean.status, WorkspaceOwnershipProbeStatus::Clean);
+                assert!(clean.evidence.unwrap_or_default().contains("uid=501"));
+            }
+        }
     }
 
     #[test]
     fn doctor_marks_no_workspace_user_as_not_probed() {
         let policy = effective_container_policy("web", "demo-web", "workspace", "compose.yml");
-        let diagnosis = diagnose_workspace_ownership(
-            &policy,
-            Ok(true),
-            &[],
-            &mut MemoryAccessBackend::new(vec![identity("dev", 501, 20)]),
-        );
+        let mut backend = MemoryAccessBackend::new(vec![identity("dev", 501, 20)]);
+        let diagnosis = diagnose_workspace_ownership(&policy, Ok(true), &[], &mut backend);
         assert_eq!(
             diagnosis.status,
             WorkspaceOwnershipProbeStatus::NotProbedNoUser
         );
+        assert_eq!(
+            diagnosis.evidence.as_deref(),
+            Some("container `web` workspace ownership: not probed (no workspace user)")
+        );
+        assert_eq!(backend.list_unowned_calls.get(), 0);
+        assert!(backend.chown_log.is_empty());
     }
 
     // ---- bulk ownership repair (papercut dab293be) ----
@@ -3878,17 +3860,6 @@ services:
     }
 
     #[test]
-    fn bulk_repair_is_idempotent_on_reused_volumes() {
-        let (mut backend, plan) = bulk_fixture(100, (0, 0));
-        prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend).expect("first");
-        let first = backend.chown_log.len();
-        assert!(first > 0);
-        prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend)
-            .expect("second");
-        assert_eq!(backend.chown_log.len(), first, "second run must not chown");
-    }
-
-    #[test]
     fn bulk_repair_skips_symlinks_inside_scope() {
         let (mut backend, plan) = bulk_fixture(100, (0, 0));
         backend.add_symlink("/cargo/registry/src/escape", "/etc");
@@ -3977,24 +3948,17 @@ services:
         let plan = WorkspaceOwnershipPlan {
             targets: vec![shared],
         };
-        let _ = prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend);
+        let error = prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend)
+            .expect_err("verify-only scopes refuse required repair");
+        assert!(
+            error
+                .message
+                .contains("will not chown this named-volume path"),
+            "{}",
+            error.message
+        );
         assert_eq!(backend.bulk_calls, 0);
         assert!(backend.chown_log.is_empty());
-    }
-
-    #[test]
-    fn compose_bulk_chown_honors_expired_deadline() {
-        let mut policy = effective_container_policy("web", "demo-web", "workspace", "compose.yml");
-        policy.workspace_user = Some("dev".to_owned());
-        policy.compose_files = Vec::new();
-        let deadline = Instant::now()
-            .checked_sub(std::time::Duration::from_secs(1))
-            .expect("deadline");
-        let mut backend = compose_backend_with_deadline(Path::new("/tmp"), &policy, Some(deadline));
-        let error = backend
-            .chown_tree_unowned("/cargo/registry", 501, 20)
-            .expect_err("expired");
-        assert!(error.message.contains("timed out"), "{}", error.message);
     }
 
     #[test]
@@ -4031,7 +3995,7 @@ services:
     }
 
     #[cfg(unix)]
-    fn run_swap_race(argv: &[String]) -> (bool, String) {
+    fn run_swap_race(argv: &[String]) -> (bool, bool, String) {
         use std::os::unix::fs::PermissionsExt;
         let temp = effigy_test_support::Fixture::new("effigy-bulk-swap-").expect("tempdir");
         let root = std::fs::canonicalize(temp.path()).expect("canon");
@@ -4073,6 +4037,7 @@ services:
         let note = String::from_utf8_lossy(&out.stderr).into_owned();
         (
             std::fs::read_to_string(&log).is_ok_and(|text| text.contains("ESCAPED")),
+            root.join("swapped").exists(),
             note,
         )
     }
@@ -4081,7 +4046,11 @@ services:
     #[test]
     fn bulk_intermediate_symlink_swap_cannot_redirect_bulk_chown_outside_volume() {
         let argv = bulk_chown_argv("/cargo/git", 424242, 424243);
-        let (escaped, note) = run_swap_race(&argv);
+        let (escaped, swapped, note) = run_swap_race(&argv);
+        assert!(
+            swapped,
+            "the fake chown reached and triggered the symlink swap"
+        );
         assert!(!escaped, "bulk chown resolved outside the volume: {note}");
     }
     /// Real traversal at empty, single-file and multi-batch boundaries. GNU
@@ -4405,6 +4374,21 @@ exit 0
         let (bin, _) = install_fake_hung_bulk_docker(&root, &process_file);
         let _env = with_fake_bulk_runtime(&bin);
         let policy = bulk_deadline_test_policy(&root);
+        let expired = Instant::now()
+            .checked_sub(std::time::Duration::from_secs(1))
+            .expect("expired deadline");
+        let mut direct = compose_backend_with_deadline(&root, &policy, Some(expired));
+        let direct_error = direct
+            .chown_tree_unowned("/cargo/registry", 501, 20)
+            .expect_err("direct Compose backend honors an expired caller deadline");
+        assert!(direct_error
+            .message
+            .starts_with("workspace bulk chown timed out"));
+        assert!(
+            !process_file.exists(),
+            "direct backend refused before spawn"
+        );
+
         let mut backend = compose_backend(&root, &policy);
         assert_eq!(backend.bulk_timeout, BULK_CHOWN_TIMEOUT);
         backend.deadline = Some(

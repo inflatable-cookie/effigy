@@ -1016,6 +1016,29 @@ mod tests {
         (dir, OsString::from("/bin/sh"), vec![path.into_os_string()])
     }
 
+    fn assert_overflow(
+        failure: BoundedCaptureFailure,
+        expected_stream: Option<BoundedStream>,
+        limit: u64,
+    ) {
+        let BoundedCaptureFailure::Overflow {
+            stream,
+            limit_bytes,
+            retained_bytes,
+        } = failure
+        else {
+            panic!("expected overflow, got {failure:?}");
+        };
+        if let Some(expected) = expected_stream {
+            assert_eq!(stream, expected);
+        }
+        assert_eq!(limit_bytes, limit);
+        assert!(
+            retained_bytes <= limit,
+            "the refused prefix never exceeds its configured limit: {retained_bytes} > {limit}"
+        );
+    }
+
     #[test]
     fn bounded_reader_keeps_exactly_the_budget() {
         let overflow = AtomicBool::new(false);
@@ -1037,10 +1060,7 @@ mod tests {
             other => panic!("expected complete, got {other:?}"),
         }
         assert!(!overflow.load(Ordering::SeqCst));
-    }
 
-    #[test]
-    fn bounded_reader_reports_one_byte_over_and_retains_the_prefix() {
         let overflow = AtomicBool::new(false);
         let failure = AtomicBool::new(false);
         // Deliberately short reads so the retained prefix reaches the budget
@@ -1055,23 +1075,22 @@ mod tests {
             }
         }
         let mut input = Chunked(vec![b'a'; 33], 8);
-        let mut outcome = None;
-        drive_bounded_reader(
-            &mut input,
-            32,
-            &overflow,
-            &failure,
-            &BoundedStreamProgress::default(),
-            |reported| {
-                outcome = Some(reported);
-            },
-        );
-        match outcome.expect("reader reports an outcome") {
+        let progress = BoundedStreamProgress::default();
+        let mut over_budget = None;
+        drive_bounded_reader(&mut input, 32, &overflow, &failure, &progress, |reported| {
+            over_budget = Some(reported);
+        });
+        match over_budget.expect("reader reports the one-byte overflow") {
             StreamOutcome::Overflow { retained_bytes } => {
-                assert!(retained_bytes <= 32, "retention must stay bounded");
+                assert_eq!(
+                    retained_bytes, 32,
+                    "the retained prefix is exactly the budget"
+                );
             }
             other => panic!("expected overflow, got {other:?}"),
         }
+        assert_eq!(progress.retained.load(Ordering::SeqCst), 32);
+        assert_eq!(progress.read.load(Ordering::SeqCst), 33);
         assert!(overflow.load(Ordering::SeqCst));
     }
 
@@ -1148,13 +1167,7 @@ mod tests {
             Instant::now(),
         )
         .expect_err("one byte over must refuse");
-        assert!(matches!(
-            error.failure,
-            BoundedCaptureFailure::Overflow {
-                stream: BoundedStream::Stdout,
-                ..
-            }
-        ));
+        assert_overflow(error.failure, Some(BoundedStream::Stdout), 4);
     }
 
     #[cfg(unix)]
@@ -1174,10 +1187,7 @@ mod tests {
             Instant::now(),
         )
         .expect_err("flood must refuse");
-        assert!(matches!(
-            error.failure,
-            BoundedCaptureFailure::Overflow { .. }
-        ));
+        assert_overflow(error.failure, None, 8);
     }
 
     #[cfg(unix)]
@@ -1198,13 +1208,7 @@ mod tests {
             Instant::now(),
         )
         .expect_err("asymmetric flood must refuse");
-        assert!(matches!(
-            error.failure,
-            BoundedCaptureFailure::Overflow {
-                stream: BoundedStream::Stderr,
-                ..
-            }
-        ));
+        assert_overflow(error.failure, Some(BoundedStream::Stderr), 16);
         assert!(started.elapsed() < Duration::from_secs(10));
     }
 
@@ -1288,10 +1292,14 @@ mod tests {
         // The direct client exits immediately but a background descendant in
         // the same owned group keeps the pipe open. Without the deadline the
         // final drain would block forever.
-        let (_dir, program, args) = test_command("(sleep 30) & exit 0");
+        let dir = tempfile::tempdir().expect("writer fixture");
+        let marker = dir.path().join("writer-started");
+        let script = format!("touch '{}'; (sleep 30) & exit 0", marker.display());
+        let program = OsString::from("/bin/sh");
+        let args = [OsString::from("-c"), OsString::from(script)];
         let started = Instant::now();
         let error = run_command_capture_bounded(
-            Path::new("."),
+            dir.path(),
             &program,
             &args,
             None,
@@ -1300,6 +1308,10 @@ mod tests {
             Instant::now(),
         )
         .expect_err("an inherited writer must not defeat the deadline");
+        assert!(
+            marker.is_file(),
+            "the inherited-pipe workload actually started"
+        );
         assert!(matches!(error.failure, BoundedCaptureFailure::Deadline));
         assert!(started.elapsed() < Duration::from_secs(5));
     }
