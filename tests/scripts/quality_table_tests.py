@@ -47,6 +47,84 @@ class QualityTableTests(unittest.TestCase):
         start = text.index("const fn") + len("const ")
         self.assertTrue(quality_table.has_test_attribute(text, start))
 
+    def test_raw_string_braces_do_not_end_or_swallow_the_function(self):
+        text = (
+            "#[test]\n"
+            "fn sample() {\n"
+            "    let payload = r#\"{\"key\": 1}\"#;\n"
+            "    assert_eq!(payload.len(), 9);\n"
+            "}\n"
+            "\n"
+            "#[test]\n"
+            "fn neighbour() { assert!(true); }\n"
+        )
+        body = quality_table.rust_function(text, "sample")
+        # The raw string carries both brace characters; the item still ends at
+        # its own closing brace and does not absorb the next test.
+        self.assertIn("r#\"{\"key\": 1}\"#", body)
+        self.assertNotIn("neighbour", body)
+        # A hash-terminated raw string may hold an unmatched brace on its own.
+        lopsided = "#[test]\nfn sample() { let text = r#\"}\"#; assert!(!text.is_empty()); }\n"
+        self.assertEqual(
+            quality_table.rust_function(lopsided, "sample"),
+            "fn sample() { let text = r#\"}\"#; assert!(!text.is_empty()); }",
+        )
+
+    def test_char_literals_and_lifetimes_do_not_break_brace_balance(self):
+        text = (
+            "#[test]\n"
+            "fn sample<'a>(value: &'a str) {\n"
+            "    let open = '{';\n"
+            "    let close = '}';\n"
+            "    let quote = '\\'';\n"
+            "    assert_eq!((open, close, quote, value), ('{', '}', '\\'', value));\n"
+            "}\n"
+            "\n"
+            "#[test]\n"
+            "fn neighbour() { assert!(true); }\n"
+        )
+        body = quality_table.rust_function(text, "sample")
+        self.assertIsNotNone(body, "a lifetime must not be read as a char literal")
+        self.assertIn("let close = '}'", body)
+        self.assertNotIn("neighbour", body)
+        self.assertEqual(
+            quality_table.char_literal_end("&'a str", 1), None,
+            "a lifetime is not a char literal",
+        )
+
+    def test_block_and_line_comments_are_skipped(self):
+        text = (
+            "#[test]\n"
+            "fn sample() {\n"
+            "    // a line comment with an unbalanced } brace\n"
+            "    /* a nested /* block */ comment carrying { braces */\n"
+            "    assert!(true);\n"
+            "}\n"
+            "\n"
+            "#[test]\n"
+            "fn neighbour() { assert!(true); }\n"
+        )
+        body = quality_table.rust_function(text, "sample")
+        self.assertIn("assert!(true)", body)
+        self.assertNotIn("neighbour", body)
+
+    def test_raw_string_prefixes_and_escape_sequences_are_skipped(self):
+        text = (
+            "#[test]\n"
+            "fn sample() {\n"
+            "    let bytes = br#\"}{\"#;\n"
+            "    let c = cr#\"{}\"#;\n"
+            "    let escaped = \"a } brace and a \\\" quote\";\n"
+            "    assert!(!bytes.is_empty() && !c.is_empty() && !escaped.is_empty());\n"
+            "}\n"
+            "\n"
+            "#[test]\n"
+            "fn neighbour() { assert!(true); }\n"
+        )
+        body = quality_table.rust_function(text, "sample")
+        self.assertIn("escaped", body)
+        self.assertNotIn("neighbour", body)
+
 
 if __name__ == "__main__":
     unittest.main()
