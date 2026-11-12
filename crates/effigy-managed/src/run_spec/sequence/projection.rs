@@ -9,6 +9,7 @@ use super::env_resolution::StepEnvAccumulator;
 pub struct ProjectedRunSequence {
     pub commands: Vec<String>,
     pub timeouts: Vec<Option<u64>>,
+    pub env: std::collections::BTreeMap<String, String>,
 }
 
 pub fn project_run_sequence(
@@ -17,6 +18,7 @@ pub fn project_run_sequence(
 ) -> Result<ProjectedRunSequence, ManagedError> {
     let mut commands = Vec::<String>::with_capacity(steps.len());
     let mut timeouts = Vec::with_capacity(steps.len());
+    let mut env = std::collections::BTreeMap::new();
     let mut env_state =
         StepEnvAccumulator::new(context.task_env_file, context.runtime_env_schema_override)?;
 
@@ -34,6 +36,11 @@ pub fn project_run_sequence(
         // (effigy#431, contract 005).
         let mut step_env = env_state.chained_env().clone();
         effigy_core::host_alias::resolve_env(&mut step_env, context.host_env_aliases);
+        // Chained keys persist in every later statement. Only those present
+        // from the first statement are delivered throughout this workload.
+        if commands.is_empty() {
+            env = step_env.clone();
+        }
         commands.push(wrap_command_with_task_env(
             command,
             &step_env,
@@ -45,5 +52,9 @@ pub fn project_run_sequence(
         });
     }
 
-    Ok(ProjectedRunSequence { commands, timeouts })
+    Ok(ProjectedRunSequence {
+        commands,
+        timeouts,
+        env,
+    })
 }

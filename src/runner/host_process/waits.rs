@@ -18,7 +18,7 @@ use effigy_core::managed_waits::{should_publish, EntryState, EntryWaits, HostOrd
 
 use std::collections::BTreeMap;
 
-use super::{EffectiveManagedHostListener, ManagedHostListenerFailure, ManagedHostListenerResult};
+use super::EffectiveManagedHostListener;
 use crate::runner::error::RunnerError;
 use crate::runner::managed_wait::{WaitLedger, WaitPublisher};
 
@@ -388,16 +388,6 @@ pub(in crate::runner) trait HostActivation {
         detail: String,
         observed_status: Option<u16>,
     ) -> Result<String, RunnerError>;
-
-    /// The clients this activation started, for the caller's detach and its
-    /// owner-loss fallback.
-    fn take_started(&mut self) -> Vec<(String, effigy_kernel::supervise::SupervisorClient)>;
-    /// How many clients the activation holds now.
-    fn started_len(&self) -> usize;
-    /// The listeners this activation verified, for the caller's report.
-    fn take_listeners(&mut self) -> Vec<ManagedHostListenerResult>;
-    /// The listeners this activation withheld, for the caller's report.
-    fn take_failures(&mut self) -> Vec<ManagedHostListenerFailure>;
 }
 
 /// The activation's ordering loop: the one place that decides what starts, what
@@ -794,22 +784,6 @@ mod tests {
         ) -> Result<String, RunnerError> {
             self.withdrawn.push(process.name.clone());
             Ok(detail)
-        }
-
-        fn take_started(&mut self) -> Vec<(String, effigy_kernel::supervise::SupervisorClient)> {
-            Vec::new()
-        }
-
-        fn started_len(&self) -> usize {
-            0
-        }
-
-        fn take_listeners(&mut self) -> Vec<ManagedHostListenerResult> {
-            Vec::new()
-        }
-
-        fn take_failures(&mut self) -> Vec<ManagedHostListenerFailure> {
-            Vec::new()
         }
     }
 

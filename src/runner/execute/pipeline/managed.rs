@@ -420,7 +420,7 @@ fn start_managed_run(
                 // must not hide an inherited value from it (effigy#431 review).
                 let mut delivered = session_delivered.clone();
                 delivered.extend(process.secret_env.keys().cloned());
-                delivered.extend(effigy_managed::declared_env_keys(&process.run));
+                delivered.extend(process.delivered_env.keys().cloned());
                 for (key, value) in resolver.resolved_inherited_env(&delivered, true)? {
                     if !resolved.iter().any(|(existing, _)| existing == &key) {
                         resolved.push((key, value));
@@ -2093,6 +2093,7 @@ working_dir = "/workspace"
             name: name.to_owned(),
             role,
             run: format!("run-{name}"),
+            delivered_env: Default::default(),
             secret_env: Default::default(),
             setup: None,
             setup_steps: Vec::new(),

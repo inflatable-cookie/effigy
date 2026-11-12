@@ -72,7 +72,7 @@ pub(in crate::runner) fn bring_up(
     plan: &EnvironmentPlan,
     token: &str,
     ansi_front: bool,
-    stop: &mut dyn FnMut(&mut TaskRun) -> Option<StopCause>,
+    stop: &mut dyn FnMut(&mut TaskRun) -> Result<Option<StopCause>, String>,
     progress: &mut dyn FnMut(Option<(u32, u32)>),
 ) -> Result<(), NotReady> {
     let effect = EnvironmentEffect {
@@ -317,7 +317,7 @@ fn run_up(
     run: &mut TaskRun,
     plan: &EnvironmentPlan,
     ansi_front: bool,
-    stop: &mut dyn FnMut(&mut TaskRun) -> Option<StopCause>,
+    stop: &mut dyn FnMut(&mut TaskRun) -> Result<Option<StopCause>, String>,
     progress: &mut dyn FnMut(Option<(u32, u32)>),
 ) -> Result<i32, NotReady> {
     let mut env = task_engine::spawn_environment(&plan.repo)
@@ -376,7 +376,12 @@ fn run_up(
     loop {
         run.verify_admission()
             .map_err(|error| NotReady::Failed(error.to_string()))?;
-        if let Some(cause) = stop(run) {
+        let pending = match stop(run) {
+            Ok(Some(cause)) => Some(NotReady::Stopped(cause)),
+            Ok(None) => None,
+            Err(reason) => Some(NotReady::Failed(reason)),
+        };
+        if let Some(pending) = pending {
             // The bring-up ends with its run. Stop the `up` transition now and
             // record its exit, so no gate-holding child of this run outlives
             // the poll that noticed the stop: the run's own settle, or the
@@ -390,13 +395,9 @@ fn run_up(
             // settle (or the discharge) owes the environment its stop either
             // way.
             let exit = proven_up_stop_exit(&report.leader).map_err(NotReady::Failed)?;
-            let _ = process.complete(
-                &mut *run
-                    .run_mut()
-                    .map_err(|error| NotReady::Failed(error.to_string()))?,
-                effigy_kernel::custody::Exit { code: exit },
-            );
-            return Err(NotReady::Stopped(cause));
+            run.complete(&process, effigy_kernel::custody::Exit { code: exit })
+                .map_err(|error| NotReady::Failed(error.to_string()))?;
+            return Err(pending);
         }
         if Instant::now() >= next_progress_read {
             next_progress_read = Instant::now() + ENVIRONMENT_PROGRESS_READ;
@@ -411,12 +412,8 @@ fn run_up(
             );
         }
         if let Observed::Verified(exit, _) = process.poll() {
-            let _ = process.complete(
-                &mut *run
-                    .run_mut()
-                    .map_err(|error| NotReady::Failed(error.to_string()))?,
-                exit,
-            );
+            run.complete(&process, exit)
+                .map_err(|error| NotReady::Failed(error.to_string()))?;
             if exit.code != 0 {
                 return Err(NotReady::Failed(format!(
                     "environment `{}` did not come up: `up` exited {} after {}s",
@@ -456,7 +453,7 @@ fn exec_ready(
     run: &mut TaskRun,
     plan: &EnvironmentPlan,
     service: &str,
-    stop: &mut dyn FnMut(&mut TaskRun) -> Option<StopCause>,
+    stop: &mut dyn FnMut(&mut TaskRun) -> Result<Option<StopCause>, String>,
 ) -> Result<(), NotReady> {
     let policy = match settlement::policy(&plan.repo, &plan.binding) {
         Ok(policy) => policy,
@@ -530,14 +527,14 @@ fn observe_until(
     run: &mut TaskRun,
     what: &str,
     deadline: Instant,
-    stop: &mut dyn FnMut(&mut TaskRun) -> Option<StopCause>,
+    stop: &mut dyn FnMut(&mut TaskRun) -> Result<Option<StopCause>, String>,
     attempt: &mut dyn FnMut(Instant) -> Result<(), String>,
 ) -> Result<(), NotReady> {
     let started = Instant::now();
     let mut backoff = Duration::from_millis(250);
     let mut last = String::new();
     loop {
-        if let Some(cause) = stop(run) {
+        if let Some(cause) = stop(run).map_err(NotReady::Failed)? {
             return Err(NotReady::Stopped(cause));
         }
         let attempt_deadline = deadline.min(Instant::now() + Duration::from_secs(15));
@@ -564,7 +561,7 @@ fn observe_until(
         }
         let wake = Instant::now() + backoff;
         while Instant::now() < wake.min(deadline) {
-            if let Some(cause) = stop(run) {
+            if let Some(cause) = stop(run).map_err(NotReady::Failed)? {
                 return Err(NotReady::Stopped(cause));
             }
             std::thread::sleep(POLL);

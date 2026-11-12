@@ -251,6 +251,7 @@ mod tests {
                 role: ManagedProcessRole::Lifecycle,
                 cwd: PathBuf::from("/tmp/repo"),
                 run: "printf lifecycle".to_owned(),
+                delivered_env: Default::default(),
                 secret_env: BTreeMap::new(),
                 setup: None,
                 setup_steps: Vec::new(),
@@ -265,6 +266,7 @@ mod tests {
                 role: ManagedProcessRole::Standard,
                 cwd: PathBuf::from("/tmp/repo/api"),
                 run: "printf api".to_owned(),
+                delivered_env: Default::default(),
                 secret_env: BTreeMap::from([(
                     "API_TOKEN".to_owned(),
                     "synthetic-secret".to_owned(),
@@ -282,6 +284,7 @@ mod tests {
                 role: ManagedProcessRole::Shell,
                 cwd: PathBuf::from("/tmp/repo"),
                 run: "sh".to_owned(),
+                delivered_env: Default::default(),
                 secret_env: BTreeMap::new(),
                 setup: None,
                 setup_steps: Vec::new(),

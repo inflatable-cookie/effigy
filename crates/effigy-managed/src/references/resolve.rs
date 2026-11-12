@@ -10,7 +10,9 @@ use effigy_manifest::{
 use super::parser::{is_builtin_task_selector, ParsedTaskRef};
 use super::ReferenceResolution;
 use crate::profiles::has_concurrent_schema;
-use crate::run_spec::{render_builtin_reference_invocation, render_task_run_spec, RunSpecContext};
+use crate::run_spec::{
+    render_builtin_reference_invocation, resolve_task_run_spec, RenderedRun, RunSpecContext,
+};
 use crate::{resolve_catalog_env_schema_with_ancestors, ManagedError};
 
 pub enum ReferenceTarget<'a> {
@@ -19,7 +21,7 @@ pub enum ReferenceTarget<'a> {
 }
 
 pub struct ResolvedReferenceRun {
-    pub command: String,
+    pub run: RenderedRun,
     pub cwd: PathBuf,
 }
 
@@ -42,15 +44,18 @@ where
     let split_source_target = execution_root != task_scope_cwd;
     match resolve_reference_target(parsed, catalogs, task_scope_cwd, resolver) {
         Ok(ReferenceTarget::Builtin) => Ok(ResolvedReferenceRun {
-            command: render_builtin_reference_invocation(
-                &parsed.selector_rendered,
-                args_rendered,
-                if split_source_target {
-                    execution_root
-                } else {
-                    task_scope_cwd
-                },
-            )?,
+            run: RenderedRun {
+                command: render_builtin_reference_invocation(
+                    &parsed.selector_rendered,
+                    args_rendered,
+                    if split_source_target {
+                        execution_root
+                    } else {
+                        task_scope_cwd
+                    },
+                )?,
+                env: Default::default(),
+            },
             cwd: if split_source_target {
                 execution_root.to_path_buf()
             } else {
@@ -64,7 +69,7 @@ where
                 selection.catalog.catalog_root.clone()
             };
             Ok(ResolvedReferenceRun {
-                command: render_selected_task_invocation(
+                run: render_selected_task_invocation(
                     &selection,
                     &parsed.selector_rendered,
                     &parsed.selector.task_name,
@@ -97,7 +102,7 @@ fn render_selected_task_invocation<F>(
     task_name: &str,
     resolution: ReferenceResolution<'_, '_>,
     missing_run_error: F,
-) -> Result<String, ManagedError>
+) -> Result<RenderedRun, ManagedError>
 where
     F: FnOnce() -> ManagedError,
 {
@@ -139,17 +144,20 @@ fn render_nested_catalog_invocation(
     selector_rendered: &str,
     selection: &TaskSelection<'_>,
     resolution: ReferenceResolution<'_, '_>,
-) -> Result<String, ManagedError> {
+) -> Result<RenderedRun, ManagedError> {
     let args = nested_discovery_args(
         resolution.args_rendered,
         resolution.catalogs,
         &selection.catalog.catalog_root,
     );
-    render_builtin_reference_invocation(
-        selector_rendered,
-        args.as_ref(),
-        &selection.catalog.catalog_root,
-    )
+    Ok(RenderedRun {
+        command: render_builtin_reference_invocation(
+            selector_rendered,
+            args.as_ref(),
+            &selection.catalog.catalog_root,
+        )?,
+        env: Default::default(),
+    })
 }
 
 fn nested_discovery_args<'a>(
@@ -181,7 +189,7 @@ fn render_selected_task_run<'request, 'a>(
     run_spec: &ManifestManagedRun,
     task_name: &str,
     resolution: ReferenceResolution<'request, 'a>,
-) -> Result<String, ManagedError> {
+) -> Result<RenderedRun, ManagedError> {
     let ReferenceResolution {
         args_rendered,
         catalogs,
@@ -218,7 +226,7 @@ fn render_selected_task_run<'request, 'a>(
         task_env.insert(key.clone(), value.clone());
     }
 
-    render_task_run_spec(
+    resolve_task_run_spec(
         run_spec,
         RunSpecContext {
             task_name,

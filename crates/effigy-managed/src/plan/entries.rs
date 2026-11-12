@@ -77,7 +77,8 @@ pub fn resolve_concurrent_process_entries<'a>(
             spec: ManagedProcessSpec {
                 name: process_name,
                 role: normalized.role,
-                run,
+                run: run.command,
+                delivered_env: run.env,
                 secret_env: Default::default(),
                 setup,
                 setup_steps: entry.setup.clone(),
@@ -126,7 +127,7 @@ pub fn resolve_own_task_run_process(
     for (key, value) in &task.env {
         task_env.insert(key.clone(), value.clone());
     }
-    let command = crate::run_spec::render_task_run_spec(
+    let run = crate::run_spec::resolve_task_run_spec(
         run_spec,
         crate::run_spec::RunSpecContext {
             task_name: &selector.task_name,
@@ -156,7 +157,8 @@ pub fn resolve_own_task_run_process(
         spec: ManagedProcessSpec {
             name: selector.task_name.clone(),
             role: ManagedProcessRole::Standard,
-            run: command,
+            run: run.command,
+            delivered_env: run.env,
             secret_env: Default::default(),
             setup: None,
             setup_steps: Vec::new(),
@@ -328,14 +330,20 @@ fn resolve_process_run_and_cwd<'a>(
     context: EntryResolutionContext<'a>,
     process_name: &str,
     entry: &ManifestManagedConcurrentEntry,
-) -> Result<(String, PathBuf), crate::ManagedError> {
+) -> Result<(crate::run_spec::RenderedRun, PathBuf), crate::ManagedError> {
     let EntryResolutionContext {
         selector,
         task_scope_cwd,
         ..
     } = context;
     if matches!(entry.role.as_deref(), Some("lifecycle") | Some("shell")) {
-        return Ok((String::new(), task_scope_cwd.to_path_buf()));
+        return Ok((
+            crate::run_spec::RenderedRun {
+                command: String::new(),
+                env: Default::default(),
+            },
+            task_scope_cwd.to_path_buf(),
+        ));
     }
     match select_run_or_task(
         entry.run.as_deref(),
@@ -358,7 +366,13 @@ fn resolve_process_run_and_cwd<'a>(
         super::RunOrTaskRef::Task(task_ref) => {
             resolve_task_process_run_and_cwd(context, process_name, task_ref)
         }
-        super::RunOrTaskRef::Run(run) => Ok((run.to_owned(), task_scope_cwd.to_path_buf())),
+        super::RunOrTaskRef::Run(run) => Ok((
+            crate::run_spec::RenderedRun {
+                command: run.to_owned(),
+                env: Default::default(),
+            },
+            task_scope_cwd.to_path_buf(),
+        )),
     }
 }
 
@@ -366,7 +380,7 @@ fn resolve_task_process_run_and_cwd<'a>(
     context: EntryResolutionContext<'a>,
     process_name: &str,
     task_ref: &str,
-) -> Result<(String, PathBuf), crate::ManagedError> {
+) -> Result<(crate::run_spec::RenderedRun, PathBuf), crate::ManagedError> {
     let EntryResolutionContext {
         selector,
         catalogs,
@@ -393,7 +407,7 @@ fn resolve_shell_process_run(
     selector: &TaskSelector,
     process_name: &str,
     task_scope_cwd: &Path,
-) -> Result<(String, PathBuf), crate::ManagedError> {
+) -> Result<(crate::run_spec::RenderedRun, PathBuf), crate::ManagedError> {
     if process_name != "shell" {
         return Err(invalid_managed_process_definition(
             selector,
@@ -402,7 +416,10 @@ fn resolve_shell_process_run(
         ));
     }
     Ok((
-        DEFAULT_MANAGED_SHELL_RUN.to_owned(),
+        crate::run_spec::RenderedRun {
+            command: DEFAULT_MANAGED_SHELL_RUN.to_owned(),
+            env: Default::default(),
+        },
         task_scope_cwd.to_path_buf(),
     ))
 }
