@@ -25,11 +25,15 @@ use effigy_gateway::registration::{register_route, RouteRegistration};
 use effigy_gateway::routes::{Route, RouteSource, RouteTable};
 
 use crate::runner::error::RunnerError;
-use crate::runner::gateway_command::{ensure_gateway_tls_cert, gateway_dir};
+use crate::runner::gateway_command::{ensure_gateway_tls_cert, gateway_config, gateway_dir};
 
 const GATEWAY_SERVICE_PORT_READY_TIMEOUT: Duration = Duration::from_secs(60);
 const GATEWAY_SERVICE_PORT_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const GATEWAY_EXIT_DIAGNOSTIC_TIMEOUT: Duration = Duration::from_secs(2);
+/// Bound on the post-registration TLS handshake for one route. The gateway is
+/// local, so a route it cannot serve answers at once; the bound only keeps a
+/// wedged listener from stalling `container up`.
+const GATEWAY_TLS_ROUTE_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn gateway_runtime_target_error(detail: impl Into<String>) -> RunnerError {
     RunnerError::gateway_runtime_target("validation", detail)
@@ -298,6 +302,7 @@ fn finish_gateway_route_registration(
         rows,
         on_wait,
         &mut ensure_gateway_tls_cert,
+        &mut probe_registered_tls_route,
     )
 }
 
@@ -308,6 +313,7 @@ fn finish_gateway_route_registration_with_tls(
     rows: &[RunningComposeContainer],
     on_wait: &mut dyn FnMut(GatewayPortWait<'_>),
     ensure_tls: &mut dyn FnMut(&str) -> Result<(), RunnerError>,
+    probe_tls: &mut dyn FnMut(&str) -> Result<(), RunnerError>,
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
     if let Some(binding) = binding {
         on_wait(GatewayPortWait::ConfirmingOwnership);
@@ -339,7 +345,92 @@ fn finish_gateway_route_registration_with_tls(
     on_wait(GatewayPortWait::ReconcilingRoutes);
     let route_table_path = gateway_route_table_path()?;
     reconcile_gateway_routes_with_tls(&route_table_path, repo_root, &routes, ensure_tls)?;
+    verify_registered_tls_routes(&routes, probe_tls, &mut running_gateway_build_note)?;
     Ok(routes)
+}
+
+/// After the route write, prove the running gateway can serve every TLS route
+/// it just registered (papercut 9604503b).
+///
+/// A gateway that never loaded the route's certificate answers the SNI with an
+/// access-denied alert, so the container comes up while every browser request
+/// fails. The write therefore does not report success: the refusal names the
+/// route, the running gateway build, and the one command pair that replaces
+/// that gateway with the current build.
+fn verify_registered_tls_routes(
+    routes: &[RegisteredGatewayRoute],
+    probe: &mut dyn FnMut(&str) -> Result<(), RunnerError>,
+    running_build: &mut dyn FnMut() -> String,
+) -> Result<(), RunnerError> {
+    for route in routes.iter().filter(|route| route.tls) {
+        if let Err(error) = probe(&route.domain) {
+            return Err(RunnerError::task_invocation(format!(
+                "gateway route `{}` is registered but the {} cannot serve it: {error}; `effigy gateway down` then `effigy gateway up` replaces the running gateway with this build and reloads the route's certificate",
+                route.domain,
+                running_build(),
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The running gateway's own build, for the refusal above. An unreadable or
+/// absent build record is reported as unknown rather than guessed.
+fn running_gateway_build_note() -> String {
+    let build = gateway_config().ok().and_then(|config| {
+        effigy_gateway::server::get_status(&config)
+            .ok()
+            .and_then(|status| status.binary_version)
+    });
+    match build {
+        Some(build) => format!("running gateway build {build}"),
+        None => "running gateway build unknown".to_owned(),
+    }
+}
+
+/// The real post-registration probe: the gateway's configured HTTPS endpoint,
+/// the certificate this registration wrote, and the route's SNI.
+fn probe_registered_tls_route(domain: &str) -> Result<(), RunnerError> {
+    let config = gateway_config()?;
+    let tls = config.tls.clone().ok_or_else(|| {
+        RunnerError::task_invocation(format!(
+            "gateway route `{domain}` requires TLS but gateway TLS is not configured for this installation"
+        ))
+    })?;
+    let address = gateway_tls_probe_address(&config)?;
+    effigy_gateway::tls::probe_route_handshake(
+        address,
+        domain,
+        &tls.cert_paths(domain).cert,
+        GATEWAY_TLS_ROUTE_PROBE_TIMEOUT,
+    )
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))
+}
+
+/// The HTTPS endpoint the running gateway listens on. A private fixture binds
+/// an ephemeral port, so its running record is the only source of the real
+/// address; the operator gateway's configured address needs no observation.
+fn gateway_tls_probe_address(
+    config: &effigy_gateway::GatewayConfig,
+) -> Result<std::net::SocketAddr, RunnerError> {
+    let configured = config.proxy.tls_bind_addr.ok_or_else(|| {
+        RunnerError::task_invocation("gateway TLS is not configured for this installation")
+    })?;
+    if configured.port() != 0 {
+        return Ok(configured);
+    }
+    effigy_gateway::server::get_status(config)
+        .map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "cannot observe the running gateway's HTTPS endpoint: {error}"
+            ))
+        })?
+        .https_addr
+        .ok_or_else(|| {
+            RunnerError::task_invocation(
+                "the running gateway publishes no HTTPS endpoint for the TLS route check",
+            )
+        })
 }
 
 fn wait_for_gateway_service_ports_ready(

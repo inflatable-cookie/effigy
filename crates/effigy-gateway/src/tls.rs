@@ -812,6 +812,160 @@ pub fn build_sni_resolver_from_dir(certs_dir: &Path) -> Result<SniCertResolver, 
     Ok(resolver)
 }
 
+/// One local client handshake against the running gateway for a registered
+/// TLS route.
+///
+/// The probe asks one question: can the running gateway complete a TLS
+/// handshake for this SNI and present the certificate this registration wrote?
+/// A gateway build that predates loading a route's certificate never resolves
+/// the new name, so its rustls server answers the ClientHello with an
+/// access-denied alert and the route is broken even though the container came
+/// up. Browser trust is not re-verified here; the presented leaf must instead
+/// be byte-identical to the certificate file the route registered, so a
+/// handshake that resolves some other certificate still refuses.
+pub fn probe_route_handshake(
+    address: std::net::SocketAddr,
+    server_name: &str,
+    expected_cert: &Path,
+    timeout: Duration,
+) -> Result<(), GatewayError> {
+    let tls_error = |reason: String| GatewayError::TlsError {
+        domain: server_name.to_owned(),
+        reason,
+    };
+    let expected = std::fs::read(expected_cert).map_err(|error| {
+        tls_error(format!(
+            "cannot read the registered certificate {}: {error}",
+            expected_cert.display()
+        ))
+    })?;
+    let expected = rustls_pemfile::certs(&mut expected.as_slice())
+        .next()
+        .transpose()
+        .map_err(|error| {
+            tls_error(format!(
+                "registered certificate {} is not PEM: {error}",
+                expected_cert.display()
+            ))
+        })?
+        .ok_or_else(|| {
+            tls_error(format!(
+                "registered certificate {} holds no certificate",
+                expected_cert.display()
+            ))
+        })?;
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let presented: Arc<std::sync::Mutex<Option<Vec<u8>>>> = Arc::new(std::sync::Mutex::new(None));
+    let config = rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(RouteProbeVerifier {
+            provider,
+            presented: Arc::clone(&presented),
+        }))
+        .with_no_client_auth();
+    let name: rustls::pki_types::ServerName = server_name.to_owned().try_into().map_err(|error| {
+        tls_error(format!(
+            "`{server_name}` is not a valid TLS server name: {error}"
+        ))
+    })?;
+    let session = rustls::ClientConnection::new(Arc::new(config), name).map_err(|error| {
+        tls_error(format!(
+            "cannot start a TLS client for `{server_name}`: {error}"
+        ))
+    })?;
+    let stream = std::net::TcpStream::connect_timeout(&address, timeout).map_err(|error| {
+        tls_error(format!(
+            "cannot connect to the running gateway at {address}: {error}"
+        ))
+    })?;
+    stream
+        .set_read_timeout(Some(timeout))
+        .and_then(|()| stream.set_write_timeout(Some(timeout)))
+        .map_err(|error| tls_error(format!("cannot bound the gateway handshake: {error}")))?;
+    let mut tls = rustls::StreamOwned::new(session, stream);
+    {
+        let rustls::StreamOwned { conn, sock } = &mut tls;
+        conn.complete_io(sock).map_err(|error| {
+            tls_error(format!(
+                "the running gateway at {address} did not complete a TLS handshake: {error}"
+            ))
+        })?;
+    }
+    let presented = presented
+        .lock()
+        .ok()
+        .and_then(|presented| presented.clone())
+        .ok_or_else(|| {
+            tls_error("the running gateway exchanged no certificate".to_owned())
+        })?;
+    if presented != expected.as_ref() {
+        return Err(tls_error(format!(
+            "the running gateway presented a certificate that is not the registered {}; it has not loaded this route's certificate",
+            expected_cert.display()
+        )));
+    }
+    Ok(())
+}
+
+/// Accepts the presented leaf only so [`probe_route_handshake`] can compare it
+/// with the registered certificate itself; it never grants browser trust.
+#[derive(Debug)]
+struct RouteProbeVerifier {
+    provider: Arc<rustls::crypto::CryptoProvider>,
+    presented: Arc<std::sync::Mutex<Option<Vec<u8>>>>,
+}
+
+impl rustls::client::danger::ServerCertVerifier for RouteProbeVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        if let Ok(mut presented) = self.presented.lock() {
+            *presented = Some(end_entity.as_ref().to_vec());
+        }
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.provider
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
 #[cfg(test)]
 #[path = "tls/tests.rs"]
 mod tests;
