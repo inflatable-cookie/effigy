@@ -217,6 +217,7 @@ host_ports = ["41001:41001"]
 
 #[test]
 fn scoped_checkouts_get_distinct_compose_resources_and_source_mounts() {
+    let _lock = crate::test_env_lock();
     // Phase 1: linked worktrees generate distinct resources and mounts.
     with_temp_effigy_home("linked-worktree-resources", |_| {
         let _lock = crate::test_env_lock();
@@ -268,7 +269,6 @@ fn scoped_checkouts_get_distinct_compose_resources_and_source_mounts() {
     // Phase 2: marked ephemeral clones get distinct resources alongside
     // the unmarked operator checkout.
     with_temp_effigy_home("ephemeral-clone-resources", |_| {
-        let _lock = crate::test_env_lock();
         let root = temp_repo("ephemeral-clone-resources");
         let manifest = SCOPED_IDENTITY_MANIFEST;
         // The operator's own unmarked checkout keeps primary behavior.
@@ -568,6 +568,7 @@ fn assert_scope_token_shared(project_name: &str, project_prefix: &str, scoped: &
 /// and a fresh worktree mints its scope on first use.
 #[test]
 fn linked_worktrees_keep_distinct_dns_identity_per_scope() {
+    let _lock = crate::test_env_lock();
     // Phase 1: worktrees get distinct effective hosts; primary keeps declared.
     with_temp_effigy_home("linked-worktree-hosts", |_| {
         let _lock = crate::test_env_lock();
@@ -627,7 +628,6 @@ catalog = "workspace-rust-bun"
     });
     // Phase 2: managed listener routes scope per worktree with declared hosts.
     with_temp_effigy_home("linked-worktree-listener-routes", |_| {
-        let _lock = crate::test_env_lock();
         let root = temp_repo("linked-worktree-listener-routes");
         let manifest = r#"
 [containers]
@@ -676,7 +676,6 @@ tls = true
     // the canonical declared TCP alias to its own backing service, because the
     // Compose network (and its project) belongs to that scope.
     with_temp_effigy_home("scoped-database-aliases", |_| {
-        let _lock = crate::test_env_lock();
         let root = temp_repo("scoped-database-aliases");
         let manifest = r#"
 [containers]
@@ -2205,6 +2204,7 @@ shared = true
 
 #[test]
 fn runtime_dns_overrides_carry_resolvers_aliases_and_gateways() {
+    let _lock = crate::test_env_lock();
     // Phase 1: direct compose carries the exact resolver list and invents
     // no route hosts.
     {
@@ -2269,7 +2269,6 @@ fn runtime_dns_overrides_carry_resolvers_aliases_and_gateways() {
     // Phase 2: an explicit base domain aliases TCP services while routes
     // point at the gateway.
     {
-        let _lock = crate::test_env_lock();
         let root = temp_repo("generated-compose-route-parity");
         fs::write(
             root.join("effigy.toml"),
@@ -2337,7 +2336,6 @@ fn runtime_dns_overrides_carry_resolvers_aliases_and_gateways() {
     }
     // Phase 3: an undeclared alias apex infers from the shallowest route.
     {
-        let _lock = crate::test_env_lock();
         let root = temp_repo("generated-compose-inferred-apex");
         fs::write(
             root.join("effigy.toml"),

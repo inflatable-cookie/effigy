@@ -1796,23 +1796,6 @@ esac
 
     #[test]
     fn unusable_running_profiles_are_refused_without_touching_the_vm() {
-        use crate::exec::ContainerExecError;
-        let assert_colima_status_refusal =
-            |error: ContainerExecError, check: &str, stderr: &str| match error {
-                ContainerExecError::Failure {
-                    command,
-                    code,
-                    stdout,
-                    stderr: actual,
-                } => {
-                    assert_eq!(command, "colima status");
-                    assert_eq!(code, None);
-                    assert_eq!(stdout, check);
-                    assert_eq!(actual, stderr);
-                }
-                other => panic!("expected the status refusal, got {other}"),
-            };
-
         // Phase 1: a profile that stays running refuses recovery, and a
         // profile with unproven status refuses reset — neither starts.
         let _lock = crate::test_env_lock();
@@ -1822,10 +1805,9 @@ esac
         fixture.state("stop-stays-running");
         let policy = fixture.policy();
         let error = recover_colima_runtime(&policy, &fixture.root).unwrap_err();
-        assert_colima_status_refusal(
-            error,
-            "[check] recovering Colima profile `effigy`\n[ok] stopped Colima profile `effigy`",
-            "profile is still running; refusing profile recovery. Verify pidfile ownership before manually running `colima stop -p effigy --force`; Effigy did not run it.",
+        assert_eq!(
+            error.to_string(),
+            "colima status failed (no exit code: the command ended on a signal)\nstdout:\n[check] recovering Colima profile `effigy`\n[ok] stopped Colima profile `effigy`\nstderr:\nprofile is still running; refusing profile recovery. Verify pidfile ownership before manually running `colima stop -p effigy --force`; Effigy did not run it."
         );
         assert!(!fixture
             .calls()
@@ -1833,10 +1815,9 @@ esac
             .any(|call| call.starts_with("start ")));
         fixture.state("status-unknown");
         let error = reset_colima_runtime(&policy, &fixture.root).unwrap_err();
-        assert_colima_status_refusal(
-            error,
-            "[check] resetting Colima profile `effigy` to a fully stopped state\n[ok] stopped Colima profile `effigy`",
-            "colima status failed (exit code 1)\nstdout:\n\nstderr:\nColima stop status is unproven: status unavailable\n; refusing profile recovery. Verify pidfile ownership before manually running `colima stop -p effigy --force`; Effigy did not run it.",
+        assert_eq!(
+            error.to_string(),
+            "colima status failed (no exit code: the command ended on a signal)\nstdout:\n[check] resetting Colima profile `effigy` to a fully stopped state\n[ok] stopped Colima profile `effigy`\nstderr:\ncolima status failed (exit code 1)\nstdout:\n\nstderr:\nColima stop status is unproven: status unavailable\n; refusing profile recovery. Verify pidfile ownership before manually running `colima stop -p effigy --force`; Effigy did not run it."
         );
 
         // Phase 2: a registry failure never stops or restarts the shared profile.

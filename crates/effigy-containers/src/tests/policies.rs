@@ -259,6 +259,7 @@ primary_service = "app"
 /// and two containers that must not collide.
 #[test]
 fn colima_mount_budgets_refuse_over_budget_payloads() {
+    let _lock = crate::test_env_lock();
     // Phase 1: a direct-compose mount payload over budget is refused, with
     // path-free contributors, while Docker is unaffected.
     {
@@ -332,8 +333,6 @@ fn colima_mount_budgets_refuse_over_budget_payloads() {
     // Phase 2: a null-DNS overlay passes under budget and refuses over
     // budget or when scalar, and the generated overlay stays valid YAML.
     {
-        let _lock = crate::test_env_lock();
-
         let validate = |name: &str, mount_count: usize| {
             // Match the measured 21-entry synthetic shape for the passing case;
             // the larger fixture proves the same generated overlay still reaches
@@ -406,7 +405,6 @@ fn colima_mount_budgets_refuse_over_budget_payloads() {
     }
     // Phase 3: primary-service tmpfs entries count in the nerdctl label budget.
     {
-        let _lock = crate::test_env_lock();
         let root = temp_repo("colima-tmpfs-budget");
         fs::write(
             root.join("effigy.toml"),
