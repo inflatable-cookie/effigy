@@ -9,6 +9,8 @@ slow-timeout = { period = "180s", terminate-after = 1, grace-period = "2s" }
 # 1 s window failed healthy runs for slow reaping.
 leak-timeout = { period = "30s", result = "fail" }
 global-timeout = "1800s"
+[profile.default.junit]
+path = "qa-junit.xml"
 
 [[profile.default.overrides]]
 # Share the default suite's bounded cold-start class without reserving ordinary

@@ -1,0 +1,6 @@
+<testsuites>
+  <testsuite name="effigy" tests="2">
+    <testcase classname="cli::tests" name="fast_case" time="0.012" />
+    <testcase classname="cli::tests" name="slow_case" time="2.345" />
+  </testsuite>
+</testsuites>

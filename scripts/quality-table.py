@@ -10,6 +10,7 @@ import hashlib
 import re
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
@@ -43,6 +44,183 @@ def rows() -> list[dict[str, str]]:
         with table.open(newline="", encoding="utf-8") as source:
             result.extend(csv.DictReader(source))
     return result
+
+
+def junit_cases(paths: list[Path]) -> list[dict[str, object]]:
+    """Read nextest JUnit files, retaining the source filename as selector."""
+    cases = []
+    for path in paths:
+        root = ET.parse(path).getroot()
+        report_id = root.get("uuid", "")
+        report_time = root.get("timestamp", "")
+        for suite in root.iter("testsuite"):
+            binary = suite.get("name", "unknown")
+            for case in suite.findall("testcase"):
+                try:
+                    seconds = float(case.get("time", ""))
+                except ValueError:
+                    continue
+                cases.append({
+                    "selector": path.stem,
+                    "binary": binary,
+                    "name": case.get("name", ""),
+                    "classname": case.get("classname", ""),
+                    "duration_ms": round(seconds * 1000),
+                    "report_id": report_id,
+                    "report_time": report_time,
+                })
+    return cases
+
+
+def group_filters(config: Path) -> dict[str, list[str]]:
+    """Collect test-name predicates for serialized nextest groups."""
+    def test_patterns(expression: str) -> list[str]:
+        patterns = []
+        cursor = 0
+        while True:
+            start = expression.find("test(", cursor)
+            if start < 0:
+                break
+            depth = 1
+            end = start + len("test(")
+            while end < len(expression) and depth:
+                if expression[end] == "(":
+                    depth += 1
+                elif expression[end] == ")":
+                    depth -= 1
+                end += 1
+            if depth:
+                break
+            item = expression[start + len("test("):end - 1].strip()
+            if item.startswith("/") and item.endswith("/"):
+                patterns.append(item[1:-1])
+            elif item:
+                patterns.append(re.escape(item))
+            cursor = end
+        return patterns
+
+    text = config.read_text(encoding="utf-8")
+    groups: dict[str, list[str]] = {}
+    for block in re.split(r"(?=\[\[profile\.[^\]]+\.overrides\]\])", text):
+        group = re.search(r"test-group\s*=\s*['\"]([^'\"]+)['\"]", block)
+        selected = re.search(r"filter\s*=\s*'([^']*)'", block)
+        if not group or not selected:
+            continue
+        patterns = test_patterns(selected.group(1))
+        groups.setdefault(group.group(1), []).extend(patterns)
+    return groups
+
+
+def group_limits(config: Path) -> dict[str, int]:
+    """Return configured concurrency limits for nextest test groups."""
+    text = config.read_text(encoding="utf-8")
+    limits = {}
+    for match in re.finditer(r"\[test-groups\.([^\]]+)\]([^\[]*)", text):
+        threads = re.search(r"max-threads\s*=\s*(\d+)", match.group(2))
+        if threads:
+            limits[match.group(1)] = int(threads.group(1))
+    return limits
+
+
+def match_quality_row(case: dict[str, object], rated_rows: list[dict[str, str]]) -> str | None:
+    """Bind a JUnit identity to one rated row without guessing between siblings."""
+    classname = str(case["classname"])
+    name = str(case["name"])
+    exact = f"{classname}::{name}" if classname else name
+    normalize = lambda value: value.replace("::tests::", "::")
+    matches = [row["id"] for row in rated_rows if normalize(row["id"]) == normalize(exact)]
+    if len(matches) == 1:
+        return matches[0]
+
+    package = classname.split("::", 1)[0]
+    wanted = normalize(exact).split("::")
+    candidates = [row["id"] for row in rated_rows
+                  if row["id"].startswith(package + "::")]
+    scored = []
+    for candidate in candidates:
+        actual = normalize(candidate).split("::")
+        common = 0
+        for left, right in zip(reversed(wanted), reversed(actual)):
+            if left != right:
+                break
+            common += 1
+        if common:
+            scored.append((common, candidate))
+    if not scored:
+        return None
+    best = max(score for score, _ in scored)
+    best_matches = [candidate for score, candidate in scored if score == best]
+    return best_matches[0] if len(best_matches) == 1 else None
+
+
+def print_durations(paths: list[Path], limit: int, write_tables: bool = True) -> int:
+    cases = junit_cases(paths)
+    if not cases:
+        print("quality-table: no testcase durations found", file=sys.stderr)
+        return 2
+    print(f"JUnit: {len(cases)} testcases from {len(paths)} report(s)")
+    reports = {}
+    for case in cases:
+        if case["report_id"]:
+            reports[str(case["selector"])] = (case["report_id"], case["report_time"])
+    for selector, (report_id, report_time) in sorted(reports.items()):
+        print(f"  source {selector}: {report_id} ({report_time})")
+    print(f"\nTop {limit} slowest tests:")
+    for case in sorted(cases, key=lambda item: int(item["duration_ms"]), reverse=True)[:limit]:
+        print(f"  {int(case['duration_ms']):>9} ms  {case['selector']} / {case['binary']}::{case['name']}")
+    for selector in sorted({str(case["selector"]) for case in cases}):
+        selected = [case for case in cases if case["selector"] == selector]
+        print(f"\nSelector {selector}: {sum(int(case['duration_ms']) for case in selected)} ms total")
+        binaries = sorted({str(case["binary"]) for case in selected})
+        for binary in binaries:
+            members = [case for case in selected if case["binary"] == binary]
+            print(f"  binary {binary}: {sum(int(case['duration_ms']) for case in members)} ms")
+
+    root = ROOT
+    grouped = group_filters(root / ".config/nextest.toml")
+    grouped.update(group_filters(root / "tests/config/kernel-faults-nextest.toml"))
+    grouped.update(group_filters(root / "tests/config/gateway-nextest.toml"))
+    limits = group_limits(root / ".config/nextest.toml")
+    limits.update(group_limits(root / "tests/config/kernel-faults-nextest.toml"))
+    limits.update(group_limits(root / "tests/config/gateway-nextest.toml"))
+    for name, patterns in sorted(grouped.items()):
+        members = [case for case in cases
+                   if any(re.search(pattern, str(case["name"])) for pattern in patterns)]
+        if members:
+            print(f"\nTest group {name}: {sum(int(case['duration_ms']) for case in members)} ms "
+                  f"({len(members)} tests, max threads {limits.get(name, 'unknown')})")
+
+    rated_rows = rows()
+    by_test: dict[str, list[dict[str, str]]] = {}
+    for row in rated_rows:
+        by_test.setdefault(row["id"], []).append(row)
+    updates: dict[str, int] = {}
+    unmatched = 0
+    for case in cases:
+        row_id = match_quality_row(case, rated_rows)
+        if row_id:
+            updates[row_id] = max(updates.get(row_id, 0), int(case["duration_ms"]))
+        else:
+            unmatched += 1
+    for table in sorted(TABLE_DIR.glob("T[1-6].csv")) if write_tables else []:
+        with table.open(newline="", encoding="utf-8") as source:
+            reader = csv.DictReader(source)
+            fields = list(reader.fieldnames or [])
+            table_rows = list(reader)
+        if "duration_ms" not in fields:
+            fields.append("duration_ms")
+        for row in table_rows:
+            if row["id"] in updates:
+                row["duration_ms"] = str(updates[row["id"]])
+            else:
+                row.setdefault("duration_ms", "")
+        with table.open("w", newline="", encoding="utf-8") as destination:
+            writer = csv.DictWriter(destination, fieldnames=fields, lineterminator="\n")
+            writer.writeheader()
+            writer.writerows(table_rows)
+    action = "updated" if write_tables else "would update"
+    print(f"\nQuality tables {action}: {len(updates)} rows; {unmatched} JUnit cases unmatched or ambiguous")
+    return 0
 
 
 # A raw string keeps its braces: `r"..."`, `r#"..."#`, `br#"..."#`, `cr#"..."#`.
@@ -232,7 +410,18 @@ def discover_current() -> tuple[dict[str, str], set[str], int]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--summary", action="store_true", help="print the milestone summary line only")
+    parser.add_argument("--durations", nargs="+", metavar="JUNIT", type=Path,
+                        help="summarize nextest JUnit reports and fill duration_ms")
+    parser.add_argument("--top", type=int, default=50, help="slowest tests to show (default: 50)")
+    parser.add_argument("--report-only", action="store_true", help="summarize without changing CSV tables")
     args = parser.parse_args()
+
+    if args.durations:
+        missing = [path for path in args.durations if not path.is_file()]
+        if missing:
+            print("quality-table: missing JUnit report(s): " + ", ".join(map(str, missing)), file=sys.stderr)
+            return 2
+        return print_durations(args.durations, max(1, args.top), not args.report_only)
 
     rated_rows = rows()
     if not rated_rows:

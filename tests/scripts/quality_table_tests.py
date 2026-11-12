@@ -3,6 +3,7 @@
 
 import importlib.machinery
 import importlib.util
+import subprocess
 from pathlib import Path
 import unittest
 
@@ -107,6 +108,38 @@ class QualityTableTests(unittest.TestCase):
         body = quality_table.rust_function(text, "sample")
         self.assertIn("assert!(true)", body)
         self.assertNotIn("neighbour", body)
+
+    def test_duration_mode_reads_junit_and_orders_slow_tests(self):
+        fixture = Path(__file__).parent / "fixtures/quality-table-junit.xml"
+        result = subprocess.run(
+            ["python3", str(SCRIPT), "--durations", str(fixture), "--report-only", "--top", "1"],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("JUnit: 2 testcases from 1 report(s)", result.stdout)
+        self.assertIn("2345 ms  quality-table-junit / effigy::slow_case", result.stdout)
+        self.assertNotIn("fast_case", result.stdout)
+
+    def test_duration_identity_normalizes_tests_module_and_refuses_ambiguous_leaf(self):
+        row = {"id": "effigy::runner::container_command::tests::creator_evidence::named"}
+        case = {
+            "classname": "effigy",
+            "name": "runner::container_command::reserved_input::creator_evidence::tests::named",
+        }
+        self.assertEqual(quality_table.match_quality_row(case, [row]), row["id"])
+        ambiguous = [
+            {"id": "effigy::left::same"},
+            {"id": "effigy::right::same"},
+        ]
+        self.assertIsNone(
+            quality_table.match_quality_row({"classname": "effigy", "name": "same"}, ambiguous)
+        )
+
+    def test_serialized_group_filters_accept_both_toml_quote_styles(self):
+        groups = quality_table.group_filters(quality_table.ROOT / "tests/config/kernel-faults-nextest.toml")
+        self.assertIn("kernel-fault-drivers", groups)
+        limits = quality_table.group_limits(quality_table.ROOT / "tests/config/kernel-faults-nextest.toml")
+        self.assertEqual(limits["kernel-fault-drivers"], 2)
 
     def test_raw_string_prefixes_and_escape_sequences_are_skipped(self):
         text = (
