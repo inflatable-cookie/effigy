@@ -1168,7 +1168,7 @@ mod guest_isolation_tests {
                     message,
                     "container `dev` mounts two sources at guest path `/workspace/data`; the effective mount set must name each path once"
                 ),
-                other => panic!("expected refusal, got {other:?}"),
+                other => panic!("expected refusal, got {other}"),
             }
             let _ = fs::remove_dir_all(repo_root);
         }

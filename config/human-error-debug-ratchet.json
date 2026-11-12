@@ -5,7 +5,6 @@
     "crates/effigy-builtin/src/init/agent.rs": 1,
     "crates/effigy-builtin/src/init/request.rs": 1,
     "crates/effigy-builtin/src/init/wizard_test_support.rs": 1,
-    "crates/effigy-containers/src/exec/process.rs": 4,
     "crates/effigy-containers/src/policy/inline_workspace.rs": 1,
     "crates/effigy-context/src/lib.rs": 1,
     "crates/effigy-kernel/src/custody.rs": 2,

@@ -297,7 +297,7 @@ mod tests {
                     ),
                     "{name}"
                 ),
-                Err(other) => panic!("{name}: expected the repo-relative refusal, got {other:?}"),
+                Err(other) => panic!("{name}: expected the repo-relative refusal, got {other}"),
             }
         }
     }

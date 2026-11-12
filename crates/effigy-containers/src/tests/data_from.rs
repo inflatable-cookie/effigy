@@ -242,7 +242,7 @@ fn borrowed_volume_names(policy: &EffectiveContainerPolicy) -> Vec<String> {
 /// Run the Colima nerdctl preflight against a fixture root. Fixture checkouts
 /// live under a temp directory, so the Colima host-path preflight is skipped
 /// for the same reason the other mount-budget tests skip it.
-fn with_colima_nerdctl_preflight<T>(run: impl FnOnce() -> T) -> T {
+pub(super) fn with_colima_nerdctl_preflight<T>(run: impl FnOnce() -> T) -> T {
     let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK");
     unsafe {
         std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1");

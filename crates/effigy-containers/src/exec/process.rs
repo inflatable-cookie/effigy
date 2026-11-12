@@ -1528,49 +1528,24 @@ mod tests {
     /// label, no exit code, no output, and the bare timeout text (no child
     /// ran long enough to name a reaped process).
     fn assert_exact_deadline_refusal(error: &ContainerExecError, command: &str) {
-        match error {
-            super::super::implementation::ContainerExecError::Failure {
-                command: actual,
-                code,
-                stdout,
-                stderr,
-            } => {
-                assert_eq!(actual, command);
-                assert_eq!(*code, None);
-                assert!(
-                    stdout.is_empty(),
-                    "a refused deadline leaves no stdout: {stdout:?}"
-                );
-                assert_eq!(stderr, "[effigy] command timed out");
-            }
-            other => panic!("expected deadline refusal, got {other:?}"),
-        }
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "{command} failed (no exit code: the command ended on a signal)\nstdout:\n\nstderr:\n[effigy] command timed out"
+            )
+        );
     }
 
     /// Both capture paths report a deadline kill with the same exact
     /// failure: the caller's label, no exit code, no output, and the full
     /// timeout text naming the reaped child.
     fn assert_exact_timeout_failure(error: &ContainerExecError, command: &str) {
-        match error {
-            super::super::implementation::ContainerExecError::Failure {
-                command: actual,
-                code,
-                stdout,
-                stderr,
-            } => {
-                assert_eq!(actual, command);
-                assert_eq!(*code, None);
-                assert!(
-                    stdout.is_empty(),
-                    "a killed child leaves no stdout: {stdout:?}"
-                );
-                assert_eq!(
-                    stderr,
-                    "[effigy] command timed out after 0s: owned capture child terminated and reaped; stdout/stderr EOF verified"
-                );
-            }
-            other => panic!("expected timeout failure, got {other:?}"),
-        }
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "{command} failed (no exit code: the command ended on a signal)\nstdout:\n\nstderr:\n[effigy] command timed out after 0s: owned capture child terminated and reaped; stdout/stderr EOF verified"
+            )
+        );
     }
 
     #[test]
@@ -1619,23 +1594,10 @@ mod tests {
             Duration::from_secs(1),
         )
         .expect_err("command should fail");
-        match error {
-            super::super::implementation::ContainerExecError::Failure {
-                command,
-                code,
-                stdout,
-                stderr,
-            } => {
-                assert_eq!(command, "stream test");
-                assert_eq!(code, Some(7));
-                assert!(stdout.is_empty());
-                assert_eq!(
-                    stderr,
-                    "[effigy] `stream test` failed after streaming output directly to the terminal"
-                );
-            }
-            other => panic!("expected failure, got {other:?}"),
-        }
+        assert_eq!(
+            error.to_string(),
+            "stream test failed (exit code 7)\nstdout:\n\nstderr:\n[effigy] `stream test` failed after streaming output directly to the terminal"
+        );
     }
 
     #[test]
@@ -1740,7 +1702,7 @@ mod tests {
             super::super::implementation::ContainerExecError::Failure { command, .. } => {
                 assert_eq!(command, "descendant test");
             }
-            other => panic!("expected failure, got {other:?}"),
+            other => panic!("expected failure, got {other}"),
         }
 
         let descendant_pid = fs::read_to_string(&pid_file)
@@ -2277,26 +2239,13 @@ while True:
         let record = fixture
             .path()
             .join(".effigy/runtime/logs/private-failure.compose.log");
-        match error {
-            super::super::implementation::ContainerExecError::Failure {
-                command,
-                code,
-                stdout,
-                stderr,
-            } => {
-                assert_eq!(command, "private detached up");
-                assert_eq!(code, Some(7));
-                assert!(stdout.is_empty());
-                assert_eq!(
-                    stderr,
-                    format!(
-                        "[effigy] detached backend failed (exit code 7); its output was isolated from service writers and retained at {}\n[effigy] backend output tail:\nbuild failed: missing base image",
-                        record.display()
-                    )
-                );
-            }
-            other => panic!("expected the detached failure, got {other:?}"),
-        }
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "private detached up failed (exit code 7)\nstdout:\n\nstderr:\n[effigy] detached backend failed (exit code 7); its output was isolated from service writers and retained at {}\n[effigy] backend output tail:\nbuild failed: missing base image",
+                record.display()
+            )
+        );
 
         // Phase 2: a chatty detached backend retains only its bounded tail.
         let fixture = tempfile::tempdir().expect("fresh bounded record fixture");
@@ -2464,18 +2413,9 @@ time.sleep(60)
             Duration::from_secs(5),
         )
         .expect_err("overflow never success");
-        match error {
-            super::super::implementation::ContainerExecError::Launch { command, error } => {
-                assert_eq!(
-                    command,
-                    "python3 -c import os; os.write(1,b'x'*(1024*1024+8192))"
-                );
-                assert_eq!(
-                    error.to_string(),
-                    "capture exceeded the per-stream retention limit; output is unavailable"
-                );
-            }
-            other => panic!("expected the retention refusal, got {other:?}"),
-        }
+        assert_eq!(
+            error.to_string(),
+            "failed to launch `python3 -c import os; os.write(1,b'x'*(1024*1024+8192))`: capture exceeded the per-stream retention limit; output is unavailable"
+        );
     }
 }

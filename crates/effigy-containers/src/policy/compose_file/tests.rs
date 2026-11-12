@@ -331,7 +331,7 @@ fn migration_plan_requires_a_compose_file_declaration() {
                 "container `dev` does not declare `compose_file`; nothing to migrate"
             );
         }
-        other => panic!("expected refusal, got {other:?}"),
+        other => panic!("expected refusal, got {other}"),
     }
 }
 

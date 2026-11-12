@@ -681,15 +681,10 @@ mod tests {
         let error = facts
             .validate(&process)
             .expect_err("an unknown reference fails at load");
-        match error {
-            ContainerPolicyError::TaskInvocation(message) => {
-                assert_eq!(
-                    message,
-                    "host process `worker` env `DATABASE_URL` uses unknown reference `${service.postgres.portt}`: valid references are `${service.<name>.host}` and `${service.<name>.port}` (services: mailpit, postgres), `${route.<domain>.public_url}` (routes: api.acme.test), `${host_process.<name>.public_url}` and `${host_process.<name>.internal_url}` (host processes: api), `${domains}`, `${apex}` and `${gateway.https_port}`"
-                );
-            }
-            other => panic!("expected refusal, got {other:?}"),
-        }
+        assert_eq!(
+            error.to_string(),
+            "host process `worker` env `DATABASE_URL` uses unknown reference `${service.postgres.portt}`: valid references are `${service.<name>.host}` and `${service.<name>.port}` (services: mailpit, postgres), `${route.<domain>.public_url}` (routes: api.acme.test), `${host_process.<name>.public_url}` and `${host_process.<name>.internal_url}` (host processes: api), `${domains}`, `${apex}` and `${gateway.https_port}`"
+        );
     }
 
     #[test]
@@ -733,15 +728,10 @@ env = { DATABASE_URL = "postgres://app@127.0.0.1:${service.postgress.port}/app" 
         )
         .expect("compose");
         let error = crate::load_container_policy(&root, None).expect_err("the typo fails at load");
-        match error {
-            ContainerPolicyError::TaskInvocation(message) => {
-                assert_eq!(
-                    message,
-                    "host process `api` env `DATABASE_URL` uses unknown reference `${service.postgress.port}`: valid references are `${service.<name>.host}` and `${service.<name>.port}` (services: app), `${route.<domain>.public_url}` (routes: none), `${host_process.<name>.public_url}` and `${host_process.<name>.internal_url}` (host processes: none), `${domains}`, `${apex}` and `${gateway.https_port}`"
-                );
-            }
-            other => panic!("expected refusal, got {other:?}"),
-        }
+        assert_eq!(
+            error.to_string(),
+            "host process `api` env `DATABASE_URL` uses unknown reference `${service.postgress.port}`: valid references are `${service.<name>.host}` and `${service.<name>.port}` (services: app), `${route.<domain>.public_url}` (routes: none), `${host_process.<name>.public_url}` and `${host_process.<name>.internal_url}` (host processes: none), `${domains}`, `${apex}` and `${gateway.https_port}`"
+        );
     }
 
     #[test]
@@ -751,15 +741,10 @@ env = { DATABASE_URL = "postgres://app@127.0.0.1:${service.postgress.port}/app" 
         let error = facts
             .resolve(&process)
             .expect_err("an unclosed reference fails");
-        match error {
-            ContainerPolicyError::TaskInvocation(message) => {
-                assert_eq!(
-                    message,
-                    "host process `worker` env `BROKEN` value `${apex` is not closed with `}`; a reference is `${...}` and `$${` writes a literal `${`: valid references are `${service.<name>.host}` and `${service.<name>.port}` (services: mailpit, postgres), `${route.<domain>.public_url}` (routes: api.acme.test), `${host_process.<name>.public_url}` and `${host_process.<name>.internal_url}` (host processes: api), `${domains}`, `${apex}` and `${gateway.https_port}`"
-                );
-            }
-            other => panic!("expected refusal, got {other:?}"),
-        }
+        assert_eq!(
+            error.to_string(),
+            "host process `worker` env `BROKEN` value `${apex` is not closed with `}`; a reference is `${...}` and `$${` writes a literal `${`: valid references are `${service.<name>.host}` and `${service.<name>.port}` (services: mailpit, postgres), `${route.<domain>.public_url}` (routes: api.acme.test), `${host_process.<name>.public_url}` and `${host_process.<name>.internal_url}` (host processes: api), `${domains}`, `${apex}` and `${gateway.https_port}`"
+        );
     }
 
     #[test]

@@ -303,19 +303,9 @@ fn colima_mount_budgets_refuse_over_budget_payloads() {
         )
         .expect("overlay");
         policy.compose_files.push(overlay);
-        let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK");
-        unsafe {
-            std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1");
-        }
-        let error = with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
+        let error = super::data_from::with_colima_nerdctl_preflight(|| {
             crate::validate_compose_backend_runtime(&root, &policy).expect_err("should fail")
         });
-        match previous {
-            Some(value) => unsafe {
-                std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", value)
-            },
-            None => unsafe { std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK") },
-        }
 
         assert!(matches!(error, ContainerPolicyError::TaskInvocation(_)));
         assert!(
@@ -406,20 +396,10 @@ fn colima_mount_budgets_refuse_over_budget_payloads() {
             "colima-nonmapping-primary-service",
             "services:\n  app: 42\n",
         );
-        let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK");
-        unsafe {
-            std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1");
-        }
-        let malformed = with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
+        let malformed = super::data_from::with_colima_nerdctl_preflight(|| {
             crate::validate_compose_backend_runtime(&root, &policy)
                 .expect_err("a scalar primary service must still refuse")
         });
-        match previous {
-            Some(value) => unsafe {
-                std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", value)
-            },
-            None => unsafe { std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK") },
-        }
         assert!(malformed
             .to_string()
             .contains("primary service definition is not a mapping"));
@@ -444,21 +424,10 @@ fn colima_mount_budgets_refuse_over_budget_payloads() {
 
         let validate_colima = |content: &str| {
             fs::write(root.join("infra/dev/docker-compose.yml"), content).expect("write compose");
-            let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK");
-            unsafe {
-                std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1");
-            }
-            let result = with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
+            super::data_from::with_colima_nerdctl_preflight(|| {
                 let policy = load_container_policy(&root, None).expect("policy");
                 crate::validate_compose_backend_runtime(&root, &policy)
-            });
-            match previous {
-                Some(value) => unsafe {
-                    std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", value)
-                },
-                None => unsafe { std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK") },
-            }
-            result
+            })
         };
 
         let generated_secret_runtime = "services:\n  app:\n    image: example.invalid/synthetic\n    tmpfs:\n      - /run/effigy/secrets\n";

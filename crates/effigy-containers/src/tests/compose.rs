@@ -201,13 +201,10 @@ fn load_prepared_policy(
 /// their own Compose resources: distinct project names and volume sets with
 /// exact project-anchored volume names and OS-assigned ports, stable across
 /// reloads and recreation.
-#[test]
-fn scoped_checkouts_get_distinct_compose_resources_and_source_mounts() {
-    // Phase 1: linked worktrees generate distinct resources and mounts.
-    with_temp_effigy_home("linked-worktree-resources", |_| {
-        let _lock = crate::test_env_lock();
-        let root = temp_repo("linked-worktree-resources");
-        let manifest = r#"
+/// The shared-dev manifest behind the scope-identity proof: one workspace
+/// service with a pinned host port that every checkout scope must translate
+/// to an OS-assigned port.
+const SCOPED_IDENTITY_MANIFEST: &str = r#"
 [containers]
 default = "web"
 [containers.web]
@@ -217,6 +214,14 @@ primary_service = "app"
 catalog = "workspace-rust-bun"
 host_ports = ["41001:41001"]
 "#;
+
+#[test]
+fn scoped_checkouts_get_distinct_compose_resources_and_source_mounts() {
+    // Phase 1: linked worktrees generate distinct resources and mounts.
+    with_temp_effigy_home("linked-worktree-resources", |_| {
+        let _lock = crate::test_env_lock();
+        let root = temp_repo("linked-worktree-resources");
+        let manifest = SCOPED_IDENTITY_MANIFEST;
         let (primary, checkouts) = create_linked_worktree_fixture(&root, manifest, &["one", "two"]);
         let mut policies = Vec::new();
         for (name, checkout) in ["one", "two"].into_iter().zip(&checkouts) {
@@ -265,16 +270,7 @@ host_ports = ["41001:41001"]
     with_temp_effigy_home("ephemeral-clone-resources", |_| {
         let _lock = crate::test_env_lock();
         let root = temp_repo("ephemeral-clone-resources");
-        let manifest = r#"
-[containers]
-default = "web"
-[containers.web]
-project_name = "shared-dev"
-primary_service = "app"
-[containers.web.services.app]
-catalog = "workspace-rust-bun"
-host_ports = ["41001:41001"]
-"#;
+        let manifest = SCOPED_IDENTITY_MANIFEST;
         // The operator's own unmarked checkout keeps primary behavior.
         let operator = root.join("operator");
         fs::create_dir_all(operator.join(".git")).unwrap();
@@ -1327,15 +1323,10 @@ version = "8.3"
         .expect("write manifest");
 
         let error = load_container_policy(&root, None).expect_err("should fail");
-        match error {
-            ContainerPolicyError::TaskInvocation(message) => {
-                assert_eq!(
-                    message,
-                    "container `web` has invalid `host.publish_address` `not-an-ip`: invalid IPv4 address syntax"
-                );
-            }
-            other => panic!("expected refusal, got {other:?}"),
-        }
+        assert_eq!(
+            error.to_string(),
+            "container `web` has invalid `host.publish_address` `not-an-ip`: invalid IPv4 address syntax"
+        );
     });
 }
 
@@ -2109,15 +2100,10 @@ shared = true
         .expect("write manifest");
 
         let error = load_container_policy(&root, None).expect_err("should fail");
-        match error {
-            ContainerPolicyError::TaskInvocation(message) => {
-                assert_eq!(
-                    message,
-                    "service `app` uses unsupported shared catalog `php-fpm`; the bounded shared-service path only supports catalogs that declare `shared_service = true`"
-                );
-            }
-            other => panic!("expected refusal, got {other:?}"),
-        }
+        assert_eq!(
+            error.to_string(),
+            "service `app` uses unsupported shared catalog `php-fpm`; the bounded shared-service path only supports catalogs that declare `shared_service = true`"
+        );
     });
 }
 
@@ -2425,15 +2411,10 @@ catalog = "php-fpm"
     .expect("compose");
 
     let error = load_container_policy(&root, None).expect_err("should fail");
-    match error {
-        ContainerPolicyError::TaskInvocation(message) => {
-            assert_eq!(
-                message,
-                "container `web` cannot combine `compose_file` with `[containers.web.services]`"
-            );
-        }
-        other => panic!("expected refusal, got {other:?}"),
-    }
+    assert_eq!(
+        error.to_string(),
+        "container `web` cannot combine `compose_file` with `[containers.web.services]`"
+    );
 }
 
 #[test]

@@ -146,7 +146,7 @@ mod tests {
     use super::{
         parse_health_check_pidfile_prune, prune_stale_health_check_pidfiles,
         prune_stale_health_check_pidfiles_script_for, HealthCheckPidFilePrune,
-        HEALTHCHECK_PIDFILE_STALE_MINUTES, HEALTHCHECK_TASK_ROOT,
+        HEALTHCHECK_TASK_ROOT,
     };
 
     #[test]
@@ -267,7 +267,11 @@ printf 'before 269091\nafter 907\n'
                 expected_script.as_str(),
             ]
         );
-        assert_eq!(commands.matches("-delete").count(), 1, "one deletion, no retries of it");
+        assert_eq!(
+            commands.matches("-delete").count(),
+            1,
+            "one deletion, no retries of it"
+        );
         assert!(!commands.contains(" rm "), "no rm: {commands}");
     }
 

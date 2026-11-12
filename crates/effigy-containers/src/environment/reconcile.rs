@@ -2818,7 +2818,7 @@ mod tests {
                 error.to_string(),
                 "the run was refused: this environment generation is reserved by a workspace activation; admit the activation through its reservation, or cancel the reservation first; nothing ran; stop what holds it or change the request, then retry"
             ),
-            other => panic!("expected the reservation refusal, got {other:?}"),
+            other => panic!("expected the reservation refusal, got {other}"),
         }
         let run = EnvRun::begin_claimed(&ctx, &stack, Operation::Up, Wait::FailFast, &reservation)
             .expect("claimed admission under the progress probe");

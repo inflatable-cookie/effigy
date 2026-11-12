@@ -1714,7 +1714,7 @@ services:
                     "`containers.*.services.*.config` must stay repo-relative in v1 or resolve under `{{ bundle.root }}`"
                 );
             }
-            other => panic!("expected refusal, got {other:?}"),
+            other => panic!("expected refusal, got {other}"),
         }
     }
 

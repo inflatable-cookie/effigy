@@ -616,7 +616,6 @@ mod legacy_admission_tests {
     use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
 
-    use super::ContainerExecError;
     use super::OwnershipContext;
     use crate::{EffectiveComposeSource, EffectiveContainerPolicy};
     use effigy_manifest::{
@@ -1205,16 +1204,10 @@ mod legacy_admission_tests {
                 serde_json::json!([record]).to_string().as_bytes(),
             )
             .expect_err("an incomplete inspect record is not proof of identity");
-        match error {
-            ContainerExecError::Refusal { command, reason } => {
-                assert_eq!(command, "inspect owned binding");
-                assert_eq!(
-                    reason,
-                    "binding unavailable: canonical container identity is unverified: inspect record missing State.Status"
-                );
-            }
-            other => panic!("expected the inspect refusal, got {other:?}"),
-        }
+        assert_eq!(
+            error.to_string(),
+            "inspect owned binding refused: binding unavailable: canonical container identity is unverified: inspect record missing State.Status"
+        );
     }
 
     #[test]

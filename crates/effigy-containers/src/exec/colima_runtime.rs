@@ -1810,7 +1810,7 @@ esac
                     assert_eq!(stdout, check);
                     assert_eq!(actual, stderr);
                 }
-                other => panic!("expected the status refusal, got {other:?}"),
+                other => panic!("expected the status refusal, got {other}"),
             };
 
         // Phase 1: a profile that stays running refuses recovery, and a
@@ -1861,7 +1861,7 @@ esac
                     "the runtime's own cause reaches the caller: {stderr}"
                 );
             }
-            other => panic!("expected the compose failure, got {other:?}"),
+            other => panic!("expected the compose failure, got {other}"),
         }
         let calls = fixture.calls();
         assert!(
@@ -1967,7 +1967,7 @@ esac
                     )
                 );
             }
-            other => panic!("expected the no-change refusal, got {other:?}"),
+            other => panic!("expected the no-change refusal, got {other}"),
         };
 
         // Phase 1: an absent profile is refused without starting it.
