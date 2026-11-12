@@ -14,9 +14,7 @@ pub(in crate::runner) use super::deadline::{
     verify_guest_artifact_bounded, BoundedReadRefusal,
 };
 pub(in crate::runner) use super::guest_io::observed_identity_on_backend;
-pub(super) use super::permission_prep::{
-    ensure_workspace_permissions_ready, is_dependency_tree_path,
-};
+pub(super) use super::permission_prep::ensure_workspace_permissions_ready;
 pub(super) use super::publication::{
     ensure_workspace_effigy_available_for_policy,
     ensure_workspace_effigy_available_for_policy_bounded, ensure_workspace_provisioning_ready,
