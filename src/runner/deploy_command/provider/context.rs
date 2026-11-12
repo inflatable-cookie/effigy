@@ -3,9 +3,9 @@ use std::path::Path;
 use serde::Serialize;
 use serde_json::{to_value, Value};
 
-use crate::runner::deploy_command::model::DeployModel;
 use super::descriptor::DeployProviderPolicy;
 use super::DeployProviderPackage;
+use crate::runner::deploy_command::model::DeployModel;
 use crate::runner::error::RunnerError;
 
 pub(in crate::runner::deploy_command) struct DeployProviderContextRequest<'a> {

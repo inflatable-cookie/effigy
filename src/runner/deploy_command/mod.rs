@@ -17,7 +17,6 @@ mod report;
 mod status;
 mod text;
 
-
 pub(super) fn run_deploy(args: DeployArgs) -> Result<String, RunnerError> {
     let resolved = resolve_active_repo_root(args.repo_override)?;
 

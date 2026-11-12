@@ -181,9 +181,16 @@ mod tests {
 
     #[test]
     fn a_shared_development_command_is_withheld_from_a_deployed_environment() {
-        let mut service = service("web", "bun x vite dev --host 0.0.0.0", &["web.acme.example"]);
+        let mut service = service(
+            "web",
+            "bun x vite dev --host 0.0.0.0",
+            &["web.acme.example"],
+        );
         let mut provenance = BTreeMap::from([
-            ("services.web.start".to_owned(), PROVENANCE_SHARED.to_owned()),
+            (
+                "services.web.start".to_owned(),
+                PROVENANCE_SHARED.to_owned(),
+            ),
             (
                 "services.web.domains".to_owned(),
                 PROVENANCE_SHARED.to_owned(),
@@ -217,11 +224,13 @@ mod tests {
 
     #[test]
     fn a_development_declaration_is_kept() {
-        let mut service = service("web", "bun x vite dev --host 0.0.0.0", &["web.acme.example"]);
-        let mut provenance = BTreeMap::from([(
-            "services.web.start".to_owned(),
-            "environment".to_owned(),
-        )]);
+        let mut service = service(
+            "web",
+            "bun x vite dev --host 0.0.0.0",
+            &["web.acme.example"],
+        );
+        let mut provenance =
+            BTreeMap::from([("services.web.start".to_owned(), "environment".to_owned())]);
         let mut missing = BTreeSet::new();
 
         suppress_development_values(&mut service, &mut provenance, &mut missing);
@@ -310,8 +319,7 @@ mod tests {
             warnings: Vec::new(),
         };
         assert_eq!(
-            serde_json::to_value(&service)
-                .expect("serialize backing service")["mode"],
+            serde_json::to_value(&service).expect("serialize backing service")["mode"],
             serde_json::Value::String("external".to_owned())
         );
     }

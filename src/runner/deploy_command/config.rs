@@ -287,7 +287,11 @@ mod tests {
                 (*name).to_owned(),
                 toml::from_str(&format!(
                     "provider = \"render\"\nstate = \"{}\"",
-                    if production_state { "production" } else { *name }
+                    if production_state {
+                        "production"
+                    } else {
+                        *name
+                    }
                 ))
                 .expect("decode environment"),
             );
@@ -311,7 +315,9 @@ mod tests {
             .resolve_environment(Some("staging"))
             .expect_err("staging is not declared");
         assert!(
-            error.to_string().contains("available environments: production, uat"),
+            error
+                .to_string()
+                .contains("available environments: production, uat"),
             "got: {error}"
         );
     }
@@ -343,7 +349,9 @@ mod tests {
             .resolve_environment(None)
             .expect_err("two environments are ambiguous");
         assert!(
-            error.to_string().contains("require <ENV>; declared environments: production, uat"),
+            error
+                .to_string()
+                .contains("require <ENV>; declared environments: production, uat"),
             "got: {error}"
         );
     }

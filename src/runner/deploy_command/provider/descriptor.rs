@@ -57,7 +57,9 @@ pub(in crate::runner::deploy_command) struct DeployProviderPolicy {
     pub prints_secret_values: bool,
 }
 
-pub(super) fn read_provider_descriptor(root: &Path) -> Result<DeployProviderDescriptor, RunnerError> {
+pub(super) fn read_provider_descriptor(
+    root: &Path,
+) -> Result<DeployProviderDescriptor, RunnerError> {
     let path = root.join("provider.toml");
     let raw = std::fs::read_to_string(&path).map_err(|error| {
         RunnerError::task_invocation(format!(
@@ -132,7 +134,6 @@ pub(super) fn validate_provider_relative_path(
     )))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -201,7 +202,9 @@ mod tests {
         let error = read_provider_descriptor(root.path())
             .expect_err("an unknown descriptor field is refused, not ignored");
         assert!(
-            error.to_string().contains("failed to parse deploy provider descriptor"),
+            error
+                .to_string()
+                .contains("failed to parse deploy provider descriptor"),
             "got: {error}"
         );
     }

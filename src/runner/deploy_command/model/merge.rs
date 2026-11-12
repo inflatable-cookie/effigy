@@ -555,7 +555,10 @@ mod tests {
                 output: None,
                 port: None,
                 domains: None,
-                env: Some(BTreeMap::from([("API_URL".to_owned(), "https://api.acme.test".to_owned())])),
+                env: Some(BTreeMap::from([(
+                    "API_URL".to_owned(),
+                    "https://api.acme.test".to_owned(),
+                )])),
                 env_unset: None,
                 secret_refs: None,
                 volumes: None,
@@ -577,19 +580,32 @@ mod tests {
         assert_eq!(service.runtime, "bun");
         assert_eq!(service.role, "web");
         assert_eq!(
-            service.env.as_ref().and_then(|env| env.get("API_URL")).map(String::as_str),
+            service
+                .env
+                .as_ref()
+                .and_then(|env| env.get("API_URL"))
+                .map(String::as_str),
             Some("https://api.acme.test")
         );
         assert_eq!(
-            effective.provenance.get("services.web.runtime").map(String::as_str),
+            effective
+                .provenance
+                .get("services.web.runtime")
+                .map(String::as_str),
             Some(PROVENANCE_ENVIRONMENT)
         );
         assert_eq!(
-            effective.provenance.get("services.web.role").map(String::as_str),
+            effective
+                .provenance
+                .get("services.web.role")
+                .map(String::as_str),
             Some(PROVENANCE_SHARED)
         );
         assert_eq!(
-            effective.provenance.get("services.web.env.API_URL").map(String::as_str),
+            effective
+                .provenance
+                .get("services.web.env.API_URL")
+                .map(String::as_str),
             Some(PROVENANCE_ENVIRONMENT)
         );
     }

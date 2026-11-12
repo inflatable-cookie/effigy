@@ -164,7 +164,6 @@ pub(super) fn validate_provider_report_status(
     )))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -194,17 +193,21 @@ mod tests {
     fn a_report_must_name_its_schema_provider_and_phase() {
         let mut wrong_schema = report("export", DeployProviderReportStatus::Succeeded);
         wrong_schema.schema = "effigy.deploy-provider.report.v2".to_owned();
-        assert!(validate_provider_phase_report("acme", "export", &wrong_schema)
-            .expect_err("unsupported schema")
-            .to_string()
-            .contains("has unsupported schema"));
+        assert!(
+            validate_provider_phase_report("acme", "export", &wrong_schema)
+                .expect_err("unsupported schema")
+                .to_string()
+                .contains("has unsupported schema")
+        );
 
         let mut wrong_provider = report("export", DeployProviderReportStatus::Succeeded);
         wrong_provider.provider = "other".to_owned();
-        assert!(validate_provider_phase_report("acme", "export", &wrong_provider)
-            .expect_err("another provider")
-            .to_string()
-            .contains("report declares provider `other`"));
+        assert!(
+            validate_provider_phase_report("acme", "export", &wrong_provider)
+                .expect_err("another provider")
+                .to_string()
+                .contains("report declares provider `other`")
+        );
 
         let phase = report("status", DeployProviderReportStatus::Ok);
         assert!(validate_provider_phase_report("acme", "export", &phase)

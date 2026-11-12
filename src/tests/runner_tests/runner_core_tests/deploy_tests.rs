@@ -2554,7 +2554,8 @@ project_name = "acme"
         "got: {message}"
     );
     assert!(
-        message.contains("`release-tag`, `branch:<branch or rev>`, `tag:<tag>` or `sha:<commit sha>`"),
+        message
+            .contains("`release-tag`, `branch:<branch or rev>`, `tag:<tag>` or `sha:<commit sha>`"),
         "the refusal names the accepted forms: {message}"
     );
 }

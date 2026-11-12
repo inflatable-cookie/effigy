@@ -186,7 +186,10 @@ mod tests {
         }
     }
 
-    fn backing_service(mode: &str, warnings: Option<Vec<DeployWarning>>) -> ManifestDeployModelBackingService {
+    fn backing_service(
+        mode: &str,
+        warnings: Option<Vec<DeployWarning>>,
+    ) -> ManifestDeployModelBackingService {
         ManifestDeployModelBackingService {
             name: "store".to_owned(),
             kind: "object-storage".to_owned(),
@@ -219,7 +222,9 @@ mod tests {
             "got: {message}"
         );
         assert!(
-            message.contains("allowed runtimes: static, node, bun, deno, rust, python, go, php, ruby, java"),
+            message.contains(
+                "allowed runtimes: static, node, bun, deno, rust, python, go, php, ruby, java"
+            ),
             "message should name the whole closed set: {message}"
         );
     }
@@ -247,8 +252,8 @@ mod tests {
 
     #[test]
     fn an_unsupported_backing_mode_is_refused_naming_the_allowed_set() {
-        let error = decode_backing_mode(&backing_service("magic", None))
-            .expect_err("magic is not a mode");
+        let error =
+            decode_backing_mode(&backing_service("magic", None)).expect_err("magic is not a mode");
         let message = error.to_string();
         assert!(
             message.contains("unsupported mode `magic`"),
@@ -273,7 +278,8 @@ mod tests {
             notice.message
         );
         assert!(
-            static_site_approximation_notice(&static_service, ServiceRuntime::Node, false).is_none(),
+            static_site_approximation_notice(&static_service, ServiceRuntime::Node, false)
+                .is_none(),
             "the notice only appears for a declared environment"
         );
         assert!(

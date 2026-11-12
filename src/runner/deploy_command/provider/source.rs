@@ -286,7 +286,6 @@ fn run_git(manifest_root: &Path, cwd: Option<&Path>, args: &[&str]) -> Result<()
     .map(|_| ())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::pinned_rev;

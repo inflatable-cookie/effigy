@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 use effigy_ui::steps::ProgressSource;
 use serde::{Deserialize, Serialize};
 
+use crate::runner::error::RunnerError;
 use descriptor::{
     read_provider_descriptor, validate_capability_paths, validate_provider_name,
     DeployProviderDescriptor,
 };
-use crate::runner::error::RunnerError;
 
 pub(in crate::runner::deploy_command) mod context;
 pub(in crate::runner::deploy_command) mod descriptor;
@@ -183,7 +183,10 @@ fn provider_source_awaiting(url: &str, reference: Option<&str>, rev: Option<&str
 
 /// `resolving deploy provider acme (offline)`: the label says which source
 /// policy is in force, because "offline" explains a cache miss.
-pub(in crate::runner::deploy_command) fn resolving_provider_label(provider_name: &str, fetch: DeployProviderFetch) -> String {
+pub(in crate::runner::deploy_command) fn resolving_provider_label(
+    provider_name: &str,
+    fetch: DeployProviderFetch,
+) -> String {
     let mode = match fetch {
         DeployProviderFetch::Offline => "offline",
         DeployProviderFetch::Online => "online",
@@ -250,7 +253,6 @@ fn resolve_provider_package_inner(
         warnings,
     })
 }
-
 
 #[cfg(test)]
 mod tests {

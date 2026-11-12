@@ -70,8 +70,11 @@ mod tests {
 
     #[test]
     fn a_sha_ref_resolves_without_touching_git() {
-        let resolved = resolve_code_ref(Path::new("."), "sha:0123456789abcdef0123456789abcdef01234567")
-            .expect("a sha names its own commit");
+        let resolved = resolve_code_ref(
+            Path::new("."),
+            "sha:0123456789abcdef0123456789abcdef01234567",
+        )
+        .expect("a sha names its own commit");
         assert_eq!(resolved.kind, "sha");
         assert_eq!(
             resolved.resolved_commit.as_deref(),
@@ -104,7 +107,9 @@ mod tests {
             "got: {message}"
         );
         assert!(
-            message.contains("`release-tag`, `branch:<branch or rev>`, `tag:<tag>` or `sha:<commit sha>`"),
+            message.contains(
+                "`release-tag`, `branch:<branch or rev>`, `tag:<tag>` or `sha:<commit sha>`"
+            ),
             "the refusal names the accepted forms: {message}"
         );
     }

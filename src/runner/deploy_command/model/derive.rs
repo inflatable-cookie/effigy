@@ -9,8 +9,7 @@ use super::production::{
     reserved_local_domains, suppress_development_domains, suppress_development_values,
 };
 use super::vocabulary::{
-    decode_backing_mode, decode_service_runtime, static_site_approximation_notice,
-    ServiceRuntime,
+    decode_backing_mode, decode_service_runtime, static_site_approximation_notice, ServiceRuntime,
 };
 use super::*;
 use crate::runner::error::RunnerError;
@@ -73,13 +72,9 @@ pub(in crate::runner::deploy_command) fn derive_deploy_model(
     let mut services = Vec::with_capacity(effective.model.services.len());
     for service in &mut effective.model.services {
         let runtime = decode_service_runtime(service)?;
-        if let Some(notice) =
-            static_site_approximation_notice(service, runtime, environment_scoped)
+        if let Some(notice) = static_site_approximation_notice(service, runtime, environment_scoped)
         {
-            service
-                .warnings
-                .get_or_insert_with(Vec::new)
-                .push(notice);
+            service.warnings.get_or_insert_with(Vec::new).push(notice);
         }
         let Some(mut derived) = derive_service(repo_root, service, runtime)? else {
             continue;
@@ -193,7 +188,6 @@ pub(in crate::runner::deploy_command) fn derive_deploy_model(
         warnings,
     })
 }
-
 
 fn derive_service(
     repo_root: &Path,
@@ -355,7 +349,6 @@ fn normalize_task_command(command: &str) -> String {
         .to_owned()
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::derive_deploy_model;
@@ -441,9 +434,9 @@ task = "build"
         let error =
             derive_deploy_model(root.path(), None).expect_err("a required task must resolve");
         assert!(
-            error
-                .to_string()
-                .contains("required task `build` is missing or non-command in `app-web/effigy.toml`"),
+            error.to_string().contains(
+                "required task `build` is missing or non-command in `app-web/effigy.toml`"
+            ),
             "got: {error}"
         );
     }

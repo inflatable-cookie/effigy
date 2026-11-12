@@ -4,8 +4,8 @@ use serde_json::json;
 
 use super::config::load_deploy_config;
 use super::model::derive::derive_deploy_model;
-use super::model::*;
 use super::model::production::reserved_local_domains;
+use super::model::*;
 use super::provider::context::{build_provider_context, DeployProviderContextRequest};
 use super::provider::phase::run_provider_export;
 use super::provider::{resolve_provider_package, DeployProviderFetch};

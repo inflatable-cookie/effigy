@@ -5,8 +5,8 @@ use effigy_state::{path_display, safe_path_component};
 
 use serde_json::Value;
 
-use super::config::{ArtifactPolicy, ManifestDeployEnvConfig, ReleasePolicy};
 use super::code_ref::resolve_code_ref;
+use super::config::{ArtifactPolicy, ManifestDeployEnvConfig, ReleasePolicy};
 use super::inputs::deploy_execution_inputs;
 use super::provider::context::{
     build_provider_context, provider_package_policy_blockers, DeployProviderContextRequest,
@@ -58,7 +58,10 @@ fn deployment_id(env: &str, resolved_commit: Option<&str>, started: SystemTime) 
 }
 
 fn seconds_since_epoch(started: SystemTime) -> u64 {
-    started.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+    started
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 fn build_deploy_plan(repo_root: &Path, env: &str) -> Result<DeployPlanReport, RunnerError> {
@@ -129,11 +132,7 @@ fn build_deploy_plan(repo_root: &Path, env: &str) -> Result<DeployPlanReport, Ru
             })
         })
         .collect();
-    let deployment_id = deployment_id(
-        env,
-        code.resolved_commit.as_deref(),
-        SystemTime::now(),
-    );
+    let deployment_id = deployment_id(env, code.resolved_commit.as_deref(), SystemTime::now());
     Ok(DeployPlanReport {
         schema: PLAN_SCHEMA.to_owned(),
         schema_version: 1,
@@ -174,7 +173,6 @@ fn build_deploy_plan(repo_root: &Path, env: &str) -> Result<DeployPlanReport, Ru
         written_history_path: None,
     })
 }
-
 
 fn provider_preflight_report(
     repo_root: &Path,
@@ -331,7 +329,6 @@ pub(super) fn deploy_provider_context(
         plan: false,
     })
 }
-
 
 #[cfg(test)]
 mod tests {

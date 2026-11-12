@@ -255,7 +255,6 @@ fn write_provider_json(path: &Path, value: &Value) -> Result<(), RunnerError> {
     })
 }
 
-
 struct ScopedProviderEnvOverride {
     previous: Vec<(&'static str, Option<String>)>,
 }
@@ -284,7 +283,6 @@ impl Drop for ScopedProviderEnvOverride {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {

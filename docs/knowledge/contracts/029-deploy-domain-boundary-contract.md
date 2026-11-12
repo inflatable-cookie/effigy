@@ -137,3 +137,42 @@ The accepted v0.6.x cleanup shape is:
 This lane deliberately did not create an `effigy-deploy` crate. The split is
 useful, but current deploy internals still depend on runner side effects enough
 that a new crate would be premature.
+
+## Current shape (v0.15, effigy#936)
+
+The v0.6.x map above is history. The modules are now split by vocabulary, so
+each mechanism below has one owner, and the command surface is separate from
+both vocabularies:
+
+- `deploy_command/mod.rs`: the `deploy` dispatch only — one arm per
+  subcommand, naming the module that answers it.
+- `deploy_command/model/` — the managed deployment-model vocabulary:
+  - `mod.rs`: the `deploy.model.v1` output types and warning collection.
+  - `manifest.rs`: the `[deploy.model]` wire shapes, shared and per-environment
+    overrides.
+  - `merge.rs`: per-environment override merging and key provenance.
+  - `derive.rs`: derivation from the effective manifest and child task
+    manifests.
+  - `vocabulary.rs`: the closed `runtime` and backing-service `mode` sets,
+    decoded once into the types the model reports.
+  - `production.rs`: development-value suppression and reserved-local-domain
+    policy.
+- `deploy_command/provider/` — the external provider-package vocabulary:
+  - `mod.rs`: package identity, provenance, and resolution entry point.
+  - `descriptor.rs`: `provider.toml`, capabilities, policy, capability paths.
+  - `source.rs`: path/git source materialization and the shared git cache.
+  - `phase.rs`: Rhai phase invocation, phase workspace, scoped env.
+  - `report.rs`: the phase-report contract and its status vocabulary.
+  - `context.rs`: the context document a phase script reads.
+- `deploy_command/config.rs`: `[deploy]` transaction config (environments,
+  provider selection, release and artifact policy).
+- `deploy_command/inputs.rs`: resolves one environment's config, model and
+  provider package.
+- `deploy_command/plan.rs`, `status.rs`, `export.rs`, `refuse.rs`,
+  `code_ref.rs`: the read/write command surfaces.
+- `deploy_command/report.rs`: report schemas, active/latest/history paths, JSON
+  read/write. Path and display helpers are `effigy_state::paths`', not copies.
+- `deploy_command/text.rs`: human-facing rendering.
+
+Report paths, the JSON schemas and the provider context/report contracts are
+unchanged by the split.
