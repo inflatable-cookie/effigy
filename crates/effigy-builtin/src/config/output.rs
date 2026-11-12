@@ -258,26 +258,30 @@ fn render_inspect_payload(
                 })
             }),
             selected_path,
-            selected_value: selected.map(|entry| {
-                json!({
-                    "path": entry.path,
-                    "source": display_path(&entry.source, target_root),
-                    "value": toml_value_to_json(&entry.value),
-                    "rendered": render_selected_value(&entry.path, &entry.value)
-                        .unwrap_or_else(|_| "<render failed>".to_owned()),
-                    "overrides": entry
-                        .overrides
-                        .iter()
-                        .map(|override_entry| {
-                            json!({
-                                "path": override_entry.path,
-                                "replaced_source": display_path(&override_entry.replaced_source, target_root),
-                                "by_fragment": display_path(&override_entry.by_fragment, target_root),
+            // A value the text form cannot render fails the inspection;
+            // `--json` never reports a placeholder instead.
+            selected_value: selected
+                .as_ref()
+                .map(|entry| {
+                    Ok::<_, BuiltinError>(json!({
+                        "path": entry.path,
+                        "source": display_path(&entry.source, target_root),
+                        "value": toml_value_to_json(&entry.value),
+                        "rendered": render_selected_value(&entry.path, &entry.value)?,
+                        "overrides": entry
+                            .overrides
+                            .iter()
+                            .map(|override_entry| {
+                                json!({
+                                    "path": override_entry.path,
+                                    "replaced_source": display_path(&override_entry.replaced_source, target_root),
+                                    "by_fragment": display_path(&override_entry.by_fragment, target_root),
+                                })
                             })
-                        })
-                        .collect::<Vec<_>>(),
+                            .collect::<Vec<_>>(),
+                    }))
                 })
-            }),
+                .transpose()?,
         }),
     )
 }

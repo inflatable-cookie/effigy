@@ -66,6 +66,26 @@ impl SecretOpProgress {
     }
 }
 
+/// Decrypt the vault under live progress: the slowest secret step, and the
+/// failure a person most needs described.
+pub(in crate::runner) fn decrypt_vault_with_progress(
+    vault_path: &Path,
+    passphrase: &str,
+) -> Result<VaultPlaintextPayload, RunnerError> {
+    let progress = SecretOpProgress::start(PROBE_VAULT_DECRYPT);
+    progress.update(|_| ProgressFrame::new("decrypting vault"));
+    match crate::runner::secret_vault::read_effigy_vault_payload(vault_path, passphrase) {
+        Ok(payload) => {
+            progress.succeed("vault unlocked");
+            Ok(payload)
+        }
+        Err(error) => {
+            progress.fail("could not unlock the vault");
+            Err(error)
+        }
+    }
+}
+
 fn generate_hook_event(generate: &ManifestInlineTaskDefinition) -> String {
     if let Some(task) = generate.task.as_deref() {
         format!("task `{task}`")
@@ -705,9 +725,10 @@ fn run_secrets_export(
     let mut exported = Vec::new();
     for (name, key) in &secrets.keys {
         match payload.records.get(name) {
-            Some(record) => {
-                exported.push((secret_env_name(name), record.value.expose().to_owned()))
-            }
+            Some(record) => exported.push((
+                effigy_manifest::secret_env_name(name),
+                record.value.expose().to_owned(),
+            )),
             None if key.required => missing_required.push(name.clone()),
             None => {}
         }
@@ -981,18 +1002,6 @@ fn dotenv_quote(value: &str) -> String {
         .replace('\n', "\\n")
         .replace('"', "\\\"");
     format!("\"{escaped}\"")
-}
-
-fn secret_env_name(name: &str) -> String {
-    name.chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() {
-                character.to_ascii_uppercase()
-            } else {
-                '_'
-            }
-        })
-        .collect()
 }
 
 fn render_export_result(

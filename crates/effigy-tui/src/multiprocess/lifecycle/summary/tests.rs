@@ -16,10 +16,15 @@ fn a_text_record_projects_every_supervised_entry_honestly() {
     };
     let failed = |detail: &str| SessionEntryState::Failed {
         detail: detail.to_owned(),
+        exit: None,
+    };
+    let failed_with_exit = |detail: &str, exit: i32| SessionEntryState::Failed {
+        detail: detail.to_owned(),
+        exit: Some(exit),
     };
     let cases = [
         ("exit=0", SessionEntryState::Passed),
-        ("exit=7", failed("exit=7")),
+        ("exit=7", failed_with_exit("exit=7", 7)),
         // Only a signal a stop sends says the session ended the entry.
         ("signal=15", stopped("signal=15")),
         ("signal=1", stopped("signal=1")),
@@ -64,7 +69,8 @@ fn format_process_status_names_the_recorded_state() {
     assert_eq!(
         format_process_status(
             &SessionEntryState::Failed {
-                detail: "exit=9".to_owned()
+                detail: "exit=9".to_owned(),
+                exit: Some(9),
             },
             "5s",
             false,
@@ -122,6 +128,7 @@ fn a_failed_entry_names_its_logs_and_a_stopped_entry_does_not() {
             name: "failed".to_owned(),
             state: SessionEntryState::Failed {
                 detail: "exit=1".to_owned(),
+                exit: Some(1),
             },
         },
         SessionEntry {

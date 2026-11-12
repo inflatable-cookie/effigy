@@ -230,7 +230,7 @@ pub(super) fn resolve_container_secret_runtime(
     for (name, key) in container_keys {
         match payload.records.get(name.as_str()) {
             Some(record) => injected.push((
-                container_secret_env_name(name),
+                effigy_manifest::secret_env_name(name),
                 SecretString::new(record.value.expose().to_owned()),
             )),
             None if key.required => missing_required.push(name.to_owned()),
@@ -436,18 +436,6 @@ fn write_file_into_primary_service(
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
     })
-}
-
-fn container_secret_env_name(name: &str) -> String {
-    name.chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() {
-                character.to_ascii_uppercase()
-            } else {
-                '_'
-            }
-        })
-        .collect()
 }
 
 /// Host-side staging for one secret runtime file. Created exclusively with an

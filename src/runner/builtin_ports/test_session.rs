@@ -60,36 +60,28 @@ pub(super) fn source<'p, 'r>(
 struct Entry {
     spec: ProcessSpec,
     process: Option<OwnedProcess>,
-    exit: Option<EntryExit>,
+    exit: Option<SessionEntryState>,
 }
 
-/// How one attempt ended, as this session observed it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum EntryExit {
-    /// The suite itself reported this exit status.
-    Reported(String),
-    /// The session ended the suite: it never reported its own status, so the
-    /// attempt is a cancellation rather than a failure.
-    Stopped,
-}
-
-impl EntryExit {
-    fn record(&self) -> &str {
-        match self {
-            Self::Reported(record) => record,
-            Self::Stopped => "stopped by the session",
-        }
-    }
-
-    fn state(&self) -> SessionEntryState {
-        match self {
-            Self::Reported(record) => SessionEntryState::from_record(record),
-            Self::Stopped => SessionEntryState::Stopped {
-                detail: "stopped by the session".into(),
-            },
-        }
+/// The record the tab shows for one attempt: the state's own detail where it
+/// has one, and the display spell for the states that do not.
+fn exit_record(state: &SessionEntryState) -> String {
+    match state {
+        SessionEntryState::Passed => "exit=0".to_owned(),
+        SessionEntryState::Failed { detail, .. } => detail.clone(),
+        SessionEntryState::Stopped { detail } => detail.clone(),
+        SessionEntryState::NotStarted => "not started".to_owned(),
     }
 }
+
+/// A failure this session observed, with the display record it shows.
+fn failed(detail: impl Into<String>, exit: Option<i32>) -> SessionEntryState {
+    SessionEntryState::Failed {
+        detail: detail.into(),
+        exit,
+    }
+}
+
 struct State<'p, 'r> {
     run: RefMut<'p, &'r mut TaskRun>,
     entries: BTreeMap<String, Entry>,
@@ -202,7 +194,7 @@ impl State<'_, '_> {
             if let Some(name) = self.pending.pop_front() {
                 if let Err(error) = self.start(&name) {
                     self.entries.get_mut(&name).expect("queued suite").exit =
-                        Some(EntryExit::Reported("not started".into()));
+                        Some(SessionEntryState::NotStarted);
                     self.push(event(
                         &name,
                         ProcessEventKind::StartupFailed,
@@ -233,22 +225,15 @@ impl State<'_, '_> {
                     // Stop uses an independent cleanup context, even after a
                     // workload deadline or the invoking terminal is lost.
                     process.stop(&task_engine::cleanup_context(CLEANUP));
-                    entry.exit = Some(EntryExit::Reported("timed out".into()));
+                    entry.exit = Some(failed("timed out", None));
                 } else if let Observed::Verified(exit, _) = process.poll() {
-                    entry.exit = Some(EntryExit::Reported(
-                        match self.run.complete(process, exit) {
-                            Ok(()) => format!("exit={}", exit.code),
-                            Err(error) => format!("unrecorded exit: {error}"),
-                        },
-                    ));
+                    entry.exit = Some(match self.run.complete(process, exit) {
+                        Ok(()) => SessionEntryState::from_exit_code(exit.code),
+                        Err(error) => failed(format!("unrecorded exit: {error}"), Some(exit.code)),
+                    });
                 }
                 if let Some(exit) = &entry.exit {
-                    events.push(event(
-                        name,
-                        ProcessEventKind::Exit,
-                        exit.record().to_owned(),
-                        None,
-                    ));
+                    events.push(event(name, ProcessEventKind::Exit, exit_record(exit), None));
                 }
             }
         }
@@ -274,12 +259,10 @@ impl State<'_, '_> {
         if let Some(process) = entry.process.as_mut() {
             if entry.exit.is_none() {
                 if let Observed::Verified(exit, _) = process.poll() {
-                    entry.exit = Some(EntryExit::Reported(
-                        match self.run.complete(process, exit) {
-                            Ok(()) => format!("exit={}", exit.code),
-                            Err(error) => format!("unrecorded exit: {error}"),
-                        },
-                    ));
+                    entry.exit = Some(match self.run.complete(process, exit) {
+                        Ok(()) => SessionEntryState::from_exit_code(exit.code),
+                        Err(error) => failed(format!("unrecorded exit: {error}"), Some(exit.code)),
+                    });
                 }
             }
             let report = process.stop(cleanup);
@@ -298,21 +281,21 @@ impl State<'_, '_> {
 
                 entry.exit = Some(match report.leader {
                     Observed::Verified(exit, _) => match self.run.complete(process, exit) {
-                        Ok(()) if exit.code == 0 => {
-                            EntryExit::Reported(format!("exit={}", exit.code))
-                        }
+                        Ok(()) if exit.code == 0 => SessionEntryState::from_exit_code(exit.code),
                         Ok(())
                             if report
                                 .signals
                                 .iter()
                                 .any(|sent| exit.code == 128 + sent.signal) =>
                         {
-                            EntryExit::Stopped
+                            SessionEntryState::Stopped {
+                                detail: "stopped by the session".to_owned(),
+                            }
                         }
-                        Ok(()) => EntryExit::Reported(format!("exit={}", exit.code)),
-                        Err(error) => EntryExit::Reported(format!("unrecorded exit: {error}")),
+                        Ok(()) => SessionEntryState::from_exit_code(exit.code),
+                        Err(error) => failed(format!("unrecorded exit: {error}"), Some(exit.code)),
                     },
-                    _ => EntryExit::Reported("unknown exit".into()),
+                    _ => failed("unknown exit", None),
                 });
             }
             if !matches!(report.group, Observed::Verified(..) | Observed::Absent(_))
@@ -328,16 +311,16 @@ impl State<'_, '_> {
                 ));
             }
         } else if entry.exit.is_none() {
-            entry.exit = Some(EntryExit::Reported("not started".into()));
+            entry.exit = Some(SessionEntryState::NotStarted);
         }
         let exit = entry
             .exit
             .clone()
-            .unwrap_or_else(|| EntryExit::Reported("unknown exit".into()));
+            .unwrap_or_else(|| failed("unknown exit", None));
         self.push(event(
             name,
             ProcessEventKind::Exit,
-            exit.record().to_owned(),
+            exit_record(&exit),
             None,
         ));
         self.pending.retain(|pending| pending != name);
@@ -351,7 +334,7 @@ impl State<'_, '_> {
         for name in names {
             if let Err(error) = self.stop_with(&name, &cleanup) {
                 self.entries.get_mut(&name).expect("known suite").exit =
-                    Some(EntryExit::Reported(error.to_string()));
+                    Some(failed(error.to_string(), None));
             }
         }
     }
@@ -440,7 +423,7 @@ impl SessionProcesses for Source<'_, '_> {
                     // The session never started this attempt, so it has no
                     // result to report.
                     None => SessionEntryState::NotStarted,
-                    Some(exit) => exit.state(),
+                    Some(exit) => exit.clone(),
                 };
                 (name.clone(), state)
             })
@@ -504,6 +487,55 @@ mod tests {
             source.entry_states()
         );
     }
+    #[test]
+    fn a_reported_exit_builds_its_state_from_the_observed_code() {
+        // The session holds the exit it verified; the record is rendered from
+        // it for the tab, never decoded back into a status.
+        let passed = SessionEntryState::from_exit_code(0);
+        assert_eq!(exit_record(&passed), "exit=0");
+        assert_eq!(passed, SessionEntryState::Passed);
+
+        let failed_state = SessionEntryState::from_exit_code(7);
+        assert_eq!(exit_record(&failed_state), "exit=7");
+        assert_eq!(
+            failed_state,
+            SessionEntryState::Failed {
+                detail: "exit=7".into(),
+                exit: Some(7),
+            }
+        );
+
+        let unread = failed("timed out", None);
+        assert_eq!(
+            unread,
+            SessionEntryState::Failed {
+                detail: "timed out".into(),
+                exit: None,
+            }
+        );
+        assert_eq!(exit_record(&SessionEntryState::NotStarted), "not started");
+    }
+
+    #[test]
+    fn an_unrecorded_exit_still_carries_the_code_the_session_observed() {
+        // The wait verified a code, but recording it in the run journal failed.
+        // The tab shows the failure record; the attempt is a failure and its
+        // typed code travels with it.
+        let unrecorded = failed("unrecorded exit: journal unavailable", Some(7));
+
+        assert_eq!(
+            exit_record(&unrecorded),
+            "unrecorded exit: journal unavailable"
+        );
+        assert_eq!(
+            unrecorded,
+            SessionEntryState::Failed {
+                detail: "unrecorded exit: journal unavailable".into(),
+                exit: Some(7),
+            }
+        );
+    }
+
     #[test]
     fn input_exit_and_retry_use_the_same_memory_run_without_a_database() {
         let fixture = tempfile::tempdir().expect("private checkout");
@@ -703,7 +735,8 @@ mod tests {
                 vec![(
                     "failed".into(),
                     SessionEntryState::Failed {
-                        detail: "exit=143".into()
+                        detail: "exit=143".into(),
+                        exit: Some(143),
                     }
                 )],
                 "a completed failure is not a cancellation"

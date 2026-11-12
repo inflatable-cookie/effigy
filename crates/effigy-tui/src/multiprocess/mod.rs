@@ -42,7 +42,12 @@ pub enum SessionEntryState {
     Passed,
     /// The entry reported a non-zero exit, or a final state that proves no
     /// successful completion (a wait error, no exit at all).
-    Failed { detail: String },
+    Failed {
+        /// The record the session shows for this attempt.
+        detail: String,
+        /// The exit the entry reported, when it reported one.
+        exit: Option<i32>,
+    },
     /// The session ended the entry: it never reported an exit status of its
     /// own.
     Stopped { detail: String },
@@ -51,10 +56,9 @@ pub enum SessionEntryState {
 }
 
 impl SessionEntryState {
-    /// The state a session recorded as one text record: `exit=0` or another
-    /// `exit=N`, `signal=N`, `not-tracked`/`not started`, or anything else the
-    /// supervisor reported. A session that keeps a typed record reports that
-    /// record instead, so a stop it caused is never read as a failure.
+    /// The state a text record reports (`exit=N`, `signal=N`, `not started`, or
+    /// anything else). The one place a record is decoded; a producer holding
+    /// the typed exit reports [`Self::from_exit_code`] instead.
     pub fn from_record(record: &str) -> Self {
         let record = record.trim();
         if record == "exit=0" {
@@ -73,6 +77,7 @@ impl SessionEntryState {
             } else {
                 Self::Failed {
                     detail: record.to_owned(),
+                    exit: None,
                 }
             };
         }
@@ -81,6 +86,20 @@ impl SessionEntryState {
         }
         Self::Failed {
             detail: record.to_owned(),
+            exit: record
+                .strip_prefix("exit=")
+                .and_then(|value| value.parse::<i32>().ok()),
+        }
+    }
+
+    /// The state for an entry that reported this exit code itself.
+    pub fn from_exit_code(code: i32) -> Self {
+        if code == 0 {
+            return Self::Passed;
+        }
+        Self::Failed {
+            detail: format!("exit={code}"),
+            exit: Some(code),
         }
     }
 }

@@ -126,6 +126,20 @@ pub struct ManifestSecretKeyConfig {
     pub description: Option<String>,
 }
 
+/// The environment name a declared secret or named host process is delivered
+/// under: ASCII alphanumerics upper-cased, other characters underscore.
+pub fn secret_env_name(name: &str) -> String {
+    name.chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ManifestSecretTarget {

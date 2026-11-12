@@ -179,3 +179,38 @@ run = "printf docs"
     assert!(rendered.contains("effigy.docs.toml"));
     assert!(rendered.contains("override = [\"tasks.qa.run\"]"));
 }
+
+/// A selected path renders once, and the text and JSON forms show that one
+/// rendering: `--json` never reports a placeholder the text form would refuse.
+#[test]
+fn run_manifest_task_builtin_config_inspect_json_shares_the_text_rendering() {
+    let root = temp_workspace("builtin-config-inspect-json-rendered");
+    write_root_manifest(
+        &root,
+        r#"
+[tasks.qa]
+run = "printf docs"
+"#,
+    );
+
+    let text = run_builtin_ok(
+        root.clone(),
+        "config",
+        &["--inspect", "--path", "tasks.qa.run"],
+    );
+    let json = run_builtin_ok(
+        root,
+        "config",
+        &["--inspect", "--path", "tasks.qa.run", "--json"],
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("inspect json");
+    let rendered = parsed["selected_value"]["rendered"]
+        .as_str()
+        .expect("rendered selected value");
+
+    assert!(
+        text.contains(rendered),
+        "the JSON rendering is the text form's own rendering\ntext: {text}\njson rendered: {rendered}"
+    );
+    assert!(!json.contains("<render failed>"));
+}

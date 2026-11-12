@@ -359,8 +359,9 @@ impl ManagedContext<'_, '_, '_> {
         }
         // Session vault-once stays on `resolved_root` above. Values for this
         // task still load from the selected catalog's declarations and vault.
-        super::standard::resolve_task_secret_env(
-            super::standard::task_secret_repo_root(self.preflight, self.selection),
+        crate::runner::task_secrets::resolve_task_secret_env(
+            self.preflight
+                .task_execution_root(&self.selection.catalog.catalog_root),
             &self.preflight.secret_targets,
             self.selection.task,
             true,
@@ -418,10 +419,15 @@ fn start_managed_run(
                 // `setup` step is a separate statement in the same script, so
                 // its assignment never reaches the workload's environment and
                 // must not hide an inherited value from it (effigy#431 review).
-                let mut delivered = session_delivered.clone();
-                delivered.extend(process.secret_env.keys().cloned());
-                delivered.extend(process.delivered_env.keys().cloned());
-                for (key, value) in resolver.resolved_inherited_env(&delivered, true)? {
+                let child_keys = process
+                    .secret_env
+                    .keys()
+                    .cloned()
+                    .chain(process.delivered_env.keys().cloned());
+                for (key, value) in resolver
+                    .resolve_delivered_env(&session_delivered, &[], child_keys, true)?
+                    .1
+                {
                     if !resolved.iter().any(|(existing, _)| existing == &key) {
                         resolved.push((key, value));
                     }
@@ -512,7 +518,8 @@ pub(in crate::runner) fn resolve_managed_session_secret_access(
     if crate::runner::secret_session::session_passphrase().is_some() {
         return Ok(());
     }
-    let Some(vault_path) = super::standard::managed_session_vault_path(repo_root)? else {
+    let Some(vault_path) = crate::runner::task_secrets::managed_session_vault_path(repo_root)?
+    else {
         return Ok(());
     };
     let passphrase_env = crate::runner::secret_session::session_secret_passphrase_env();

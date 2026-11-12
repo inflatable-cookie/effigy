@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::runner::managed_run::{self, OwnedRun, WorkloadSpec};
+use crate::runner::task_secrets::resolve_standard_task_secrets;
 use effigy_core::managed_waits::{SessionOrder, WorkloadOrder};
 use std::collections::BTreeMap;
 
@@ -81,14 +82,16 @@ pub(in crate::runner) fn run_reserved_shell(
             secrets = combined.into_iter().collect();
         }
         let mut built = command::build_task_command(preflight, selection, &schema)?;
-        let mut delivered = built.plain_env_keys.clone();
         let mut inherited = Vec::new();
         if let Some(aliases) = built.host_aliases.as_mut() {
             aliases.require_published_in(&preflight.selector.task_name, &built.command)?;
             let pairs = secret_env_slice(&secrets);
-            secrets = aliases.resolved_secret_env(&pairs, &delivered, true)?;
-            delivered.extend(secrets.iter().map(|(key, _)| key.clone()));
-            inherited = aliases.resolved_inherited_env(&delivered, true)?;
+            (secrets, inherited) = aliases.resolve_delivered_env(
+                &built.plain_env_keys,
+                &pairs,
+                std::iter::empty(),
+                true,
+            )?;
         }
         let secret_env = secrets
             .iter()

@@ -167,12 +167,12 @@ fn format_process_status(
             styled_text(theme.muted, elapsed)
         ),
         SessionEntryState::Passed => format!("OK {elapsed}"),
-        SessionEntryState::Failed { detail } if color_enabled => format!(
+        SessionEntryState::Failed { detail, .. } if color_enabled => format!(
             "{} {}",
             styled_text(theme.error, detail),
             styled_text(theme.muted, elapsed)
         ),
-        SessionEntryState::Failed { detail } => format!("{detail} {elapsed}"),
+        SessionEntryState::Failed { detail, .. } => format!("{detail} {elapsed}"),
         SessionEntryState::Stopped { detail } if color_enabled => format!(
             "{} {}",
             styled_text(theme.muted, detail),

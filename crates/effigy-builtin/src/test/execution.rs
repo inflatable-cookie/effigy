@@ -173,12 +173,10 @@ fn suite_result(
 
     let (outcome, code) = match state {
         Some(SessionEntryState::Passed) => (BuiltinTestOutcome::Passed, Some(0)),
-        Some(SessionEntryState::Failed { detail }) => {
-            let code = detail
-                .strip_prefix("exit=")
-                .and_then(|value| value.parse::<i32>().ok());
-            (BuiltinTestOutcome::Failed, code)
-        }
+        // The session carries the exit the suite reported. A failure it could
+        // not read a status for (a timeout, an unreadable wait) names none, and
+        // the display record is never parsed back into a code.
+        Some(SessionEntryState::Failed { exit, .. }) => (BuiltinTestOutcome::Failed, *exit),
         Some(SessionEntryState::Stopped { .. }) => (BuiltinTestOutcome::Cancelled, None),
         Some(SessionEntryState::NotStarted) | None => (BuiltinTestOutcome::NotStarted, None),
     };
@@ -1214,6 +1212,35 @@ mod tests {
 
     use effigy_tui::multiprocess::{MultiProcessTuiOutcome, SessionEntry, SessionEntryState};
 
+    /// A failed suite's code is the exit the session observed, not something
+    /// re-read from the display record: a verified exit whose journal record
+    /// failed still names its code, and a failure with no observed status names
+    /// none.
+    #[test]
+    fn a_failed_suite_carries_the_exit_the_session_observed() {
+        let fixture = tempfile::tempdir().expect("fixture");
+
+        let unrecorded = suite_result(
+            named_suite(fixture.path(), "one"),
+            Some(&SessionEntryState::Failed {
+                detail: "unrecorded exit: journal unavailable".to_owned(),
+                exit: Some(7),
+            }),
+        );
+        assert_eq!(unrecorded.outcome, BuiltinTestOutcome::Failed);
+        assert_eq!(unrecorded.code, Some(7));
+
+        let unread = suite_result(
+            named_suite(fixture.path(), "two"),
+            Some(&SessionEntryState::Failed {
+                detail: "timed out".to_owned(),
+                exit: None,
+            }),
+        );
+        assert_eq!(unread.outcome, BuiltinTestOutcome::Failed);
+        assert_eq!(unread.code, None);
+    }
+
     fn named_suite(root: &Path, name: &str) -> BuiltinTestRunnable {
         let mut runnable = suite(root, "printf suite", BuiltinTargetRuntime::Host);
         runnable.name = name.to_owned();
@@ -1300,6 +1327,7 @@ mod tests {
                         "two",
                         SessionEntryState::Failed {
                             detail: "exit=7".to_owned(),
+                            exit: Some(7),
                         },
                     ),
                 ],
@@ -1441,6 +1469,7 @@ mod tests {
         };
         let failed = SessionEntryState::Failed {
             detail: "exit=7".to_owned(),
+            exit: Some(7),
         };
         let cases = [
             (

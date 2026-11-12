@@ -278,6 +278,25 @@ impl HostAliasResolver {
         Ok(resolved)
     }
 
+    /// Resolve what one host child delivers: its secrets and inherited values,
+    /// each declared alias resolved once.
+    pub(in crate::runner) fn resolve_delivered_env(
+        &mut self,
+        plain: &BTreeSet<String>,
+        secrets: &[(&str, &SecretString)],
+        child_keys: impl IntoIterator<Item = String>,
+        verify: bool,
+    ) -> Result<DeliveredEnv, RunnerError> {
+        let secret_env = self.resolved_secret_env(secrets, plain, verify)?;
+        let delivered = plain
+            .iter()
+            .cloned()
+            .chain(child_keys)
+            .chain(secret_env.iter().map(|(key, _)| key.clone()))
+            .collect::<BTreeSet<_>>();
+        Ok((secret_env, self.resolved_inherited_env(&delivered, verify)?))
+    }
+
     /// Prove every alias a rendered session command names before the session
     /// starts: a managed plan bakes its environment into the command string, so
     /// the check reads the rendered text.
@@ -507,6 +526,8 @@ pub(in crate::runner) fn resolve_host_env_inherited(
     let _ = label;
     Ok(resolved)
 }
+
+type DeliveredEnv = (Vec<(String, SecretString)>, Vec<(String, String)>);
 
 /// Borrow resolved secret pairs for a spawn.
 pub(in crate::runner) fn secret_env_slice(

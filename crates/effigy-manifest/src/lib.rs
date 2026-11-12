@@ -50,8 +50,8 @@ pub use composition::{
     ManifestCompositionEdge, ManifestCompositionOverride, ManifestCompositionValueSource,
 };
 pub use config_sections::{
-    load_committed_docs_policy_sources, ManifestBootstrapConfig, ManifestBundleBase,
-    ManifestBundleConfig, ManifestCatalogSourceConfig, ManifestContainerConfig,
+    load_committed_docs_policy_sources, secret_env_name, ManifestBootstrapConfig,
+    ManifestBundleBase, ManifestBundleConfig, ManifestCatalogSourceConfig, ManifestContainerConfig,
     ManifestContainerDataConfig, ManifestContainerDnsConfig, ManifestContainerDnsDomainDefaults,
     ManifestContainerDnsRouteConfig, ManifestContainerDriver, ManifestContainerExecAliasConfig,
     ManifestContainerExecAliasTableConfig, ManifestContainerHostConfig, ManifestContainerHostMount,
@@ -756,16 +756,7 @@ fn validate_host_processes(
                 ),
             });
         }
-        let dependency_env_name = trimmed_name
-            .chars()
-            .map(|character| {
-                if character.is_ascii_alphanumeric() {
-                    character.to_ascii_uppercase()
-                } else {
-                    '_'
-                }
-            })
-            .collect::<String>();
+        let dependency_env_name = secret_env_name(trimmed_name);
         if !dependency_env_names.insert(dependency_env_name) {
             return Err(ManifestError::Compose {
                 path: manifest_path.to_path_buf(),
