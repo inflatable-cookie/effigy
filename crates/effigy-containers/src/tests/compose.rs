@@ -217,7 +217,6 @@ host_ports = ["41001:41001"]
 
 #[test]
 fn scoped_checkouts_get_distinct_compose_resources_and_source_mounts() {
-    let _lock = crate::test_env_lock();
     // Phase 1: linked worktrees generate distinct resources and mounts.
     with_temp_effigy_home("linked-worktree-resources", |_| {
         let _lock = crate::test_env_lock();
@@ -568,7 +567,6 @@ fn assert_scope_token_shared(project_name: &str, project_prefix: &str, scoped: &
 /// and a fresh worktree mints its scope on first use.
 #[test]
 fn linked_worktrees_keep_distinct_dns_identity_per_scope() {
-    let _lock = crate::test_env_lock();
     // Phase 1: worktrees get distinct effective hosts; primary keeps declared.
     with_temp_effigy_home("linked-worktree-hosts", |_| {
         let _lock = crate::test_env_lock();
@@ -2204,7 +2202,6 @@ shared = true
 
 #[test]
 fn runtime_dns_overrides_carry_resolvers_aliases_and_gateways() {
-    let _lock = crate::test_env_lock();
     // Phase 1: direct compose carries the exact resolver list and invents
     // no route hosts.
     {

@@ -259,7 +259,6 @@ primary_service = "app"
 /// and two containers that must not collide.
 #[test]
 fn colima_mount_budgets_refuse_over_budget_payloads() {
-    let _lock = crate::test_env_lock();
     // Phase 1: a direct-compose mount payload over budget is refused, with
     // path-free contributors, while Docker is unaffected.
     {
