@@ -973,7 +973,8 @@ pub struct LiveOutput {
 ///
 /// `None` when this terminal cannot show one: piped, CI, `--json`, a managed
 /// pane or a capturing test keeps the caller's existing plain or JSON output.
-/// `log` is the file the producer's complete stream is retained in.
+/// `log` is the retained backend record the producer's stream is written to:
+/// its last 64 KiB, with a visible marker when earlier output was dropped.
 pub fn live_output(source: ProgressSource, log: Option<&Path>) -> Option<LiveOutput> {
     if !streams_output() {
         return None;
@@ -1063,7 +1064,9 @@ impl LiveOutput {
 
     fn note_log(&self) {
         if let Some(log) = &self.log {
-            self.note(&format!("full output: {}", log.display()));
+            // The record is bounded (#277): name what it actually holds rather
+            // than promising a complete stream it may have trimmed (effigy#925).
+            self.note(&format!("output log (last 64 KiB): {}", log.display()));
         }
     }
 
@@ -1742,7 +1745,7 @@ mod tests {
         live.succeed("The stack is up");
         let text = buffer.text();
         assert!(
-            text.starts_with(&format!("full output: {}\n", log.display())),
+            text.starts_with(&format!("output log (last 64 KiB): {}\n", log.display())),
             "{text}"
         );
         let ending = text.lines().last().expect("the stage's own line");
@@ -1816,7 +1819,7 @@ mod tests {
         assert!(text.contains("runtime line 39"), "{text}");
         assert!(!text.contains("runtime line 9\n"), "{text}");
         assert!(
-            text.contains(&format!("full output: {}\n", log.display())),
+            text.contains(&format!("output log (last 64 KiB): {}\n", log.display())),
             "{text}"
         );
         let ending = lines.last().expect("the failure line");

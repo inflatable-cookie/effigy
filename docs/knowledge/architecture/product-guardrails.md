@@ -56,8 +56,11 @@ when the real cause was two named services failing their health checks.
   the colima output - there's multiple pages of it". The producer's own lines
   draw as a rolling window of about seven width-truncated lines under its
   stage line, rewritten in place, and collapse into that stage's timed finish
-  line when the work succeeds (effigy#925). The complete stream stays in the
-  run's retained backend log and its path is printed once, dim. A failure
+  line when the work succeeds (effigy#925). The runtime's own stream is kept
+  in the run's retained backend log: #277's 64 KiB bound with its `earlier
+  backend output was dropped` marker stands (planner ruling 2026-11-12), so the
+  record is a bounded tail and never claims to be a complete log. Its path is
+  printed once, dim, as `output log (last 64 KiB): <path>`. A failure
   prints the last ~30 lines and that path, then one failure sentence: the tail
   carries the detail, so a multi-line error keeps its first line. A runtime's
   known capability warnings are counted, never echoed - nerdctl's structured

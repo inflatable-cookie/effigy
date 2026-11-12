@@ -776,7 +776,7 @@ fn run_container_up_compose(
     // runtime line it read, so a runtime whose progress this parser does not
     // recognise still shows what it is waiting for (effigy#460, Q-017).
     let progress = activation_source(&plan.up_plan.label, &plan.policy.name);
-    // The complete stream stays in the backend record; the terminal gets a
+    // The backend record keeps the stream's last bytes; the terminal gets a
     // bounded window of its latest lines and the record's path (effigy#925).
     let log = effigy_containers::exec::retained_backend_log_path(
         &plan.policy.repo_root,
