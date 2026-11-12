@@ -427,6 +427,49 @@ run = "printf %s \"$DATABASE_URL\""
 }
 
 #[test]
+#[cfg(unix)]
+fn run_dev_surfaces_an_unusable_local_dev_key_instead_of_asking_to_upgrade() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = temp_workspace("dev-vault-secret-unsafe-local-key");
+    write_root_manifest(
+        &root,
+        r#"
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+
+[secrets.keys.database_url]
+required = true
+targets = ["tasks"]
+
+[tasks.dev]
+run = "printf %s \"$DATABASE_URL\""
+"#,
+    );
+    write_test_vault_with_local_dev_unlock(
+        &root,
+        "vault-passphrase",
+        &[("database_url", "postgres://secret-value")],
+    );
+    // A key that exists but is readable by other users is a real failure, not
+    // the "this machine has no local-dev key yet" state an interactive upgrade
+    // answers. Resolving it must say what is wrong with the key.
+    let key_path = local_dev_unlock_key_path(&root.join(".effigy/secrets/local.vault"));
+    fs::set_permissions(&key_path, fs::Permissions::from_mode(0o644))
+        .expect("make the local-dev key readable beyond its owner");
+    let _env = EnvGuard::set_many(&[
+        ("EFFIGY_TEST_SECRETS_PASSPHRASE", None),
+        ("EFFIGY_INTERNAL_SECRET_PASSPHRASE", None),
+    ]);
+
+    let err = run_task(&root, "dev", &[]).expect_err("an unsafe local-dev key must refuse");
+    assert_task_invocation_error_contains(err, &["readable by other users", "effigy secrets lock"]);
+}
+
+#[test]
 fn run_manifest_task_blocks_missing_required_vault_secret_before_spawn() {
     let root = temp_workspace("task-vault-secret-missing");
     let marker = root.join("should-not-run.out");

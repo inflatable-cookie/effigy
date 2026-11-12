@@ -42,7 +42,15 @@ pub enum SessionEntryState {
     Passed,
     /// The entry reported a non-zero exit, or a final state that proves no
     /// successful completion (a wait error, no exit at all).
-    Failed { detail: String },
+    Failed {
+        /// The record the session shows for this attempt.
+        detail: String,
+        /// The exit code the entry itself reported, when the session observed
+        /// one. A failure with no observed status (a timeout, an unreadable
+        /// wait) carries none; a consumer never has to read the display record
+        /// to learn it.
+        exit: Option<i32>,
+    },
     /// The session ended the entry: it never reported an exit status of its
     /// own.
     Stopped { detail: String },
@@ -55,6 +63,10 @@ impl SessionEntryState {
     /// `exit=N`, `signal=N`, `not-tracked`/`not started`, or anything else the
     /// supervisor reported. A session that keeps a typed record reports that
     /// record instead, so a stop it caused is never read as a failure.
+    ///
+    /// This is the one place a display record is decoded. A producer that
+    /// already holds the typed exit attaches it with [`Self::with_exit`]
+    /// instead of formatting it into a record for a consumer to parse back.
     pub fn from_record(record: &str) -> Self {
         let record = record.trim();
         if record == "exit=0" {
@@ -73,6 +85,7 @@ impl SessionEntryState {
             } else {
                 Self::Failed {
                     detail: record.to_owned(),
+                    exit: None,
                 }
             };
         }
@@ -81,6 +94,43 @@ impl SessionEntryState {
         }
         Self::Failed {
             detail: record.to_owned(),
+            exit: record
+                .strip_prefix("exit=")
+                .and_then(|value| value.parse::<i32>().ok()),
+        }
+    }
+
+    /// The state a session recorded for an entry that reported this exit code
+    /// itself, with no record to decode.
+    pub fn from_exit_code(code: i32) -> Self {
+        if code == 0 {
+            return Self::Passed;
+        }
+        Self::Failed {
+            detail: format!("exit={code}"),
+            exit: Some(code),
+        }
+    }
+
+    /// The exit code this entry reported, when the session observed one. A
+    /// cancelled or never-started entry has none of its own.
+    pub fn exit_code(&self) -> Option<i32> {
+        match self {
+            Self::Failed { exit, .. } => *exit,
+            _ => None,
+        }
+    }
+
+    /// Carry a typed exit the producer observed onto a failure state, so a
+    /// consumer reads it instead of the display record. A state that already
+    /// holds one, or that is not a failure, keeps its own verdict.
+    pub fn with_exit(self, code: Option<i32>) -> Self {
+        match (self, code) {
+            (Self::Failed { detail, exit: None }, Some(code)) => Self::Failed {
+                detail,
+                exit: Some(code),
+            },
+            (state, _) => state,
         }
     }
 }

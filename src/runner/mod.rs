@@ -55,6 +55,7 @@ mod state_command;
 mod state_command_artifact;
 mod state_command_render;
 mod task_engine;
+mod task_secrets;
 mod tasks_command;
 #[cfg(test)]
 mod test_support;

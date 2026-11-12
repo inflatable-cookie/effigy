@@ -198,7 +198,7 @@ fn resolve_tree_from(
             &preflight.selector.task_name,
         )?
         && !(selection.task.uses_scratch() && crate::runner::scratch::wanted())
-        && !super::pipeline::standard::startup_can_run_vault_generate_hook(preflight, selection)?;
+        && !crate::runner::task_secrets::startup_can_run_vault_generate_hook(preflight, selection)?;
     ancestors.push(identity);
     let result = match selection.task.run.as_ref() {
         Some(ManifestManagedRun::Command(command)) => resolve_steps(
@@ -369,25 +369,25 @@ fn run_steps(
         }
         // A step whose own environment delivers a key wins over a secret of
         // the same name, so that secret is neither delivered again nor proved
-        // (effigy#431 review).
+        // (effigy#431 review). The alias owner resolves the delivered
+        // environment, so no step, host run or session keeps its own copy.
         let mut step_secrets: Option<Vec<(String, SecretString)>> = None;
-        let mut delivered = step_env.keys().cloned().collect::<BTreeSet<_>>();
-        if let (Some(resolver), Some(pairs)) = (host_aliases.as_mut(), secrets) {
-            step_secrets = Some(resolver.resolved_secret_env(pairs, &delivered, true)?);
-        }
-        delivered.extend(
-            secrets
-                .unwrap_or_default()
-                .iter()
-                .map(|(key, _)| (*key).to_owned()),
-        );
-        // A value this step would inherit unchanged is resolved and proved too.
-        let inherited = match host_aliases.as_mut() {
-            Some(resolver) => resolver.resolved_inherited_env(&delivered, true)?,
-            None => Vec::new(),
+        let delivered = match host_aliases.as_mut() {
+            Some(resolver) => Some(resolver.resolve_delivered_env(
+                &step_env.keys().cloned().collect::<BTreeSet<_>>(),
+                secrets.unwrap_or_default(),
+                std::iter::empty(),
+                true,
+            )?),
+            None => None,
         };
-        for (key, value) in inherited {
-            step_env.entry(key).or_insert(value);
+        if let Some(env) = delivered {
+            if secrets.is_some() {
+                step_secrets = Some(env.secret_env);
+            }
+            for (key, value) in env.inherited {
+                step_env.entry(key).or_insert(value);
+            }
         }
         let (label, timeout) = match &step {
             ManifestManagedRunStep::Command(_) => ((index + 1).to_string(), None),

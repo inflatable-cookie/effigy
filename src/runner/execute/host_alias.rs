@@ -278,6 +278,34 @@ impl HostAliasResolver {
         Ok(resolved)
     }
 
+    /// Every host run resolves what it delivers in one place: the secret
+    /// values it hands a child (with their declared aliases resolved) and the
+    /// values that child would otherwise inherit unchanged. A caller decides
+    /// what it renders; the resolution itself never has a second copy.
+    ///
+    /// `plain` is the key set the child's own rendered environment already
+    /// delivers, `secrets` the raw secret values this child delivers, and
+    /// `child_keys` the further keys the child's declaration adds (a managed
+    /// workload's own `env`, its exec markers). A key any of those delivers is
+    /// neither resolved a second time nor proved as inherited.
+    pub(in crate::runner) fn resolve_delivered_env(
+        &mut self,
+        plain: &BTreeSet<String>,
+        secrets: &[(&str, &SecretString)],
+        child_keys: impl IntoIterator<Item = String>,
+        verify: bool,
+    ) -> Result<DeliveredEnv, RunnerError> {
+        let secret_env = self.resolved_secret_env(secrets, plain, verify)?;
+        let mut delivered = plain.clone();
+        delivered.extend(child_keys);
+        delivered.extend(secret_env.iter().map(|(key, _)| key.clone()));
+        let inherited = self.resolved_inherited_env(&delivered, verify)?;
+        Ok(DeliveredEnv {
+            secret_env,
+            inherited,
+        })
+    }
+
     /// Prove every alias a rendered session command names before the session
     /// starts: a managed plan bakes its environment into the command string, so
     /// the check reads the rendered text.
@@ -506,6 +534,14 @@ pub(in crate::runner) fn resolve_host_env_inherited(
     let resolved = resolver.resolved_inherited_env(delivered, true)?;
     let _ = label;
     Ok(resolved)
+}
+
+/// What one host child receives beyond the plain environment it renders:
+/// the secret values it delivers, and the values it would otherwise inherit
+/// unchanged. Both are resolved, so a caller only decides what to render.
+pub(in crate::runner) struct DeliveredEnv {
+    pub(in crate::runner) secret_env: Vec<(String, SecretString)>,
+    pub(in crate::runner) inherited: Vec<(String, String)>,
 }
 
 /// Borrow resolved secret pairs for a spawn.

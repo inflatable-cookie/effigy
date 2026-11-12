@@ -16,6 +16,7 @@ mod nested;
 mod pipeline;
 #[path = "execute/planning.rs"]
 mod planning;
+pub(in crate::runner) use preflight::ExecutionPreflight;
 #[path = "execute/preflight.rs"]
 mod preflight;
 #[path = "execute/process_run.rs"]

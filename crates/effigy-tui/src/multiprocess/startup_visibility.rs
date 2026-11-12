@@ -267,7 +267,8 @@ fn run_child_case(case: &str, root: &Path) {
                 outcome.entries.contains(&super::SessionEntry {
                     name: "failed".to_owned(),
                     state: super::SessionEntryState::Failed {
-                        detail: "exit=7".to_owned()
+                        detail: "exit=7".to_owned(),
+                        exit: Some(7),
                     },
                 }),
                 "a failed entry keeps its own exit: {:?}",

@@ -70,7 +70,7 @@ struct Shared {
     /// and live canonical logs from their own supervisors.
     hosts: BTreeMap<String, HostFollower>,
     queue: VecDeque<ProcessEvent>,
-    exits: BTreeMap<String, String>,
+    exits: BTreeMap<String, SessionEntryState>,
     startup_finished: bool,
     closed: Option<Closed>,
     stop: StopSender,
@@ -159,7 +159,8 @@ impl Shared {
                         // Bytes written before the exit reach the tab first.
                         self.read_logs();
                         let payload = format!("exit={code}");
-                        self.exits.insert(process.clone(), payload.clone());
+                        self.exits
+                            .insert(process.clone(), SessionEntryState::from_exit_code(code));
                         self.queue
                             .push_back(event(&process, ProcessEventKind::Exit, &payload));
                     }
@@ -378,13 +379,13 @@ impl SessionProcesses for RunSource {
     }
 
     fn entry_states(&self) -> Vec<(String, SessionEntryState)> {
-        // The run's own engine reports an entry's exit as one record; the
-        // shell processes this client supervises report theirs.
+        // The run's own engine reports an entry's exit as the typed code it
+        // recorded; the shell processes this client supervises report theirs.
         let mut entries = self
             .shared()
             .exits
             .iter()
-            .map(|(name, payload)| (name.clone(), SessionEntryState::from_record(payload)))
+            .map(|(name, state)| (name.clone(), state.clone()))
             .collect::<Vec<_>>();
         if let Some(shells) = &self.shells {
             entries.extend(shells.entry_states());

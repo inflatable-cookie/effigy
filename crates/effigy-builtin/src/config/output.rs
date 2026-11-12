@@ -193,7 +193,18 @@ fn render_inspect_payload(
         .as_deref()
         .map(|path| inspect_selected_path(&loaded, path, &manifest_path))
         .transpose()?;
-    let text = render_manifest_inspection(target_root, &loaded, selected.as_ref())?;
+    // One rendering of the selected value feeds both surfaces: a value the
+    // text form cannot render must fail the inspection, not print a
+    // placeholder that would make `--json` disagree with the text form.
+    let selected_rendered = selected
+        .as_ref()
+        .map(|entry| render_selected_value(&entry.path, &entry.value))
+        .transpose()?;
+    let text = render_manifest_inspection(
+        target_root,
+        &loaded,
+        selected_view(selected.as_ref(), selected_rendered.as_deref()),
+    )?;
     let evaluation_order = loaded
         .evaluation_order
         .iter()
@@ -258,13 +269,12 @@ fn render_inspect_payload(
                 })
             }),
             selected_path,
-            selected_value: selected.map(|entry| {
-                json!({
+            selected_value: match (selected.as_ref(), selected_rendered.as_deref()) {
+                (Some(entry), Some(rendered)) => Some(json!({
                     "path": entry.path,
                     "source": display_path(&entry.source, target_root),
                     "value": toml_value_to_json(&entry.value),
-                    "rendered": render_selected_value(&entry.path, &entry.value)
-                        .unwrap_or_else(|_| "<render failed>".to_owned()),
+                    "rendered": rendered,
                     "overrides": entry
                         .overrides
                         .iter()
@@ -276,8 +286,9 @@ fn render_inspect_payload(
                             })
                         })
                         .collect::<Vec<_>>(),
-                })
-            }),
+                })),
+                _ => None,
+            },
         }),
     )
 }
@@ -579,10 +590,22 @@ impl ConfigPayload {
     }
 }
 
+/// A selected path and the one rendering of its value both surfaces show.
+/// They are resolved together, so a value that cannot be rendered never
+/// reaches either form.
+type SelectedView<'a> = Option<(&'a SelectedInspectValue, &'a str)>;
+
+fn selected_view<'a>(
+    selected: Option<&'a SelectedInspectValue>,
+    rendered: Option<&'a str>,
+) -> SelectedView<'a> {
+    selected.zip(rendered)
+}
+
 fn render_manifest_inspection(
     target_root: &Path,
     loaded: &effigy_manifest::LoadedTaskManifest,
-    selected: Option<&SelectedInspectValue>,
+    selected: SelectedView<'_>,
 ) -> Result<String, BuiltinError> {
     let mut out = String::new();
     out.push_str("Manifest Composition\n");
@@ -646,7 +669,7 @@ fn render_manifest_inspection(
         out.push('\n');
     }
 
-    if let Some(selected) = selected {
+    if let Some((selected, rendered)) = selected {
         out.push_str("Selected Path\n");
         out.push_str("-------------\n");
         out.push_str(&format!("Path: {}\n", selected.path));
@@ -671,7 +694,7 @@ fn render_manifest_inspection(
 
         out.push_str("Selected Value\n");
         out.push_str("--------------\n");
-        out.push_str(&render_selected_value(&selected.path, &selected.value)?);
+        out.push_str(rendered);
         if !out.ends_with('\n') {
             out.push('\n');
         }
