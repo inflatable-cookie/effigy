@@ -15,8 +15,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 TABLE_DIR = ROOT / "docs/knowledge/quality/tests"
-RATED_COMMIT = "5db5437b48de595c5a597036da4c7013ef658b74"
-EXPECTED_ROWS = {"T1": 1306, "T2": 623, "T3": 858, "T4": 1793, "T5": 1857, "T6": 1264}
+RATED_COMMIT = "7a502af038b7fbc4889d6484ea78deb25c7daac5"
+EXPECTED_ROWS = {"T1": 1305, "T2": 623, "T3": 858, "T4": 1793, "T5": 1857, "T6": 1264}
 _GIT_CACHE: dict[tuple[str, str], str | None] = {}
 
 
