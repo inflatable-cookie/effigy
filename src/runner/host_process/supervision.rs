@@ -443,7 +443,6 @@ fn supervise_plain_host_process(
         wait_for_host_child(&mut child, spec, &dependency_generations, &mut stop)?
     };
     let stopping = matches!(wait, HostChildWait::Shutdown) || stop_requested(run, watch, spec);
-    if stopping {}
     let report = stop_generation(run, spec, &mut child, stopping);
     append_log_line(
         spec.output.as_ref(),
