@@ -132,6 +132,7 @@ pub(crate) fn apply_bundle_defaults(
         manifest_path,
         &resolved_source.local_path,
         &normalized_inputs,
+        resolved_source.stale,
     )?;
     let LocalBundleDefaults {
         mut defaults,
@@ -221,6 +222,7 @@ fn resolve_local_bundle_defaults(
     manifest_path: &Path,
     bundle_dir: &Path,
     inputs: &BTreeMap<String, Value>,
+    stale: bool,
 ) -> Result<LocalBundleDefaults, ManifestError> {
     if !bundle_dir.is_dir() {
         return Err(ManifestError::Compose {
@@ -240,7 +242,7 @@ fn resolve_local_bundle_defaults(
         })?;
     let descriptor = parse_bundle_descriptor_source(&descriptor_path, &descriptor_source)?;
     validate_local_bundle_descriptor(manifest_path, &descriptor)?;
-    let resolved = resolve_local_bundle_inputs(manifest_path, &descriptor, inputs)?;
+    let resolved = resolve_local_bundle_inputs(manifest_path, &descriptor, inputs, stale)?;
 
     let defaults_path = bundle_dir.join(&descriptor.bundle.defaults);
     let defaults_template =
@@ -381,6 +383,7 @@ fn resolve_local_bundle_inputs(
     manifest_path: &Path,
     descriptor: &LocalBundleDescriptor,
     provided: &BTreeMap<String, Value>,
+    stale: bool,
 ) -> Result<ResolvedBundleInputs, ManifestError> {
     let bundle_name = descriptor.bundle.name.trim();
     let declared = descriptor
@@ -397,7 +400,7 @@ fn resolve_local_bundle_inputs(
         }
     }
 
-    let user_inputs = user_bundle_inputs(descriptor);
+    let user_inputs = user_bundle_inputs(descriptor, stale);
     let mut resolved = BTreeMap::new();
     let mut inputs = Vec::new();
     for input in &descriptor.inputs {
@@ -459,7 +462,17 @@ fn resolve_local_bundle_inputs(
 /// block naming a bundle this project does not use is never read. Every
 /// rejected entry produces one warning and leaves that input to the layer
 /// below it.
-fn user_bundle_inputs(descriptor: &LocalBundleDescriptor) -> BTreeMap<String, Value> {
+///
+/// `stale` says the read selected the pinned snapshot while the declaration
+/// already moved on. That snapshot is not the effective bundle: the Prepare
+/// path replaces it and validates the result against the refreshed inputs, so
+/// a warning here would judge the operator's file against the pin Tom is about
+/// to lose (papercut 1f529edc). Withholding it keeps the one accurate warning,
+/// which `validate_source_snapshot` emits from the refreshed descriptor.
+fn user_bundle_inputs(
+    descriptor: &LocalBundleDescriptor,
+    stale: bool,
+) -> BTreeMap<String, Value> {
     let bundle_name = descriptor.bundle.name.trim();
     let config = match crate::user_config::load_user_config() {
         Ok(config) => config,
@@ -486,18 +499,22 @@ fn user_bundle_inputs(descriptor: &LocalBundleDescriptor) -> BTreeMap<String, Va
     let mut accepted = BTreeMap::new();
     for (key, value) in bundle_input_entries(entries) {
         let Some(input) = declared.get(key.as_str()) else {
-            let declared_names = declared.keys().copied().collect::<Vec<_>>().join(", ");
-            crate::retired_notice::warn(format!(
-                "{config_path} sets `[bundle.{bundle_name}].inputs.{key}`, but bundle `{bundle_name}` does not declare that input; ignoring the machine-local value (declared inputs: {declared_names})"
-            ));
+            if !stale {
+                let declared_names = declared.keys().copied().collect::<Vec<_>>().join(", ");
+                crate::retired_notice::warn(format!(
+                    "{config_path} sets `[bundle.{bundle_name}].inputs.{key}`, but bundle `{bundle_name}` does not declare that input; ignoring the machine-local value (declared inputs: {declared_names})"
+                ));
+            }
             continue;
         };
         if !bundle_input_type_matches(input.value_type, &value) {
-            crate::retired_notice::warn(format!(
-                "{config_path} sets `[bundle.{bundle_name}].inputs.{key}` to {}, but bundle `{bundle_name}` declares `{key}` as {}; ignoring the machine-local value and using the project value or the bundle default",
-                render_bundle_input_value(&value),
-                bundle_input_type_name(input.value_type),
-            ));
+            if !stale {
+                crate::retired_notice::warn(format!(
+                    "{config_path} sets `[bundle.{bundle_name}].inputs.{key}` to {}, but bundle `{bundle_name}` declares `{key}` as {}; ignoring the machine-local value and using the project value or the bundle default",
+                    render_bundle_input_value(&value),
+                    bundle_input_type_name(input.value_type),
+                ));
+            }
             continue;
         }
         insert_bundle_input_value(&mut accepted, &key, value);
