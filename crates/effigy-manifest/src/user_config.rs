@@ -514,7 +514,10 @@ recurse = true
         )
         .expect("write");
         let err = load_user_config_from(&path).expect_err("should fail");
-        assert!(matches!(err, ManifestError::Parse { .. }));
+        assert!(matches!(&err, ManifestError::Parse { .. }));
+        let rendered = err.to_string();
+        assert!(rendered.contains("unknown field"), "{rendered}");
+        assert!(rendered.contains("recurse"), "{rendered}");
     }
 
     #[test]
@@ -582,7 +585,10 @@ unexpected_field = "nope"
         )
         .expect("write");
         let err = load_user_config_from(&path).expect_err("should fail");
-        assert!(matches!(err, ManifestError::Parse { .. }));
+        assert!(matches!(&err, ManifestError::Parse { .. }));
+        let rendered = err.to_string();
+        assert!(rendered.contains("unknown field"), "{rendered}");
+        assert!(rendered.contains("unexpected_field"), "{rendered}");
     }
 
     #[test]
