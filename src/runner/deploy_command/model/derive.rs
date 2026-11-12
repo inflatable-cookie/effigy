@@ -8,7 +8,10 @@ use super::merge::resolve_effective_model;
 use super::production::{
     reserved_local_domains, suppress_development_domains, suppress_development_values,
 };
-use super::vocabulary::validate_vocabularies;
+use super::vocabulary::{
+    decode_backing_mode, decode_service_runtime, static_site_approximation_notice,
+    ServiceRuntime,
+};
 use super::*;
 use crate::runner::error::RunnerError;
 use crate::runner::manifest::{load_task_manifest, load_task_manifest_with_inspection};
@@ -58,9 +61,8 @@ pub(in crate::runner::deploy_command) fn derive_deploy_model(
     };
 
     let non_development = !resolved_env.is_development();
+    let environment_scoped = resolved_env.name.is_some();
     let mut effective = resolve_effective_model(shared, overrides)?;
-
-    validate_vocabularies(&mut effective.model, resolved_env.name.is_some())?;
 
     let repo_name = repo_root
         .file_name()
@@ -69,8 +71,17 @@ pub(in crate::runner::deploy_command) fn derive_deploy_model(
         .to_owned();
 
     let mut services = Vec::with_capacity(effective.model.services.len());
-    for service in &effective.model.services {
-        let Some(mut derived) = derive_service(repo_root, service)? else {
+    for service in &mut effective.model.services {
+        let runtime = decode_service_runtime(service)?;
+        if let Some(notice) =
+            static_site_approximation_notice(service, runtime, environment_scoped)
+        {
+            service
+                .warnings
+                .get_or_insert_with(Vec::new)
+                .push(notice);
+        }
+        let Some(mut derived) = derive_service(repo_root, service, runtime)? else {
             continue;
         };
         if non_development {
@@ -81,6 +92,18 @@ pub(in crate::runner::deploy_command) fn derive_deploy_model(
             );
         }
         services.push(derived);
+    }
+
+    let mut backing_services = Vec::with_capacity(effective.model.backing_services.len());
+    for service in &effective.model.backing_services {
+        backing_services.push(DeployBackingService {
+            name: service.name.clone(),
+            kind: service.kind.clone(),
+            mode: decode_backing_mode(service)?,
+            required: service.required,
+            consumers: service.consumers.clone(),
+            warnings: service.warnings.clone().unwrap_or_default(),
+        });
     }
 
     let mut domains: Vec<DeployDomain> = effective
@@ -151,19 +174,7 @@ pub(in crate::runner::deploy_command) fn derive_deploy_model(
             notes: effective.model.app.notes.clone(),
         },
         services,
-        backing_services: effective
-            .model
-            .backing_services
-            .into_iter()
-            .map(|service| DeployBackingService {
-                name: service.name,
-                kind: service.kind,
-                mode: service.mode,
-                required: service.required,
-                consumers: service.consumers,
-                warnings: service.warnings.unwrap_or_default(),
-            })
-            .collect(),
+        backing_services,
         domains,
         secrets: effective
             .model
@@ -187,6 +198,7 @@ pub(in crate::runner::deploy_command) fn derive_deploy_model(
 fn derive_service(
     repo_root: &Path,
     service: &ManifestDeployModelService,
+    runtime: ServiceRuntime,
 ) -> Result<Option<DeployService>, RunnerError> {
     let manifest = load_child_manifest(repo_root, &service.source_root)?;
     let mut warnings = service.warnings.clone().unwrap_or_default();
@@ -225,7 +237,7 @@ fn derive_service(
     Ok(Some(DeployService {
         name: service.name.clone(),
         role: service.role.clone(),
-        runtime: service.runtime.clone(),
+        runtime,
         source_root: service.source_root.clone(),
         build: build.command.map(|command| DeployCommandStep { command }),
         start: start.command.map(|command| DeployCommandStep { command }),
@@ -343,3 +355,96 @@ fn normalize_task_command(command: &str) -> String {
         .to_owned()
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::derive_deploy_model;
+    use crate::runner::deploy_command::model::vocabulary::{BackingServiceMode, ServiceRuntime};
+    use std::fs;
+
+    fn write(path: &std::path::Path, body: &str) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create fixture directory");
+        }
+        fs::write(path, body).expect("write fixture manifest");
+    }
+
+    #[test]
+    fn a_derived_model_reports_decoded_vocabularies_and_resolved_task_commands() {
+        let root = tempfile::tempdir().expect("temp dir");
+        write(
+            &root.path().join("app-web/effigy.toml"),
+            "[tasks.build]\nrun = \"bun x vite build {args}\"\n",
+        );
+        write(
+            &root.path().join("effigy.toml"),
+            r#"
+[deploy.model.app]
+project_name = "acme"
+
+[[deploy.model.services]]
+name = "web"
+role = "web"
+runtime = "node"
+source_root = "app-web"
+domains = ["web.acme.example"]
+
+[deploy.model.services.build]
+task = "build"
+
+[[deploy.model.backing_services]]
+name = "store"
+kind = "object-storage"
+mode = "external"
+"#,
+        );
+
+        // No declared environment: the shared model is reported as it stands.
+        let model = derive_deploy_model(root.path(), None).expect("derive the shared model");
+
+        assert_eq!(model.environment, None);
+        assert_eq!(model.services.len(), 1);
+        let service = &model.services[0];
+        assert_eq!(service.name, "web");
+        assert_eq!(service.runtime, ServiceRuntime::Node);
+        assert_eq!(
+            service.build.as_ref().map(|step| step.command.as_str()),
+            Some("bun x vite build"),
+            "the task's `{{args}}` placeholder is not part of the resolved command"
+        );
+        assert_eq!(service.domains, vec!["web.acme.example".to_owned()]);
+        assert_eq!(model.backing_services.len(), 1);
+        assert_eq!(model.backing_services[0].mode, BackingServiceMode::External);
+    }
+
+    #[test]
+    fn a_service_whose_child_manifest_lacks_a_required_task_is_refused() {
+        let root = tempfile::tempdir().expect("temp dir");
+        write(&root.path().join("app-web/effigy.toml"), "");
+        write(
+            &root.path().join("effigy.toml"),
+            r#"
+[deploy.model.app]
+project_name = "acme"
+
+[[deploy.model.services]]
+name = "web"
+role = "web"
+runtime = "node"
+source_root = "app-web"
+
+[deploy.model.services.build]
+task = "build"
+"#,
+        );
+
+        let error =
+            derive_deploy_model(root.path(), None).expect_err("a required task must resolve");
+        assert!(
+            error
+                .to_string()
+                .contains("required task `build` is missing or non-command in `app-web/effigy.toml`"),
+            "got: {error}"
+        );
+    }
+}

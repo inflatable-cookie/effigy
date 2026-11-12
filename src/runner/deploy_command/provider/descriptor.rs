@@ -132,3 +132,77 @@ pub(super) fn validate_provider_relative_path(
     )))
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        read_provider_descriptor, validate_capability_paths, validate_provider_name,
+        validate_provider_relative_path, DeployProviderCapabilities,
+    };
+
+    #[test]
+    fn a_provider_id_must_be_ascii_and_path_safe() {
+        validate_provider_name("acme-cdn_2").expect("a plain id is accepted");
+        let error = validate_provider_name("../acme").expect_err("a path segment is not an id");
+        assert!(
+            error.to_string().contains("has an invalid id"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn a_capability_path_stays_inside_the_package() {
+        validate_provider_relative_path("acme", "export", "scripts/export.rhai")
+            .expect("a package-relative path is accepted");
+        let error = validate_provider_relative_path("acme", "export", "../escape.rhai")
+            .expect_err("a parent segment would leave the package");
+        assert!(
+            error
+                .to_string()
+                .contains("capability `export` must be a package-relative file path"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn a_capability_naming_a_missing_script_is_refused_with_its_path() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let capabilities = DeployProviderCapabilities {
+            export: Some("scripts/export.rhai".to_owned()),
+            ..DeployProviderCapabilities::default()
+        };
+        let error = validate_capability_paths(root.path(), "acme", &capabilities)
+            .expect_err("the capability points at no file");
+        let message = error.to_string();
+        assert!(
+            message.contains("capability `export` points to missing script"),
+            "got: {message}"
+        );
+    }
+
+    #[test]
+    fn a_descriptor_is_read_as_typed_metadata_and_refuses_unknown_fields() {
+        let root = tempfile::tempdir().expect("temp dir");
+        std::fs::write(
+            root.path().join("provider.toml"),
+            "[provider]\nschema = \"effigy.deploy-provider.v1\"\nname = \"acme\"\ndisplay_name = \"Acme\"\nversion = \"1.2.3\"\n",
+        )
+        .expect("write descriptor");
+        let descriptor = read_provider_descriptor(root.path()).expect("read descriptor");
+        assert_eq!(descriptor.provider.name, "acme");
+        assert_eq!(descriptor.provider.version, "1.2.3");
+        assert!(!descriptor.policy.creates_projects);
+
+        std::fs::write(
+            root.path().join("provider.toml"),
+            "[provider]\nschema = \"effigy.deploy-provider.v1\"\nname = \"acme\"\ndisplay_name = \"Acme\"\nversion = \"1.2.3\"\nunexpected = true\n",
+        )
+        .expect("write descriptor");
+        let error = read_provider_descriptor(root.path())
+            .expect_err("an unknown descriptor field is refused, not ignored");
+        assert!(
+            error.to_string().contains("failed to parse deploy provider descriptor"),
+            "got: {error}"
+        );
+    }
+}

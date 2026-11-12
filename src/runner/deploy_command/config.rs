@@ -95,6 +95,7 @@ impl ManifestDeployConfig {
     }
 }
 
+#[derive(Debug)]
 pub(super) struct ResolvedDeployEnvironment {
     pub(super) name: Option<String>,
     pub(super) config: Option<ManifestDeployEnvConfig>,
@@ -273,4 +274,94 @@ impl ArtifactPolicy {
 
 fn default_code_ref() -> String {
     "branch:main".to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ArtifactPolicy, ManifestDeployConfig, ReleasePolicy};
+
+    fn config(environments: &[&str], production_state: bool) -> ManifestDeployConfig {
+        let mut envs = std::collections::BTreeMap::new();
+        for name in environments {
+            envs.insert(
+                (*name).to_owned(),
+                toml::from_str(&format!(
+                    "provider = \"render\"\nstate = \"{}\"",
+                    if production_state { "production" } else { *name }
+                ))
+                .expect("decode environment"),
+            );
+        }
+        ManifestDeployConfig {
+            providers: std::collections::BTreeMap::new(),
+            model: None,
+            envs,
+        }
+    }
+
+    #[test]
+    fn an_explicit_environment_must_be_declared() {
+        let resolved = config(&["uat", "production"], false)
+            .resolve_environment(Some("uat"))
+            .expect("uat is declared");
+        assert_eq!(resolved.name.as_deref(), Some("uat"));
+        assert!(resolved.notices.is_empty());
+
+        let error = config(&["uat", "production"], false)
+            .resolve_environment(Some("staging"))
+            .expect_err("staging is not declared");
+        assert!(
+            error.to_string().contains("available environments: production, uat"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn a_single_declared_environment_is_the_default_with_a_notice() {
+        let resolved = config(&["uat"], false)
+            .resolve_environment(None)
+            .expect("one environment needs no <ENV>");
+        assert_eq!(resolved.name.as_deref(), Some("uat"));
+        assert_eq!(resolved.notices.len(), 1);
+        assert!(resolved.notices[0].contains("using the only declared environment `uat`"));
+    }
+
+    #[test]
+    fn no_declared_environment_reports_the_shared_model_with_a_notice() {
+        let resolved = config(&[], false)
+            .resolve_environment(None)
+            .expect("a shared model needs no environment");
+        assert_eq!(resolved.name, None);
+        assert_eq!(resolved.name_or_unscoped(), "unscoped");
+        assert!(resolved.is_development());
+        assert_eq!(resolved.notices.len(), 1);
+    }
+
+    #[test]
+    fn two_declared_environments_require_an_explicit_one() {
+        let error = config(&["uat", "production"], false)
+            .resolve_environment(None)
+            .expect_err("two environments are ambiguous");
+        assert!(
+            error.to_string().contains("require <ENV>; declared environments: production, uat"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn a_production_state_is_not_development_whatever_the_name() {
+        let resolved = config(&["release"], true)
+            .resolve_environment(Some("release"))
+            .expect("declared environment");
+        assert!(!resolved.is_development());
+        assert_eq!(resolved.state(), Some("production"));
+    }
+
+    #[test]
+    fn the_transaction_vocabularies_report_their_declared_names() {
+        assert_eq!(ReleasePolicy::default().as_str(), "optional");
+        assert_eq!(ReleasePolicy::None.as_str(), "none");
+        assert_eq!(ArtifactPolicy::default().as_str(), "digest-preferred");
+        assert_eq!(ArtifactPolicy::DigestPinned.as_str(), "digest-pinned");
+    }
 }

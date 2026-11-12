@@ -145,11 +145,11 @@ is refused, naming the allowed set.
 - backing-service `mode`: `managed`, `external`
 
 `static` describes a static-site surface served as files; `external` describes
-a resource the operator supplies and Effigy does not provision. The values used
-before this vocabulary remain accepted for one release with a
-`deploy-vocabulary-migration` warning: a `role = "static"` service still
-declaring a non-static runtime, and a `managed` backing service whose warnings
-describe an external resource.
+a resource the operator supplies and Effigy does not provision. The value you
+declare is the value the model reports: Effigy decodes `runtime` and `mode` once
+and never infers one from a warning's text. A `role = "static"` service still
+declaring a non-static runtime remains accepted for one release with a
+`deploy-vocabulary-migration` warning naming `runtime = "static"`.
 
 ```toml
 [deploy.production]

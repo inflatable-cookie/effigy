@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::Path;
 
+use effigy_state::path_display;
 use serde_json::Value;
 
 use super::inputs::deploy_execution_inputs;
@@ -133,7 +134,7 @@ fn deploy_status_provider_report(
                 repo_root,
                 env_config.provider.adapter(),
                 &provider_package,
-                deploy_provider_context("status", env, &env_config, &model, &provider_package),
+                deploy_provider_context("status", env, &env_config, &model, &provider_package)?,
             )?;
             Ok(DeployStatusProviderObservation {
                 provider_status: report.map(|report| json_value(&report)).transpose()?,

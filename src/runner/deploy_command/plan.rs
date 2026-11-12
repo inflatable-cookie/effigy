@@ -1,10 +1,12 @@
 use std::path::Path;
-use std::time::SystemTime;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use effigy_state::{path_display, safe_path_component};
 
 use serde_json::Value;
 
 use super::config::{ArtifactPolicy, ManifestDeployEnvConfig, ReleasePolicy};
-use super::code_ref::{resolve_code_ref, utc_basic_timestamp};
+use super::code_ref::resolve_code_ref;
 use super::inputs::deploy_execution_inputs;
 use super::provider::context::{
     build_provider_context, provider_package_policy_blockers, DeployProviderContextRequest,
@@ -37,6 +39,26 @@ pub(super) fn run_deploy_plan(
     let ok = report.blockers.is_empty();
     let text = render_deploy_plan_text(&report);
     render_command_result(output_json, ok, json_value(&report)?, text)
+}
+
+/// The id of one deployment attempt: the second it started, the environment
+/// and the commit it resolved, so two attempts never share a report path.
+///
+/// The clock prefix is whole seconds since the Unix epoch, not
+/// `effigy_state`'s `YYYYMMDDThhmmssZ` stamp: the id is a file name that must
+/// sort attempts lexically, and `effigy_state::paths` owns the canonical
+/// timestamp format.
+fn deployment_id(env: &str, resolved_commit: Option<&str>, started: SystemTime) -> String {
+    format!(
+        "{}-{}-{}",
+        seconds_since_epoch(started),
+        safe_path_component(env),
+        resolved_commit.unwrap_or("unresolved")
+    )
+}
+
+fn seconds_since_epoch(started: SystemTime) -> u64 {
+    started.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
 }
 
 fn build_deploy_plan(repo_root: &Path, env: &str) -> Result<DeployPlanReport, RunnerError> {
@@ -107,13 +129,10 @@ fn build_deploy_plan(repo_root: &Path, env: &str) -> Result<DeployPlanReport, Ru
             })
         })
         .collect();
-    let deployment_id = format!(
-        "{}-{}-{}",
-        utc_basic_timestamp(SystemTime::now()),
-        safe_path_component(env),
-        code.resolved_commit
-            .clone()
-            .unwrap_or_else(|| "unresolved".to_owned())
+    let deployment_id = deployment_id(
+        env,
+        code.resolved_commit.as_deref(),
+        SystemTime::now(),
     );
     Ok(DeployPlanReport {
         schema: PLAN_SCHEMA.to_owned(),
@@ -215,7 +234,7 @@ fn provider_preflight_report(
         repo_root,
         &provider,
         package,
-        deploy_provider_context("preflight", env, env_config, model, package),
+        deploy_provider_context("preflight", env, env_config, model, package)?,
     )? {
         checks.extend(report.checks.into_iter().map(|check| DeployProviderCheck {
             name: check.name,
@@ -285,13 +304,18 @@ fn provider_preflight_report(
     })
 }
 
+/// The context document a provider phase reads.
+///
+/// Building it is fallible: the document is the only hand-off to a provider
+/// script, so a projection that cannot be encoded is a refusal, never a panic
+/// in the middle of a deploy.
 pub(super) fn deploy_provider_context(
     phase: &str,
     env: &str,
     env_config: &ManifestDeployEnvConfig,
     model: &super::model::DeployModel,
     package: &DeployProviderPackage,
-) -> Value {
+) -> Result<Value, RunnerError> {
     build_provider_context(DeployProviderContextRequest {
         phase,
         env,
@@ -306,6 +330,25 @@ pub(super) fn deploy_provider_context(
         export_path: None,
         plan: false,
     })
-    .expect("deploy provider context should serialize")
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::deployment_id;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    #[test]
+    fn a_deployment_id_names_the_attempts_second_environment_and_commit() {
+        let started = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        assert_eq!(
+            deployment_id("production", Some("0123456789abcdef"), started),
+            "1700000000-production-0123456789abcdef"
+        );
+        assert_eq!(
+            deployment_id("uat", None, started),
+            "1700000000-uat-unresolved",
+            "an unpinned deploy says so instead of inventing a commit"
+        );
+    }
+}

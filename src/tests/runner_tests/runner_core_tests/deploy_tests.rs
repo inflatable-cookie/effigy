@@ -2483,3 +2483,78 @@ fn run_deploy_export_context_names_the_environment_and_its_model() {
         Some("environment")
     );
 }
+
+#[test]
+fn run_deploy_model_does_not_reclassify_a_managed_backing_service_from_warning_prose() {
+    // effigy#936: the retired classification lowercased a warning's code and
+    // message and matched "external", so descriptive prose decided a resource's
+    // owner. The declared `mode` is the fact the model reports.
+    let root = temp_workspace("deploy-model-managed-prose");
+    write_root_manifest(
+        &root,
+        r#"
+[deploy.production]
+provider = "render"
+
+[deploy.model.app]
+project_name = "acme"
+
+[[deploy.model.backing_services]]
+name = "store"
+kind = "object-storage"
+mode = "managed"
+
+[[deploy.model.backing_services.warnings]]
+code = "operator-endpoint"
+scope = "backing_service"
+target = "store"
+message = "the endpoint is an external, operator-supplied resource"
+severity = "warn"
+"#,
+    );
+
+    let out = run_model(&root, Some("production")).expect("derive the production model");
+    let model = parse_json_output_with_schema_version(&out, "deploy.model.v1", 1);
+    let store = &model["backing_services"][0];
+    assert_eq!(store["mode"].as_str(), Some("managed"));
+    assert!(
+        !store["warnings"]
+            .as_array()
+            .expect("backing service warnings")
+            .iter()
+            .any(|warning| warning["code"].as_str() == Some("deploy-vocabulary-migration")),
+        "a managed declaration keeps its own warnings and gains no guessed notice: {store}"
+    );
+}
+
+#[test]
+fn run_deploy_plan_refuses_an_unsupported_code_ref_kind() {
+    // effigy#936: an unknown `<kind>:<value>` used to resolve to no commit and
+    // plan an unpinned deployment. It names nothing resolvable, so it refuses.
+    let root = temp_workspace("deploy-plan-unknown-code-ref-kind");
+    write_root_manifest(
+        &root,
+        r#"
+[deploy.uat]
+state = "uat"
+code_ref = "release:main"
+
+[deploy.uat.provider]
+adapter = "render"
+
+[deploy.model.app]
+project_name = "acme"
+"#,
+    );
+
+    let error = run_plan(&root, "uat").expect_err("an unsupported code_ref kind must refuse");
+    let message = error.to_string();
+    assert!(
+        message.contains("names unsupported kind `release`"),
+        "got: {message}"
+    );
+    assert!(
+        message.contains("`release-tag`, `branch:<branch or rev>`, `tag:<tag>` or `sha:<commit sha>`"),
+        "the refusal names the accepted forms: {message}"
+    );
+}

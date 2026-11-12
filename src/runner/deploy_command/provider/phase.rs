@@ -285,3 +285,22 @@ impl Drop for ScopedProviderEnvOverride {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::{is_provider_phase_workspace_name, PROVIDER_PHASE_SWEEP_LIMIT};
+
+    #[test]
+    fn the_sweep_only_removes_effigys_own_phase_workspaces() {
+        assert!(is_provider_phase_workspace_name("1700000000000-export"));
+        assert!(is_provider_phase_workspace_name("1-preflight"));
+        assert!(is_provider_phase_workspace_name("1700000000000-status"));
+        // An operator's own directory, a phase name Effigy never writes, and a
+        // non-numeric prefix all stay untouched.
+        assert!(!is_provider_phase_workspace_name("notes"));
+        assert!(!is_provider_phase_workspace_name("1700000000000-anything"));
+        assert!(!is_provider_phase_workspace_name("millis-export"));
+        assert!(!is_provider_phase_workspace_name("1700000000000"));
+        assert_eq!(PROVIDER_PHASE_SWEEP_LIMIT, 32);
+    }
+}

@@ -47,3 +47,37 @@ pub(super) fn refuse_deploy_execution(
         )))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::refuse_deploy_execution;
+
+    #[test]
+    fn the_json_refusal_names_every_obligation_and_one_next_action() {
+        let error = refuse_deploy_execution("apply", "production", true)
+            .expect_err("deploy execution is refused");
+        let rendered = error.rendered_output().expect("a JSON refusal body");
+        let body: serde_json::Value = serde_json::from_str(rendered).expect("parse refusal");
+        assert_eq!(body["schema"], "effigy.deploy.apply.v1");
+        assert_eq!(body["ok"], false);
+        assert_eq!(body["reason"], "not_supported");
+        assert_eq!(body["operation"], "apply");
+        assert_eq!(body["env"], "production");
+        let blockers = body["blockers"].as_array().expect("obligation list");
+        assert_eq!(blockers.len(), 6);
+        assert!(body["next_action"]
+            .as_str()
+            .expect("next action")
+            .contains("effigy deploy model --json"));
+    }
+
+    #[test]
+    fn the_text_refusal_lists_the_obligations_and_a_runnable_next_step() {
+        let error = refuse_deploy_execution("redeploy", "uat", false)
+            .expect_err("deploy execution is refused");
+        let message = error.to_string();
+        assert!(message.contains("`deploy redeploy` is not yet supported in v0.15"));
+        assert!(message.contains("hooks: before_state, after_state"));
+        assert!(message.contains("\nnext: run `effigy deploy model --json`"));
+    }
+}

@@ -164,3 +164,96 @@ pub(super) fn validate_provider_report_status(
     )))
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        validate_provider_phase_report, DeployProviderCheckStatus, DeployProviderPhaseReport,
+        DeployProviderReportStatus,
+    };
+
+    fn report(phase: &str, status: DeployProviderReportStatus) -> DeployProviderPhaseReport {
+        DeployProviderPhaseReport {
+            schema: "effigy.deploy-provider.report.v1".to_owned(),
+            phase: phase.to_owned(),
+            provider: "acme".to_owned(),
+            status,
+            checks: vec![super::DeployProviderPhaseCheck {
+                name: "plan".to_owned(),
+                status: DeployProviderCheckStatus::Planned,
+                target: None,
+                message: None,
+            }],
+            warnings: Vec::new(),
+            blockers: Vec::new(),
+            files: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_report_must_name_its_schema_provider_and_phase() {
+        let mut wrong_schema = report("export", DeployProviderReportStatus::Succeeded);
+        wrong_schema.schema = "effigy.deploy-provider.report.v2".to_owned();
+        assert!(validate_provider_phase_report("acme", "export", &wrong_schema)
+            .expect_err("unsupported schema")
+            .to_string()
+            .contains("has unsupported schema"));
+
+        let mut wrong_provider = report("export", DeployProviderReportStatus::Succeeded);
+        wrong_provider.provider = "other".to_owned();
+        assert!(validate_provider_phase_report("acme", "export", &wrong_provider)
+            .expect_err("another provider")
+            .to_string()
+            .contains("report declares provider `other`"));
+
+        let phase = report("status", DeployProviderReportStatus::Ok);
+        assert!(validate_provider_phase_report("acme", "export", &phase)
+            .expect_err("another phase")
+            .to_string()
+            .contains("report declares phase `status`"));
+    }
+
+    #[test]
+    fn a_status_a_phase_cannot_return_is_refused() {
+        // An export ends succeeded, warned, failed or skipped, so a plan-only
+        // `ok` is not an export outcome; an apply ends succeeded, failed or
+        // skipped, so a preview `planned` is not an apply outcome either.
+        assert!(validate_provider_phase_report(
+            "acme",
+            "export",
+            &report("export", DeployProviderReportStatus::Succeeded)
+        )
+        .is_ok());
+        let error = validate_provider_phase_report(
+            "acme",
+            "export",
+            &report("export", DeployProviderReportStatus::Ok),
+        )
+        .expect_err("ok is not an export outcome");
+        assert!(
+            error
+                .to_string()
+                .contains("export report returned unsupported status `ok`"),
+            "got: {error}"
+        );
+        let error = validate_provider_phase_report(
+            "acme",
+            "apply",
+            &report("apply", DeployProviderReportStatus::Planned),
+        )
+        .expect_err("planned is not an apply outcome");
+        assert!(
+            error
+                .to_string()
+                .contains("apply report returned unsupported status `planned`"),
+            "got: {error}"
+        );
+        // A preflight is a preview: `planned` is exactly its outcome.
+        assert!(validate_provider_phase_report(
+            "acme",
+            "preflight",
+            &report("preflight", DeployProviderReportStatus::Planned)
+        )
+        .is_ok());
+    }
+}

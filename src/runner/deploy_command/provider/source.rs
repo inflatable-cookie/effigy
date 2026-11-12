@@ -286,3 +286,27 @@ fn run_git(manifest_root: &Path, cwd: Option<&Path>, args: &[&str]) -> Result<()
     .map(|_| ())
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::pinned_rev;
+
+    #[test]
+    fn a_pinned_rev_must_be_a_full_commit_sha() {
+        let full = "0123456789abcdef0123456789abcdef01234567";
+        assert_eq!(
+            pinned_rev("acme", &full.to_ascii_uppercase()).expect("a full sha is a pin"),
+            full
+        );
+        let error = pinned_rev("acme", "0123456").expect_err("a short sha is not a pin");
+        let message = error.to_string();
+        assert!(
+            message.contains("source `rev` must be a full commit SHA"),
+            "got: {message}"
+        );
+        assert!(
+            message.contains("use `ref` for a moving branch or tag"),
+            "the refusal names the alternative: {message}"
+        );
+    }
+}

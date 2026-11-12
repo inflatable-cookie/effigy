@@ -4,6 +4,7 @@ use super::manifest::*;
 use super::{PROVENANCE_ENVIRONMENT, PROVENANCE_SHARED};
 use crate::runner::error::RunnerError;
 
+#[derive(Debug)]
 pub(super) struct EffectiveModel {
     pub(super) model: ManifestDeployModelConfig,
     pub(super) provenance: BTreeMap<String, String>,
@@ -494,5 +495,119 @@ fn join_or_none(values: &[String]) -> String {
         "none".to_owned()
     } else {
         values.join(", ")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_effective_model;
+    use crate::runner::deploy_command::model::manifest::{
+        ManifestDeployModelApp, ManifestDeployModelConfig, ManifestDeployModelOverride,
+        ManifestDeployModelService, ManifestDeployModelServiceOverride,
+    };
+    use crate::runner::deploy_command::model::{PROVENANCE_ENVIRONMENT, PROVENANCE_SHARED};
+    use std::collections::BTreeMap;
+
+    fn shared_model() -> ManifestDeployModelConfig {
+        ManifestDeployModelConfig {
+            app: ManifestDeployModelApp {
+                project_name: "acme".to_owned(),
+                bundle: None,
+                source_root: None,
+                notes: None,
+            },
+            services: vec![ManifestDeployModelService {
+                name: "web".to_owned(),
+                role: "web".to_owned(),
+                runtime: "node".to_owned(),
+                source_root: "app-web".to_owned(),
+                build: None,
+                start: None,
+                release: None,
+                health: None,
+                output: None,
+                port: Some(8080),
+                domains: vec!["web.acme.test".to_owned()],
+                env: None,
+                secret_refs: None,
+                volumes: None,
+                warnings: None,
+            }],
+            backing_services: Vec::new(),
+            domains: Vec::new(),
+            secrets: Vec::new(),
+            warnings: None,
+        }
+    }
+
+    fn override_for(runtime: Option<&str>) -> ManifestDeployModelOverride {
+        ManifestDeployModelOverride {
+            app: None,
+            services: vec![ManifestDeployModelServiceOverride {
+                name: "web".to_owned(),
+                role: None,
+                runtime: runtime.map(str::to_owned),
+                source_root: None,
+                build: None,
+                start: None,
+                release: None,
+                health: None,
+                output: None,
+                port: None,
+                domains: None,
+                env: Some(BTreeMap::from([("API_URL".to_owned(), "https://api.acme.test".to_owned())])),
+                env_unset: None,
+                secret_refs: None,
+                volumes: None,
+                warnings: None,
+            }],
+            backing_services: Vec::new(),
+            domains: None,
+            secrets: Vec::new(),
+            warnings: None,
+        }
+    }
+
+    #[test]
+    fn an_environment_override_wins_and_records_which_layer_supplied_each_key() {
+        let effective = resolve_effective_model(shared_model(), Some(override_for(Some("bun"))))
+            .expect("the override names a declared service");
+
+        let service = &effective.model.services[0];
+        assert_eq!(service.runtime, "bun");
+        assert_eq!(service.role, "web");
+        assert_eq!(
+            service.env.as_ref().and_then(|env| env.get("API_URL")).map(String::as_str),
+            Some("https://api.acme.test")
+        );
+        assert_eq!(
+            effective.provenance.get("services.web.runtime").map(String::as_str),
+            Some(PROVENANCE_ENVIRONMENT)
+        );
+        assert_eq!(
+            effective.provenance.get("services.web.role").map(String::as_str),
+            Some(PROVENANCE_SHARED)
+        );
+        assert_eq!(
+            effective.provenance.get("services.web.env.API_URL").map(String::as_str),
+            Some(PROVENANCE_ENVIRONMENT)
+        );
+    }
+
+    #[test]
+    fn an_override_for_an_undeclared_service_is_refused_naming_the_declared_ones() {
+        let mut overrides = override_for(Some("bun"));
+        overrides.services[0].name = "admin".to_owned();
+        let error = resolve_effective_model(shared_model(), Some(overrides))
+            .expect_err("admin is not declared by the shared model");
+        let message = error.to_string();
+        assert!(
+            message.contains("overrides service `admin`, which the shared `[deploy.model.services]` does not declare"),
+            "got: {message}"
+        );
+        assert!(
+            message.contains("declared services: web"),
+            "the refusal names what is declared: {message}"
+        );
     }
 }
