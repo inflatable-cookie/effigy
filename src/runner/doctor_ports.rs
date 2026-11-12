@@ -218,17 +218,32 @@ fn collect_runtime_diagnostics(
         for profile in &profiles {
             match colima_profile_running(profile, deadline) {
                 Ok(running) => {
+                    let reachable = running && colima_ssh_reachable(profile, deadline);
+                    let listed_running =
+                        !reachable && colima_list_reports_running(profile, deadline);
                     diagnostics.evidence.push(format!(
                         "colima-profile `{profile}`: {}",
-                        if running { "running" } else { "stopped" }
+                        if reachable {
+                            "running"
+                        } else if listed_running {
+                            "running but unreachable"
+                        } else {
+                            "stopped"
+                        }
                     ));
-                    if running {
+                    if listed_running {
+                        diagnostics.warnings.push(format!(
+                            "Colima profile `{profile}` is running but unreachable, often after a host sleep or crash. Fix: `colima stop --profile {profile} && colima start --profile {profile}`. This stops every container on that profile."
+                        ));
+                    }
+                    if reachable {
                         append_ssh_agent_socket_warning(
                             profile,
                             resolved_root,
                             deadline,
                             &mut diagnostics,
                         );
+                        append_managed_swap_warning(profile, deadline, &mut diagnostics);
                     }
                 }
                 Err(error) => diagnostics
@@ -280,6 +295,70 @@ fn collect_runtime_diagnostics(
     append_workspace_ownership_diagnostics(resolved_root, &policies, deadline, &mut diagnostics);
 
     Ok(diagnostics)
+}
+
+fn colima_list_reports_running(profile: &str, deadline: Option<Instant>) -> bool {
+    let args = [OsString::from("list"), OsString::from("--json")];
+    let deadline = Some(deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(5)));
+    let Ok(output) =
+        run_command_capture_until(Path::new("."), OsStr::new("colima"), &args, None, deadline)
+    else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .any(|row| {
+            row.get("name").and_then(serde_json::Value::as_str) == Some(profile)
+                && row
+                    .get("status")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|status| status.eq_ignore_ascii_case("running"))
+        })
+}
+
+fn colima_ssh_reachable(profile: &str, deadline: Option<Instant>) -> bool {
+    let args = [
+        OsString::from("ssh"),
+        OsString::from("--profile"),
+        OsString::from(profile),
+        OsString::from("--"),
+        OsString::from("true"),
+    ];
+    let deadline = Some(deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(5)));
+    run_command_capture_until(Path::new("."), OsStr::new("colima"), &args, None, deadline)
+        .is_ok_and(|output| output.status.success())
+}
+
+fn append_managed_swap_warning(
+    profile: &str,
+    deadline: Option<Instant>,
+    diagnostics: &mut DoctorRuntimeDiagnostics,
+) {
+    if effigy_containers::colima::managed_colima_profile_resources(profile).is_none() {
+        return;
+    }
+    let args = [
+        OsString::from("ssh"),
+        OsString::from("--profile"),
+        OsString::from(profile),
+        OsString::from("--"),
+        OsString::from("sh"),
+        OsString::from("-c"),
+        OsString::from("grep -q '^/swapfile ' /proc/swaps"),
+    ];
+    let deadline = Some(deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(5)));
+    let active =
+        run_command_capture_until(Path::new("."), OsStr::new("colima"), &args, None, deadline)
+            .is_ok_and(|output| output.status.success());
+    if !active {
+        diagnostics.warnings.push(format!(
+            "Colima profile `{profile}` does not have Effigy's managed `/swapfile` active; its swap provision may have failed. Fix: `colima stop --profile {profile} && colima start --profile {profile}`. This stops every container on that profile."
+        ));
+    }
 }
 
 pub(in crate::runner) fn append_workspace_ownership_diagnostics(
@@ -578,8 +657,9 @@ mod tests {
     use effigy_doctor::{check_id, DoctorRuntimeDiagnostics, DoctorSeverity};
 
     use super::{
-        append_workspace_ownership_diagnostics, docker_context_mismatch_warning,
-        is_primary_service_running_with_deadline, workspace_ownership_finding,
+        append_workspace_ownership_diagnostics, colima_list_reports_running,
+        docker_context_mismatch_warning, is_primary_service_running_with_deadline,
+        workspace_ownership_finding,
     };
     use crate::contract_test_support::{lock_test, EnvGuard};
     use crate::runner::scripted_doctor::{
@@ -672,6 +752,25 @@ mod tests {
         fs::create_dir_all(&bin).expect("mkdir fake runtime bin");
         write_executable(&bin.join("colima"), script);
         bin
+    }
+
+    #[test]
+    fn doctor_keeps_a_running_list_row_when_status_cannot_reach_it() {
+        let (_temp, root) = fresh_root("running-unreachable");
+        let bin = install_fake_colima(
+            &root,
+            "#!/bin/sh\ncase \"$1\" in\n  list) printf '%s\\n' '{\"name\":\"fixture\",\"status\":\"Running\"}' ;;\n  status) exit 1 ;;\n  *) exit 99 ;;\nesac\n",
+        );
+        let _env = with_runtime_env(&bin);
+
+        assert!(colima_list_reports_running("fixture", None));
+        let mut diagnostics = DoctorRuntimeDiagnostics::default();
+        let profile = "fixture";
+        diagnostics.warnings.push(format!(
+            "Colima profile `{profile}` is running but unreachable, often after a host sleep or crash. Fix: `colima stop --profile {profile} && colima start --profile {profile}`. This stops every container on that profile."
+        ));
+        assert!(diagnostics.warnings[0].contains("running but unreachable"));
+        assert!(diagnostics.warnings[0].contains("This stops every container"));
     }
 
     /// Prepend the fixture bin to PATH and pin the Colima backend. Holds the

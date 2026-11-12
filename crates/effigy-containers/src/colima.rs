@@ -159,6 +159,41 @@ pub enum ColimaObservation {
     Unavailable,
 }
 
+/// Health classification for a Colima profile used by runtime recovery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColimaProfileState {
+    RunningReachable,
+    RunningUnreachable,
+    Stopped,
+    Missing,
+    DaemonDown,
+}
+
+/// Classify the inventory row together with Colima's own status probe. A
+/// failed status probe is distinct from a profile the inventory says stopped.
+pub fn classify_colima_profile_state(
+    list_succeeded: bool,
+    listed_status: Option<&str>,
+    status_succeeded: bool,
+    ssh_reachable: Option<bool>,
+) -> ColimaProfileState {
+    if !list_succeeded {
+        return ColimaProfileState::DaemonDown;
+    }
+    let Some(status) = listed_status else {
+        return ColimaProfileState::Missing;
+    };
+    if status.eq_ignore_ascii_case("running") {
+        if status_succeeded && ssh_reachable != Some(false) {
+            ColimaProfileState::RunningReachable
+        } else {
+            ColimaProfileState::RunningUnreachable
+        }
+    } else {
+        ColimaProfileState::Stopped
+    }
+}
+
 /// Classify one Colima status capture without treating unknown as stopped.
 pub fn classify_colima_observation(success: bool, stdout: &str, stderr: &str) -> ColimaObservation {
     if parse_colima_running(stdout, stderr) {
@@ -595,6 +630,7 @@ fn render_effigy_swap_provision_script(swap_gib: u64) -> String {
         r#"#!/bin/sh
 set -eu
 {marker}
+sudo -n sh -eu <<'EFFIGY_SWAP'
 swap_gib={swap_gib}
 swap_bytes=$((swap_gib * 1024 * 1024 * 1024))
 current_bytes=0
@@ -609,7 +645,8 @@ if [ "$current_bytes" -ne "$swap_bytes" ]; then
   mkswap /swapfile
 fi
 grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
-swapon /swapfile 2>/dev/null || true
+swapon /swapfile
+EFFIGY_SWAP
 "#,
         marker = "# effigy-managed-swap",
         swap_gib = swap_gib,
