@@ -118,19 +118,12 @@ class CargoRouteGuardTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("[ok] 0 plain-Cargo routes", result.stdout)
 
-    def test_escape_is_not_a_route(self):
-        repo = self._repo(
-            '[tasks]\n"ok.escape" = "EFFIGY_OXIDE_ESCAPE=cargo cargo test"\n'
-        )
-        result = run_guard(repo, CARGO_GUARD)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("[ok] 0 plain-Cargo routes", result.stdout)
-
-    def test_comments_and_environment_variables_are_not_routes(self):
+    def test_inert_cargo_forms_are_not_routes(self):
         repo = self._repo(
             "# cargo test\n[tasks]\n"
             "ok.comment = \"echo hi\"\n"
             'ok.env = "$CARGO test"\n'
+            '"ok.escape" = "EFFIGY_OXIDE_ESCAPE=cargo cargo test"\n'
         )
         result = run_guard(repo, CARGO_GUARD)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

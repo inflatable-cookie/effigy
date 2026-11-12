@@ -1228,6 +1228,7 @@ class HelperDispatchTests(Fixture):
         self.assertEqual(stat.S_IMODE(os.lstat(dest).st_mode), 0o600)
         with self.assertRaises(ex.Collision):  # an existing name is a refusal, never adopted
             ex.prefetch_pinned_artifact(_io.BytesIO(data), dest, len(data), digest)
+        self.assertEqual(Path(dest).read_bytes(), data)
         symlink = self.tmp + '/artifact-link.raw'
         target = self.tmp + '/not-created.raw'
         os.symlink(target, symlink)
@@ -1242,6 +1243,7 @@ class HelperDispatchTests(Fixture):
         self.assertEqual(Path(self.tmp + '/short.raw').read_bytes(), data[:-1])
         with self.assertRaises(ex.Refusal):
             ex.prefetch_pinned_artifact(_io.BytesIO(data), self.tmp + '/bad.raw', len(data), '0' * 128)
+        self.assertEqual(Path(self.tmp + '/bad.raw').read_bytes(), data)
         calls = []
 
         def lost_counter():
@@ -4934,19 +4936,20 @@ class ColimaImageFetchTests(Fixture):
             self.assertEqual(os.listdir(elsewhere), [])
             os.unlink(self.image_dir)
 
-    def test_unknown_or_mismatched_length_refuses_before_any_byte_is_written(self):
-        for headers in ({'Content-Length': None}, {'Content-Length': str(len(FAKE_IMAGE) + 1)}):
-            with self.assertRaises(primitive.Refusal):
-                self.fetch(FakeResponse(headers=headers))
-            self.assertFalse(os.path.lexists(self.dest))
-
-    def test_encoding_chunking_and_status_refuse(self):
-        cases = (FakeResponse(headers={'Content-Encoding': 'gzip'}), FakeResponse(headers={'Transfer-Encoding': 'chunked'}),
-                 FakeResponse(status=500), FakeResponse(status=404))
-        for response in cases:
-            with self.assertRaises(primitive.Refusal):
-                self.fetch(response)
-            self.assertFalse(os.path.lexists(self.dest))
+    def test_http_length_encoding_transfer_and_status_refuse_before_write(self):
+        cases = (
+            ('unknown Content-Length', FakeResponse(headers={'Content-Length': None})),
+            ('mismatched Content-Length', FakeResponse(headers={'Content-Length': str(len(FAKE_IMAGE) + 1)})),
+            ('compressed response', FakeResponse(headers={'Content-Encoding': 'gzip'})),
+            ('chunked transfer', FakeResponse(headers={'Transfer-Encoding': 'chunked'})),
+            ('server error', FakeResponse(status=500)),
+            ('not found', FakeResponse(status=404)),
+        )
+        for label, response in cases:
+            with self.subTest(response=label):
+                with self.assertRaises(primitive.Refusal):
+                    self.fetch(response)
+                self.assertFalse(os.path.lexists(self.dest))
 
 class RedirectPolicyTests(Fixture):
     """The real opener, with http.client replaced by a scripted connection: redirects stay on allowlisted HTTPS hosts."""
