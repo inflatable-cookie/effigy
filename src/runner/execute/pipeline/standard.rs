@@ -419,13 +419,13 @@ fn run_standard_task_inner(
     let mut host_aliases = host_aliases;
     let (resolved_secret_env, inherited_env) = match host_aliases.resolver.as_mut() {
         Some(resolver) => {
-            let delivered = resolver.resolve_delivered_env(
+            let (secret_env, inherited) = resolver.resolve_delivered_env(
                 host_aliases.plain_env_keys,
                 secret_ref.unwrap_or_default(),
                 std::iter::empty(),
                 true,
             )?;
-            (Some(delivered.secret_env), delivered.inherited)
+            (Some(secret_env), inherited)
         }
         None => (None, Vec::new()),
     };

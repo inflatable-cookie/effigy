@@ -381,11 +381,11 @@ fn run_steps(
             )?),
             None => None,
         };
-        if let Some(env) = delivered {
+        if let Some((secret_env, inherited)) = delivered {
             if secrets.is_some() {
-                step_secrets = Some(env.secret_env);
+                step_secrets = Some(secret_env);
             }
-            for (key, value) in env.inherited {
+            for (key, value) in inherited {
                 step_env.entry(key).or_insert(value);
             }
         }

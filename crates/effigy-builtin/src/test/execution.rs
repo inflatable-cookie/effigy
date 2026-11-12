@@ -176,9 +176,7 @@ fn suite_result(
         // The session carries the exit the suite reported. A failure it could
         // not read a status for (a timeout, an unreadable wait) names none, and
         // the display record is never parsed back into a code.
-        Some(state @ SessionEntryState::Failed { .. }) => {
-            (BuiltinTestOutcome::Failed, state.exit_code())
-        }
+        Some(SessionEntryState::Failed { exit, .. }) => (BuiltinTestOutcome::Failed, *exit),
         Some(SessionEntryState::Stopped { .. }) => (BuiltinTestOutcome::Cancelled, None),
         Some(SessionEntryState::NotStarted) | None => (BuiltinTestOutcome::NotStarted, None),
     };

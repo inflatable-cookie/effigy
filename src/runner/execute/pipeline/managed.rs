@@ -425,7 +425,7 @@ fn start_managed_run(
                     .chain(effigy_managed::declared_env_keys(&process.run));
                 for (key, value) in resolver
                     .resolve_delivered_env(&session_delivered, &[], child_keys, true)?
-                    .inherited
+                    .1
                 {
                     if !resolved.iter().any(|(existing, _)| existing == &key) {
                         resolved.push((key, value));

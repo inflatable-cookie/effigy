@@ -45,10 +45,7 @@ pub enum SessionEntryState {
     Failed {
         /// The record the session shows for this attempt.
         detail: String,
-        /// The exit code the entry itself reported, when the session observed
-        /// one. A failure with no observed status (a timeout, an unreadable
-        /// wait) carries none; a consumer never has to read the display record
-        /// to learn it.
+        /// The exit the entry reported, when the session observed one.
         exit: Option<i32>,
     },
     /// The session ended the entry: it never reported an exit status of its
@@ -61,13 +58,9 @@ pub enum SessionEntryState {
 impl SessionEntryState {
     /// The state a session recorded as one text record: `exit=0` or another
     /// `exit=N`, `signal=N`, `not-tracked`/`not started`, or anything else the
-    /// supervisor reported. A session that keeps a typed record reports that
-    /// record instead, so a stop it caused is never read as a failure.
-    ///
-    /// This is the one place a display record is decoded, and only a text
-    /// protocol needs it: a producer that already holds the typed exit reports
-    /// [`Self::from_exit_code`], so no consumer parses a record back into a
-    /// status.
+    /// supervisor reported. This is the one place a record is decoded, for the
+    /// text protocols; a producer holding the typed exit reports
+    /// [`Self::from_exit_code`] instead.
     pub fn from_record(record: &str) -> Self {
         let record = record.trim();
         if record == "exit=0" {
@@ -101,8 +94,7 @@ impl SessionEntryState {
         }
     }
 
-    /// The state a session recorded for an entry that reported this exit code
-    /// itself, with no record to decode.
+    /// The state for an entry that reported this exit code itself.
     pub fn from_exit_code(code: i32) -> Self {
         if code == 0 {
             return Self::Passed;
@@ -110,15 +102,6 @@ impl SessionEntryState {
         Self::Failed {
             detail: format!("exit={code}"),
             exit: Some(code),
-        }
-    }
-
-    /// The exit code this entry reported, when the session observed one. A
-    /// cancelled or never-started entry has none of its own.
-    pub fn exit_code(&self) -> Option<i32> {
-        match self {
-            Self::Failed { exit, .. } => *exit,
-            _ => None,
         }
     }
 }

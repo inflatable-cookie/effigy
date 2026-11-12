@@ -193,20 +193,7 @@ fn render_inspect_payload(
         .as_deref()
         .map(|path| inspect_selected_path(&loaded, path, &manifest_path))
         .transpose()?;
-    // One rendering of the selected value feeds both surfaces: a value the
-    // text form cannot render must fail the inspection, not print a
-    // placeholder that would make `--json` disagree with the text form.
-    let selected_rendered = selected
-        .as_ref()
-        .map(|entry| render_selected_value(&entry.path, &entry.value))
-        .transpose()?;
-    let text = render_manifest_inspection(
-        target_root,
-        &loaded,
-        // The selected path and its one rendering travel together, so a value
-        // that cannot be rendered never reaches either surface.
-        selected.as_ref().zip(selected_rendered.as_deref()),
-    )?;
+    let text = render_manifest_inspection(target_root, &loaded, selected.as_ref())?;
     let evaluation_order = loaded
         .evaluation_order
         .iter()
@@ -271,13 +258,16 @@ fn render_inspect_payload(
                 })
             }),
             selected_path,
-            selected_value: selected.as_ref().zip(selected_rendered.as_deref()).map(
-                |(entry, rendered)| {
-                    json!({
+            // A value the text form cannot render fails the inspection; `--json`
+            // never reports a placeholder instead.
+            selected_value: selected
+                .as_ref()
+                .map(|entry| {
+                    Ok::<_, BuiltinError>(json!({
                         "path": entry.path,
                         "source": display_path(&entry.source, target_root),
                         "value": toml_value_to_json(&entry.value),
-                        "rendered": rendered,
+                        "rendered": render_selected_value(&entry.path, &entry.value)?,
                         "overrides": entry
                             .overrides
                             .iter()
@@ -289,9 +279,9 @@ fn render_inspect_payload(
                                 })
                             })
                             .collect::<Vec<_>>(),
-                    })
-                },
-            ),
+                    }))
+                })
+                .transpose()?,
         }),
     )
 }
@@ -596,7 +586,7 @@ impl ConfigPayload {
 fn render_manifest_inspection(
     target_root: &Path,
     loaded: &effigy_manifest::LoadedTaskManifest,
-    selected: Option<(&SelectedInspectValue, &str)>,
+    selected: Option<&SelectedInspectValue>,
 ) -> Result<String, BuiltinError> {
     let mut out = String::new();
     out.push_str("Manifest Composition\n");
@@ -660,7 +650,7 @@ fn render_manifest_inspection(
         out.push('\n');
     }
 
-    if let Some((selected, rendered)) = selected {
+    if let Some(selected) = selected {
         out.push_str("Selected Path\n");
         out.push_str("-------------\n");
         out.push_str(&format!("Path: {}\n", selected.path));
@@ -685,7 +675,7 @@ fn render_manifest_inspection(
 
         out.push_str("Selected Value\n");
         out.push_str("--------------\n");
-        out.push_str(rendered);
+        out.push_str(&render_selected_value(&selected.path, &selected.value)?);
         if !out.ends_with('\n') {
             out.push('\n');
         }

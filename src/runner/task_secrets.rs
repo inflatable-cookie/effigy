@@ -1,12 +1,8 @@
-//! The one owner of the secrets a task run delivers.
-//!
-//! A task's declared `[secrets.keys]` entries reach its child as environment
-//! values only when the run is a direct shell (a `task:` reference runs in the
-//! process instead), and only for the targets this invocation names. Every
-//! route that injects them — the standard pipeline, the nested sequence
-//! engine, the managed session and the reserved host shell — asks this module,
-//! so the policy, the vault read and the redaction of delivered values have one
-//! home. Nothing here renders or runs a task command.
+//! The one owner of the secrets a task run delivers: which declared keys a
+//! direct-shell run injects for the targets it names, the vault read and
+//! upgrade, and the redaction of delivered values. The standard pipeline, the
+//! nested sequence engine, the managed session and the reserved host shell all
+//! ask this module.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -15,13 +11,13 @@ use effigy_cli::{SecretsArgs, SecretsSubcommand};
 use effigy_env::secret::SecretString;
 use effigy_manifest::{
     ManifestManagedRun, ManifestManagedRunStep, ManifestSecretTarget, ManifestSecretsBackend,
-    ManifestSecretsConfig, TaskSelection,
+    ManifestTaskSecretsMode, TaskSelection,
 };
 use effigy_secrets::{SecretValue, VaultPlaintextPayload};
 use effigy_ui::steps::ProgressFrame;
 
 use crate::runner::error::RunnerError;
-use crate::runner::execute::ExecutionPreflight;
+use crate::runner::execute::preflight::ExecutionPreflight;
 use crate::runner::manifest::{load_task_manifest, TASK_MANIFEST_FILE};
 
 /// Vault declarations and the relative vault file for an ordinary local
@@ -47,18 +43,23 @@ pub(in crate::runner) fn resolve_standard_task_secrets(
         selection.task,
         matches!(
             selection.task.secrets,
-            Some(effigy_manifest::ManifestTaskSecretsMode::Required)
+            Some(ManifestTaskSecretsMode::Required)
         ),
         preflight.selector.task_name == "dev",
     )
 }
 
+/// A command runs its own shell unless it names another task instead.
+fn direct_shell(command: &str) -> bool {
+    command
+        .strip_prefix("task:")
+        .map(str::trim)
+        .is_none_or(str::is_empty)
+}
+
 fn task_uses_direct_shell(run: Option<&ManifestManagedRun>) -> bool {
     match run {
-        Some(ManifestManagedRun::Command(command)) => command
-            .strip_prefix("task:")
-            .map(str::trim)
-            .is_none_or(|value| value.is_empty()),
+        Some(ManifestManagedRun::Command(command)) => direct_shell(command),
         Some(ManifestManagedRun::Sequence(steps)) => steps.iter().any(step_uses_direct_shell),
         None => false,
     }
@@ -66,10 +67,7 @@ fn task_uses_direct_shell(run: Option<&ManifestManagedRun>) -> bool {
 
 fn step_uses_direct_shell(step: &ManifestManagedRunStep) -> bool {
     match step {
-        ManifestManagedRunStep::Command(command) => command
-            .strip_prefix("task:")
-            .map(str::trim)
-            .is_none_or(|value| value.is_empty()),
+        ManifestManagedRunStep::Command(command) => direct_shell(command),
         ManifestManagedRunStep::Step(table) => table.run.is_some(),
     }
 }
@@ -109,48 +107,29 @@ fn collect_task_secret_env_names_from_run(run: &ManifestManagedRun, names: &mut 
     }
 }
 
+/// The `$NAME` and `${NAME}` references a shell command names. Braced names
+/// keep whatever sits between the braces (`${1}` included); an unbraced name
+/// still has to start like a shell variable.
 fn collect_task_secret_env_names_from_shell(command: &str, names: &mut BTreeSet<String>) {
-    let bytes = command.as_bytes();
-    let mut index = 0usize;
-    while index < bytes.len() {
-        if bytes[index] != b'$' {
-            index += 1;
-            continue;
+    let mut rest = command;
+    while let Some(dollar) = rest.find('$') {
+        rest = &rest[dollar + 1..];
+        let braced = rest.starts_with('{');
+        let body = rest.strip_prefix('{').unwrap_or(rest);
+        let end = body
+            .find(|character: char| !(character == '_' || character.is_ascii_alphanumeric()))
+            .unwrap_or(body.len());
+        let name = &body[..end];
+        let named = if braced {
+            !name.is_empty() && body[end..].starts_with('}')
+        } else {
+            name.starts_with(|character: char| character == '_' || character.is_ascii_alphabetic())
+        };
+        if named {
+            names.insert(name.to_owned());
         }
-        if index + 1 >= bytes.len() {
-            break;
-        }
-        if bytes[index + 1] == b'{' {
-            let start = index + 2;
-            let mut end = start;
-            while end < bytes.len() && is_env_name_char(bytes[end]) {
-                end += 1;
-            }
-            if end > start && end < bytes.len() && bytes[end] == b'}' {
-                names.insert(command[start..end].to_owned());
-                index = end + 1;
-                continue;
-            }
-        } else if is_env_name_start(bytes[index + 1]) {
-            let start = index + 1;
-            let mut end = start + 1;
-            while end < bytes.len() && is_env_name_char(bytes[end]) {
-                end += 1;
-            }
-            names.insert(command[start..end].to_owned());
-            index = end;
-            continue;
-        }
-        index += 1;
+        rest = &body[end..];
     }
-}
-
-fn is_env_name_start(byte: u8) -> bool {
-    byte == b'_' || byte.is_ascii_alphabetic()
-}
-
-fn is_env_name_char(byte: u8) -> bool {
-    byte == b'_' || byte.is_ascii_alphanumeric()
 }
 
 pub(in crate::runner) fn resolve_task_secret_env(
@@ -201,7 +180,11 @@ pub(in crate::runner) fn resolve_task_secret_env(
         ));
     }
 
-    let vault_path = resolve_task_secret_vault_path(repo_root, secrets)?;
+    let vault_path = crate::runner::secret_vault::resolve_shared_effigy_vault_path(
+        repo_root,
+        secrets,
+        "task secret injection",
+    )?;
     if !vault_path.exists() && eager_load {
         crate::runner::run_command(effigy_cli::Command::Secrets(SecretsArgs {
             subcommand: SecretsSubcommand::Init,
@@ -220,16 +203,14 @@ pub(in crate::runner) fn resolve_task_secret_env(
     }
 
     let mut payload = if local_dev {
-        // Only a vault this machine has no local-dev key for is answered by
-        // asking for the passphrase and minting one. Any other failure — an
-        // unreadable vault, an unsafe or invalid key, a key the vault's
-        // passphrase does not match — keeps its own error instead of starting
-        // an interactive upgrade that would hide it.
+        // Only a machine with no local-dev key yet is answered by asking for
+        // the passphrase and minting one; every other failure keeps its error
+        // instead of hiding behind an interactive upgrade.
         match crate::runner::secret_vault::read_effigy_vault_payload_with_local_dev_key(
             &vault_path,
         )? {
-            crate::runner::secret_vault::LocalDevVaultRead::Opened(payload) => payload,
-            crate::runner::secret_vault::LocalDevVaultRead::NoLocalDevKey => {
+            Some(payload) => payload,
+            None => {
                 let Some(passphrase) =
                     read_local_dev_upgrade_passphrase(required_names.is_empty())?
                 else {
@@ -256,7 +237,11 @@ pub(in crate::runner) fn resolve_task_secret_env(
     let mut missing_required =
         task_required_secret_names_missing_from_payload(&payload, &task_keys);
     if !missing_required.is_empty() && eager_load {
-        maybe_generate_required_task_secrets(repo_root, secrets)?;
+        crate::runner::secrets_command::run_configured_vault_generate_task(
+            repo_root,
+            Some(secrets),
+        )
+        .map(|_| ())?;
         payload = if local_dev {
             crate::runner::secret_vault::read_effigy_vault_payload_for_local_dev(&vault_path)?
         } else {
@@ -324,11 +309,9 @@ fn task_secret_targets(extra_targets: &[String]) -> Result<Vec<ManifestSecretTar
     Ok(targets)
 }
 
-/// The built-in vault this checkout's manifest declares and that exists on
-/// disk: the vault a managed session resolves access to once, before any
-/// front end renders (032, Q-007). A checkout without `[secrets]`, or without
-/// a vault file yet, has nothing locked to resolve, so a session starts
-/// without asking.
+/// The built-in vault this checkout declares and that exists on disk: the
+/// vault a managed session resolves access to before any front end renders
+/// (032, Q-007). No `[secrets]` or no vault file means nothing to resolve.
 pub(in crate::runner) fn managed_session_vault_path(
     repo_root: &Path,
 ) -> Result<Option<PathBuf>, RunnerError> {
@@ -339,31 +322,21 @@ pub(in crate::runner) fn managed_session_vault_path(
     if !matches!(secrets.backend, Some(ManifestSecretsBackend::EffigyVault)) {
         return Ok(None);
     }
-    let vault_path = resolve_task_secret_vault_path(repo_root, secrets)?;
+    let vault_path = crate::runner::secret_vault::resolve_shared_effigy_vault_path(
+        repo_root,
+        secrets,
+        "managed session secret access",
+    )?;
     Ok(vault_path.exists().then_some(vault_path))
 }
 
-fn resolve_task_secret_vault_path(
-    repo_root: &Path,
-    secrets: &ManifestSecretsConfig,
-) -> Result<PathBuf, RunnerError> {
-    crate::runner::secret_vault::resolve_shared_effigy_vault_path(
-        repo_root,
-        secrets,
-        "task secret injection",
-    )
-}
-
-/// Whether this task's preflight secret resolution can run the manifest's
-/// declared `[secrets.vault].generate` hook. The hook is not written in the
-/// task's `run`, so `classify_tree` cannot see it by walking steps: it is a
-/// durable descendant of `secrets = "required"` startup that the manifest
-/// declares. Resolving that join before admission keeps the hook's effects
-/// inside the tree class instead of refusing them after workload go
-/// (contract 052 §3.1). Only a direct-shell task resolves task secret env, and
-/// only a task-targeted key reaches the hook, so no other task widens. Secret
-/// scope and this join use the selected catalog's declarations and vault, not
-/// the invoking workspace root.
+/// Whether this task's preflight can run the manifest's declared
+/// `[secrets.vault].generate` hook. The hook is not in the task's `run`, so
+/// `classify_tree` cannot see it: resolving that join before admission keeps
+/// its effects inside the tree class instead of refusing them after workload
+/// go (contract 052 §3.1). Only a direct-shell task with a task-targeted
+/// required key reaches it, and only the selected catalog's declarations and
+/// vault count.
 pub(in crate::runner) fn startup_can_run_vault_generate_hook(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
@@ -382,9 +355,6 @@ pub(in crate::runner) fn startup_can_run_vault_generate_hook(
     let Some(secrets) = manifest.secrets.as_ref() else {
         return Ok(false);
     };
-    if !matches!(secrets.backend, Some(ManifestSecretsBackend::EffigyVault)) {
-        return Ok(false);
-    }
     let Some(generate) = secrets
         .vault
         .as_ref()
@@ -392,7 +362,9 @@ pub(in crate::runner) fn startup_can_run_vault_generate_hook(
     else {
         return Ok(false);
     };
-    if generate.run.is_none() && generate.task.is_none() && generate.rhai.is_none() {
+    if !matches!(secrets.backend, Some(ManifestSecretsBackend::EffigyVault))
+        || (generate.run.is_none() && generate.task.is_none() && generate.rhai.is_none())
+    {
         return Ok(false);
     }
     let targets = task_secret_targets(&preflight.secret_targets)?;
@@ -400,14 +372,6 @@ pub(in crate::runner) fn startup_can_run_vault_generate_hook(
         .keys
         .values()
         .any(|key| key.targets.iter().any(|target| targets.contains(target))))
-}
-
-fn maybe_generate_required_task_secrets(
-    repo_root: &Path,
-    secrets: &ManifestSecretsConfig,
-) -> Result<(), RunnerError> {
-    crate::runner::secrets_command::run_configured_vault_generate_task(repo_root, Some(secrets))
-        .map(|_| ())
 }
 
 fn read_task_secret_passphrase(
@@ -483,4 +447,28 @@ pub(in crate::runner) fn redact_task_secret_values(
         }
     }
     redacted
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn names(command: &str) -> Vec<String> {
+        let mut names = BTreeSet::new();
+        collect_task_secret_env_names_from_shell(command, &mut names);
+        names.into_iter().collect()
+    }
+
+    /// The shell scanner reads both spellings, keeps the braced form's
+    /// contents as written, and names nothing for a bare or unterminated
+    /// reference.
+    #[test]
+    fn a_shell_command_names_every_secret_variable_it_references() {
+        assert_eq!(names("printf %s \"$TOKEN\""), ["TOKEN"]);
+        assert_eq!(names("printf %s \"${TOKEN}\""), ["TOKEN"]);
+        assert_eq!(names("$A-$B ${C} $1 ${1} $${D}"), ["1", "A", "B", "C", "D"]);
+        assert!(names("${TOKEN $ ${} $").is_empty());
+        // A reference after an unterminated brace is still read.
+        assert_eq!(names("${A$B"), ["B"]);
+    }
 }

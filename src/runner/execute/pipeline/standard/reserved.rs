@@ -86,14 +86,12 @@ pub(in crate::runner) fn run_reserved_shell(
         if let Some(aliases) = built.host_aliases.as_mut() {
             aliases.require_published_in(&preflight.selector.task_name, &built.command)?;
             let pairs = secret_env_slice(&secrets);
-            let delivered = aliases.resolve_delivered_env(
+            (secrets, inherited) = aliases.resolve_delivered_env(
                 &built.plain_env_keys,
                 &pairs,
                 std::iter::empty(),
                 true,
             )?;
-            secrets = delivered.secret_env;
-            inherited = delivered.inherited;
         }
         let secret_env = secrets
             .iter()

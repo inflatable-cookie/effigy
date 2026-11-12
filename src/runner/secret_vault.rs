@@ -101,43 +101,21 @@ pub(in crate::runner) fn read_effigy_vault_payload(
     })
 }
 
-/// How a local-dev read ended. A machine that has not minted a local-dev
-/// unlock key yet is the one case a caller may answer by asking for the
-/// passphrase and minting one; every other failure keeps its own error and
-/// next step, so a broken or unreadable key is never treated as "no key".
-#[derive(Debug)]
-pub(in crate::runner) enum LocalDevVaultRead {
-    /// The local-dev key opened the vault.
-    Opened(VaultPlaintextPayload),
-    /// This vault has no local-dev unlock key yet.
-    NoLocalDevKey,
-}
-
-/// Read the vault with the local-dev key, reporting the absence of that key as
-/// a distinct outcome rather than as a failure another factor might paper
-/// over.
-///
-/// The vault is read first: a corrupt or unreadable vault is this machine's
-/// failure whether or not a local-dev key exists, and must not disappear
-/// behind "no key yet". Only a key path that is genuinely absent (a `NotFound`
-/// from the key's own metadata) is that distinct outcome; a key path that
-/// exists but cannot be inspected or read keeps its own error.
+/// Read the vault with the local-dev key, or `None` when this machine has not
+/// minted one yet. The vault is read first, so a corrupt vault fails whether or
+/// not a key exists; only a genuinely absent key path (a `NotFound` from its
+/// own symlink metadata, never `Path::exists`, which reports every failed
+/// lookup as absent) is `None`. A key path that exists but cannot be used — a
+/// dangling or looping link included — keeps its own error.
 pub(in crate::runner) fn read_effigy_vault_payload_with_local_dev_key(
     vault_path: &Path,
-) -> Result<LocalDevVaultRead, RunnerError> {
+) -> Result<Option<VaultPlaintextPayload>, RunnerError> {
     let envelope = read_vault_envelope(vault_path)?;
     let key_path = local_dev_unlock_key_path(vault_path);
-    match fs::metadata(&key_path) {
+    match fs::symlink_metadata(&key_path) {
         Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(LocalDevVaultRead::NoLocalDevKey);
-        }
-        Err(error) => {
-            return Err(RunnerError::task_invocation(format!(
-                "could not inspect the local-dev unlock key {}: {error}\nnext: check the vault directory's ownership and permissions, or run `effigy secrets lock` then `effigy secrets unlock`",
-                key_path.display()
-            )));
-        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(local_dev_key_error(&key_path, error)),
     }
     match inspect_vault_permissions(&key_path) {
         Ok(VaultPermissionStatus::Safe) | Ok(VaultPermissionStatus::UnsupportedPlatform) => {}
@@ -147,12 +125,7 @@ pub(in crate::runner) fn read_effigy_vault_payload_with_local_dev_key(
                 key_path.display()
             )));
         }
-        Err(error) => {
-            return Err(RunnerError::task_invocation(format!(
-                "could not inspect the local-dev unlock key {}: {error}\nnext: check the vault directory's ownership and permissions, or run `effigy secrets lock` then `effigy secrets unlock`",
-                key_path.display()
-            )));
-        }
+        Err(error) => return Err(local_dev_key_error(&key_path, error)),
     }
     let key = fs::read(&key_path).map_err(|error| {
         RunnerError::task_invocation(format!(
@@ -172,19 +145,25 @@ pub(in crate::runner) fn read_effigy_vault_payload_with_local_dev_key(
             vault_path.display()
         ))
     })?;
-    Ok(LocalDevVaultRead::Opened(payload))
+    Ok(Some(payload))
+}
+
+fn local_dev_key_error(key_path: &Path, error: impl std::fmt::Display) -> RunnerError {
+    RunnerError::task_invocation(format!(
+        "could not inspect the local-dev unlock key {}: {error}\nnext: check the vault directory's ownership and permissions, or run `effigy secrets lock` then `effigy secrets unlock`",
+        key_path.display()
+    ))
 }
 
 pub(in crate::runner) fn read_effigy_vault_payload_for_local_dev(
     vault_path: &Path,
 ) -> Result<VaultPlaintextPayload, RunnerError> {
-    match read_effigy_vault_payload_with_local_dev_key(vault_path)? {
-        LocalDevVaultRead::Opened(payload) => Ok(payload),
-        LocalDevVaultRead::NoLocalDevKey => Err(RunnerError::task_invocation(format!(
+    read_effigy_vault_payload_with_local_dev_key(vault_path)?.ok_or_else(|| {
+        RunnerError::task_invocation(format!(
             "this vault has no local-dev unlock key at {}\nnext: run `effigy secrets unlock` with the passphrase to mint one",
             local_dev_unlock_key_path(vault_path).display()
-        ))),
-    }
+        ))
+    })
 }
 
 pub(in crate::runner) fn begin_vault_write(
@@ -338,7 +317,10 @@ mod tests {
 
         let read = super::read_effigy_vault_payload_with_local_dev_key(&vault)
             .expect("a missing local-dev key is not a read failure");
-        assert!(matches!(read, super::LocalDevVaultRead::NoLocalDevKey));
+        assert!(
+            read.is_none(),
+            "the absence of a key is None, not a payload"
+        );
 
         let message = super::read_effigy_vault_payload_for_local_dev(&vault)
             .expect_err("the plain read still refuses")
@@ -420,9 +402,28 @@ mod tests {
             message.contains("could not inspect the local-dev unlock key"),
             "the error names the key it could not inspect: {message}"
         );
+    }
+
+    /// The key path itself is absent only when nothing exists at it. A link
+    /// whose target is gone is a key this machine cannot use, and its error
+    /// must not read as "no key yet" (which would start an upgrade).
+    #[test]
+    #[cfg(unix)]
+    fn a_dangling_local_dev_key_link_is_not_a_missing_key() {
+        use std::os::unix::fs::symlink;
+
+        let root = TempDir::new().expect("tempdir");
+        let vault = write_valid_vault(root.path());
+        let key_path = effigy_secrets::local_dev_unlock_key_path(&vault);
+        let missing = root.path().join("no-such-key");
+        symlink(&missing, &key_path).expect("dangling key link");
+
+        let message = super::read_effigy_vault_payload_with_local_dev_key(&vault)
+            .expect_err("a key link with no target is a failure")
+            .to_string();
         assert!(
-            !message.contains("no local-dev unlock key"),
-            "the absence of a key is not a failure to inspect it: {message}"
+            message.contains("could not inspect the local-dev unlock key"),
+            "the error names the key it could not use: {message}"
         );
     }
 
