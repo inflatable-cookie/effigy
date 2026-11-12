@@ -144,10 +144,8 @@ pub(in crate::runner) fn run_standard_task(
             &context,
             &env_schema_resolved,
             Some(&task_secret_pairs),
-            RunHostAliases {
-                resolver: built.host_aliases,
-                plain_env_keys: &plain_env_keys,
-            },
+            built.host_aliases,
+            &plain_env_keys,
             &mut run,
             &mut workload,
             tree,
@@ -247,7 +245,8 @@ fn run_standard_task_inner(
     context: &ExecutionTaskContext<'_>,
     env_schema_resolved: &Option<ResolvedEnv>,
     resolved_task_secrets: Option<&[(String, SecretString)]>,
-    host_aliases: RunHostAliases<'_>,
+    mut host_aliases: Option<HostAliasResolver>,
+    plain_env_keys: &BTreeSet<String>,
     run: &mut TaskRun,
     workload: &mut Option<WorkloadOutcome>,
     tree: super::super::sequence_run::ResolvedSteps,
@@ -416,11 +415,10 @@ fn run_standard_task_inner(
     // does). It refuses before the child starts when this checkout has no
     // published backing service, and the one resolution lives with the alias
     // owner (contract 005, effigy#431 review).
-    let mut host_aliases = host_aliases;
-    let (resolved_secret_env, inherited_env) = match host_aliases.resolver.as_mut() {
+    let (resolved_secret_env, inherited_env) = match host_aliases.as_mut() {
         Some(resolver) => {
             let (secret_env, inherited) = resolver.resolve_delivered_env(
-                host_aliases.plain_env_keys,
+                plain_env_keys,
                 secret_ref.unwrap_or_default(),
                 std::iter::empty(),
                 true,
@@ -684,14 +682,6 @@ fn activate_inline_workspace_container_runtime_with(
     )
 }
 
-/// The scoped alias resolution a host run owes, and the env keys its rendered
-/// command already delivers, so a same-named secret is neither delivered twice
-/// nor proved.
-pub(in crate::runner) struct RunHostAliases<'a> {
-    pub(in crate::runner) resolver: Option<HostAliasResolver>,
-    pub(in crate::runner) plain_env_keys: &'a BTreeSet<String>,
-}
-
 pub(in crate::runner) fn resolve_env_schema_if_present(
     catalog_root: &Path,
     runtime_override: Option<&Path>,
@@ -753,10 +743,8 @@ pub(in crate::runner) fn run_sequence_container_command(
         &context,
         &None,
         None,
-        RunHostAliases {
-            resolver: built.host_aliases,
-            plain_env_keys: &plain_env_keys,
-        },
+        built.host_aliases,
+        &plain_env_keys,
         run,
         &mut None,
         tree,
