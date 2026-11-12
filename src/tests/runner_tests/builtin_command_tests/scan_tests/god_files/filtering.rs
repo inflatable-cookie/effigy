@@ -44,10 +44,7 @@ fn run_manifest_task_builtin_scan_god_files_skips_each_non_source_family_by_defa
         &["god-files", "--threshold", "10", "--show-warnings"],
     );
 
-    assert_output_contains_all(
-        &out,
-        &["findings: 2", "src/app.ts", "tests/large_spec.rs"],
-    );
+    assert_output_contains_all(&out, &["findings: 2", "src/app.ts", "tests/large_spec.rs"]);
     assert_output_excludes_all(
         &out,
         &[

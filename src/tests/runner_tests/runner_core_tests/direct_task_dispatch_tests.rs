@@ -365,7 +365,10 @@ concurrent = [
     )
     .expect("managed tui plan");
 
-    assert!(output.lines().any(|line| line == "Selector: dev"), "{output}");
+    assert!(
+        output.lines().any(|line| line == "Selector: dev"),
+        "{output}"
+    );
     assert!(
         output
             .lines()

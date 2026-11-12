@@ -1,8 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    looks_like_bind_mount_source, parse_mount_parts, ContainerPolicyError,
-    EffectiveContainerPolicy,
+    looks_like_bind_mount_source, parse_mount_parts, ContainerPolicyError, EffectiveContainerPolicy,
 };
 
 /// How a workspace path is mounted into the primary service.

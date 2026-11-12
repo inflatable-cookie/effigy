@@ -35,12 +35,13 @@ command-local `--verbose`.
 
 ## The gate
 
-`effigy lint:feedback` runs `scripts/check-feedback-inventory.py` and then a
-Clippy sweep with `-D warnings`, both over `--workspace --all-targets`: a
-crate compiled only as another package's dependency is never linted as a
-package, so a `-p` list could miss a wrapper in it. The lint is not an optional
-selector — `validate`, `qa` and `qa:gates` all run it, so the normal validation
-path and the milestone QA path both fail on a reintroduced bare spinner.
+`effigy lint:feedback` first runs `fmt:check`, then
+`scripts/check-feedback-inventory.py`, then a Clippy sweep with `-D warnings`
+over `--workspace --all-targets`: a crate compiled only as another package's
+dependency is never linted as a package, so a `-p` list could miss a wrapper in
+it. The lint is not an optional selector — `validate`, `qa` and `qa:gates` all
+run it, so normal validation and milestone QA check Rust formatting and fail
+on a reintroduced bare spinner.
 
 - The legacy fixed-label entry points `steps::step` and `Step::step` are the
   deprecated anchors. rustc resolves a use through aliases and wrappers before

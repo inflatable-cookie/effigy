@@ -617,7 +617,10 @@ mod tests {
         assert!(!hint.usage.is_empty(), "{hint:?}");
         assert!(hint.usage.iter().all(|line| line.contains("effigy tasks")));
         assert_eq!(hint.command, "effigy tasks");
-        assert!(hint.usage.iter().any(|line| line.contains("--repo")), "{hint:?}");
+        assert!(
+            hint.usage.iter().any(|line| line.contains("--repo")),
+            "{hint:?}"
+        );
         assert!(hint.did_you_mean.is_none(), "{hint:?}");
     }
 

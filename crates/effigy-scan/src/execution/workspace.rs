@@ -147,8 +147,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let path = temp.path().join("secret.rs");
         std::fs::write(&path, b"fn secret() {}\n").expect("write");
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000))
-            .expect("chmod");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).expect("chmod");
         if std::fs::read_to_string(&path).is_err() {
             let error = collect(temp.path()).expect_err("unreadable file must fail");
             assert!(

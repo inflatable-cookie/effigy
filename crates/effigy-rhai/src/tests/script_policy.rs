@@ -30,7 +30,10 @@ fn run_effigy_json_surfaces_callback_errors_as_runtime_errors() {
         .expect_err("must fail");
     let rendered = error.to_string();
     assert!(rendered.contains("boom"), "{rendered}");
-    assert!(!rendered.contains("rendered"), "callback output is not an error: {rendered}");
+    assert!(
+        !rendered.contains("rendered"),
+        "callback output is not an error: {rendered}"
+    );
 }
 
 #[test]
@@ -70,7 +73,10 @@ fn first_party_rhai_scripts_do_not_recursively_invoke_effigy() {
         .expect("repo root")
         .to_path_buf();
     let scripts = collect_rhai_scripts(&repo_root);
-    assert!(!scripts.is_empty(), "first-party Rhai script inventory is empty");
+    assert!(
+        !scripts.is_empty(),
+        "first-party Rhai script inventory is empty"
+    );
     let mut violations = Vec::new();
     for script in scripts {
         let contents = fs::read_to_string(&script).expect("read script");
@@ -142,7 +148,10 @@ fn first_party_rhai_scripts_use_exec_run_for_container_commands() {
         .expect("repo root")
         .to_path_buf();
     let scripts = collect_rhai_scripts(&repo_root);
-    assert!(!scripts.is_empty(), "first-party Rhai script inventory is empty");
+    assert!(
+        !scripts.is_empty(),
+        "first-party Rhai script inventory is empty"
+    );
     let mut violations = Vec::new();
     for script in scripts {
         let contents = fs::read_to_string(&script).expect("read script");
@@ -173,7 +182,10 @@ fn linux_workspace_artifact_build_streams_container_output() {
         .to_path_buf();
     let script = repo_root.join("scripts/build-linux-workspace-artifact.rhai");
     let contents = fs::read_to_string(script).expect("read script");
-    assert!(!contents.trim().is_empty(), "workspace artifact script is empty");
+    assert!(
+        !contents.trim().is_empty(),
+        "workspace artifact script is empty"
+    );
 
     assert!(
         contents
@@ -196,7 +208,10 @@ fn first_party_rhai_scripts_do_not_use_legacy_module_dot_calls() {
         .expect("repo root")
         .to_path_buf();
     let scripts = collect_rhai_scripts(&repo_root);
-    assert!(!scripts.is_empty(), "first-party Rhai script inventory is empty");
+    assert!(
+        !scripts.is_empty(),
+        "first-party Rhai script inventory is empty"
+    );
     let mut violations = Vec::new();
     let module_call = regex::Regex::new(
         r"\b(?:time|path|fs|process|http|json|toml|str|regex|random|search|config|task|container|scan|docs|deploy|system|demo|changelog|cache|gateway|bundle|service|catalog|doctor|contracts|unlock|test|effigy)\.[A-Za-z_][A-Za-z0-9_]*\s*\(",

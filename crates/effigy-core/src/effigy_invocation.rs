@@ -94,7 +94,9 @@ fn resolve_source_with_target_dir(
 fn render_source(source: &InvocationSource) -> Result<Vec<String>, std::io::Error> {
     match source {
         InvocationSource::Explicit(value) => Ok(vec![value.clone()]),
-        InvocationSource::ProfileBinary(binary) => Ok(vec![canonical_display(binary, "profile binary")?]),
+        InvocationSource::ProfileBinary(binary) => {
+            Ok(vec![canonical_display(binary, "profile binary")?])
+        }
         InvocationSource::TargetFallback(binary) => Ok(vec![canonical_display(
             binary,
             "checkout target fallback; set EFFIGY_EXECUTABLE to the effigy binary",
@@ -104,15 +106,17 @@ fn render_source(source: &InvocationSource) -> Result<Vec<String>, std::io::Erro
 }
 
 fn canonical_display(path: &Path, context: &str) -> Result<String, std::io::Error> {
-    path.canonicalize().map(|canonical| canonical.display().to_string()).map_err(|error| {
-        std::io::Error::new(
-            error.kind(),
-            format!(
-                "effigy executable `{}` ({context}) is unavailable: {error}",
-                path.display()
-            ),
-        )
-    })
+    path.canonicalize()
+        .map(|canonical| canonical.display().to_string())
+        .map_err(|error| {
+            std::io::Error::new(
+                error.kind(),
+                format!(
+                    "effigy executable `{}` ({context}) is unavailable: {error}",
+                    path.display()
+                ),
+            )
+        })
 }
 
 #[cfg(test)]
@@ -168,8 +172,7 @@ mod tests {
     #[test]
     fn non_deps_executable_resolves_to_itself() {
         let exe = Path::new("/usr/local/bin/effigy");
-        let source =
-            resolve_source_with_target_dir(None, exe, Path::new("/tmp/target"));
+        let source = resolve_source_with_target_dir(None, exe, Path::new("/tmp/target"));
         assert_eq!(source, InvocationSource::CurrentExe(exe.to_path_buf()));
     }
 

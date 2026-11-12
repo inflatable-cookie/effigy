@@ -202,8 +202,6 @@ fn state_history_summary_typed(kind: StateHistoryKind, record: &RawStateHistoryR
     }
 }
 
-
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum StateHistoryKind {

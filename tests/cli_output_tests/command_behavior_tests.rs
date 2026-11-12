@@ -1463,7 +1463,10 @@ fn cli_changelog_extract_fails_for_missing_version() {
         .expect("run changelog extract");
 
     assert!(!output.status.success(), "extract should fail");
-    assert!(output.stdout.is_empty(), "refusal has no stdout: {output:?}");
+    assert!(
+        output.stdout.is_empty(),
+        "refusal has no stdout: {output:?}"
+    );
     let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
     assert_eq!(
         stderr,
@@ -2062,7 +2065,10 @@ fn cli_release_plan_text_mode_shows_identities_files_and_targets() {
 
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     assert!(output.status.success(), "got: {stdout}");
-    assert!(stdout.lines().any(|line| line == "Release Plan"), "{stdout}");
+    assert!(
+        stdout.lines().any(|line| line == "Release Plan"),
+        "{stdout}"
+    );
     let identities = stdout
         .split_once("Identities (1)\n")
         .expect("one identity section")
@@ -2111,8 +2117,14 @@ fn cli_release_plan_text_mode_shows_identities_files_and_targets() {
         ])
     );
     assert!(stdout.lines().any(|line| line == "Targets (1)"), "{stdout}");
-    assert!(stdout.lines().any(|line| line == "  tag          tag"), "{stdout}");
-    assert!(stdout.lines().any(|line| line == "  Ready to run: yes"), "{stdout}");
+    assert!(
+        stdout.lines().any(|line| line == "  tag          tag"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.lines().any(|line| line == "  Ready to run: yes"),
+        "{stdout}"
+    );
 }
 
 #[test]
@@ -2209,7 +2221,10 @@ fn cli_release_plan_replaces_the_retired_simulate_command() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(!output.status.success(), "got: {combined}");
-    assert!(output.stdout.is_empty(), "refusal has no stdout: {output:?}");
+    assert!(
+        output.stdout.is_empty(),
+        "refusal has no stdout: {output:?}"
+    );
     let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
     let refusal = stderr
         .split_once("[error] Invalid command arguments\n")
@@ -3630,15 +3645,29 @@ fn cli_container_data_list_json_reports_managed_volumes() {
                 volume["service"].as_str().expect("volume service"),
                 volume["classification"].as_str().expect("classification"),
                 volume["size_bytes"].is_null(),
-                volume["size_available"].as_bool().expect("size availability"),
+                volume["size_available"]
+                    .as_bool()
+                    .expect("size availability"),
             )
         })
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(
         inventory,
         std::collections::BTreeSet::from([
-            ("fixture-web-dev-app-app-node-modules", "app", "ephemeral", true, false),
-            ("fixture-web-dev-app-node-modules", "app", "ephemeral", true, false),
+            (
+                "fixture-web-dev-app-app-node-modules",
+                "app",
+                "ephemeral",
+                true,
+                false
+            ),
+            (
+                "fixture-web-dev-app-node-modules",
+                "app",
+                "ephemeral",
+                true,
+                false
+            ),
             ("fixture-web-dev-db-data", "db", "persistent", false, true),
         ])
     );
@@ -3722,8 +3751,20 @@ fn cli_container_cache_list_json_reports_purge_safe_isolated_volumes() {
     assert_eq!(
         inventory,
         std::collections::BTreeSet::from([
-            ("fixture-web-dev-app-app-node-modules", "node-modules", true, true, false),
-            ("fixture-web-dev-app-node-modules", "node-modules", true, true, false),
+            (
+                "fixture-web-dev-app-app-node-modules",
+                "node-modules",
+                true,
+                true,
+                false
+            ),
+            (
+                "fixture-web-dev-app-node-modules",
+                "node-modules",
+                true,
+                true,
+                false
+            ),
         ])
     );
     assert_eq!(parsed["result"]["reclaimable_size_bytes"], 0);
@@ -6132,9 +6173,7 @@ fn cli_container_shell_command_runs_via_sh_lc() {
     let shell_invocations = colima_invocations
         .lines()
         .filter_map(|line| line.split_once(' ').map(|(_, command)| command))
-        .filter(|command| {
-            command.starts_with("nerdctl --profile dev -- exec -w /workspace ")
-        })
+        .filter(|command| command.starts_with("nerdctl --profile dev -- exec -w /workspace "))
         .collect::<Vec<_>>();
     assert_eq!(shell_invocations.len(), 1, "{colima_invocations}");
     assert!(

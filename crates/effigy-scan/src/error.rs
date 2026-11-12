@@ -15,15 +15,24 @@ use effigy_manifest::ManifestError;
 pub enum ScanError {
     Invocation(String),
     Manifest(ManifestError),
-    BudgetExhausted { phase: String },
+    BudgetExhausted {
+        phase: String,
+    },
     /// A filesystem path that is not valid UTF-8. Scan matching, globs
     /// and finding paths are text, so a non-UTF-8 path is a typed refusal
     /// instead of a lossy replacement or an empty-string default.
-    NonUtf8Path { path: String },
+    NonUtf8Path {
+        path: String,
+    },
     /// A text scan read file bytes that are not valid UTF-8.
-    NonUtf8Contents { path: String },
+    NonUtf8Contents {
+        path: String,
+    },
     /// A scan file or walk entry that could not be read.
-    ReadFailed { path: String, message: String },
+    ReadFailed {
+        path: String,
+        message: String,
+    },
 }
 
 impl ScanError {
@@ -103,8 +112,7 @@ mod tests {
         let typed = ScanError::budget_exhausted("inventory");
         assert!(typed.is_budget_exhausted());
         assert!(typed.to_string().contains("budget exhausted"));
-        let lookalike =
-            ScanError::invocation("inventory notes: budget exhausted (historical)");
+        let lookalike = ScanError::invocation("inventory notes: budget exhausted (historical)");
         assert!(!lookalike.is_budget_exhausted());
     }
 }

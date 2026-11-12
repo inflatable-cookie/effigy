@@ -60,6 +60,9 @@ fn run_doctor_and_explain_text_row_and_section_order_contract_is_stable() {
         "selected-catalog: catalog_a",
         "selected-mode: explicit_prefix",
     ] {
-        assert!(prefix_block.lines().any(|actual| actual == line), "{prefix_block}");
+        assert!(
+            prefix_block.lines().any(|actual| actual == line),
+            "{prefix_block}"
+        );
     }
 }

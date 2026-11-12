@@ -21,9 +21,9 @@ mod legacy;
 mod process;
 mod remote;
 mod run;
-mod tail;
 mod spawn_env;
 mod status;
+mod tail;
 
 pub(in crate::runner) use control::{
     effects_in as run_effects, list as list_runs, list_owned as list_owned_runs, lookup_checkout,

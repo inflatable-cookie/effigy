@@ -46,10 +46,7 @@ fn run_tasks_lists_catalogs_and_tasks() {
         .lines()
         .filter(|line| line.starts_with("-  :") || line.starts_with("- catalog_a :"))
         .collect::<Vec<_>>();
-    assert_eq!(
-        catalog_rows,
-        ["- catalog_a : catalog_a/effigy.toml"]
-    );
+    assert_eq!(catalog_rows, ["- catalog_a : catalog_a/effigy.toml"]);
     assert_eq!(
         out.lines()
             .filter(|line| line.starts_with("- dev :") || line.starts_with("- catalog_a/reset-db :"))
@@ -81,9 +78,7 @@ fn run_tasks_without_catalogs_still_lists_builtin_tasks() {
         assert!(out.lines().any(|actual| actual == line), "missing {line:?}: {out}");
     }
     assert_eq!(
-        out.lines()
-            .filter(|line| line.starts_with("-  :"))
-            .count(),
+        out.lines().filter(|line| line.starts_with("-  :")).count(),
         0
     );
     let task_section = out
