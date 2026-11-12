@@ -830,6 +830,41 @@ fn text_command_payload_carries_its_next_action_to_the_json_form() {
 }
 
 #[test]
+fn a_nested_envelope_failure_carries_its_next_action_to_the_json_form() {
+    // A command that reports its own failure in the standard `--json` envelope
+    // nests the human block under `error.human`. The outer form used to reduce
+    // that payload to the generic display sentence, so `next_action` was null
+    // while the payload named the step.
+    let payload = serde_json::json!({
+        "ok": false,
+        "error": {
+            "kind": "unavailable",
+            "type": "RunnerError",
+            "message": "command `effigy test:focused` failed",
+            "details": { "exit_code": 3 },
+            "human": {
+                "what_failed": "step `lint` failed",
+                "evidence": ["exit code 3"],
+                "next_action": "run `effigy lint:feedback`",
+            },
+        },
+    })
+    .to_string();
+    let error = RunnerError::CommandJsonFailure { rendered: payload };
+    let human = error.human_error();
+    assert_eq!(human.what_failed(), "step `lint` failed");
+    assert_eq!(human.evidence_lines(), ["exit code 3"]);
+    assert_eq!(
+        human.to_json()["next_action"],
+        "run `effigy lint:feedback`",
+        "the outer JSON form carries the action the payload names"
+    );
+    assert!(human
+        .render_text()
+        .contains("next: run `effigy lint:feedback`"));
+}
+
+#[test]
 fn command_payload_without_an_action_keeps_a_valid_null() {
     let error = RunnerError::CommandJsonFailure {
         rendered: serde_json::json!({ "message": "the lock is held", "state": "blocked" })
