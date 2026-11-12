@@ -2070,8 +2070,7 @@ mod tests {
         }
     }
 
-    type RepoPackageManagerCase<'a> =
-        (&'a str, &'a [(&'a str, &'a str)], &'a [PackageManager]);
+    type RepoPackageManagerCase<'a> = (&'a str, &'a [(&'a str, &'a str)], &'a [PackageManager]);
 
     #[test]
     fn detect_repo_package_managers_finds_declared_managers() {
