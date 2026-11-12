@@ -31,6 +31,22 @@ class QualityTableTests(unittest.TestCase):
     def test_missing_test_function_is_untracked(self):
         self.assertIsNone(quality_table.rust_function("fn other() {}", "sample"))
 
+    def test_async_tokio_test_is_a_discovered_test_item(self):
+        text = (
+            "#[tokio::test(flavor = \"multi_thread\", worker_threads = 4)]\n"
+            "#[ignore = \"bounded proof\"]\n"
+            "async fn sample() { assert_eq!(1, 1); }\n"
+        )
+        start = text.index("async fn") + len("async ")
+        self.assertTrue(quality_table.has_test_attribute(text, start))
+        # A plain `async fn` without a test attribute is still not a test.
+        self.assertFalse(quality_table.has_test_attribute("async fn other() {}\n", 6))
+
+    def test_sync_test_with_a_body_modifier_gap_is_still_a_test(self):
+        text = "#[test]\nconst fn sample<const N: usize>() -> usize { N }\n"
+        start = text.index("const fn") + len("const ")
+        self.assertTrue(quality_table.has_test_attribute(text, start))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -15,8 +15,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 TABLE_DIR = ROOT / "docs/knowledge/quality/tests"
-RATED_COMMIT = "4026bd67eae1bdc51dad77bc9792795502e817f8"
-EXPECTED_ROWS = {"T1": 1464, "T2": 633, "T3": 870, "T4": 1847, "T5": 1922, "T6": 1257}
+RATED_COMMIT = "b5b54db3538b57416f8cc1b8d0fb1e8ec0d0bae8"
+EXPECTED_ROWS = {"T1": 1317, "T2": 627, "T3": 858, "T4": 1797, "T5": 1859, "T6": 1264}
 _GIT_CACHE: dict[tuple[str, str], str | None] = {}
 
 
@@ -99,7 +99,12 @@ def has_test_attribute(text: str, function_start: int) -> bool:
     if not matches:
         return False
     gap = prefix[matches[-1].end():]
-    return re.fullmatch(r"\s*(?:#\[[^]]+\]\s*)*", gap) is not None
+    # A test item may carry `async`, `unsafe`, `const`, `extern "..."` or a
+    # visibility modifier between its last attribute and `fn`.
+    return re.fullmatch(
+        r"\s*(?:#\[[^]]+\]\s*)*(?:(?:pub(?:\([^)]*\))?|async|unsafe|const|extern\s+\"[^\"]*\")\s+)*",
+        gap,
+    ) is not None
 
 
 def locate_body(revision: str, row: dict[str, str]) -> str | None:
