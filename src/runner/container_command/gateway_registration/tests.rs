@@ -1,11 +1,101 @@
 use super::*;
 
 #[test]
-fn unreachable_profile_restart_requires_interactive_non_json_output() {
-    assert!(colima_restart_prompt_allowed(true, true, false));
-    assert!(!colima_restart_prompt_allowed(false, true, false));
-    assert!(!colima_restart_prompt_allowed(true, false, false));
-    assert!(!colima_restart_prompt_allowed(true, true, true));
+fn unreachable_profile_wrapper_never_restarts_without_interactive_non_json_yes() {
+    let detail = "profile is running but unreachable; repair command; stops every container";
+    for (stdin_tty, stdout_tty, json) in [
+        (false, true, false),
+        (true, false, false),
+        (true, true, true),
+    ] {
+        let mut restart_called = false;
+        let result = run_colima_restart_if_confirmed(
+            detail,
+            stdin_tty,
+            stdout_tty,
+            json,
+            || panic!("must not prompt for non-interactive or JSON calls"),
+            || {
+                restart_called = true;
+                Ok(())
+            },
+        );
+        assert!(result.is_err());
+        assert!(!restart_called, "the wrapper ran a real restart path");
+    }
+
+    let mut restart_called = false;
+    let declined = run_colima_restart_if_confirmed(
+        detail,
+        true,
+        true,
+        false,
+        || Ok(false),
+        || {
+            restart_called = true;
+            Ok(())
+        },
+    );
+    assert!(declined.is_err());
+    assert!(!restart_called, "default No must leave the profile running");
+
+    let accepted = run_colima_restart_if_confirmed(
+        detail,
+        true,
+        true,
+        false,
+        || Ok(true),
+        || {
+            restart_called = true;
+            Ok(())
+        },
+    );
+    assert!(accepted.is_ok());
+    assert!(restart_called, "an explicit yes invokes the restart path");
+}
+
+#[test]
+fn unreachable_profile_restart_runs_stop_and_start_for_the_selected_profile() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = tempfile::tempdir().expect("fixture tempdir");
+    let bin = fixture.path().join("bin");
+    std::fs::create_dir_all(&bin).expect("create fake command directory");
+    let colima = bin.join("colima");
+    std::fs::write(
+        &colima,
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$COLIMA_CALL_LOG\"\n",
+    )
+    .expect("write fake Colima");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&colima)
+            .expect("fake Colima metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&colima, permissions).expect("make fake Colima executable");
+    }
+    let call_log = fixture.path().join("colima-calls.log");
+    let path = std::env::var("PATH").unwrap_or_default();
+    let _env = crate::contract_test_support::EnvGuard::set_many(&[
+        ("PATH", Some(format!("{}:{path}", bin.display()))),
+        ("COLIMA_CALL_LOG", Some(call_log.display().to_string())),
+    ]);
+    let mut policy = test_policy();
+    policy.profile = "mac-4f6a-test".to_owned();
+
+    restart_colima_profile(
+        fixture.path(),
+        &policy,
+        "colima stop --profile mac-4f6a-test && colima start --profile mac-4f6a-test",
+        "profile is running but unreachable",
+    )
+    .expect("restart selected profile");
+
+    assert_eq!(
+        std::fs::read_to_string(call_log).expect("read Colima calls"),
+        "stop --profile mac-4f6a-test\nstart --profile mac-4f6a-test\n"
+    );
 }
 
 #[test]

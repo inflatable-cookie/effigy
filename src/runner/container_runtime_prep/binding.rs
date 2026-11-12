@@ -49,7 +49,7 @@ pub(super) fn verified_service_binding(
     service: &str,
     deadline: Instant,
 ) -> Result<effigy_containers::exec::VerifiedComposeContainer, RunnerError> {
-    let rows = effigy_containers::exec::list_running_compose_containers_for_policy_with_deadline(
+    let rows = crate::runner::container_command::list_running_rows_with_colima_repair(
         repo_root,
         policy,
         Some(deadline),

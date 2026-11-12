@@ -24,7 +24,8 @@ pub(in crate::runner) use bounded_exec::{
 };
 pub(in crate::runner) use closeout::maybe_confirm_container_shell_exit_cleanup;
 pub(in crate::runner) use gateway_registration::{
-    gateway_routes_registered_for_container, register_gateway_routes_for_container,
+    gateway_routes_registered_for_container, list_running_rows_with_colima_repair,
+    register_gateway_routes_for_container,
 };
 pub(in crate::runner) use hosts::scoped_host_map;
 pub(in crate::runner) use lifecycle::{

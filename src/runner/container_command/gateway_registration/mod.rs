@@ -12,8 +12,7 @@ use std::time::{Duration, Instant};
 use effigy_containers::exec::{
     list_compose_containers_for_policy_including_stopped_with_timeout,
     list_running_compose_containers_for_policy,
-    list_running_compose_containers_for_policy_with_deadline,
-    list_running_compose_containers_for_policy_with_timeout, RunningComposeContainer,
+    list_running_compose_containers_for_policy_with_deadline, RunningComposeContainer,
 };
 use effigy_containers::{EffectiveContainerPolicy, EffectiveDnsRoute};
 use effigy_gateway::endpoint_store::EndpointStore;
@@ -350,13 +349,14 @@ fn wait_for_gateway_service_ports_ready(
 ) -> Result<Vec<RunningComposeContainer>, RunnerError> {
     let deadline = Instant::now() + GATEWAY_SERVICE_PORT_READY_TIMEOUT;
     let mut running_rows = |timeout| {
-        list_running_compose_containers_for_policy_with_timeout(repo_root, policy, timeout)
+        list_running_rows_with_colima_repair(repo_root, policy, Some(Instant::now() + timeout))
+            .map_err(|error| error.to_string())
             .and_then(|rows| {
                 effigy_containers::exec::verify_owned_running_compose_rows(
                     repo_root, policy, &rows, deadline,
                 )
+                .map_err(|error| error.to_string())
             })
-            .map_err(|error| error.to_string())
     };
     let mut all_rows = |timeout| {
         list_compose_containers_for_policy_including_stopped_with_timeout(
@@ -606,7 +606,7 @@ fn gateway_routes_registered_against_rows(
     )
 }
 
-fn list_running_rows_with_colima_repair(
+pub(in crate::runner) fn list_running_rows_with_colima_repair(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     deadline: Option<std::time::Instant>,
@@ -622,66 +622,91 @@ fn list_running_rows_with_colima_repair(
                 "Colima profile `{}` is running but unreachable, often after a host sleep or crash. Fix: `{command}`. This stops every container on that profile.",
                 policy.profile
             );
-            if !colima_restart_prompt_allowed(
+            run_colima_restart_if_confirmed(
+                &detail,
                 io::stdin().is_terminal(),
                 io::stdout().is_terminal(),
                 std::env::args_os().any(|arg| arg == "--json"),
-            ) {
-                return Err(gateway_runtime_rows_error(detail));
-            }
-            eprint!("{detail}\nRestart this profile now? [y/N] ");
-            io::stderr().flush().map_err(|write_error| {
-                gateway_runtime_rows_error(format!(
-                    "{detail}\nfailed to write restart prompt: {write_error}"
-                ))
-            })?;
-            let mut answer = String::new();
-            io::stdin().read_line(&mut answer).map_err(|read_error| {
-                gateway_runtime_rows_error(format!(
-                    "{detail}\nfailed to read restart choice: {read_error}"
-                ))
-            })?;
-            if !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
-                return Err(gateway_runtime_rows_error(detail));
-            }
-            for args in [
-                vec!["stop", "--profile", policy.profile.as_str()],
-                vec!["start", "--profile", policy.profile.as_str()],
-            ] {
-                let output = Command::new("colima")
-                    .current_dir(repo_root)
-                    .args(args)
-                    .output()
-                    .map_err(|command_error| {
-                        gateway_runtime_rows_error(format!(
-                            "{detail}\nfailed to run `{command}`: {command_error}"
+                || {
+                    eprint!("{detail}\nRestart this profile now? [y/N] ");
+                    io::stderr().flush().map_err(|write_error| {
+                        RunnerError::task_invocation(format!(
+                            "{detail}\nfailed to write restart prompt: {write_error}"
                         ))
                     })?;
-                if !output.status.success() {
-                    return Err(gateway_runtime_rows_error(format!(
-                        "{detail}\nrestart command failed ({}): {}",
-                        output.status,
-                        String::from_utf8_lossy(&output.stderr).trim()
-                    )));
-                }
-            }
+                    let mut answer = String::new();
+                    io::stdin().read_line(&mut answer).map_err(|read_error| {
+                        RunnerError::task_invocation(format!(
+                            "{detail}\nfailed to read restart choice: {read_error}"
+                        ))
+                    })?;
+                    Ok(matches!(
+                        answer.trim().to_ascii_lowercase().as_str(),
+                        "y" | "yes"
+                    ))
+                },
+                || restart_colima_profile(repo_root, policy, &command, &detail),
+            )?;
             list_running_compose_containers_for_policy_with_deadline(
                 repo_root,
                 policy,
                 Some(Instant::now() + Duration::from_secs(30)),
             )
             .map_err(|retry_error| {
-                gateway_runtime_rows_error(format!(
+                RunnerError::task_invocation(format!(
                     "{detail}\nprofile restarted but runtime rows remain unavailable: {retry_error}"
                 ))
             })
         }
-        Err(error) => Err(gateway_runtime_rows_error(error.to_string())),
+        Err(error) => Err(error.into()),
     }
 }
 
-fn colima_restart_prompt_allowed(stdin_terminal: bool, stdout_terminal: bool, json: bool) -> bool {
-    stdin_terminal && stdout_terminal && !json
+fn run_colima_restart_if_confirmed<T>(
+    detail: &str,
+    stdin_terminal: bool,
+    stdout_terminal: bool,
+    json: bool,
+    confirm: impl FnOnce() -> Result<bool, RunnerError>,
+    restart: impl FnOnce() -> Result<T, RunnerError>,
+) -> Result<T, RunnerError> {
+    if !stdin_terminal || !stdout_terminal || json {
+        return Err(RunnerError::task_invocation(detail.to_owned()));
+    }
+    if !confirm()? {
+        return Err(RunnerError::task_invocation(detail.to_owned()));
+    }
+    restart()
+}
+
+fn restart_colima_profile(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    command: &str,
+    detail: &str,
+) -> Result<(), RunnerError> {
+    for args in [
+        vec!["stop", "--profile", policy.profile.as_str()],
+        vec!["start", "--profile", policy.profile.as_str()],
+    ] {
+        let output = Command::new("colima")
+            .current_dir(repo_root)
+            .args(args)
+            .output()
+            .map_err(|command_error| {
+                RunnerError::task_invocation(format!(
+                    "{detail}\nfailed to run `{command}`: {command_error}"
+                ))
+            })?;
+        if !output.status.success() {
+            return Err(RunnerError::task_invocation(format!(
+                "{detail}\nrestart command failed ({}): {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn colima_profile_is_running_but_unreachable(
