@@ -288,7 +288,7 @@ impl HostAliasResolver {
         secrets: &[(&str, &SecretString)],
         child_keys: impl IntoIterator<Item = String>,
         verify: bool,
-    ) -> Result<(Vec<(String, SecretString)>, Vec<(String, String)>), RunnerError> {
+    ) -> Result<DeliveredEnv, RunnerError> {
         let secret_env = self.resolved_secret_env(secrets, plain, verify)?;
         let delivered = plain
             .iter()
@@ -528,6 +528,10 @@ pub(in crate::runner) fn resolve_host_env_inherited(
     let _ = label;
     Ok(resolved)
 }
+
+/// What one host child receives beyond the plain environment it renders: its
+/// resolved secret values and the values it would otherwise inherit unchanged.
+pub(in crate::runner) type DeliveredEnv = (Vec<(String, SecretString)>, Vec<(String, String)>);
 
 /// Borrow resolved secret pairs for a spawn.
 pub(in crate::runner) fn secret_env_slice(
