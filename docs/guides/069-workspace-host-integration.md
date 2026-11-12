@@ -304,12 +304,25 @@ observation.
 - A run that failed, was cancelled or timed out keeps it for 24 hours, and the
   failure output names the path. The 24 hours start when the run ended, not when
   it started, so a long run that fails late keeps its full window.
-- A failed non-interactive sequence step writes its complete captured stdout and
-  stderr, with credential redaction, to a private `failed-step-*.log` file here.
-  Failure evidence names the file. An explicit caller `TMPDIR` receives the file
-  when no Effigy scratch scope exists; its owner controls retention. Failure
+- A failed step writes the output it produced, with credential redaction, to a
+  private `failed-step-*.log` file, and the failure evidence names the file.
+  The record lives in `<root>/effigy/failed-steps/<run id>/`, not inside the
+  run's own directory: a harness that removes the run's temporary directory at
+  teardown (a milestone QA run, for instance) cannot take the failure's output
+  with it. Without a configured root the run's own scratch directory, or an
+  explicit caller `TMPDIR`, receives the file and that owner controls retention.
+  A step whose output Effigy captures keeps that capture. A step whose output is
+  not a terminal — CI and QA, and any piped run — has its stream pass through
+  the runner, relayed live byte for byte, and the same bytes are recorded in a
+  bounded tail, so a failure of that kind leaves its real output too. Failure
   names and their first panic/assertion lines take priority over passing noise
-  within the existing human/JSON evidence budget; overflow stays in the file.
+  within the existing human/JSON evidence budget; a relayed record also names
+  its failing lines in the summary. Overflow stays in the file.
+- A failed-step record is a retained tree: the same bounded sweep retires it 24
+  hours after the failure that wrote it, and an older record is never removed
+  while it is fresh. A step run in an interactive terminal, whose child writes
+  straight to that terminal rather than through Effigy, is shown live and has no
+  relayed stream to record; its failure still names its own path.
 - A run that loses its directory — the path is gone, or something else now
   occupies the name without Effigy's marker for that run — never writes a
   conclusion into it and never removes it.
@@ -320,10 +333,11 @@ observation.
   process that created it is gone, or when it is more than 7 days old. It reads
   only the marker and a process-liveness check — never a journal — and stops at
   its own time and count bounds; whatever it did not reach is a later run's. It
-  covers this build's runs under `<root>/effigy/` and a legacy run left directly
-  under the root, with the same bounds over both. An entry it did not mark
-  itself, and any entry it cannot decide, is left alone; the `effigy/`
-  namespace is never treated as a run.
+  covers this build's runs under `<root>/effigy/`, a legacy run left directly
+  under the root, and the failed-step records under
+  `<root>/effigy/failed-steps/`, with the same bounds over all of them. An entry
+  it did not mark itself, and any entry it cannot decide, is left alone; the
+  `effigy/` and `effigy/failed-steps/` directories are never treated as runs.
 - Only the run that opened a directory concludes it, so a step's or a nested
   run's success never removes the parent's tree.
 
