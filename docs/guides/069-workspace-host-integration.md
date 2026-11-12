@@ -311,6 +311,10 @@ observation.
   teardown (a milestone QA run, for instance) cannot take the failure's output
   with it. Without a configured root the run's own scratch directory, or an
   explicit caller `TMPDIR`, receives the file and that owner controls retention.
+  A configured root that is itself named `effigy` therefore shows that segment
+  twice, as `/Volumes/Stash/scratch/effigy/effigy/failed-steps/<run id>/`: the
+  `effigy/` child is the namespace a later sweep descends into, not a copy of
+  the root, so it is never dropped to shorten the path.
   A step whose output Effigy captures keeps that capture. A step whose output is
   not a terminal — CI and QA, and any piped run — has its stream pass through
   the runner, relayed live byte for byte, and the same bytes are recorded in a

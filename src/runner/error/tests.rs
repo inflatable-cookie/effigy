@@ -804,6 +804,39 @@ fn a_failed_step_record_is_past_its_life_a_day_after_the_failure() {
     );
 }
 
+/// A configured root the operator already named `effigy` shows the namespace
+/// segment twice. That layout is the intended one (effigy#946): the `effigy/`
+/// child is the namespace the sweep descends into, so a record left directly
+/// under such a root would sit beside it and never be retired.
+#[test]
+fn a_record_under_a_root_named_effigy_stays_in_the_swept_namespace() {
+    let owner = tempfile::tempdir().expect("owner");
+    let root = owner.path().join("scratch").join("effigy");
+    std::fs::create_dir_all(&root).expect("configured root");
+    let run = effigy_kernel::id::RunId::new(0, [12; 10]).expect("run id");
+    let retained = crate::runner::scratch::with_test_scratch(Some(root.clone()), true, || {
+        crate::runner::scratch::retain_step_output(&run, "out", "err", false)
+    });
+    let path = std::path::Path::new(
+        retained
+            .lines()
+            .next()
+            .and_then(|line| line.strip_prefix("full failed-step output: "))
+            .expect("retained path"),
+    )
+    .to_path_buf();
+    let expected = root.join("effigy/failed-steps").join(run.to_string());
+    assert!(
+        path.starts_with(&expected),
+        "the record stays under the namespace the sweep reaches: {}",
+        path.display()
+    );
+    let later = now_ms() + 25 * 60 * 60 * 1000;
+    let report = crate::runner::scratch::sweep_at(&root, later, std::time::Duration::MAX);
+    assert_eq!(report.removed, 1, "{report:?}");
+    assert!(!path.exists(), "a later sweep retires the record");
+}
+
 /// Now, in milliseconds since the Unix epoch, as the sweep takes it.
 fn now_ms() -> i64 {
     std::time::SystemTime::now()

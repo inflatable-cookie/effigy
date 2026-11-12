@@ -22,7 +22,10 @@
 //!
 //! The root is the operator's. Effigy creates a missing one, and a root it
 //! cannot write degrades to the default temp directory with one warning rather
-//! than failing or refusing the run.
+//! than failing or refusing the run. A root the operator already named `effigy`
+//! therefore shows the segment twice (`<root>/effigy/<run>/`): the child is the
+//! namespace Effigy owns and the sweep descends into, not a second copy of the
+//! root, so it is never dropped to shorten the path (effigy#946).
 
 use std::cell::RefCell;
 use std::ffi::OsStr;
@@ -245,6 +248,11 @@ fn retain_record(run: &effigy_kernel::id::RunId, body: &str) -> std::io::Result<
 /// configured scratch root's `effigy/failed-steps/<run id>/`. `None` when the
 /// operator configured no root, scratch is disabled, or the directory cannot
 /// be created; the caller then keeps the record in the run's own temp.
+///
+/// The `effigy/` segment is the namespace, not a suffix the root already
+/// carries: it is what a later sweep descends into, so a record left directly
+/// under a root named `effigy` would sit beside the namespace and never be
+/// judged. A doubled segment in such a root is the intended layout.
 fn failed_steps_dir(run: &effigy_kernel::id::RunId) -> Option<PathBuf> {
     let config = config().filter(|_| !disabled_by_env())?;
     let dir = config
