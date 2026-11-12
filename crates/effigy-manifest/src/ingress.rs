@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use toml::Value;
 
 use crate::retired_config::RetiredConfigDeclaration;
-use crate::{ManifestError, TaskManifest};
 
 #[derive(Debug, Clone)]
 pub(crate) struct ManifestInput {
@@ -35,18 +34,6 @@ impl ManifestInput {
     pub fn normalize(&mut self) {
         self.retired_config
             .merge(crate::retired_bootstrap::translate(&mut self.value));
-    }
-
-    pub fn deserialize(&self, path: &Path) -> Result<TaskManifest, ManifestError> {
-        let manifest = self
-            .clone()
-            .into_manifest()
-            .map_err(|error| ManifestError::Parse {
-                path: path.to_path_buf(),
-                error,
-            })?;
-        manifest.validate(path)?;
-        Ok(manifest)
     }
 }
 
