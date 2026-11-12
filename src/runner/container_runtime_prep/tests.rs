@@ -147,7 +147,10 @@ fn prepare_host_bind_mount_dirs_leaves_an_existing_file_mount_source_alone() {
     prepare_host_bind_mount_dirs(&repo_root, &policy)
         .expect("an existing file mount source does not need directory creation");
 
-    assert!(certificate.is_file(), "the file mount source remains a file");
+    assert!(
+        certificate.is_file(),
+        "the file mount source remains a file"
+    );
     assert_eq!(
         fs::read_to_string(&certificate).expect("read certificate"),
         "fixture certificate",
