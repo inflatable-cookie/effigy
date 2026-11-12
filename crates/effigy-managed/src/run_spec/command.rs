@@ -3,14 +3,14 @@ use std::path::Path;
 
 use serde_json;
 
-use super::RunSpecContext;
+use super::{RenderedRun, RunSpecContext};
 use crate::ManagedError;
 use effigy_core::shell::shell_quote;
 use effigy_tasks::render_template_args;
 
 const CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH: &str = "/usr/local/bin/effigy";
 
-pub fn render_task_command(command: &str, context: RunSpecContext<'_>) -> String {
+pub fn render_task_command(command: &str, context: RunSpecContext<'_>) -> RenderedRun {
     let rendered = render_command_template(
         command,
         context.repo_root,
@@ -22,7 +22,10 @@ pub fn render_task_command(command: &str, context: RunSpecContext<'_>) -> String
     // canonical one (effigy#431, contract 005).
     let mut env = context.task_env.clone();
     effigy_core::host_alias::resolve_env(&mut env, context.host_env_aliases);
-    wrap_command_with_task_env(rendered, &env, context.repo_root)
+    RenderedRun {
+        command: wrap_command_with_task_env(rendered, &env, context.repo_root),
+        env,
+    }
 }
 
 pub fn render_step_command(command: &str, context: RunSpecContext<'_>) -> String {

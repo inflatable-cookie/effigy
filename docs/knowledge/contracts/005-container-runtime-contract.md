@@ -1996,6 +1996,12 @@ released address is immediately allocatable, and the gateway answers DNS with a
 one-second TTL. Growing the pool beyond `127.1.0.50` is not part of this
 contract; the `lo0` aliases come from `gateway setup`.
 
+Host-process status preserves an unreadable journal as `unknown`, with its
+diagnostic alongside the log locator. Stop reports retain request, custody and
+settlement failures instead of claiming a missing or stopped process. A managed
+session that cannot read pending stop requests fails that phase and settles;
+unknown request state never permits another start or readiness attempt.
+
 ### Detached activation failures
 
 A detached `container up` that fails before or during admission reports the
@@ -2452,7 +2458,9 @@ caller's value from the workload or suite command that inherits it. A managed
 session decides inherited values per host workload so a value no workload
 receives is never proved, its client hands the resolved values to its supervisor
 in the supervisor's own environment, and the supervisor inherits what was
-proved.
+proved. Managed plans carry declared delivery beside the rendered command;
+command text never supplies that fact. A chained sequence carries only keys
+delivered from its first statement.
 
 A plan (`--plan`) runs nothing, so it refuses nothing: a task plan renders the
 aliases it would deliver, and the built-in `test` plan keeps the declared

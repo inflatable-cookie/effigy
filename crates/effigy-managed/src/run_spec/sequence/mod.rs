@@ -6,7 +6,7 @@ use effigy_manifest::{
     ManifestEnvEntry, ManifestEnvFileDirective, ManifestManagedRunStep, ManifestRunStepEnv,
 };
 
-use super::RunSpecContext;
+use super::{RenderedRun, RunSpecContext};
 use projection::project_run_sequence;
 
 mod dotenv;
@@ -20,7 +20,7 @@ pub use env_resolution::StepEnvAccumulator;
 pub fn render_run_sequence(
     steps: &[ManifestManagedRunStep],
     context: RunSpecContext<'_>,
-) -> Result<String, ManagedError> {
+) -> Result<RenderedRun, ManagedError> {
     if steps.is_empty() {
         return Err(ManagedError::task_invocation(format!(
             "task `{}` has an empty run array",
@@ -29,13 +29,16 @@ pub fn render_run_sequence(
     }
 
     let projected = project_run_sequence(steps, context)?;
-    Ok(projected
-        .commands
-        .iter()
-        .zip(&projected.timeouts)
-        .map(|(command, timeout)| crate::scheduler::render_legacy_step(command, *timeout))
-        .collect::<Vec<_>>()
-        .join(" && "))
+    Ok(RenderedRun {
+        env: projected.env,
+        command: projected
+            .commands
+            .iter()
+            .zip(&projected.timeouts)
+            .map(|(command, timeout)| crate::scheduler::render_legacy_step(command, *timeout))
+            .collect::<Vec<_>>()
+            .join(" && "),
+    })
 }
 
 pub fn resolve_standalone_env(

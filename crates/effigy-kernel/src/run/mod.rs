@@ -174,7 +174,8 @@ impl EffectTicket {
         self.sequence
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Phase {
     Admitted,
     Starting,
@@ -183,7 +184,7 @@ pub enum Phase {
     Closed,
 }
 impl Phase {
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Self::Admitted => "admitted",
             Self::Starting => "starting",

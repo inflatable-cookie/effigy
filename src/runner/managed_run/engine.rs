@@ -472,7 +472,7 @@ impl Owner {
         // A blocking setup step reads stop requests on its parent run; the
         // owning client's death becomes such a request.
         let filed = std::sync::atomic::AtomicBool::new(false);
-        let result = std::thread::scope(|scope| {
+        let (prepared, lost) = std::thread::scope(|scope| {
             let watch = self.watch.as_ref();
             let filed_ref = &filed;
             let stop_filer = scope.spawn(move || {
@@ -490,20 +490,8 @@ impl Owner {
             let lost = stop_filer.join().unwrap_or(false);
             (prepared, lost)
         });
-        let (prepared, lost) = result;
         self.lost_while_blocked |= lost;
-        let prepared = match prepared {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                return Err(match pending_stop(run, self.watch.as_ref()) {
-                    Some(cause) => End::Stopped(self.cause(cause)),
-                    None => End::StartFailed(error.to_string(), Some(error.process_exit_code())),
-                })
-            }
-        };
-        if let Some(cause) = pending_stop(run, self.watch.as_ref()) {
-            return Err(End::Stopped(self.cause(cause)));
-        }
+        let prepared = self.finish_start_phase(run, prepared)?;
         // Every workload's wait is named before anything starts, so a front
         // end never has to guess from the tab order (effigy#458).
         self.publish_waits(Instant::now());
@@ -611,15 +599,8 @@ impl Owner {
         // The environment's `up` is itself a Prepare path (contract 020): it
         // can publish a source generation and remove the one an earlier render
         // named. The commands are therefore rendered here, after it.
-        let specs = match workloads(run, prepared) {
-            Ok(specs) => specs,
-            Err(error) => {
-                return Err(match pending_stop(run, self.watch.as_ref()) {
-                    Some(cause) => End::Stopped(self.cause(cause)),
-                    None => End::StartFailed(error.to_string(), Some(error.process_exit_code())),
-                })
-            }
-        };
+        let specs = workloads(run, prepared);
+        let specs = self.finish_start_phase(run, specs)?;
         self.workloads = specs
             .into_iter()
             .map(|spec| Workload {
@@ -631,6 +612,23 @@ impl Owner {
             })
             .collect();
         Ok(())
+    }
+
+    /// A completed start phase may hand work to its successor only while the
+    /// stop mailbox is readable and clear. Keep its own failure when unknown.
+    fn finish_start_phase<T>(
+        &self,
+        run: &mut TaskRun,
+        result: Result<T, RunnerError>,
+    ) -> Result<T, End> {
+        match (pending_stop(run, self.watch.as_ref()), result) {
+            (Ok(Some(cause)), _) => Err(End::Stopped(self.cause(cause))),
+            (Ok(None), result) => result.map_err(|error| {
+                End::StartFailed(error.to_string(), Some(error.process_exit_code()))
+            }),
+            (Err(reason), Err(error)) => Err(End::StartFailed(format!("{error}; {reason}"), None)),
+            (Err(reason), Ok(_)) => Err(End::StartFailed(reason, None)),
+        }
     }
 
     fn cause(&self, cause: StopCause) -> StopCause {
@@ -877,7 +875,9 @@ impl Owner {
                         "managed exec exited before reading its environment".into(),
                     ));
                 }
-                if let Some(cause) = pending_stop(run, self.watch.as_ref()) {
+                if let Some(cause) =
+                    pending_stop(run, self.watch.as_ref()).map_err(SpawnError::Failed)?
+                {
                     return Err(SpawnError::Stopped(cause));
                 }
                 if Instant::now() >= deadline {
@@ -959,7 +959,9 @@ impl Owner {
             // A filed stop, a signal or the owning client's death ends the
             // setup as that stop: the run reports a cancelled outcome, not a
             // failed start.
-            if let Some(cause) = pending_stop(run, self.watch.as_ref()) {
+            if let Some(cause) =
+                pending_stop(run, self.watch.as_ref()).map_err(SpawnError::Failed)?
+            {
                 if matches!(cause, StopCause::OwnerLost) {
                     self.lost_while_blocked = true;
                 }
@@ -1293,19 +1295,23 @@ impl Owner {
     }
 }
 
-/// A stop pending for a blocked phase: a signal, the owning client's death
-/// or a stop request, read without resolving it.
-fn pending_stop(run: &mut TaskRun, watch: Option<&OwnerWatch>) -> Option<StopCause> {
+/// A blocked phase may continue only after proving that no stop is pending.
+/// An unreadable request mailbox is unknown, not permission to keep starting.
+fn pending_stop(
+    run: &mut TaskRun,
+    watch: Option<&OwnerWatch>,
+) -> Result<Option<StopCause>, String> {
     if let Some(cause) = task_engine::root_cancel_cause() {
-        return Some(cause);
+        return Ok(Some(cause));
     }
     if watch.is_some_and(OwnerWatch::lost) {
-        return Some(StopCause::OwnerLost);
+        return Ok(Some(StopCause::OwnerLost));
     }
-    run.run_mut()
-        .ok()?
+    Ok(run
+        .run_mut()
+        .map_err(|error| format!("cannot observe managed stop requests: {error}"))?
         .requests()
-        .ok()?
+        .map_err(|error| format!("cannot observe managed stop requests: {error}"))?
         .iter()
         .any(|request| {
             matches!(
@@ -1313,7 +1319,7 @@ fn pending_stop(run: &mut TaskRun, watch: Option<&OwnerWatch>) -> Option<StopCau
                 RequestAction::Stop | RequestAction::Escalate | RequestAction::Settle
             )
         })
-        .then_some(StopCause::Requested)
+        .then_some(StopCause::Requested))
 }
 
 fn sequence_of(process: &OwnedProcess) -> i64 {
@@ -1415,6 +1421,70 @@ mod tests {
     use effigy_kernel::ctx::StopCause;
     use std::fs;
     use std::path::{Path, PathBuf};
+
+    /// A malformed mailbox must stop a blocked phase, while preserving the
+    /// difference between a clear mailbox, a requested stop and an unknown one.
+    #[test]
+    fn pending_stop_refuses_an_unreadable_mailbox() {
+        use crate::runner::task_engine::{self, TaskRun, TaskRunRequest, TaskTarget};
+        use effigy_kernel::outcome::WorkloadOutcome;
+        use effigy_manifest::LoadedCatalog;
+
+        let repo = tempfile::tempdir().expect("checkout");
+        let catalog = LoadedCatalog::for_test(
+            "",
+            repo.path().to_owned(),
+            toml::from_str("").expect("empty manifest"),
+            0,
+        );
+        let target = TaskTarget::for_catalog(repo.path(), "dev", &catalog);
+        let mut run = TaskRun::begin(TaskRunRequest {
+            target: &target,
+            lock_wait_ms: 0,
+            custody: false,
+            scratch: false,
+            managed_run_token: None,
+            args: &[],
+            key: None,
+            admission: None,
+            workspace_admission: None,
+            cwd: None,
+        })
+        .expect("managed journal run");
+        assert!(matches!(super::pending_stop(&mut run, None), Ok(None)));
+        task_engine::request_run_stop(repo.path(), run.id()).expect("file stop");
+        assert!(matches!(
+            super::pending_stop(&mut run, None),
+            Ok(Some(StopCause::Requested))
+        ));
+
+        let root = task_engine::checkout_effects_root(repo.path()).expect("journal root");
+        let conn = rusqlite::Connection::open(root.path().join(effigy_kernel::store::DB_NAME))
+            .expect("owned fixture journal");
+        let original: String = conn
+            .query_row(
+                "SELECT action FROM requests WHERE run_id=?1",
+                [run.id().to_string()],
+                |row| row.get(0),
+            )
+            .expect("the pending request");
+        conn.execute(
+            "UPDATE requests SET action='unreadable' WHERE run_id=?1",
+            [run.id().to_string()],
+        )
+        .expect("corrupt fixture mailbox");
+        let reason = super::pending_stop(&mut run, None).expect_err("unknown must refuse");
+        assert!(
+            reason.contains("cannot observe managed stop requests"),
+            "{reason}"
+        );
+        conn.execute(
+            "UPDATE requests SET action=?1 WHERE run_id=?2",
+            [original, run.id().to_string()],
+        )
+        .expect("restore fixture mailbox");
+        assert!(run.close(WorkloadOutcome::Succeeded).is_empty());
+    }
 
     /// A checkout whose lock selects `bundle` from `object`.
     fn pinned_checkout(object: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
