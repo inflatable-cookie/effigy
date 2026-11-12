@@ -2070,11 +2070,14 @@ mod tests {
         }
     }
 
+    type RepoPackageManagerCase<'a> =
+        (&'a str, &'a [(&'a str, &'a str)], &'a [PackageManager]);
+
     #[test]
     fn detect_repo_package_managers_finds_declared_managers() {
         // One table over seeded manifests: a Bun workspace alone, and Cargo
         // plus Bun together.
-        let cases: &[(&str, &[(&str, &str)], &[PackageManager])] = &[
+        let cases: &[RepoPackageManagerCase<'_>] = &[
             (
                 "bun workspace",
                 &[

@@ -817,7 +817,7 @@ version = "10.11"
         assert_scope_token_shared(
             &linked_policy.project_name,
             "fixture-dev-wt-",
-            &aliases
+            aliases
                 .iter()
                 .find(|alias| alias.starts_with("postgres.acme-w"))
                 .expect("scoped postgres alias"),

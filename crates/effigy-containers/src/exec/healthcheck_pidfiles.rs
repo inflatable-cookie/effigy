@@ -252,8 +252,7 @@ printf 'before 269091\nafter 907\n'
         // effigy -- sudo sh -c <script>` with the prune script for the task
         // root. Nothing else may run, and the script carries the
         // pattern-scoped deletion.
-        let expected_script =
-            prune_stale_health_check_pidfiles_script_for(&HEALTHCHECK_TASK_ROOT.to_string());
+        let expected_script = prune_stale_health_check_pidfiles_script_for(HEALTHCHECK_TASK_ROOT);
         assert_eq!(
             lines,
             vec![
