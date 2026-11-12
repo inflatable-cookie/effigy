@@ -60,13 +60,22 @@ pub(super) fn prepare_host_bind_mount_dirs(
                             continue;
                         }
                     }
-                    std::fs::create_dir_all(&host_path).map_err(|error| {
-                        RunnerError::task_invocation(format!(
-                            "cannot create bind mount directory {} for container `{}`: {error}; Compose will refuse to start the service until that path exists and is writable by you",
-                            host_path.display(),
-                            policy.name
-                        ))
-                    })?;
+                    if matches!(
+                        std::fs::symlink_metadata(&host_path),
+                        Err(ref error)
+                            if matches!(
+                                error.kind(),
+                                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                            )
+                    ) {
+                        std::fs::create_dir_all(&host_path).map_err(|error| {
+                            RunnerError::task_invocation(format!(
+                                "cannot create bind mount directory {} for container `{}`: {error}; Compose will refuse to start the service until that path exists and is writable by you",
+                                host_path.display(),
+                                policy.name
+                            ))
+                        })?;
+                    }
                     #[cfg(unix)]
                     if host_path.starts_with(&runtime_data_root) {
                         grant_runtime_data_access(&host_path)?;

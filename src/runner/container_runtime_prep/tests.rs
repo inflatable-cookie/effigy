@@ -124,6 +124,38 @@ services:
     let _ = fs::remove_dir_all(&repo_root);
     let _ = fs::remove_dir_all(&outside_dir);
 }
+
+#[test]
+fn prepare_host_bind_mount_dirs_leaves_an_existing_file_mount_source_alone() {
+    let repo_root = temp_test_dir("bind-mount-existing-file");
+    let ca_root = repo_root.join("fake-mkcert-caroot");
+    let certificate = ca_root.join("rootCA.pem");
+    let compose_file = repo_root.join("docker-compose.yml");
+
+    fs::create_dir_all(&ca_root).expect("create certificate directory");
+    fs::write(&certificate, "fixture certificate").expect("write certificate");
+    fs::write(
+        &compose_file,
+        format!(
+            "\nservices:\n  app:\n    volumes:\n      - \"{}:/usr/local/share/ca-certificates/rootCA.pem\"\n",
+            certificate.display()
+        ),
+    )
+    .expect("write compose file");
+    let policy = test_policy(compose_file);
+
+    prepare_host_bind_mount_dirs(&repo_root, &policy)
+        .expect("an existing file mount source does not need directory creation");
+
+    assert!(certificate.is_file(), "the file mount source remains a file");
+    assert_eq!(
+        fs::read_to_string(&certificate).expect("read certificate"),
+        "fixture certificate",
+        "preparation leaves the existing file contents alone"
+    );
+
+    let _ = fs::remove_dir_all(&repo_root);
+}
 #[test]
 fn prepare_host_bind_mount_dirs_creates_named_volume_targets_under_repo_binds() {
     let fixture_root = temp_test_dir("named-volume-targets");
@@ -287,13 +319,14 @@ fn prepare_host_bind_mount_dirs_refuses_a_compose_input_it_cannot_parse() {
 #[test]
 fn prepare_host_bind_mount_dirs_reports_a_directory_it_cannot_create() {
     let repo_root = temp_test_dir("bind-mount-blocked");
-    let runtime_dir = repo_root.join(".effigy/runtime/data/db/mysql");
+    let blocking_file = repo_root.join(".effigy/runtime/data/db");
+    let runtime_dir = blocking_file.join("mysql");
     let compose_file = repo_root.join("docker-compose.yml");
-    // A regular file where the bind source must be a directory: `create_dir_all`
-    // cannot succeed, and a swallowed failure would start the service against a
-    // missing host path.
-    fs::create_dir_all(runtime_dir.parent().expect("runtime parent")).expect("runtime parent");
-    fs::write(&runtime_dir, "not a directory").expect("blocking file");
+    // The bind source is missing, but a regular file in its parent chain means
+    // `create_dir_all` cannot create it. Swallowing that failure would start
+    // the service against a missing host path.
+    fs::create_dir_all(blocking_file.parent().expect("runtime parent")).expect("runtime parent");
+    fs::write(&blocking_file, "not a directory").expect("blocking file");
     fs::write(
         &compose_file,
         format!(
