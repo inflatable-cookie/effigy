@@ -2184,7 +2184,7 @@ mod live_progress_tests {
     };
 
     #[test]
-    fn apply_frames_name_their_place_and_source() {
+    fn apply_and_capture_frames_name_their_place_source_and_artifact() {
         // A task layer frame names its place and the source it waits on ...
         let progress = layer_progress(ApplyAction::Task, "seed", "seed-task", 2, 3);
         assert_eq!(
@@ -2198,10 +2198,7 @@ mod live_progress_tests {
             hook.detailed_frame_at(Duration::from_secs(9)),
             "running apply hook `users` (1/2); waiting for apply hook `users` to finish; last: layer `users` applied; 9s elapsed"
         );
-    }
 
-    #[test]
-    fn capture_frames_name_the_task_artifact_and_phase() {
         // A capture task frame names the task and its phase ...
         let task = capture_task_progress("snapshot");
         assert_eq!(

@@ -799,9 +799,12 @@ async fn proxy_multiple_concurrent_requests() {
                 .unwrap();
             assert_eq!(response.status(), 200);
             let body = response.text().await.unwrap();
-            assert!(
-                body.contains(&format!("uri=/request-{i}")),
-                "request {i}: {body}"
+            assert_eq!(
+                body,
+                format!(
+                    "method=GET\nuri=/request-{i}\nhost=myapp.test\nx-forwarded-for=127.0.0.1\nx-forwarded-host=myapp.test\n"
+                ),
+                "request {i}"
             );
         }));
     }

@@ -8,7 +8,7 @@ use std::time::Duration;
 use tokio::sync::watch;
 
 #[test]
-fn standard_config_paths() {
+fn standard_config_defaults_and_private_mode_rejects_unsafe_values() {
     let config = GatewayConfig::standard(PathBuf::from("/tmp/effigy/gateway"));
     assert_eq!(
         config.route_table_path,
@@ -26,10 +26,7 @@ fn standard_config_paths() {
         config.tls.as_ref().unwrap().certs_dir,
         PathBuf::from("/tmp/effigy/gateway/certs")
     );
-}
 
-#[test]
-fn private_config_rejects_non_loopback_privileged_and_escaped_paths() {
     let fixture = gateway_dir();
     let root = std::fs::canonicalize(fixture.path()).expect("canonical private root");
     set_private_test_root_permissions(&root);
