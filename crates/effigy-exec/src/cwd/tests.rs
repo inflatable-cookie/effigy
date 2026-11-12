@@ -94,6 +94,14 @@ fn works_with_real_filesystem_paths() {
 
     let m = CwdMapper::new(dir.path().to_path_buf(), PathBuf::from("/workspace"));
 
-    let result = m.host_to_container(&subdir).unwrap();
+    // A `.`-laden spelling of the same directory maps by canonicalization,
+    // not by string prefixing.
+    let result = m
+        .host_to_container(&dir.path().join("./src/./app"))
+        .unwrap();
     assert_eq!(result, PathBuf::from("/workspace/src/app"));
+    // The container path maps back onto the same real directory, even when
+    // the fixture root itself passes through a symlink.
+    let back = m.container_to_host(&result).unwrap();
+    assert_eq!(back.canonicalize().unwrap(), subdir.canonicalize().unwrap());
 }

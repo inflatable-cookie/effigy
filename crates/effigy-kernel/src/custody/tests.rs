@@ -144,13 +144,12 @@ fn assert_recoverable_settlement_retains_core(lost_response: bool) {
 }
 
 #[test]
-fn recoverable_settlement_retains_the_exact_core_on_unknown_receipt() {
-    assert_recoverable_settlement_retains_core(false);
-}
-
-#[test]
-fn recoverable_settlement_retains_the_exact_core_on_lost_response() {
-    assert_recoverable_settlement_retains_core(true);
+fn recoverable_settlement_retains_the_exact_core() {
+    // The unknown-receipt and lost-response faults differ only in the armed
+    // fault; both must retain the same process core with the returned run.
+    for lost_response in [false, true] {
+        assert_recoverable_settlement_retains_core(lost_response);
+    }
 }
 
 #[test]
@@ -2464,6 +2463,12 @@ fn anchor_spawn_overhead_is_measured() {
     baseline.sort();
     anchored.sort();
     added.sort();
+    // The measurement completed: every path produced positive samples, so
+    // the percentile report below cannot be an empty or zeroed table.
+    assert_eq!(baseline.len(), samples);
+    assert_eq!(anchored.len(), samples);
+    assert!(baseline.iter().all(|&elapsed| elapsed > 0));
+    assert!(anchored.iter().all(|&elapsed| elapsed > 0));
     let percentiles = |v: &[i64]| serde_json::json!({"p50_us":v[(v.len()-1)/2], "p90_us":v[(v.len()*9).div_ceil(10)-1]});
     let result = serde_json::json!({"samples":samples,"load_workers":load,"host_load":host_load,
         "release":!cfg!(debug_assertions),"image":image_path,"image_bytes":std::fs::metadata(&image_path).unwrap().len(),
@@ -4719,7 +4724,7 @@ fn exited_leader_stop(retire_anchor: bool) -> (StopReport, AnchorFixture) {
 // occurrence's raw reason, which was never retained.
 #[test]
 fn milestone_130acca8_refused_anchor_kill_reproduces_the_recorded_residue_shape() {
-    let (report, _fixture) = exited_leader_stop(false);
+    let (report, fixture) = exited_leader_stop(false);
     assert!(
         matches!(report.leader, Observed::Verified(..)),
         "the recorded leader is verified: {report:?}"
@@ -4750,6 +4755,12 @@ fn milestone_130acca8_refused_anchor_kill_reproduces_the_recorded_residue_shape(
         "{report:?}"
     );
     assert!(matches!(report.capture, CaptureState::Complete));
+    // Causal pin: the kill was refused, so the stopped anchor is still alive
+    // under the same identity after the stop.
+    assert!(
+        platform::generation(&fixture.0[0]).verified().is_some(),
+        "a refused kill must not deaden the anchor"
+    );
 }
 
 // Regression control: the same stop, with the anchor retiring inside its kill,
@@ -4757,13 +4768,18 @@ fn milestone_130acca8_refused_anchor_kill_reproduces_the_recorded_residue_shape(
 // recorded cause.
 #[test]
 fn milestone_130acca8_retired_anchor_kill_closes_the_recorded_shape() {
-    let (report, _fixture) = exited_leader_stop(true);
+    let (report, fixture) = exited_leader_stop(true);
     assert!(
         matches!(report.group, Observed::Verified(..) | Observed::Absent(_)),
         "a retired anchor leaves a closed group: {report:?}"
     );
     assert!(report.residue.is_empty(), "{report:?}");
     assert!(report.leader.verified().is_some(), "{report:?}");
+    // Causal pin: the seam's SIGKILL landed, so the anchor is gone.
+    assert!(
+        platform::generation(&fixture.0[0]).verified().is_none(),
+        "a retired anchor must not survive the kill"
+    );
 }
 
 /// A child this test started; killed and reaped however the test ends.

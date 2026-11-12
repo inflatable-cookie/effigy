@@ -2349,22 +2349,43 @@ fn parked_reacquisition_refuses_changed_session_and_releases_gate() {
 
 #[test]
 fn parked_reacquisition_refuses_changed_reservation_facts() {
-    for (column, value, expected) in [
-        ("state", "cancelled".to_owned(), "session is frozen"),
+    // Every change to the parked reservation's facts refuses reacquisition:
+    // changed columns, an advanced environment generation, and a stopped
+    // session. Each refusal also releases the gate.
+    enum Change {
+        Column(&'static str, String),
+        Generation,
+        Stop,
+    }
+    for (name, change, expected) in [
         (
-            "environment_run",
-            run_id(250).to_string(),
-            "another environment run",
+            "cancelled-state",
+            Change::Column("state", "cancelled".to_owned()),
+            Some("session is frozen"),
         ),
         (
-            "reservation_id",
-            "ff".repeat(16),
-            "not the one this caller holds",
+            "other-run",
+            Change::Column("environment_run", run_id(250).to_string()),
+            Some("another environment run"),
         ),
         (
-            "inputs",
-            serde_json::to_string(&decision_inputs(201)).unwrap(),
-            "reservation changed while parked",
+            "foreign-reservation",
+            Change::Column("reservation_id", "ff".repeat(16)),
+            Some("not the one this caller holds"),
+        ),
+        (
+            "changed-inputs",
+            Change::Column(
+                "inputs",
+                serde_json::to_string(&decision_inputs(201)).unwrap(),
+            ),
+            Some("reservation changed while parked"),
+        ),
+        ("advanced-generation", Change::Generation, None),
+        (
+            "stopped-session",
+            Change::Stop,
+            Some("session is no longer live"),
         ),
     ] {
         let fixture = home();
@@ -2372,90 +2393,49 @@ fn parked_reacquisition_refuses_changed_reservation_facts() {
         let root = StateRoot::effects(&cx, fixture.path()).unwrap();
         let environment = environment();
         let reservation = decided(&cx, &root, &environment);
-        let (_session, _) = admit_staged(&cx, &root, &reservation, run_id(248));
+        let (session, _) = admit_staged(&cx, &root, &reservation, run_id(248));
         let run = admit_activation(&cx, &root, &reservation, run_id(249));
         let parked = run
             .park_workspace(&reservation, Instant::now() + Duration::from_secs(10))
             .unwrap();
         let mut store = Store::open(&cx, &root).unwrap();
-        store
-            .transaction(&cx, |txn| {
-                let sql = format!(
-                    "UPDATE workspace_activation_reservations SET {column}=?2 WHERE environment=?1"
-                );
-                txn.conn().execute(
-                    &sql,
-                    rusqlite::params![environment.name().to_string(), value],
-                )?;
-                Ok::<_, RunError>(())
-            })
-            .unwrap();
+        match change {
+            Change::Column(column, value) => {
+                store
+                    .transaction(&cx, |txn| {
+                        let sql = format!(
+                            "UPDATE workspace_activation_reservations SET {column}=?2 WHERE environment=?1"
+                        );
+                        txn.conn().execute(
+                            &sql,
+                            rusqlite::params![environment.name().to_string(), value],
+                        )?;
+                        Ok::<_, RunError>(())
+                    })
+                    .unwrap();
+            }
+            Change::Generation => {
+                store
+                    .txn(&cx, |txn| txn.next_generation(&environment))
+                    .unwrap();
+            }
+            Change::Stop => {
+                session.settle(&cleanup(&cx), &mut adapter()).unwrap();
+            }
+        }
         let (error, _custody) = parked.reacquire().expect_err("changed reservation refuses");
-        assert!(error.to_string().contains(expected), "{column}: {error}");
+        if let Some(expected) = expected {
+            assert!(error.to_string().contains(expected), "{name}: {error}");
+        }
         let gate = crate::gate::Gate::acquire(
             &cx,
             &root,
             std::slice::from_ref(&environment),
             Wait::FailFast,
         )
-        .unwrap();
+        .expect("failed revalidation released the gate");
         drop(gate);
     }
-}
-
-#[test]
-fn parked_reacquisition_refuses_advanced_environment_generation() {
-    let fixture = home();
-    let cx = context();
-    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
-    let environment = environment();
-    let reservation = decided(&cx, &root, &environment);
-    let (_session, _) = admit_staged(&cx, &root, &reservation, run_id(238));
-    let run = admit_activation(&cx, &root, &reservation, run_id(239));
-    let parked = run
-        .park_workspace(&reservation, Instant::now() + Duration::from_secs(10))
-        .unwrap();
-    let mut store = Store::open(&cx, &root).unwrap();
-    store
-        .txn(&cx, |txn| txn.next_generation(&environment))
-        .unwrap();
-    let (_error, _custody) = parked.reacquire().expect_err("advanced generation refuses");
-    let gate = crate::gate::Gate::acquire(
-        &cx,
-        &root,
-        std::slice::from_ref(&environment),
-        Wait::FailFast,
-    )
-    .expect("failed revalidation released the gate");
-    drop(gate);
-}
-
-#[test]
-fn parked_reacquisition_refuses_stopped_session() {
-    let fixture = home();
-    let cx = context();
-    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
-    let environment = environment();
-    let reservation = decided(&cx, &root, &environment);
-    let (session, _) = admit_staged(&cx, &root, &reservation, run_id(251));
-    let run = admit_activation(&cx, &root, &reservation, run_id(252));
-    let parked = run
-        .park_workspace(&reservation, Instant::now() + Duration::from_secs(10))
-        .unwrap();
-    session.settle(&cleanup(&cx), &mut adapter()).unwrap();
-    let (error, _custody) = parked.reacquire().expect_err("stopped session refuses");
-    assert!(
-        error.to_string().contains("session is no longer live"),
-        "{error}"
-    );
-    let gate = crate::gate::Gate::acquire(
-        &cx,
-        &root,
-        std::slice::from_ref(&environment),
-        Wait::FailFast,
-    )
-    .unwrap();
-    drop(gate);
 }
 
 #[test]
@@ -2517,64 +2497,66 @@ fn parked_cleanup_gate_timeout_returns_custody_for_retry() {
 }
 
 #[test]
-fn park_refuses_release_callbacks_and_retains_guarded_run() {
+fn park_refusals_retain_the_guarded_run() {
     use std::sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     };
-    let fixture = home();
-    let cx = context();
-    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
-    let environment = environment();
-    let reservation = decided(&cx, &root, &environment);
-    let (session, _) = admit_staged(&cx, &root, &reservation, run_id(244));
-    let mut run = admit_activation(&cx, &root, &reservation, run_id(245));
-    let released = Arc::new(AtomicBool::new(false));
-    let flag = Arc::clone(&released);
-    run.on_settle(move || flag.store(true, Ordering::SeqCst));
-    let (error, run) = run
-        .park_workspace(&reservation, Instant::now() + Duration::from_secs(10))
-        .expect_err("release action cannot be parked");
-    assert!(error.to_string().contains("release actions"));
-    assert!(!released.load(Ordering::SeqCst));
-    assert!(crate::gate::Gate::acquire(
-        &cx,
-        &root,
-        std::slice::from_ref(&environment),
-        Wait::FailFast
-    )
-    .is_err());
-    run.settle(&cleanup(&cx), &mut adapter()).unwrap();
-    assert!(released.load(Ordering::SeqCst));
-    session.settle(&cleanup(&cx), &mut adapter()).unwrap();
-    reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
-}
-
-#[test]
-fn park_refuses_shared_gate_and_retains_guarded_run() {
-    let fixture = home();
-    let cx = context();
-    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
-    let environment = environment();
-    let reservation = decided(&cx, &root, &environment);
-    let (session, _) = admit_staged(&cx, &root, &reservation, run_id(246));
-    let mut run = admit_activation(&cx, &root, &reservation, run_id(247));
-    let copies = run.share_workspace_gate_for_test().unwrap();
-    let (error, run) = run
-        .park_workspace(&reservation, Instant::now() + Duration::from_secs(10))
-        .expect_err("shared gate cannot be parked");
-    assert!(error.to_string().contains("shared custody"));
-    assert!(crate::gate::Gate::acquire(
-        &cx,
-        &root,
-        std::slice::from_ref(&environment),
-        Wait::FailFast
-    )
-    .is_err());
-    drop(copies);
-    run.settle(&cleanup(&cx), &mut adapter()).unwrap();
-    session.settle(&cleanup(&cx), &mut adapter()).unwrap();
-    reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
+    // Release callbacks cannot be parked ...
+    {
+        let fixture = home();
+        let cx = context();
+        let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+        let environment = environment();
+        let reservation = decided(&cx, &root, &environment);
+        let (session, _) = admit_staged(&cx, &root, &reservation, run_id(244));
+        let mut run = admit_activation(&cx, &root, &reservation, run_id(245));
+        let released = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&released);
+        run.on_settle(move || flag.store(true, Ordering::SeqCst));
+        let (error, run) = run
+            .park_workspace(&reservation, Instant::now() + Duration::from_secs(10))
+            .expect_err("release action cannot be parked");
+        assert!(error.to_string().contains("release actions"));
+        assert!(!released.load(Ordering::SeqCst));
+        assert!(crate::gate::Gate::acquire(
+            &cx,
+            &root,
+            std::slice::from_ref(&environment),
+            Wait::FailFast
+        )
+        .is_err());
+        run.settle(&cleanup(&cx), &mut adapter()).unwrap();
+        assert!(released.load(Ordering::SeqCst));
+        session.settle(&cleanup(&cx), &mut adapter()).unwrap();
+        reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
+    }
+    // ... and neither can a shared gate.
+    {
+        let fixture = home();
+        let cx = context();
+        let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+        let environment = environment();
+        let reservation = decided(&cx, &root, &environment);
+        let (session, _) = admit_staged(&cx, &root, &reservation, run_id(246));
+        let mut run = admit_activation(&cx, &root, &reservation, run_id(247));
+        let copies = run.share_workspace_gate_for_test().unwrap();
+        let (error, run) = run
+            .park_workspace(&reservation, Instant::now() + Duration::from_secs(10))
+            .expect_err("shared gate cannot be parked");
+        assert!(error.to_string().contains("shared custody"));
+        assert!(crate::gate::Gate::acquire(
+            &cx,
+            &root,
+            std::slice::from_ref(&environment),
+            Wait::FailFast
+        )
+        .is_err());
+        drop(copies);
+        run.settle(&cleanup(&cx), &mut adapter()).unwrap();
+        session.settle(&cleanup(&cx), &mut adapter()).unwrap();
+        reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
+    }
 }
 
 #[test]
@@ -4328,7 +4310,9 @@ fn successor_death_at_the_commit_boundary_cannot_publish_a_dead_session() {
 }
 
 #[test]
-fn generic_active_publication_cannot_bypass_a_reserved_session_commit() {
+fn generic_commit_paths_require_the_atomic_selection() {
+    // A generic active publication cannot bypass the reserved session commit
+    // ...
     for with_holders in [false, true] {
         let cx = context();
         let fixture = home();
@@ -4364,6 +4348,54 @@ fn generic_active_publication_cannot_bypass_a_reserved_session_commit() {
         );
         assert_eq!(attachment_row(&reader, &environment, session.run()), None);
     }
+    // ... and a generic commit cannot publish a generation without its
+    // selection record. Both refusals leave the journal unpublished.
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let (environment, _predecessor) = active_environment(&cx, &root);
+    let reservation =
+        WorkspaceActivationReservation::reserve(&cx, &root, &environment, Wait::FailFast)
+            .expect("reservation");
+    let (session_run, _session) = admit_staged(&cx, &root, &reservation, run_id(222));
+    // Everything the old generic commit needed is present, including a complete
+    // applied publication: the refusal is about the missing selection record,
+    // not about the run.
+    let environment_run = admit_activation(&cx, &root, &reservation, run_id(223));
+    let error = reservation
+        .commit(&cx, &root, &environment_run, &session_run)
+        .expect_err("the generic commit cannot publish without a selection");
+    assert!(
+        matches!(error, RunError::Refused(ref message) if message.contains("use commit_selection")),
+        "{error:?}"
+    );
+    let reader = read_journal(&cx, &root);
+    assert_eq!(
+        mapping(&reader, &environment),
+        None,
+        "nothing is published by the generic commit"
+    );
+    assert_eq!(obligation_row(&reader, &environment), None);
+    assert_eq!(
+        attachment_row(&reader, &environment, session_run.id()),
+        None
+    );
+    end_run(
+        &cx,
+        environment_run,
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            signal: None,
+        },
+    );
+    end_run(
+        &cx,
+        session_run,
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            signal: None,
+        },
+    );
 }
 
 // ---- 052 §8.11 C1: the atomic activation decision -------------------------
@@ -5087,93 +5119,6 @@ fn a_decision_attaches_the_live_session_that_serves_its_exact_inputs() {
 }
 
 #[test]
-fn competing_decisions_reserve_one_successor_generation_and_keep_the_predecessor() {
-    let cx = context();
-    let fixture = home();
-    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
-    let environment = pending_environment(&cx, &root);
-    let first = publish_inputs(11, None);
-    let activated =
-        activate_with_selection(&cx, &root, &environment, run_id(202), run_id(203), &first);
-
-    // Two callers that both see a changed artifact decide at the same time.
-    let changed = publish_inputs(12, None);
-    let one = match WorkspaceActivationReservation::decide(
-        &cx,
-        &root,
-        &environment,
-        &changed,
-        Wait::FailFast,
-    )
-    .expect("first decision")
-    {
-        ActivationDecision::Activate(reservation) => *reservation,
-        ActivationDecision::Attach(_) => panic!("changed inputs cannot attach"),
-    };
-    let two = match WorkspaceActivationReservation::decide(
-        &cx,
-        &root,
-        &environment,
-        &changed,
-        Wait::FailFast,
-    )
-    .expect("competing decision recovers, never duplicates")
-    {
-        ActivationDecision::Activate(reservation) => *reservation,
-        ActivationDecision::Attach(_) => panic!("changed inputs cannot attach"),
-    };
-    assert_eq!(one.id(), two.id(), "one successor generation per decision");
-    assert_eq!(
-        one.generation(),
-        activated
-            .obligation
-            .environment_generation()
-            .next()
-            .expect("E+1"),
-        "the successor is exactly the generation after the live one"
-    );
-    assert_eq!(one.inputs(), Some(&changed));
-
-    // A third caller with yet other inputs meets the reserved fence by name.
-    let error = WorkspaceActivationReservation::decide(
-        &cx,
-        &root,
-        &environment,
-        &publish_inputs(13, None),
-        Wait::FailFast,
-    )
-    .expect_err("a different intent cannot share the reserved generation");
-    assert!(matches!(error, RunError::Refused(_)), "{error:?}");
-
-    // The predecessor is untouched by any of it.
-    let reader = read_journal(&cx, &root);
-    assert_eq!(
-        resolved(&reader, &environment),
-        Some(activated.session.clone())
-    );
-    assert_eq!(
-        attachment_row(&reader, &environment, activated.session.run()),
-        Some((
-            activated.obligation.environment_generation().get() as i64,
-            "\"Borrow\"".to_owned(),
-            "attached".to_owned()
-        ))
-    );
-    assert!(is_live(&activated.session_run));
-    assert_eq!(stop_requests(&cx, &root, activated.session.run()), 0);
-    one.cancel(&cx, &root, Wait::FailFast)
-        .expect("release the unused successor");
-    end_run(
-        &cx,
-        activated.session_run,
-        WorkloadOutcome::Cancelled {
-            cause: StopCause::Requested,
-            signal: None,
-        },
-    );
-}
-
-#[test]
 fn a_decision_refuses_a_target_the_live_publication_does_not_name() {
     let cx = context();
     let fixture = home();
@@ -5762,56 +5707,6 @@ fn an_established_dead_listener_abandons_and_revokes_without_restoring_the_prede
     end_run(
         &cx,
         predecessor.session_run,
-        WorkloadOutcome::Cancelled {
-            cause: StopCause::Requested,
-            signal: None,
-        },
-    );
-}
-
-#[test]
-fn the_generic_commit_cannot_publish_a_generation_without_its_selection() {
-    let cx = context();
-    let fixture = home();
-    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
-    let (environment, _predecessor) = active_environment(&cx, &root);
-    let reservation =
-        WorkspaceActivationReservation::reserve(&cx, &root, &environment, Wait::FailFast)
-            .expect("reservation");
-    let (session_run, _session) = admit_staged(&cx, &root, &reservation, run_id(222));
-    // Everything the old generic commit needed is present, including a complete
-    // applied publication: the refusal is about the missing selection record,
-    // not about the run.
-    let environment_run = admit_activation(&cx, &root, &reservation, run_id(223));
-    let error = reservation
-        .commit(&cx, &root, &environment_run, &session_run)
-        .expect_err("the generic commit cannot publish without a selection");
-    assert!(
-        matches!(error, RunError::Refused(ref message) if message.contains("use commit_selection")),
-        "{error:?}"
-    );
-    let reader = read_journal(&cx, &root);
-    assert_eq!(
-        mapping(&reader, &environment),
-        None,
-        "nothing is published by the generic commit"
-    );
-    assert_eq!(obligation_row(&reader, &environment), None);
-    assert_eq!(
-        attachment_row(&reader, &environment, session_run.id()),
-        None
-    );
-    end_run(
-        &cx,
-        environment_run,
-        WorkloadOutcome::Cancelled {
-            cause: StopCause::Requested,
-            signal: None,
-        },
-    );
-    end_run(
-        &cx,
-        session_run,
         WorkloadOutcome::Cancelled {
             cause: StopCause::Requested,
             signal: None,
@@ -6814,6 +6709,95 @@ fn concurrent_decisions_reserve_one_generation_or_attach_one_session() {
     assert_eq!(resolved(&reader, &environment), Some(session));
     assert_eq!(stop_requests(&cx, &root, run_id(240)), 0);
     drop(activated);
+
+    // Sequential callers converge the same way: the loser recovers the
+    // winner's reservation, a different intent meets the reserved fence,
+    // and the predecessor is untouched.
+    {
+        let cx = context();
+        let fixture = home();
+        let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+        let environment = pending_environment(&cx, &root);
+        let first = publish_inputs(11, None);
+        let activated =
+            activate_with_selection(&cx, &root, &environment, run_id(202), run_id(203), &first);
+
+        // Two callers that both see a changed artifact decide at the same time.
+        let changed = publish_inputs(12, None);
+        let one = match WorkspaceActivationReservation::decide(
+            &cx,
+            &root,
+            &environment,
+            &changed,
+            Wait::FailFast,
+        )
+        .expect("first decision")
+        {
+            ActivationDecision::Activate(reservation) => *reservation,
+            ActivationDecision::Attach(_) => panic!("changed inputs cannot attach"),
+        };
+        let two = match WorkspaceActivationReservation::decide(
+            &cx,
+            &root,
+            &environment,
+            &changed,
+            Wait::FailFast,
+        )
+        .expect("competing decision recovers, never duplicates")
+        {
+            ActivationDecision::Activate(reservation) => *reservation,
+            ActivationDecision::Attach(_) => panic!("changed inputs cannot attach"),
+        };
+        assert_eq!(one.id(), two.id(), "one successor generation per decision");
+        assert_eq!(
+            one.generation(),
+            activated
+                .obligation
+                .environment_generation()
+                .next()
+                .expect("E+1"),
+            "the successor is exactly the generation after the live one"
+        );
+        assert_eq!(one.inputs(), Some(&changed));
+
+        // A third caller with yet other inputs meets the reserved fence by name.
+        let error = WorkspaceActivationReservation::decide(
+            &cx,
+            &root,
+            &environment,
+            &publish_inputs(13, None),
+            Wait::FailFast,
+        )
+        .expect_err("a different intent cannot share the reserved generation");
+        assert!(matches!(error, RunError::Refused(_)), "{error:?}");
+
+        // The predecessor is untouched by any of it.
+        let reader = read_journal(&cx, &root);
+        assert_eq!(
+            resolved(&reader, &environment),
+            Some(activated.session.clone())
+        );
+        assert_eq!(
+            attachment_row(&reader, &environment, activated.session.run()),
+            Some((
+                activated.obligation.environment_generation().get() as i64,
+                "\"Borrow\"".to_owned(),
+                "attached".to_owned()
+            ))
+        );
+        assert!(is_live(&activated.session_run));
+        assert_eq!(stop_requests(&cx, &root, activated.session.run()), 0);
+        one.cancel(&cx, &root, Wait::FailFast)
+            .expect("release the unused successor");
+        end_run(
+            &cx,
+            activated.session_run,
+            WorkloadOutcome::Cancelled {
+                cause: StopCause::Requested,
+                signal: None,
+            },
+        );
+    }
 }
 
 #[test]
@@ -9345,6 +9329,9 @@ fn split_timeout_observer_acknowledges_release_after_gate_reacquisition() {
     let (started, ready) = std::sync::mpsc::channel();
     let (release, blocked) = std::sync::mpsc::channel();
     let (done, completed) = std::sync::mpsc::channel();
+    let observe_cx = cx.clone();
+    let observe_root = root.clone();
+    let observe_environment = environment.clone();
     let result = WorkspaceActivationReservation::decide_observing_split(
         &cx,
         &root,
@@ -9353,6 +9340,18 @@ fn split_timeout_observer_acknowledges_release_after_gate_reacquisition() {
         Instant::now() + Duration::from_millis(300),
         move |_| {
             let _ = started.send(());
+            // The decision gate is held for the whole observation: no other
+            // actor may take it while the observer runs.
+            assert!(
+                crate::gate::Gate::acquire(
+                    &observe_cx,
+                    &observe_root,
+                    std::slice::from_ref(&observe_environment),
+                    Wait::FailFast
+                )
+                .is_err(),
+                "observer must hold the decision gate"
+            );
             let received_release = blocked.recv_timeout(Duration::from_secs(5)).is_ok();
             let _ = done.send(received_release);
             Ok(1)
@@ -9529,7 +9528,7 @@ fn cancelled_decision_releases_gate_while_observer_is_stalled() {
                 Ok(decision_inputs(1))
             },
         );
-        done_tx.send(result.is_err()).expect("decision result");
+        done_tx.send(result).expect("decision result");
     });
     started_rx
         .recv_timeout(Duration::from_secs(2))
@@ -9549,7 +9548,11 @@ fn cancelled_decision_releases_gate_while_observer_is_stalled() {
     };
     let _ = release_tx.send(());
     worker.join().expect("decision joined");
-    assert!(prompt.expect("cancelled decision must return promptly"));
+    let decision = prompt.expect("cancelled decision must return promptly");
+    assert!(
+        matches!(decision, Err(RunError::Interrupted(_))),
+        "cancel must interrupt the stalled decision: {decision:?}"
+    );
     competing
         .expect("decision returned")
         .expect("gate is free while observer remains stalled");

@@ -365,6 +365,12 @@ mod tests {
         std::fs::create_dir_all(exe.parent().expect("parent")).expect("mkdir exe dir");
         std::fs::write(&exe, "").expect("exe");
 
+        // The checkout itself is discovered; only the commit is missing, so
+        // the None proves "no commit", not "not a checkout".
+        assert_eq!(
+            discover_repo_root_from_executable(&exe),
+            Some(temp.path().to_path_buf())
+        );
         assert!(infer_repo_local_version(&exe).is_none());
     }
 
@@ -442,37 +448,34 @@ mod tests {
 
     #[test]
     fn stale_repo_local_install_reports_proven_ancestor_install() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let (root, ancestor, head) = checkout_with_two_commits(temp.path());
-        let installed_identity = format!("v0.12.1+local.{}", &ancestor[..7]);
-        let executable = write_local_install(&root, &installed_identity);
-        let manifest = root.join("effigy.toml");
+        for (name, dirty) in [("clean ancestor", false), ("recorded dirty ancestor", true)] {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let (root, ancestor, head) = checkout_with_two_commits(temp.path());
+            let installed_identity = if dirty {
+                format!("v0.12.1+local.{}.dirty", &ancestor[..7])
+            } else {
+                format!("v0.12.1+local.{}", &ancestor[..7])
+            };
+            let executable = write_local_install(&root, &installed_identity);
+            let manifest = root.join("effigy.toml");
 
-        let stale = stale_repo_local_install_for(&executable, &manifest).expect("stale install");
-        assert_eq!(stale.executable, executable);
-        assert_eq!(stale.repo_root, root);
-        assert_eq!(stale.installed_identity, installed_identity);
-        assert_eq!(
-            stale.current_identity,
-            format!(
-                "{}+local.{}.dirty",
-                display_version_prefix(package_version()),
-                &head[..7]
-            ),
-            "fixture files stay untracked, so the checkout is dirty"
-        );
-    }
-
-    #[test]
-    fn stale_repo_local_install_preserves_recorded_dirty_identity() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let (root, ancestor, _head) = checkout_with_two_commits(temp.path());
-        let installed_identity = format!("v0.12.1+local.{}.dirty", &ancestor[..7]);
-        let executable = write_local_install(&root, &installed_identity);
-
-        let stale =
-            stale_repo_local_install_for(&executable, &root.join("effigy.toml")).expect("stale");
-        assert_eq!(stale.installed_identity, installed_identity);
+            let stale =
+                stale_repo_local_install_for(&executable, &manifest).expect("stale install");
+            assert_eq!(stale.executable, executable, "{name}");
+            assert_eq!(stale.repo_root, root, "{name}");
+            // The recorded identity is preserved verbatim, including a recorded
+            // dirty marker (the preserves_recorded_dirty_identity row).
+            assert_eq!(stale.installed_identity, installed_identity, "{name}");
+            assert_eq!(
+                stale.current_identity,
+                format!(
+                    "{}+local.{}.dirty",
+                    display_version_prefix(package_version()),
+                    &head[..7]
+                ),
+                "fixture files stay untracked, so the checkout is dirty"
+            );
+        }
     }
 
     #[test]
@@ -502,34 +505,35 @@ mod tests {
     }
 
     #[test]
-    fn stale_repo_local_install_skips_unresolvable_recorded_commit() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let (root, _ancestor, _head) = checkout_with_two_commits(temp.path());
-        let executable = write_local_install(&root, "v0.12.1+local.deadbee");
-
-        assert!(
-            stale_repo_local_install_for(&executable, &root.join("effigy.toml")).is_none(),
-            "an unprovable recorded commit keeps the ordinary parse error"
-        );
-    }
-
-    #[test]
-    fn stale_repo_local_install_skips_unknown_local_identity() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let (root, _ancestor, _head) = checkout_with_two_commits(temp.path());
-        let executable = write_local_install(&root, "v0.12.1+local.unknown");
-
-        assert!(stale_repo_local_install_for(&executable, &root.join("effigy.toml")).is_none());
-    }
-    #[test]
-    fn stale_repo_local_install_skips_missing_stamp() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let (root, _ancestor, _head) = checkout_with_two_commits(temp.path());
-        let executable = root.join(".local-install/bin/effigy");
-        std::fs::create_dir_all(executable.parent().expect("parent")).expect("mkdir");
-        std::fs::write(&executable, "").expect("exe");
-
-        assert!(stale_repo_local_install_for(&executable, &root.join("effigy.toml")).is_none());
+    fn stale_repo_local_install_skips_unprovable_records() {
+        // A record that cannot prove staleness keeps None instead of
+        // guessing: an unresolvable commit, an unknown local identity, and
+        // a missing stamp file.
+        for (name, recorded) in [
+            (
+                "unresolvable recorded commit",
+                Some("v0.12.1+local.deadbee"),
+            ),
+            ("unknown local identity", Some("v0.12.1+local.unknown")),
+            ("missing stamp", None),
+        ] {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let (root, _ancestor, _head) = checkout_with_two_commits(temp.path());
+            let executable = root.join(".local-install/bin/effigy");
+            std::fs::create_dir_all(executable.parent().expect("parent")).expect("mkdir");
+            std::fs::write(&executable, "").expect("exe");
+            if let Some(recorded) = recorded {
+                std::fs::write(
+                    active_version_file_for(&executable),
+                    format!("{recorded}\n"),
+                )
+                .expect("stamp");
+            }
+            assert!(
+                stale_repo_local_install_for(&executable, &root.join("effigy.toml")).is_none(),
+                "{name} must not diagnose a stale install"
+            );
+        }
     }
 
     #[test]

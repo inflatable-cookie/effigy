@@ -400,7 +400,9 @@ mod tests {
     }
 
     #[test]
-    fn nested_effigy_manifest_without_root_marker_still_promotes_to_workspace() {
+    fn nested_effigy_manifest_promotes_to_parent_effigy_root_without_other_workspace_markers() {
+        // Row 1: the parent carries no effigy.toml root marker, only a Cargo
+        // workspace, and the nested manifest still promotes to the workspace.
         let (temp, child) = workspace_with_child_manifest("[catalog]\nalias = \"child\"\n");
 
         let resolved = resolve_target_root(child, None).expect("resolve");
@@ -410,10 +412,8 @@ mod tests {
             fs::canonicalize(temp.path()).expect("canonical temp")
         );
         assert_eq!(resolved.resolution_mode, ResolutionMode::AutoPromoted);
-    }
 
-    #[test]
-    fn nested_effigy_manifest_promotes_to_parent_effigy_root_without_other_workspace_markers() {
+        // Row 2: a parent effigy.toml anchors the child workspace and says so.
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path();
         fs::write(

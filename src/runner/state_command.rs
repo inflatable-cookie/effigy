@@ -1435,24 +1435,14 @@ task = {task_value}
     }
 
     #[test]
-    fn state_apply_executes_declared_artifact_layer_hook_with_context() {
-        let repo = temp_workspace("apply-hook-success");
-        state_apply_executes_declared_artifact_layer_hook_with_context_at(&repo);
-    }
-
-    fn state_apply_executes_declared_artifact_layer_hook_with_context_at(repo: &Path) {
-        fs::write(
-            repo.join("effigy.toml"),
-            r#"
+    fn state_apply_executes_artifact_layer_hooks_with_context() {
+        // A named hook task and an inline hook task both execute with the
+        // layer context; only the hook label and manifest shape differ.
+        let named_manifest = r#"
 [tasks.apply-hook]
 run = "sh -lc 'printf \"%s\" \"$EFFIGY_STATE_APPLY_CONTEXT\" > hook-path.txt'"
-"#,
-        )
-        .expect("write effigy manifest");
-        fs::write(repo.join("payload.txt"), "payload\n").expect("write payload");
-        fs::write(
-            repo.join("state.toml"),
-            r#"
+"#;
+        let named_state = r#"
 schema = "effigy.state-stack.v1"
 name = "acowtancy-uat"
 environment = "uat"
@@ -1466,28 +1456,76 @@ environment_policy = "all"
 artifact_kind = "object-store"
 target = "media"
 hook = "apply-hook"
-"#,
-        )
-        .expect("write state manifest");
+"#;
+        let inline_manifest = r#"
+[state]
 
-        let rendered = run_state_apply(
-            Some(Path::new("state.toml")),
+[state.uat]
+schema = "effigy.state-stack.v1"
+name = "acowtancy-uat"
+environment = "uat"
+
+[[state.uat.layers]]
+key = "legacy-media"
+role = "media-library"
+source = "./payload.txt"
+apply_mode = "artifact"
+environment_policy = "all"
+artifact_kind = "object-store"
+target = "media"
+hook = [{ run = "sh -lc 'printf \"%s\" \"$EFFIGY_STATE_APPLY_CONTEXT\" > inline-hook-path.txt'" }]
+"#;
+        let repo = temp_workspace("apply-hook-success");
+        state_apply_executes_artifact_layer_hook_with_context_at(
+            &repo,
+            named_manifest,
+            Some(named_state),
+            "apply-hook",
+            "hook-path.txt",
+        );
+        let inline_repo = temp_workspace("apply-inline-hook");
+        state_apply_executes_artifact_layer_hook_with_context_at(
+            &inline_repo,
+            inline_manifest,
             None,
-            repo,
-            repo,
-            true,
-            &[],
-            true,
-        )
+            "<inline>",
+            "inline-hook-path.txt",
+        );
+    }
+
+    fn state_apply_executes_artifact_layer_hook_with_context_at(
+        repo: &Path,
+        manifest: &str,
+        state_manifest: Option<&str>,
+        hook_label: &str,
+        marker: &str,
+    ) {
+        fs::write(repo.join("effigy.toml"), manifest).expect("write effigy manifest");
+        fs::write(repo.join("payload.txt"), "payload\n").expect("write payload");
+
+        let rendered = if let Some(state) = state_manifest {
+            fs::write(repo.join("state.toml"), state).expect("write state manifest");
+            run_state_apply(
+                Some(Path::new("state.toml")),
+                None,
+                repo,
+                repo,
+                true,
+                &[],
+                true,
+            )
+        } else {
+            run_state_apply(None, Some("uat"), repo, repo, true, &[], true)
+        }
         .expect("run state apply");
         let report: Value = serde_json::from_str(&rendered).expect("parse apply report");
         let layer = &report["layers"][0];
 
         assert_eq!(report["ok"], true);
         assert_eq!(layer["status"], "staged");
-        assert_eq!(layer["hook"], "apply-hook");
+        assert_eq!(layer["hook"], hook_label);
         assert_eq!(layer["hook_status"], "executed");
-        let hook_context_path = fs::read_to_string(repo.join("hook-path.txt"))
+        let hook_context_path = fs::read_to_string(repo.join(marker))
             .expect("read hook path marker")
             .trim()
             .to_owned();
@@ -1575,49 +1613,6 @@ hook = "apply-hook"
             fs::read_to_string(repo.join("state-secret.txt")).expect("read marker"),
             "state_secret"
         );
-    }
-
-    #[test]
-    fn state_apply_accepts_inline_hook_task_in_composed_manifest() {
-        let repo = temp_workspace("apply-inline-hook");
-        fs::write(repo.join("payload.txt"), "payload\n").expect("write payload");
-        fs::write(
-            repo.join("effigy.toml"),
-            r#"
-[state]
-
-[state.uat]
-schema = "effigy.state-stack.v1"
-name = "acowtancy-uat"
-environment = "uat"
-
-[[state.uat.layers]]
-key = "legacy-media"
-role = "media-library"
-source = "./payload.txt"
-apply_mode = "artifact"
-environment_policy = "all"
-artifact_kind = "object-store"
-target = "media"
-hook = [{ run = "sh -lc 'printf \"%s\" \"$EFFIGY_STATE_APPLY_CONTEXT\" > inline-hook-path.txt'" }]
-"#,
-        )
-        .expect("write effigy manifest");
-
-        let rendered = run_state_apply(None, Some("uat"), &repo, &repo, true, &[], true)
-            .expect("run state apply");
-        let report: Value = serde_json::from_str(&rendered).expect("parse apply report");
-        let layer = &report["layers"][0];
-
-        assert_eq!(report["ok"], true);
-        assert_eq!(layer["status"], "staged");
-        assert_eq!(layer["hook"], "<inline>");
-        assert_eq!(layer["hook_status"], "executed");
-        let hook_context_path = fs::read_to_string(repo.join("inline-hook-path.txt"))
-            .expect("read hook path marker")
-            .trim()
-            .to_owned();
-        assert_eq!(layer["hook_context_path"], hook_context_path);
     }
 
     #[test]
@@ -2189,47 +2184,40 @@ mod live_progress_tests {
     };
 
     #[test]
-    fn an_apply_layer_frame_names_its_place_and_the_source_it_waits_on() {
+    fn apply_frames_name_their_place_and_source() {
+        // A task layer frame names its place and the source it waits on ...
         let progress = layer_progress(ApplyAction::Task, "seed", "seed-task", 2, 3);
         assert_eq!(
             progress.detailed_frame_at(Duration::from_secs(4)),
             "running task layer `seed` (2/3); waiting for task `seed-task` to finish; 4s elapsed"
         );
-    }
-
-    #[test]
-    fn an_apply_hook_frame_names_the_layer_that_applied() {
-        let progress = layer_progress(ApplyAction::Sql, "users", "users.sql", 1, 2);
-        show_apply_hook(&progress, "users", 1, 2);
+        // ... and an apply hook frame names the layer that applied.
+        let hook = layer_progress(ApplyAction::Sql, "users", "users.sql", 1, 2);
+        show_apply_hook(&hook, "users", 1, 2);
         assert_eq!(
-            progress.detailed_frame_at(Duration::from_secs(9)),
+            hook.detailed_frame_at(Duration::from_secs(9)),
             "running apply hook `users` (1/2); waiting for apply hook `users` to finish; last: layer `users` applied; 9s elapsed"
         );
     }
 
     #[test]
-    fn a_capture_task_frame_names_the_task_and_its_phase() {
-        let progress = capture_task_progress("snapshot");
+    fn capture_frames_name_the_task_artifact_and_phase() {
+        // A capture task frame names the task and its phase ...
+        let task = capture_task_progress("snapshot");
         assert_eq!(
-            progress.detailed_frame_at(Duration::from_secs(3)),
+            task.detailed_frame_at(Duration::from_secs(3)),
             "running capture task `snapshot` (1/2); waiting for task `snapshot` to finish; 3s elapsed"
         );
-    }
-
-    #[test]
-    fn a_capture_artifact_frame_names_the_destination_it_pushes_to() {
-        let progress = capture_artifact_progress("db-dump", true, Some("oci://registry/dump"));
+        // ... a pushed artifact frame names the destination it pushes to ...
+        let pushed = capture_artifact_progress("db-dump", true, Some("oci://registry/dump"));
         assert_eq!(
-            progress.detailed_frame_at(Duration::from_secs(2)),
+            pushed.detailed_frame_at(Duration::from_secs(2)),
             "pushing capture artifact `db-dump` to oci://registry/dump (1/1); waiting for artifact `db-dump` to be pushed; 2s elapsed"
         );
-    }
-
-    #[test]
-    fn a_staged_capture_artifact_names_the_artifact_it_stages() {
-        let progress = capture_artifact_progress("snapshot", false, Some("oci://registry/dump"));
+        // ... and a staged artifact frame names the artifact it stages.
+        let staged = capture_artifact_progress("snapshot", false, Some("oci://registry/dump"));
         assert_eq!(
-            progress.detailed_frame_at(Duration::from_secs(3)),
+            staged.detailed_frame_at(Duration::from_secs(3)),
             "staging capture artifact `snapshot` (1/1); waiting for artifact `snapshot` to be staged; 3s elapsed"
         );
     }

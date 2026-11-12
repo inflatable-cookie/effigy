@@ -1725,43 +1725,10 @@ mod tests {
     }
 
     /// Links record their Bun package root, so a `studio/` reference is still a
-    /// reference to the checkout being inspected.
+    /// reference to the checkout being inspected — whether the inspection
+    /// starts at the checkout or at a sibling Bun root (`harness/`).
     #[test]
     fn orphan_bun_registration_from_a_nested_root_is_reported_at_the_checkout() {
-        let temp = TempDir::new().unwrap();
-        let checkout = temp.path().join("checkout");
-        fs::create_dir_all(checkout.join(".git")).unwrap();
-        fs::create_dir_all(checkout.join("studio")).unwrap();
-        let checkout = fs::canonicalize(&checkout).unwrap();
-        let studio = fs::canonicalize(checkout.join("studio")).unwrap();
-        let mut index = BunRegistrationIndex::empty();
-        index
-            .registrations
-            .push(bun_registration("@acme/core", &studio, &studio));
-
-        let report = inspect_dependency_status(
-            &checkout,
-            temp.path(),
-            &RepoLinkState::empty(),
-            &index,
-            &NoProcess,
-        )
-        .unwrap();
-
-        assert_eq!(
-            report
-                .links
-                .iter()
-                .map(|link| link.observed.drift[0].code.as_str())
-                .collect::<Vec<_>>(),
-            ["bun-registration-without-ledger"]
-        );
-    }
-
-    /// One checkout can hold several Bun roots, and any of them can be the
-    /// path a command was pointed at.
-    #[test]
-    fn orphan_bun_registration_is_reported_from_a_sibling_bun_root() {
         let temp = TempDir::new().unwrap();
         let checkout = temp.path().join("checkout");
         fs::create_dir_all(checkout.join(".git")).unwrap();
@@ -1775,23 +1742,26 @@ mod tests {
             .registrations
             .push(bun_registration("@acme/core", &studio, &studio));
 
-        let report = inspect_dependency_status(
-            &harness,
-            temp.path(),
-            &RepoLinkState::empty(),
-            &index,
-            &NoProcess,
-        )
-        .unwrap();
+        // The same orphan surfaces from the checkout and from a sibling root.
+        for root in [&checkout, &harness] {
+            let report = inspect_dependency_status(
+                root,
+                temp.path(),
+                &RepoLinkState::empty(),
+                &index,
+                &NoProcess,
+            )
+            .unwrap();
 
-        assert_eq!(
-            report
-                .links
-                .iter()
-                .map(|link| link.observed.drift[0].code.as_str())
-                .collect::<Vec<_>>(),
-            ["bun-registration-without-ledger"]
-        );
+            assert_eq!(
+                report
+                    .links
+                    .iter()
+                    .map(|link| link.observed.drift[0].code.as_str())
+                    .collect::<Vec<_>>(),
+                ["bun-registration-without-ledger"]
+            );
+        }
     }
 
     /// A vendored clone carries its own `.git`, so its links are its own.
@@ -2101,36 +2071,44 @@ mod tests {
     }
 
     #[test]
-    fn detect_repo_package_managers_finds_root_bun_workspace() {
-        let temp = TempDir::new().unwrap();
-        write(
-            &temp.path().join("package.json"),
-            r#"{"private":true,"workspaces":["packages/*"],"packageManager":"bun@1.3.14"}"#,
-        );
-        write(&temp.path().join("bun.lock"), "{}\n");
-
-        assert_eq!(
-            detect_repo_package_managers(temp.path()),
-            vec![PackageManager::Bun]
-        );
-    }
-
-    #[test]
-    fn detect_repo_package_managers_finds_cargo_and_bun_together() {
-        let temp = TempDir::new().unwrap();
-        write(
-            &temp.path().join("Cargo.toml"),
-            "[package]\nname=\"demo\"\n",
-        );
-        write(
-            &temp.path().join("package.json"),
-            r#"{"name":"demo","packageManager":"bun@1.2.0"}"#,
-        );
-
-        assert_eq!(
-            detect_repo_package_managers(temp.path()),
-            vec![PackageManager::Cargo, PackageManager::Bun]
-        );
+    fn detect_repo_package_managers_finds_declared_managers() {
+        // One table over seeded manifests: a Bun workspace alone, and Cargo
+        // plus Bun together.
+        let cases: &[(&str, &[(&str, &str)], &[PackageManager])] = &[
+            (
+                "bun workspace",
+                &[
+                    (
+                        "package.json",
+                        r#"{"private":true,"workspaces":["packages/*"],"packageManager":"bun@1.3.14"}"#,
+                    ),
+                    ("bun.lock", "{}\n"),
+                ],
+                &[PackageManager::Bun],
+            ),
+            (
+                "cargo and bun",
+                &[
+                    ("Cargo.toml", "[package]\nname=\"demo\"\n"),
+                    (
+                        "package.json",
+                        r#"{"name":"demo","packageManager":"bun@1.2.0"}"#,
+                    ),
+                ],
+                &[PackageManager::Cargo, PackageManager::Bun],
+            ),
+        ];
+        for (name, files, expected) in cases {
+            let temp = TempDir::new().unwrap();
+            for (file, contents) in *files {
+                write(&temp.path().join(file), contents);
+            }
+            assert_eq!(
+                detect_repo_package_managers(temp.path()),
+                *expected,
+                "{name}"
+            );
+        }
     }
 
     #[test]

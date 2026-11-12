@@ -150,6 +150,13 @@ fn bootstrap_help_is_command_specific() {
     assert!(!stdout.contains("--db-seed"), "{stdout}");
     assert!(!stdout.contains("bootstrap teardown"), "{stdout}");
     assert!(!stdout.contains("release Help"), "{stdout}");
+    // Help is human text on stdout, never the JSON envelope, and stays quiet.
+    assert!(serde_json::from_str::<serde_json::Value>(&stdout).is_err());
+    assert!(
+        output.stderr.is_empty(),
+        "help must not warn: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
@@ -285,6 +292,7 @@ fn bootstrap_reports_missing_bootstrap_contract_via_binary() {
     assert!(output.status.success(), "bootstrap failed: {output:?}");
     let parsed = parse_stdout_json(&output);
     assert_eq!(parsed["result"]["manifest_found"], false);
+    assert_eq!(parsed["result"]["phase"], "executed");
     assert_eq!(parsed["result"]["root_repo_state"], "cloned");
     assert_eq!(parsed["result"]["start"]["ran"], false);
 }
@@ -310,6 +318,11 @@ fn bootstrap_reports_a_manifest_without_a_bootstrap_contract() {
         parsed["result"]["manifest"]["bootstrap_contract_found"],
         false
     );
+    assert_eq!(parsed["result"]["phase"], "executed");
+    assert_eq!(
+        parsed["result"]["setup"]["ran"].as_array().map(Vec::len),
+        Some(0)
+    );
     assert_eq!(parsed["result"]["start"]["ran"], false);
 }
 
@@ -331,6 +344,7 @@ fn bootstrap_custom_destination_and_no_start_keep_setup_semantics() {
     assert!(output.status.success(), "bootstrap failed: {output:?}");
     let parsed = parse_stdout_json(&output);
     assert_eq!(parsed["result"]["start"]["ran"], false);
+    assert_eq!(parsed["result"]["setup"]["ran"][0], "record-a");
     assert_eq!(
         fs::read_to_string(cwd.join("app/order.txt")).expect("order file"),
         "a\n"
@@ -359,6 +373,7 @@ run = "printf 'dev\n' >> order.txt"
     assert!(output.status.success(), "bootstrap failed: {output:?}");
     let parsed = parse_stdout_json(&output);
     assert_eq!(parsed["result"]["root_repo_state"], "existing");
+    assert_eq!(parsed["result"]["destination_source"], "existing-checkout");
     assert_eq!(
         fs::read_to_string(cwd.join("order.txt")).expect("order file"),
         "a\ndev\n"
@@ -525,6 +540,12 @@ fn v0141_bootstrap_fixtures_load_and_list_tasks() {
             .matches("retired v0.15 config still loads for one release")
             .count();
         assert_eq!(notices, 1, "{fixture}: one notice per manifest: {stderr}");
+        // Every compat notice carries the actionable migration pointer, not
+        // just the deprecation label.
+        assert!(
+            stderr.contains("085-v0.15.0-consumer-migration.md"),
+            "{fixture}: notice must point at the migration guide: {stderr}"
+        );
     }
 }
 

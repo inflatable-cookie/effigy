@@ -195,6 +195,15 @@ fn collect_link_check_files_keeps_explicit_file_inside_generated_tree() {
     let fixture = DocsFixture::new("link-explicit-target");
     fixture.write("docs/target/notes.md", "# Notes\n");
 
+    // Without the explicit flag the generated tree stays skipped ...
+    let unflagged = collect_link_check_files(fixture.root(), &[]);
+    assert!(
+        !rendered_relative_paths(fixture.root(), &unflagged)
+            .iter()
+            .any(|path| path.contains("/target/")),
+        "generated tree must stay skipped unless named"
+    );
+    // ... while naming the file explicitly checks exactly that file.
     let files = collect_link_check_files(fixture.root(), &[PathBuf::from("docs/target/notes.md")]);
     let rendered = rendered_relative_paths(fixture.root(), &files);
     assert_eq!(rendered, vec!["docs/target/notes.md".to_owned()]);

@@ -350,23 +350,16 @@ fn gateway_tcp_alias_unbound_routes_flags_missing_and_invalid_fallbacks() {
     assert!(unbound[0].reason.contains("invalid mapped-port fallback"));
     assert_eq!(unbound[1].domain, "missing.test");
     assert!(unbound[1].reason.contains("missing mapped-port fallback"));
-}
 
-#[test]
-fn gateway_tcp_alias_unbound_lines_name_alias_and_fallback() {
-    let table = RouteTable {
-        revision: 0,
-        routes: [tcp_alias_route("missing.test", None)]
-            .into_iter()
-            .collect(),
-    };
-
-    let lines = render_gateway_tcp_alias_unbound_lines(&gateway_tcp_alias_unbound_routes(&table));
-
-    assert_eq!(lines.len(), 1);
-    assert!(lines[0].contains("`missing.test`"));
-    assert!(lines[0].contains("127.1.0.9:5432"));
-    assert!(lines[0].contains("<missing>"));
+    // The rendered lines name each alias and its fallback socket or
+    // `<missing>` (the unbound_lines row folded in here).
+    let lines = render_gateway_tcp_alias_unbound_lines(&unbound);
+    assert_eq!(lines.len(), 2);
+    assert!(lines[0].contains("`broken.test`"), "{}", lines[0]);
+    assert!(lines[0].contains("not-a-socket"), "{}", lines[0]);
+    assert!(lines[1].contains("`missing.test`"), "{}", lines[1]);
+    assert!(lines[1].contains("127.1.0.9:5432"), "{}", lines[1]);
+    assert!(lines[1].contains("<missing>"), "{}", lines[1]);
 }
 
 fn gateway_status_fixture(pid: u32) -> (tempfile::TempDir, VerifiedGatewayStatus) {
@@ -438,7 +431,7 @@ fn probe_state_up_refuses_unknown_without_starting_a_replacement() {
 
 #[cfg(unix)]
 #[test]
-fn gateway_identity_legacy_active_record_refused_by_status_up_down_and_managed_start() {
+fn gateway_identity_legacy_records_refused_by_status_up_down_and_managed_start() {
     let _environment = crate::contract_test_support::clean_fixture_environment();
     // The gateway library's operator fence requires an explicit fixture mark.
     // This proof must not depend on nextest supplying its own ambient marker.
@@ -457,189 +450,146 @@ fn gateway_identity_legacy_active_record_refused_by_status_up_down_and_managed_s
         }
     }
 
-    let root = tempfile::tempdir().expect("private fixture directory");
-    let home = root.path().join("home");
-    let gateway_home = home.join(GATEWAY_DIR_NAME);
-    std::fs::create_dir_all(&gateway_home).expect("create private gateway directory");
-    let _home_guard = set_test_gateway_home(&home);
-
-    let mut child = OwnedChild(
-        std::process::Command::new("sleep")
-            .arg("60")
-            .spawn()
-            .expect("start private process fixture"),
-    );
-    let pid_path = gateway_home.join("gateway.pid");
-    let version_path = gateway_home.join("gateway.version");
-    let identity_path = gateway_home.join("gateway.identity");
-    std::fs::write(&pid_path, child.0.id().to_string()).expect("write legacy PID record");
-    std::fs::write(&version_path, "v0.13.1+local.6774846\n").expect("write legacy version record");
-    let before_pid = std::fs::read(&pid_path).expect("read PID fixture");
-    let before_version = std::fs::read(&version_path).expect("read version fixture");
-
-    let status = run_gateway_status(false).expect("bounded migration diagnosis");
-    let status_json = run_gateway_status(true).expect("JSON migration diagnosis");
-    assert!(status_json.contains("setup_required"));
-    let up = run_gateway_up_with_config(&gateway_config().expect("gateway config"), false)
-        .expect_err("up must refuse to replace the unauthenticated process")
-        .to_string();
-    let down = run_gateway_down(false)
-        .expect_err("down must refuse to signal the unauthenticated process")
-        .to_string();
-    let marker = root.path().join("managed-start-ran");
-    let command = format!("touch '{}'", marker.display());
-    let managed = gateway_up_for_managed_task(&command)
-        .expect_err("managed start must refuse the unauthenticated process")
-        .to_string();
-
-    assert!(status.contains("gateway setup"), "{status}");
-    for message in [&up, &down, &managed] {
-        assert!(message.contains("private gateway root"), "{message}");
+    // Shared four-way refusal probe: status, up, down and managed start must
+    // all refuse the legacy record without running or staging anything.
+    fn assert_legacy_refused(
+        gateway_home: &std::path::Path,
+        marker: &std::path::Path,
+        status_ok: bool,
+    ) {
+        if status_ok {
+            let status = run_gateway_status(false).expect("bounded migration diagnosis");
+            assert!(status.contains("gateway setup"), "{status}");
+        } else {
+            let status = run_gateway_status(false)
+                .expect_err("status must refuse the legacy record")
+                .to_string();
+            assert!(
+                status.contains("version") || status.contains("unsafe"),
+                "{status}"
+            );
+        }
+        let up = run_gateway_up_with_config(&gateway_config().expect("gateway config"), false)
+            .expect_err("up must refuse the legacy record")
+            .to_string();
+        let down = run_gateway_down(false)
+            .expect_err("down must refuse the legacy record")
+            .to_string();
+        let command = format!("touch '{}'", marker.display());
+        let managed = gateway_up_for_managed_task(&command)
+            .expect_err("managed start must refuse the legacy record")
+            .to_string();
+        for message in [&up, &down, &managed] {
+            assert!(message.contains("private gateway root"), "{message}");
+        }
+        assert!(!marker.exists(), "managed startup command must not run");
+        assert!(
+            !gateway_home.join("routes.json").exists(),
+            "up must not stage elevated state before refusing legacy identity"
+        );
     }
-    assert!(!marker.exists(), "managed startup command must not run");
-    assert!(
-        !gateway_home.join("routes.json").exists(),
-        "up must not stage elevated state before refusing legacy identity"
-    );
-    assert_eq!(std::fs::read(&pid_path).expect("PID remains"), before_pid);
-    assert_eq!(
-        std::fs::read(&version_path).expect("version remains"),
-        before_version
-    );
-    assert!(!identity_path.exists(), "no identity may be synthesized");
-    assert!(child.0.try_wait().expect("probe private child").is_none());
-}
 
-#[cfg(unix)]
-#[test]
-fn gateway_identity_legacy_version_only_record_refused_by_status_up_down_and_managed_start() {
-    let _environment = crate::contract_test_support::clean_fixture_environment();
-    // The gateway library's operator fence requires an explicit fixture mark.
-    // This proof must not depend on nextest supplying its own ambient marker.
-    let _fixture = crate::contract_test_support::EnvGuard::set_many(&[(
-        "EFFIGY_TEST_GATEWAY_LEGACY_FIXTURE",
-        Some("1".to_owned()),
-    )]);
-    let root = tempfile::tempdir().expect("private fixture directory");
-    let home = root.path().join("home");
-    let gateway_home = home.join(GATEWAY_DIR_NAME);
-    std::fs::create_dir_all(&gateway_home).expect("create private gateway directory");
+    // Row 1: an active legacy record (live PID, version, no identity).
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&gateway_home, std::fs::Permissions::from_mode(0o700))
-            .expect("restrict private gateway directory");
+        let root = tempfile::tempdir().expect("private fixture directory");
+        let home = root.path().join("home");
+        let gateway_home = home.join(GATEWAY_DIR_NAME);
+        std::fs::create_dir_all(&gateway_home).expect("create private gateway directory");
+        let _home_guard = set_test_gateway_home(&home);
+
+        let mut child = OwnedChild(
+            std::process::Command::new("sleep")
+                .arg("60")
+                .spawn()
+                .expect("start private process fixture"),
+        );
+        let pid_path = gateway_home.join("gateway.pid");
+        let version_path = gateway_home.join("gateway.version");
+        let identity_path = gateway_home.join("gateway.identity");
+        std::fs::write(&pid_path, child.0.id().to_string()).expect("write legacy PID record");
+        std::fs::write(&version_path, "v0.13.1+local.6774846\n")
+            .expect("write legacy version record");
+        let before_pid = std::fs::read(&pid_path).expect("read PID fixture");
+        let before_version = std::fs::read(&version_path).expect("read version fixture");
+
+        let status_json = run_gateway_status(true).expect("JSON migration diagnosis");
+        assert!(status_json.contains("setup_required"));
+        assert_legacy_refused(&gateway_home, &root.path().join("managed-start-ran"), true);
+
+        assert_eq!(std::fs::read(&pid_path).expect("PID remains"), before_pid);
+        assert_eq!(
+            std::fs::read(&version_path).expect("version remains"),
+            before_version
+        );
+        assert!(!identity_path.exists(), "no identity may be synthesized");
+        assert!(child.0.try_wait().expect("probe private child").is_none());
     }
-    let _home_guard = set_test_gateway_home(&home);
-    let version_path = gateway_home.join("gateway.version");
-    let pid_path = gateway_home.join("gateway.pid");
-    let identity_path = gateway_home.join("gateway.identity");
-    std::fs::write(&version_path, "v0.13.1+local.version-only\n").expect("write version-only");
-    let before_version = std::fs::read(&version_path).expect("read version fixture");
 
-    let status = run_gateway_status(false)
-        .expect_err("status must refuse a version-only record")
-        .to_string();
-    let up = run_gateway_up_with_config(&gateway_config().expect("gateway config"), false)
-        .expect_err("up must refuse to overwrite a version-only record")
-        .to_string();
-    let down = run_gateway_down(false)
-        .expect_err("down must refuse a version-only record")
-        .to_string();
-    let marker = root.path().join("managed-start-ran");
-    let command = format!("touch '{}'", marker.display());
-    let managed = gateway_up_for_managed_task(&command)
-        .expect_err("managed start must refuse a version-only record")
-        .to_string();
-
-    assert!(
-        status.contains("version") || status.contains("unsafe"),
-        "{status}"
-    );
-    for message in [&up, &down, &managed] {
-        assert!(message.contains("private gateway root"), "{message}");
-    }
-    assert!(!marker.exists(), "managed startup command must not run");
-    assert!(
-        !gateway_home.join("routes.json").exists(),
-        "up must not stage elevated state before refusing a version-only record"
-    );
-    assert!(
-        !pid_path.exists(),
-        "start must not publish a PID over version-only"
-    );
-    assert!(!identity_path.exists(), "no identity may be synthesized");
-    assert_eq!(
-        std::fs::read(&version_path).expect("version remains"),
-        before_version
-    );
-}
-
-#[cfg(unix)]
-#[test]
-fn gateway_identity_legacy_version_symlink_refused_by_status_up_down_and_managed_start() {
-    let _environment = crate::contract_test_support::clean_fixture_environment();
-    // The gateway library's operator fence requires an explicit fixture mark.
-    // This proof must not depend on nextest supplying its own ambient marker.
-    let _fixture = crate::contract_test_support::EnvGuard::set_many(&[(
-        "EFFIGY_TEST_GATEWAY_LEGACY_FIXTURE",
-        Some("1".to_owned()),
-    )]);
-    use std::os::unix::fs::symlink;
-    let root = tempfile::tempdir().expect("private fixture directory");
-    let home = root.path().join("home");
-    let gateway_home = home.join(GATEWAY_DIR_NAME);
-    std::fs::create_dir_all(&gateway_home).expect("create private gateway directory");
+    // Row 2: a version-only record with no live process behind it.
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&gateway_home, std::fs::Permissions::from_mode(0o700))
-            .expect("restrict private gateway directory");
-    }
-    let _home_guard = set_test_gateway_home(&home);
-    let version_path = gateway_home.join("gateway.version");
-    let pid_path = gateway_home.join("gateway.pid");
-    let outside = root.path().join("outside-version");
-    std::fs::write(&outside, b"sentinel").expect("outside version target");
-    symlink(&outside, &version_path).expect("symlink version record");
+        let root = tempfile::tempdir().expect("private fixture directory");
+        let home = root.path().join("home");
+        let gateway_home = home.join(GATEWAY_DIR_NAME);
+        std::fs::create_dir_all(&gateway_home).expect("create private gateway directory");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&gateway_home, std::fs::Permissions::from_mode(0o700))
+                .expect("restrict private gateway directory");
+        }
+        let _home_guard = set_test_gateway_home(&home);
+        let version_path = gateway_home.join("gateway.version");
+        let pid_path = gateway_home.join("gateway.pid");
+        let identity_path = gateway_home.join("gateway.identity");
+        std::fs::write(&version_path, "v0.13.1+local.version-only\n").expect("write version-only");
+        let before_version = std::fs::read(&version_path).expect("read version fixture");
 
-    let status = run_gateway_status(false)
-        .expect_err("status must refuse a symlink version")
-        .to_string();
-    let up = run_gateway_up_with_config(&gateway_config().expect("gateway config"), false)
-        .expect_err("up must refuse to follow a symlink version")
-        .to_string();
-    let down = run_gateway_down(false)
-        .expect_err("down must refuse a symlink version")
-        .to_string();
-    let marker = root.path().join("managed-start-ran");
-    let command = format!("touch '{}'", marker.display());
-    let managed = gateway_up_for_managed_task(&command)
-        .expect_err("managed start must refuse a symlink version")
-        .to_string();
+        assert_legacy_refused(&gateway_home, &root.path().join("managed-start-ran"), false);
 
-    assert!(
-        status.contains("version") || status.contains("unsafe"),
-        "{status}"
-    );
-    for message in [&up, &down, &managed] {
-        assert!(message.contains("private gateway root"), "{message}");
+        assert!(
+            !pid_path.exists(),
+            "start must not publish a PID over version-only"
+        );
+        assert!(!identity_path.exists(), "no identity may be synthesized");
+        assert_eq!(
+            std::fs::read(&version_path).expect("version remains"),
+            before_version
+        );
     }
-    assert!(!marker.exists(), "managed startup command must not run");
-    assert!(
-        !gateway_home.join("routes.json").exists(),
-        "up must not stage elevated state before refusing a symlink version"
-    );
-    assert!(
-        !pid_path.exists(),
-        "start must not publish a PID over a symlink version"
-    );
-    assert_eq!(
-        std::fs::read(&outside).expect("outside remains"),
-        b"sentinel"
-    );
-    assert!(std::fs::symlink_metadata(&version_path)
-        .expect("version symlink remains")
-        .file_type()
-        .is_symlink());
+
+    // Row 3: a version record that is a symlink to outside the gateway home.
+    {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().expect("private fixture directory");
+        let home = root.path().join("home");
+        let gateway_home = home.join(GATEWAY_DIR_NAME);
+        std::fs::create_dir_all(&gateway_home).expect("create private gateway directory");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&gateway_home, std::fs::Permissions::from_mode(0o700))
+                .expect("restrict private gateway directory");
+        }
+        let _home_guard = set_test_gateway_home(&home);
+        let version_path = gateway_home.join("gateway.version");
+        let pid_path = gateway_home.join("gateway.pid");
+        let outside = root.path().join("outside-version");
+        std::fs::write(&outside, b"sentinel").expect("outside version target");
+        symlink(&outside, &version_path).expect("symlink version record");
+
+        assert_legacy_refused(&gateway_home, &root.path().join("managed-start-ran"), false);
+
+        assert!(
+            !pid_path.exists(),
+            "start must not publish a PID over a symlink version"
+        );
+        assert_eq!(
+            std::fs::read(&outside).expect("outside remains"),
+            b"sentinel"
+        );
+        assert!(std::fs::symlink_metadata(&version_path)
+            .expect("version symlink remains")
+            .file_type()
+            .is_symlink());
+    }
 }
 
 #[cfg(unix)]
@@ -1717,29 +1667,26 @@ fn gateway_status_refusal_exposes_headless_observations_without_claiming_known()
         .as_str()
         .expect("precondition text")
         .contains("record=authenticated"));
-}
 
-#[test]
-fn gateway_status_refusal_keeps_an_unreadable_record_unknown() {
-    use effigy_gateway::server::{
-        GatewayIdentityOutcome, GatewayRecordKind, GatewayStatusDiagnosis,
-    };
-    let diagnosis = GatewayStatusDiagnosis {
+    // An unreadable record stays unknown: no PID, nothing probed, and the
+    // headless gate stays unsatisfied (the unreadable_record row).
+    let unreadable = GatewayStatusDiagnosis {
         pid: None,
         record: GatewayRecordKind::Unreadable,
         process_probe: None,
         identity: GatewayIdentityOutcome::NotChecked,
     };
-    let refusal = gateway_status_refusal_json(
+    let denied = gateway_status_refusal_json(
         "gateway_status_unverified",
         "I/O error: permission denied",
-        &diagnosis,
+        &unreadable,
         unverified_gateway_recovery(),
     );
-    assert_eq!(refusal["observations"]["record"], "unreadable");
-    assert_eq!(refusal["observations"]["process"], "not-probed");
-    assert_eq!(refusal["headless"]["satisfied"], false);
-    assert_eq!(refusal["pid"], serde_json::Value::Null);
+    assert_eq!(denied["status"], "unknown");
+    assert_eq!(denied["observations"]["record"], "unreadable");
+    assert_eq!(denied["observations"]["process"], "not-probed");
+    assert_eq!(denied["headless"]["satisfied"], false);
+    assert_eq!(denied["pid"], serde_json::Value::Null);
 }
 
 /// The private status command renders the same structured refusal, so one
@@ -1934,13 +1881,19 @@ fn reusing_a_running_private_gateway_reads_the_route_table_as_its_own_step() {
 
 /// An `up` from a command line records exactly one event, at the boundary, and
 /// the shared lifecycle it calls records none (effigy#450 review).
+/// Each gateway boundary records exactly its own event: an operator `up`
+/// records one `gateway_up` command event with its cause and caller, a
+/// task-run managed start records its own cause (effigy#450 review), and a
+/// successful `setup` emits only its setup event across operator up/down
+/// plus a named removal event.
 #[test]
-fn gateway_up_records_one_command_event_at_the_boundary() {
+fn gateway_boundaries_record_exactly_their_own_events() {
+    // Operator `gateway up`: the command refuses (nothing is set up), but
+    // its request is recorded.
     let home = tempfile::tempdir().expect("gateway fixture");
     let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
     let directory = config.pid_file_path.parent().unwrap();
     std::fs::create_dir_all(directory).expect("gateway directory");
-    // The command refuses (nothing is set up), but its request is recorded.
     let _ = run_gateway_up_with_config(&config, false);
     let log = std::fs::read_to_string(directory.join("gateway.stderr.log"))
         .expect("the up request is recorded beside the gateway records");
@@ -1952,54 +1905,50 @@ fn gateway_up_records_one_command_event_at_the_boundary() {
     assert_eq!(events[0]["event"], "gateway_up", "{log}");
     assert_eq!(events[0]["cause"], "gateway up command", "{log}");
     assert_eq!(events[0]["caller"]["pid"], std::process::id(), "{log}");
-}
 
-/// A task run that starts the gateway in-process says so: it is not an operator
-/// `gateway up` command (effigy#450 review).
-#[test]
-fn managed_gateway_start_records_its_own_cause() {
+    // Managed start: a task run that starts the gateway in-process says so.
     let dir = tempfile::tempdir().expect("private gateway fixture");
     let root = std::fs::canonicalize(dir.path()).expect("canonical private root");
     std::fs::set_permissions(&root, std::os::unix::fs::PermissionsExt::from_mode(0o700))
         .expect("private root mode");
-    let config = GatewayConfig::private(root.clone());
-    record_managed_gateway_start(&config);
-    let log = std::fs::read_to_string(root.join("gateway.stderr.log"))
+    let managed_config = GatewayConfig::private(root.clone());
+    record_managed_gateway_start(&managed_config);
+    let managed_log = std::fs::read_to_string(root.join("gateway.stderr.log"))
         .expect("the managed start is recorded beside the gateway records");
-    let record: serde_json::Value = serde_json::from_str(log.trim()).unwrap();
-    assert_eq!(record["event"], "gateway_up", "{log}");
-    assert_eq!(record["cause"], "managed gateway start", "{log}");
-    assert_ne!(record["cause"], "gateway up command", "{log}");
-}
+    let record: serde_json::Value = serde_json::from_str(managed_log.trim()).unwrap();
+    assert_eq!(record["event"], "gateway_up", "{managed_log}");
+    assert_eq!(record["cause"], "managed gateway start", "{managed_log}");
+    assert_ne!(record["cause"], "gateway up command", "{managed_log}");
 
-/// A successful `setup` — which starts the gateway as its last step — emits its
-/// own setup event and no extra `gateway up` or `gateway down` command event.
-#[test]
-fn gateway_setup_emits_exactly_its_setup_event() {
-    let dir = tempfile::tempdir().expect("private gateway fixture");
-    let root = std::fs::canonicalize(dir.path()).expect("canonical private root");
-    std::fs::set_permissions(&root, std::os::unix::fs::PermissionsExt::from_mode(0o700))
-        .expect("private root mode");
-    let gateway = GatewayConfig::private(root.clone());
-    // The setup boundary records the action; its platform and lifecycle steps
-    // are the shared helpers that write nothing.
-    record_gateway_setup(&gateway, false);
-    let before = std::fs::read_to_string(root.join("gateway.stderr.log")).expect("setup event");
-    let _ = effigy_gateway::operator::up(&gateway);
-    let _ = effigy_gateway::operator::down(&gateway);
-    let after = std::fs::read_to_string(root.join("gateway.stderr.log")).expect("setup event");
+    // Setup: its own event only, no extra `gateway up`/`gateway down`
+    // command events from its platform and lifecycle steps.
+    let setup_dir = tempfile::tempdir().expect("private gateway fixture");
+    let setup_root = std::fs::canonicalize(setup_dir.path()).expect("canonical private root");
+    std::fs::set_permissions(
+        &setup_root,
+        std::os::unix::fs::PermissionsExt::from_mode(0o700),
+    )
+    .expect("private root mode");
+    let setup_gateway = GatewayConfig::private(setup_root.clone());
+    record_gateway_setup(&setup_gateway, false);
+    let before =
+        std::fs::read_to_string(setup_root.join("gateway.stderr.log")).expect("setup event");
+    let _ = effigy_gateway::operator::up(&setup_gateway);
+    let _ = effigy_gateway::operator::down(&setup_gateway);
+    let after =
+        std::fs::read_to_string(setup_root.join("gateway.stderr.log")).expect("setup event");
     assert_eq!(before, after, "setup's own steps add no command event");
-    let events = after
+    let setup_events = after
         .lines()
         .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(events.len(), 1, "{after}");
-    assert_eq!(events[0]["event"], "gateway_setup", "{after}");
-    assert_eq!(events[0]["cause"], "gateway setup command", "{after}");
+    assert_eq!(setup_events.len(), 1, "{after}");
+    assert_eq!(setup_events[0]["event"], "gateway_setup", "{after}");
+    assert_eq!(setup_events[0]["cause"], "gateway setup command", "{after}");
     // A removed setup is still one setup action, named as removal.
-    record_gateway_setup(&gateway, true);
+    record_gateway_setup(&setup_gateway, true);
     let after_remove =
-        std::fs::read_to_string(root.join("gateway.stderr.log")).expect("setup event");
+        std::fs::read_to_string(setup_root.join("gateway.stderr.log")).expect("setup event");
     let last = after_remove
         .lines()
         .last()

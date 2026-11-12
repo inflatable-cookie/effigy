@@ -1,7 +1,8 @@
 use super::{
-    derive_repo_name, normalize_bootstrap_repo_url, plan_bootstrap_request, render_bootstrap_plan,
-    render_bootstrap_result, resolve_bootstrap_request, BootstrapPlan, BootstrapProgressEvent,
-    BootstrapRequest, PinnedSourceReport, SubmoduleReport,
+    derive_repo_name, execute_bootstrap_request_with_progress, load_manifest_bootstrap,
+    normalize_bootstrap_repo_url, plan_bootstrap_request, render_bootstrap_plan,
+    render_bootstrap_result, resolve_bootstrap_request, BootstrapRequest, PinnedSourceReport,
+    SubmoduleReport,
 };
 use effigy_manifest::PinnedSourceState;
 use std::path::{Path, PathBuf};
@@ -47,17 +48,6 @@ fn resolve_bootstrap_request_defaults_destination_under_cwd() {
         Some("git@github.com:acme/app.git")
     );
     assert!(resolved.start_requested);
-}
-
-#[test]
-fn resolve_bootstrap_request_uses_an_existing_checkout_without_a_url() {
-    let fixture = tempfile::tempdir().expect("temp dir");
-    let resolved = resolve_bootstrap_request(fixture.path(), None, None, None, false)
-        .expect("resolve request");
-    assert_eq!(resolved.repo_url, None);
-    assert_eq!(resolved.destination, fixture.path());
-    assert_eq!(resolved.destination_source, "existing-checkout");
-    assert!(!resolved.start_requested);
 }
 
 #[test]
@@ -166,6 +156,19 @@ fn a_plan_reports_retired_bootstrap_refusals_with_the_migration() {
     let json: serde_json::Value =
         serde_json::from_str(&render_bootstrap_plan(&plan, true)).expect("plan json");
     assert_eq!(json["refusals"].as_array().map(Vec::len), Some(1));
+    // The run entry point must refuse retired keys too, without running selectors.
+    let error = execute_bootstrap_request_with_progress(
+        &request,
+        load_manifest_bootstrap,
+        |_: &Path, _: &str, _: &str| -> Result<(), super::BootstrapError> {
+            panic!("no selector must run for retired bootstrap keys")
+        },
+        |_| Ok(()),
+    )
+    .expect_err("retired children refuse the run");
+    let message = error.to_string();
+    assert!(message.contains("[bootstrap].children"), "{message}");
+    assert!(message.contains("[sources.<name>]"), "{message}");
 }
 
 fn source_report(state: PinnedSourceState, dirty: bool) -> PinnedSourceReport {
@@ -250,29 +253,11 @@ fn a_result_without_a_start_says_so() {
     assert!(text.contains("no [bootstrap] contract was found"), "{text}");
     assert!(text.contains("setup: none"), "{text}");
     assert!(text.contains("start: none"), "{text}");
-}
 
-#[test]
-fn plan_progress_variants_are_constructible() {
-    let _ = BootstrapPlan {
-        request: BootstrapRequest {
-            repo_url: None,
-            destination: Path::new("/dev/app").to_path_buf(),
-            destination_source: "existing-checkout",
-            branch: None,
-            start_requested: false,
-        },
-        manifest_found: false,
-        manifest_unreadable: None,
-        refusals: Vec::new(),
-        sources: Vec::new(),
-        submodules: false,
-        setup: Vec::new(),
-        start: None,
-    };
-    let _ = BootstrapProgressEvent::SourcesPrepared {
-        destination: Path::new("/dev/app").to_path_buf(),
-        cloned: 0,
-        drift: 0,
-    };
+    let json: serde_json::Value =
+        serde_json::from_str(&render_bootstrap_result(&result, true)).expect("result json");
+    assert_eq!(json["schema"], "effigy.bootstrap.v1");
+    assert_eq!(json["manifest"]["bootstrap_contract_found"], false);
+    assert_eq!(json["setup"]["ran"].as_array().map(Vec::len), Some(0));
+    assert_eq!(json["start"]["ran"], false);
 }

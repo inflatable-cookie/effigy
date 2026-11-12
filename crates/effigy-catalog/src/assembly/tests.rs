@@ -54,17 +54,27 @@ fn extract_service_definition_from_valid_yaml() {
 }
 
 #[test]
-fn extract_service_definition_rejects_invalid_yaml() {
-    let yaml = "not: valid: yaml: {{{{";
-    let result = ComposeAssembler::extract_service_definition(yaml, "app", "test");
-    assert!(result.is_err());
-}
-
-#[test]
-fn extract_service_definition_rejects_missing_services_key() {
-    let yaml = "app:\n  image: php:8.3\n";
-    let result = ComposeAssembler::extract_service_definition(yaml, "app", "test");
-    assert!(result.is_err());
+fn extract_service_definition_refuses_unusable_templates() {
+    // Each input fails for a distinct reason; the refusal names the cause so
+    // a broken fragment template is diagnosable instead of a bare Err.
+    for (yaml, expected_reason) in [
+        (
+            "not: valid: yaml: {{{{",
+            "rendered template produced invalid YAML",
+        ),
+        (
+            "app:\n  image: php:8.3\n",
+            "rendered template missing top-level 'services' key",
+        ),
+    ] {
+        let error = ComposeAssembler::extract_service_definition(yaml, "app", "test")
+            .expect_err("unusable template must be refused");
+        let message = error.to_string();
+        assert!(
+            message.contains(expected_reason),
+            "input {yaml:?} refused without naming the cause: {message}"
+        );
+    }
 }
 
 #[test]
@@ -119,8 +129,14 @@ fn build_compose_document_without_volumes() {
 
     let yaml =
         ComposeAssembler::build_compose_document(services, "test", "/tmp/test", &[]).unwrap();
-    assert!(yaml.contains("services:"));
-    assert!(!yaml.contains("volumes:"));
+    // Structural check, not a substring probe: the emitted document must have
+    // no top-level `volumes:` mapping while keeping the service.
+    let document: serde_yaml::Value = serde_yaml::from_str(&yaml).expect("valid yaml");
+    assert!(document.get("volumes").is_none(), "{yaml}");
+    assert!(
+        document["services"]["app"]["image"] == "test:latest",
+        "{yaml}"
+    );
 }
 
 #[test]

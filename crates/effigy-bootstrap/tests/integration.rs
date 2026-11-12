@@ -503,6 +503,10 @@ fn no_url_uses_the_existing_checkout_in_place() {
     write_root_manifest(&worktree, &["prepare"], Some("dev"), "", false);
     let request =
         resolve_bootstrap_request(&worktree, None, None, None, true).expect("resolve request");
+    // Resolver pins: no URL keeps the existing checkout in place.
+    assert_eq!(request.repo_url, None);
+    assert_eq!(request.destination, worktree);
+    assert_eq!(request.destination_source, "existing-checkout");
     let result = run_bootstrap(&request).expect("bootstrap");
     assert_eq!(result.root_repo_state, "existing");
     assert_eq!(
@@ -523,24 +527,6 @@ fn a_missing_start_is_not_an_error() {
     assert_eq!(result.start_selector, None);
     assert!(!result.start_ran);
     assert_eq!(read_selectors(&worktree), vec!["prepare".to_owned()]);
-}
-
-#[test]
-fn retired_bootstrap_keys_fail_bootstrap_with_their_replacement() {
-    let workspace = temp_dir("retired-keys");
-    let worktree = workspace.join("app");
-    fs::create_dir_all(&worktree).expect("mkdir app");
-    fs::write(
-        worktree.join("effigy.toml"),
-        "[bootstrap]\nstart = \"dev\"\n\n[[bootstrap.children]]\npath = \"../book\"\nrepo = \"git@example.test:book.git\"\n",
-    )
-    .expect("write manifest");
-    let request =
-        resolve_bootstrap_request(&worktree, None, None, None, false).expect("resolve request");
-    let error = run_bootstrap(&request).expect_err("retired children");
-    let message = error.to_string();
-    assert!(message.contains("[bootstrap].children"), "{message}");
-    assert!(message.contains("[sources.<name>]"), "{message}");
 }
 
 #[test]

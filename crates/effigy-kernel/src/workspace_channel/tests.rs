@@ -3643,23 +3643,20 @@ fn terminal_input_and_resize_reach_the_attached_terminal_exactly_once() {
 }
 
 #[test]
-fn terminal_input_for_unknown_stream_is_refused() {
-    let mut frame = input_frame(1, 0, b"typed");
-    frame.stream_id = 999;
-    let terminal = refused_terminal_frames("effigy-channel-input-unknown", 62, vec![frame]);
-    assert!(terminal.input.is_empty(), "no input reached the terminal");
-}
-
-#[test]
-fn terminal_input_for_another_request_is_refused() {
-    let mut frame = input_frame(1, 0, b"typed");
-    frame.id = RequestId::new([99; 16]);
-    let terminal = refused_terminal_frames("effigy-channel-input-foreign", 63, vec![frame]);
-    assert!(terminal.input.is_empty(), "no input reached the terminal");
-}
-
-#[test]
-fn repeated_terminal_input_is_not_replayed() {
+fn terminal_input_sequencing_is_enforced() {
+    // A gap refuses the ahead frame: only the in-order frame reaches the
+    // terminal ...
+    let terminal = refused_terminal_frames(
+        "effigy-channel-input-ahead",
+        65,
+        vec![input_frame(1, 0, b"typed"), input_frame(1, 2, b"next")],
+    );
+    assert_eq!(
+        terminal.input,
+        vec![b"typed".to_vec()],
+        "only the in-order frame reached the terminal"
+    );
+    // ... and a duplicate is not replayed: the delivered frame lands once.
     let terminal = refused_terminal_frames(
         "effigy-channel-input-repeat",
         64,
@@ -3673,21 +3670,20 @@ fn repeated_terminal_input_is_not_replayed() {
 }
 
 #[test]
-fn out_of_order_terminal_input_is_refused() {
-    let terminal = refused_terminal_frames(
-        "effigy-channel-input-ahead",
-        65,
-        vec![input_frame(1, 0, b"typed"), input_frame(1, 2, b"next")],
-    );
-    assert_eq!(
-        terminal.input,
-        vec![b"typed".to_vec()],
-        "only the in-order frame reached the terminal"
-    );
-}
-
-#[test]
 fn a_malformed_or_outbound_terminal_frame_is_refused() {
+    // Frames outside the authorized shape never reach the terminal: unknown
+    // stream ids and foreign request ids, as well as malformed payloads,
+    // sized input, outbound kinds and padded resizes.
+    let mut unknown = input_frame(1, 0, b"typed");
+    unknown.stream_id = 999;
+    let terminal = refused_terminal_frames("effigy-channel-input-unknown", 62, vec![unknown]);
+    assert!(terminal.input.is_empty(), "no input reached the terminal");
+
+    let mut foreign = input_frame(1, 0, b"typed");
+    foreign.id = RequestId::new([99; 16]);
+    let terminal = refused_terminal_frames("effigy-channel-input-foreign", 63, vec![foreign]);
+    assert!(terminal.input.is_empty(), "no input reached the terminal");
+
     let mut missing = input_frame(1, 0, b"typed");
     missing.payload = None;
     let terminal = refused_terminal_frames("effigy-channel-input-shape", 66, vec![missing]);

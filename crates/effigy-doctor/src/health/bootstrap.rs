@@ -753,32 +753,148 @@ mod tests {
         std::fs::remove_dir_all(root).expect("cleanup");
     }
 
+    /// Every isolated JS layout leaves the member without a local install:
+    /// a child with its own lock, bun self-contained member/root listings by
+    /// path or name, a bun v1 config, an isolated bunfig linker, npm nested
+    /// or linked strategies, and an isolated pnpm member. Each row is the
+    /// same gap contract with the same remediation and evidence.
     #[test]
-    fn child_with_own_lock_and_no_local_install_is_a_gap() {
-        let root = temp_root("gap");
-        let workspace = root.join("workspace");
-        let child = workspace.join("child");
-        let manifest = manifest(&child);
-        mark_repo(&workspace);
-        write(
-            &child.join("package.json"),
-            r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
-        );
-        write(&child.join("bun.lock"), "");
-        // The parent workspace provides the package.
-        std::fs::create_dir_all(workspace.join("node_modules")).expect("parent install");
+    fn isolated_js_layouts_require_a_local_install() {
+        for (name, manager, lock) in [
+            ("own-lock", "bun", "bun.lock"),
+            ("bun-member-config", "bun", "bun.lock"),
+            ("bun-list-by-path", "bun", "bun.lock"),
+            ("bun-list-by-name", "bun", "bun.lock"),
+            ("bun-config-v1", "bun", "bun.lock"),
+            ("bunfig-isolated", "bun", "bun.lock"),
+            ("npm-nested", "npm", "package-lock.json"),
+            ("npm-linked", "npm", "package-lock.json"),
+            ("pnpm-isolated", "pnpm", "pnpm-lock.yaml"),
+        ] {
+            let root = temp_root(&format!("isolated-{name}"));
+            let workspace = root.join("workspace");
+            let child = workspace.join("child");
+            match name {
+                "own-lock" => {
+                    mark_repo(&workspace);
+                    write(
+                        &child.join("package.json"),
+                        r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
+                    );
+                    write(&child.join("bun.lock"), "");
+                }
+                "bun-member-config" => {
+                    write_workspace_root(&workspace, Some(r#"["child"]"#));
+                    write(
+                        &child.join("package.json"),
+                        r#"{"dependencies":{"left-pad":"1.3.0"},"installConfig":{"hoistingLimits":"workspaces"}}"#,
+                    );
+                }
+                "bun-list-by-path" => {
+                    mark_repo(&workspace);
+                    write(
+                        &workspace.join("package.json"),
+                        r#"{"private":true,"workspaces":{"packages":["child"],"selfContained":["child"]}}"#,
+                    );
+                    write(&workspace.join("bun.lock"), "");
+                    write(
+                        &child.join("package.json"),
+                        r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
+                    );
+                }
+                "bun-list-by-name" => {
+                    mark_repo(&workspace);
+                    write(
+                        &workspace.join("package.json"),
+                        r#"{"private":true,"workspaces":{"packages":["child"],"selfContained":["@acme/child"]}}"#,
+                    );
+                    write(&workspace.join("bun.lock"), "");
+                    write(
+                        &child.join("package.json"),
+                        r#"{"name":"@acme/child","dependencies":{"left-pad":"1.3.0"}}"#,
+                    );
+                }
+                "bun-config-v1" => {
+                    mark_repo(&workspace);
+                    write(
+                        &workspace.join("package.json"),
+                        r#"{"private":true,"workspaces":["child"]}"#,
+                    );
+                    write_bun_lock(&workspace, 1);
+                    write(
+                        &child.join("package.json"),
+                        r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
+                    );
+                }
+                "bunfig-isolated" => {
+                    mark_repo(&workspace);
+                    write(
+                        &workspace.join("package.json"),
+                        r#"{"private":true,"workspaces":["child"]}"#,
+                    );
+                    write(&workspace.join("bun.lock"), "");
+                    write(
+                        &workspace.join("bunfig.toml"),
+                        "[install]\nlinker = \"isolated\"\n",
+                    );
+                    write(
+                        &child.join("package.json"),
+                        r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
+                    );
+                }
+                "npm-nested" | "npm-linked" => {
+                    let strategy = if name == "npm-nested" {
+                        "nested"
+                    } else {
+                        "linked"
+                    };
+                    mark_repo(&workspace);
+                    write(
+                        &workspace.join("package.json"),
+                        r#"{"private":true,"workspaces":["child"]}"#,
+                    );
+                    write(&workspace.join("package-lock.json"), "");
+                    write(
+                        &workspace.join(".npmrc"),
+                        &format!("install-strategy={strategy}\n"),
+                    );
+                    write(
+                        &child.join("package.json"),
+                        r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
+                    );
+                }
+                "pnpm-isolated" => {
+                    write_pnpm_workspace_root(&workspace, "  - 'child'\n");
+                    write(
+                        &child.join("package.json"),
+                        r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
+                    );
+                }
+                other => panic!("unknown isolated layout {other}"),
+            }
+            // The workspace root is installed, but no isolated layout puts
+            // the member's dependencies there.
+            std::fs::create_dir_all(workspace.join("node_modules")).expect("workspace install");
+            let manifest = manifest_for(&child, manager);
 
-        let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
+            let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
 
-        assert_eq!(gap.manager, "bun");
-        assert_eq!(gap.route, "child");
-        assert_eq!(gap.install_root, child);
-        assert_eq!(gap.lock_name.as_deref(), Some("bun.lock"));
-        assert_eq!(gap.reason, BootstrapReason::MissingLocalInstall);
-        assert!(gap.remediation().contains("effigy bootstrap --path child"));
-        assert!(gap.evidence().contains("observed=missing-local-install"));
+            assert_eq!(gap.manager, manager, "{name}");
+            assert_eq!(gap.route, "child", "{name}");
+            assert_eq!(gap.install_root, child, "{name}");
+            assert_eq!(gap.lock_name.as_deref(), Some(lock), "{name}");
+            assert_eq!(gap.reason, BootstrapReason::MissingLocalInstall, "{name}");
+            assert!(
+                gap.remediation().contains("effigy bootstrap --path child"),
+                "{name}"
+            );
+            assert!(
+                gap.evidence().contains("observed=missing-local-install"),
+                "{name}"
+            );
 
-        std::fs::remove_dir_all(root).ok();
+            std::fs::remove_dir_all(root).ok();
+        }
     }
 
     #[test]
@@ -850,69 +966,58 @@ mod tests {
         std::fs::remove_dir_all(root).ok();
     }
 
+    /// Declared members share the ancestor install across layouts: a bun
+    /// workspace member, a pnpm member with the hoisted linker, and a bun
+    /// workspace whose bunfig hoists the linker over the isolated default.
     #[test]
-    fn declared_workspace_member_shares_the_ancestor_install() {
-        let root = temp_root("shared");
-        let workspace = root.join("workspace");
-        let child = workspace.join("child");
-        let manifest = manifest(&child);
-        write_workspace_root(&workspace, Some(r#"["child"]"#));
-        write(
-            &child.join("package.json"),
-            r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
-        );
-        // Only the workspace root locks and installs; the child is a declared
-        // member and intentionally shares it.
-        std::fs::create_dir_all(workspace.join("node_modules")).expect("shared install");
-        install_dependency(&workspace, "left-pad");
+    fn declared_members_share_the_ancestor_install() {
+        for (name, manager) in [
+            ("bun-member", "bun"),
+            ("pnpm-hoisted", "pnpm"),
+            ("bunfig-hoisted", "bun"),
+        ] {
+            let root = temp_root(&format!("shared-{name}"));
+            let workspace = root.join("workspace");
+            let child = workspace.join("child");
+            match name {
+                "bun-member" => {
+                    write_workspace_root(&workspace, Some(r#"["child"]"#));
+                }
+                "pnpm-hoisted" => {
+                    write_pnpm_workspace_root(&workspace, "  - 'child'\n");
+                    write(&workspace.join(".npmrc"), "node-linker=hoisted\n");
+                }
+                "bunfig-hoisted" => {
+                    mark_repo(&workspace);
+                    write(
+                        &workspace.join("package.json"),
+                        r#"{"private":true,"workspaces":["child"]}"#,
+                    );
+                    write_bun_lock(&workspace, 1);
+                    write(
+                        &workspace.join("bunfig.toml"),
+                        "[install]\nlinker = \"hoisted\"\n",
+                    );
+                }
+                other => panic!("unknown shared layout {other}"),
+            }
+            let manifest = manifest_for(&child, manager);
+            write(
+                &child.join("package.json"),
+                r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
+            );
+            // Only the workspace root locks and installs; the child is a
+            // declared member and intentionally shares it.
+            std::fs::create_dir_all(workspace.join("node_modules")).expect("shared install");
+            install_dependency(&workspace, "left-pad");
 
-        assert!(health_js_bootstrap_gap(&child, &workspace, &manifest).is_none());
+            assert!(
+                health_js_bootstrap_gap(&child, &workspace, &manifest).is_none(),
+                "{name} shares the ancestor install"
+            );
 
-        std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn pnpm_isolated_workspace_member_requires_a_local_install() {
-        let root = temp_root("pnpm-isolated");
-        let workspace = root.join("workspace");
-        let child = workspace.join("child");
-        let manifest = manifest_for(&child, "pnpm");
-        write_pnpm_workspace_root(&workspace, "  - 'child'\n");
-        write(
-            &child.join("package.json"),
-            r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
-        );
-        // The workspace root is installed, but pnpm's isolated layout does not
-        // put the member's dependencies there.
-        std::fs::create_dir_all(workspace.join("node_modules")).expect("workspace install");
-
-        let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
-
-        assert_eq!(gap.reason, BootstrapReason::MissingLocalInstall);
-        assert_eq!(gap.install_root, child);
-        assert_eq!(gap.route, "child");
-
-        std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn pnpm_hoisted_node_linker_shares_the_workspace_install() {
-        let root = temp_root("pnpm-hoisted");
-        let workspace = root.join("workspace");
-        let child = workspace.join("child");
-        let manifest = manifest_for(&child, "pnpm");
-        write_pnpm_workspace_root(&workspace, "  - 'child'\n");
-        write(&workspace.join(".npmrc"), "node-linker=hoisted\n");
-        write(
-            &child.join("package.json"),
-            r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
-        );
-        std::fs::create_dir_all(workspace.join("node_modules")).expect("workspace install");
-        install_dependency(&workspace, "left-pad");
-
-        assert!(health_js_bootstrap_gap(&child, &workspace, &manifest).is_none());
-
-        std::fs::remove_dir_all(root).ok();
+            std::fs::remove_dir_all(root).ok();
+        }
     }
 
     fn write_bun_lock(dir: &Path, config_version: i64) {
@@ -922,217 +1027,6 @@ mod tests {
                 "{{\n  \"lockfileVersion\": 1,\n  \"configVersion\": {config_version},\n  \"workspaces\": {{}},\n  \"packages\": {{}}\n}}\n"
             ),
         );
-    }
-
-    #[test]
-    fn bun_self_contained_member_install_config_requires_a_local_install() {
-        let root = temp_root("bun-self-contained-member");
-        let workspace = root.join("workspace");
-        let child = workspace.join("child");
-        let manifest = manifest(&child);
-        write_workspace_root(&workspace, Some(r#"["child"]"#));
-        write(
-            &child.join("package.json"),
-            r#"{"dependencies":{"left-pad":"1.3.0"},"installConfig":{"hoistingLimits":"workspaces"}}"#,
-        );
-        std::fs::create_dir_all(workspace.join("node_modules")).expect("workspace install");
-
-        let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
-
-        assert_eq!(gap.reason, BootstrapReason::MissingLocalInstall);
-        assert_eq!(gap.install_root, child);
-
-        std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn bun_self_contained_root_list_by_path_requires_a_local_install() {
-        let root = temp_root("bun-self-contained-path");
-        let workspace = root.join("workspace");
-        let child = workspace.join("child");
-        let manifest = manifest(&child);
-        mark_repo(&workspace);
-        write(
-            &workspace.join("package.json"),
-            r#"{"private":true,"workspaces":{"packages":["child"],"selfContained":["child"]}}"#,
-        );
-        write(&workspace.join("bun.lock"), "");
-        write(
-            &child.join("package.json"),
-            r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
-        );
-        std::fs::create_dir_all(workspace.join("node_modules")).expect("workspace install");
-
-        let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
-
-        assert_eq!(gap.reason, BootstrapReason::MissingLocalInstall);
-        assert_eq!(gap.install_root, child);
-
-        std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn bun_self_contained_root_list_by_name_requires_a_local_install() {
-        let root = temp_root("bun-self-contained-name");
-        let workspace = root.join("workspace");
-        let child = workspace.join("child");
-        let manifest = manifest(&child);
-        mark_repo(&workspace);
-        write(
-            &workspace.join("package.json"),
-            r#"{"private":true,"workspaces":{"packages":["child"],"selfContained":["@acme/child"]}}"#,
-        );
-        write(&workspace.join("bun.lock"), "");
-        write(
-            &child.join("package.json"),
-            r#"{"name":"@acme/child","dependencies":{"left-pad":"1.3.0"}}"#,
-        );
-        std::fs::create_dir_all(workspace.join("node_modules")).expect("workspace install");
-
-        let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
-
-        assert_eq!(gap.reason, BootstrapReason::MissingLocalInstall);
-        assert_eq!(gap.install_root, child);
-
-        std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn bun_isolated_config_version_one_workspace_requires_a_local_install() {
-        let root = temp_root("bun-isolated-v1");
-        let workspace = root.join("workspace");
-        let child = workspace.join("child");
-        let manifest = manifest(&child);
-        mark_repo(&workspace);
-        write(
-            &workspace.join("package.json"),
-            r#"{"private":true,"workspaces":["child"]}"#,
-        );
-        write_bun_lock(&workspace, 1);
-        write(
-            &child.join("package.json"),
-            r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
-        );
-        std::fs::create_dir_all(workspace.join("node_modules")).expect("workspace install");
-
-        let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
-
-        assert_eq!(gap.reason, BootstrapReason::MissingLocalInstall);
-        assert_eq!(gap.install_root, child);
-
-        std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn bunfig_hoisted_linker_overrides_the_isolated_default() {
-        let root = temp_root("bun-hoisted-override");
-        let workspace = root.join("workspace");
-        let child = workspace.join("child");
-        let manifest = manifest(&child);
-        mark_repo(&workspace);
-        write(
-            &workspace.join("package.json"),
-            r#"{"private":true,"workspaces":["child"]}"#,
-        );
-        write_bun_lock(&workspace, 1);
-        write(
-            &workspace.join("bunfig.toml"),
-            "[install]\nlinker = \"hoisted\"\n",
-        );
-        write(
-            &child.join("package.json"),
-            r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
-        );
-        std::fs::create_dir_all(workspace.join("node_modules")).expect("workspace install");
-        install_dependency(&workspace, "left-pad");
-
-        assert!(health_js_bootstrap_gap(&child, &workspace, &manifest).is_none());
-
-        std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn bunfig_isolated_linker_requires_a_local_install() {
-        let root = temp_root("bun-isolated-override");
-        let workspace = root.join("workspace");
-        let child = workspace.join("child");
-        let manifest = manifest(&child);
-        mark_repo(&workspace);
-        write(
-            &workspace.join("package.json"),
-            r#"{"private":true,"workspaces":["child"]}"#,
-        );
-        write(&workspace.join("bun.lock"), "");
-        write(
-            &workspace.join("bunfig.toml"),
-            "[install]\nlinker = \"isolated\"\n",
-        );
-        write(
-            &child.join("package.json"),
-            r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
-        );
-        std::fs::create_dir_all(workspace.join("node_modules")).expect("workspace install");
-
-        let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
-
-        assert_eq!(gap.reason, BootstrapReason::MissingLocalInstall);
-        assert_eq!(gap.install_root, child);
-
-        std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn npm_nested_install_strategy_requires_a_local_install() {
-        let root = temp_root("npm-nested");
-        let workspace = root.join("workspace");
-        let child = workspace.join("child");
-        let manifest = manifest_for(&child, "npm");
-        mark_repo(&workspace);
-        write(
-            &workspace.join("package.json"),
-            r#"{"private":true,"workspaces":["child"]}"#,
-        );
-        write(&workspace.join("package-lock.json"), "");
-        write(&workspace.join(".npmrc"), "install-strategy=nested\n");
-        write(
-            &child.join("package.json"),
-            r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
-        );
-        std::fs::create_dir_all(workspace.join("node_modules")).expect("workspace install");
-
-        let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
-
-        assert_eq!(gap.reason, BootstrapReason::MissingLocalInstall);
-        assert_eq!(gap.install_root, child);
-
-        std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn npm_linked_install_strategy_requires_a_local_install() {
-        let root = temp_root("npm-linked");
-        let workspace = root.join("workspace");
-        let child = workspace.join("child");
-        let manifest = manifest_for(&child, "npm");
-        mark_repo(&workspace);
-        write(
-            &workspace.join("package.json"),
-            r#"{"private":true,"workspaces":["child"]}"#,
-        );
-        write(&workspace.join("package-lock.json"), "");
-        write(&workspace.join(".npmrc"), "install-strategy=linked\n");
-        write(
-            &child.join("package.json"),
-            r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
-        );
-        std::fs::create_dir_all(workspace.join("node_modules")).expect("workspace install");
-
-        let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
-
-        assert_eq!(gap.reason, BootstrapReason::MissingLocalInstall);
-        assert_eq!(gap.install_root, child);
-
-        std::fs::remove_dir_all(root).ok();
     }
 
     #[test]
@@ -1383,49 +1277,33 @@ mod tests {
             ManifestJsPackageManager::Bun
         ));
 
-        std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn pnpm_workspace_yaml_declares_membership() {
-        let root = temp_root("pnpm-membership");
-        let workspace = root.join("workspace");
-        let member = workspace.join("packages").join("core");
-        let outsider = workspace.join("packages").join("core").join("nested");
-        std::fs::create_dir_all(&workspace).expect("mkdir workspace");
+        // pnpm-workspace.yaml inclusion declares membership the same way,
+        // and a `!` exclusion removes it.
+        let pnpm = root.join("pnpm");
+        std::fs::create_dir_all(&pnpm).expect("mkdir pnpm");
         write(
-            &workspace.join("pnpm-workspace.yaml"),
+            &pnpm.join("pnpm-workspace.yaml"),
             "packages:\n  - 'packages/*'\n",
         );
-
         assert!(is_declared_workspace_member(
-            &workspace,
-            &member,
+            &pnpm,
+            &pnpm.join("packages").join("core"),
             ManifestJsPackageManager::Pnpm
         ));
         assert!(!is_declared_workspace_member(
-            &workspace,
-            &outsider,
+            &pnpm,
+            &pnpm.join("packages").join("core").join("nested"),
             ManifestJsPackageManager::Pnpm
         ));
-
-        std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn pnpm_workspace_exclusion_removes_membership() {
-        let root = temp_root("pnpm-exclusion");
-        let workspace = root.join("workspace");
-        let member = workspace.join("packages").join("core");
-        std::fs::create_dir_all(&workspace).expect("mkdir workspace");
+        let excluded = root.join("excluded");
+        std::fs::create_dir_all(&excluded).expect("mkdir excluded");
         write(
-            &workspace.join("pnpm-workspace.yaml"),
+            &excluded.join("pnpm-workspace.yaml"),
             "packages:\n  - 'packages/*'\n  - '!packages/core'\n",
         );
-
         assert!(!is_declared_workspace_member(
-            &workspace,
-            &member,
+            &excluded,
+            &excluded.join("packages").join("core"),
             ManifestJsPackageManager::Pnpm
         ));
 

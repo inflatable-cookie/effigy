@@ -216,32 +216,30 @@ fn generation_hook_failure_never_spawns_the_task_body() {
 }
 
 #[test]
-fn plain_task_without_required_secrets_stays_foreground() {
-    let root = support::temp_workspace("effigy-hook-admission", "plain-foreground");
+fn tasks_without_a_hook_admission_stay_foreground() {
+    // No declared hook means no durable admission, with or without required
+    // secrets: both fixtures must run to completion without opening the
+    // checkout journal (contract 052 §3.1).
+    let plain = support::temp_workspace("effigy-hook-admission", "plain-foreground");
     fs::write(
-        root.join("effigy.toml"),
+        plain.join("effigy.toml"),
         "[tasks.plain]\nrun = \"sh -lc 'printf ok > plain.out'\"\n",
     )
     .expect("write manifest");
-
-    let run = effigy(&root, &["plain"]);
+    let run = effigy(&plain, &["plain"]);
     assert!(run.status.success(), "{}", text(&run));
     assert_eq!(
-        fs::read_to_string(root.join("plain.out")).expect("plain body"),
+        fs::read_to_string(plain.join("plain.out")).expect("plain body"),
         "ok"
     );
     assert!(
-        !ran_durable(&root),
+        !ran_durable(&plain),
         "an ordinary task must not gain a journal from the hook admission rule"
     );
-}
 
-#[test]
-fn required_secret_task_without_a_declared_hook_stays_foreground() {
     let root = support::temp_workspace("effigy-hook-admission", "no-hook-foreground");
     write_capture_manifest_without_hook(&root);
     write_vault(&root, &[("api_token", "tok_stored")]);
-
     let run = effigy(&root, &["capture"]);
     assert!(run.status.success(), "{}", text(&run));
     assert_eq!(captured(&root), "tok_stored");

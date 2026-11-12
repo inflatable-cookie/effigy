@@ -258,7 +258,12 @@ fn write_state_context_file_returns_repo_relative_path() {
         written,
         ".effigy/state-captures/capture-context/acowtancy-uat/uat.json"
     );
-    assert!(repo.join(&written).exists());
+    let stored = repo.join(&written);
+    assert!(stored.exists());
+    // The stored bytes are the context itself, not just a path receipt.
+    let decoded: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&stored).expect("read")).expect("json");
+    assert_eq!(decoded, context.context);
 }
 
 #[test]
