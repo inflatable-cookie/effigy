@@ -251,16 +251,13 @@ fn detached_activation_failure(
     };
     if output_json {
         let failure_kind = match &error {
-            RunnerError::TaskInvocation(message)
-                if message.starts_with("gateway endpoint store: observation unknown:") =>
-            {
-                "endpoint_observation_unknown"
-            }
-            RunnerError::TaskInvocation(message)
-                if message.starts_with("gateway endpoint store:") =>
-            {
-                "endpoint_store_refusal"
-            }
+            // The store's own typed answer decides the kind; the message is
+            // never read for it (effigy#933).
+            RunnerError::GatewayEndpointStore {
+                kind: effigy_gateway::EndpointStoreRefusal::ObservationUnknown,
+                ..
+            } => "endpoint_observation_unknown",
+            RunnerError::GatewayEndpointStore { .. } => "endpoint_store_refusal",
             RunnerError::TaskInvocation(_) => "invocation_refusal",
             RunnerError::ManagedHostReadiness { .. } => "managed_readiness",
             RunnerError::GatewayRouteTable { .. }
@@ -2185,7 +2182,10 @@ mod tests {
         let failure = detached_activation_failure(
             &operation,
             true,
-            RunnerError::task_invocation("gateway endpoint store: revision changed"),
+            RunnerError::GatewayEndpointStore {
+                kind: effigy_gateway::EndpointStoreRefusal::Refused,
+                reason: "revision changed".to_owned(),
+            },
         );
         let RunnerError::CommandJsonFailure { rendered } = failure else {
             panic!("detached JSON mode must render a machine failure");
@@ -2198,6 +2198,38 @@ mod tests {
             document["cause"],
             "gateway endpoint store: revision changed"
         );
+
+        // An unobservable store is its own kind: nothing was read or changed.
+        let failure = detached_activation_failure(
+            &operation,
+            true,
+            RunnerError::GatewayEndpointStore {
+                kind: effigy_gateway::EndpointStoreRefusal::ObservationUnknown,
+                reason: "store unreadable".to_owned(),
+            },
+        );
+        let RunnerError::CommandJsonFailure { rendered } = failure else {
+            panic!("detached JSON mode must render a machine failure");
+        };
+        let document: serde_json::Value = serde_json::from_str(&rendered).expect("json failure");
+        assert_eq!(document["failure_kind"], "endpoint_observation_unknown");
+        assert_eq!(
+            document["cause"],
+            "gateway endpoint store: observation unknown: store unreadable"
+        );
+
+        // A sentence that merely reads like one is not the store's answer: the
+        // kind comes from the error's own type, never its wording (effigy#933).
+        let failure = detached_activation_failure(
+            &operation,
+            true,
+            RunnerError::task_invocation("gateway endpoint store: revision changed"),
+        );
+        let RunnerError::CommandJsonFailure { rendered } = failure else {
+            panic!("detached JSON mode must render a machine failure");
+        };
+        let document: serde_json::Value = serde_json::from_str(&rendered).expect("json failure");
+        assert_eq!(document["failure_kind"], "invocation_refusal");
     }
 
     #[test]

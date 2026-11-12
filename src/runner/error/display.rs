@@ -128,6 +128,9 @@ pub(super) fn fmt_runner_error(
         RunnerError::GatewayRuntimeTarget { phase, detail } => {
             write!(f, "gateway runtime target {phase} failed: {detail}")
         }
+        RunnerError::GatewayEndpointStore { kind, reason } => {
+            write!(f, "gateway endpoint store: {kind}{reason}")
+        }
         RunnerError::ContainerRuntimePolicy { phase, detail } => {
             write!(f, "container runtime {phase} failed: {detail}")
         }

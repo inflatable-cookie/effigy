@@ -26,6 +26,16 @@ const CLEANUP_BUDGET: Duration = Duration::from_secs(60);
 
 pub(crate) fn error(reason: impl std::fmt::Display) -> GatewayError {
     GatewayError::EndpointStore {
+        kind: crate::EndpointStoreRefusal::Refused,
+        reason: reason.to_string(),
+    }
+}
+
+/// The store could not be observed: nothing was read or changed, so absence is
+/// unproven. The kind travels with the error; the text only names the reason.
+pub(crate) fn observation_unknown(reason: impl std::fmt::Display) -> GatewayError {
+    GatewayError::EndpointStore {
+        kind: crate::EndpointStoreRefusal::ObservationUnknown,
         reason: reason.to_string(),
     }
 }
@@ -144,7 +154,7 @@ impl EndpointStore {
         match self.read() {
             Observed::Verified(snapshot, _) => Ok(snapshot),
             Observed::Absent(_) => Ok(EndpointSnapshot::default()),
-            Observed::Unknown(reason) => Err(error(format!("observation unknown: {reason}"))),
+            Observed::Unknown(reason) => Err(observation_unknown(reason)),
         }
     }
 

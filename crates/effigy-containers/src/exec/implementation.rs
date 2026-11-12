@@ -70,6 +70,19 @@ impl ContainerExecError {
             reason: reason.into(),
         }
     }
+
+    /// The engine's own answer that it is not running, decoded once by the
+    /// module that owns its vocabulary ([`super::engine`]). A caller that needs
+    /// to know whether a failure means a stopped engine matches this type
+    /// instead of reading the engine's text (effigy#933).
+    pub fn engine_absence(&self) -> Option<super::engine::EngineAbsence> {
+        match self {
+            Self::Failure { stdout, stderr, .. } => {
+                super::engine::EngineAbsence::observed_in(stdout, stderr)
+            }
+            Self::Launch { .. } | Self::Refusal { .. } => None,
+        }
+    }
 }
 
 fn container_manager_error(error: ContainerManagerError) -> ContainerExecError {

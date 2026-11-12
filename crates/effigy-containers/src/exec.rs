@@ -2,6 +2,7 @@ mod colima_cleanup;
 mod colima_runtime;
 mod compose_progress;
 mod compose_steps;
+mod engine;
 mod healthcheck_pidfiles;
 mod implementation;
 mod managed_stop;
@@ -37,6 +38,7 @@ pub use compose_progress::{
     parse_compose_step_event, service_from_container_name, ComposeStepEvent,
 };
 pub use compose_steps::{runtime_wait, ComposeSteps, TimedStep};
+pub use engine::EngineAbsence;
 pub use healthcheck_pidfiles::{
     parse_health_check_pidfile_prune, prune_stale_health_check_pidfiles, HealthCheckPidFilePrune,
     HEALTHCHECK_PIDFILE_PATTERN, HEALTHCHECK_PIDFILE_STALE_MINUTES, HEALTHCHECK_TASK_ROOT,
