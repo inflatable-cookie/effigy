@@ -864,11 +864,12 @@ pub fn probe_route_handshake(
             presented: Arc::clone(&presented),
         }))
         .with_no_client_auth();
-    let name: rustls::pki_types::ServerName = server_name.to_owned().try_into().map_err(|error| {
-        tls_error(format!(
-            "`{server_name}` is not a valid TLS server name: {error}"
-        ))
-    })?;
+    let name: rustls::pki_types::ServerName =
+        server_name.to_owned().try_into().map_err(|error| {
+            tls_error(format!(
+                "`{server_name}` is not a valid TLS server name: {error}"
+            ))
+        })?;
     let session = rustls::ClientConnection::new(Arc::new(config), name).map_err(|error| {
         tls_error(format!(
             "cannot start a TLS client for `{server_name}`: {error}"
@@ -896,9 +897,7 @@ pub fn probe_route_handshake(
         .lock()
         .ok()
         .and_then(|presented| presented.clone())
-        .ok_or_else(|| {
-            tls_error("the running gateway exchanged no certificate".to_owned())
-        })?;
+        .ok_or_else(|| tls_error("the running gateway exchanged no certificate".to_owned()))?;
     if presented != expected.as_ref() {
         return Err(tls_error(format!(
             "the running gateway presented a certificate that is not the registered {}; it has not loaded this route's certificate",

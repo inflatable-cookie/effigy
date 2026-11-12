@@ -207,13 +207,8 @@ fn route_handshake_probe_proves_the_registered_certificate_is_served() {
     });
 
     let registered = certs.join("probe.test.pem");
-    probe_route_handshake(
-        address,
-        "probe.test",
-        &registered,
-        Duration::from_secs(10),
-    )
-    .expect("the running gateway serves the registered route");
+    probe_route_handshake(address, "probe.test", &registered, Duration::from_secs(10))
+        .expect("the running gateway serves the registered route");
 
     let unknown = probe_route_handshake(
         address,
@@ -223,18 +218,12 @@ fn route_handshake_probe_proves_the_registered_certificate_is_served() {
     )
     .expect_err("an SNI the gateway never loaded refuses the handshake");
     assert!(
-        unknown.to_string().contains("missing.test")
-            || unknown.to_string().contains("handshake"),
+        unknown.to_string().contains("missing.test") || unknown.to_string().contains("handshake"),
         "{unknown}"
     );
 
-    let wrong = probe_route_handshake(
-        address,
-        "other.test",
-        &registered,
-        Duration::from_secs(10),
-    )
-    .expect_err("another route's certificate is not this route's certificate");
+    let wrong = probe_route_handshake(address, "other.test", &registered, Duration::from_secs(10))
+        .expect_err("another route's certificate is not this route's certificate");
     assert!(
         wrong
             .to_string()

@@ -298,7 +298,10 @@ mod tests {
             .expect("encrypt fixture vault");
         effigy_test_support::write_private_fixture(
             &vault,
-            envelope.to_json_pretty().expect("serialize fixture").as_bytes(),
+            envelope
+                .to_json_pretty()
+                .expect("serialize fixture")
+                .as_bytes(),
         )
         .expect("write fixture vault");
         vault

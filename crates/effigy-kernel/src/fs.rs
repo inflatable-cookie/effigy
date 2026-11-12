@@ -542,18 +542,16 @@ impl DirFd {
         let mut created = false;
         for component in components {
             let name = FileName::new(component)?;
-            let (child, made) = directory.descend_created(
-                name.as_str().as_bytes(),
-                Trust::Ancestor,
-                Some(mode),
-            )?;
+            let (child, made) =
+                directory.descend_created(name.as_str().as_bytes(), Trust::Ancestor, Some(mode))?;
             directory = child;
             created = made;
         }
         Ok((directory, created))
     }
     fn descend(&self, name: &[u8], trust: Trust, create: Option<u32>) -> Result<Self, FsError> {
-        self.descend_created(name, trust, create).map(|(dir, _)| dir)
+        self.descend_created(name, trust, create)
+            .map(|(dir, _)| dir)
     }
     /// [`DirFd::descend`], reporting whether this call created the component.
     fn descend_created(

@@ -1254,7 +1254,10 @@ fn write_session_vault(
     };
     effigy_test_support::write_private_fixture(
         &vault_path,
-        envelope.to_json_pretty().expect("serialize vault").as_bytes(),
+        envelope
+            .to_json_pretty()
+            .expect("serialize vault")
+            .as_bytes(),
     )
     .expect("write vault");
 }

@@ -360,7 +360,8 @@ mod tests {
         ];
         assert!(authorize(501, 501, good).is_ok());
         assert!(authorize(501, 502, good).is_err());
-        let beyond_pool = std::net::Ipv4Addr::new(127, 1, 0, crate::loopback::DEFAULT_LOOPBACK_COUNT + 1);
+        let beyond_pool =
+            std::net::Ipv4Addr::new(127, 1, 0, crate::loopback::DEFAULT_LOOPBACK_COUNT + 1);
         for endpoint in [
             "0.0.0.0:80".to_owned(),
             "192.168.0.1:80".to_owned(),

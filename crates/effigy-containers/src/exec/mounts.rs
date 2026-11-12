@@ -309,11 +309,8 @@ mod tests {
         {
             let link = fixture.path().join("linked");
             std::os::unix::fs::symlink(fixture.path(), &link).unwrap();
-            let error = ensure_points(
-                fixture.path(),
-                &[IsolatedMountPoint { host_path: link }],
-            )
-            .expect_err("a symlink mount point refuses");
+            let error = ensure_points(fixture.path(), &[IsolatedMountPoint { host_path: link }])
+                .expect_err("a symlink mount point refuses");
             let error = error.to_string();
             assert!(error.contains("symlink"), "{error}");
             assert!(
@@ -364,7 +361,11 @@ mod tests {
         let error = error.to_string();
         assert!(error.contains("reached through a symlink"), "{error}");
         assert!(
-            error.contains(&format!("at `{}` to `{}`", link.display(), outside.path().display())),
+            error.contains(&format!(
+                "at `{}` to `{}`",
+                link.display(),
+                outside.path().display()
+            )),
             "the refusal names the ancestor link and its target: {error}"
         );
         assert!(error.contains("oxide outputs adopt"), "{error}");
@@ -391,7 +392,10 @@ mod tests {
             }],
         )
         .expect_err("an existing leaf behind a link is no authority either");
-        assert!(error.to_string().contains("reached through a symlink"), "{error}");
+        assert!(
+            error.to_string().contains("reached through a symlink"),
+            "{error}"
+        );
         assert_eq!(
             std::fs::read_dir(&present).unwrap().count(),
             0,
@@ -415,8 +419,13 @@ mod tests {
         std::fs::rename(fixture.path().join("apps"), &moved).unwrap();
         std::os::unix::fs::symlink(outside.path(), fixture.path().join("apps")).unwrap();
 
-        let (_, created) = held.create_component_path(&["farmyard", "target"], 0o777).unwrap();
-        assert!(created, "the missing leaf below the held directory is created");
+        let (_, created) = held
+            .create_component_path(&["farmyard", "target"], 0o777)
+            .unwrap();
+        assert!(
+            created,
+            "the missing leaf below the held directory is created"
+        );
         assert!(moved.join("farmyard/target").is_dir());
         assert!(
             !outside.path().join("farmyard").exists(),

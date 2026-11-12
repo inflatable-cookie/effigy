@@ -2218,7 +2218,10 @@ fn a_registered_tls_route_the_running_gateway_cannot_serve_is_refused() {
         service: Some("web".to_owned()),
         external_target: false,
     };
-    let routes = vec![route("plain.clientname.test", false), route("app.clientname.test", true)];
+    let routes = vec![
+        route("plain.clientname.test", false),
+        route("app.clientname.test", true),
+    ];
     let mut probed = Vec::new();
     let refusal = verify_registered_tls_routes(
         &routes,
