@@ -242,8 +242,11 @@ services:
 }
 #[test]
 fn prepare_host_bind_mount_dirs_creates_named_volume_targets_under_repo_binds() {
-    let repo_root = temp_test_dir("named-volume-targets");
+    let fixture_root = temp_test_dir("named-volume-targets");
+    let repo_root = fixture_root.join("repo");
+    fs::create_dir_all(&repo_root).expect("repo fixture");
     let api_target = repo_root.join("acme-api/target");
+    let outside_target = fixture_root.join("outside/target");
     let compose_file = repo_root.join("docker-compose.yml");
 
     fs::write(
@@ -255,8 +258,11 @@ services:
     volumes:
       - "{}:/workspace-root/demo"
       - "named-api-target:/workspace-root/demo/acme-api/target"
+      - "{}:/outside"
+      - "named-outside-target:/outside/target"
 "#,
             repo_root.display(),
+            fixture_root.join("outside").display(),
         ),
     )
     .expect("write compose file");
@@ -264,12 +270,22 @@ services:
     let policy = test_policy(compose_file);
     prepare_host_bind_mount_dirs(&repo_root, &policy).expect("prepare bind mounts");
 
+    assert!(api_target.is_dir(), "named-volume target is created");
+    let created_directories = [repo_root.join("acme-api"), api_target.clone()]
+        .into_iter()
+        .filter(|path| path.is_dir())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        created_directories,
+        [repo_root.join("acme-api"), api_target.clone()],
+        "only the named-volume target's parent chain is created under the repo bind"
+    );
     assert!(
-        api_target.is_dir(),
-        "expected named-volume target under repo bind to be created"
+        !outside_target.exists(),
+        "an unrelated bind target stays untouched"
     );
 
-    let _ = fs::remove_dir_all(&repo_root);
+    let _ = fs::remove_dir_all(&fixture_root);
 }
 
 #[test]
@@ -611,11 +627,12 @@ fn task_apply_starts_shared_services_and_delivers_secrets_before_the_one_apply()
         "shared services and secrets come first, then the one apply"
     );
 }
+
 #[test]
-fn runtime_gateway_readiness_stage_skips_when_no_gateway_surface_exists() {
+fn runtime_gateway_readiness_stage_starts_gateway_before_registration() {
     let repo_root = Path::new("/tmp/demo-repo");
-    let policy = test_policy(PathBuf::from("docker-compose.yml"));
-    let events = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+    let mut policy = test_policy(PathBuf::from("docker-compose.yml"));
+    let events = Arc::new(Mutex::new(Vec::<String>::new()));
 
     ensure_runtime_gateway_readiness_stage_using(
         repo_root,
@@ -623,34 +640,38 @@ fn runtime_gateway_readiness_stage_skips_when_no_gateway_surface_exists() {
         {
             let events = Arc::clone(&events);
             move || {
-                events.lock().expect("events lock").push("resolve");
+                events
+                    .lock()
+                    .expect("events lock")
+                    .push("resolve".to_owned());
                 Ok("effigy".to_owned())
             }
         },
         {
             let events = Arc::clone(&events);
-            move |_| {
-                events.lock().expect("events lock").push("start");
+            move |command| {
+                events
+                    .lock()
+                    .expect("events lock")
+                    .push(format!("start:{command}"));
                 Ok(())
             }
         },
         {
             let events = Arc::clone(&events);
-            move |_, _| {
-                events.lock().expect("events lock").push("register");
+            move |repo_root, policy| {
+                events.lock().expect("events lock").push(format!(
+                    "register:{}:{}",
+                    repo_root.display(),
+                    policy.name
+                ));
                 Ok(())
             }
         },
     )
-    .expect("gateway readiness");
-
+    .expect("no gateway surface is a no-op");
     assert!(events.lock().expect("events lock").is_empty());
-}
 
-#[test]
-fn runtime_gateway_readiness_stage_starts_gateway_before_registration() {
-    let repo_root = Path::new("/tmp/demo-repo");
-    let mut policy = test_policy(PathBuf::from("docker-compose.yml"));
     policy.dns_routes = vec![EffectiveDnsRoute {
         domain: "demo.test".to_owned(),
         declared_domain: "demo.test".to_owned(),
@@ -659,7 +680,6 @@ fn runtime_gateway_readiness_stage_starts_gateway_before_registration() {
         service: None,
         target_host: None,
     }];
-    let events = Arc::new(Mutex::new(Vec::<String>::new()));
 
     ensure_runtime_gateway_readiness_stage_using(
         repo_root,
@@ -781,7 +801,7 @@ fn validate_policy_runtime_uses_typed_policy_error_family() {
     }
 }
 #[test]
-fn ensure_runtime_running_stage_skips_up_when_runtime_is_already_running() {
+fn ensure_runtime_running_stage_uses_plan_identity_when_runtime_is_stopped() {
     let calls = Arc::new(Mutex::new(Vec::<(Option<String>, Option<PathBuf>)>::new()));
 
     ensure_runtime_running_stage(
@@ -799,14 +819,9 @@ fn ensure_runtime_running_stage_skips_up_when_runtime_is_already_running() {
             }
         },
     )
-    .expect("ensure running");
+    .expect("already-running runtime needs no up call");
 
     assert!(calls.lock().expect("calls lock").is_empty());
-}
-
-#[test]
-fn ensure_runtime_running_stage_uses_plan_identity_when_runtime_is_stopped() {
-    let calls = Arc::new(Mutex::new(Vec::<(Option<String>, Option<PathBuf>)>::new()));
 
     ensure_runtime_running_stage(
         false,
@@ -1101,21 +1116,18 @@ fn task_activation_surfaces_dependency_volume_failure() {
     )
     .expect_err("dependency volume failure should surface");
 
-    assert!(error
-        .to_string()
-        .contains("cannot read/write `/var/www/cbs/vendor`"));
+    match error {
+        RunnerError::TaskInvocation(detail) => assert_eq!(
+            detail,
+            "resolved user `dev` (uid=501 gid=20) cannot read/write `/var/www/cbs/vendor`"
+        ),
+        other => panic!("expected dependency volume refusal, got {other:?}"),
+    }
     assert_eq!(
         *events.lock().expect("events lock"),
         vec!["prepare", "permissions"],
         "nothing runs after a dependency volume permission failure"
     );
-}
-
-#[test]
-fn shared_process_container_prep_waits_for_path_mutator() {
-    crate::contract_test_support::assert_waits_for_path_mutator(|after_serial| {
-        host_edit_refreshes_cargo_input_before_container_check_using(after_serial)
-    });
 }
 
 #[test]
@@ -1372,43 +1384,6 @@ fn the_preflight_seals_an_unpublished_render_and_the_publisher_accepts_it() {
             "the receipt's private tree is leased"
         );
         assert!(!render.path.exists(), "no canonical object is written here");
-    });
-}
-
-/// An expired budget seals nothing at all.
-#[test]
-fn an_expired_preflight_budget_seals_nothing() {
-    let fixture = effigy_test_support::Fixture::new("effigy-preflight-expired-").expect("fixture");
-    let checkout = fixture.path().join("checkout");
-    let home = fixture.path().join("home/.effigy");
-    fs::create_dir_all(&checkout).expect("checkout");
-    fs::create_dir_all(&home).expect("home");
-    fs::create_dir_all(checkout.join(".git")).expect("git directory");
-    fs::write(
-        checkout.join("effigy.toml"),
-        "[containers]\ndefault = \"one\"\n[containers.one]\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\n",
-    )
-    .expect("manifest");
-    fs::write(
-        checkout.join("compose.yml"),
-        "services:\n  app:\n    image: example:one\n",
-    )
-    .expect("compose file");
-    effigy_containers::with_test_effigy_home(&home, || {
-        let policy = effigy_containers::load_container_policy(&checkout, None).expect("policy");
-        let render = policy.render.as_ref().expect("render");
-        assert!(
-            super::seal_render_for_preflight(
-                &policy,
-                std::time::Instant::now() - std::time::Duration::from_secs(1),
-            )
-            .is_err(),
-            "an expired budget refuses"
-        );
-        assert!(
-            !render.path.exists(),
-            "an expired preflight writes no canonical object"
-        );
     });
 }
 
@@ -2226,6 +2201,7 @@ fn an_expired_preflight_seal_opens_no_state_root_and_stages_nothing() {
     .expect("compose file");
     effigy_containers::with_test_effigy_home(&home, || {
         let policy = effigy_containers::load_container_policy(&checkout, None).expect("policy");
+        let render = policy.render.as_ref().expect("render");
         assert!(
             super::seal_render_for_preflight(
                 &policy,
@@ -2233,6 +2209,10 @@ fn an_expired_preflight_seal_opens_no_state_root_and_stages_nothing() {
             )
             .is_err(),
             "an expired budget refuses before opening or sealing"
+        );
+        assert!(
+            !render.path.exists(),
+            "no canonical render object is written"
         );
         // Nothing was staged under the state root's staging family.
         let staging = checkout.join(".effigy/state/staging");

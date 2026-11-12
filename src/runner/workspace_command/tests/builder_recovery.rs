@@ -2,6 +2,7 @@
 //! backend executables. No engine, VM, real artifact or consumer is touched.
 use super::*;
 use crate::runner::execute::api::run_manifest_task_with_cwd;
+use crate::runner::workspace_command::provisioning::verify_guest_artifact;
 use effigy_cli::TaskInvocation;
 use effigy_test_support::process::FixtureCommandExt;
 use serde_json::{json, Value};
@@ -306,17 +307,6 @@ impl Drop for Fixture {
     }
 }
 
-#[test]
-fn private_builder_fixture_removes_sealed_object_directories() {
-    let _lock = crate::contract_test_support::lock_test();
-    let root = {
-        let fixture = Fixture::new(false, false, "docker");
-        effigy_containers::prepare_container_policy(&fixture.root, Some("linux-release")).unwrap();
-        fixture.root.clone()
-    };
-    assert!(!root.exists());
-}
-
 // A confined worker supplies a fresh parent under its assigned scratch via
 // EFFIGY_RECOVERY_FIXTURE_PARENT. Ordinary callers retain the shared HOME route.
 // Each fixture's CLI operations get a separate nested temp directory, so their
@@ -371,8 +361,19 @@ fn builder_fixture_passes_colima_guard_while_os_temp_still_refuses() {
 }
 
 #[test]
-fn builder_fixture_keeps_storage_in_its_selected_parent_and_confines_operation_temp() {
+fn builder_fixtures_teardown_and_confine_their_storage() {
     let _lock = crate::contract_test_support::lock_test();
+    let (root, render) = {
+        let fixture = Fixture::new(false, false, "docker");
+        let policy =
+            effigy_containers::prepare_container_policy(&fixture.root, Some("linux-release"))
+                .unwrap();
+        let render = policy.render.expect("prepared compose render").path;
+        assert!(render.is_dir());
+        (fixture.root.clone(), render)
+    };
+    assert!(!root.exists());
+    assert!(!render.exists(), "fixture teardown removes sealed output");
     let parent = std::env::var_os("EFFIGY_RECOVERY_FIXTURE_PARENT")
         .or_else(|| std::env::var_os("HOME"))
         .unwrap();
@@ -1094,14 +1095,14 @@ fn changed_input_partial_builder_recovers_through_the_maintained_artifact_task()
             .task()
             .expect("automatic build with original admission retained");
         assert!(fixture.root.join("state/build-effect").exists());
+        assert_activations(&fixture, 0, backend);
         let artifact = fixture
             .root
             .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
         let expected = workspace_effigy_local_install_identity(&Fixture::compiled_cli()).unwrap();
         assert!(linux_workspace_effigy_artifact_is_current(&artifact, LinuxWorkspaceTarget::X86_64Gnu, &expected),
-            "the direct producer must publish a held-current artifact without a later handoff blessing it");
-        let trace = std::fs::read_to_string(fixture.root.join("state/calls")).unwrap();
-        assert!(!trace.contains("\"up\""), "{trace}");
+            "the direct producer must publish a held-current artifact without a later handoff blessing it"
+        );
         fixture.assert_preserved();
     }
 }
@@ -1120,6 +1121,9 @@ fn unchanged_partial_completed_and_absent_builders_use_supported_task() {
                 .expect("a deliberate repeat build may produce identical current bytes");
         }
         assert!(fixture.root.join("state/build-effect").exists());
+        let activations = if state == "absent" { 1 } else { 0 };
+        let builds = if state == "complete" { 2 } else { 1 };
+        assert_builder_effects(&fixture, activations, builds, state);
         fixture.assert_preserved();
     }
 }
@@ -1155,6 +1159,7 @@ fn deleted_managed_colima_profile_is_recreated_before_the_next_artifact_build() 
             "{expected} missing from the managed start: {colima}"
         );
     }
+    assert_activations(&fixture, 1, "profile recreation");
     fixture.assert_preserved();
 }
 
@@ -1172,6 +1177,7 @@ fn retained_builder_accepts_its_immutable_compose_working_directory() {
         .task()
         .expect("owned immutable render working directory");
     assert!(fixture.root.join("state/build-effect").exists());
+    assert_activations(&fixture, 0, "retained builder reuse");
     fixture.assert_preserved();
 }
 
@@ -1227,11 +1233,13 @@ fn failed_and_interrupted_changed_input_builds_retain_admission_and_retry() {
         let fixture = Fixture::new(true, true, "docker");
         fixture.mode(mode);
         fixture.task().expect_err(mode);
+        assert_builder_effects(&fixture, 0, 1, "failed build keeps the builder");
         fixture.assert_preserved();
         fixture.mode("retry");
         fixture
             .task()
             .expect("retry without manual container commands");
+        assert_builder_effects(&fixture, 0, 2, "retry reuses the builder");
         fixture.assert_preserved();
     }
 }
@@ -1342,6 +1350,7 @@ fn handoff_automatically_builds_through_changed_input_partial_recovery() {
         LinuxWorkspaceTarget::X86_64Gnu,
         &expected
     ));
+    assert_builder_effects(&fixture, 0, 1, "handoff reuses the partial builder");
     fixture.assert_preserved();
 }
 
@@ -1474,6 +1483,7 @@ fn extra_declared_service_refuses_and_legacy_receipts_stay_inert() {
         if mode == "sibling" {
             fixture.task().expect_err(mode);
             assert!(!fixture.root.join("state/build-effect").exists());
+            assert_eq!(fixture.activation_count(), 0, "{mode}");
         } else {
             // A v0.14.1 receipt is inert history: the environment record,
             // not a marker, retains admission, and the receipt stays as it
@@ -1481,6 +1491,7 @@ fn extra_declared_service_refuses_and_legacy_receipts_stay_inert() {
             fixture
                 .task()
                 .unwrap_or_else(|error| panic!("{mode}: {error}"));
+            assert_eq!(fixture.activation_count(), 0, "{mode}");
         }
         fixture.assert_preserved();
     }
@@ -1816,6 +1827,7 @@ fn refused_inspect_names_its_cause_without_claiming_a_signal() {
             !fixture.root.join("state/build-effect").exists(),
             "{mode}: {error}"
         );
+        assert_no_builder_effects(&fixture, mode);
         fixture.assert_preserved();
     }
 }
@@ -1920,6 +1932,7 @@ fn an_export_above_its_declared_cap_is_refused_before_it_reaches_the_caller() {
             .exists(),
         "nothing beyond the declared names is exported"
     );
+    assert_activations(&fixture, 1, "rejected export follows one build");
     fixture.assert_preserved();
 }
 
@@ -1949,6 +1962,7 @@ fn compiler_writes_through_the_read_only_source_bind_are_denied() {
             !plan.source.join(".effigy").exists(),
             "{mode}: the read-only bind received no compiler write"
         );
+        assert_activations(&fixture, 1, mode);
         fixture.assert_preserved();
     }
 }
@@ -2007,6 +2021,8 @@ fn a_successful_build_releases_its_staged_export() {
         .root
         .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
     assert!(artifact.is_file(), "the artifact reached the caller");
+    verify_guest_artifact(&artifact, LinuxWorkspaceTarget::X86_64Gnu)
+        .expect("published artifact verifies after staged export cleanup");
     fixture.assert_preserved();
 }
 
@@ -2047,11 +2063,7 @@ fn staged_source_keeps_one_builder_and_refreshes_changed_inputs() {
     let fixture = Fixture::staged(true, false, "docker");
     let plan = fixture.stage().expect("a staged source plan");
     fixture.task().expect("first build");
-    assert_eq!(
-        fixture.activation_count(),
-        0,
-        "the retained builder is reused"
-    );
+    assert_activations(&fixture, 0, "retained builder reuse");
     let first = effigy_containers::artifact_source::StageManifest::read(&plan).unwrap();
     let notes = fixture.root.join("scripts/notes.rhai");
     std::fs::write(&notes, "// a changed development input\n").unwrap();
@@ -2064,6 +2076,7 @@ fn staged_source_keeps_one_builder_and_refreshes_changed_inputs() {
     fixture.task().expect("second build with changed source");
     let second = effigy_containers::artifact_source::StageManifest::read(&plan).unwrap();
     assert_ne!(first.closure, second.closure, "the closure digest moved");
+    assert_builds(&fixture, 2, "incremental refresh");
     assert_eq!(
         std::fs::read_to_string(plan.source.join("scripts/notes.rhai")).unwrap(),
         "// a changed development input\n"
@@ -2090,7 +2103,7 @@ fn staged_source_replaces_a_pre_staging_builder_once() {
         fixture
             .task()
             .expect("the pre-staging builder is replaced by the maintained activation");
-        assert_eq!(fixture.activation_count(), 1);
+        assert_builder_effects(&fixture, 1, 1, backend);
         assert_eq!(fixture.build_source(), plan.source);
         let current: Value = serde_json::from_slice(&std::fs::read(&identity).unwrap()).unwrap();
         let bound = std::path::Path::new(current[0]["Mounts"][0]["Source"].as_str().unwrap());
@@ -2133,6 +2146,7 @@ fn ordinary_auto_build_recovers_an_owned_writable_source_bind() {
             .unwrap();
     assert_eq!(identity[0]["Mounts"][0]["RW"], json!(false));
     assert_eq!(identity[0]["Mounts"][0]["Mode"], json!("ro"));
+    assert_eq!(private_build_count(&fixture.root), 1);
     let compose = std::fs::read_to_string(fixture.root.join("state/last-up-compose")).unwrap();
     assert!(
         compose.contains(&format!("{}:/workspace:ro", plan.source.display())),
@@ -2148,13 +2162,14 @@ fn no_change_reuses_a_matching_read_only_owned_builder() {
     let _lock = crate::contract_test_support::lock_test();
     for backend in ["docker", "colima"] {
         let fixture = Fixture::staged(true, false, backend);
-        fixture.stage().expect("a staged source plan");
+        let plan = fixture.stage().expect("a staged source plan");
         let _switch =
             EnvGuard::set_many(&[("EFFIGY_LINUX_RELEASE_REQUIRE_RUNNING", Some("1".to_owned()))]);
         fixture
             .task()
             .unwrap_or_else(|error| panic!("{backend}: exact owned read-only builder: {error}"));
         assert_eq!(fixture.activation_count(), 0, "{backend}");
+        assert_eq!(fixture.build_source(), plan.source, "{backend}");
         assert!(
             fixture.root.join("state/build-effect").exists(),
             "{backend}"
@@ -2222,11 +2237,7 @@ fn colima_native_read_or_replaced_identity_refuses_without_replacing() {
                 error.contains(reason),
                 "{case} (required={required}): {error}"
             );
-            assert_eq!(
-                fixture.activation_count(),
-                0,
-                "{case} (required={required})"
-            );
+            assert_no_builder_effects(&fixture, case);
             assert!(!fixture.root.join("state/build-effect").exists(), "{case}");
         }
         fixture.assert_preserved();
@@ -2453,6 +2464,7 @@ fn staged_source_refuses_an_alias_above_its_owned_child() {
         "the alias was left exactly as it was"
     );
     assert!(!fixture.root.join("state/build-effect").exists());
+    assert_no_builder_effects(&fixture, "alias refusal precedes builder effects");
     fixture.assert_preserved();
 }
 
@@ -2576,6 +2588,7 @@ fn concurrent_staged_callers_have_no_second_effect() {
         .task()
         .expect("the caller builds once the lock is free");
     assert_eq!(fixture.build_source(), plan.source);
+    assert_activations(&fixture, 0, "the already-active builder is reused");
     let calls = fixture.calls();
     let execs = calls
         .iter()
@@ -2651,6 +2664,9 @@ fn staged_source_builds_beside_a_foreign_531_builder_without_touching_it() {
         artifact.is_file(),
         "the verified artifact reached the caller"
     );
+    assert_builds(&fixture, 1, "the owned staged source builds once");
+    verify_guest_artifact(&artifact, LinuxWorkspaceTarget::X86_64Gnu)
+        .expect("the copied artifact's receipt and digest verify");
     fixture.assert_preserved();
 }
 
@@ -2734,6 +2750,27 @@ fn private_build_count(root: &Path) -> usize {
         .count()
 }
 
+fn assert_builder_effects(fixture: &Fixture, activations: usize, builds: usize, context: &str) {
+    assert_eq!(fixture.activation_count(), activations, "{context}");
+    assert_eq!(private_build_count(&fixture.root), builds, "{context}");
+}
+
+fn assert_activations(fixture: &Fixture, expected: usize, context: &str) {
+    assert_eq!(fixture.activation_count(), expected, "{context}");
+}
+
+fn assert_builds(fixture: &Fixture, expected: usize, context: &str) {
+    assert_eq!(private_build_count(&fixture.root), expected, "{context}");
+}
+
+fn assert_no_builder_effects(fixture: &Fixture, context: &str) {
+    assert_builder_effects(fixture, 0, 0, context);
+    assert!(
+        fixture.calls().iter().flatten().all(|arg| arg != "exec"),
+        "{context}"
+    );
+}
+
 /// Two automatic acquisition callers in one checkout run at once. The maintained
 /// freshness and single-flight locks let exactly one of them build, and the
 /// other hands off the artifact that build produced.
@@ -2806,6 +2843,7 @@ fn staged_source_refuses_an_edit_made_while_snapshotting() {
             || effigy_containers::artifact_source::StageManifest::read(&plan).is_ok(),
         "no half-written record is left behind"
     );
+    assert_no_builder_effects(&fixture, "snapshot refusal precedes builder effects");
     fixture.assert_preserved();
 }
 
@@ -3073,8 +3111,7 @@ fn created_builder_under_docker_refuses_without_transition() {
     fixture.retain_created_pre_staging();
     let error = fixture.task().expect_err("docker never-started");
     assert!(error.contains("Colima nerdctl"), "{error}");
-    assert_eq!(fixture.activation_count(), 0);
-    assert_eq!(private_build_count(&fixture.root), 0);
+    assert_no_builder_effects(&fixture, "Docker refuses a created Colima builder");
     fixture.assert_preserved();
 }
 
@@ -3091,7 +3128,6 @@ fn created_builder_started_before_transition_is_not_targeted() {
         .task()
         .expect_err("a started builder is not replaced");
     assert!(error.contains("never-started"), "{error}");
-    assert_eq!(fixture.activation_count(), 0, "{error}");
-    assert_eq!(private_build_count(&fixture.root), 0, "{error}");
+    assert_no_builder_effects(&fixture, &error);
     fixture.assert_preserved();
 }

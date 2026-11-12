@@ -1328,15 +1328,7 @@ mod capture_deadline_tests {
             .recv_timeout(Duration::from_secs(30))
             .expect("bounded capture settles after the controlled expiry")
             .expect_err("parked health workload must hit the deadline");
-        let rendered = error.to_string();
-        assert!(
-            rendered.contains("timed out"),
-            "expected timeout, got {rendered}"
-        );
-        assert!(
-            rendered.contains("/bin/sh"),
-            "the refusal must name the owned command: {rendered}"
-        );
+        assert_command_deadline_refusal(error, "/bin/sh");
 
         // Real wall bound for cleanup: the recorded writer generation must be
         // gone after the deadline's owned-group termination.
@@ -1373,7 +1365,7 @@ mod capture_deadline_tests {
         );
 
         let error = capture_command_until_refusal(temp.path(), &script, deadline);
-        assert!(error.contains("timed out"), "expected timeout, got {error}");
+        assert_command_deadline_refusal(error, "/bin/sh");
         assert!(
             !record.exists() && !marker.exists(),
             "an expired deadline must never spawn the health workload"
@@ -1387,37 +1379,24 @@ mod capture_deadline_tests {
         root: &std::path::Path,
         script: &str,
         deadline: Instant,
-    ) -> String {
-        match run_command_capture_until(
+    ) -> RunnerError {
+        run_command_capture_until(
             root,
             OsStr::new("/bin/sh"),
             &[OsString::from("-c"), OsString::from(script)],
             None,
             Some(deadline),
-        ) {
-            Ok(_) => "unexpectedly completed".to_owned(),
-            Err(error) => error.to_string(),
-        }
+        )
+        .expect_err("expired deadline must refuse before spawn")
     }
 
-    #[test]
-    fn run_command_capture_until_expired_deadline_does_not_spawn() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let deadline = Instant::now()
-            .checked_sub(Duration::from_secs(1))
-            .expect("deadline");
-        let error = run_command_capture_until(
-            temp.path(),
-            OsStr::new("/definitely-not-a-binary-effigy-deadline-probe"),
-            &[],
-            None,
-            Some(deadline),
-        )
-        .expect_err("expired deadline must fail closed");
-        assert!(
-            error.to_string().contains("timed out"),
-            "expected timeout, got {error}"
-        );
+    #[cfg(unix)]
+    fn assert_command_deadline_refusal(error: RunnerError, command: &str) {
+        let RunnerError::TaskInvocation(message) = error else {
+            panic!("expected typed command deadline refusal");
+        };
+        assert!(message.starts_with(command), "{message}");
+        assert!(message.ends_with("timed out"), "{message}");
     }
 
     #[cfg(unix)]
@@ -1433,10 +1412,7 @@ mod capture_deadline_tests {
             Some(Instant::now() + Duration::from_millis(250)),
         )
         .expect_err("hung child must time out");
-        assert!(
-            error.to_string().contains("timed out"),
-            "expected timeout, got {error}"
-        );
+        assert_command_deadline_refusal(error, "/bin/sleep");
         assert!(
             started.elapsed() < Duration::from_secs(5),
             "deadline must kill the child instead of waiting out sleep 30"
@@ -1461,7 +1437,7 @@ mod capture_deadline_tests {
             Some(Instant::now() + Duration::from_millis(300)),
         )
         .expect_err("deadline covers final drain after leader exit");
-        assert!(error.to_string().contains("timed out"));
+        assert_command_deadline_refusal(error, "/bin/sh");
         assert!(started.elapsed() < Duration::from_secs(2));
         thread::sleep(Duration::from_secs(2));
         assert!(!marker.exists(), "legacy writer survived cancellation");
@@ -1691,12 +1667,11 @@ mod credential_bootstrap_tests {
             "the bootstrap must embed the resolved runtime path: {}",
             args[1]
         );
+        assert_eq!(calls, "call exec -e MYSQL_PWD abc mysql\nenv MYSQL_PWD\n");
         assert!(
-            calls.contains("call exec -e MYSQL_PWD abc mysql"),
-            "{calls}"
+            !calls.contains(PASSWORD),
+            "credential in runtime trace: {calls}"
         );
-        assert!(!calls.contains(PASSWORD), "credential in argv: {calls}");
-        assert!(calls.contains("env MYSQL_PWD"), "{calls}");
     }
 
     /// A fallback-only install — an application-bundle executable with no
@@ -1731,12 +1706,14 @@ mod credential_bootstrap_tests {
             "the bootstrap must run the bundle runtime: {}",
             args[1]
         );
-        assert!(
-            calls.contains("call exec -e PGPASSWORD abc pg_dump"),
-            "{calls}"
+        assert_eq!(
+            calls,
+            "call exec -e PGPASSWORD abc pg_dump\nenv PGPASSWORD\n"
         );
-        assert!(!calls.contains(PASSWORD), "credential in argv: {calls}");
-        assert!(calls.contains("env PGPASSWORD"), "{calls}");
+        assert!(
+            !calls.contains(PASSWORD),
+            "credential in runtime trace: {calls}"
+        );
     }
 
     #[test]

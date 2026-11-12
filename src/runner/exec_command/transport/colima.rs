@@ -899,6 +899,16 @@ mod tests {
         });
 
         assert_eq!(resolved, "demo-stack-workspace-1");
+        let trace = std::fs::read_to_string(&tracefile).expect("runtime argv trace");
+        let argv = trace
+            .lines()
+            .filter(|line| line.starts_with("argv: "))
+            .collect::<Vec<_>>();
+        assert_eq!(argv.len(), 2, "both probes invoke the runtime");
+        assert!(argv.iter().all(|line| line.contains(
+            "nerdctl --profile effigy -- ps --filter label=com.docker.compose.project=demo-stack --format "
+        )), "{argv:?}");
+        assert_eq!(argv[0], argv[1], "both probes use the same argv");
         // Both the warmup and the bounded proof call must have spawned the
         // fixture through the production path: no cache stands between them.
         assert_eq!(

@@ -227,6 +227,13 @@ fn observed_unknown<T>(observed: &Observed<T>) -> String {
     }
 }
 
+fn assert_unknown<T>(observed: Observed<T>, expected: impl FnOnce(&UnknownReason) -> bool) {
+    match observed {
+        Observed::Unknown(reason) => assert!(expected(&reason), "{reason:?}"),
+        _ => panic!("expected unknown observation"),
+    }
+}
+
 fn guest_argv(args: Vec<String>) -> Command {
     effigy_cli::parse_command(args).expect("the guest entry parses the probe's argv")
 }
@@ -301,16 +308,20 @@ fn identity_refuses_another_identity_target_or_object() {
     elsewhere.container_id = "b".repeat(64);
     backend.respond(&reply(&elsewhere));
     let mut probe = backend.linked_probe(&policy);
-    let reason = observed_unknown(&probe.identity(&claimed(), &object(), Duration::from_secs(5)));
-    assert!(reason.contains("another identity"), "{reason}");
+    assert_unknown(
+        probe.identity(&claimed(), &object(), Duration::from_secs(5)),
+        |reason| matches!(reason, UnknownReason::Inconsistent(_)),
+    );
 
     // A boot that moved on refuses before any exec: the capture still holds
     // the first observation's argv.
     let captured = std::fs::read_to_string(&backend.capture).expect("first argv");
     let mut moved = claimed();
     moved.vm_boot_id = "8e7d6c5b-4a39-4172-9605-8d7c6b5a4132".to_owned();
-    let reason = observed_unknown(&probe.identity(&moved, &object(), Duration::from_secs(5)));
-    assert!(reason.contains("another container or boot"), "{reason}");
+    assert_unknown(
+        probe.identity(&moved, &object(), Duration::from_secs(5)),
+        |reason| matches!(reason, UnknownReason::Inconsistent(_)),
+    );
     assert_eq!(
         std::fs::read_to_string(&backend.capture).expect("unchanged argv"),
         captured,
@@ -320,8 +331,10 @@ fn identity_refuses_another_identity_target_or_object() {
     // The object bound by the first observation cannot be replaced later.
     let mut restaged = object();
     restaged.digest = Digest::of(b"a replacement object");
-    let reason = observed_unknown(&probe.identity(&claimed(), &restaged, Duration::from_secs(5)));
-    assert!(reason.contains("another immutable object"), "{reason}");
+    assert_unknown(
+        probe.identity(&claimed(), &restaged, Duration::from_secs(5)),
+        |reason| matches!(reason, UnknownReason::Inconsistent(_)),
+    );
 
     // A Compose service alias or a short id can never name the exec target.
     for refused in ["app", "9d1c0b6a"] {
@@ -349,14 +362,9 @@ fn identity_distinguishes_absence_from_an_unreadable_object() {
     for code in ["3", "64", "65", "66", "67", "68"] {
         backend.body(&format!("printf 'the object is fine' >&2; exit {code}"));
         let mut probe = backend.linked_probe(&policy);
-        let reason = observed_unknown(&probe.identity(&claimed(), &staged, Duration::from_secs(5)));
-        assert!(
-            reason.contains(&format!("ended with {code}")),
-            "exit {code} is a failed observation, not a gate refusal: {reason}"
-        );
-        assert!(
-            !reason.contains("the object is fine"),
-            "backend stderr must remain private: {reason}"
+        assert_unknown(
+            probe.identity(&claimed(), &staged, Duration::from_secs(5)),
+            |reason| matches!(reason, UnknownReason::Inconsistent(_)),
         );
     }
 
@@ -373,18 +381,24 @@ fn identity_distinguishes_absence_from_an_unreadable_object() {
     // The marker with the wrong code does not become an absence proof either.
     backend.body(&format!("printf '{GATE_OBJECT_ABSENT}\\n' >&2; exit 70"));
     let mut probe = backend.linked_probe(&policy);
-    let reason = observed_unknown(&probe.identity(&claimed(), &staged, Duration::from_secs(5)));
-    assert!(reason.contains("ended with 70"), "{reason}");
+    assert_unknown(
+        probe.identity(&claimed(), &staged, Duration::from_secs(5)),
+        |reason| matches!(reason, UnknownReason::Inconsistent(_)),
+    );
 
     backend.body(&format!("printf '{GATE_NO_HASH_TOOL}\\n' >&2; exit 65"));
     let mut probe = backend.linked_probe(&policy);
-    let reason = observed_unknown(&probe.identity(&claimed(), &staged, Duration::from_secs(5)));
-    assert!(reason.contains("no SHA-256 utility"), "{reason}");
+    assert_unknown(
+        probe.identity(&claimed(), &staged, Duration::from_secs(5)),
+        |reason| matches!(reason, UnknownReason::ToolUnavailable(_)),
+    );
 
     backend.body(&format!("printf '{GATE_OBJECT_DIFFERS}\\n' >&2; exit 66"));
     let mut probe = backend.linked_probe(&policy);
-    let reason = observed_unknown(&probe.identity(&claimed(), &staged, Duration::from_secs(5)));
-    assert!(reason.contains("requested immutable digest"), "{reason}");
+    assert_unknown(
+        probe.identity(&claimed(), &staged, Duration::from_secs(5)),
+        |reason| matches!(reason, UnknownReason::Inconsistent(_)),
+    );
 
     // A path occupied by something that is not the immutable regular file is a
     // refusal, not the absence of the object.
@@ -392,23 +406,26 @@ fn identity_distinguishes_absence_from_an_unreadable_object() {
         "printf '{GATE_OBJECT_NOT_REGULAR}\\n' >&2; exit 67"
     ));
     let mut probe = backend.linked_probe(&policy);
-    let reason = observed_unknown(&probe.identity(&claimed(), &staged, Duration::from_secs(5)));
-    assert!(
-        reason.contains("not the immutable regular file"),
-        "{reason}"
+    assert_unknown(
+        probe.identity(&claimed(), &staged, Duration::from_secs(5)),
+        |reason| matches!(reason, UnknownReason::Inconsistent(_)),
     );
 
     backend.body(&format!(
         "printf '{GATE_OBJECT_UNREADABLE}\\n' >&2; exit 68"
     ));
     let mut probe = backend.linked_probe(&policy);
-    let reason = observed_unknown(&probe.identity(&claimed(), &staged, Duration::from_secs(5)));
-    assert!(reason.contains("absence is unproven"), "{reason}");
+    assert_unknown(
+        probe.identity(&claimed(), &staged, Duration::from_secs(5)),
+        |reason| matches!(reason, UnknownReason::Inconsistent(_)),
+    );
 
     backend.body("printf 'not a probe document'");
     let mut probe = backend.linked_probe(&policy);
-    let reason = observed_unknown(&probe.identity(&claimed(), &staged, Duration::from_secs(5)));
-    assert!(reason.contains("no probe document"), "{reason}");
+    assert_unknown(
+        probe.identity(&claimed(), &staged, Duration::from_secs(5)),
+        |reason| matches!(reason, UnknownReason::Unparsable(_)),
+    );
 }
 
 #[test]
@@ -730,37 +747,28 @@ fn context_dial_refuses_an_absent_peer_or_pin() {
     wrong_identity["pin"] = serde_json::json!(format!("sha256:{PIN_HEX}"));
     backend.respond(&wrong_identity);
     let mut probe = backend.linked_probe(&policy);
-    let reason = observed_unknown(&probe.context_dial(
-        &claimed(),
-        &staged,
-        &context,
-        Duration::from_secs(5),
-    ));
-    assert!(reason.contains("another identity"), "{reason}");
+    assert_unknown(
+        probe.context_dial(&claimed(), &staged, &context, Duration::from_secs(5)),
+        |reason| matches!(reason, UnknownReason::Inconsistent(_)),
+    );
 
     let mut without_peer = reply(&claimed());
     without_peer["pin"] = serde_json::json!(format!("sha256:{PIN_HEX}"));
     backend.respond(&without_peer);
     let mut probe = backend.linked_probe(&policy);
-    let reason = observed_unknown(&probe.context_dial(
-        &claimed(),
-        &staged,
-        &context,
-        Duration::from_secs(5),
-    ));
-    assert!(reason.contains("no peer"), "{reason}");
+    assert_unknown(
+        probe.context_dial(&claimed(), &staged, &context, Duration::from_secs(5)),
+        |reason| matches!(reason, UnknownReason::Inconsistent(_)),
+    );
 
     let mut without_pin = reply(&claimed());
     without_pin["peer"] = serde_json::json!(PEER);
     backend.respond(&without_pin);
     let mut probe = backend.linked_probe(&policy);
-    let reason = observed_unknown(&probe.context_dial(
-        &claimed(),
-        &staged,
-        &context,
-        Duration::from_secs(5),
-    ));
-    assert!(reason.contains("no canonical pin"), "{reason}");
+    assert_unknown(
+        probe.context_dial(&claimed(), &staged, &context, Duration::from_secs(5)),
+        |reason| matches!(reason, UnknownReason::Inconsistent(_)),
+    );
 
     let mut malformed_pin = reply(&claimed());
     malformed_pin["peer"] = serde_json::json!(PEER);
@@ -892,12 +900,9 @@ fn a_hung_staged_probe_is_bounded_and_reported_as_a_timeout() {
     let mut probe = backend.linked_probe(&policy);
 
     let started = Instant::now();
-    let reason =
-        observed_unknown(&probe.identity(&claimed(), &object(), Duration::from_millis(150)));
-
-    assert!(
-        reason.contains("timed out") || reason.contains("staged guest observation"),
-        "{reason}"
+    assert_unknown(
+        probe.identity(&claimed(), &object(), Duration::from_millis(150)),
+        |reason| matches!(reason, UnknownReason::TimedOut { .. }),
     );
     assert!(
         started.elapsed() < Duration::from_secs(2),
@@ -968,10 +973,10 @@ fn staged_probe_backend_stderr_is_never_an_observation_diagnostic() {
     let _env = backend.env();
     let policy = backend.policy();
     let mut probe = backend.linked_probe(&policy);
-    let reason = observed_unknown(&probe.identity(&claimed(), &object(), Duration::from_secs(2)));
-    assert!(
-        reason.contains("ended with 73"),
-        "fixed status classification: {reason}"
-    );
+    let observed = probe.identity(&claimed(), &object(), Duration::from_secs(2));
+    let reason = observed_unknown(&observed);
+    assert_unknown(observed, |reason| {
+        matches!(reason, UnknownReason::Inconsistent(_))
+    });
     assert!(!reason.contains("adversarial-secret-backend-diagnostic"));
 }

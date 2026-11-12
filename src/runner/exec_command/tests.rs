@@ -158,7 +158,7 @@ fn resolve_exec_working_dir_prefers_exec_config() {
 }
 
 #[test]
-fn build_alias_table_resolves_multi_word_aliases() {
+fn build_alias_table_resolves_config_and_string_aliases() {
     let aliases = build_alias_table(&ManifestContainerConfig {
         checkout_scoped_identity: false,
         workspace_source: None,
@@ -172,15 +172,21 @@ fn build_alias_table_resolves_multi_word_aliases() {
         primary_service: Some("app".to_owned()),
         services: Default::default(),
         working_dir: None,
-        aliases: [(
-            "artisan".to_owned(),
-            effigy_manifest::ManifestContainerExecAliasConfig::Config(
-                effigy_manifest::ManifestContainerExecAliasTableConfig {
-                    service: "app".to_owned(),
-                    command: Some("php artisan".to_owned()),
-                },
+        aliases: [
+            (
+                "artisan".to_owned(),
+                effigy_manifest::ManifestContainerExecAliasConfig::Config(
+                    effigy_manifest::ManifestContainerExecAliasTableConfig {
+                        service: "app".to_owned(),
+                        command: Some("php artisan".to_owned()),
+                    },
+                ),
             ),
-        )]
+            (
+                "psql".to_owned(),
+                effigy_manifest::ManifestContainerExecAliasConfig::Service("postgres".to_owned()),
+            ),
+        ]
         .into_iter()
         .collect(),
         dns: None,
@@ -200,46 +206,9 @@ fn build_alias_table_resolves_multi_word_aliases() {
         resolved.command,
         vec!["php".to_owned(), "artisan".to_owned(), "migrate".to_owned()]
     );
-}
-
-#[test]
-fn build_alias_table_defaults_command_to_alias_name_for_string_entries() {
-    let aliases = build_alias_table(&ManifestContainerConfig {
-        checkout_scoped_identity: false,
-        workspace_source: None,
-        share_runtime_identity: false,
-        driver: None,
-        startup: None,
-        profile: None,
-        compose_file: Some("infra/dev/docker-compose.yml".to_owned()),
-        project_name: None,
-        data_from: None,
-        primary_service: Some("app".to_owned()),
-        services: Default::default(),
-        working_dir: None,
-        aliases: [(
-            "psql".to_owned(),
-            effigy_manifest::ManifestContainerExecAliasConfig::Service("postgres".to_owned()),
-        )]
-        .into_iter()
-        .collect(),
-        dns: None,
-        lifecycle: None,
-        health: None,
-        secrets: None,
-        host: None,
-        data: None,
-        host_processes: Vec::new(),
-    })
-    .expect("alias table");
-    let resolved = aliases
-        .resolve_command("psql", &["-U".to_owned(), "dev".to_owned()])
-        .expect("alias");
+    let resolved = aliases.resolve_command("psql", &[]).expect("string alias");
     assert_eq!(resolved.service, "postgres");
-    assert_eq!(
-        resolved.command,
-        vec!["psql".to_owned(), "-U".to_owned(), "dev".to_owned()]
-    );
+    assert_eq!(resolved.command, ["psql"]);
 }
 
 #[test]
@@ -391,6 +360,10 @@ fn parse_compose_exec_args_defaults_to_tty_when_not_disabled() {
 
     assert!(parsed.tty);
     assert_eq!(parsed.service, "workspace");
+    assert_eq!(parsed.working_dir, Some(OsString::from("/workspace")));
+    assert_eq!(parsed.user, None);
+    assert!(parsed.env.is_empty());
+    assert_eq!(parsed.command, ["sh", "-lc", "pwd"].map(OsString::from));
 }
 
 #[test]
@@ -524,7 +497,7 @@ fn copy_file_into_service_invocation_prefers_policy_backend_over_installed_docke
         "EFFIGY_COMPOSE_BACKEND",
         Some("docker".into()),
     )]);
-    let (_, args, stdin_file) = copy_file_into_service_invocation(
+    let (program, args, stdin_file) = copy_file_into_service_invocation(
         &temp_dir,
         &test_policy(),
         "exact-target",
@@ -532,21 +505,23 @@ fn copy_file_into_service_invocation_prefers_policy_backend_over_installed_docke
         "/tmp/stage",
     )
     .unwrap();
+    assert_eq!(program, "docker");
     assert!(stdin_file.is_none());
-    assert!(args.ends_with(&[
-        "cp".into(),
-        "/host/artifact".into(),
-        "exact-target:/tmp/stage".into()
-    ]));
+    assert_eq!(
+        args,
+        ["cp", "/host/artifact", "exact-target:/tmp/stage"].map(OsString::from)
+    );
 }
 
 #[test]
 fn build_routed_task_exec_args_raw_exec_emits_single_workdir_flag() {
+    let strategy = effigy_exec::ExecStrategy::RawExec {
+        working_dir: "/tmp/work".to_owned(),
+        command: vec!["sh".to_owned(), "-lc".to_owned(), "pwd".to_owned()],
+    };
+    assert!(!strategy_requires_workspace_effigy_install(&strategy));
     let args = build_routed_task_exec_args(
-        &effigy_exec::ExecStrategy::RawExec {
-            working_dir: "/tmp/work".to_owned(),
-            command: vec!["sh".to_owned(), "-lc".to_owned(), "pwd".to_owned()],
-        },
+        &strategy,
         None,
         None,
         None,
@@ -576,10 +551,12 @@ fn build_routed_task_exec_args_raw_exec_emits_single_workdir_flag() {
 
 #[test]
 fn build_routed_task_exec_args_handoff_uses_installed_effigy_path() {
+    let strategy = effigy_exec::ExecStrategy::Handoff {
+        args: vec!["tasks".to_owned(), "--json".to_owned()],
+    };
+    assert!(strategy_requires_workspace_effigy_install(&strategy));
     let args = build_routed_task_exec_args(
-        &effigy_exec::ExecStrategy::Handoff {
-            args: vec!["tasks".to_owned(), "--json".to_owned()],
-        },
+        &strategy,
         None,
         None,
         None,
@@ -648,21 +625,6 @@ fn build_routed_task_exec_args_uses_workspace_identity_for_host_dispatched_tasks
     assert!(args
         .windows(2)
         .any(|window| window == ["-e", "HOME=/home/dev"]));
-}
-
-#[test]
-fn handoff_strategy_requires_workspace_effigy_install() {
-    assert!(strategy_requires_workspace_effigy_install(
-        &effigy_exec::ExecStrategy::Handoff {
-            args: vec!["tasks".to_owned()],
-        }
-    ));
-    assert!(!strategy_requires_workspace_effigy_install(
-        &effigy_exec::ExecStrategy::RawExec {
-            working_dir: "/workspace".to_owned(),
-            command: vec!["sh".to_owned(), "-lc".to_owned(), "pwd".to_owned()],
-        }
-    ));
 }
 
 #[test]
@@ -749,7 +711,7 @@ fn build_alias_table_renders_service_param_templates() {
 }
 
 #[test]
-fn resolve_default_exec_surface_reports_missing_container_registry_with_typed_error() {
+fn resolve_default_exec_surface_reports_missing_registry_and_target_with_typed_errors() {
     let root = temp_repo("missing-container-registry");
     fs::write(root.join("effigy.toml"), "").expect("write manifest");
 
@@ -758,10 +720,7 @@ fn resolve_default_exec_surface_reports_missing_container_registry_with_typed_er
         error,
         RunnerError::ContainerSurfaceRegistryMissing
     ));
-}
 
-#[test]
-fn resolve_default_exec_surface_reports_missing_default_target_with_typed_error() {
     let root = temp_repo("missing-default-target");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
     fs::write(
@@ -829,6 +788,9 @@ container = "web"
 
     let surface = resolve_default_exec_surface(&root).expect("surface");
     assert_eq!(surface.container_name, "web");
+    assert_eq!(surface.policy.name, "web");
+    assert_eq!(surface.policy.primary_service, "app");
+    assert_eq!(surface.policy.repo_root, root);
 }
 
 #[test]
@@ -868,10 +830,7 @@ working_dir = "/var/www/html"
         } => {
             assert_eq!(phase, "policy load");
             assert_eq!(container, "web");
-            assert!(
-                detail.contains("missing.yml") || detail.contains("compose"),
-                "got: {detail}"
-            );
+            assert!(detail.contains("infra/dev/missing.yml"), "got: {detail}");
         }
         other => panic!("unexpected error variant: {other}"),
     }
