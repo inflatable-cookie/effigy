@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -27,34 +27,6 @@ pub use signal::{
     terminate_process_tree,
 };
 const PROCESS_GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_millis(800);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProcessGroupEvent {
-    Started(u32),
-    Stopped(u32),
-}
-
-pub type ProcessGroupObserver = Arc<dyn Fn(ProcessGroupEvent) + Send + Sync + 'static>;
-
-static PROCESS_GROUP_OBSERVER: OnceLock<Mutex<Option<ProcessGroupObserver>>> = OnceLock::new();
-
-pub fn replace_process_group_observer(
-    observer: Option<ProcessGroupObserver>,
-) -> Option<ProcessGroupObserver> {
-    let mut active = PROCESS_GROUP_OBSERVER
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    std::mem::replace(&mut *active, observer)
-}
-
-pub fn process_group_observer_active() -> bool {
-    PROCESS_GROUP_OBSERVER
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .is_some()
-}
 
 /// Return the process group that currently contains `pid` on Unix.
 ///
@@ -81,28 +53,6 @@ pub fn process_group_id(pid: u32) -> std::io::Result<i32> {
             std::io::ErrorKind::Unsupported,
             "process groups are unavailable on this platform",
         ))
-    }
-}
-
-pub fn notify_process_group_started(pid: u32) -> bool {
-    notify_process_group_event(ProcessGroupEvent::Started(pid))
-}
-
-pub fn notify_process_group_stopped(pid: u32) -> bool {
-    notify_process_group_event(ProcessGroupEvent::Stopped(pid))
-}
-
-fn notify_process_group_event(event: ProcessGroupEvent) -> bool {
-    let observer = PROCESS_GROUP_OBSERVER
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone();
-    if let Some(observer) = observer {
-        observer(event);
-        true
-    } else {
-        false
     }
 }
 
@@ -230,8 +180,6 @@ impl ProcessSupervisor {
 
         for spec in processes {
             let child = lifecycle::spawn_process_instance(&spec, &events_tx, true)?;
-            let child_pid = crate::locks::lock_tolerant(&child).id();
-            notify_process_group_started(child_pid);
             specs_map.insert(spec.name.clone(), spec.clone());
             process_map.insert(spec.name.clone(), child);
         }
@@ -278,8 +226,6 @@ impl ProcessSupervisor {
                 });
                 match lifecycle::spawn_process_instance(&spec, &worker_events_tx, false) {
                     Ok(child) => {
-                        let child_pid = crate::locks::lock_tolerant(&child).id();
-                        crate::notify_process_group_started(child_pid);
                         crate::locks::lock_tolerant(&worker_process_map)
                             .insert(spec.name.clone(), child);
                         let _ = worker_events_tx.send(ProcessEvent {
@@ -350,16 +296,6 @@ impl ProcessSupervisor {
     pub fn exit_diagnostics(&self) -> Vec<(String, String)> {
         let process_map = crate::locks::lock_tolerant(&self.processes);
         collect_exit_diagnostics(&self.specs, &process_map)
-    }
-
-    pub fn process_ids(&self) -> Vec<(String, u32)> {
-        let process_map = crate::locks::lock_tolerant(&self.processes);
-        let mut ids = process_map
-            .iter()
-            .map(|(name, child)| (name.clone(), crate::locks::lock_tolerant(child).id()))
-            .collect::<Vec<_>>();
-        ids.sort_by(|left, right| left.0.cmp(&right.0));
-        ids
     }
 }
 

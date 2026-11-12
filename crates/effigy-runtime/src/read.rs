@@ -22,10 +22,6 @@ use effigy_containers::{
     ContainerStatsService, ContainerStatusService, EffectiveContainerPolicy,
 };
 use effigy_containers::{ContainerAction, ContainerRuntimeState};
-use effigy_containers::{
-    ContainerOperationKind, ContainerOperationPlan, ContainerOperationRequest,
-    ContainerReadOperation,
-};
 
 use crate::container_manager::{
     compose_invocation_plan, lifecycle_operation_report, runtime_invocation_plan,
@@ -48,8 +44,6 @@ pub fn run_container_status(
 ) -> Result<String, EffigyRuntimeError> {
     let policy = load_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    let _operation_plan =
-        read_operation_plan(repo_root, &policy, ContainerReadOperation::status(false));
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     // Status is a read surface: it reports state and, when the renderer never
@@ -185,11 +179,6 @@ pub fn run_container_logs(
 
     let policy = load_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    let _operation_plan = read_operation_plan(
-        repo_root,
-        &policy,
-        ContainerReadOperation::logs(service.map(str::to_owned), follow),
-    );
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     // Logs attach to an already-running stack; the apply-time backend
@@ -281,14 +270,7 @@ pub fn run_container_logs(
 pub fn run_container_status_all(output_json: bool) -> Result<String, EffigyRuntimeError> {
     let environments = discover_running_environments()?
         .into_iter()
-        .map(|environment| {
-            let _operation_plan = read_operation_plan(
-                Path::new(&environment.repo_root),
-                &environment.policy,
-                ContainerReadOperation::status(true),
-            );
-            environment_status_entry(&environment)
-        })
+        .map(|environment| environment_status_entry(&environment))
         .collect::<Vec<_>>();
 
     Ok(render_container_report(
@@ -304,13 +286,6 @@ pub fn run_container_status_under_path(
 ) -> Result<String, EffigyRuntimeError> {
     let environments =
         filter_running_environments_for_scope(discover_running_environments()?, scope_root, name);
-    for environment in &environments {
-        let _operation_plan = read_operation_plan(
-            Path::new(&environment.repo_root),
-            &environment.policy,
-            ContainerReadOperation::status(true),
-        );
-    }
     Ok(render_container_report(
         status_global_report(
             &environments
@@ -325,11 +300,6 @@ pub fn run_container_status_under_path(
 pub fn run_container_stats_all(output_json: bool) -> Result<String, EffigyRuntimeError> {
     let environments = discover_running_environments()?;
     for environment in &environments {
-        let _operation_plan = read_operation_plan(
-            Path::new(&environment.repo_root),
-            &environment.policy,
-            ContainerReadOperation::stats(true),
-        );
         let _manager_report = lifecycle_operation_report(
             Path::new(&environment.repo_root),
             &environment.policy,
@@ -406,26 +376,6 @@ pub fn run_container_stats_all(output_json: bool) -> Result<String, EffigyRuntim
         stats_global_report(&environments, stats_warning.as_deref()),
         output_json,
     ))
-}
-
-pub fn read_operation_plan(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    operation: ContainerReadOperation,
-) -> ContainerOperationPlan {
-    ContainerOperationRequest::new(
-        repo_root.to_path_buf(),
-        policy.name.clone(),
-        ContainerOperationKind::read(operation),
-    )
-    .backend_id(read_backend_id(policy))
-    .plan()
-}
-
-fn read_backend_id(policy: &EffectiveContainerPolicy) -> &'static str {
-    match policy.driver {
-        effigy_manifest::ManifestContainerDriver::Colima => "colima",
-    }
 }
 
 /// A status line says a service is unhealthy; the service's own check says

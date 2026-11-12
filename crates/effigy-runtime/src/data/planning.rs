@@ -1,72 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
 
 use effigy_catalog::volumes::{
     verify_volume_identity, CacheVolumeKind, RuntimeVolumeMetadata, VolumeIdentity,
 };
-use effigy_containers::{ContainerCacheGlobalEntry, EffectiveContainerPolicy};
-use effigy_containers::{
-    ContainerCacheOperation, ContainerDataOperation, ContainerOperationKind,
-    ContainerOperationPlan, ContainerOperationRequest, ContainerVolumeOperation,
-};
+use effigy_containers::ContainerCacheGlobalEntry;
 
 use crate::EffigyRuntimeError;
-
-pub fn data_operation_plan(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    operation: ContainerDataOperation,
-) -> ContainerOperationPlan {
-    ContainerOperationRequest::new(
-        repo_root.to_path_buf(),
-        policy.name.clone(),
-        ContainerOperationKind::data(operation),
-    )
-    .backend_id(data_backend_id(policy))
-    .plan()
-}
-
-pub fn cache_operation_plan(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    operation: ContainerCacheOperation,
-) -> ContainerOperationPlan {
-    ContainerOperationRequest::new(
-        repo_root.to_path_buf(),
-        policy.name.clone(),
-        ContainerOperationKind::cache(operation),
-    )
-    .backend_id(data_backend_id(policy))
-    .plan()
-}
-
-pub fn global_cache_operation_plan(
-    cwd: &Path,
-    profile: &str,
-    operation: ContainerCacheOperation,
-) -> ContainerOperationPlan {
-    ContainerOperationRequest::new(
-        cwd.to_path_buf(),
-        format!("profile:{profile}"),
-        ContainerOperationKind::cache(operation),
-    )
-    .backend_id("colima")
-    .plan()
-}
-
-pub fn global_volume_operation_plan(
-    cwd: &Path,
-    profile: &str,
-    operation: ContainerVolumeOperation,
-) -> ContainerOperationPlan {
-    ContainerOperationRequest::new(
-        cwd.to_path_buf(),
-        format!("profile:{profile}"),
-        ContainerOperationKind::volume(operation),
-    )
-    .backend_id("colima")
-    .plan()
-}
 
 pub(super) fn cache_kind_label(kind: CacheVolumeKind) -> &'static str {
     match kind {
@@ -184,12 +123,6 @@ pub(super) fn parse_volume_cache_kind_rows(stdout: &str) -> BTreeMap<String, Str
             Some((mount_point.to_owned(), kind.to_owned()))
         })
         .collect()
-}
-
-fn data_backend_id(policy: &EffectiveContainerPolicy) -> &'static str {
-    match policy.driver {
-        effigy_manifest::ManifestContainerDriver::Colima => "colima",
-    }
 }
 
 fn project_name_from_volume_name(name: &str) -> Option<String> {
