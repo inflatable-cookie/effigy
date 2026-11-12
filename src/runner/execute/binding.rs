@@ -308,45 +308,27 @@ mod tests {
     }
 
     #[test]
-    fn standard_routing_inline_capability_error_is_stable() {
-        let error = ensure_inline_workspace_supported(
-            &inline_binding(),
-            InlineWorkspaceCapabilitySurface::StandardTaskRouting { task_name: "build" },
-        )
-        .expect_err("inline binding should be rejected");
+    fn inline_capability_refusals_are_specific_to_each_surface() {
+        let cases = [
+            (
+                InlineWorkspaceCapabilitySurface::StandardTaskRouting { task_name: "build" },
+                "task `build` uses an inline workspace container, but standard task routing does not support inline workspace containers yet",
+            ),
+            (
+                InlineWorkspaceCapabilitySurface::ManagedAttachedSession { task_name: "dev" },
+                "task `dev` uses an inline workspace container, but non-managed attached container sessions do not support inline workspace containers yet",
+            ),
+            (
+                InlineWorkspaceCapabilitySurface::PublicWorkspaceCommand { surface: "workspace" },
+                "`effigy workspace` does not support inline workspace containers yet",
+            ),
+        ];
 
-        assert!(error
-            .to_string()
-            .contains("standard task routing does not support inline workspace containers yet"));
-    }
-
-    #[test]
-    fn managed_attached_inline_capability_error_is_stable() {
-        let error = ensure_inline_workspace_supported(
-            &inline_binding(),
-            InlineWorkspaceCapabilitySurface::ManagedAttachedSession { task_name: "dev" },
-        )
-        .expect_err("inline binding should be rejected");
-
-        assert!(error.to_string().contains(
-            "non-managed attached container sessions do not support inline workspace containers yet"
-        ));
-    }
-
-    #[test]
-    fn public_workspace_inline_capability_error_is_stable() {
-        let error = ensure_inline_workspace_supported(
-            &inline_binding(),
-            InlineWorkspaceCapabilitySurface::PublicWorkspaceCommand {
-                surface: "workspace",
-            },
-        )
-        .expect_err("inline binding should be rejected");
-
-        assert_eq!(
-            error.to_string(),
-            "`effigy workspace` does not support inline workspace containers yet"
-        );
+        for (surface, expected) in cases {
+            let error = ensure_inline_workspace_supported(&inline_binding(), surface)
+                .expect_err("inline binding should be rejected");
+            assert_eq!(error.to_string(), expected, "surface: {surface:?}");
+        }
     }
 
     #[test]

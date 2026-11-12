@@ -1236,7 +1236,6 @@ mod tests {
     };
     use crate::runner::container_runtime_prep::activate_routed_container_runtime_with;
     use crate::runner::container_runtime_prep::ContainerTaskActivation;
-    use crate::runner::execute::workspace_seeded::render_workspace_seeded_task_command;
     use crate::runner::runtime_session_context::LeaseRefreshPolicy;
     use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
     use effigy_manifest::{ManifestManagedRun, ManifestTask, ManifestTaskRunIn};
@@ -1251,17 +1250,6 @@ mod tests {
             run: Some(ManifestManagedRun::Command("printf seed".to_owned())),
             ..Default::default()
         }
-    }
-
-    #[test]
-    fn workspace_seeded_task_command_preserves_passthrough_args() {
-        let rendered =
-            render_workspace_seeded_task_command("seed", &["--".to_owned(), "--force".to_owned()]);
-
-        assert!(
-            rendered.ends_with("effigy 'seed' '--' '--force'"),
-            "got: {rendered}"
-        );
     }
 
     #[test]

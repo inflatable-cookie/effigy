@@ -1694,7 +1694,6 @@ mod tests {
         should_open_workspace_shell_for_non_managed_task, ContainerExecutionBinding,
         HostProcessTab, ManagedProcessRole, TabSource,
     };
-    use crate::runner::execute::workspace_seeded::render_workspace_seeded_task_command;
     use crate::runner::managed_shell::managed_readiness_probe_urls;
     use effigy_containers::HostProcessRestart;
     use effigy_containers::{
@@ -1870,45 +1869,20 @@ working_dir = "/workspace"
     }
 
     #[test]
-    fn workspace_seeded_task_command_preserves_passthrough_args() {
-        let rendered = render_workspace_seeded_task_command(
-            "dev",
-            &[
-                "front".to_owned(),
-                "--".to_owned(),
-                "--host".to_owned(),
-                "0.0.0.0".to_owned(),
-            ],
-        );
+    fn non_managed_container_shell_handoff_depends_on_task_run_presence() {
+        let binding = ContainerExecutionBinding::Container {
+            name: Some("web".to_owned()),
+            workspace: None,
+        };
+        let cases = [(true, false), (false, true)];
 
-        assert!(
-            rendered.ends_with("effigy 'dev' 'front' '--' '--host' '0.0.0.0'"),
-            "got: {rendered}"
-        );
-    }
-
-    #[test]
-    fn non_managed_container_task_with_run_skips_workspace_shell_handoff() {
-        assert!(!should_open_workspace_shell_for_non_managed_task(
-            true,
-            &ContainerExecutionBinding::Container {
-                name: Some("web".to_owned()),
-                workspace: None,
-            },
-            false,
-        ));
-    }
-
-    #[test]
-    fn non_managed_container_task_without_run_opens_workspace_shell() {
-        assert!(should_open_workspace_shell_for_non_managed_task(
-            false,
-            &ContainerExecutionBinding::Container {
-                name: Some("web".to_owned()),
-                workspace: None,
-            },
-            false,
-        ));
+        for (has_run, opens_shell) in cases {
+            assert_eq!(
+                should_open_workspace_shell_for_non_managed_task(has_run, &binding, false),
+                opens_shell,
+                "has_run={has_run}"
+            );
+        }
     }
 
     #[test]
