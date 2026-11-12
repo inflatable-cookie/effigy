@@ -93,36 +93,33 @@ fn exercise(selection: BackendSelection, tools: &FakeTools) -> Vec<Workload> {
 }
 
 #[test]
-fn colima_adapter_targets_only_its_profile() {
+fn each_adapter_targets_only_its_own_cli() {
     let tools = FakeTools::install();
-    let rows = exercise(selection(), &tools);
-    assert_eq!(
-        tools.calls("colima"),
-        [
-            format!(
-                "nerdctl --profile fixture -- ps --all --no-trunc --filter label=com.docker.compose.project={PROJECT} --format {{{{.ID}}}}"
-            ),
-            format!("nerdctl --profile fixture -- inspect {ID}"),
-            format!("nerdctl --profile fixture -- ps --all --no-trunc --filter label=com.docker.compose.project={PROJECT} --format {{{{.ID}}}}"),
-        ]
-    );
+    let colima_rows = exercise(selection(), &tools);
+    let expected_colima = [
+        format!(
+            "nerdctl --profile fixture -- ps --all --no-trunc --filter label=com.docker.compose.project={PROJECT} --format {{{{.ID}}}}"
+        ),
+        format!("nerdctl --profile fixture -- inspect {ID}"),
+        format!("nerdctl --profile fixture -- ps --all --no-trunc --filter label=com.docker.compose.project={PROJECT} --format {{{{.ID}}}}"),
+    ];
+    assert_eq!(tools.calls("colima"), expected_colima);
     assert!(
         tools.calls("docker").is_empty(),
         "unselected backend was called"
     );
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].id, ID);
-    assert!(rows[0].running);
+    assert_eq!(colima_rows.len(), 1);
+    assert_eq!(colima_rows[0].id, ID);
+    assert!(colima_rows[0].running);
     assert_eq!(
-        rows[0].labels.get("com.effigy.scope").map(String::as_str),
+        colima_rows[0]
+            .labels
+            .get("com.effigy.scope")
+            .map(String::as_str),
         Some("4677bfcb81da18054ef32e71aa3f3c29")
     );
-}
 
-#[test]
-fn docker_adapter_targets_only_the_docker_cli() {
-    let tools = FakeTools::install();
-    let selection = BackendSelection {
+    let docker_selection = BackendSelection {
         kind: if cfg!(target_os = "macos") {
             BackendKind::DockerDesktop
         } else {
@@ -132,7 +129,7 @@ fn docker_adapter_targets_only_the_docker_cli() {
         context: "default".into(),
         reason: BackendReason::UserPreference,
     };
-    let rows = exercise(selection, &tools);
+    let docker_rows = exercise(docker_selection, &tools);
     assert_eq!(
         tools.calls("docker"),
         [
@@ -143,11 +140,12 @@ fn docker_adapter_targets_only_the_docker_cli() {
             format!("--context default ps --all --no-trunc --filter label=com.docker.compose.project={PROJECT} --format {{{{.ID}}}}"),
         ]
     );
-    assert!(
-        tools.calls("colima").is_empty(),
-        "unselected backend was called"
+    assert_eq!(
+        tools.calls("colima"),
+        expected_colima,
+        "the docker phase must not issue colima calls"
     );
-    assert_eq!(rows.len(), 1);
+    assert_eq!(docker_rows.len(), 1);
 }
 
 #[test]
@@ -322,9 +320,21 @@ fn docker_selection() -> BackendSelection {
 /// on that same backend.
 #[test]
 fn a_container_is_read_back_by_full_id_on_both_backends() {
-    for (label, selection, tool) in [
-        ("colima", selection(), "colima"),
-        ("docker", docker_selection(), "docker"),
+    for (label, selection, tool, inspect, image_inspect) in [
+        (
+            "colima",
+            selection(),
+            "colima",
+            format!("nerdctl --profile fixture -- inspect {ID}"),
+            "nerdctl --profile fixture -- image inspect fixture:latest".to_owned(),
+        ),
+        (
+            "docker",
+            docker_selection(),
+            "docker",
+            format!("--context default inspect {ID}"),
+            "--context default image inspect fixture:latest".to_owned(),
+        ),
     ] {
         let tools = CreationTools::install();
         let workdir = tools.logs.parent().unwrap().to_path_buf();
@@ -344,19 +354,9 @@ fn a_container_is_read_back_by_full_id_on_both_backends() {
             other => panic!("{label}: image read: {other:?}"),
         };
         assert_eq!(resolved, format!("sha256:{}", "c".repeat(64)));
-        let calls = tools.calls(tool);
-        assert!(
-            calls
-                .iter()
-                .any(|call| call.contains(&format!("inspect {ID}"))),
-            "{label}: the read names the created id: {calls:?}"
-        );
-        assert!(
-            calls
-                .iter()
-                .any(|call| call.contains("image inspect fixture:latest")),
-            "{label}: the image id is read on the same backend: {calls:?}"
-        );
+        // The read performs exactly the id inspect and the image-table
+        // inspect on its own backend, and nothing anywhere else.
+        assert_eq!(tools.calls(tool), [inspect, image_inspect], "{label}");
         let other_tool = if tool == "docker" { "colima" } else { "docker" };
         assert!(
             tools.calls(other_tool).is_empty(),
@@ -439,13 +439,15 @@ fn expired_observation_deadlines_do_not_launch_an_engine() {
         let workdir = tools.logs.parent().unwrap();
         let mut backend = selected.adapter();
         let deadline = std::time::Instant::now();
+        // Each read names the phase its own deadline expired in, and neither
+        // spawns its engine: the refusal happens before any process work.
         assert!(matches!(
             backend.inventory_until(workdir, PROJECT, deadline),
-            Observed::Unknown(UnknownReason::TimedOut { .. })
+            Observed::Unknown(UnknownReason::TimedOut { phase }) if phase == "list project"
         ));
         assert!(matches!(
             backend.image_id_until(workdir, "fixture:latest", deadline),
-            Observed::Unknown(UnknownReason::TimedOut { .. })
+            Observed::Unknown(UnknownReason::TimedOut { phase }) if phase == "inspect image"
         ));
         assert!(tools.calls("docker").is_empty());
         assert!(tools.calls("colima").is_empty());
@@ -454,32 +456,49 @@ fn expired_observation_deadlines_do_not_launch_an_engine() {
 
 /// A live but unresponsive engine is terminated and reaped by the caller's
 /// absolute observation deadline, including during the inventory's inspect.
+/// The fake engine traps TERM and leaves a marker, so the test proves the
+/// deadline path signalled the actual engine child instead of merely
+/// stopping its own wait.
 #[test]
 fn inspection_is_bounded_by_the_callers_deadline() {
     for (selected, tool) in [(selection(), "colima"), (docker_selection(), "docker")] {
         let tools = FakeTools::install();
         let workdir = tools.logs.parent().unwrap();
+        let marker = workdir.join("engine-signalled");
         std::fs::write(
             tools.bin.join(tool),
             format!(
-            "#!/bin/sh\ncase \" $* \" in\n *' ps '*) echo {ID} ;;\n *) exec sleep 30 ;;\nesac\n"
-        ),
+                "#!/bin/sh\nMARKER=\"{}\"\ncase \" $* \" in\n *' ps '*) echo {ID} ;;\n *) trap 'touch \"$MARKER\"; exit 0' TERM; sleep 30 ;;\nesac\n",
+                marker.display(),
+            ),
         )
         .unwrap();
+        let assert_signalled = || {
+            let signalled = std::time::Instant::now();
+            while !marker.exists() && signalled.elapsed() < std::time::Duration::from_secs(5) {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            assert!(
+                marker.exists(),
+                "the {tool} engine child was never signalled"
+            );
+        };
         let mut backend = selected.adapter();
         let budget = std::time::Duration::from_millis(200);
         let started = std::time::Instant::now();
         assert!(matches!(
             backend.inventory_until(workdir, PROJECT, started + budget),
-            Observed::Unknown(UnknownReason::TimedOut { .. })
+            Observed::Unknown(UnknownReason::TimedOut { phase }) if phase == "inspect project"
         ));
-        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        assert_signalled();
         let started = std::time::Instant::now();
         assert!(matches!(
             backend.image_id_until(workdir, "fixture:latest", started + budget),
-            Observed::Unknown(UnknownReason::TimedOut { .. })
+            Observed::Unknown(UnknownReason::TimedOut { phase }) if phase == "inspect image"
         ));
-        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        assert_signalled();
     }
 }
 
@@ -650,14 +669,40 @@ fn sealed_id_difference_records_each_cli_image_capability_and_nerdctl_membership
                     .reobserve(adapter.as_mut(), request.deadline)
                     .unwrap();
             }
-            assert_eq!(
-                tools
-                    .calls(tool)
-                    .iter()
-                    .filter(|call| call.contains("compose up -d"))
-                    .count(),
-                1
+            // The full sealed protocol runs in order on the selected CLI:
+            // preflight image reads and listing, the single `compose up`,
+            // the inventory read-back, and the reobservation after accept.
+            let prefix = if tool == "colima" {
+                "nerdctl --profile fixture -- "
+            } else {
+                "--context default "
+            };
+            let ps = format!(
+                "{prefix}ps --all --no-trunc --filter label=com.docker.compose.project={PROJECT} --format {{{{.ID}}}}"
             );
+            let inspect = format!("{prefix}inspect {ID}");
+            let image_inspect = format!("{prefix}image inspect fixture:latest");
+            let mut expected = vec![
+                image_inspect.clone(),
+                image_inspect.clone(),
+                ps.clone(),
+                format!("{prefix}compose up -d"),
+                ps.clone(),
+                inspect.clone(),
+            ];
+            if accepted {
+                expected.extend([
+                    ps.clone(),
+                    image_inspect.clone(),
+                    ps.clone(),
+                    inspect,
+                    ps,
+                    image_inspect,
+                ]);
+            } else {
+                expected.extend([ps, image_inspect]);
+            }
+            assert_eq!(tools.calls(tool), expected, "{tool} protocol order");
             run.finish(accepted).unwrap();
         }
     }

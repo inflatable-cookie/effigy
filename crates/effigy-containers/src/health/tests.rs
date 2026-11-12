@@ -77,17 +77,39 @@ fn a_health_wait_frame_names_the_probe_attempt_elapsed_and_last_answer() {
 }
 
 #[test]
-fn a_failed_health_wait_returns_its_error_and_draws_no_step_output() {
+fn failed_health_waits_report_their_terminal_outcome() {
     // Timeout 0 keeps the wait from probing: the contract under test is the
     // error a caller reports, and that a non-terminal run draws no step text.
     let error = wait_for_ready("container `web`", Some("tcp://127.0.0.1:9"), 0, None)
         .expect_err("an unreachable health check must fail the wait");
     assert_eq!(error.outcome(), "not_ready");
-    assert!(error.to_string().contains(
+    assert_eq!(
+        error.to_string(),
         "the health check of container `web` (`tcp://127.0.0.1:9`) did not become ready within 0s"
-    ));
+    );
     assert_eq!(error.subject(), "container `web`");
     assert_eq!(effigy_ui::steps::mode(), effigy_ui::StepMode::Silent);
+
+    // A 500 is a definite refusal, not a slow start: the wait ends at once
+    // with the status it observed instead of spending its 300s budget.
+    let port = answer_once("HTTP/1.1 500 Internal Server Error");
+    let check = format!("http://127.0.0.1:{port}/health");
+    let started = std::time::Instant::now();
+    let error = wait_for_ready("container `web`", Some(&check), 300, None)
+        .expect_err("a 500 is a definite refusal, not a slow start");
+    assert_eq!(error.observed_status(), Some(500));
+    assert_eq!(error.outcome(), "status_mismatch");
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "the health check of container `web` (`{check}`) answered HTTP 500 where a 2xx or 3xx status is required (status_mismatch); a definite answer is terminal, so the declared 300s budget is not spent"
+        )
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "a definite status is terminal, not a 300s wait: {:?}",
+        started.elapsed()
+    );
 }
 
 /// One in-process HTTP answer on a loopback port, so the probe's own reading of
@@ -110,25 +132,43 @@ fn answer_once(status_line: &str) -> u16 {
 }
 
 #[test]
-fn a_definite_status_mismatch_ends_the_health_wait_at_once() {
-    let port = answer_once("HTTP/1.1 500 Internal Server Error");
+fn probe_readings_distinguish_answers_prefixes_and_silence() {
+    // A status line split across reads is read to its terminator: a
+    // fragmented complete line is still a definite answer.
+    let port = scripted_http_server(vec![vec![
+        b"HTTP/1.1 500 Internal",
+        b" Server Error\r\nContent-Length: 0\r\n\r\n",
+    ]]);
+    let check = format!("http://127.0.0.1:{port}/health");
+    assert_eq!(
+        probe_health_detail(&check),
+        HealthProbe::StatusMismatch(500),
+        "a status line split across reads is read to its terminator"
+    );
+
+    // The first connection answers `HTTP/1.1 500` and closes: incomplete, so
+    // the wait keeps its budget. The second connection answers ready.
+    let port = scripted_http_server(vec![
+        vec![b"HTTP/1.1 500"],
+        vec![b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"],
+    ]);
     let check = format!("http://127.0.0.1:{port}/health");
     let started = std::time::Instant::now();
-    // A long declared budget: a definite answer must not spend it.
-    let error = wait_for_ready("container `web`", Some(&check), 300, None)
-        .expect_err("a 500 is a definite refusal, not a slow start");
-    assert_eq!(error.observed_status(), Some(500));
-    assert_eq!(error.outcome(), "status_mismatch");
+    let outcome = wait_for_ready("container `web`", Some(&check), 10, None)
+        .expect("an incomplete prefix is not a terminal refusal");
+    assert_eq!(outcome, Some("ready"));
     assert!(
-        error.to_string().contains("answered HTTP 500")
-            && error.to_string().contains("status_mismatch"),
-        "{error}"
-    );
-    assert!(
-        started.elapsed() < std::time::Duration::from_secs(5),
-        "a definite status is terminal, not a 300s wait: {:?}",
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "the wait continued instead of spending its whole budget: {:?}",
         started.elapsed()
     );
+
+    // No answer at all is unanswered, not a mismatch.
+    assert_eq!(
+        probe_health_detail("tcp://127.0.0.1:9"),
+        HealthProbe::Unanswered
+    );
+    assert!(!probe_health("tcp://127.0.0.1:9"));
 }
 
 #[test]
@@ -188,40 +228,6 @@ fn scripted_http_server(responses: Vec<Vec<&'static [u8]>>) -> u16 {
 }
 
 #[test]
-fn a_fragmented_complete_status_line_is_still_a_definite_answer() {
-    let port = scripted_http_server(vec![vec![
-        b"HTTP/1.1 500 Internal",
-        b" Server Error\r\nContent-Length: 0\r\n\r\n",
-    ]]);
-    let check = format!("http://127.0.0.1:{port}/health");
-    assert_eq!(
-        probe_health_detail(&check),
-        HealthProbe::StatusMismatch(500),
-        "a status line split across reads is read to its terminator"
-    );
-}
-
-#[test]
-fn a_truncated_mismatch_prefix_stays_in_the_wait_instead_of_ending_it() {
-    // The first connection answers `HTTP/1.1 500` and closes: incomplete, so
-    // the wait keeps its budget. The second connection answers ready.
-    let port = scripted_http_server(vec![
-        vec![b"HTTP/1.1 500"],
-        vec![b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"],
-    ]);
-    let check = format!("http://127.0.0.1:{port}/health");
-    let started = std::time::Instant::now();
-    let outcome = wait_for_ready("container `web`", Some(&check), 10, None)
-        .expect("an incomplete prefix is not a terminal refusal");
-    assert_eq!(outcome, Some("ready"));
-    assert!(
-        started.elapsed() < std::time::Duration::from_secs(10),
-        "the wait continued instead of spending its whole budget: {:?}",
-        started.elapsed()
-    );
-}
-
-#[test]
 fn a_truncated_ready_prefix_is_not_readiness() {
     // The first connection answers `HTTP/1.1 200` and closes: incomplete, so it
     // proves nothing. The second connection answers a definite 500.
@@ -234,13 +240,4 @@ fn a_truncated_ready_prefix_is_not_readiness() {
         .expect_err("an incomplete 200 prefix never reports readiness");
     assert_eq!(error.observed_status(), Some(500));
     assert_eq!(error.outcome(), "status_mismatch");
-}
-
-#[test]
-fn a_probe_with_no_answer_is_unanswered_not_a_mismatch() {
-    assert_eq!(
-        probe_health_detail("tcp://127.0.0.1:9"),
-        HealthProbe::Unanswered
-    );
-    assert!(!probe_health("tcp://127.0.0.1:9"));
 }

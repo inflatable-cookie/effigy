@@ -448,23 +448,6 @@ mod tests {
     use super::*;
     use std::cell::Cell;
 
-    #[test]
-    fn absent_explicit_unix_endpoint_is_inactive() {
-        let probes = Cell::new(0);
-        let participation = classify_docker_participation(
-            vec![DockerEndpoint::Unix(PathBuf::from(
-                "/tmp/effigy-absent.sock",
-            ))],
-            |_| {
-                probes.set(probes.get() + 1);
-                SocketProbe::Absent
-            },
-        );
-
-        assert_eq!(participation, RuntimeParticipation::Inactive);
-        assert_eq!(probes.get(), 1);
-    }
-
     /// Every probe outcome, candidate set and empty set, with the verdict it
     /// must produce and how often the runtime was probed.
     #[test]
@@ -906,10 +889,16 @@ mod tests {
             Some(dir.path().to_path_buf()),
         );
 
-        assert!(candidates.contains(&DockerEndpoint::Unix(PathBuf::from(
-            "/Users/me/.docker/run/docker.sock"
-        ))));
-        assert!(candidates.contains(&DockerEndpoint::Unix(PathBuf::from("/tmp/other.sock"))));
+        // The named context resolves first, then the explicit host, then the
+        // local default: nothing the operator named is dropped.
+        assert_eq!(
+            candidates,
+            vec![
+                DockerEndpoint::Unix(PathBuf::from("/Users/me/.docker/run/docker.sock")),
+                DockerEndpoint::Unix(PathBuf::from("/tmp/other.sock")),
+                DockerEndpoint::DefaultLocal,
+            ]
+        );
     }
 
     /// Without an environment override the stored current context names the

@@ -141,7 +141,22 @@ fn a_teardown_step_the_runtime_did_not_narrate_still_says_what_happened() {
 }
 
 #[test]
-fn a_finished_step_is_never_rewritten_by_a_repeated_runtime_line() {
+fn compose_steps_stay_distinct_and_finished_steps_are_never_rewritten() {
+    // Distinct runtime phases touch distinct steps.
+    let mut steps = ComposeSteps::new("demo");
+    steps.observe(&ComposeStepEvent::Pulling {
+        subject: "postgres:16".to_owned(),
+    });
+    steps.observe(&ComposeStepEvent::Building {
+        subject: "demo-web-1".to_owned(),
+    });
+    steps.observe(&ComposeStepEvent::Creating {
+        subject: "demo-web-1".to_owned(),
+    });
+    assert_eq!(steps.touched(), 3);
+
+    // A finished step is never rewritten by a repeated runtime line, and a
+    // second ending is the only one drawn.
     let (_, lines) = effigy_ui::steps::capture_lines(|| {
         let mut steps = ComposeSteps::new("demo-web-dev");
         let removed = ComposeStepEvent::Removed {
@@ -160,21 +175,6 @@ fn a_finished_step_is_never_rewritten_by_a_repeated_runtime_line() {
         lines[1].starts_with("✓ the stack is checked ("),
         "the second ending is the only one drawn: {lines:?}"
     );
-}
-
-#[test]
-fn image_build_and_container_steps_stay_distinct() {
-    let mut steps = ComposeSteps::new("demo");
-    steps.observe(&ComposeStepEvent::Pulling {
-        subject: "postgres:16".to_owned(),
-    });
-    steps.observe(&ComposeStepEvent::Building {
-        subject: "demo-web-1".to_owned(),
-    });
-    steps.observe(&ComposeStepEvent::Creating {
-        subject: "demo-web-1".to_owned(),
-    });
-    assert_eq!(steps.touched(), 3);
 }
 
 #[test]

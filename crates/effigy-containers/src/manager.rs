@@ -678,8 +678,9 @@ mod tests {
     /// A host runtime installed outside `PATH` — the macOS application-bundle
     /// layout — resolves from the fallback directories that follow `PATH`, so a
     /// seed or dump can run Docker a shell `not found` would miss.
+    /// `PATH` still wins over a fallback directory holding the same name.
     #[test]
-    fn host_cli_resolution_searches_fallback_directories_after_path() {
+    fn host_cli_resolution_prefers_path_then_falls_back() {
         let _lock = crate::test_env_lock();
         let temp = tempfile::tempdir().expect("tempdir");
         let empty_path = temp.path().join("path");
@@ -693,25 +694,11 @@ mod tests {
         std::env::set_var("PATH", empty_path.display().to_string());
         let resolved =
             resolve_host_cli_program_path_with_extra("docker", std::slice::from_ref(&bundle));
-        std::env::set_var("PATH", previous.unwrap_or_default());
-
         assert_eq!(resolved, Some(bundle.join("docker")));
-    }
 
-    /// `PATH` still wins over a fallback directory holding the same name.
-    #[test]
-    fn host_cli_resolution_prefers_a_path_hit() {
-        let _lock = crate::test_env_lock();
-        let temp = tempfile::tempdir().expect("tempdir");
-        let path_dir = temp.path().join("path");
-        std::fs::create_dir_all(&path_dir).expect("mkdir path");
+        let path_dir = temp.path().join("path-hit");
+        std::fs::create_dir_all(&path_dir).expect("mkdir path hit");
         std::fs::write(path_dir.join("docker"), "#!/bin/sh\n").expect("write path docker");
-        let bundle = temp
-            .path()
-            .join("Applications/Docker.app/Contents/Resources/bin");
-        std::fs::create_dir_all(&bundle).expect("mkdir bundle bin");
-        std::fs::write(bundle.join("docker"), "#!/bin/sh\n").expect("write bundle docker");
-        let previous = std::env::var_os("PATH");
         std::env::set_var("PATH", path_dir.display().to_string());
         let resolved = resolve_host_cli_program_path_with_extra("docker", &[bundle]);
         std::env::set_var("PATH", previous.unwrap_or_default());

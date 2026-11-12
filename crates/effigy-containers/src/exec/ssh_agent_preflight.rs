@@ -166,13 +166,35 @@ mod tests {
     }
 
     #[test]
-    fn probe_script_targets_the_forwarded_socket_and_emits_one_token() {
-        let script = ssh_agent_socket_probe_script();
-        assert!(script.contains(FORWARDED_SSH_AGENT_SOCKET));
-        assert!(script.contains("readlink -f"));
-        assert!(script.contains("-S"));
-        for token in ["healthy", "stale", "absent"] {
-            assert!(script.contains(token), "probe must emit `{token}`");
-        }
+    fn probe_script_reports_live_stale_and_absent_sockets() {
+        use std::os::unix::net::UnixListener;
+        let root = tempfile::tempdir().expect("probe fixture");
+        // Run the VM probe with its socket path redirected at the fixture;
+        // a script that stopped targeting the forwarded socket probes the
+        // real (absent) path and fails the healthy case below.
+        let run_probe = |source: &std::path::Path| {
+            let script = ssh_agent_socket_probe_script()
+                .replace(FORWARDED_SSH_AGENT_SOCKET, &source.to_string_lossy());
+            let output = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(&script)
+                .output()
+                .expect("probe script runs");
+            assert!(output.status.success(), "probe exits zero: {output:?}");
+            classify_ssh_agent_probe_output(&String::from_utf8_lossy(&output.stdout))
+        };
+        // Healthy: the source resolves to a live socket.
+        let healthy = root.path().join("agent.sock");
+        let _listener = UnixListener::bind(&healthy).expect("live socket");
+        assert_eq!(run_probe(&healthy), SshAgentSocketHealth::Healthy);
+        // Stale: a dangling symlink where the forwarded socket was.
+        let stale = root.path().join("stale.sock");
+        std::os::unix::fs::symlink(root.path().join("gone.sock"), &stale).expect("dangling link");
+        assert_eq!(run_probe(&stale), SshAgentSocketHealth::Stale);
+        // Absent: nothing at the forwarded path.
+        assert_eq!(
+            run_probe(&root.path().join("missing.sock")),
+            SshAgentSocketHealth::Absent
+        );
     }
 }

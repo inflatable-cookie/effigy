@@ -275,47 +275,29 @@ mod tests {
     /// is refused with the `external = true` remedy.
     #[test]
     fn legacy_form_cases() {
-        type Row = (
-            &'static str,
-            &'static str,
-            Result<(&'static str, &'static str), &'static str>,
-        );
-        let cases: [Row; 3] = [
-            (
-                "a repo-relative source resolves",
-                "./assets:/srv/assets",
-                Ok(("assets:", ":/srv/assets")),
-            ),
-            (
-                "options are kept",
-                "./assets:/srv/assets:ro",
-                Ok(("assets:", ":/srv/assets:ro")),
-            ),
-            (
-                "an absolute source is refused",
-                "/etc/foo:/etc/foo",
-                Err("must use a repo-relative source path"),
-            ),
+        let cases: [(&str, &str); 3] = [
+            ("a repo-relative source resolves", "./assets:/srv/assets"),
+            ("options are kept", "./assets:/srv/assets:ro"),
+            ("an absolute source is refused", "/etc/foo:/etc/foo"),
         ];
-        for (name, spec, expected) in cases {
+        for (name, spec) in cases {
             let repo = temp_repo();
             std::fs::create_dir_all(repo.path().join("assets")).unwrap();
-            match expected {
-                Ok((source_tail, target)) => {
-                    let resolved = resolve_legacy_spec(repo.path(), "web", spec).expect(name);
-                    let expected_root = repo.path().canonicalize().unwrap();
-                    assert!(
-                        resolved.starts_with(&format!("{}/{source_tail}", expected_root.display())),
-                        "{name}: got `{resolved}`"
-                    );
-                    assert!(resolved.ends_with(target), "{name}: got `{resolved}`");
-                }
-                Err(token) => {
-                    let err = resolve_legacy_spec(repo.path(), "web", spec).expect_err(name);
-                    let message = format!("{err}");
-                    assert!(message.contains(token), "{name}: {message}");
-                    assert!(message.contains("external = true"), "{name}: {message}");
-                }
+            let expected_root = repo.path().canonicalize().unwrap();
+            match resolve_legacy_spec(repo.path(), "web", spec) {
+                Ok(resolved) => assert_eq!(
+                    resolved,
+                    format!("{}/{}", expected_root.display(), spec.trim_start_matches("./")),
+                    "{name}: got `{resolved}`"
+                ),
+                Err(ContainerPolicyError::TaskInvocation(message)) => assert_eq!(
+                    message,
+                    format!(
+                        "container `web` mount `{spec}` must use a repo-relative source path; declare `external = true` in the structured form to source from outside the repo"
+                    ),
+                    "{name}"
+                ),
+                Err(other) => panic!("{name}: expected the repo-relative refusal, got {other:?}"),
             }
         }
     }

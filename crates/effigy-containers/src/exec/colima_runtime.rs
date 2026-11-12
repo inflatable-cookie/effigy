@@ -1371,8 +1371,10 @@ mod tests {
         .expect_err("permanent runtime failure should time out");
 
         assert!(started.elapsed() < Duration::from_millis(250));
-        assert!(error.contains("did not become ready"));
-        assert!(error.contains("containerd endpoint unavailable"));
+        assert_eq!(
+            error,
+            "Colima containerd and BuildKit did not become ready within 0s; last runtime probe: containerd endpoint unavailable"
+        );
     }
 
     #[test]
@@ -1728,13 +1730,20 @@ esac
         assert!(warnings[0].contains("shared with unrelated"));
     }
 
+    /// Repair and reset stop the shared profile gracefully and report every
+    /// phase they put in flight, so the owning command plane can name the
+    /// command actually running instead of a generic recovery wait (Q-017).
+    /// The fixture's fake `colima` is the only executable on the path, so
+    /// nothing here touches a real runtime.
     #[test]
-    fn colima_runtime_explicit_repair_and_reset_use_only_graceful_colima_stop() {
+    fn colima_runtime_repair_and_reset_stop_gracefully_and_report_phases() {
         let _lock = crate::test_env_lock();
         let fixture = ManagedProfileFixture::new();
         fixture.state("listed");
         fixture.state("running");
         let policy = fixture.policy();
+
+        // Phase 1: explicit repair and reset stop gracefully, never forced.
         recover_colima_runtime(&policy, &fixture.root).expect("repair profile");
         reset_colima_runtime(&policy, &fixture.root).expect("reset profile");
         let calls = fixture.calls();
@@ -1751,20 +1760,9 @@ esac
             "{calls:#?}"
         );
         assert!(!fixture.has_state("running"));
-    }
 
-    /// The recovery reports each phase it puts in flight, in order, so the
-    /// owning command plane can name the command actually running instead of a
-    /// generic recovery wait (Q-017). The fixture's fake `colima` is the only
-    /// executable on the path, so nothing here touches a real runtime.
-    #[test]
-    fn a_recovery_and_a_reset_report_each_phase_they_put_in_flight() {
-        let _lock = crate::test_env_lock();
-        let fixture = ManagedProfileFixture::new();
-        fixture.state("listed");
+        // Phase 2: the same flows report each phase they put in flight.
         fixture.state("running");
-        let policy = fixture.policy();
-
         let mut recovered = Vec::new();
         recover_colima_runtime_with_progress(&policy, &fixture.root, &mut |phase| {
             recovered.push(phase)
@@ -1782,7 +1780,6 @@ esac
             ],
             "configuration preparation is its own phase, before the start"
         );
-
         fixture.state("running");
         let mut reset = Vec::new();
         reset_colima_runtime_with_progress(&policy, &fixture.root, &mut |phase| reset.push(phase))
@@ -1798,7 +1795,26 @@ esac
     }
 
     #[test]
-    fn colima_runtime_refuses_running_or_unknown_status() {
+    fn unusable_running_profiles_are_refused_without_touching_the_vm() {
+        use crate::exec::ContainerExecError;
+        let assert_colima_status_refusal =
+            |error: ContainerExecError, check: &str, stderr: &str| match error {
+                ContainerExecError::Failure {
+                    command,
+                    code,
+                    stdout,
+                    stderr: actual,
+                } => {
+                    assert_eq!(command, "colima status");
+                    assert_eq!(code, None);
+                    assert_eq!(stdout, check);
+                    assert_eq!(actual, stderr);
+                }
+                other => panic!("expected the status refusal, got {other:?}"),
+            };
+
+        // Phase 1: a profile that stays running refuses recovery, and a
+        // profile with unproven status refuses reset — neither starts.
         let _lock = crate::test_env_lock();
         let fixture = ManagedProfileFixture::new();
         fixture.state("listed");
@@ -1806,22 +1822,24 @@ esac
         fixture.state("stop-stays-running");
         let policy = fixture.policy();
         let error = recover_colima_runtime(&policy, &fixture.root).unwrap_err();
-        assert!(error.to_string().contains("still running"));
+        assert_colima_status_refusal(
+            error,
+            "[check] recovering Colima profile `effigy`\n[ok] stopped Colima profile `effigy`",
+            "profile is still running; refusing profile recovery. Verify pidfile ownership before manually running `colima stop -p effigy --force`; Effigy did not run it.",
+        );
         assert!(!fixture
             .calls()
             .iter()
             .any(|call| call.starts_with("start ")));
         fixture.state("status-unknown");
         let error = reset_colima_runtime(&policy, &fixture.root).unwrap_err();
-        assert!(error.to_string().contains("status is unproven"));
-    }
+        assert_colima_status_refusal(
+            error,
+            "[check] resetting Colima profile `effigy` to a fully stopped state\n[ok] stopped Colima profile `effigy`",
+            "colima status failed (exit code 1)\nstdout:\n\nstderr:\nColima stop status is unproven: status unavailable\n; refusing profile recovery. Verify pidfile ownership before manually running `colima stop -p effigy --force`; Effigy did not run it.",
+        );
 
-    /// An offline registry lookup used to take the shared VM down and start
-    /// it again, which stops every other checkout's stack. A detected problem
-    /// is now reported with the manual command and nothing else (effigy#371).
-    #[test]
-    fn an_offline_registry_failure_never_stops_the_shared_profile() {
-        let _lock = crate::test_env_lock();
+        // Phase 2: a registry failure never stops or restarts the shared profile.
         let fixture = ManagedProfileFixture::new();
         fixture.state("listed");
         fixture.state("running");
@@ -1831,13 +1849,20 @@ esac
             .into_iter()
             .map(std::ffi::OsString::from)
             .collect::<Vec<_>>();
-
         let failure = crate::exec::run_compose_capture(&fixture.root, &policy, &args, "compose up")
             .expect_err("the registry failure is reported as it stands");
-        assert!(
-            failure.to_string().contains("registry-1.docker.io"),
-            "the runtime's own cause reaches the caller: {failure}"
-        );
+        match failure {
+            ContainerExecError::Failure {
+                command, stderr, ..
+            } => {
+                assert_eq!(command, "compose up");
+                assert!(
+                    stderr.contains("registry-1.docker.io"),
+                    "the runtime's own cause reaches the caller: {stderr}"
+                );
+            }
+            other => panic!("expected the compose failure, got {other:?}"),
+        }
         let calls = fixture.calls();
         assert!(
             !calls.iter().any(|call| call.starts_with("stop ")),
@@ -1850,189 +1875,143 @@ esac
     }
 
     #[test]
-    fn absent_managed_profile_is_created_with_the_managed_arguments() {
+    fn managed_profile_lifecycle_creates_starts_warns_then_reuses() {
         let _lock = crate::test_env_lock();
         let fixture = ManagedProfileFixture::new();
         let policy = fixture.policy();
+        const MANAGED_START: &str = "start --profile effigy --runtime containerd --ssh-agent --memory 32 --disk 300 --dns 1.1.1.1 --dns 8.8.8.8";
 
+        // Phase 1: an absent profile is created with the managed arguments.
         let report = ensure_colima_running_report(&policy, &fixture.root).expect("create profile");
-
         assert!(report.started);
         assert!(report.profile_created_or_restarted);
         assert!(fixture.has_state("running"));
         let calls = fixture.calls();
-        let starts = calls
-            .iter()
-            .filter(|call| call.starts_with("start "))
-            .collect::<Vec<_>>();
-        assert_eq!(starts.len(), 1, "one managed start: {calls:#?}");
-        let start = starts[0];
-        for expected in [
-            "--profile effigy",
-            "--ssh-agent",
-            "--dns 1.1.1.1",
-            "--dns 8.8.8.8",
-            "--memory 32",
-            "--disk 300",
-        ] {
-            assert!(start.contains(expected), "{expected} missing from {start}");
-        }
+        assert!(
+            calls.contains(&MANAGED_START.to_owned()),
+            "the create start carries the managed runtime, memory, disk and dns arguments: {calls:#?}"
+        );
         assert!(
             !calls.iter().any(|call| call.starts_with("stop ")),
             "a missing profile is created, never stopped: {calls:#?}"
         );
-    }
 
-    #[test]
-    fn stopped_managed_profile_is_started_without_being_recreated() {
-        let _lock = crate::test_env_lock();
-        let fixture = ManagedProfileFixture::new();
-        fixture.state("listed");
-        let policy = fixture.policy();
-
+        // Phase 2: a stopped profile is started, not recreated.
+        std::fs::remove_file(fixture.root.join("running")).expect("stop the profile");
         let report = ensure_colima_running_report(&policy, &fixture.root).expect("start profile");
-
         assert!(report.started);
         assert!(!report.profile_created_or_restarted);
         assert!(fixture.has_state("running"));
         let calls = fixture.calls();
-        assert!(
-            calls
-                .iter()
-                .any(|call| call.starts_with("start --profile effigy")),
-            "{calls:#?}"
-        );
+        let starts: Vec<_> = calls
+            .iter()
+            .filter(|call| call.starts_with("start "))
+            .collect();
+        assert_eq!(starts, [MANAGED_START, MANAGED_START], "{calls:#?}");
         assert!(
             !calls.iter().any(|call| call.starts_with("stop ")),
-            "{calls:#?}"
+            "a stopped profile is started, never stopped or recreated: {calls:#?}"
         );
-    }
 
-    #[test]
-    fn running_managed_profile_with_drifted_config_warns_without_touching_the_vm() {
-        let _lock = crate::test_env_lock();
-        let fixture = ManagedProfileFixture::new();
-        fixture.state("listed");
-        fixture.state("running");
+        // Phase 3: a drifted running profile is never stopped or restarted,
+        // and its config is rewritten to the managed settings so the
+        // operator's own `colima restart effigy` applies them.
         fixture.write_colima_config("forwardAgent: false\n");
-        let policy = fixture.policy();
-
         let report = ensure_colima_running_report(&policy, &fixture.root).expect("reuse profile");
-
         assert!(!report.started);
         assert!(!report.profile_created_or_restarted);
-        let calls = fixture.calls();
-        assert!(
-            !calls
-                .iter()
-                .any(|call| call.starts_with("start ") || call.starts_with("stop ")),
-            "a running shared profile is never stopped or restarted: {calls:#?}"
-        );
-        // The managed settings are written so the operator's own
-        // `colima restart effigy` applies them.
         let config = std::fs::read_to_string(fixture.home.join(".colima/effigy/colima.yaml"))
             .expect("managed config");
         assert!(config.contains("forwardAgent: true"), "{config}");
-    }
 
-    #[test]
-    fn configured_running_managed_profile_is_reused_without_a_restart() {
-        let _lock = crate::test_env_lock();
-        let fixture = ManagedProfileFixture::new();
-        fixture.state("listed");
-        fixture.state("running");
-        fixture.write_colima_config("forwardAgent: true\n");
-        let policy = fixture.policy();
-
+        // Phase 4: with the config now aligned, a further ensure reuses the
+        // running profile without a restart.
         let report = ensure_colima_running_report(&policy, &fixture.root).expect("reuse profile");
-
         assert!(!report.started);
         assert!(!report.profile_created_or_restarted);
+
+        // Across the whole lifecycle only the two starts ran: create, then
+        // the stopped-profile start. Nothing was ever stopped or restarted.
         let calls = fixture.calls();
+        let starts: Vec<_> = calls
+            .iter()
+            .filter(|call| call.starts_with("start "))
+            .collect();
+        assert_eq!(starts, [MANAGED_START, MANAGED_START], "{calls:#?}");
         assert!(
-            !calls
-                .iter()
-                .any(|call| call.starts_with("start ") || call.starts_with("stop ")),
-            "a configured running profile is not restarted: {calls:#?}"
+            !calls.iter().any(|call| call.starts_with("stop ")),
+            "the shared profile is never stopped: {calls:#?}"
         );
     }
 
     #[test]
-    fn no_change_reuses_a_configured_running_profile_without_any_write() {
-        let _lock = crate::test_env_lock();
-        let fixture = ManagedProfileFixture::new();
-        fixture.state("listed");
-        fixture.state("running");
-        fixture.write_colima_config("forwardAgent: true\n");
-        let policy = fixture.policy();
-
-        let report =
-            verify_runtime_backend_no_change(&policy, &fixture.root).expect("reuse profile");
-
-        assert_eq!(report, ColimaEnsureReport::default());
-        let calls = fixture.calls();
-        assert!(
-            !calls.iter().any(|call| call.contains("start")
-                || call.starts_with("stop ")
-                || call.starts_with("restart ")
-                || call.starts_with("delete ")),
-            "a configured running profile needs no start, restart or unit start: {calls:#?}"
-        );
-        let config = std::fs::read_to_string(fixture.home.join(".colima/effigy/colima.yaml"))
-            .expect("managed config");
-        assert_eq!(config, "forwardAgent: true\n");
-    }
-
-    #[test]
-    fn no_change_refuses_an_absent_or_stopped_profile_without_starting_it() {
+    fn no_change_verifies_without_touching_anything() {
+        use crate::exec::ContainerExecError;
         let _lock = crate::test_env_lock();
         let fixture = ManagedProfileFixture::new();
         let policy = fixture.policy();
+        let no_change_refusal = |error: ContainerExecError, reason: &str| match error {
+            ContainerExecError::Failure {
+                command,
+                code,
+                stdout,
+                stderr,
+            } => {
+                assert_eq!(command, "Colima profile no-change check");
+                assert_eq!(code, None);
+                assert!(stdout.is_empty());
+                assert_eq!(
+                    stderr,
+                    format!(
+                        "Colima profile `effigy` {reason}; no-change mode refuses to start, create, restart, rewrite or unit-start the shared profile"
+                    )
+                );
+            }
+            other => panic!("expected the no-change refusal, got {other:?}"),
+        };
+
+        // Phase 1: an absent profile is refused without starting it.
         let absent = verify_runtime_backend_no_change(&policy, &fixture.root)
             .expect_err("absent profile refuses");
-        assert!(absent.to_string().contains("is not running"), "{absent}");
+        no_change_refusal(absent, "is not running");
 
+        // Phase 2: a listed-but-stopped profile is refused the same way.
         fixture.state("listed");
         let stopped = verify_runtime_backend_no_change(&policy, &fixture.root)
             .expect_err("stopped profile refuses");
-        assert!(stopped.to_string().contains("is not running"), "{stopped}");
-
-        let calls = fixture.calls();
-        assert!(
-            !calls.iter().any(|call| call.starts_with("start")
-                || call.starts_with("stop ")
-                || call.starts_with("restart ")
-                || call.starts_with("delete ")),
-            "no-change never starts or creates the profile: {calls:#?}"
-        );
+        no_change_refusal(stopped, "is not running");
         assert!(!fixture.has_state("running"));
-    }
 
-    #[test]
-    fn no_change_refuses_drifted_managed_settings_without_rewriting_them() {
-        let _lock = crate::test_env_lock();
-        let fixture = ManagedProfileFixture::new();
-        fixture.state("listed");
+        // Phase 3: a configured running profile is reused without any write.
         fixture.state("running");
-        fixture.write_colima_config("forwardAgent: false\n");
-        let policy = fixture.policy();
+        fixture.write_colima_config("forwardAgent: true\n");
+        let report =
+            verify_runtime_backend_no_change(&policy, &fixture.root).expect("reuse profile");
+        assert_eq!(report, ColimaEnsureReport::default());
+        let config = std::fs::read_to_string(fixture.home.join(".colima/effigy/colima.yaml"))
+            .expect("managed config");
+        assert_eq!(config, "forwardAgent: true\n");
 
+        // Phase 4: drifted managed settings are refused without rewriting them.
+        fixture.write_colima_config("forwardAgent: false\n");
         let error = verify_runtime_backend_no_change(&policy, &fixture.root)
             .expect_err("drifted settings refuse");
-
-        assert!(error.to_string().contains("managed settings"), "{error}");
+        no_change_refusal(error, "has managed settings that differ from Effigy's");
         let config = std::fs::read_to_string(fixture.home.join(".colima/effigy/colima.yaml"))
             .expect("unchanged config");
         assert_eq!(
             config, "forwardAgent: false\n",
             "no-change never rewrites settings"
         );
+
+        // Across all four phases nothing was started, stopped, restarted or deleted.
         let calls = fixture.calls();
         assert!(
             !calls.iter().any(|call| call.starts_with("start ")
                 || call.starts_with("stop ")
-                || call.starts_with("restart ")),
-            "{calls:#?}"
+                || call.starts_with("restart ")
+                || call.starts_with("delete ")),
+            "no-change never starts or creates the profile: {calls:#?}"
         );
     }
 

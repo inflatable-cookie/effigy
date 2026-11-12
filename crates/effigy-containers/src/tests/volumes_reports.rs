@@ -261,7 +261,7 @@ fn stats_global_report_renders_resource_inventory_and_warning() {
 }
 
 #[test]
-fn status_report_renders_shared_service_targets() {
+fn status_report_renders_shared_services_and_media_mounts() {
     let root = temp_repo("status-shared-services");
     fs::write(
         root.join("effigy.toml"),
@@ -297,6 +297,8 @@ primary_service = "app"
         render_digest: "shared-render".to_owned(),
     }];
 
+    policy.declared_media_mounts = vec!["storage/uploads:/var/www/html/storage/uploads".to_owned()];
+
     let report = status_report(&policy, "containerd", true, None, Some(true), &[], None);
 
     assert!(report.success_text.contains("shared_services: 1"));
@@ -307,6 +309,13 @@ primary_service = "app"
         report.json["shared_services"][0]["project_name"],
         "effigy-shared-mariadb-deadbeef"
     );
+    assert_eq!(
+        report.json["media_mounts"][0],
+        "storage/uploads:/var/www/html/storage/uploads"
+    );
+    assert!(report
+        .success_text
+        .contains("media_mounts: storage/uploads:/var/www/html/storage/uploads"));
 }
 
 #[test]
@@ -331,11 +340,50 @@ working_subdir = "managed-volumes"
 
     let policy = load_container_policy(&root, None).expect("policy");
 
-    assert!(policy
+    // The workspace catalog declares exactly two managed volumes; their
+    // names embed a hash of the fixture path, so the set is pinned on the
+    // stable contract (service, persistence, mount target, kind suffix)
+    // rather than the per-run hash.
+    assert_eq!(policy.managed_volumes.len(), 2);
+    let mut volumes: Vec<(String, bool, Option<String>, String)> = policy
         .managed_volumes
         .iter()
-        .any(|volume| volume.name.ends_with("cargo-registry")));
-    assert!(policy.managed_volumes.iter().any(|volume| volume.persist));
+        .map(|volume| {
+            let kind = volume
+                .name
+                .rsplit('-')
+                .take(2)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("-");
+            (
+                volume.service.clone(),
+                volume.persist,
+                volume.mount_target.clone(),
+                kind,
+            )
+        })
+        .collect();
+    volumes.sort();
+    assert_eq!(
+        volumes,
+        vec![
+            (
+                "workspace".to_owned(),
+                true,
+                Some("/usr/local/cargo/git".to_owned()),
+                "cargo-git".to_owned(),
+            ),
+            (
+                "workspace".to_owned(),
+                true,
+                Some("/usr/local/cargo/registry".to_owned()),
+                "cargo-registry".to_owned(),
+            ),
+        ]
+    );
 }
 
 #[test]
@@ -444,7 +492,8 @@ catalog = "mariadb"
 }
 
 #[test]
-fn generated_compose_policy_includes_pull_production_hook() {
+fn pull_production_hook_flows_from_policy_into_its_report() {
+    // The hook parses into the policy exactly.
     let _lock = crate::test_env_lock();
     let root = temp_repo("pull-production-policy");
     fs::create_dir_all(root.join("scripts")).expect("mkdir scripts");
@@ -473,6 +522,47 @@ version = "8.3"
         policy.pull_production_hook.as_deref(),
         Some("scripts/pull-production.sh")
     );
+
+    // The report renders the hook contract from a policy.
+    let root = temp_repo("pull-production-report");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+    let report = crate::data_pull_production_report(
+        &policy,
+        &crate::ContainerDataHookResult {
+            hook: "rhai:scripts/pull-prod.rhai".to_owned(),
+        },
+        true,
+        Some("ready"),
+    );
+
+    assert_eq!(
+        report.json["schema"],
+        "effigy.container.data-pull-production.v1"
+    );
+    assert_eq!(report.json["hook"], "rhai:scripts/pull-prod.rhai");
+    assert_eq!(report.json["colima_started"], true);
+    assert!(report
+        .success_text
+        .contains("ran production data hook for container `web`"));
 }
 
 #[test]
@@ -663,7 +753,7 @@ fn cache_list_global_report_keeps_incomplete_size_totals_honest() {
 }
 
 #[test]
-fn volume_list_report_renders_orphan_contract() {
+fn volume_list_report_renders_filter_contracts() {
     let report = crate::volume_list_report(
         "global runtime volume inventory",
         Some("orphans"),
@@ -711,10 +801,8 @@ fn volume_list_report_renders_orphan_contract() {
     assert!(report.success_text.contains("containerd persistent"));
     assert!(report.success_text.contains("in-use"));
     assert!(report.success_text.contains("inactive"));
-}
 
-#[test]
-fn volume_list_report_renders_dormant_contract() {
+    // The dormant filter keeps its own counts and never emits orphan counts.
     let report = crate::volume_list_report(
         "repo volume inventory for /tmp/workspace-app-reference",
         Some("dormant"),
@@ -864,85 +952,6 @@ primary_service = "app"
 }
 
 #[test]
-fn data_pull_production_report_renders_hook_contract() {
-    let root = temp_repo("pull-production-report");
-    fs::write(
-        root.join("effigy.toml"),
-        r#"
-[containers]
-default = "web"
-
-[containers.web]
-compose_file = "infra/dev/docker-compose.yml"
-primary_service = "app"
-"#,
-    )
-    .expect("write manifest");
-    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(
-        root.join("infra/dev/docker-compose.yml"),
-        "services:\n  app:\n    image: example\n",
-    )
-    .expect("compose");
-
-    let policy = load_container_policy(&root, None).expect("policy");
-    let report = crate::data_pull_production_report(
-        &policy,
-        &crate::ContainerDataHookResult {
-            hook: "rhai:scripts/pull-prod.rhai".to_owned(),
-        },
-        true,
-        Some("ready"),
-    );
-
-    assert_eq!(
-        report.json["schema"],
-        "effigy.container.data-pull-production.v1"
-    );
-    assert_eq!(report.json["hook"], "rhai:scripts/pull-prod.rhai");
-    assert_eq!(report.json["colima_started"], true);
-    assert!(report
-        .success_text
-        .contains("ran production data hook for container `web`"));
-}
-
-#[test]
-fn status_report_renders_media_mounts() {
-    let root = temp_repo("status-media");
-    fs::write(
-        root.join("effigy.toml"),
-        r#"
-[containers]
-default = "web"
-
-[containers.web]
-compose_file = "infra/dev/docker-compose.yml"
-primary_service = "app"
-"#,
-    )
-    .expect("write manifest");
-    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(
-        root.join("infra/dev/docker-compose.yml"),
-        "services:\n  app:\n    image: example\n",
-    )
-    .expect("compose");
-
-    let mut policy = load_container_policy(&root, None).expect("policy");
-    policy.declared_media_mounts = vec!["storage/uploads:/var/www/html/storage/uploads".to_owned()];
-
-    let report = status_report(&policy, "containerd", true, None, None, &[], None);
-
-    assert_eq!(
-        report.json["media_mounts"][0],
-        "storage/uploads:/var/www/html/storage/uploads"
-    );
-    assert!(report
-        .success_text
-        .contains("media_mounts: storage/uploads:/var/www/html/storage/uploads"));
-}
-
-#[test]
 fn status_report_prefers_runtime_services_over_compose_ps_text() {
     let root = temp_repo("status-services");
     fs::write(
@@ -1034,7 +1043,8 @@ primary_service = "app"
 
     assert!(report
         .success_text
-        .contains("- postgres: Exited (255) 2 minutes ago"));
+        .lines()
+        .any(|line| line == "- postgres: Exited (255) 2 minutes ago"));
     assert_eq!(
         report.json["services"][0]["status"],
         "Exited (255) 2 minutes ago"

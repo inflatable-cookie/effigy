@@ -176,43 +176,35 @@ mod tests {
     }
 
     #[test]
-    fn handover_plan_names_owner_direction() {
-        let (_root, policy) = policy(
+    fn handover_plan_names_both_directions_exactly() {
+        // Without peers there is nothing to hand over.
+        let (_fresh_root, fresh_policy) = policy(None, vec![]);
+        assert!(plan_volume_data_handover(&fresh_policy).is_empty());
+
+        // Owning the data is handed over to the borrowing environment.
+        let (_root, owner_policy) = policy(
             Some("dev"),
             vec![peer("dev", "acowtancy-dev", &["db", "s3"])],
         );
-        let plan = plan_volume_data_handover(&policy);
+        let plan = plan_volume_data_handover(&owner_policy);
         assert_eq!(plan.len(), 1);
         assert_eq!(plan[0].environment, "dev");
         assert_eq!(plan[0].project_name, "acowtancy-dev");
         assert_eq!(plan[0].services, vec!["db".to_owned(), "s3".to_owned()]);
-        assert!(
-            plan[0]
-                .note
-                .contains("handing over db, s3 data volumes from `dev` to `hybrid`"),
-            "{}",
-            plan[0].note
+        assert_eq!(
+            plan[0].note,
+            "[data_from] handing over db, s3 data volumes from `dev` to `hybrid`"
         );
-    }
 
-    #[test]
-    fn handover_plan_names_take_back_direction() {
-        let (_root, policy) = policy(None, vec![peer("hybrid", "acowtancy-dev-hybrid", &["db"])]);
-        let plan = plan_volume_data_handover(&policy);
+        // Not owning it takes it back.
+        let (_take_root, take_policy) =
+            policy(None, vec![peer("hybrid", "acowtancy-dev-hybrid", &["db"])]);
+        let plan = plan_volume_data_handover(&take_policy);
         assert_eq!(plan.len(), 1);
-        assert!(
-            plan[0]
-                .note
-                .contains("taking back db data volume from `hybrid`"),
-            "{}",
-            plan[0].note
+        assert_eq!(
+            plan[0].note,
+            "[data_from] taking back db data volume from `hybrid` to `hybrid`"
         );
-    }
-
-    #[test]
-    fn handover_plan_is_empty_without_peers() {
-        let (_root, policy) = policy(None, vec![]);
-        assert!(plan_volume_data_handover(&policy).is_empty());
     }
 
     #[test]

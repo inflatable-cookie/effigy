@@ -145,7 +145,8 @@ mod tests {
 
     use super::{
         parse_health_check_pidfile_prune, prune_stale_health_check_pidfiles,
-        HealthCheckPidFilePrune, HEALTHCHECK_PIDFILE_STALE_MINUTES, HEALTHCHECK_TASK_ROOT,
+        prune_stale_health_check_pidfiles_script_for, HealthCheckPidFilePrune,
+        HEALTHCHECK_PIDFILE_STALE_MINUTES, HEALTHCHECK_TASK_ROOT,
     };
 
     #[test]
@@ -247,31 +248,26 @@ printf 'before 269091\nafter 907\n'
         let commands = fs::read_to_string(fixture.path().join("commands"))
             .expect("private adapter command receipt");
         let lines: Vec<&str> = commands.lines().filter(|line| !line.is_empty()).collect();
-        assert!(
-            lines.iter().all(|line| *line == "ssh"
-                || *line == "--profile"
-                || *line == "effigy"
-                || *line == "--"
-                || *line == "sudo"
-                || *line == "sh"
-                || *line == "-c"
-                || line.contains("root=")),
-            "only the bounded `colima ssh --profile effigy -- sudo sh -c <script>` adapter may run: {commands}"
-        );
-        assert!(commands.contains("ssh"), "got: {commands}");
-        assert!(commands.contains("sudo"), "got: {commands}");
-        assert!(commands.contains(HEALTHCHECK_TASK_ROOT), "got: {commands}");
-        assert!(
-            commands.contains(&format!(
-                "-name \"$pattern\" -mmin +{HEALTHCHECK_PIDFILE_STALE_MINUTES} -delete"
-            )),
-            "the only deletion is the pattern-scoped find: {commands}"
-        );
+        // The adapter issues exactly one bounded call: `colima ssh --profile
+        // effigy -- sudo sh -c <script>` with the prune script for the task
+        // root. Nothing else may run, and the script carries the
+        // pattern-scoped deletion.
+        let expected_script =
+            prune_stale_health_check_pidfiles_script_for(&HEALTHCHECK_TASK_ROOT.to_string());
         assert_eq!(
-            commands.matches("-delete").count(),
-            1,
-            "one deletion, no retries of it: {commands}"
+            lines,
+            vec![
+                "ssh",
+                "--profile",
+                "effigy",
+                "--",
+                "sudo",
+                "sh",
+                "-c",
+                expected_script.as_str(),
+            ]
         );
+        assert_eq!(commands.matches("-delete").count(), 1, "one deletion, no retries of it");
         assert!(!commands.contains(" rm "), "no rm: {commands}");
     }
 

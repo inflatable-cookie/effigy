@@ -690,7 +690,21 @@ catalog = "workspace-rust-bun"
             .as_str()
             .expect("the Dockerfile content is rendered");
         assert!(
-            inline.contains("FROM ") && inline.contains("BUN_VERSION"),
+            inline.starts_with("ARG RUST_VERSION=1.91\nFROM rust:$${RUST_VERSION}-bookworm\n"),
+            "the rendered content starts with the escaped catalog Dockerfile head: {:?}",
+            inline.lines().take(3).collect::<Vec<_>>()
+        );
+        assert!(
+            inline.trim_end().ends_with("CMD [\"sleep\", \"infinity\"]"),
+            "the rendered content keeps the catalog Dockerfile tail"
+        );
+        assert_eq!(
+            inline.lines().count(),
+            230,
+            "the catalog Dockerfile is inlined whole, not truncated or extended"
+        );
+        assert!(
+            inline.contains("ARG BUN_VERSION"),
             "the rendered content is the catalog Dockerfile: {inline}"
         );
         assert_eq!(

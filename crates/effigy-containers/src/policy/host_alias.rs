@@ -181,6 +181,24 @@ mod tests {
             aliases.resolve("postgres://app@postgres.acme.test:5432/app"),
             None
         );
+
+        // The same manifest through the real host map: a primary checkout
+        // declares and answers one name, so host execution rewrites nothing.
+        let map = build_host_map(
+            &[],
+            &[crate::EffectiveServiceAlias {
+                service: "postgres".to_owned(),
+                domain_label: "postgres".to_owned(),
+                container_port: 5432,
+            }],
+            &[],
+            None,
+            false,
+            Some("acme.test"),
+        );
+        assert_eq!(map.kind, HostScopeKind::Primary);
+        let aliases = HostExecutionAliases::for_scoped_checkout(&map);
+        assert!(aliases.is_empty(), "{aliases:?}");
     }
 
     #[test]
@@ -224,26 +242,5 @@ mod tests {
         ] {
             assert_eq!(aliases.resolve(value), None, "{value}");
         }
-    }
-
-    #[test]
-    fn the_host_map_a_primary_checkout_keeps_is_unchanged() {
-        // The same manifest through the real host map: a primary checkout
-        // declares and answers one name, so host execution rewrites nothing.
-        let map = build_host_map(
-            &[],
-            &[crate::EffectiveServiceAlias {
-                service: "postgres".to_owned(),
-                domain_label: "postgres".to_owned(),
-                container_port: 5432,
-            }],
-            &[],
-            None,
-            false,
-            Some("acme.test"),
-        );
-        assert_eq!(map.kind, HostScopeKind::Primary);
-        let aliases = HostExecutionAliases::for_scoped_checkout(&map);
-        assert!(aliases.is_empty(), "{aliases:?}");
     }
 }

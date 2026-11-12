@@ -124,26 +124,19 @@ fn up(root: &Path) -> Result<std::process::Output, ContainerExecError> {
 }
 
 #[test]
-fn a_name_store_conflict_on_this_project_clears_the_container_and_retries_once() {
-    let root = fixture(PROJECT);
-    assert!(up(&root)
-        .expect("the retried create succeeds")
-        .status
-        .success());
-    assert_eq!(
-        count(&root, &format!("\"rm\", \"-f\", \"{ID}")),
-        1,
-        "the owned container is removed once, by the id the runtime named"
-    );
-    assert_eq!(count(&root, "\"up\""), 2, "the create is retried once");
-    std::fs::remove_dir_all(&root).ok();
-}
-
-#[test]
-fn a_name_store_conflict_from_another_project_is_reported_and_never_removed() {
+fn name_store_conflicts_report_foreign_owners_and_retry_only_own_ones() {
+    // A foreign conflict is reported and never removed: no `rm` runs
+    // and the create is not retried.
     let root = fixture("someone-elses-project");
     let error = up(&root).expect_err("a foreign conflict is reported");
-    assert!(error.to_string().contains(ID), "{error}");
+    assert_eq!(
+            error.to_string(),
+            format!(
+                "docker compose up failed (exit code 1)\nstdout:\n\nstderr:\n[effigy] detached backend failed (exit code 1); its output was isolated from service writers and retained at {}\n[effigy] backend output tail:\nmsg={:?}",
+                root.join(".effigy/runtime/logs/app-dev-wt-abcdef012345.compose.log").display(),
+                format!("name-store error: name \"app-dev-wt-abcdef012345-app-1\" is already used by ID {ID}")
+            )
+        );
     assert_eq!(
         count(&root, "\"rm\""),
         0,
@@ -154,5 +147,19 @@ fn a_name_store_conflict_from_another_project_is_reported_and_never_removed() {
         1,
         "a foreign conflict is not retried"
     );
+    std::fs::remove_dir_all(&root).ok();
+
+    // The project's own conflict is cleared by id and retried once.
+    let root = fixture(PROJECT);
+    assert!(up(&root)
+        .expect("the retried create succeeds")
+        .status
+        .success());
+    assert_eq!(
+        count(&root, &format!("\"rm\", \"-f\", \"{ID}\"")),
+        1,
+        "the owned container is removed once, by the id the runtime named"
+    );
+    assert_eq!(count(&root, "\"up\""), 2, "the create is retried once");
     std::fs::remove_dir_all(&root).ok();
 }

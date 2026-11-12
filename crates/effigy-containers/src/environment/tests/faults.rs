@@ -164,16 +164,10 @@ fn recover_and_check(scenario: Scenario, home: &Path, label: &str) {
 }
 
 #[test]
-fn faults_reconciler_boundaries_up() {
-    faults_reconciler_boundaries(Scenario::Up);
-}
-#[test]
-fn faults_reconciler_boundaries_down() {
-    faults_reconciler_boundaries(Scenario::Down);
-}
-#[test]
-fn faults_reconciler_boundaries_reset() {
-    faults_reconciler_boundaries(Scenario::Reset);
+fn faults_reconciler_boundaries_share_one_table() {
+    for scenario in [Scenario::Up, Scenario::Down, Scenario::Reset] {
+        faults_reconciler_boundaries(scenario);
+    }
 }
 
 fn faults_reconciler_boundaries(scenario: Scenario) {

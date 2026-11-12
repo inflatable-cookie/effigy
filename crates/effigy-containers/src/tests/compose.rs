@@ -87,75 +87,6 @@ fn service_aliases(document: &serde_yaml::Value, service: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-#[test]
-fn isolated_dirs_survive_primary_and_linked_worktree_render_closures() {
-    let fixture = tempfile::tempdir().unwrap();
-    crate::with_test_effigy_home(&fixture.path().join("home"), || {
-        let manifest = r#"
-[containers]
-default = "stack"
-[containers.stack]
-project_name = "acowtancy-dev"
-primary_service = "workspace"
-working_dir = "/workspace-root/acowtancy"
-[containers.stack.services.workspace]
-catalog = "workspace-rust-bun"
-working_subdir = "acowtancy"
-isolated_dirs = ["node_modules", "packages/froyo/node_modules", "apps/farmyard/target", "platform/silo/target"]
-[systems.dev]
-container = "stack"
-working_dir = "/workspace-root/acowtancy"
-user = "dev"
-home = "/home/dev"
-"#;
-        let (primary, worktrees) =
-            create_linked_worktree_fixture(fixture.path(), manifest, &["task"]);
-        let mut volume_sets = Vec::new();
-        for checkout in [primary, worktrees[0].clone()] {
-            let policy = load_container_policy(&checkout, None).unwrap();
-            let render = policy.render.as_ref().unwrap();
-            assert!(!render.path.exists(), "render is pure");
-            let document: serde_yaml::Value =
-                serde_yaml::from_str(&policy.read_compose(&policy.compose_files[0]).unwrap())
-                    .unwrap();
-            let mounts = document["services"]["workspace"]["volumes"]
-                .as_sequence()
-                .unwrap();
-            let mut names = std::collections::BTreeSet::new();
-            for dir in [
-                "node_modules",
-                "packages/froyo/node_modules",
-                "apps/farmyard/target",
-                "platform/silo/target",
-            ] {
-                let target = format!(":/workspace-root/acowtancy/{dir}");
-                let matches = mounts
-                    .iter()
-                    .filter_map(serde_yaml::Value::as_str)
-                    .filter(|mount| mount.ends_with(&target))
-                    .collect::<Vec<_>>();
-                assert_eq!(matches.len(), 1, "{dir}: {mounts:?}");
-                let name = matches[0].split(':').next().unwrap();
-                assert!(
-                    names.insert(name.to_owned()),
-                    "one volume per isolated directory"
-                );
-                let declaration = &document["volumes"][name];
-                assert_eq!(declaration["name"].as_str(), Some(name));
-                assert_eq!(
-                    declaration["labels"]["com.effigy.managed"].as_str(),
-                    Some("true")
-                );
-            }
-            volume_sets.push(names);
-        }
-        assert!(
-            volume_sets[0].is_disjoint(&volume_sets[1]),
-            "worktree volumes are isolated from primary"
-        );
-    });
-}
-
 pub(super) fn create_linked_worktree_fixture(
     root: &Path,
     manifest: &str,
@@ -266,8 +197,13 @@ fn load_prepared_policy(
     crate::load_container_policy_for_creation(root, name).map(|(policy, _)| policy)
 }
 
+/// Linked worktrees, ephemeral clones and isolated directories each get
+/// their own Compose resources: distinct project names and volume sets with
+/// exact project-anchored volume names and OS-assigned ports, stable across
+/// reloads and recreation.
 #[test]
-fn linked_worktrees_generate_distinct_compose_resources_and_source_mounts() {
+fn scoped_checkouts_get_distinct_compose_resources_and_source_mounts() {
+    // Phase 1: linked worktrees generate distinct resources and mounts.
     with_temp_effigy_home("linked-worktree-resources", |_| {
         let _lock = crate::test_env_lock();
         let root = temp_repo("linked-worktree-resources");
@@ -291,10 +227,20 @@ host_ports = ["41001:41001"]
                 compose.contains(&checkout.display().to_string()),
                 "{compose}"
             );
-            assert!(policy
-                .managed_volumes
-                .iter()
-                .all(|volume| volume.name.starts_with(&policy.project_name)));
+            let mut names = managed_volume_names(&policy);
+            names.sort();
+            assert_eq!(
+                names,
+                [
+                    format!("{}-app-cargo-git", policy.project_name),
+                    format!("{}-app-cargo-registry", policy.project_name),
+                ]
+            );
+            assert_eq!(
+                policy.declared_ports,
+                vec!["127.0.0.1::41001".to_owned()],
+                "a worktree takes an OS-assigned port instead of the pin"
+            );
             policies.push(policy);
         }
         assert_ne!(policies[0].project_name, policies[1].project_name);
@@ -313,57 +259,161 @@ host_ports = ["41001:41001"]
             managed_volume_names(&policies[0])
         );
     });
-}
 
-#[test]
-fn linked_worktrees_get_distinct_effective_hosts_and_primary_keeps_declared() {
-    with_temp_effigy_home("linked-worktree-hosts", |_| {
+    // Phase 2: marked ephemeral clones get distinct resources alongside
+    // the unmarked operator checkout.
+    with_temp_effigy_home("ephemeral-clone-resources", |_| {
         let _lock = crate::test_env_lock();
-        let root = temp_repo("linked-worktree-hosts");
+        let root = temp_repo("ephemeral-clone-resources");
         let manifest = r#"
 [containers]
 default = "web"
 [containers.web]
-project_name = "app-dev"
+project_name = "shared-dev"
 primary_service = "app"
-[containers.web.dns]
-routes = [
-  { domain = "app.test", tls = true, service = "web" },
-  { domain = "mail.app.test", tls = false, service = "mail" },
-]
 [containers.web.services.app]
 catalog = "workspace-rust-bun"
+host_ports = ["41001:41001"]
 "#;
-        let (primary, checkouts) = create_linked_worktree_fixture(&root, manifest, &["one", "two"]);
-        let primary_policy = load_prepared_policy(&primary, None).unwrap();
-        assert_eq!(primary_policy.dns_domain.as_deref(), Some("app.test"));
-        assert_eq!(primary_policy.dns_routes[0].declared(), "app.test");
-        assert_eq!(primary_policy.dns_routes[0].domain, "app.test");
-        let mut effective = Vec::new();
-        let mut preceding_policies = vec![primary_policy.clone()];
-        for (name, checkout) in ["one", "two"].into_iter().zip(&checkouts) {
-            assert_linked_worktree_git_layout(&primary, checkout, name);
-            let policy = load_prepared_policy(checkout, None).unwrap();
-            assert_eq!(policy.dns_routes[0].declared(), "app.test");
-            assert_ne!(policy.dns_routes[0].domain, "app.test");
-            assert!(policy.dns_routes[0].domain.contains("-w"));
-            assert!(policy.dns_routes[1].domain.starts_with("mail.app-w"));
-            assert!(policy.read_compose(&policy.compose_files[0]).is_ok());
+        // The operator's own unmarked checkout keeps primary behavior.
+        let operator = root.join("operator");
+        fs::create_dir_all(operator.join(".git")).unwrap();
+        fs::write(operator.join(".git/config"), "[core]\n").unwrap();
+        fs::write(operator.join("effigy.toml"), manifest).unwrap();
+        let operator_policy = load_prepared_policy(&operator, None).unwrap();
+        assert_eq!(operator_policy.project_name, "shared-dev");
+
+        let mut identities = Vec::new();
+        for name in ["clone-one", "clone-two"] {
+            let checkout = root.join(name);
+            fs::create_dir_all(checkout.join(".git")).unwrap();
+            fs::write(
+                checkout.join(".git/config"),
+                "[effigy]\n\truntimeScope = ephemeral\n",
+            )
+            .unwrap();
+            fs::write(checkout.join("effigy.toml"), manifest).unwrap();
+            let policy = load_prepared_policy(&checkout, None).unwrap();
+            assert!(
+                policy.project_name.starts_with("shared-dev-ec-"),
+                "{}",
+                policy.project_name
+            );
+            let mut names = managed_volume_names(&policy);
+            names.sort();
+            assert_eq!(
+                names,
+                [
+                    format!("{}-app-cargo-git", policy.project_name),
+                    format!("{}-app-cargo-registry", policy.project_name),
+                ]
+            );
             let compose = policy.read_compose(&policy.compose_files[0]).unwrap();
             assert!(compose.contains("com.effigy.scope"), "{compose}");
-            effective.push(policy.dns_routes[0].domain.clone());
-            preceding_policies.push(policy);
+            identities.push((policy.project_name.clone(), policy.declared_ports.clone()));
         }
-        assert_ne!(
-            preceding_policies[1].project_name,
-            preceding_policies[2].project_name
+        // Distinct from the operator checkout and from each other.
+        assert_ne!(identities[0].0, identities[1].0);
+        assert_ne!(identities[0].0, "shared-dev");
+        assert_eq!(
+            identities[0].1,
+            vec!["127.0.0.1::41001".to_owned()],
+            "a scoped clone takes an OS-assigned port instead of the pin"
         );
-        assert_ne!(effective[0], effective[1]);
-        assert_ne!(effective[0], "app.test");
+        assert_eq!(identities[0].1, identities[1].1);
 
-        let again = load_container_policy(&checkouts[0], None).unwrap();
-        assert_eq!(again.project_name, preceding_policies[1].project_name);
-        assert_eq!(again.dns_routes[0].domain, effective[0]);
+        // Repeated commands reuse the identity; a recreated clone gets a new
+        // generation with its own name and ports.
+        let again = load_container_policy(&root.join("clone-one"), None).unwrap();
+        assert_eq!(again.project_name, identities[0].0);
+        assert_eq!(again.declared_ports, identities[0].1);
+        // Move the sealed old fixture aside, then replace the whole checkout.
+        // Replacing only Git metadata cannot adopt its existing journal.
+        fs::rename(root.join("clone-one"), root.join("retired-clone-one")).unwrap();
+        fs::create_dir_all(root.join("clone-one/.git")).unwrap();
+        fs::write(
+            root.join("clone-one/.git/config"),
+            "[effigy]\n\truntimeScope = ephemeral\n",
+        )
+        .unwrap();
+        fs::write(root.join("clone-one/effigy.toml"), manifest).unwrap();
+        let recreated = load_prepared_policy(&root.join("clone-one"), None).unwrap();
+        assert_ne!(recreated.project_name, identities[0].0);
+        // Host ports are OS-assigned, so the identity and volumes carry the
+        // difference, not a shared port number.
+        assert_eq!(recreated.declared_ports, identities[0].1);
+    });
+
+    // Phase 3: isolated directories stay per-scope volumes in both the
+    // primary and the linked worktree renders.
+    let fixture = tempfile::tempdir().unwrap();
+    crate::with_test_effigy_home(&fixture.path().join("home"), || {
+        let manifest = r#"
+[containers]
+default = "stack"
+[containers.stack]
+project_name = "acowtancy-dev"
+primary_service = "workspace"
+working_dir = "/workspace-root/acowtancy"
+[containers.stack.services.workspace]
+catalog = "workspace-rust-bun"
+working_subdir = "acowtancy"
+isolated_dirs = ["node_modules", "packages/froyo/node_modules", "apps/farmyard/target", "platform/silo/target"]
+[systems.dev]
+container = "stack"
+working_dir = "/workspace-root/acowtancy"
+user = "dev"
+home = "/home/dev"
+"#;
+        let (primary, worktrees) =
+            create_linked_worktree_fixture(fixture.path(), manifest, &["task"]);
+        let mut volume_sets = Vec::new();
+        for checkout in [primary, worktrees[0].clone()] {
+            let policy = load_container_policy(&checkout, None).unwrap();
+            let render = policy.render.as_ref().unwrap();
+            assert!(!render.path.exists(), "render is pure");
+            let document: serde_yaml::Value =
+                serde_yaml::from_str(&policy.read_compose(&policy.compose_files[0]).unwrap())
+                    .unwrap();
+            let mounts = document["services"]["workspace"]["volumes"]
+                .as_sequence()
+                .unwrap();
+            let mut names = std::collections::BTreeSet::new();
+            for dir in [
+                "node_modules",
+                "packages/froyo/node_modules",
+                "apps/farmyard/target",
+                "platform/silo/target",
+            ] {
+                let target = format!(":/workspace-root/acowtancy/{dir}");
+                let matches = mounts
+                    .iter()
+                    .filter_map(serde_yaml::Value::as_str)
+                    .filter(|mount| mount.ends_with(&target))
+                    .collect::<Vec<_>>();
+                assert_eq!(matches.len(), 1, "{dir}: {mounts:?}");
+                let name = matches[0].split(':').next().unwrap();
+                assert!(
+                    !name.contains('/'),
+                    "isolated mounts are named volumes, not binds: {mounts:?}"
+                );
+                assert!(
+                    names.insert(name.to_owned()),
+                    "one volume per isolated directory"
+                );
+                let declaration = &document["volumes"][name];
+                assert_eq!(declaration["name"].as_str(), Some(name));
+                assert_eq!(
+                    declaration["labels"]["com.effigy.managed"].as_str(),
+                    Some("true")
+                );
+            }
+            volume_sets.push(names);
+        }
+        assert!(
+            volume_sets[0].is_disjoint(&volume_sets[1]),
+            "worktree volumes are isolated from primary"
+        );
     });
 }
 
@@ -374,55 +424,6 @@ fn listener_route(policy: &crate::EffectiveContainerPolicy) -> String {
         .expect("managed listener")
         .route_domain
         .clone()
-}
-
-#[test]
-fn linked_worktrees_scope_managed_listener_routes_with_declared_hosts() {
-    with_temp_effigy_home("linked-worktree-listener-routes", |_| {
-        let _lock = crate::test_env_lock();
-        let root = temp_repo("linked-worktree-listener-routes");
-        let manifest = r#"
-[containers]
-default = "web"
-[containers.web]
-project_name = "app-dev"
-primary_service = "app"
-[containers.web.services.app]
-catalog = "workspace-rust-bun"
-[[containers.web.host_processes]]
-name = "api"
-run = "exec ./scripts/api"
-[containers.web.host_processes.listener]
-bind = "127.0.0.1:0"
-[containers.web.host_processes.listener.readiness]
-path = "/health"
-status = 200
-[containers.web.host_processes.listener.route]
-domain = "api.acme.test"
-tls = true
-"#;
-        let (primary, checkouts) = create_linked_worktree_fixture(&root, manifest, &["one", "two"]);
-        let primary_policy = load_container_policy(&primary, None).unwrap();
-        assert_eq!(listener_route(&primary_policy), "api.acme.test");
-        let mut preceding_policies = vec![primary_policy];
-        let mut effective = Vec::new();
-        for checkout in &checkouts {
-            let policy = load_container_policy(checkout, None).unwrap();
-            let domain = listener_route(&policy);
-            assert!(domain.starts_with("api.acme-w"), "got `{domain}`");
-            assert!(domain.ends_with(".test"), "got `{domain}`");
-            effective.push(domain);
-            preceding_policies.push(policy);
-        }
-        assert_ne!(effective[0], effective[1]);
-
-        let again = load_container_policy(&checkouts[0], None).unwrap();
-        assert_eq!(
-            listener_route(&again),
-            effective[0],
-            "repeated resolution must not scope the listener twice"
-        );
-    });
 }
 
 #[test]
@@ -547,88 +548,134 @@ fn invalid_linked_worktree_admin_directory_is_refused() {
     assert!(error.to_string().contains("not a git directory"));
 }
 
+/// One translated compose file with a fixed host port, in each checkout
+/// scope: a linked worktree and a marked ephemeral clone take an OS-assigned
+/// port rather than competing for the primary's, and an unmarked clone leaves
+/// the host side to Prepare instead of claiming the declared 8080.
+/// DNS and listener surfaces shorten the 12-hex checkout token to 8 hex
+/// (DNS labels cap at 63 chars); every surface must still share the one
+/// checkout token root, or scopes cross-wire.
+fn assert_scope_token_shared(project_name: &str, project_prefix: &str, scoped: &str) {
+    let token = project_name
+        .strip_prefix(project_prefix)
+        .expect("scoped project name");
+    let short = &token[..8];
+    assert!(
+        scoped.contains(short),
+        "one checkout token across surfaces: {project_name} vs {scoped}"
+    );
+}
+
+/// Linked worktrees and scoped clones keep their own DNS identity: distinct
+/// effective hosts, scoped listener routes and database aliases that share
+/// one checkout token, stable across reloads, while shared services stay put
+/// and a fresh worktree mints its scope on first use.
 #[test]
-fn marked_ephemeral_clones_get_distinct_compose_resources_alongside_unmarked_checkout() {
-    with_temp_effigy_home("ephemeral-clone-resources", |_| {
+fn linked_worktrees_keep_distinct_dns_identity_per_scope() {
+    // Phase 1: worktrees get distinct effective hosts; primary keeps declared.
+    with_temp_effigy_home("linked-worktree-hosts", |_| {
         let _lock = crate::test_env_lock();
-        let root = temp_repo("ephemeral-clone-resources");
+        let root = temp_repo("linked-worktree-hosts");
         let manifest = r#"
 [containers]
 default = "web"
 [containers.web]
-project_name = "shared-dev"
+project_name = "app-dev"
+primary_service = "app"
+[containers.web.dns]
+routes = [
+  { domain = "app.test", tls = true, service = "web" },
+  { domain = "mail.app.test", tls = false, service = "mail" },
+]
+[containers.web.services.app]
+catalog = "workspace-rust-bun"
+"#;
+        let (primary, checkouts) = create_linked_worktree_fixture(&root, manifest, &["one", "two"]);
+        let primary_policy = load_prepared_policy(&primary, None).unwrap();
+        assert_eq!(primary_policy.dns_domain.as_deref(), Some("app.test"));
+        assert_eq!(primary_policy.dns_routes[0].declared(), "app.test");
+        assert_eq!(primary_policy.dns_routes[0].domain, "app.test");
+        let mut effective = Vec::new();
+        let mut preceding_policies = vec![primary_policy.clone()];
+        for (name, checkout) in ["one", "two"].into_iter().zip(&checkouts) {
+            assert_linked_worktree_git_layout(&primary, checkout, name);
+            let policy = load_prepared_policy(checkout, None).unwrap();
+            assert_eq!(policy.dns_routes[0].declared(), "app.test");
+            assert_ne!(policy.dns_routes[0].domain, "app.test");
+            assert_scope_token_shared(
+                &policy.project_name,
+                "app-dev-wt-",
+                &policy.dns_routes[0].domain,
+            );
+            assert_scope_token_shared(
+                &policy.project_name,
+                "app-dev-wt-",
+                &policy.dns_routes[1].domain,
+            );
+            assert!(policy.read_compose(&policy.compose_files[0]).is_ok());
+            let compose = policy.read_compose(&policy.compose_files[0]).unwrap();
+            assert!(compose.contains("com.effigy.scope"), "{compose}");
+            effective.push(policy.dns_routes[0].domain.clone());
+            preceding_policies.push(policy);
+        }
+        assert_ne!(
+            preceding_policies[1].project_name,
+            preceding_policies[2].project_name
+        );
+        assert_ne!(effective[0], effective[1]);
+        assert_ne!(effective[0], "app.test");
+
+        let again = load_container_policy(&checkouts[0], None).unwrap();
+        assert_eq!(again.project_name, preceding_policies[1].project_name);
+        assert_eq!(again.dns_routes[0].domain, effective[0]);
+    });
+    // Phase 2: managed listener routes scope per worktree with declared hosts.
+    with_temp_effigy_home("linked-worktree-listener-routes", |_| {
+        let _lock = crate::test_env_lock();
+        let root = temp_repo("linked-worktree-listener-routes");
+        let manifest = r#"
+[containers]
+default = "web"
+[containers.web]
+project_name = "app-dev"
 primary_service = "app"
 [containers.web.services.app]
 catalog = "workspace-rust-bun"
-host_ports = ["41001:41001"]
+[[containers.web.host_processes]]
+name = "api"
+run = "exec ./scripts/api"
+[containers.web.host_processes.listener]
+bind = "127.0.0.1:0"
+[containers.web.host_processes.listener.readiness]
+path = "/health"
+status = 200
+[containers.web.host_processes.listener.route]
+domain = "api.acme.test"
+tls = true
 "#;
-        // The operator's own unmarked checkout keeps primary behavior.
-        let operator = root.join("operator");
-        fs::create_dir_all(operator.join(".git")).unwrap();
-        fs::write(operator.join(".git/config"), "[core]\n").unwrap();
-        fs::write(operator.join("effigy.toml"), manifest).unwrap();
-        let operator_policy = load_prepared_policy(&operator, None).unwrap();
-        assert_eq!(operator_policy.project_name, "shared-dev");
-
-        let mut identities = Vec::new();
-        for name in ["clone-one", "clone-two"] {
-            let checkout = root.join(name);
-            fs::create_dir_all(checkout.join(".git")).unwrap();
-            fs::write(
-                checkout.join(".git/config"),
-                "[effigy]\n\truntimeScope = ephemeral\n",
-            )
-            .unwrap();
-            fs::write(checkout.join("effigy.toml"), manifest).unwrap();
-            let policy = load_prepared_policy(&checkout, None).unwrap();
-            assert!(
-                policy.project_name.starts_with("shared-dev-ec-"),
-                "{}",
-                policy.project_name
-            );
-            assert!(policy
-                .managed_volumes
-                .iter()
-                .all(|volume| volume.name.starts_with(&policy.project_name)));
-            let compose = policy.read_compose(&policy.compose_files[0]).unwrap();
-            assert!(compose.contains("com.effigy.scope"), "{compose}");
-            identities.push((policy.project_name.clone(), policy.declared_ports.clone()));
+        let (primary, checkouts) = create_linked_worktree_fixture(&root, manifest, &["one", "two"]);
+        let primary_policy = load_container_policy(&primary, None).unwrap();
+        assert_eq!(listener_route(&primary_policy), "api.acme.test");
+        let mut preceding_policies = vec![primary_policy];
+        let mut effective = Vec::new();
+        for checkout in &checkouts {
+            let policy = load_container_policy(checkout, None).unwrap();
+            let domain = listener_route(&policy);
+            assert_scope_token_shared(&policy.project_name, "app-dev-wt-", &domain);
+            assert!(domain.ends_with(".test"), "got `{domain}`");
+            effective.push(domain);
+            preceding_policies.push(policy);
         }
-        // Distinct from the operator checkout and from each other.
-        assert_ne!(identities[0].0, identities[1].0);
-        assert_ne!(identities[0].0, "shared-dev");
+        assert_ne!(effective[0], effective[1]);
+
+        let again = load_container_policy(&checkouts[0], None).unwrap();
         assert_eq!(
-            identities[0].1,
-            vec!["127.0.0.1::41001".to_owned()],
-            "a scoped clone takes an OS-assigned port instead of the pin"
+            listener_route(&again),
+            effective[0],
+            "repeated resolution must not scope the listener twice"
         );
-        assert_eq!(identities[0].1, identities[1].1);
-
-        // Repeated commands reuse the identity; a recreated clone gets a new
-        // generation with its own name and ports.
-        let again = load_container_policy(&root.join("clone-one"), None).unwrap();
-        assert_eq!(again.project_name, identities[0].0);
-        assert_eq!(again.declared_ports, identities[0].1);
-        // Move the sealed old fixture aside, then replace the whole checkout.
-        // Replacing only Git metadata cannot adopt its existing journal.
-        fs::rename(root.join("clone-one"), root.join("retired-clone-one")).unwrap();
-        fs::create_dir_all(root.join("clone-one/.git")).unwrap();
-        fs::write(
-            root.join("clone-one/.git/config"),
-            "[effigy]\n\truntimeScope = ephemeral\n",
-        )
-        .unwrap();
-        fs::write(root.join("clone-one/effigy.toml"), manifest).unwrap();
-        let recreated = load_prepared_policy(&root.join("clone-one"), None).unwrap();
-        assert_ne!(recreated.project_name, identities[0].0);
-        // Host ports are OS-assigned, so the identity and volumes carry the
-        // difference, not a shared port number.
-        assert_eq!(recreated.declared_ports, identities[0].1);
     });
-}
-
-#[test]
-fn linked_worktree_container_target_resolves_its_own_declared_database_alias() {
+    // Phase 3: a worktree container target resolves its own declared database alias.
     // Two scoped checkouts of one manifest. Each container target must resolve
     // the canonical declared TCP alias to its own backing service, because the
     // Compose network (and its project) belongs to that scope.
@@ -687,6 +734,7 @@ catalog = "postgres"
                 generated.contains("networks:") && generated.contains("com.effigy.scope"),
                 "the scope owns its Compose network: {generated}"
             );
+            assert_scope_token_shared(&policy.project_name, "app-dev-ec-", &effective_base);
             let aliases = service_aliases(&dns_override, "postgres");
             assert!(
                 aliases
@@ -707,7 +755,7 @@ catalog = "postgres"
             scopes.push((policy.project_name.clone(), effective_base));
         }
         assert_ne!(
-            scopes[0].0, scopes[1].0,
+            scopes[1].0, scopes[0].0,
             "each scope keeps its own Compose project network"
         );
         assert_ne!(
@@ -715,12 +763,75 @@ catalog = "postgres"
             "each scope keeps its own host apex"
         );
     });
+    // Phase 4: fresh worktree creation scopes local resources but keeps the shared service.
+    let fixture = tempfile::tempdir().unwrap();
+    fs::create_dir(fixture.path().join("home")).unwrap();
+    crate::with_test_effigy_home(&fixture.path().join("home"), || {
+        let manifest = r#"
+[containers]
+default = "web"
+[containers.web]
+project_name = "fixture-dev"
+primary_service = "app"
+[containers.web.dns]
+base_domain = "acme.test"
+routes = [{ domain = "app.acme.test", service = "app", tls = false }]
+[containers.web.services.app]
+catalog = "workspace-rust-bun"
+[containers.web.services.postgres]
+catalog = "postgres"
+[containers.web.services.shared_db]
+catalog = "mariadb"
+shared = true
+version = "10.11"
+"#;
+        let (primary, worktrees) =
+            create_linked_worktree_fixture(fixture.path(), manifest, &["linked"]);
+        let linked = &worktrees[0];
+        let token_dir = effigy_core::worktree_scope::resolve(linked)
+            .unwrap()
+            .unwrap()
+            .token_dir;
+        fs::remove_file(token_dir.join(effigy_core::worktree_scope::SCOPE_FILE)).unwrap();
+        let primary_policy = load_prepared_policy(&primary, None).unwrap();
+        assert!(effigy_core::worktree_scope::load_scoped(linked)
+            .unwrap()
+            .is_none());
+        let linked_policy = load_prepared_policy(linked, None).unwrap();
+        assert_ne!(primary_policy.project_name, linked_policy.project_name);
+        assert!(linked_policy.project_name.starts_with("fixture-dev-wt-"));
+        assert_ne!(
+            primary_policy.dns_routes[0].domain,
+            linked_policy.dns_routes[0].domain
+        );
+        assert!(primary_policy.managed_volumes.iter().all(|v| linked_policy
+            .managed_volumes
+            .iter()
+            .all(|other| v.name != other.name)));
+        assert_eq!(
+            primary_policy.shared_services[0].project_name,
+            linked_policy.shared_services[0].project_name
+        );
+        assert_scope_token_shared(
+            &linked_policy.project_name,
+            "fixture-dev-wt-",
+            &linked_policy.dns_routes[0].domain,
+        );
+        let aliases = service_aliases(&parsed_compose(&linked_policy, 1), "postgres");
+        assert!(aliases
+            .iter()
+            .any(|alias| alias.starts_with("postgres.acme-w")));
+        assert_scope_token_shared(
+            &linked_policy.project_name,
+            "fixture-dev-wt-",
+            &aliases
+                .iter()
+                .find(|alias| alias.starts_with("postgres.acme-w"))
+                .expect("scoped postgres alias"),
+        );
+    });
 }
 
-/// One translated compose file with a fixed host port, in each checkout
-/// scope: a linked worktree and a marked ephemeral clone take an OS-assigned
-/// port rather than competing for the primary's, and an unmarked clone leaves
-/// the host side to Prepare instead of claiming the declared 8080.
 #[test]
 fn translated_fixed_port_is_assigned_per_scope_kind() {
     fn linked_worktree(checkout: &Path, root: &Path) {
@@ -783,22 +894,21 @@ primary_service = "app"
         match assigned {
             Some(port) => {
                 assert_eq!(policy.declared_ports, vec![port.to_owned()], "{name}");
-                let compose = policy.read_compose(&policy.compose_files[0]).unwrap();
-                assert!(compose.contains(port), "{name}: {compose}");
+                let document: serde_yaml::Value =
+                    serde_yaml::from_str(&policy.read_compose(&policy.compose_files[0]).unwrap())
+                        .expect("parse translated compose");
+                let rendered: Vec<&str> = document["services"]["app"]["ports"]
+                    .as_sequence()
+                    .map(|ports| ports.iter().filter_map(serde_yaml::Value::as_str).collect())
+                    .unwrap_or_default();
+                assert_eq!(rendered, vec![port], "{name}");
             }
             // A translated port is a catalog port: Prepare assigns the host
             // side, so no checkout claims the fixed 8080.
             None => {
-                assert!(
-                    !policy.declared_ports.contains(&"8080:80".to_owned()),
-                    "{name}: {:?}",
-                    policy.declared_ports
-                );
-                assert!(
-                    policy
-                        .declared_ports
-                        .iter()
-                        .any(|port| port.ends_with(":80")),
+                assert_eq!(
+                    policy.declared_ports,
+                    vec!["127.0.0.1::80".to_owned()],
                     "{name}: {:?}",
                     policy.declared_ports
                 );
@@ -908,22 +1018,40 @@ variant = "default"
         let compose = policy
             .read_compose(&compose_path)
             .expect("read generated compose");
-        assert!(compose.contains("services:"));
-        assert!(compose.contains("app:"));
-        assert!(compose.contains("web:"));
+        let document: serde_yaml::Value =
+            serde_yaml::from_str(&compose).expect("parse generated compose");
+        let services: std::collections::BTreeSet<String> = document["services"]
+            .as_mapping()
+            .map(|mapping| {
+                mapping
+                    .keys()
+                    .filter_map(serde_yaml::Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert_eq!(
+            services,
+            ["app".to_owned(), "web".to_owned()].into_iter().collect()
+        );
         assert_eq!(
             policy.secret_delivery,
             effigy_manifest::ManifestContainerSecretDelivery::ComposeEnv
         );
         assert!(!policy.ports_declared_explicitly);
-        assert!(
-            policy.declared_ports.contains(&"127.0.0.1::80".to_owned()),
-            "{:?}",
-            policy.declared_ports
-        );
-        assert!(
-            compose.contains("127.0.0.1::80"),
-            "generated compose lets the OS assign the published port, bound to loopback: {compose}"
+        assert_eq!(policy.declared_ports, vec!["127.0.0.1::80".to_owned()]);
+        assert_eq!(
+            document["services"]["web"]["ports"]
+                .as_sequence()
+                .map(|ports| {
+                    ports
+                        .iter()
+                        .filter_map(serde_yaml::Value::as_str)
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>()
+                }),
+            Some(vec!["127.0.0.1::80".to_owned()]),
+            "generated compose lets the OS assign the published port, bound to loopback"
         );
     });
 }
@@ -1036,6 +1164,22 @@ variant = "default"
 
         assert_eq!(policy.compose_source, EffectiveComposeSource::Generated);
         assert_eq!(policy.project_name, "workspace-app-reference-web-dev");
+        let document: serde_yaml::Value =
+            serde_yaml::from_str(&compose).expect("parse generated compose");
+        let services: std::collections::BTreeSet<String> = document["services"]
+            .as_mapping()
+            .map(|mapping| {
+                mapping
+                    .keys()
+                    .filter_map(serde_yaml::Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert_eq!(
+            services,
+            ["app".to_owned(), "web".to_owned()].into_iter().collect()
+        );
         assert!(policy.compose_files[0].starts_with(&runtime_compose_dir));
         assert!(
             !policy.compose_files[0].exists(),
@@ -1104,14 +1248,12 @@ variant = "default"
         assert!(compose.contains("127.0.0.1:18080:80"), "{compose}");
         assert!(compose.contains("127.0.0.1:13306:3306"), "{compose}");
         assert!(policy.ports_declared_explicitly);
-        assert!(policy
-            .declared_ports
-            .iter()
-            .any(|value| value == "18080:80"));
-        assert!(policy
-            .declared_ports
-            .iter()
-            .any(|value| value == "13306:3306"));
+        let mut declared = policy.declared_ports.clone();
+        declared.sort();
+        assert_eq!(
+            declared,
+            vec!["13306:3306".to_owned(), "18080:80".to_owned()]
+        );
     });
 }
 
@@ -1185,10 +1327,15 @@ version = "8.3"
         .expect("write manifest");
 
         let error = load_container_policy(&root, None).expect_err("should fail");
-        assert!(
-            error.to_string().contains("host.publish_address"),
-            "unexpected error: {error}"
-        );
+        match error {
+            ContainerPolicyError::TaskInvocation(message) => {
+                assert_eq!(
+                    message,
+                    "container `web` has invalid `host.publish_address` `not-an-ip`: invalid IPv4 address syntax"
+                );
+            }
+            other => panic!("expected refusal, got {other:?}"),
+        }
     });
 }
 
@@ -1317,13 +1464,20 @@ catalog = "silo"
             "two HTTP services",
             two_http,
             Ports::TwoHttpServices,
-            &["127.0.0.1::80", "127.0.0.1::80"],
+            &["127.0.0.1::3306", "127.0.0.1::80", "127.0.0.1::80"],
         ),
         (
             "TCP-alias services",
             tcp_aliases,
             Ports::TcpAliases,
-            &["127.0.0.1::5432", "127.0.0.1::1025", "127.0.0.1::9000"],
+            &[
+                "127.0.0.1::1025",
+                "127.0.0.1::41001",
+                "127.0.0.1::5432",
+                "127.0.0.1::8025",
+                "127.0.0.1::9000",
+                "127.0.0.1::9001",
+            ],
         ),
     ];
     for (name, manifest, kind, expected) in cases {
@@ -1337,16 +1491,15 @@ catalog = "silo"
             let compose = policy
                 .read_compose(&policy.compose_files[0])
                 .expect("read generated compose");
-            for published in expected {
-                assert!(
-                    policy.declared_ports.contains(&published.to_string()),
-                    "{name}: expected {published} beside {:?}",
-                    policy.declared_ports
-                );
+            let mut declared = policy.declared_ports.clone();
+            declared.sort();
+            let mut want: Vec<String> = expected.iter().map(|port| (*port).to_owned()).collect();
+            want.sort();
+            assert_eq!(declared, want, "{name}: exact OS-assigned port set");
+            for published in &want {
                 assert!(
                     compose.contains(&format!("- {published}")),
-                    "{name}: {published} is published:
-{compose}"
+                    "{name}: {published} is published:\n{compose}"
                 );
             }
 
@@ -1465,10 +1618,12 @@ container = "web"
             .read_compose(&policy.compose_files[0])
             .expect("read compose");
 
-        assert!(
-            compose.contains("working_dir: /var/www/html")
-                || compose.contains("working_dir: \"/var/www/html\""),
-            "generated compose should include the container working_dir: {compose}"
+        let document: serde_yaml::Value =
+            serde_yaml::from_str(&compose).expect("parse generated compose");
+        assert_eq!(
+            document["services"]["app"]["working_dir"].as_str(),
+            Some("/var/www/html"),
+            "generated compose should include the container working_dir"
         );
         assert!(
             compose.contains(&format!("{}:/var/www/html", root.display())),
@@ -1546,25 +1701,62 @@ working_dir = "/var/www/html"
             let rewritten = policy
                 .read_compose(&policy.compose_files[0])
                 .expect("read compose");
-
+            let document: serde_yaml::Value =
+                serde_yaml::from_str(&rewritten).expect("parse rewritten compose");
+            let mounts: Vec<&str> = document["services"]["app"]["volumes"]
+                .as_sequence()
+                .map(|volumes| {
+                    volumes
+                        .iter()
+                        .filter_map(serde_yaml::Value::as_str)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let with_target = |target: &str| -> Vec<&&str> {
+                mounts
+                    .iter()
+                    .filter(|mount| mount.ends_with(target))
+                    .collect()
+            };
             let host_mount = format!(
                 "{}:/home/dev/.config/composer",
                 host_composer_home.display()
             );
-            let shared_home = ":/home/dev/.config/composer";
-            let shared_cache = "/shared/composer-cache:/home/dev/.cache/composer";
             match mode {
                 ComposerMount::HostHome => {
-                    assert!(rewritten.contains(&host_mount), "{name}: {rewritten}");
+                    assert_eq!(
+                        with_target(":/home/dev/.config/composer"),
+                        [&host_mount.as_str()],
+                        "{name}"
+                    );
+                    assert_eq!(
+                        with_target(":/home/dev/.cache/composer").len(),
+                        1,
+                        "{name}: the cache stays shared"
+                    );
                 }
                 ComposerMount::Shared => {
-                    assert!(!rewritten.contains(&host_mount), "{name}: {rewritten}");
-                    assert!(rewritten.contains(shared_home), "{name}: {rewritten}");
-                    assert!(rewritten.contains(shared_cache), "{name}: {rewritten}");
+                    assert_eq!(
+                        with_target(":/home/dev/.config/composer").len(),
+                        1,
+                        "{name}"
+                    );
+                    let shared = with_target(":/home/dev/.config/composer")[0];
+                    assert!(
+                        shared.starts_with("efv-"),
+                        "the shared home is a managed volume: {shared}"
+                    );
+                    assert_eq!(with_target(":/home/dev/.cache/composer").len(), 1, "{name}");
                 }
                 ComposerMount::Disabled => {
-                    assert!(!rewritten.contains(shared_home), "{name}: {rewritten}");
-                    assert!(!rewritten.contains(shared_cache), "{name}: {rewritten}");
+                    assert!(
+                        with_target(":/home/dev/.config/composer").is_empty(),
+                        "{name}"
+                    );
+                    assert!(
+                        with_target(":/home/dev/.cache/composer").is_empty(),
+                        "{name}"
+                    );
                 }
             }
         });
@@ -1633,6 +1825,25 @@ working_dir = "/var/www/html"
         });
         let document = parsed_compose(&policy, 0);
         let volumes = service_volumes(&document, "app");
+        let mut efv_targets: Vec<&str> = volumes
+            .iter()
+            .filter_map(|mount| {
+                let mut parts = mount.split(':');
+                let source = parts.next()?;
+                let target = parts.next()?;
+                source.starts_with("efv-").then_some(target)
+            })
+            .collect();
+        efv_targets.sort();
+        assert_eq!(
+            efv_targets,
+            vec![
+                "/home/dev/.local/share/pnpm/store",
+                "/var/www/html/.effigy/secrets",
+                "/var/www/html/.effigy/state",
+            ],
+            "the stack keeps exactly its three managed mounts: {volumes:?}"
+        );
         assert!(
             volumes.contains(&format!(
                 "{}:/home/dev/.config/composer",
@@ -1724,7 +1935,22 @@ variant = "default"
         let compose = policy
             .read_compose(&policy.compose_files[0])
             .expect("compose");
-        assert!(!compose.contains("\n  db:\n"));
+        let document: serde_yaml::Value = serde_yaml::from_str(&compose).expect("parse compose");
+        let services: std::collections::BTreeSet<String> = document["services"]
+            .as_mapping()
+            .map(|mapping| {
+                mapping
+                    .keys()
+                    .filter_map(serde_yaml::Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert_eq!(
+            services,
+            ["app".to_owned(), "web".to_owned()].into_iter().collect(),
+            "the shared db service leaves the local compose"
+        );
         assert!(compose.contains("DB_HOST: host.docker.internal"));
         assert!(compose.contains(&format!("DB_PORT: '{}'", shared.host_port)));
 
@@ -1883,9 +2109,15 @@ shared = true
         .expect("write manifest");
 
         let error = load_container_policy(&root, None).expect_err("should fail");
-        assert!(error
-            .to_string()
-            .contains("unsupported shared catalog `php-fpm`"));
+        match error {
+            ContainerPolicyError::TaskInvocation(message) => {
+                assert_eq!(
+                    message,
+                    "service `app` uses unsupported shared catalog `php-fpm`; the bounded shared-service path only supports catalogs that declare `shared_service = true`"
+                );
+            }
+            other => panic!("expected refusal, got {other:?}"),
+        }
     });
 }
 
@@ -1986,6 +2218,188 @@ shared = true
 }
 
 #[test]
+fn runtime_dns_overrides_carry_resolvers_aliases_and_gateways() {
+    // Phase 1: direct compose carries the exact resolver list and invents
+    // no route hosts.
+    {
+        let _lock = crate::test_env_lock();
+        let root = temp_repo("direct-compose-runtime-dns");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+    [containers]
+    default = "web"
+
+    [containers.web]
+    compose_file = "infra/dev/docker-compose.yml"
+    primary_service = "app"
+    "#,
+        )
+        .expect("write manifest");
+        fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+        fs::write(
+            root.join("infra/dev/docker-compose.yml"),
+            r#"
+    services:
+      app:
+        image: "node:22"
+      db:
+        image: "postgres:16"
+    "#,
+        )
+        .expect("compose");
+
+        let policy = load_container_policy(&root, None).expect("policy");
+
+        // Translated `compose_file` renders like any catalog environment: one
+        // generated document carrying ownership labels, plus the DNS override.
+        assert_eq!(policy.compose_files.len(), 2);
+        assert!(
+            policy.compose_files[0].ends_with(".effigy/runtime/compose/web.generated.compose.yml")
+        );
+        assert!(policy.compose_files[1].ends_with(".effigy/runtime/dns/web.compose.override.yml"));
+        let dns_override = parsed_compose(&policy, 1);
+        for service in ["app", "db"] {
+            let servers: Vec<&str> = dns_override["services"][service]["dns"]
+                .as_sequence()
+                .map(|servers| {
+                    servers
+                        .iter()
+                        .filter_map(|server| server.as_str())
+                        .collect()
+                })
+                .unwrap_or_default();
+            assert_eq!(
+                servers,
+                vec!["1.1.1.1", "8.8.8.8"],
+                "dns override should carry both resolvers for {service}: {dns_override:?}"
+            );
+            assert!(
+                host_gateway_domains(&dns_override, service).is_empty(),
+                "dns override should not invent route parity hosts without domains for {service}: {dns_override:?}"
+            );
+        }
+    }
+    // Phase 2: an explicit base domain aliases TCP services while routes
+    // point at the gateway.
+    {
+        let _lock = crate::test_env_lock();
+        let root = temp_repo("generated-compose-route-parity");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+    [containers]
+    default = "stack"
+
+    [containers.stack]
+    primary_service = "workspace"
+
+    [containers.stack.dns]
+    base_domain = "acme.test"
+    routes = [
+      { domain = "s3.acme.test", tls = false, service = "workspace" },
+      { domain = "api.s3.acme.test", tls = false, service = "workspace", port = 41001 },
+    ]
+
+    [containers.stack.services.workspace]
+    catalog = "workspace-rust-bun"
+    working_subdir = "generated-compose-route-parity"
+
+    [containers.stack.services.postgres]
+    catalog = "postgres"
+
+    [containers.stack.services.mailpit]
+    catalog = "mailpit"
+    "#,
+        )
+        .expect("write manifest");
+
+        let policy = load_container_policy(&root, None).expect("policy");
+
+        assert_eq!(policy.compose_files.len(), 2);
+        let dns_override = parsed_compose(&policy, 1);
+        let gateway_hosts = host_gateway_domains(&dns_override, "workspace");
+        for domain in ["s3.acme.test", "api.s3.acme.test"] {
+            assert!(
+                gateway_hosts
+                    .iter()
+                    .any(|host| host == &format!("{domain}:192.168.5.2")),
+                "dns override should route {domain} to the gateway: {dns_override:?}"
+            );
+        }
+        for (service, alias) in [
+            ("postgres", "postgres.acme.test"),
+            ("mailpit", "smtp.acme.test"),
+        ] {
+            assert!(
+                service_aliases(&dns_override, service).iter().any(|entry| entry == alias),
+                "dns override should alias {service} as {alias} under the configured base domain: {dns_override:?}"
+            );
+            assert!(
+                !gateway_hosts
+                    .iter()
+                    .any(|host| host.starts_with(&format!("{alias}:"))),
+                "TCP service aliases must not point back at the host gateway: {dns_override:?}"
+            );
+            assert!(
+                !host_gateway_domains(&dns_override, service)
+                    .iter()
+                    .any(|host| host.starts_with(&format!("{alias}:"))),
+                "TCP service aliases must not point back at the host gateway: {dns_override:?}"
+            );
+        }
+    }
+    // Phase 3: an undeclared alias apex infers from the shallowest route.
+    {
+        let _lock = crate::test_env_lock();
+        let root = temp_repo("generated-compose-inferred-apex");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+    [containers]
+    default = "stack"
+
+    [containers.stack]
+    primary_service = "workspace"
+
+    [containers.stack.dns]
+    routes = [
+      { domain = "s3.acme.test", tls = false, service = "workspace" },
+      { domain = "admin.acme.test", tls = false, service = "workspace" },
+      { domain = "acme.test", tls = false, service = "workspace" },
+    ]
+
+    [containers.stack.services.workspace]
+    catalog = "workspace-rust-bun"
+    working_subdir = "generated-compose-inferred-apex"
+
+    [containers.stack.services.postgres]
+    catalog = "postgres"
+    "#,
+        )
+        .expect("write manifest");
+
+        let policy = load_container_policy(&root, None).expect("policy");
+
+        assert_eq!(
+            policy.dns_effective_base_domain().as_deref(),
+            Some("acme.test"),
+            "the shallowest host the primary service serves is the alias apex"
+        );
+        let dns_override = parsed_compose(&policy, 1);
+        let aliases = service_aliases(&dns_override, "postgres");
+        assert!(
+            aliases.iter().any(|alias| alias == "postgres.acme.test"),
+            "Compose aliases use the inferred apex: {dns_override:?}"
+        );
+        assert!(
+            !aliases.iter().any(|alias| alias == "postgres.s3.acme.test"),
+            "the front route does not become the alias apex: {dns_override:?}"
+        );
+    }
+}
+
+#[test]
 fn load_container_policy_rejects_compose_file_and_services_together() {
     let root = temp_repo("mixed-compose-source");
     fs::write(
@@ -2011,186 +2425,15 @@ catalog = "php-fpm"
     .expect("compose");
 
     let error = load_container_policy(&root, None).expect_err("should fail");
-    assert!(error
-        .to_string()
-        .contains("cannot combine `compose_file` with"));
-}
-
-#[test]
-fn direct_compose_policy_writes_runtime_dns_override_for_declared_services() {
-    let _lock = crate::test_env_lock();
-    let root = temp_repo("direct-compose-runtime-dns");
-    fs::write(
-        root.join("effigy.toml"),
-        r#"
-[containers]
-default = "web"
-
-[containers.web]
-compose_file = "infra/dev/docker-compose.yml"
-primary_service = "app"
-"#,
-    )
-    .expect("write manifest");
-    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(
-        root.join("infra/dev/docker-compose.yml"),
-        r#"
-services:
-  app:
-    image: "node:22"
-  db:
-    image: "postgres:16"
-"#,
-    )
-    .expect("compose");
-
-    let policy = load_container_policy(&root, None).expect("policy");
-
-    // Translated `compose_file` renders like any catalog environment: one
-    // generated document carrying ownership labels, plus the DNS override.
-    assert_eq!(policy.compose_files.len(), 2);
-    assert!(policy.compose_files[0].ends_with(".effigy/runtime/compose/web.generated.compose.yml"));
-    assert!(policy.compose_files[1].ends_with(".effigy/runtime/dns/web.compose.override.yml"));
-    let dns_override = parsed_compose(&policy, 1);
-    for service in ["app", "db"] {
-        let servers: Vec<&str> = dns_override["services"][service]["dns"]
-            .as_sequence()
-            .map(|servers| {
-                servers
-                    .iter()
-                    .filter_map(|server| server.as_str())
-                    .collect()
-            })
-            .unwrap_or_default();
-        assert_eq!(
-            servers,
-            vec!["1.1.1.1", "8.8.8.8"],
-            "dns override should carry both resolvers for {service}: {dns_override:?}"
-        );
-        assert!(
-            host_gateway_domains(&dns_override, service).is_empty(),
-            "dns override should not invent route parity hosts without domains for {service}: {dns_override:?}"
-        );
+    match error {
+        ContainerPolicyError::TaskInvocation(message) => {
+            assert_eq!(
+                message,
+                "container `web` cannot combine `compose_file` with `[containers.web.services]`"
+            );
+        }
+        other => panic!("expected refusal, got {other:?}"),
     }
-}
-
-#[test]
-fn generated_compose_runtime_dns_override_uses_explicit_alias_base_domain() {
-    let _lock = crate::test_env_lock();
-    let root = temp_repo("generated-compose-route-parity");
-    fs::write(
-        root.join("effigy.toml"),
-        r#"
-[containers]
-default = "stack"
-
-[containers.stack]
-primary_service = "workspace"
-
-[containers.stack.dns]
-base_domain = "acme.test"
-routes = [
-  { domain = "s3.acme.test", tls = false, service = "workspace" },
-  { domain = "api.s3.acme.test", tls = false, service = "workspace", port = 41001 },
-]
-
-[containers.stack.services.workspace]
-catalog = "workspace-rust-bun"
-working_subdir = "generated-compose-route-parity"
-
-[containers.stack.services.postgres]
-catalog = "postgres"
-
-[containers.stack.services.mailpit]
-catalog = "mailpit"
-"#,
-    )
-    .expect("write manifest");
-
-    let policy = load_container_policy(&root, None).expect("policy");
-
-    assert_eq!(policy.compose_files.len(), 2);
-    let dns_override = parsed_compose(&policy, 1);
-    let gateway_hosts = host_gateway_domains(&dns_override, "workspace");
-    for domain in ["s3.acme.test", "api.s3.acme.test"] {
-        assert!(
-            gateway_hosts
-                .iter()
-                .any(|host| host == &format!("{domain}:192.168.5.2")),
-            "dns override should route {domain} to the gateway: {dns_override:?}"
-        );
-    }
-    for (service, alias) in [
-        ("postgres", "postgres.acme.test"),
-        ("mailpit", "smtp.acme.test"),
-    ] {
-        assert!(
-            service_aliases(&dns_override, service).iter().any(|entry| entry == alias),
-            "dns override should alias {service} as {alias} under the configured base domain: {dns_override:?}"
-        );
-        assert!(
-            !gateway_hosts
-                .iter()
-                .any(|host| host.starts_with(&format!("{alias}:"))),
-            "TCP service aliases must not point back at the host gateway: {dns_override:?}"
-        );
-        assert!(
-            !host_gateway_domains(&dns_override, service)
-                .iter()
-                .any(|host| host.starts_with(&format!("{alias}:"))),
-            "TCP service aliases must not point back at the host gateway: {dns_override:?}"
-        );
-    }
-}
-
-#[test]
-fn generated_compose_infers_an_undeclared_alias_base_domain() {
-    let _lock = crate::test_env_lock();
-    let root = temp_repo("generated-compose-inferred-apex");
-    fs::write(
-        root.join("effigy.toml"),
-        r#"
-[containers]
-default = "stack"
-
-[containers.stack]
-primary_service = "workspace"
-
-[containers.stack.dns]
-routes = [
-  { domain = "s3.acme.test", tls = false, service = "workspace" },
-  { domain = "admin.acme.test", tls = false, service = "workspace" },
-  { domain = "acme.test", tls = false, service = "workspace" },
-]
-
-[containers.stack.services.workspace]
-catalog = "workspace-rust-bun"
-working_subdir = "generated-compose-inferred-apex"
-
-[containers.stack.services.postgres]
-catalog = "postgres"
-"#,
-    )
-    .expect("write manifest");
-
-    let policy = load_container_policy(&root, None).expect("policy");
-
-    assert_eq!(
-        policy.dns_effective_base_domain().as_deref(),
-        Some("acme.test"),
-        "the shallowest host the primary service serves is the alias apex"
-    );
-    let dns_override = parsed_compose(&policy, 1);
-    let aliases = service_aliases(&dns_override, "postgres");
-    assert!(
-        aliases.iter().any(|alias| alias == "postgres.acme.test"),
-        "Compose aliases use the inferred apex: {dns_override:?}"
-    );
-    assert!(
-        !aliases.iter().any(|alias| alias == "postgres.s3.acme.test"),
-        "the front route does not become the alias apex: {dns_override:?}"
-    );
 }
 
 #[test]
@@ -2392,6 +2635,51 @@ working_dir = "/var/www/html"
         rewritten.contains(":/var/www/html/node_modules:ro"),
         "rewritten compose should keep the nginx read-only node_modules mirror mount: {rewritten}"
     );
+    // The compacted names are consistent: every `efv-` mount source in
+    // either service is declared once up top, and both services mirror the
+    // same compacted names.
+    let document: serde_yaml::Value =
+        serde_yaml::from_str(&rewritten).expect("parse compacted compose");
+    let mount_sources = |service: &str| -> Vec<String> {
+        document["services"][service]["volumes"]
+            .as_sequence()
+            .map(|volumes| {
+                volumes
+                    .iter()
+                    .filter_map(serde_yaml::Value::as_str)
+                    .filter_map(|mount| mount.split(':').next().map(str::to_owned))
+                    .filter(|source| source.starts_with("efv-"))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let declared: Vec<String> = document["volumes"]
+        .as_mapping()
+        .map(|volumes| {
+            volumes
+                .keys()
+                .filter_map(serde_yaml::Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    let app_sources = mount_sources("app");
+    let web_sources = mount_sources("web");
+    assert!(
+        !app_sources.is_empty(),
+        "the compaction actually renamed volumes"
+    );
+    assert!(!web_sources.is_empty(), "the mirrors use compacted names");
+    for source in &web_sources {
+        assert!(
+            app_sources.iter().any(|name| name == source),
+            "every mirrored compacted mount is owned by the app service: {source}"
+        );
+        assert!(
+            declared.iter().any(|name| name == source),
+            "every compacted mount source is declared once: {source}"
+        );
+    }
 }
 
 /// An environment that opts into `stable_ports` gets one concrete host port
@@ -2425,63 +2713,6 @@ catalog = "node"
         assert!(port >= 20000, "{}", prepared.declared_ports[0]);
         let again = load_prepared_policy(&root, None).expect("repeat prepare");
         assert_eq!(again.declared_ports, prepared.declared_ports);
-    });
-}
-
-#[test]
-fn fresh_worktree_creation_scopes_local_resources_but_keeps_shared_service() {
-    let fixture = tempfile::tempdir().unwrap();
-    fs::create_dir(fixture.path().join("home")).unwrap();
-    crate::with_test_effigy_home(&fixture.path().join("home"), || {
-        let manifest = r#"
-[containers]
-default = "web"
-[containers.web]
-project_name = "fixture-dev"
-primary_service = "app"
-[containers.web.dns]
-base_domain = "acme.test"
-routes = [{ domain = "app.acme.test", service = "app", tls = false }]
-[containers.web.services.app]
-catalog = "workspace-rust-bun"
-[containers.web.services.postgres]
-catalog = "postgres"
-[containers.web.services.shared_db]
-catalog = "mariadb"
-shared = true
-version = "10.11"
-"#;
-        let (primary, worktrees) =
-            create_linked_worktree_fixture(fixture.path(), manifest, &["linked"]);
-        let linked = &worktrees[0];
-        let token_dir = effigy_core::worktree_scope::resolve(linked)
-            .unwrap()
-            .unwrap()
-            .token_dir;
-        fs::remove_file(token_dir.join(effigy_core::worktree_scope::SCOPE_FILE)).unwrap();
-        let primary_policy = load_prepared_policy(&primary, None).unwrap();
-        assert!(effigy_core::worktree_scope::load_scoped(linked)
-            .unwrap()
-            .is_none());
-        let linked_policy = load_prepared_policy(linked, None).unwrap();
-        assert_ne!(primary_policy.project_name, linked_policy.project_name);
-        assert!(linked_policy.project_name.starts_with("fixture-dev-wt-"));
-        assert_ne!(
-            primary_policy.dns_routes[0].domain,
-            linked_policy.dns_routes[0].domain
-        );
-        assert!(primary_policy.managed_volumes.iter().all(|v| linked_policy
-            .managed_volumes
-            .iter()
-            .all(|other| v.name != other.name)));
-        assert_eq!(
-            primary_policy.shared_services[0].project_name,
-            linked_policy.shared_services[0].project_name
-        );
-        let aliases = service_aliases(&parsed_compose(&linked_policy, 1), "postgres");
-        assert!(aliases
-            .iter()
-            .any(|alias| alias.starts_with("postgres.acme-w")));
     });
 }
 

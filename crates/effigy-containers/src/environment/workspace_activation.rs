@@ -1967,6 +1967,20 @@ mod tests {
     }
 
     #[cfg(feature = "fault-injection")]
+    fn admitted_env_injection_hook() -> impl FnMut(&'static str) -> std::io::Result<()> {
+        let mut adopted = false;
+        move |point| {
+            if point == "SessionSupervisorAdoptAfter" {
+                adopted = true;
+            }
+            if adopted && (point == "BeginAdmitted" || point == "SettleCloseBefore") {
+                return Err(std::io::Error::other("injected"));
+            }
+            Ok(())
+        }
+    }
+
+    #[cfg(feature = "fault-injection")]
     #[test]
     fn admitted_env_failure_retries_without_a_second_owner() {
         use effigy_kernel::gate::OwnerState;
@@ -1980,31 +1994,22 @@ mod tests {
         )
         .unwrap();
         let env = env("workspace");
-        let options = options(49);
-        let session = options.id;
-        let mut adopted = false;
-        let failure = effigy_kernel::fault_injection::with_hook(
-            move |point| {
-                if point == "SessionSupervisorAdoptAfter" {
-                    adopted = true;
-                }
-                if adopted && (point == "BeginAdmitted" || point == "SettleCloseBefore") {
-                    return Err(std::io::Error::other("injected"));
-                }
-                Ok(())
-            },
-            || {
+        // Phase 1: a post-admission error retains the exact session owner,
+        // and the retry settles it without admitting a second owner.
+        let first = options(49);
+        let session = first.id;
+        let failure =
+            effigy_kernel::fault_injection::with_hook(admitted_env_injection_hook(), || {
                 WorkspaceActivation::begin_recoverable(
                     &ctx,
                     &env,
                     &inputs(),
                     &invocation(),
-                    options,
+                    first,
                     "fixture-supervisor",
                 )
-            },
-        )
-        .expect_err("post-admission error must not settle the session");
+            })
+            .expect_err("post-admission error must not settle the session");
         let custody = failure
             .custody
             .expect("retain session on ambiguous admission");
@@ -2021,32 +2026,11 @@ mod tests {
         custody
             .retry(&ctx, Wait::FailFast)
             .expect("exact owners settle on retry");
-    }
 
-    #[cfg(feature = "fault-injection")]
-    #[test]
-    fn admitted_env_fault_retains_both_exact_owners_for_retry() {
-        let fixture = home();
-        let state = root(fixture.path());
-        let ctx = EnvContext::with_cleanup_budget(
-            &state,
-            CancelToken::default(),
-            std::time::Duration::from_millis(100),
-        )
-        .unwrap();
-        let env = env("workspace");
-        let mut adopted = false;
-        let failure = effigy_kernel::fault_injection::with_hook(
-            move |point| {
-                if point == "SessionSupervisorAdoptAfter" {
-                    adopted = true;
-                }
-                if adopted && (point == "BeginAdmitted" || point == "SettleCloseBefore") {
-                    return Err(std::io::Error::other("injected"));
-                }
-                Ok(())
-            },
-            || {
+        // Phase 2: the same injection keeps both the admitted Env and the
+        // session owners held, and the retry settles the same owners.
+        let failure =
+            effigy_kernel::fault_injection::with_hook(admitted_env_injection_hook(), || {
                 WorkspaceActivation::begin_recoverable(
                     &ctx,
                     &env,
@@ -2055,9 +2039,8 @@ mod tests {
                     options(52),
                     "fixture-supervisor",
                 )
-            },
-        )
-        .expect_err("injected admitted Env failure");
+            })
+            .expect_err("injected admitted Env failure");
         let custody = failure.custody.expect("retain cleanup custody");
         let retained = matches!(&custody.state, GuardedAbortState::GuardedEnvironment { .. });
         let held = effigy_kernel::gate::Gate::acquire(

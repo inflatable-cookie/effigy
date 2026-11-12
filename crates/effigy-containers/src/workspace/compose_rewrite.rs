@@ -1095,41 +1095,6 @@ mod overlay_tests {
         assert!(error.to_string().contains("host state root"), "{error}");
     }
 
-    /// A later overlay that binds a host state root at another guest target is
-    /// refused, even though the first file never mentions it.
-    #[test]
-    fn an_overlay_that_binds_a_host_state_root_elsewhere_is_refused() {
-        let repo_root = fixture("state-elsewhere");
-        let canonical = repo_root.canonicalize().expect("canonical root");
-        let state = canonical.join(".effigy/state");
-        fs::create_dir_all(&state).expect("state root");
-        let base = canonical.join("compose.yml");
-        let overlay = canonical.join("overlay.yml");
-        fs::write(&base, "services:\n  app:\n    image: app\n").expect("base compose");
-        fs::write(
-            &overlay,
-            format!(
-                "services:\n  app:\n    volumes:\n      - \"{}:/workspace/leaked\"\n",
-                state.display()
-            ),
-        )
-        .expect("overlay compose");
-        let config = container_config();
-        let workspace = effigy_manifest::ManifestWorkspaceConfig::default();
-        let mut draft = crate::policy::render::Draft::default();
-
-        let error = rewrite_workspace_mounts_for_direct_compose(
-            request(&canonical, Path::new("/workspace"), &config, &workspace),
-            &[base, overlay],
-            false,
-            &mut draft,
-        )
-        .expect_err("the overlay would expose host state");
-
-        assert!(error.to_string().contains("host state root"), "{error}");
-        let _ = fs::remove_dir_all(repo_root);
-    }
-
     /// A later overlay that re-declares a masked guest target is stripped, and
     /// the masks are appended to the last file that defines the service, so the
     /// mask still wins.
@@ -1225,11 +1190,24 @@ mod overlay_tests {
 
         let error = rewrite_workspace_mounts_for_direct_compose(
             request(&canonical, Path::new("/workspace"), &config, &workspace),
-            &[base, middle, last],
+            &[base.clone(), middle.clone(), last],
             false,
             &mut draft,
         )
         .expect_err("the middle overlay would expose host state");
+
+        assert!(error.to_string().contains("host state root"), "{error}");
+
+        // The two-file shape: the same refusal when the offending overlay is
+        // the last file.
+        let mut draft = crate::policy::render::Draft::default();
+        let error = rewrite_workspace_mounts_for_direct_compose(
+            request(&canonical, Path::new("/workspace"), &config, &workspace),
+            &[base, middle],
+            false,
+            &mut draft,
+        )
+        .expect_err("the overlay would expose host state");
 
         assert!(error.to_string().contains("host state root"), "{error}");
         let _ = fs::remove_dir_all(repo_root);

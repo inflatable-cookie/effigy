@@ -1751,7 +1751,8 @@ mod hosts_report_tests {
     }
 
     #[test]
-    fn an_inferred_base_is_reported_with_its_warning() {
+    fn base_domain_reporting_names_inference_and_declaration() {
+        // An inferred base is reported with its warning.
         let map = build_host_map(
             &[route("s3.acme.test"), route("other.example")],
             &[],
@@ -1772,10 +1773,8 @@ mod hosts_report_tests {
             "{}",
             report.success_text
         );
-    }
 
-    #[test]
-    fn a_declared_base_is_not_reported_as_inferred() {
+        // A declared base is not reported as inferred.
         let map = build_host_map(
             &[route("s3.acme.test")],
             &[],

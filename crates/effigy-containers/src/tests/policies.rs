@@ -258,6 +258,446 @@ primary_service = "app"
 /// explicit name, the checkout name when only bundle defaults carry an alias,
 /// and two containers that must not collide.
 #[test]
+fn colima_mount_budgets_refuse_over_budget_payloads() {
+    // Phase 1: a direct-compose mount payload over budget is refused, with
+    // path-free contributors, while Docker is unaffected.
+    {
+        let _lock = crate::test_env_lock();
+        let root = temp_repo("colima-mount-budget");
+        let volumes = (0..72)
+            .map(|index| {
+                format!(
+                    "      - workspace-volume-{index:02}:/workspace-root/acme/some/really/long/path/{index:02}/node_modules\n"
+                )
+            })
+            .collect::<String>();
+        let declared = (0..72)
+            .map(|index| format!("  workspace-volume-{index:02}: {{}}\n"))
+            .collect::<String>();
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+    [containers]
+    default = "web"
+
+    [containers.web]
+    compose_file = "infra/dev/docker-compose.yml"
+    primary_service = "app"
+    "#,
+        )
+        .expect("write manifest");
+        fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+        fs::write(
+            root.join("infra/dev/docker-compose.yml"),
+            format!(
+                "services:\n  app:\n    image: alpine\n    volumes:\n{volumes}volumes:\n{declared}"
+            ),
+        )
+        .expect("compose");
+
+        let mut policy = load_container_policy(&root, None).expect("policy");
+        let overlay = root.join("infra/dev/compose.overlay.yml");
+        fs::write(
+            &overlay,
+            "services:\n  app:\n    volumes:\n      - type: bind\n        source: ./replacement-cache\n        target: /workspace-root/acme/some/really/long/path/00/node_modules\n        read_only: true\n",
+        )
+        .expect("overlay");
+        policy.compose_files.push(overlay);
+        let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK");
+        unsafe {
+            std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1");
+        }
+        let error = with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
+            crate::validate_compose_backend_runtime(&root, &policy).expect_err("should fail")
+        });
+        match previous {
+            Some(value) => unsafe {
+                std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", value)
+            },
+            None => unsafe { std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK") },
+        }
+
+        assert!(matches!(error, ContainerPolicyError::TaskInvocation(_)));
+        assert!(
+            error
+                .to_string()
+                .contains("estimated nerdctl/mounts label size"),
+            "unexpected refusal: {error}"
+        );
+        assert!(error
+            .to_string()
+            .contains("reduce optional mounts or workspace isolation mounts"));
+        assert!(error
+            .to_string()
+            .contains("Largest contributors (paths omitted)"));
+        assert!(!error
+            .to_string()
+            .contains("/workspace-root/acme/some/really/long/path"));
+
+        with_test_compose_backend(ComposeBackend::Docker, || {
+            crate::validate_compose_backend_runtime(&root, &policy)
+                .expect("Docker backend must not inherit nerdctl label limit");
+        });
+    }
+    // Phase 2: a null-DNS overlay passes under budget and refuses over
+    // budget or when scalar, and the generated overlay stays valid YAML.
+    {
+        let _lock = crate::test_env_lock();
+
+        let validate = |name: &str, mount_count: usize| {
+            // Match the measured 21-entry synthetic shape for the passing case;
+            // the larger fixture proves the same generated overlay still reaches
+            // the mount-budget refusal instead of being mistaken for bad input.
+            let source = format!("/{}", "s".repeat(61));
+            let volumes = (0..mount_count)
+                .map(|index| {
+                    let target = format!("/{}{index:02}", "d".repeat(25));
+                    format!(
+                        "      - type: bind\n        source: {source}\n        target: {target}\n        read_only: {}\n",
+                        index + 1 == mount_count
+                    )
+                })
+                .collect::<String>();
+            let compose = format!(
+                "services:\n  app:\n    image: example.invalid/synthetic\n    network_mode: none\n    volumes:\n{volumes}"
+            );
+            let (root, policy) = policy_with_runtime_dns_overlay(name, &compose);
+            let dns_overlay = policy
+                .compose_files
+                .last()
+                .expect("generated runtime DNS override");
+            let rendered_overlay = policy
+                .read_compose(dns_overlay)
+                .expect("read generated runtime DNS override");
+            let parsed: serde_yaml::Value =
+                serde_yaml::from_str(&rendered_overlay).expect("generated overlay is valid YAML");
+            assert!(
+                parsed["services"]["app"].is_null(),
+                "network_mode without applicable DNS or route fields emits a null service: {rendered_overlay}"
+            );
+
+            let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK");
+            unsafe {
+                std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1");
+            }
+            let result = with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
+                crate::validate_compose_backend_runtime(&root, &policy)
+            });
+            match previous {
+                Some(value) => unsafe {
+                    std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", value)
+                },
+                None => unsafe { std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK") },
+            }
+            result
+        };
+
+        validate("colima-null-dns-under-budget", 21)
+            .expect("a supported under-budget mount set must pass preflight");
+        let over_budget = validate("colima-null-dns-over-budget", 30)
+            .expect_err("an over-budget mount set must still refuse before apply");
+        assert!(over_budget
+            .to_string()
+            .contains("estimated nerdctl/mounts label size"));
+
+        // A null generated service is an empty mapping, but malformed non-null
+        // service values remain fail-closed for the Colima fallback.
+        let (root, policy) = policy_with_runtime_dns_overlay(
+            "colima-nonmapping-primary-service",
+            "services:\n  app: 42\n",
+        );
+        let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK");
+        unsafe {
+            std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1");
+        }
+        let malformed = with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
+            crate::validate_compose_backend_runtime(&root, &policy)
+                .expect_err("a scalar primary service must still refuse")
+        });
+        match previous {
+            Some(value) => unsafe {
+                std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", value)
+            },
+            None => unsafe { std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK") },
+        }
+        assert!(malformed
+            .to_string()
+            .contains("primary service definition is not a mapping"));
+    }
+    // Phase 3: primary-service tmpfs entries count in the nerdctl label budget.
+    {
+        let _lock = crate::test_env_lock();
+        let root = temp_repo("colima-tmpfs-budget");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+    [containers]
+    default = "web"
+
+    [containers.web]
+    compose_file = "infra/dev/docker-compose.yml"
+    primary_service = "app"
+    "#,
+        )
+        .expect("write manifest");
+        fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+
+        let validate_colima = |content: &str| {
+            fs::write(root.join("infra/dev/docker-compose.yml"), content).expect("write compose");
+            let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK");
+            unsafe {
+                std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1");
+            }
+            let result = with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
+                let policy = load_container_policy(&root, None).expect("policy");
+                crate::validate_compose_backend_runtime(&root, &policy)
+            });
+            match previous {
+                Some(value) => unsafe {
+                    std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", value)
+                },
+                None => unsafe { std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK") },
+            }
+            result
+        };
+
+        let generated_secret_runtime = "services:\n  app:\n    image: example.invalid/synthetic\n    tmpfs:\n      - /run/effigy/secrets\n";
+        validate_colima(generated_secret_runtime)
+            .expect("a small generated tmpfs runtime stays inside the budget");
+
+        let oversized = (0..40)
+            .map(|index| {
+                format!(
+                    "      - /run/effigy/secrets/runtime/cache/segment/{index:02}/node-modules\n"
+                )
+            })
+            .collect::<String>();
+        let oversized_compose = format!(
+            "services:\n  app:\n    image: example.invalid/synthetic\n    tmpfs:\n{oversized}"
+        );
+        let error = validate_colima(&oversized_compose)
+            .expect_err("enough tmpfs entries must exceed the nerdctl label budget");
+        assert!(matches!(error, ContainerPolicyError::TaskInvocation(_)));
+        assert!(
+            error
+                .to_string()
+                .contains("estimated nerdctl/mounts label size"),
+            "unexpected refusal: {error}"
+        );
+        assert!(!error.to_string().contains("/run/effigy/secrets"));
+
+        with_test_compose_backend(ComposeBackend::Docker, || {
+            let policy = load_container_policy(&root, None).expect("policy");
+            crate::validate_compose_backend_runtime(&root, &policy)
+                .expect("Docker must not inherit Colima mount-budget refusals");
+        });
+    }
+}
+
+#[test]
+fn creation_policy_resolves_workspace_mounts_for_creation() {
+    // Phase 1: late and absolute extra mounts resolve with decisions.
+    {
+        let root = temp_repo("workspace-mount-create-direct");
+        let absolute_source = root.join("absolute-extra");
+        fs::write(
+            root.join("effigy.toml"),
+            format!(
+                r#"
+    [containers]
+    default = "web"
+
+    [containers.web]
+    compose_file = "compose.yml"
+    primary_service = "app"
+
+    [systems.dev]
+    default_workspace = "app"
+
+    [systems.dev.workspaces.app]
+    container = "web"
+    working_dir = "/workspace-root/app"
+    mounts = [
+      "late:/workspace-root/late:ro,cached",
+      {{ source = "{}", target = "/workspace-root/absolute-extra", options = ["ro"] }}
+    ]
+    "#,
+                absolute_source.display()
+            ),
+        )
+        .expect("write manifest");
+        fs::write(
+            root.join("compose.yml"),
+            "services:\n  app:\n    image: alpine:latest\n",
+        )
+        .expect("write compose");
+
+        let initially_loaded = load_container_policy(&root, Some("web")).expect("initial policy");
+        let initial_compose = initially_loaded
+            .read_compose(&initially_loaded.compose_files[0])
+            .expect("initial workspace compose");
+        assert!(!initial_compose.contains("/workspace-root/late"));
+        assert!(!initial_compose.contains("/workspace-root/absolute-extra"));
+
+        fs::create_dir(root.join("late")).expect("preparation creates late source");
+        fs::create_dir(&absolute_source).expect("preparation creates absolute source");
+
+        let (creation_policy, decisions) =
+            load_container_policy_for_creation(&root, Some("web")).expect("creation policy");
+        let created_compose = creation_policy
+            .read_compose(&creation_policy.compose_files[0])
+            .expect("creation workspace compose");
+        let canonical_late = root.join("late").canonicalize().expect("canonical late");
+        let canonical_absolute = absolute_source.canonicalize().expect("canonical absolute");
+
+        assert!(created_compose.contains(&format!(
+            "{}:/workspace-root/late:ro,cached",
+            canonical_late.display()
+        )));
+        assert!(created_compose.contains(&format!(
+            "{}:/workspace-root/absolute-extra:ro",
+            canonical_absolute.display()
+        )));
+        assert_eq!(decisions.len(), 2);
+        assert!(decisions.iter().all(|decision| {
+            decision.decision == WorkspaceExtraMountDecisionKind::IncludedInComposeSpec
+        }));
+        assert!(decisions.iter().any(|decision| {
+            decision.source == canonical_late.display().to_string()
+                && decision.target == "/workspace-root/late"
+        }));
+        assert!(decisions.iter().any(|decision| {
+            decision.source == canonical_absolute.display().to_string()
+                && decision.target == "/workspace-root/absolute-extra"
+        }));
+    }
+    // Phase 2: a symlink mount source canonicalizes into compose.
+    {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_repo("workspace-mount-create-symlink");
+        let real_source = root.join("actual-source");
+        let link_source = root.join("linked-source");
+        fs::create_dir(&real_source).expect("create source");
+        symlink(&real_source, &link_source).expect("create source symlink");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+    [containers]
+    default = "web"
+
+    [containers.web]
+    compose_file = "compose.yml"
+    primary_service = "app"
+
+    [systems.dev]
+    default_workspace = "app"
+
+    [systems.dev.workspaces.app]
+    container = "web"
+    working_dir = "/workspace-root/app"
+    mounts = ["linked-source:/workspace-root/linked:ro"]
+    "#,
+        )
+        .expect("write manifest");
+        fs::write(
+            root.join("compose.yml"),
+            "services:\n  app:\n    image: alpine:latest\n",
+        )
+        .expect("write compose");
+
+        let (policy, decisions) =
+            load_container_policy_for_creation(&root, Some("web")).expect("creation policy");
+        let compose = policy
+            .read_compose(&policy.compose_files[0])
+            .expect("read compose");
+        let canonical = real_source.canonicalize().expect("canonical source");
+
+        assert!(compose.contains(&format!(
+            "{}:/workspace-root/linked:ro",
+            canonical.display()
+        )));
+        assert!(!compose.contains(&format!(
+            "{}:/workspace-root/linked:ro",
+            link_source.display()
+        )));
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0].source, canonical.display().to_string());
+    }
+    // Phase 3: generated compose picks up the late extra mount.
+    {
+        with_temp_effigy_home("workspace-mount-create-generated", |_| {
+            let _lock = crate::test_env_lock();
+            let root = temp_repo("workspace-mount-create-generated");
+            fs::write(
+                root.join("effigy.toml"),
+                r#"
+    [containers]
+    default = "web"
+
+    [containers.web]
+    primary_service = "app"
+
+    [containers.web.services.app]
+    catalog = "php-fpm"
+    version = "8.3"
+
+    [systems.dev]
+    default_workspace = "app"
+
+    [systems.dev.workspaces.app]
+    container = "web"
+    working_dir = "/var/www/html"
+    mounts = ["late:/var/www/late:ro"]
+    "#,
+            )
+            .expect("write manifest");
+
+            let initial = load_container_policy(&root, Some("web")).expect("initial policy");
+            assert_eq!(initial.compose_source, EffectiveComposeSource::Generated);
+            fs::create_dir(root.join("late")).expect("preparation creates source");
+
+            let (creation_policy, decisions) =
+                load_container_policy_for_creation(&root, Some("web")).expect("creation policy");
+            let compose = creation_policy
+                .read_compose(&creation_policy.compose_files[0])
+                .expect("creation workspace compose");
+            let canonical = root.join("late").canonicalize().expect("canonical source");
+            let backend = crate::ContainerManager::defaults();
+            let request = crate::ContainerManagerRequest::new(&root)
+                .backend_override(crate::BackendId::docker_compose());
+            let plan = backend
+                .compose_invocation_plan(
+                    &request,
+                    &crate::ContainerBackendDetection::new(false),
+                    &creation_policy.profile,
+                    &crate::compose::compose_up_args(&creation_policy),
+                    crate::ContainerAction::Activate,
+                    "docker compose up",
+                )
+                .expect("generated compose backend plan");
+            let captured_compose = plan
+                .args
+                .windows(2)
+                .find(|args| args[0] == "-f")
+                .map(|args| PathBuf::from(&args[1]))
+                .expect("backend plan captures generated compose file");
+
+            assert!(compose.contains(&format!("{}:/var/www/late:ro", canonical.display())));
+            assert_eq!(captured_compose, creation_policy.compose_files[0]);
+            assert!(fs::read_to_string(captured_compose)
+                .expect("read captured generated compose")
+                .contains(&format!("{}:/var/www/late:ro", canonical.display())));
+            assert_eq!(decisions.len(), 1);
+            assert_eq!(
+                decisions[0].decision,
+                WorkspaceExtraMountDecisionKind::IncludedInComposeSpec
+            );
+        });
+    }
+}
+
+#[test]
 fn project_name_cases() {
     #[derive(Clone, Copy)]
     enum Expects {
@@ -416,82 +856,46 @@ primary_service = "jobs"
             }
         }
     }
-}
-
-#[test]
-fn creation_policy_resolves_direct_workspace_mounts_after_preparation() {
-    let root = temp_repo("workspace-mount-create-direct");
-    let absolute_source = root.join("absolute-extra");
-    fs::write(
-        root.join("effigy.toml"),
-        format!(
+    // A duplicate effective project name is refused by name.
+    {
+        let root = temp_repo("duplicate-project-names");
+        fs::write(
+            root.join("effigy.toml"),
             r#"
-[containers]
-default = "web"
+    [catalog]
+    alias = "workspace-app-reference"
 
-[containers.web]
-compose_file = "compose.yml"
-primary_service = "app"
+    [containers]
+    default = "web"
 
-[systems.dev]
-default_workspace = "app"
+    [containers.web]
+    compose_file = "infra/dev/docker-compose.yml"
+    primary_service = "app"
+    project_name = "workspace-app-reference-dev"
 
-[systems.dev.workspaces.app]
-container = "web"
-working_dir = "/workspace-root/app"
-mounts = [
-  "late:/workspace-root/late:ro,cached",
-  {{ source = "{}", target = "/workspace-root/absolute-extra", options = ["ro"] }}
-]
-"#,
-            absolute_source.display()
-        ),
-    )
-    .expect("write manifest");
-    fs::write(
-        root.join("compose.yml"),
-        "services:\n  app:\n    image: alpine:latest\n",
-    )
-    .expect("write compose");
+    [containers.worker]
+    compose_file = "infra/dev/docker-compose.yml"
+    primary_service = "jobs"
+    project_name = "workspace-app-reference-dev"
+    "#,
+        )
+        .expect("write manifest");
+        fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+        fs::write(
+            root.join("infra/dev/docker-compose.yml"),
+            "services:\n  app:\n    image: example\n",
+        )
+        .expect("compose");
 
-    let initially_loaded = load_container_policy(&root, Some("web")).expect("initial policy");
-    let initial_compose = initially_loaded
-        .read_compose(&initially_loaded.compose_files[0])
-        .expect("initial workspace compose");
-    assert!(!initial_compose.contains("/workspace-root/late"));
-    assert!(!initial_compose.contains("/workspace-root/absolute-extra"));
-
-    fs::create_dir(root.join("late")).expect("preparation creates late source");
-    fs::create_dir(&absolute_source).expect("preparation creates absolute source");
-
-    let (creation_policy, decisions) =
-        load_container_policy_for_creation(&root, Some("web")).expect("creation policy");
-    let created_compose = creation_policy
-        .read_compose(&creation_policy.compose_files[0])
-        .expect("creation workspace compose");
-    let canonical_late = root.join("late").canonicalize().expect("canonical late");
-    let canonical_absolute = absolute_source.canonicalize().expect("canonical absolute");
-
-    assert!(created_compose.contains(&format!(
-        "{}:/workspace-root/late:ro,cached",
-        canonical_late.display()
-    )));
-    assert!(created_compose.contains(&format!(
-        "{}:/workspace-root/absolute-extra:ro",
-        canonical_absolute.display()
-    )));
-    assert_eq!(decisions.len(), 2);
-    assert!(decisions.iter().all(|decision| {
-        decision.decision == WorkspaceExtraMountDecisionKind::IncludedInComposeSpec
-    }));
-    assert!(decisions.iter().any(|decision| {
-        decision.source == canonical_late.display().to_string()
-            && decision.target == "/workspace-root/late"
-    }));
-    assert!(decisions.iter().any(|decision| {
-        decision.source == canonical_absolute.display().to_string()
-            && decision.target == "/workspace-root/absolute-extra"
-    }));
+        let error = load_container_policy(&root, None).expect_err("should fail");
+        match error {
+            ContainerPolicyError::TaskInvocation(message) => assert_eq!(
+                message,
+                "containers must resolve to unique `project_name` values when more than one container is declared; duplicate effective project names: `workspace-app-reference-dev` for containers `web`, `worker`"
+            ),
+            other => panic!("expected the uniqueness refusal, got {other:?}"),
+        }
+    }
 }
 
 #[test]
@@ -607,60 +1011,6 @@ primary_service = "app"
 
 #[cfg(unix)]
 #[test]
-fn creation_policy_canonicalizes_optional_symlink_sources() {
-    use std::os::unix::fs::symlink;
-
-    let root = temp_repo("workspace-mount-create-symlink");
-    let real_source = root.join("actual-source");
-    let link_source = root.join("linked-source");
-    fs::create_dir(&real_source).expect("create source");
-    symlink(&real_source, &link_source).expect("create source symlink");
-    fs::write(
-        root.join("effigy.toml"),
-        r#"
-[containers]
-default = "web"
-
-[containers.web]
-compose_file = "compose.yml"
-primary_service = "app"
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-container = "web"
-working_dir = "/workspace-root/app"
-mounts = ["linked-source:/workspace-root/linked:ro"]
-"#,
-    )
-    .expect("write manifest");
-    fs::write(
-        root.join("compose.yml"),
-        "services:\n  app:\n    image: alpine:latest\n",
-    )
-    .expect("write compose");
-
-    let (policy, decisions) =
-        load_container_policy_for_creation(&root, Some("web")).expect("creation policy");
-    let compose = policy
-        .read_compose(&policy.compose_files[0])
-        .expect("read compose");
-    let canonical = real_source.canonicalize().expect("canonical source");
-
-    assert!(compose.contains(&format!(
-        "{}:/workspace-root/linked:ro",
-        canonical.display()
-    )));
-    assert!(!compose.contains(&format!(
-        "{}:/workspace-root/linked:ro",
-        link_source.display()
-    )));
-    assert_eq!(decisions.len(), 1);
-    assert_eq!(decisions[0].source, canonical.display().to_string());
-}
-
-#[test]
 fn creation_policy_refuses_unreadable_optional_source_instead_of_skipping() {
     let root = temp_repo("workspace-mount-create-unreadable");
     fs::write(root.join("blocked"), "not a directory").expect("write blocking file");
@@ -695,78 +1045,6 @@ mounts = ["blocked/source:/workspace-root/blocked:ro"]
 
     assert!(error.to_string().contains("workspace extra mount source"));
     assert!(!root.join("blocked/source").exists());
-}
-
-#[test]
-fn creation_policy_resolves_generated_workspace_mounts_after_preparation() {
-    with_temp_effigy_home("workspace-mount-create-generated", |_| {
-        let _lock = crate::test_env_lock();
-        let root = temp_repo("workspace-mount-create-generated");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[containers]
-default = "web"
-
-[containers.web]
-primary_service = "app"
-
-[containers.web.services.app]
-catalog = "php-fpm"
-version = "8.3"
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-container = "web"
-working_dir = "/var/www/html"
-mounts = ["late:/var/www/late:ro"]
-"#,
-        )
-        .expect("write manifest");
-
-        let initial = load_container_policy(&root, Some("web")).expect("initial policy");
-        assert_eq!(initial.compose_source, EffectiveComposeSource::Generated);
-        fs::create_dir(root.join("late")).expect("preparation creates source");
-
-        let (creation_policy, decisions) =
-            load_container_policy_for_creation(&root, Some("web")).expect("creation policy");
-        let compose = creation_policy
-            .read_compose(&creation_policy.compose_files[0])
-            .expect("creation workspace compose");
-        let canonical = root.join("late").canonicalize().expect("canonical source");
-        let backend = crate::ContainerManager::defaults();
-        let request = crate::ContainerManagerRequest::new(&root)
-            .backend_override(crate::BackendId::docker_compose());
-        let plan = backend
-            .compose_invocation_plan(
-                &request,
-                &crate::ContainerBackendDetection::new(false),
-                &creation_policy.profile,
-                &crate::compose::compose_up_args(&creation_policy),
-                crate::ContainerAction::Activate,
-                "docker compose up",
-            )
-            .expect("generated compose backend plan");
-        let captured_compose = plan
-            .args
-            .windows(2)
-            .find(|args| args[0] == "-f")
-            .map(|args| PathBuf::from(&args[1]))
-            .expect("backend plan captures generated compose file");
-
-        assert!(compose.contains(&format!("{}:/var/www/late:ro", canonical.display())));
-        assert_eq!(captured_compose, creation_policy.compose_files[0]);
-        assert!(fs::read_to_string(captured_compose)
-            .expect("read captured generated compose")
-            .contains(&format!("{}:/var/www/late:ro", canonical.display())));
-        assert_eq!(decisions.len(), 1);
-        assert_eq!(
-            decisions[0].decision,
-            WorkspaceExtraMountDecisionKind::IncludedInComposeSpec
-        );
-    });
 }
 
 #[test]
@@ -849,45 +1127,6 @@ mounts = [{ member = "underlay", target = "/workspace-root/underlay" }]
 }
 
 #[test]
-fn load_container_policy_rejects_duplicate_effective_project_names() {
-    let root = temp_repo("duplicate-project-names");
-    fs::write(
-        root.join("effigy.toml"),
-        r#"
-[catalog]
-alias = "workspace-app-reference"
-
-[containers]
-default = "web"
-
-[containers.web]
-compose_file = "infra/dev/docker-compose.yml"
-primary_service = "app"
-project_name = "workspace-app-reference-dev"
-
-[containers.worker]
-compose_file = "infra/dev/docker-compose.yml"
-primary_service = "jobs"
-project_name = "workspace-app-reference-dev"
-"#,
-    )
-    .expect("write manifest");
-    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(
-        root.join("infra/dev/docker-compose.yml"),
-        "services:\n  app:\n    image: example\n",
-    )
-    .expect("compose");
-
-    let error = load_container_policy(&root, None).expect_err("should fail");
-
-    assert!(error.to_string().contains("unique `project_name` values"));
-    assert!(error.to_string().contains("`workspace-app-reference-dev`"));
-    assert!(error.to_string().contains("`web`"));
-    assert!(error.to_string().contains("`worker`"));
-}
-
-#[test]
 fn translated_compose_ports_follow_catalog_port_policy() {
     let _lock = crate::test_env_lock();
     let root = temp_repo("direct-compose-inferred-ports");
@@ -927,16 +1166,16 @@ services:
     // Translated ports follow catalog port policy: every published container
     // port is kept, and Prepare assigns the host side.
     assert!(!policy.ports_declared_explicitly);
-    for container in ["41001", "41002", "8025"] {
-        assert!(
-            policy
-                .declared_ports
-                .iter()
-                .any(|value| value.ends_with(&format!(":{container}"))),
-            "{:?}",
-            policy.declared_ports
-        );
-    }
+    let mut declared = policy.declared_ports.clone();
+    declared.sort();
+    assert_eq!(
+        declared,
+        vec![
+            "127.0.0.1::41001".to_owned(),
+            "127.0.0.1::41002".to_owned(),
+            "127.0.0.1::8025".to_owned(),
+        ]
+    );
 }
 
 #[test]
@@ -1129,171 +1368,6 @@ fn validate_compose_backend_runtime_checks_staged_source_instead_of_temp_checkou
 }
 
 #[test]
-fn validate_compose_backend_runtime_rejects_colima_mount_payload_over_budget() {
-    let _lock = crate::test_env_lock();
-    let root = temp_repo("colima-mount-budget");
-    let volumes = (0..72)
-        .map(|index| {
-            format!(
-                "      - workspace-volume-{index:02}:/workspace-root/acme/some/really/long/path/{index:02}/node_modules\n"
-            )
-        })
-        .collect::<String>();
-    let declared = (0..72)
-        .map(|index| format!("  workspace-volume-{index:02}: {{}}\n"))
-        .collect::<String>();
-    fs::write(
-        root.join("effigy.toml"),
-        r#"
-[containers]
-default = "web"
-
-[containers.web]
-compose_file = "infra/dev/docker-compose.yml"
-primary_service = "app"
-"#,
-    )
-    .expect("write manifest");
-    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(
-        root.join("infra/dev/docker-compose.yml"),
-        format!(
-            "services:\n  app:\n    image: alpine\n    volumes:\n{volumes}volumes:\n{declared}"
-        ),
-    )
-    .expect("compose");
-
-    let mut policy = load_container_policy(&root, None).expect("policy");
-    let overlay = root.join("infra/dev/compose.overlay.yml");
-    fs::write(
-        &overlay,
-        "services:\n  app:\n    volumes:\n      - type: bind\n        source: ./replacement-cache\n        target: /workspace-root/acme/some/really/long/path/00/node_modules\n        read_only: true\n",
-    )
-    .expect("overlay");
-    policy.compose_files.push(overlay);
-    let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK");
-    unsafe {
-        std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1");
-    }
-    let error = with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
-        crate::validate_compose_backend_runtime(&root, &policy).expect_err("should fail")
-    });
-    match previous {
-        Some(value) => unsafe {
-            std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", value)
-        },
-        None => unsafe { std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK") },
-    }
-
-    assert!(matches!(error, ContainerPolicyError::TaskInvocation(_)));
-    assert!(
-        error
-            .to_string()
-            .contains("estimated nerdctl/mounts label size"),
-        "unexpected refusal: {error}"
-    );
-    assert!(error
-        .to_string()
-        .contains("reduce optional mounts or workspace isolation mounts"));
-    assert!(error
-        .to_string()
-        .contains("Largest contributors (paths omitted)"));
-    assert!(!error
-        .to_string()
-        .contains("/workspace-root/acme/some/really/long/path"));
-
-    with_test_compose_backend(ComposeBackend::Docker, || {
-        crate::validate_compose_backend_runtime(&root, &policy)
-            .expect("Docker backend must not inherit nerdctl label limit");
-    });
-}
-
-#[test]
-fn validate_compose_backend_runtime_accepts_rendered_null_dns_service_overlay() {
-    let _lock = crate::test_env_lock();
-
-    let validate = |name: &str, mount_count: usize| {
-        // Match the measured 21-entry synthetic shape for the passing case;
-        // the larger fixture proves the same generated overlay still reaches
-        // the mount-budget refusal instead of being mistaken for bad input.
-        let source = format!("/{}", "s".repeat(61));
-        let volumes = (0..mount_count)
-            .map(|index| {
-                let target = format!("/{}{index:02}", "d".repeat(25));
-                format!(
-                    "      - type: bind\n        source: {source}\n        target: {target}\n        read_only: {}\n",
-                    index + 1 == mount_count
-                )
-            })
-            .collect::<String>();
-        let compose = format!(
-            "services:\n  app:\n    image: example.invalid/synthetic\n    network_mode: none\n    volumes:\n{volumes}"
-        );
-        let (root, policy) = policy_with_runtime_dns_overlay(name, &compose);
-        let dns_overlay = policy
-            .compose_files
-            .last()
-            .expect("generated runtime DNS override");
-        let rendered_overlay = policy
-            .read_compose(dns_overlay)
-            .expect("read generated runtime DNS override");
-        let parsed: serde_yaml::Value =
-            serde_yaml::from_str(&rendered_overlay).expect("generated overlay is valid YAML");
-        assert!(
-            parsed["services"]["app"].is_null(),
-            "network_mode without applicable DNS or route fields emits a null service: {rendered_overlay}"
-        );
-
-        let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK");
-        unsafe {
-            std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1");
-        }
-        let result = with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
-            crate::validate_compose_backend_runtime(&root, &policy)
-        });
-        match previous {
-            Some(value) => unsafe {
-                std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", value)
-            },
-            None => unsafe { std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK") },
-        }
-        result
-    };
-
-    validate("colima-null-dns-under-budget", 21)
-        .expect("a supported under-budget mount set must pass preflight");
-    let over_budget = validate("colima-null-dns-over-budget", 30)
-        .expect_err("an over-budget mount set must still refuse before apply");
-    assert!(over_budget
-        .to_string()
-        .contains("estimated nerdctl/mounts label size"));
-
-    // A null generated service is an empty mapping, but malformed non-null
-    // service values remain fail-closed for the Colima fallback.
-    let (root, policy) = policy_with_runtime_dns_overlay(
-        "colima-nonmapping-primary-service",
-        "services:\n  app: 42\n",
-    );
-    let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK");
-    unsafe {
-        std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1");
-    }
-    let malformed = with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
-        crate::validate_compose_backend_runtime(&root, &policy)
-            .expect_err("a scalar primary service must still refuse")
-    });
-    match previous {
-        Some(value) => unsafe {
-            std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", value)
-        },
-        None => unsafe { std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK") },
-    }
-    assert!(malformed
-        .to_string()
-        .contains("primary service definition is not a mapping"));
-}
-
-#[test]
 fn validate_compose_backend_runtime_refuses_unmodelled_mount_inputs_for_colima_only() {
     let _lock = crate::test_env_lock();
     let root = temp_repo("colima-unmodelled-mount-input");
@@ -1416,72 +1490,6 @@ primary_service = "app"
 /// mount: a small generated secret runtime stays admissible, while enough
 /// option-less tmpfs entries exceed the preflight budget and refuse with
 /// paths omitted.
-#[test]
-fn validate_compose_backend_runtime_counts_primary_service_tmpfs_in_the_budget() {
-    let _lock = crate::test_env_lock();
-    let root = temp_repo("colima-tmpfs-budget");
-    fs::write(
-        root.join("effigy.toml"),
-        r#"
-[containers]
-default = "web"
-
-[containers.web]
-compose_file = "infra/dev/docker-compose.yml"
-primary_service = "app"
-"#,
-    )
-    .expect("write manifest");
-    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-
-    let validate_colima = |content: &str| {
-        fs::write(root.join("infra/dev/docker-compose.yml"), content).expect("write compose");
-        let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK");
-        unsafe {
-            std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1");
-        }
-        let result = with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
-            let policy = load_container_policy(&root, None).expect("policy");
-            crate::validate_compose_backend_runtime(&root, &policy)
-        });
-        match previous {
-            Some(value) => unsafe {
-                std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", value)
-            },
-            None => unsafe { std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK") },
-        }
-        result
-    };
-
-    let generated_secret_runtime = "services:\n  app:\n    image: example.invalid/synthetic\n    tmpfs:\n      - /run/effigy/secrets\n";
-    validate_colima(generated_secret_runtime)
-        .expect("a small generated tmpfs runtime stays inside the budget");
-
-    let oversized = (0..40)
-        .map(|index| {
-            format!("      - /run/effigy/secrets/runtime/cache/segment/{index:02}/node-modules\n")
-        })
-        .collect::<String>();
-    let oversized_compose =
-        format!("services:\n  app:\n    image: example.invalid/synthetic\n    tmpfs:\n{oversized}");
-    let error = validate_colima(&oversized_compose)
-        .expect_err("enough tmpfs entries must exceed the nerdctl label budget");
-    assert!(matches!(error, ContainerPolicyError::TaskInvocation(_)));
-    assert!(
-        error
-            .to_string()
-            .contains("estimated nerdctl/mounts label size"),
-        "unexpected refusal: {error}"
-    );
-    assert!(!error.to_string().contains("/run/effigy/secrets"));
-
-    with_test_compose_backend(ComposeBackend::Docker, || {
-        let policy = load_container_policy(&root, None).expect("policy");
-        crate::validate_compose_backend_runtime(&root, &policy)
-            .expect("Docker must not inherit Colima mount-budget refusals");
-    });
-}
-
 #[test]
 fn effective_attach_mode_respects_flags_before_policy() {
     let root = temp_repo("attach-mode");

@@ -2810,7 +2810,16 @@ mod tests {
                 Wait::FailFast,
             )
             .expect("reserved environment generation");
-        assert!(EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).is_err());
+        // An unclaimed admission is refused by name: only the reservation's
+        // own claim may take the reserved generation.
+        let unclaimed = EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).unwrap_err();
+        match unclaimed {
+            EnvError::Kernel(error) => assert_eq!(
+                error.to_string(),
+                "the run was refused: this environment generation is reserved by a workspace activation; admit the activation through its reservation, or cancel the reservation first; nothing ran; stop what holds it or change the request, then retry"
+            ),
+            other => panic!("expected the reservation refusal, got {other:?}"),
+        }
         let run = EnvRun::begin_claimed(&ctx, &stack, Operation::Up, Wait::FailFast, &reservation)
             .expect("claimed admission under the progress probe");
         assert_eq!(run.fence().generation, reservation.generation());
@@ -2857,38 +2866,33 @@ mod tests {
             &observe_gate(&state, &stack.resource),
         );
         let concise = waiting.frame_at(Duration::from_secs(4));
-        assert!(
-            concise.starts_with("Waiting for stack · held by "),
-            "{concise}"
+        let pid = std::process::id();
+        assert_eq!(
+            concise,
+            format!("Waiting for stack · held by pid {pid} · 4s"),
+            "the concise frame names the gate, the holder and the elapsed wait"
         );
-        assert!(
-            concise.contains(&format!("pid {}", std::process::id())),
-            "{concise}"
-        );
-        assert!(!concise.contains(&run.id().to_string()), "{concise}");
         println!("Blocked wait: {concise}");
         let frame = waiting.detailed_frame_at(Duration::from_secs(4));
-        for needle in [
-            "waiting for Gate(Env) on `stack`".to_owned(),
-            format!("run {}", run.id()),
-            format!("pid {}", std::process::id()),
-            "still holds it".to_owned(),
-            "4s elapsed".to_owned(),
-        ] {
-            assert!(frame.contains(&needle), "{needle}: {frame}");
-        }
+        assert_eq!(
+            frame,
+            format!(
+                "waiting for Gate(Env) on `stack`; waiting for environment `stack` to be free; last: run {} (pid {pid}) still holds it; 4s elapsed",
+                run.id()
+            ),
+            "the detailed frame names the gate, the awaited phase and the live holder"
+        );
 
         // The reconcile advances: the render is published, then the record.
-        run.publish_desired(&closure("two")).expect("publish");
+        let render = run.publish_desired(&closure("two")).expect("publish");
         let frame = run.progress.detailed_frame_at(Duration::from_secs(9));
-        assert!(
-            frame.starts_with("publishing the desired render"),
-            "{frame}"
+        assert_eq!(
+            frame,
+            format!(
+                "publishing the desired render; waiting for environment `stack` to be free; last: published render {render}; 9s elapsed"
+            ),
+            "the render frame names the phase, the awaited gate and the exact render published"
         );
-        assert!(frame.contains("last: published render "), "{frame}");
-        // The event and the awaited phase are both named.
-        assert!(frame.contains("; waiting for "), "{frame}");
-        assert!(frame.ends_with("; 9s elapsed"), "{frame}");
 
         let mut record = run
             .engine_record()
@@ -2897,12 +2901,11 @@ mod tests {
         record.retention = Retention::Persistent;
         run.write_record(&record).expect("record");
         let frame = run.progress.detailed_frame_at(Duration::from_secs(11));
-        assert!(
-            frame.starts_with("writing the environment record"),
-            "{frame}"
+        assert_eq!(
+            frame,
+            "writing the environment record; waiting for environment `stack` to be free; last: retention: persistent (explicit `container up`), project `acme-stack`; 11s elapsed",
+            "the record frame names the phase, the awaited gate and the exact retention written"
         );
-        assert!(frame.contains("retention: persistent"), "{frame}");
-        assert!(frame.contains("project `acme-stack`"), "{frame}");
 
         // The refusal's own evidence: the attach check names the live holder,
         // and the permit refuses without reaching the backend.
@@ -2923,15 +2926,13 @@ mod tests {
             "{refused:?}"
         );
         let frame = run.progress.detailed_frame_at(Duration::from_secs(12));
-        assert!(
-            frame.starts_with("checking the runs attached to environment `stack`"),
-            "{frame}"
+        assert_eq!(
+            frame,
+            format!(
+                "checking the runs attached to environment `stack`; waiting for environment `stack` to be free; last: 1 live run(s) hold it: {held}; 12s elapsed"
+            ),
+            "the refusal frame names the check, the awaited gate and the live holder"
         );
-        assert!(
-            frame.contains(&format!("1 live run(s) hold it: {held}")),
-            "{frame}"
-        );
-        assert!(frame.ends_with("; 12s elapsed"), "{frame}");
 
         run.finish(false).expect("the run settles");
     }

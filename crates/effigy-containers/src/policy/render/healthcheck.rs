@@ -130,31 +130,22 @@ mod tests {
     }
 
     #[test]
-    fn exec_form_becomes_a_quoted_shell_command() {
-        let test = command(&exec_form(
-            r#""node", "-e", "if (true) { process.exit(0) }""#,
-        ));
+    fn exec_form_renders_a_quoted_shell_command() {
+        // A multi-word CMD becomes one quoted CMD-SHELL line.
         assert_eq!(
-            test,
-            serde_yaml::from_str::<Value>(
-                r#"["CMD-SHELL", "'node' '-e' 'if (true) { process.exit(0) }'"]"#
-            )
-            .unwrap()
+            rendered(&exec_form(
+                r#""node", "-e", "if (true) { process.exit(0) }""#,
+            )),
+            "CMD-SHELL\u{1f}'node' '-e' 'if (true) { process.exit(0) }'"
         );
-    }
-
-    #[test]
-    fn an_embedded_single_quote_is_escaped() {
+        // An embedded single quote closes, escapes and reopens the run.
         assert_eq!(
             rendered(&exec_form(
                 r#""php", "-r", "exit(@fsockopen('127.0.0.1', 80) ? 0 : 1);""#
             )),
             "CMD-SHELL\u{1f}'php' '-r' 'exit(@fsockopen('\\''127.0.0.1'\\'', 80) ? 0 : 1);'"
         );
-    }
-
-    #[test]
-    fn every_argument_of_a_multi_argument_check_is_kept() {
+        // Every argument of a multi-argument check is kept.
         assert_eq!(
             rendered(&exec_form(
                 r#""healthcheck.sh", "--connect", "--innodb_initialized""#

@@ -580,6 +580,23 @@ mod tests {
             "got: {rendered}"
         );
         assert!(!rendered.contains(&host_effigy), "got: {rendered}");
+        // The setup runs first inside the routed container cwd, rewritten to
+        // the container effigy path; the attach follows with the routed
+        // command. The host invocation prefix appears in neither.
+        assert!(
+            rendered.starts_with("cd /Users/tom/repo/acme-admin && "),
+            "got: {rendered}"
+        );
+        assert!(
+            rendered.contains("/usr/local/bin/effigy script run --file"),
+            "got: {rendered}"
+        );
+        let setup_index = rendered.find("script run").expect("setup command");
+        let attach_index = rendered
+            .rfind("shell --command")
+            .expect("attach command should be present");
+        assert!(setup_index < attach_index, "got: {rendered}");
+        assert!(rendered.contains("bun run dev"), "got: {rendered}");
     }
 
     #[test]
