@@ -5,12 +5,7 @@ slow-timeout = { period = "600s", terminate-after = 1, grace-period = "5s" }
 leak-timeout = { period = "30s", result = "fail" }
 global-timeout = "1800s"
 
-# Each scenario starts twelve fault-shard processes. A shard is bound by
-# per-job latency (child handshakes, store writes, closure polls), not by
-# cores, so a drive is worth running wider than the core count and the group
-# runs three drives at once: enough lanes to overlap the drives that finish
-# early with the one long environment handover, without multiplying the
-# expansion by host CPU count.
+# Bound the expansion from twelve shard processes per scenario.
 [test-groups.kernel-fault-drivers]
 max-threads = 3
 

@@ -286,13 +286,6 @@ struct Foreign {
     child: std::sync::Mutex<std::process::Child>,
 }
 static FOREIGN: std::sync::OnceLock<Foreign> = std::sync::OnceLock::new();
-/// A whole loop of the foreign fixture's `/bin/sleep 0.05`: the latency a
-/// trap takes to run once its signal arrives.
-const FOREIGN_LOOP: Duration = Duration::from_millis(50);
-/// A loop boundary under shard load, not a per-run wait: the oracle asserts the
-/// fixture is alive and unsignalled, so waiting longer than a few loops is the
-/// finding itself.
-const FOREIGN_LOOP_BOUND: Duration = Duration::from_secs(5);
 fn foreign_fixture() -> &'static Foreign {
     FOREIGN.get_or_init(|| {
         let dir = tempfile::Builder::new()
@@ -304,16 +297,9 @@ fn foreign_fixture() -> &'static Foreign {
             .iter()
             .map(|sig| format!("trap 'echo {sig} >> \"{}\"' {sig}; ", signals.display()))
             .collect();
-        // Each completed loop appends one byte, so a reader can wait for the
-        // loop boundary that follows its own observation instead of sleeping
-        // out the worst case.
-        let ticks = dir.path().join("loops");
         let child = std::process::Command::new("/bin/sh")
             .arg("-c")
-            .arg(format!(
-                "{traps}while :; do /bin/sleep 0.05; echo . >> \"{}\"; done",
-                ticks.display()
-            ))
+            .arg(format!("{traps}while :; do /bin/sleep 0.05; done"))
             .process_group(0)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
@@ -333,14 +319,8 @@ fn foreign_pid() -> u32 {
 fn foreign_facts(world: &mut World) {
     let fixture = foreign_fixture();
     let pid = foreign_pid();
-    // A signal delivered during this run is trapped once the sleep it
-    // interrupted returns. Wait for the loop boundary that began after this
-    // read, rather than always paying the loop's whole worst case.
-    let loops = fixture.dir.path().join("loops");
-    let seen = loop_count(&loops);
-    wait_until("foreign trap latency", FOREIGN_LOOP_BOUND, || {
-        loop_count(&loops) > seen
-    });
+    // A trap runs once its 50 ms sleep returns.
+    std::thread::sleep(Duration::from_millis(60));
     let process = world::proc(pid, b"EFFIGY_CUSTODY_NONCE=");
     let mut signals: Vec<String> = std::fs::read_to_string(fixture.dir.path().join("signals"))
         .unwrap_or_default()
@@ -354,9 +334,6 @@ fn foreign_facts(world: &mut World) {
         signals.push("STOP".into());
     }
     world.foreign.push((process, signals));
-}
-fn loop_count(path: &Path) -> u64 {
-    std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
 }
 /// Ends the drive's foreign fixture: our own child and its own group.
 pub(super) fn stop_foreign() {
@@ -392,18 +369,9 @@ pub(super) struct AnchorPin {
 impl AnchorPin {
     pub(super) fn pin(&mut self, processes: &[OwnedProcess]) {
         for anchor in processes.iter().filter_map(|process| process.anchor()) {
-            // A recorded pid is not yet a live anchor. Once the group closes the
-            // anchor retires itself (effigy#520), so a bare `kill` could reach
-            // whatever the kernel gave that pid to next, and a signal return
-            // would then read as evidence about a process this launch never
-            // owned. Checking this launch's own generation immediately before
-            // the signal narrows that to the two calls themselves, and does not
-            // close it: a retirement plus pid reuse between the check and the
-            // `kill` can still stop, and the pin's drop later continue, an
-            // unrelated process. macOS has no atomic signal-by-identity (the
-            // same documented identity-check/numeric-signal window
-            // `custody::anchor::member_signal` records), so this narrows the
-            // window and claims nothing more.
+            // The generation check narrows, but cannot close, the race
+            // between anchor retirement and signalling a reused pid. macOS
+            // has no atomic signal-by-identity; see member_signal.
             if !world::identity_alive(&anchor) {
                 continue;
             }
@@ -517,12 +485,26 @@ impl Scenario for Steps {
         let mut failed = None;
         let mut anchors = AnchorPin::default();
         for step in self.steps {
+            // Keep each group alive during its anchor pin, then run the
+            // original workload. Fast exits otherwise race anchor retirement.
             let specs = step
                 .iter()
-                .map(|body| workload(home, body, finite()))
+                .map(|body| {
+                    let mut spec = workload(home, &format!("read -r _; {body}"), finite());
+                    spec.terminal = Terminal::Pipe;
+                    spec
+                })
                 .collect();
             let mut processes = attempt!(run, &cx, fake, Custody::spawn_all(&mut run, specs, &cx));
             anchors.pin(&processes);
+            for process in &processes {
+                attempt!(
+                    run,
+                    &cx,
+                    fake,
+                    process.write_stdin(b"\n", Instant::now() + Duration::from_secs(1))
+                );
+            }
             // The last member of a group may linger; settle stops it.
             let waited = processes.len() - usize::from(processes.len() > 1);
             for process in processes.iter_mut().take(waited) {
@@ -1665,15 +1647,6 @@ enum Lead {
     /// Held until its recorded anchor is positively stopped, then released.
     Pinned,
 }
-impl Lead {
-    fn held(self) -> bool {
-        !matches!(self, Self::FastExit)
-    }
-    fn pinned(self) -> bool {
-        matches!(self, Self::Pinned)
-    }
-}
-
 /// One custody launch, released only as far as `lead` allows, settled under an
 /// armed `AnchorStop`. Returns whether the point delivered.
 fn anchor_stop_delivery(home: &Home, lead: Lead) -> bool {
@@ -1691,7 +1664,11 @@ fn anchor_stop_delivery(home: &Home, lead: Lead) -> bool {
         &mut fake,
     )
     .expect("begin");
-    let body = if lead.held() { "read -r _" } else { "exit 0" };
+    let body = if matches!(lead, Lead::FastExit) {
+        "exit 0"
+    } else {
+        "read -r _"
+    };
     let mut spec = workload(&path, body, finite());
     // The owner keeps the workload's stdin: that pipe is the private barrier.
     spec.terminal = Terminal::Pipe;
@@ -1733,7 +1710,7 @@ fn anchor_stop_delivery(home: &Home, lead: Lead) -> bool {
     };
     process.complete(&mut run, exit).expect("complete");
     run.finish(WorkloadOutcome::Succeeded).expect("finish");
-    if lead.pinned() {
+    if matches!(lead, Lead::Pinned) {
         // Past the anchor's poll bound a free-running anchor would be gone;
         // the pinned one must still sit at its settlement boundary.
         std::thread::sleep(Duration::from_millis(1200));

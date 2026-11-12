@@ -119,19 +119,8 @@ fn jobs(trace: &[Point], observations: usize) -> Vec<Job> {
 }
 /// Worker processes per drive. Shards are processes, never threads: the probe
 /// runtime, the foreign fixture and child reaping are process-wide.
-///
-/// Twelve on an 18-core host: a job waits on real child handshakes, store
-/// writes and closure polls far more than it computes, so a drive is bound by
-/// per-job latency, not by cores (measured `ps` pegs a shard near a tenth of
-/// one core). Twice the shards halves the wall of the longest drives, which is
-/// what the selector's total is made of once the group runs more than one
-/// drive at a time.
 const SHARDS: usize = 12;
-/// Rotate the starting shard at each crossing. Plain modulo leaves every fault
-/// type on the same few processes, while slower fault types finish and leave
-/// those processes alone. Rotation preserves job order within each shard and
-/// visits every job once; with the stride coprime to `SHARDS` it also gives
-/// every shard one crossing per fault type.
+/// Rotate each crossing to distribute fault types while preserving job order.
 fn job_shard(ordinal: usize) -> usize {
     (ordinal + ordinal / Fault::ALL.len()) % SHARDS
 }
@@ -312,7 +301,7 @@ fn fault_shard() {
         index.parse().expect("shard"),
         count.parse().expect("shards"),
     );
-    assert_eq!(count, SHARDS, "the plan uses six shards");
+    assert_eq!(count, SHARDS, "shard count differs from the plan");
     let _foreign = ForeignGuard;
     let mut tally = Tally::default();
     let mut costs =
