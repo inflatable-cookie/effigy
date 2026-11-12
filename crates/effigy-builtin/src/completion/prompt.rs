@@ -198,6 +198,11 @@ mod tests {
         assert_eq!(resolved.action, CompletionAction::Install);
         assert!(resolved.prompted_shell);
         assert!(resolved.prompted_action);
+        assert_eq!(
+            shell_prompt(Some(CompletionShell::Zsh)),
+            "Completion shell [1/2/3] [default 2]: "
+        );
+        assert_eq!(shell_prompt(None), "Completion shell [1/2/3]: ");
     }
 
     #[test]
@@ -220,10 +225,5 @@ mod tests {
         )
         .expect_err("non-tty should fail");
         assert!(err.to_string().contains("requires a shell target"));
-    }
-
-    #[test]
-    fn completion_shell_prompt_without_default_stays_well_formed() {
-        assert_eq!(shell_prompt(None), "Completion shell [1/2/3]: ");
     }
 }

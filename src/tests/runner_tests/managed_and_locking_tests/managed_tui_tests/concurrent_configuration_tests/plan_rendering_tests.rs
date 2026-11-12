@@ -1,5 +1,6 @@
 use crate::runner::tests::prelude::{
-    assert_managed_output_case_table, lock_test, managed_tui_env,
+    assert_managed_output_case_table, install_fake_container_runtime, lock_test,
+    managed_plan_process_row, managed_tui_env, run_dev_with_repo, temp_workspace,
     write_managed_tui_container_lifecycle_manifest, write_ranked_catalog_tasks,
     write_ranked_task_ref_manifest, write_root_manifest, ManagedInvocation, ManagedOutputCase,
     Path,
@@ -220,17 +221,34 @@ fn run_manifest_task_managed_tui_concurrent_plan_rendering_contract_table() {
 fn run_manifest_task_managed_tui_plan_renders_explicit_concurrent_setup() {
     let _guard = lock_test();
     let _env = managed_tui_env();
-    assert_managed_output_case_table(&[ManagedOutputCase {
-        workspace: "managed-concurrent-setup-entry",
-        invocation: ManagedInvocation::DevWithRepo,
-        args: &[],
-        expected: &[
-            "Managed Task Plan",
-            "setup",
-            "rhai scripts/front-setup.rhai",
-            "bun run dev",
-        ],
-        expected_absent: &[],
-        setup: setup_concurrent_entries_with_setup,
-    }]);
+    let root = temp_workspace("managed-concurrent-setup-entry");
+    setup_concurrent_entries_with_setup(&root);
+    let _runtime = install_fake_container_runtime(&root);
+    let output = run_dev_with_repo(&root, &[]).expect("managed plan should render");
+    let root_path = root.display().to_string();
+    let quoted_root = effigy_core::shell::shell_quote(&root_path);
+    let expected_run = format!(
+        "(cd {quoted_root} && env EFFIGY_INTERNAL_SUPPRESS_HEADER='1' EFFIGY_RHAI_ARGS_JSON='[]' EFFIGY_RHAI_TASK_NAME='front' EFFIGY_RHAI_REPO_ROOT={} EFFIGY_RHAI_CATALOG_ROOT={} EFFIGY_RHAI_INVOCATION_CWD={} {} script run --file 'scripts/front-setup.rhai')",
+        effigy_core::shell::shell_quote(&root_path),
+        effigy_core::shell::shell_quote(&root_path),
+        effigy_core::shell::shell_quote(&root_path),
+        effigy_core::effigy_invocation::resolve_effigy_invocation_prefix()
+            .expect("resolve the current Effigy executable"),
+    );
+
+    assert!(output.lines().any(|line| line == "Managed Task Plan"));
+    assert!(output.lines().any(|line| line == "task: dev"));
+    assert!(output.lines().any(|line| line == "tab-order: front"));
+    assert_eq!(
+        managed_plan_process_row(&output, "front"),
+        vec![
+            "front".to_owned(),
+            "standard".to_owned(),
+            root_path,
+            "rhai scripts/front-setup.rhai".to_owned(),
+            expected_run,
+            "0".to_owned(),
+            "enabled".to_owned(),
+        ]
+    );
 }

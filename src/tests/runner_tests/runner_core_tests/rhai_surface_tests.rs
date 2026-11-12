@@ -3,7 +3,20 @@ use crate::runner::tests::prelude::parse_json_output_with_schema_version;
 use effigy_cli::{Command, RhaiArgs, RhaiSubcommand};
 
 #[test]
-fn run_manifest_task_builtin_rhai_surface_json_lists_git_helpers() {
+fn run_manifest_task_builtin_rhai_surface_lists_git_helpers_in_text_and_json() {
+    let text = run_command(Command::Rhai(RhaiArgs {
+        subcommand: RhaiSubcommand::Surface,
+        output_json: false,
+    }))
+    .expect("rhai surface text should render");
+    assert!(text.lines().any(|line| line == "Rhai Surface"), "{text}");
+    assert!(text.lines().any(|line| line == "git:"), "{text}");
+    assert!(
+        text.lines()
+            .any(|line| line == "  - git::status() (read-only)"),
+        "{text}"
+    );
+
     let output = run_command(Command::Rhai(RhaiArgs {
         subcommand: RhaiSubcommand::Surface,
         output_json: true,
@@ -21,17 +34,4 @@ fn run_manifest_task_builtin_rhai_surface_json_lists_git_helpers() {
         .expect("functions")
         .iter()
         .any(|function| function["module"] == "git" && function["name"] == "status"));
-}
-
-#[test]
-fn run_manifest_task_builtin_rhai_surface_text_lists_git_module() {
-    let output = run_command(Command::Rhai(RhaiArgs {
-        subcommand: RhaiSubcommand::Surface,
-        output_json: false,
-    }))
-    .expect("rhai surface should render");
-
-    assert!(output.contains("Rhai Surface"));
-    assert!(output.contains("git:"));
-    assert!(output.contains("git::status()"));
 }

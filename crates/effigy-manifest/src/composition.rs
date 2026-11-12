@@ -1180,8 +1180,13 @@ paths = ["a"]
 "#,
         );
 
-        load_task_manifest_with_inspection(&root)
+        let loaded = load_task_manifest_with_inspection(&root)
             .expect("non-conflicting extend should compose cleanly");
+        assert_eq!(
+            array_strings(&loaded.effective_value, "isolation.paths"),
+            vec!["a".to_owned()],
+            "the absent parent path should retain the overlay's value without duplication"
+        );
     }
 
     #[test]
@@ -1387,6 +1392,18 @@ paths = ["b"]
             loaded.include_graph[0].child.file_name(),
             Some(std::ffi::OsStr::new("effigy.local.toml"))
         );
+        std::env::set_var("EFFIGY_NO_LOCAL_OVERLAY", "1");
+        let disabled = load_task_manifest_with_inspection(&root).expect("load with opt-out");
+        std::env::remove_var("EFFIGY_NO_LOCAL_OVERLAY");
+        assert_eq!(
+            disabled
+                .effective_value
+                .as_table()
+                .and_then(|table| table.get("isolation")),
+            None,
+            "the opt-out leaves local overlay values absent"
+        );
+        assert!(disabled.include_graph.is_empty());
     }
 
     #[test]
@@ -1417,42 +1434,6 @@ paths = ["b"]
         assert_eq!(loaded.include_graph.len(), 1);
         assert!(!dir.join(".gitignore").exists());
         assert!(!dir.join(".git/info/exclude").exists());
-    }
-
-    #[test]
-    fn no_local_overlay_env_disables_auto_discovery() {
-        let _guard = LOCAL_OVERLAY_ENV_LOCK.lock().expect("env lock");
-        std::env::set_var("EFFIGY_NO_LOCAL_OVERLAY", "1");
-        let tmp = tempdir().expect("tempdir");
-        let dir = tmp.path();
-        let root = write_manifest(
-            dir,
-            "effigy.toml",
-            r#"
-[tasks]
-build = "true"
-"#,
-        );
-        write_manifest(
-            dir,
-            "effigy.local.toml",
-            r#"
-[isolation]
-paths = ["b"]
-"#,
-        );
-        let loaded = load_task_manifest_with_inspection(&root).expect("load");
-        std::env::remove_var("EFFIGY_NO_LOCAL_OVERLAY");
-        let isolation = loaded
-            .effective_value
-            .as_table()
-            .and_then(|t| t.get("isolation"));
-        assert!(
-            isolation.is_none(),
-            "local overlay should not have been merged: {:?}",
-            isolation
-        );
-        assert!(loaded.include_graph.is_empty());
     }
 
     #[test]
@@ -1553,7 +1534,15 @@ build = "true"
             ),
         );
 
-        load_task_manifest_with_inspection(&root).expect("load");
+        load_task_manifest_with_inspection(&root)
+            .expect("the current minimum version should compose successfully");
+        assert!(
+            crate::manifest_section::active_version_satisfies_minimum_effigy_version(
+                &effigy_core::build_info::active_version(),
+                &semver::Version::parse(env!("CARGO_PKG_VERSION")).expect("package version")
+            )
+            .expect("valid current version")
+        );
     }
 
     #[test]

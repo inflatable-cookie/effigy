@@ -363,7 +363,12 @@ fn longhorn_release_table_keeps_working_through_the_shorthand() {
 }
 
 #[test]
-fn poodle_release_table_keeps_working_through_the_shorthand() {
+fn shorthand_release_table_examples_keep_distinct_plan_contracts() {
+    assert_poodle_shorthand_contract();
+    assert_underlay_shorthand_contract();
+}
+
+fn assert_poodle_shorthand_contract() {
     let root = workspace("poodle");
     let plan = release_plan(&root);
 
@@ -388,8 +393,7 @@ fn poodle_release_table_keeps_working_through_the_shorthand() {
     assert_eq!(plan["ready"], true);
 }
 
-#[test]
-fn underlay_release_table_keeps_working_through_the_shorthand() {
+fn assert_underlay_shorthand_contract() {
     let root = workspace("underlay");
     let plan = release_plan(&root);
 

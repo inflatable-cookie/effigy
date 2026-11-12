@@ -147,6 +147,7 @@ fn skill_help_documents_the_explicit_source_and_consumer_split() {
     let output = run_skill(&fixtures.join("consumer-one"), &["skill", "--help"]);
     assert!(output.status.success(), "{output:?}");
     let stdout = String::from_utf8_lossy(&output.stdout);
+    super::support::assert_cli_help_matches_topic(&stdout, effigy_cli::HelpTopic::Skill, false);
     assert!(
         stdout.contains("skill tasks --path <SKILL_DIR|EFFIGY_TOML>"),
         "{stdout}"

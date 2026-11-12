@@ -70,6 +70,8 @@ fn follow_up_renderer_surfaces_real_commands() {
     let jobs = build_setup_inventory(&root, &checks);
     let rendered = render_follow_up_jobs_excluding(&jobs, &std::collections::BTreeSet::new());
     assert!(!rendered.contains("effigy tasks migrate"));
-    assert!(rendered.contains("effigy bundle inspect"));
+    assert!(rendered
+        .lines()
+        .any(|line| line == "- `effigy bundle inspect` - Inspect the active bundle source."));
     assert!(!rendered.contains("effigy graph"));
 }

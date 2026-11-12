@@ -1042,7 +1042,7 @@ mod tests {
     }
 
     #[test]
-    fn live_frames_show_state_and_elapsed_until_finish() {
+    fn live_and_detailed_frames_preserve_step_state_until_finish() {
         let source = ProgressSource::waiting_for("web health probe on port 8080");
         let (sink, _) = sink(StepMode::Silent);
         let step = Step::new_live(sink, None, source.clone());
@@ -1071,19 +1071,17 @@ mod tests {
         step.finish_clear();
         assert!(!step.inner.render_live(&source, Duration::from_secs(8)));
         assert!(step.label().ends_with("· 7s"));
-    }
-
-    #[test]
-    fn an_event_lands_without_moving_the_sub_step() {
-        let source = ProgressSource::waiting_for("the environment gate for `stack`");
+        let detailed = ProgressSource::waiting_for("the environment gate for `stack`");
         assert_eq!(
-            source.detailed_frame_at(Duration::from_secs(1)),
+            detailed.detailed_frame_at(Duration::from_secs(1)),
             "waiting for the environment gate for `stack`; 1s elapsed"
         );
-        source.update(|_| ProgressFrame::new("reconciling the backend").count(Some((1, 3))));
-        source.event("run agq holds it (pid 9012, task `dev`)");
+        detailed.update(|_| {
+            ProgressFrame::new("reconciling the backend").count(Some((1, 3)))
+        });
+        detailed.event("run agq holds it (pid 9012, task `dev`)");
         assert_eq!(
-            source.detailed_frame_at(Duration::from_secs(3)),
+            detailed.detailed_frame_at(Duration::from_secs(3)),
             "reconciling the backend (1/3); waiting for the environment gate for `stack`; last: run agq holds it (pid 9012, task `dev`); 3s elapsed"
         );
     }

@@ -1,8 +1,8 @@
 use crate::runner::tests::prelude::{
-    assert_run_array_task_invocation_error_case_table, assert_run_array_task_output_case_table,
+    assert_run_array_task_output_case_table, run_builtin_err, temp_workspace,
     write_catalog_api_single_env_capture_manifest, write_catalog_api_unreachable_manifest,
     write_catalog_manifest_with_alias, write_env_files, write_root_manifest, Path,
-    RunArrayTaskInvocationErrorCase, RunArrayTaskOutputCase,
+    RunArrayTaskOutputCase, RunnerError,
 };
 
 fn setup_relative_catalog_env_reference(root: &Path, marker: &Path) {
@@ -79,12 +79,14 @@ fn run_manifest_task_run_array_relative_catalog_env_reference_contract_table() {
 
 #[test]
 fn run_manifest_task_run_array_relative_catalog_env_reference_errors_are_stable() {
-    let cases = [RunArrayTaskInvocationErrorCase {
-        workspace: "run-array-env-relative-catalog-ref-missing",
-        task: "project2/api",
-        expected: &["unknown env entry `../sub-project1/MISSING_VAR`"],
-        setup: setup_missing_relative_catalog_env_reference,
-    }];
-
-    assert_run_array_task_invocation_error_case_table(&cases);
+    let root = temp_workspace("run-array-env-relative-catalog-ref-missing");
+    setup_missing_relative_catalog_env_reference(&root);
+    let error = run_builtin_err(root, "project2/api", &[]);
+    match error {
+        RunnerError::TaskInvocation(message) => assert_eq!(
+            message,
+            "task `api` run step references unknown env entry `../sub-project1/MISSING_VAR`"
+        ),
+        other => panic!("unexpected error: {other}"),
+    }
 }

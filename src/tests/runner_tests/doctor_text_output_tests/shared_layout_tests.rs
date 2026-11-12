@@ -55,4 +55,11 @@ fn run_doctor_and_explain_text_row_and_section_order_contract_is_stable() {
             "deferral-reasoning".to_owned(),
         ]
     );
+    for line in [
+        "selection-status: ok",
+        "selected-catalog: catalog_a",
+        "selected-mode: explicit_prefix",
+    ] {
+        assert!(prefix_block.lines().any(|actual| actual == line), "{prefix_block}");
+    }
 }

@@ -934,8 +934,25 @@ fn cli_doctor_supports_colorized_output_when_forced() {
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
     let combined = format!("{stdout}\n{stderr}");
-    assert!(combined.contains("health.task.execute"));
-    assert!(combined.contains('\u{1b}'));
+    let check_line = combined
+        .lines()
+        .find(|line| line.contains("health.task.execute"))
+        .expect("health check line");
+    assert!(
+        check_line.contains("\u{1b}["),
+        "forced color should style the health check itself: {check_line:?}"
+    );
+    let label = check_line
+        .find("health.task.execute")
+        .expect("health check label");
+    assert!(
+        check_line[..label].contains("\u{1b}["),
+        "health check label itself is styled: {check_line:?}"
+    );
+    assert!(
+        check_line.contains("\u{1b}[38;5;244merror\u{1b}[0m: health.task.execute"),
+        "the error status is styled and closed before the check label: {check_line:?}"
+    );
 }
 
 /// Bounded replacement for `wait_with_output` for the spawned doctor: the
@@ -1446,10 +1463,11 @@ fn cli_changelog_extract_fails_for_missing_version() {
         .expect("run changelog extract");
 
     assert!(!output.status.success(), "extract should fail");
+    assert!(output.stdout.is_empty(), "refusal has no stdout: {output:?}");
     let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
-    assert!(
-        stderr.contains("version `9.9.9` not found or has no entries in CHANGELOG.md"),
-        "got: {stderr}"
+    assert_eq!(
+        stderr,
+        "[error] version `9.9.9` not found or has no entries in CHANGELOG.md\n"
     );
 }
 
@@ -1944,12 +1962,14 @@ fn cli_release_plan_json_mode_reports_the_whole_pipeline_without_side_effects() 
             .is_some_and(|path| path.ends_with("Cargo.toml"))));
 
     let files = parsed["result"]["files"].as_array().expect("files");
-    assert!(files.iter().any(|file| file
-        .as_str()
-        .is_some_and(|path| path.ends_with("Cargo.toml"))));
-    assert!(files.iter().any(|file| file
-        .as_str()
-        .is_some_and(|path| path.ends_with("CHANGELOG.md"))));
+    assert!(files.iter().any(|file| {
+        file.as_str()
+            .is_some_and(|path| path.ends_with("Cargo.toml"))
+    }));
+    assert!(files.iter().any(|file| {
+        file.as_str()
+            .is_some_and(|path| path.ends_with("CHANGELOG.md"))
+    }));
 
     // Gates keep their configured command and default to the certify stage.
     assert_eq!(parsed["result"]["gates"][0]["name"], "smoke");
@@ -2042,13 +2062,57 @@ fn cli_release_plan_text_mode_shows_identities_files_and_targets() {
 
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     assert!(output.status.success(), "got: {stdout}");
-    assert!(stdout.contains("Release Plan"), "got: {stdout}");
-    assert!(stdout.contains("Identities (1)"), "got: {stdout}");
-    assert!(stdout.contains("0.2.4 -> 0.2.5"), "got: {stdout}");
-    assert!(stdout.contains("tag: release-0.2.5"), "got: {stdout}");
-    assert!(stdout.contains("Files to change (2)"), "got: {stdout}");
-    assert!(stdout.contains("CHANGELOG.md"), "got: {stdout}");
-    assert!(stdout.contains("Ready to run: yes"), "got: {stdout}");
+    assert!(stdout.lines().any(|line| line == "Release Plan"), "{stdout}");
+    let identities = stdout
+        .split_once("Identities (1)\n")
+        .expect("one identity section")
+        .1
+        .split_once("\n\nFiles to change (2)")
+        .expect("files section after identity")
+        .0
+        .lines()
+        .map(str::trim)
+        .collect::<Vec<_>>();
+    let identity_name = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("fixture name");
+    let identity = identities
+        .iter()
+        .find(|line| line.starts_with(&format!("{identity_name} ")))
+        .unwrap_or_else(|| panic!("fixture identity missing in {identities:?}\n{stdout}"));
+    assert_eq!(
+        identity.split_whitespace().collect::<Vec<_>>(),
+        [identity_name, "semver", "0.2.4", "->", "0.2.5"]
+    );
+    assert!(identities.contains(&"tag: release-0.2.5"), "{identities:?}");
+    assert!(
+        identities.iter().any(|line| {
+            *line == format!("version file: {}", root.join("Cargo.toml").display())
+        }),
+        "{identities:?}"
+    );
+
+    let files = stdout
+        .split_once("Files to change (2)\n")
+        .expect("two planned files")
+        .1
+        .split_once("\n\nGates (")
+        .expect("gates after files")
+        .0
+        .lines()
+        .map(str::trim)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        files,
+        std::collections::BTreeSet::from([
+            root.join("CHANGELOG.md").to_str().expect("changelog path"),
+            root.join("Cargo.toml").to_str().expect("version path"),
+        ])
+    );
+    assert!(stdout.lines().any(|line| line == "Targets (1)"), "{stdout}");
+    assert!(stdout.lines().any(|line| line == "  tag          tag"), "{stdout}");
+    assert!(stdout.lines().any(|line| line == "  Ready to run: yes"), "{stdout}");
 }
 
 #[test]
@@ -2145,10 +2209,15 @@ fn cli_release_plan_replaces_the_retired_simulate_command() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(!output.status.success(), "got: {combined}");
-    assert!(combined.contains("retired"), "got: {combined}");
-    assert!(
-        combined.contains("effigy release --plan"),
-        "the refusal names the replacement: {combined}"
+    assert!(output.stdout.is_empty(), "refusal has no stdout: {output:?}");
+    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
+    let refusal = stderr
+        .split_once("[error] Invalid command arguments\n")
+        .expect("invalid-arguments error heading")
+        .1;
+    assert_eq!(
+        refusal,
+        "  `effigy release simulate` is retired in v0.15: use `effigy release --plan`, which shows the whole pipeline (next versions, files, gates by stage, artifacts, targets and approval checkpoints) and still mutates nothing. See the v0.15.0 Removed entry in CHANGELOG.md\n  hint: Run `effigy release --help` for every form\n\neffigy release accepts here: approve, decide, gates, receipt, resume, run, settle, status\n"
     );
 }
 
@@ -2579,7 +2648,7 @@ fn install_fake_container_runtime(
         &colima,
         &r#"#!/bin/sh
 set -eu
-printf "%s %s\n" "$(date +%s)" "$*" >> "$EFFIGY_TEST_COLIMA_ARGS_FILE"
+printf "%s %s\n" "$(/bin/date +%s)" "$*" >> "$EFFIGY_TEST_COLIMA_ARGS_FILE"
 if [ "${1:-}" = "status" ]; then
   if [ -f "$EFFIGY_TEST_COLIMA_STATE_FILE" ]; then
     printf "Running\n"
@@ -3345,10 +3414,10 @@ fn cli_container_status_json_reports_warnings_matching_its_schema() {
         .as_array()
         .expect("warnings array");
     assert_eq!(warnings.len(), 1, "{warnings:?}");
-    assert!(warnings[0]
-        .as_str()
-        .expect("warning string")
-        .contains("shared with unrelated Colima workloads"));
+    assert_eq!(
+        warnings[0],
+        "Colima profile `default` is shared with unrelated Colima workloads; Effigy now reserves the implicit profile name `effigy`. Keep `default` only if that sharing is intentional."
+    );
 }
 
 #[test]
@@ -3539,11 +3608,40 @@ fn cli_container_data_list_json_reports_managed_volumes() {
     let volumes = parsed["result"]["volumes"]
         .as_array()
         .expect("volumes array");
-    assert!(volumes.iter().any(|volume| {
-        volume["name"] == "fixture-web-dev-db-data"
-            && volume["classification"] == "persistent"
-            && volume["size_bytes"] == 4096
-    }));
+    assert_eq!(volumes.len(), 3, "exact volume count: {volumes:?}");
+    let names = volumes
+        .iter()
+        .map(|volume| volume["name"].as_str().expect("volume name"))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        names,
+        std::collections::BTreeSet::from([
+            "fixture-web-dev-app-app-node-modules",
+            "fixture-web-dev-app-node-modules",
+            "fixture-web-dev-db-data",
+        ]),
+        "volume inventory: {volumes:#?}"
+    );
+    let inventory = volumes
+        .iter()
+        .map(|volume| {
+            (
+                volume["name"].as_str().expect("volume name"),
+                volume["service"].as_str().expect("volume service"),
+                volume["classification"].as_str().expect("classification"),
+                volume["size_bytes"].is_null(),
+                volume["size_available"].as_bool().expect("size availability"),
+            )
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        inventory,
+        std::collections::BTreeSet::from([
+            ("fixture-web-dev-app-app-node-modules", "app", "ephemeral", true, false),
+            ("fixture-web-dev-app-node-modules", "app", "ephemeral", true, false),
+            ("fixture-web-dev-db-data", "db", "persistent", false, true),
+        ])
+    );
     let colima_invocations = fs::read_to_string(&colima_args).expect("read colima args");
     assert!(colima_invocations.contains("volume ls"));
     assert!(colima_invocations.contains("volume inspect"));
@@ -3594,12 +3692,43 @@ fn cli_container_cache_list_json_reports_purge_safe_isolated_volumes() {
     assert_eq!(parsed["result"]["container"], "web");
     assert_eq!(parsed["result"]["cache_count"], 2);
     let caches = parsed["result"]["caches"].as_array().expect("cache array");
-    assert!(caches.iter().any(|cache| {
-        cache["kind"] == "node-modules" && cache["name"] == "fixture-web-dev-app-node-modules"
-    }));
-    assert!(caches
+    assert_eq!(caches.len(), 2, "exact cache count: {caches:?}");
+    let names = caches
         .iter()
-        .all(|cache| { cache["safe_to_purge"] == true && cache["size_available"].is_boolean() }));
+        .map(|cache| cache["name"].as_str().expect("cache name"))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        names,
+        std::collections::BTreeSet::from([
+            "fixture-web-dev-app-app-node-modules",
+            "fixture-web-dev-app-node-modules",
+        ]),
+        "cache inventory: {caches:#?}"
+    );
+    let inventory = caches
+        .iter()
+        .map(|cache| {
+            (
+                cache["name"].as_str().expect("cache name"),
+                cache["kind"].as_str().expect("cache kind"),
+                cache["size_bytes"].is_null(),
+                cache["safe_to_purge"].as_bool().expect("purge safety"),
+                cache["size_available"]
+                    .as_bool()
+                    .expect("size availability"),
+            )
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        inventory,
+        std::collections::BTreeSet::from([
+            ("fixture-web-dev-app-app-node-modules", "node-modules", true, true, false),
+            ("fixture-web-dev-app-node-modules", "node-modules", true, true, false),
+        ])
+    );
+    assert_eq!(parsed["result"]["reclaimable_size_bytes"], 0);
+    assert_eq!(parsed["result"]["unknown_size_count"], 2);
+    assert_eq!(parsed["result"]["size_complete"], false);
 }
 
 #[test]
@@ -3642,8 +3771,8 @@ fn cli_generated_container_status_json_reports_media_mounts() {
     assert!(output.status.success(), "status failed: {output:?}");
     let parsed = parse_stdout_json(&output);
     assert_eq!(
-        parsed["result"]["media_mounts"][0],
-        "storage/uploads:/var/www/html/storage/uploads"
+        parsed["result"]["media_mounts"],
+        serde_json::json!(["storage/uploads:/var/www/html/storage/uploads"])
     );
     assert!(
         !root.join(".effigy/runtime/compose").exists(),
@@ -3733,8 +3862,18 @@ fn cli_container_data_export_json_reports_transfer_contract() {
         archive.display().to_string()
     );
     let colima_invocations = fs::read_to_string(&colima_args).expect("read colima args");
-    assert!(colima_invocations.contains("run --rm"));
-    assert!(colima_invocations.contains("fixture-web-dev-db-data:/source:ro"));
+    let transfer_commands = colima_invocations
+        .lines()
+        .filter_map(|line| line.split_once(' ').map(|(_, command)| command))
+        .filter(|command| command.starts_with("nerdctl --profile dev -- run "))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        transfer_commands,
+        [format!(
+            "nerdctl --profile dev -- run --rm -v fixture-web-dev-db-data:/source:ro -v {}:/output alpine:latest tar czf /output/backup.tar.gz -C /source .",
+            root.display()
+        )]
+    );
 }
 
 #[test]
@@ -3797,8 +3936,18 @@ fn cli_container_data_import_json_reports_transfer_contract() {
         archive.display().to_string()
     );
     let colima_invocations = fs::read_to_string(&colima_args).expect("read colima args");
-    assert!(colima_invocations.contains("run --rm"));
-    assert!(colima_invocations.contains("fixture-web-dev-db-data:/target"));
+    let transfer_commands = colima_invocations
+        .lines()
+        .filter_map(|line| line.split_once(' ').map(|(_, command)| command))
+        .filter(|command| command.starts_with("nerdctl --profile dev -- run "))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        transfer_commands,
+        [format!(
+            "nerdctl --profile dev -- run --rm -v fixture-web-dev-db-data:/target -v {}:/input:ro alpine:latest tar xzf /input/backup.tar.gz -C /target",
+            root.display()
+        )]
+    );
 }
 
 #[test]
@@ -3866,8 +4015,31 @@ fn cli_container_data_pull_production_json_reports_hook_contract() {
 fn cli_container_data_seed_json_reports_seed_contract() {
     let root = temp_execution_workspace("container-data-seed");
     let output = run_container_data_seed_fixture(&root);
+    let root = fs::canonicalize(root).expect("canonicalize seed fixture root");
+    let seed = root.join("latest.sql");
+    assert!(output.status.success(), "data seed failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["schema"], "effigy.container.data-seed.v1");
+    assert_eq!(parsed["result"]["container"], "web");
+    assert_eq!(parsed["result"]["count"], 1);
+    assert_eq!(parsed["result"]["seeds"][0]["target"], "contactpatch");
+    assert_eq!(
+        parsed["result"]["seeds"][0]["source_path"],
+        seed.display().to_string()
+    );
+    assert_eq!(
+        fs::read_to_string(root.join(".effigy/local/db-seed.marker")).expect("read marker"),
+        "seeded"
+    );
 
-    assert_container_data_seed_contract(&root, &output);
+    // This app-defined seed runs on the host and does not start or hold the
+    // environment, so there is no runtime activity to idle-stop afterward.
+    let colima = fs::read_to_string(root.join("colima-args.log")).unwrap_or_default();
+    let docker = fs::read_to_string(root.join("docker-args.log")).unwrap_or_default();
+    assert!(
+        colima.is_empty() && docker.is_empty(),
+        "unexpected runtime activity:\ncolima: {colima}\ndocker: {docker}"
+    );
 }
 
 fn run_container_data_seed_fixture(fixture_root: &std::path::Path) -> std::process::Output {
@@ -3958,34 +4130,6 @@ fn container_data_seed_command(fixture_root: &std::path::Path) -> Command {
         .env_remove("EFFIGY_HOST_CONTAINER_LEASE_TIMEOUT_SECS")
         .env_remove("EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER");
     command
-}
-
-fn assert_container_data_seed_contract(root: &std::path::Path, output: &std::process::Output) {
-    let root = fs::canonicalize(root).expect("canonicalize seed fixture root");
-    let seed = root.join("latest.sql");
-    assert!(output.status.success(), "data seed failed: {output:?}");
-    let parsed = parse_stdout_json(output);
-    assert_eq!(parsed["result"]["schema"], "effigy.container.data-seed.v1");
-    assert_eq!(parsed["result"]["container"], "web");
-    assert_eq!(parsed["result"]["count"], 1);
-    assert_eq!(parsed["result"]["seeds"][0]["target"], "contactpatch");
-    assert_eq!(
-        parsed["result"]["seeds"][0]["source_path"],
-        seed.display().to_string()
-    );
-    assert_eq!(
-        fs::read_to_string(root.join(".effigy/local/db-seed.marker")).expect("read marker"),
-        "seeded"
-    );
-
-    // This app-defined seed runs on the host and does not start or hold the
-    // environment, so there is no runtime activity to idle-stop afterward.
-    let colima = fs::read_to_string(root.join("colima-args.log")).unwrap_or_default();
-    let docker = fs::read_to_string(root.join("docker-args.log")).unwrap_or_default();
-    assert!(
-        colima.is_empty() && docker.is_empty(),
-        "unexpected runtime activity:\ncolima: {colima}\ndocker: {docker}"
-    );
 }
 
 #[test]
@@ -4193,6 +4337,27 @@ fn shared_cli_container_up_cohort() {
         output.status,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
+    );
+    let stdout = String::from_utf8(output.stdout).expect("cohort stdout");
+    for test in [
+        "cli_container_up_detached_starts_colima_and_reports_ready",
+        "cli_container_up_null_dns_overlay_reaches_fake_colima_and_keeps_budget_refusal",
+        "cli_container_up_applies_the_restart_policy_after_compose_started_the_stack",
+    ] {
+        let report_prefix = format!("test command_behavior_tests::{test} ... ");
+        assert!(
+            stdout.lines().any(|line| {
+                line.strip_prefix(&report_prefix)
+                    .is_some_and(|result| result == "ok" || result.starts_with("ok "))
+            }),
+            "cohort did not report {test} as passed: {stdout}"
+        );
+    }
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line.starts_with("test result: ok. 3 passed; 0 failed; 0 ignored;")),
+        "cohort must run all three cases without failures or ignores: {stdout}"
     );
 }
 
@@ -5951,18 +6116,31 @@ fn cli_container_shell_command_runs_via_sh_lc() {
         .expect("run effigy");
 
     assert!(output.status.success(), "shell failed: {output:?}");
+    let stdout = String::from_utf8(output.stdout).expect("utf8 shell output");
+    let nonempty_lines = stdout
+        .lines()
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    assert!(
+        nonempty_lines.ends_with(&[
+            "exec-ok",
+            "[ok] finished container shell for `web` service `app`",
+        ]),
+        "shell route output: {stdout}"
+    );
     let colima_invocations = fs::read_to_string(&colima_args).expect("read colima args");
+    let shell_invocations = colima_invocations
+        .lines()
+        .filter_map(|line| line.split_once(' ').map(|(_, command)| command))
+        .filter(|command| {
+            command.starts_with("nerdctl --profile dev -- exec -w /workspace ")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(shell_invocations.len(), 1, "{colima_invocations}");
     assert!(
-        colima_invocations.contains("exec -w /workspace"),
-        "got: {colima_invocations}"
-    );
-    assert!(
-        colima_invocations.contains("sh -lc "),
-        "got: {colima_invocations}"
-    );
-    assert!(
-        colima_invocations.contains("printf shell-ok"),
-        "got: {colima_invocations}"
+        shell_invocations[0]
+            .ends_with(" sh -lc export PATH='/usr/local/bin':$PATH; printf shell-ok"),
+        "exact shell command and argv form: {shell_invocations:?}"
     );
 }
 
@@ -6094,9 +6272,14 @@ fn cli_docs_check_explicit_paths_resolve_from_the_invoking_task_cwd() {
         "cwd-relative docs paths should resolve under the task cwd: {output:?}"
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("resolved paths: docs/README.md, docs/knowledge/README.md"),
-        "the resolved set should be printed: {stdout}"
+    let resolved = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("resolved paths:"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        resolved,
+        ["resolved paths: docs/README.md, docs/knowledge/README.md"]
     );
 }
 
@@ -6128,9 +6311,14 @@ fn cli_docs_check_task_reference_expands_repo_placeholder() {
         "{{repo}} should expand inside a docs check task reference: {output:?}"
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("resolved paths: docs/README.md, docs/knowledge/README.md"),
-        "the expanded set should be printed: {stdout}"
+    let resolved = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("resolved paths:"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        resolved,
+        ["resolved paths: docs/README.md, docs/knowledge/README.md"]
     );
     assert!(
         !output.stderr.windows(6).any(|window| window == b"{repo}"),
@@ -6153,6 +6341,7 @@ fn cli_docs_check_without_paths_keeps_the_repository_root_default_scope() {
         stderr.contains("README.md") && stderr.contains("./gone.md"),
         "the default scan should read the repository-root README: {stderr}"
     );
+    assert_eq!(stderr.matches("./gone.md").count(), 1, "{stderr}");
 }
 
 /// A disposable private gateway for one fixture, with a fixture-owned state

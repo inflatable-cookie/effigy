@@ -74,24 +74,6 @@ fn output_lines_skip_runtime_meta_for_shell_processes() {
 }
 
 #[test]
-fn waiting_for_output_lines_uses_spinner_frame_and_message() {
-    let lines = waiting_for_output_lines(
-        3,
-        Duration::from_secs(1),
-        0,
-        ProcessStartupState::Running,
-        None,
-    );
-    assert_eq!(lines.len(), 2);
-    assert_eq!(lines[0].spans[0].content.as_ref(), "started: ");
-    assert_eq!(lines[1].spans[0].content.as_ref(), "⠸");
-    assert_eq!(
-        lines[1].spans[1].content.as_ref(),
-        " waiting for first output..."
-    );
-}
-
-#[test]
 fn output_lines_render_writer_styles_without_ansi_bytes() {
     use effigy_core::terminal_text::StyledSpan;
     let green =
@@ -145,6 +127,21 @@ fn a_starting_pane_names_its_wait_and_the_elapsed_time_not_just_a_glyph() {
     assert!(early.contains("startup: starting (2s elapsed)"), "{early}");
     assert!(later.contains("starting process..."), "{later}");
     assert!(later.contains("startup: starting (45s elapsed)"), "{later}");
+
+    let waiting = waiting_for_output_lines(
+        3,
+        Duration::from_secs(1),
+        0,
+        ProcessStartupState::Running,
+        None,
+    );
+    assert_eq!(waiting.len(), 2);
+    assert_eq!(waiting[0].spans[0].content.as_ref(), "started: ");
+    assert_eq!(waiting[1].spans[0].content.as_ref(), "⠸");
+    assert_eq!(
+        waiting[1].spans[1].content.as_ref(),
+        " waiting for first output..."
+    );
 }
 
 #[test]

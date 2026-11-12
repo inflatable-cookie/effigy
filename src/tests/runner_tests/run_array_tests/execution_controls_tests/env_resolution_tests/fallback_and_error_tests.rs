@@ -1,7 +1,7 @@
 use crate::runner::tests::prelude::{
-    assert_run_array_task_invocation_error_case_table, assert_run_array_task_output_case_table,
+    assert_run_array_task_output_case_table, run_builtin_err, temp_workspace,
     write_env_files, write_root_api_single_env_capture_manifest, write_validate_manifest, Path,
-    RunArrayTaskInvocationErrorCase, RunArrayTaskOutputCase,
+    RunArrayTaskOutputCase, RunnerError,
 };
 
 fn setup_named_env_value_dotenv_fallback(root: &Path, marker: &Path) {
@@ -93,12 +93,14 @@ fn run_manifest_task_run_array_env_resolution_fallback_contract_table() {
 
 #[test]
 fn run_manifest_task_run_array_env_resolution_errors_for_unknown_profiles() {
-    let cases = [RunArrayTaskInvocationErrorCase {
-        workspace: "run-array-env-profile-missing",
-        task: "validate",
-        expected: &["unknown env entry `missing-profile`"],
-        setup: setup_unknown_env_profile,
-    }];
-
-    assert_run_array_task_invocation_error_case_table(&cases);
+    let root = temp_workspace("run-array-env-profile-missing");
+    setup_unknown_env_profile(&root);
+    let error = run_builtin_err(root, "validate", &[]);
+    match error {
+        RunnerError::TaskInvocation(message) => assert_eq!(
+            message,
+            "task `validate` run step references unknown env entry `missing-profile`"
+        ),
+        other => panic!("unexpected error: {other}"),
+    }
 }

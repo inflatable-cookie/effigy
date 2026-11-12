@@ -3,8 +3,8 @@ use std::fs;
 use std::process::Command;
 
 use super::support::{
-    git_commit_all, git_stdout, init_git_repo, temp_execution_workspace, temp_workspace,
-    write_effigy_release_root_marker,
+    assert_cli_help_matches_topic, git_commit_all, git_stdout, init_git_repo,
+    temp_execution_workspace, temp_workspace, write_effigy_release_root_marker,
 };
 
 #[test]
@@ -18,6 +18,7 @@ fn cli_help_supports_colorized_sections_when_forced() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert_cli_help_matches_topic(&stdout, effigy_cli::HelpTopic::General, true);
     assert!(stdout.contains("EFFIGY"));
     assert!(stdout.contains("Commands"));
     assert!(stdout.contains('\u{1b}'));
@@ -166,6 +167,7 @@ fn cli_tasks_help_is_command_specific() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert_cli_help_matches_topic(&stdout, effigy_cli::HelpTopic::Tasks, false);
     assert!(stdout.contains("tasks Help"));
     assert!(stdout.contains(
         "effigy tasks [--all] [--repo <PATH>] [--task <TASK_NAME>] [--resolve <SELECTOR>]"
@@ -184,6 +186,7 @@ fn cli_doctor_help_is_command_specific() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert_cli_help_matches_topic(&stdout, effigy_cli::HelpTopic::Doctor, false);
     assert!(stdout.contains("doctor Help"));
     assert!(stdout.contains("effigy doctor [--repo <PATH>] [--fix] [--verbose] [--json]"));
     assert!(!stdout.contains("tasks Help"));
@@ -200,6 +203,7 @@ fn cli_docs_help_is_command_specific() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert_cli_help_matches_topic(&stdout, effigy_cli::HelpTopic::Docs, false);
     assert!(stdout.contains("docs Help"));
     assert!(stdout.contains("effigy docs check links [--repo <PATH>] [<FILE>...] [--json]"));
     assert!(stdout.contains(
@@ -238,6 +242,7 @@ fn cli_contracts_help_is_command_specific() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert_cli_help_matches_topic(&stdout, effigy_cli::HelpTopic::Contracts, false);
     assert!(stdout.contains("contracts Help"));
     assert!(stdout.contains(
         "effigy contracts check-json [--repo <PATH>] [--index <PATH>] [--contract <PATH>] [--changed-only <BASE>] [--print-selected[=text|json]] [--validate-selection] [--artifact <PATH>] [--json]"
@@ -258,6 +263,7 @@ fn cli_release_help_includes_distribution_evidence_commands() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert_cli_help_matches_topic(&stdout, effigy_cli::HelpTopic::Release, false);
     assert!(stdout.contains("release Help"));
     assert!(stdout.contains("effigy release:preflight"));
     assert!(stdout.contains("effigy release:metadata"));
@@ -276,6 +282,7 @@ fn cli_container_help_is_command_specific() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert_cli_help_matches_topic(&stdout, effigy_cli::HelpTopic::Container, false);
     assert!(stdout.contains("container Help"));
     assert!(
         stdout.contains("effigy container <NAME> up [--repo <PATH>] [--attach|--detach] [--json]")
@@ -329,9 +336,19 @@ fn cli_repo_pulse_prints_migration_guidance() {
         .expect("run effigy");
 
     assert!(!output.status.success());
+    assert!(output.stdout.is_empty(), "refusal has no stdout: {output:?}");
     let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
-    assert!(stderr.contains("no longer a built-in command"));
-    assert!(stderr.contains("effigy doctor"));
+    let diagnostic_lines = stderr
+        .lines()
+        .filter(|line| line.starts_with("note:") || line.starts_with("[error]"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        diagnostic_lines,
+        [
+            "note: `--repo` after the task name is passed to the task; put Effigy's `--repo` before the task name",
+            "[error] `repo-pulse` is no longer a built-in command. Use `effigy doctor` for consolidated health checks, or define `tasks.health` in your manifest for project-owned checks.",
+        ]
+    );
 }
 
 fn help_cli_command(
@@ -657,6 +674,7 @@ fn cli_general_help_renders_the_six_operator_groups() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert_cli_help_matches_topic(&stdout, effigy_cli::HelpTopic::General, false);
     for title in [
         "Work Commands",
         "Local Commands",
