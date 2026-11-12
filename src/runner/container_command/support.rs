@@ -2734,7 +2734,6 @@ mod tests {
 
     /// A changed shared render is replaced in the one order that frees its
     /// published host port before the new container is created (effigy#377).
-
     /// One `inspect` record for the shared restart-policy proof: a container
     /// `name` of `project` and `service`, rendered from `render` when one is
     /// given, running or not.
