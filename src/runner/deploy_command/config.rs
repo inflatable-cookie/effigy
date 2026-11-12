@@ -4,7 +4,7 @@ use std::path::Path;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
-use super::provider_package::ManifestDeployProviderConfig;
+use super::provider::ManifestDeployProviderConfig;
 use crate::runner::error::RunnerError;
 use crate::runner::manifest::load_task_manifest_with_inspection;
 

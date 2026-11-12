@@ -5,7 +5,20 @@ use std::path::Path;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use super::provider_package::DeployProviderProvenance;
+pub(in crate::runner::deploy_command) mod derive;
+pub(in crate::runner::deploy_command) mod manifest;
+pub(in crate::runner::deploy_command) mod merge;
+pub(in crate::runner::deploy_command) mod production;
+pub(in crate::runner::deploy_command) mod vocabulary;
+
+/// Which layer supplied a resolved model key: the bound environment, the
+/// shared `[deploy.model]`, or withheld because the shared value was
+/// development-only.
+pub(in crate::runner::deploy_command) const PROVENANCE_ENVIRONMENT: &str = "environment";
+pub(in crate::runner::deploy_command) const PROVENANCE_SHARED: &str = "shared";
+pub(in crate::runner::deploy_command) const PROVENANCE_MISSING: &str = "missing";
+
+use super::provider::DeployProviderProvenance;
 
 #[derive(Clone, Serialize)]
 pub(crate) struct DeployModel {

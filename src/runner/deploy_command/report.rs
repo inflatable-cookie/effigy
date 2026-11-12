@@ -6,7 +6,7 @@ use serde_json::{to_value, Value};
 
 use crate::runner::error::RunnerError;
 
-use super::provider_package::DeployProviderProvenance;
+use super::provider::DeployProviderProvenance;
 
 pub(super) const PLAN_SCHEMA: &str = "effigy.deploy.plan.v1";
 pub(super) const APPLY_SCHEMA: &str = "effigy.deploy.apply.v1";
