@@ -19,24 +19,17 @@ use effigy_containers::{
     annotate_workspace_extra_mount_decisions, cache_list_global_report, cache_list_report,
     cache_prune_report, data_list_report, data_transfer_report,
     exec::{runtime_backend_is_running, selected_backend_label},
-    load_container_policy, load_container_policy_for_creation, user_global_colima_profile,
-    validate_compose_backend_runtime, validate_container_policy, volume_list_report,
+    load_container_policy, load_container_policy_for_creation, validate_compose_backend_runtime,
+    validate_container_policy, volume_list_report,
     volume_prune_report, ContainerCachePruneEntry, ContainerCacheVolumeEntry,
     ContainerDataTransferAction, ContainerDataVolumeEntry, ContainerVolumePruneEntry,
     EffectiveContainerPolicy,
-};
-use effigy_containers::{
-    ContainerCacheOperation, ContainerDataOperation, ContainerVolumeOperation,
 };
 
 use crate::EffigyRuntimeError;
 pub use cache::discovered_running_projects;
 use cache::{collect_global_cache_inventory, project_is_running, GlobalCachePruneVerdict};
 use planning::{cache_kind_label, cache_scope_label, ensure_cache_prune_target_is_stopped};
-pub use planning::{
-    cache_operation_plan, data_operation_plan, global_cache_operation_plan,
-    global_volume_operation_plan,
-};
 use progress::{CacheVolumeProgress, PROBE_VOLUME_INSPECT, PROBE_VOLUME_REMOVE};
 pub use report::RegisteredGatewayRoute;
 use report::{
@@ -59,7 +52,6 @@ where
 {
     let policy = load_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    let _operation_plan = data_operation_plan(repo_root, &policy, ContainerDataOperation::list());
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     // Data list reads volume state and never applies Compose, so the
@@ -128,11 +120,6 @@ where
     });
     let policy = load_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    let _operation_plan = cache_operation_plan(
-        repo_root,
-        &policy,
-        ContainerCacheOperation::list(false, None, None),
-    );
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     // Cache list reads volume state and never applies Compose, so the
@@ -231,15 +218,6 @@ where
     CacheVolumeProgress::run(PROBE_VOLUME_INSPECT, |progress| {
         progress.update(|_| ProgressFrame::new("inspecting cache volumes"));
         let resolved_profile = effigy_containers::backend::global_endpoint(profile);
-        let _operation_plan = global_cache_operation_plan(
-            cwd,
-            &resolved_profile,
-            ContainerCacheOperation::list(
-                true,
-                project_filter.map(str::to_owned),
-                kind_filter.map(str::to_owned),
-            ),
-        );
         let running_projects = list_running_projects()?;
         let inventory = collect_global_cache_inventory(
             cwd,
@@ -283,11 +261,6 @@ where
         progress.update(|_| ProgressFrame::new("inspecting cache volumes"));
         let policy = load_container_policy(repo_root, name)
             .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-        let _operation_plan = cache_operation_plan(
-            repo_root,
-            &policy,
-            ContainerCacheOperation::prune(false, None, None, false),
-        );
         validate_container_policy(repo_root, &policy)
             .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
         // Cache prune removes named volumes through the runtime's volume
@@ -393,16 +366,6 @@ where
     CacheVolumeProgress::run(PROBE_VOLUME_INSPECT, |progress| {
         progress.update(|_| ProgressFrame::new("inspecting cache volumes"));
         let resolved_profile = effigy_containers::backend::global_endpoint(profile);
-        let _operation_plan = global_cache_operation_plan(
-            cwd,
-            &resolved_profile,
-            ContainerCacheOperation::prune(
-                true,
-                project_filter.map(str::to_owned),
-                kind_filter.map(str::to_owned),
-                false,
-            ),
-        );
         let running_projects = list_running_projects()?;
         let inventory = collect_global_cache_inventory(
             cwd,
@@ -520,12 +483,6 @@ where
 {
     CacheVolumeProgress::run(PROBE_VOLUME_INSPECT, |progress| {
         progress.update(|_| ProgressFrame::new("inspecting managed volumes"));
-        let profile = user_global_colima_profile().unwrap_or_else(|| "effigy".to_owned());
-        let _operation_plan = global_volume_operation_plan(
-            cwd,
-            &profile,
-            ContainerVolumeOperation::list(orphans_only, Some(profile.clone())),
-        );
         let volumes =
             collect_global_volume_entries(cwd, orphans_only, &run_runtime_volume_capture)?;
         progress.update(|_| {
@@ -558,12 +515,6 @@ where
             ProgressFrame::new(format!("inspecting volumes for `{}`", repo_root.display()))
                 .label("Inspecting volumes")
         });
-        let profile = user_global_colima_profile().unwrap_or_else(|| "effigy".to_owned());
-        let _operation_plan = global_volume_operation_plan(
-            repo_root,
-            &profile,
-            ContainerVolumeOperation::list(orphans_only, Some(profile.clone())),
-        );
         let volumes =
             collect_repo_volume_entries(repo_root, orphans_only, &run_runtime_volume_capture)?;
         progress.update(|_| {
@@ -593,12 +544,6 @@ where
 {
     CacheVolumeProgress::run(PROBE_VOLUME_INSPECT, |progress| {
         progress.update(|_| ProgressFrame::new("inspecting managed volumes"));
-        let profile = user_global_colima_profile().unwrap_or_else(|| "effigy".to_owned());
-        let _operation_plan = global_volume_operation_plan(
-            cwd,
-            &profile,
-            ContainerVolumeOperation::prune(true, Some(profile.clone())),
-        );
         let volumes = collect_global_volume_entries(cwd, true, &run_runtime_volume_capture)?;
         let total = volumes.len() as u64;
         progress.update(|_| {
@@ -669,12 +614,6 @@ where
             ProgressFrame::new(format!("inspecting volumes for `{}`", repo_root.display()))
                 .label("Inspecting volumes")
         });
-        let profile = user_global_colima_profile().unwrap_or_else(|| "effigy".to_owned());
-        let _operation_plan = global_volume_operation_plan(
-            repo_root,
-            &profile,
-            ContainerVolumeOperation::prune(true, Some(profile.clone())),
-        );
         let volumes = collect_repo_volume_entries(repo_root, true, &run_runtime_volume_capture)?;
         let total = volumes.len() as u64;
         progress.update(|_| {
@@ -794,18 +733,6 @@ where
 {
     let policy = load_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    let _operation_plan = data_operation_plan(
-        repo_root,
-        &policy,
-        match action {
-            ContainerDataTransferAction::Export => {
-                ContainerDataOperation::export(volume_name, archive_path.to_path_buf())
-            }
-            ContainerDataTransferAction::Import => {
-                ContainerDataOperation::import(volume_name, archive_path.to_path_buf())
-            }
-        },
-    );
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     // Export and import run one throwaway volume container through the
@@ -866,11 +793,6 @@ where
 {
     let mut policy = effigy_containers::prepare_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    let _operation_plan = data_operation_plan(
-        repo_root,
-        &policy,
-        ContainerDataOperation::pull_production(false),
-    );
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     // Pull-production starts the stack, so the apply-time backend preflight

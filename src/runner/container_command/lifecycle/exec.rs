@@ -1,4 +1,3 @@
-use super::exec_operation_plan;
 use crate::runner::container_command::shell_prep::{
     append_container_exec_env, maybe_refresh_workspace_effigy_for_shell,
     resolve_container_exec_working_dir_for_operation, resolve_container_shell_session,
@@ -8,7 +7,7 @@ use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_ASSIGNMENT;
 use crate::runner::exec_command::{append_color_exec_env, run_compose_exec_plan_with_options};
 use effigy_containers::{
     ContainerAction, ContainerCapturedExecOperation, ContainerComposeInvocationPlan,
-    ContainerExecOperation, EffectiveContainerPolicy,
+    EffectiveContainerPolicy,
 };
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -73,15 +72,6 @@ pub(in crate::runner) fn run_container_exec_capture_with_credentials(
     }
 
     let (policy, service, _) = resolve_container_shell_session(repo_root, name, service)?;
-    let _operation_plan = exec_operation_plan(
-        repo_root,
-        &policy,
-        ContainerExecOperation::captured(
-            Some(service.clone()),
-            command.to_vec(),
-            stdin_file.map(Path::to_path_buf),
-        ),
-    );
     maybe_refresh_workspace_effigy_for_shell(repo_root, &policy, &service)?;
     let credential_names = credential_env
         .keys()
@@ -172,15 +162,6 @@ fn run_container_exec_operation(
 
     let (policy, service, _) =
         resolve_container_shell_session(repo_root, name, operation.service.as_deref())?;
-    let _operation_plan = exec_operation_plan(
-        repo_root,
-        &policy,
-        ContainerExecOperation::captured(
-            Some(service.clone()),
-            operation.command.clone(),
-            operation.stdin_file.clone(),
-        ),
-    );
     maybe_refresh_workspace_effigy_for_shell(repo_root, &policy, &service)?;
     let plan = captured_exec_compose_plan(
         repo_root,

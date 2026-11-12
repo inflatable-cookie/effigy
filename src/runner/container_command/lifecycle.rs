@@ -1,6 +1,6 @@
 use effigy_containers::{
-    ContainerExecOperation, ContainerLifecycleOperation, ContainerOperationKind,
-    ContainerOperationPlan, ContainerOperationRequest, EffectiveContainerPolicy,
+    ContainerLifecycleOperation, ContainerOperationKind, ContainerOperationPlan,
+    ContainerOperationRequest, EffectiveContainerPolicy,
 };
 use std::path::Path;
 mod down;
@@ -40,20 +40,6 @@ pub(in crate::runner) fn lifecycle_operation_plan(
         repo_root.to_path_buf(),
         policy.name.clone(),
         ContainerOperationKind::lifecycle(operation),
-    )
-    .backend_id(lifecycle_backend_id(policy))
-    .plan()
-}
-
-pub(in crate::runner) fn exec_operation_plan(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    operation: ContainerExecOperation,
-) -> ContainerOperationPlan {
-    ContainerOperationRequest::new(
-        repo_root.to_path_buf(),
-        policy.name.clone(),
-        ContainerOperationKind::exec(operation),
     )
     .backend_id(lifecycle_backend_id(policy))
     .plan()
