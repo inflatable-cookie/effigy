@@ -2030,14 +2030,30 @@ fn operator_trust_refuses_a_group_writable_directory_and_still_accepts_group_rea
     set(0o775);
     let refused = crate::fs::DirFd::walk(&directory, crate::fs::Trust::Operator).unwrap_err();
     assert!(refused.is_open_mode(), "{refused:?}");
+    // Operator trust refuses the *write* bit alone, so the refusal says
+    // writable and names the chmod; it never calls a 0755 directory readable.
+    assert_eq!(
+        refused.to_string(),
+        format!(
+            "{} is writable by group or other users; run `chmod 700 {}`",
+            directory.display(),
+            directory.display()
+        )
+    );
     set(0o750);
     assert!(
         crate::fs::DirFd::walk(&directory, crate::fs::Trust::Operator).is_ok(),
         "group read without group write stays acceptable to operator trust"
     );
-    assert!(
-        crate::fs::DirFd::walk(&directory, crate::fs::Trust::Private).is_err(),
-        "private trust still refuses any group bit"
+    let private = crate::fs::DirFd::walk(&directory, crate::fs::Trust::Private).unwrap_err();
+    assert_eq!(
+        private.to_string(),
+        format!(
+            "{} grants group or other users access; run `chmod 700 {}`",
+            directory.display(),
+            directory.display()
+        ),
+        "private trust still refuses any group bit, and says which rule"
     );
     set(0o700);
     assert!(crate::fs::DirFd::walk(&directory, crate::fs::Trust::Private).is_ok());

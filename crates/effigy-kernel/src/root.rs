@@ -183,17 +183,15 @@ impl StateRoot {
 pub(crate) fn unknown(error: &FsError) -> UnknownReason {
     match error {
         FsError::HostAuthorityRequired => UnknownReason::HostAuthorityRequired,
-        FsError::Untrusted { path, reason } if reason == crate::fs::OPEN_MODE_REASON => {
-            UnknownReason::Untrusted(format!(
-                "{} is readable by other users; run `chmod 700 {}`",
-                path.display(),
-                path.display()
-            ))
+        FsError::Untrusted { path, reason } => {
+            UnknownReason::Untrusted(match crate::fs::open_mode_message(path, reason) {
+                Some(message) => message,
+                None => format!(
+                    "{} is not trusted store state ({reason}); fix its ownership and permissions",
+                    path.display()
+                ),
+            })
         }
-        FsError::Untrusted { path, reason } => UnknownReason::Untrusted(format!(
-            "{} is not trusted store state ({reason}); fix its ownership and permissions",
-            path.display()
-        )),
         FsError::Io(io) if io.is_permission() => UnknownReason::PermissionDenied,
         other => UnknownReason::Inconsistent(other.to_string()),
     }
