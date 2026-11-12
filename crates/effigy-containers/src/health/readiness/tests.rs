@@ -201,9 +201,9 @@ fn a_stack_that_reads_healthy_is_pointed_at_its_status() {
     )
     .expect("inspect parses");
     let diagnostic = readiness_diagnostic("demo", &services, 60, &BTreeMap::new(), None);
-    assert!(
-        diagnostic.ends_with("next: inspect the stack with `effigy container status`"),
-        "{diagnostic}"
+    assert_eq!(
+        diagnostic,
+        "environment `demo` did not become ready within 60s\nevery service reported healthy, so readiness could not be confirmed\nnext: inspect the stack with `effigy container status`"
     );
 }
 

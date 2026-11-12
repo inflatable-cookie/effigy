@@ -417,22 +417,6 @@ mod tests {
         }
     }
     #[test]
-    fn colima_runtime_partial_failure_and_exit_are_reported() {
-        let (dir, mut fake) = fixture();
-        add(&mut fake, dir.path(), "ha.pid", 40);
-        add(&mut fake, dir.path(), "vz.pid", 41);
-        fake.failed.push(41);
-        let error = cleanup(&mut fake, dir.path(), false).unwrap_err();
-        assert_eq!(fake.signalled, [40]);
-        assert!(error.contains("stopped PID 40") && error.contains("PID 41 refused"));
-        fake.failed.clear();
-        fake.exited.push(41);
-        assert!(cleanup(&mut fake, dir.path(), false)
-            .unwrap()
-            .join(" ")
-            .contains("exited before"));
-    }
-    #[test]
     fn colima_runtime_missing_and_invalid_evidence_refuses() {
         let (dir, mut fake) = fixture();
         assert!(cleanup(&mut fake, dir.path(), false).is_err());
@@ -449,22 +433,56 @@ mod tests {
     }
 
     #[test]
-    fn colima_runtime_missing_companion_pidfile_is_reported() {
+    fn colima_cleanup_reports_partial_missing_and_exited_evidence() {
+        // Phase 1: a partial failure stops what it can and names the refusal.
+        let (dir, mut fake) = fixture();
+        add(&mut fake, dir.path(), "ha.pid", 40);
+        add(&mut fake, dir.path(), "vz.pid", 41);
+        fake.failed.push(41);
+        let error = cleanup(&mut fake, dir.path(), false).unwrap_err();
+        assert_eq!(fake.signalled, [40]);
+        assert_eq!(
+            error,
+            "ha.pid: stopped PID 40\nvz.pid: PID 41 refused: changed or unprovable identity"
+        );
+        fake.failed.clear();
+        fake.exited.push(41);
+        assert_eq!(
+            cleanup(&mut fake, dir.path(), false).unwrap(),
+            vec![
+                "ha.pid: PID 40 already exited".to_owned(),
+                "vz.pid: PID 41 exited before signalling".to_owned(),
+            ]
+        );
+
+        // Phase 2: a missing companion pidfile is reported after the verified
+        // pid is stopped.
         let (dir, mut fake) = fixture();
         add(&mut fake, dir.path(), "ha.pid", 40);
         let error = cleanup(&mut fake, dir.path(), false).unwrap_err();
         assert_eq!(fake.signalled, [40]);
-        assert!(error.contains("missing profile pidfile(s): vz.pid"));
-        assert!(error.contains("stopped PID 40"));
+        assert_eq!(
+            error,
+            "ha.pid: stopped PID 40\nmissing profile pidfile(s): vz.pid"
+        );
     }
 
     #[test]
     fn colima_runtime_refusal_names_manual_force_stop_and_verification() {
+        // No pidfiles at all: nothing is signalled and the refusal names
+        // exactly what is missing.
+        let (dir, mut fake) = fixture();
+        let error = cleanup(&mut fake, dir.path(), false).unwrap_err();
+        assert!(fake.signalled.is_empty(), "nothing ran without evidence");
+        assert_eq!(error, "\nmissing profile pidfile(s): ha.pid, vz.pid");
+
+        // Through the real entry point the same refusal carries the manual
+        // force-stop and verification instructions verbatim.
         let dir = tempfile::tempdir().unwrap();
         let error = terminate_with_home("effigy", false, Some(dir.path().into())).unwrap_err();
-        assert!(error.contains("missing profile pidfile(s): ha.pid, vz.pid"));
-        assert!(error.contains("Verify the profile pidfile ownership"));
-        assert!(error.contains("colima stop -p effigy --force"));
-        assert!(error.contains("Effigy did not run it"));
+        assert_eq!(
+            error,
+            "\nmissing profile pidfile(s): ha.pid, vz.pid\nVerify the profile pidfile ownership before manually running `colima stop -p effigy --force`; Effigy did not run it. External limactl shell and SSH processes are not signalled."
+        );
     }
 }

@@ -778,25 +778,78 @@ fn idle_stop_is_holder_based() {
 }
 
 #[test]
-fn a_stopped_or_unrecorded_environment_cannot_be_held() {
-    let home = home();
-    let root = root(home.path());
-    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
-    let stack = env("stack");
-    let mut task = holder(&ctx, "dev", 1);
+fn inactive_holds_refuse_without_claiming_activity() {
+    // Phase 1: a stopped or unrecorded environment cannot be held.
+    let home1 = home();
+    let root1 = root(home1.path());
+    let ctx1 = EnvContext::new(&root1, CancelToken::default()).unwrap();
+    let stack1 = env("stack");
+    let mut task1 = holder(&ctx1, "dev", 1);
     assert!(matches!(
-        hold(&mut task, &ctx, &stack, Wait::FailFast, false),
+        hold(&mut task1, &ctx1, &stack1, Wait::FailFast, false),
         Err(HoldError::NotActive)
     ));
-    let fake = Fake::new();
-    bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[]).unwrap();
-    take_down(&ctx, &stack, Operation::Down, &fake, None).unwrap();
+    let fake1 = Fake::new();
+    bring_up(
+        &ctx1,
+        &stack1,
+        &fake1,
+        &closure("one"),
+        Retention::Held,
+        &[],
+    )
+    .unwrap();
+    take_down(&ctx1, &stack1, Operation::Down, &fake1, None).unwrap();
     assert!(matches!(
-        hold(&mut task, &ctx, &stack, Wait::FailFast, true),
+        hold(&mut task1, &ctx1, &stack1, Wait::FailFast, true),
         Err(HoldError::NotActive)
     ));
-    task.settle(&settlement(&ctx), &mut EnvSettlement).unwrap();
-    assert_store_sound(&ctx);
+    task1
+        .settle(&settlement(&ctx1), &mut EnvSettlement)
+        .unwrap();
+    assert_store_sound(&ctx1);
+
+    // Phase 2: `hold` asks the runtime whether the project's containers are
+    // running, so a stack deleted behind Effigy's back is never "held" as
+    // if it were up — and the bring-up that follows starts and attaches it.
+    let home2 = home();
+    let root2 = root(home2.path());
+    let ctx2 = EnvContext::new(&root2, CancelToken::default()).unwrap();
+    let stack2 = env("stack");
+    let fake2 = Fake::new();
+    bring_up(
+        &ctx2,
+        &stack2,
+        &fake2,
+        &closure("one"),
+        Retention::Held,
+        &[],
+    )
+    .unwrap();
+    assert!(record(&ctx2, &stack2).active());
+    let mut task2 = holder(&ctx2, "dev", 1);
+    assert!(matches!(
+        hold(&mut task2, &ctx2, &stack2, Wait::FailFast, false),
+        Err(HoldError::NotActive)
+    ));
+    assert_eq!(
+        bring_up(
+            &ctx2,
+            &stack2,
+            &fake2,
+            &closure("one"),
+            Retention::Held,
+            &[(task2.id(), AttachMode::Borrow)],
+        )
+        .unwrap(),
+        Applied::Reconciled
+    );
+    assert!(record(&ctx2, &stack2).protected());
+    task2.finish(WorkloadOutcome::Succeeded).unwrap();
+    task2
+        .settle(&settlement(&ctx2), &mut EnvSettlement)
+        .unwrap();
+    assert_store_sound(&ctx2);
 }
 
 #[test]
@@ -940,18 +993,22 @@ fn a_session_holds_for_a_command_without_a_task_run() {
 }
 
 /// An `up` interrupted before activation leaves nothing to clean up: the
-/// next `up` after a manifest edit applies the edit, with no refusal.
+/// next `up` after a manifest edit applies the edit, with no refusal; a
+/// stop is followed by a re-activation; and every transition ends with its
+/// own settlement line, so a slow activation never looks like a hang.
 #[test]
-fn an_interrupted_up_after_a_manifest_edit_applies_on_the_next_up() {
-    let home = home();
-    let root = root(home.path());
-    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
-    let stack = env("stack");
-    let fake = Fake::new();
+fn bring_ups_after_inactive_states_reconcile_and_settle() {
+    // Phase 1: interrupted before activation, then a manifest edit applies
+    // on the next up.
+    let home1 = home();
+    let root1 = root(home1.path());
+    let ctx1 = EnvContext::new(&root1, CancelToken::default()).unwrap();
+    let stack1 = env("stack");
+    let fake1 = Fake::new();
     assert_eq!(
         reconcile(
-            &ctx,
-            &stack,
+            &ctx1,
+            &stack1,
             Up {
                 render: Some(&closure("one")),
                 project: PROJECT,
@@ -961,62 +1018,93 @@ fn an_interrupted_up_after_a_manifest_edit_applies_on_the_next_up() {
                 primary_service: "app",
                 compose_files: &[],
             },
-            || fake.apply(),
+            || fake1.apply(),
         )
         .unwrap()
         .applied,
         Applied::Reconciled
     );
     // Interrupted here: no activation ran.
-    assert!(!record(&ctx, &stack).active());
+    assert!(!record(&ctx1, &stack1).active());
     // The declaration changed; the next up applies it.
     let edited = closure("two");
     assert_eq!(
-        bring_up(&ctx, &stack, &fake, &edited, Retention::Persistent, &[]).unwrap(),
+        bring_up(&ctx1, &stack1, &fake1, &edited, Retention::Persistent, &[]).unwrap(),
         Applied::Reconciled
     );
-    let applied = record(&ctx, &stack);
+    let applied = record(&ctx1, &stack1);
     assert!(applied.active());
     assert_eq!(applied.desired.as_deref(), Some(edited.digest()));
-    assert_eq!(fake.calls(), ["apply", "apply"]);
-    assert_store_sound(&ctx);
-}
+    assert_eq!(fake1.calls(), ["apply", "apply"]);
+    assert_store_sound(&ctx1);
 
-/// `hold` asks the runtime whether the project's containers are running, so a
-/// stack deleted behind Effigy's back is never "held" as if it were up.
-#[test]
-fn a_hold_reports_not_active_when_the_runtime_reports_nothing_running() {
-    let home = home();
-    let root = root(home.path());
-    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
-    let stack = env("stack");
-    let fake = Fake::new();
-    bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[]).unwrap();
-    assert!(record(&ctx, &stack).active());
-    let mut task = holder(&ctx, "dev", 1);
-    assert!(matches!(
-        hold(&mut task, &ctx, &stack, Wait::FailFast, false),
-        Err(HoldError::NotActive)
-    ));
-    // The bring-up that follows starts and attaches it.
+    // Phase 2: a bring-up after an earlier stop re-activates.
+    let home2 = home();
+    let root2 = root(home2.path());
+    let ctx2 = EnvContext::new(&root2, CancelToken::default()).unwrap();
+    let stack2 = env("stack");
+    let fake2 = Fake::new();
+    bring_up(
+        &ctx2,
+        &stack2,
+        &fake2,
+        &closure("one"),
+        Retention::Persistent,
+        &[],
+    )
+    .unwrap();
+    take_down(&ctx2, &stack2, Operation::Down, &fake2, None).unwrap();
+    assert_eq!(record(&ctx2, &stack2).state, EnvState::Stopped);
+    // Only a stop during this bring-up's integrations refuses activation.
     assert_eq!(
         bring_up(
-            &ctx,
-            &stack,
-            &fake,
+            &ctx2,
+            &stack2,
+            &fake2,
             &closure("one"),
-            Retention::Held,
-            &[(task.id(), AttachMode::Borrow)],
+            Retention::Persistent,
+            &[]
         )
         .unwrap(),
         Applied::Reconciled
     );
-    assert!(record(&ctx, &stack).protected());
-    task.finish(WorkloadOutcome::Succeeded).unwrap();
-    task.settle(&settlement(&ctx), &mut EnvSettlement).unwrap();
-    assert_store_sound(&ctx);
+    assert!(record(&ctx2, &stack2).active());
+    assert_eq!(fake2.calls(), ["apply", "stop", "apply"]);
+    assert_store_sound(&ctx2);
+
+    // Phase 3: one live step per transition names the gate it waits for and
+    // each reconcile phase, and the run ends with its own settlement line.
+    // The frame text itself is proven by `environment::reconcile::tests`;
+    // this pins the finish lines a piped run sees.
+    let home3 = home();
+    let root3 = root(home3.path());
+    let ctx3 = EnvContext::new(&root3, CancelToken::default()).unwrap();
+    let stack3 = env("stack");
+    let fake3 = Fake::new();
+    let (applied, lines) = effigy_ui::steps::capture_lines(|| {
+        bring_up(
+            &ctx3,
+            &stack3,
+            &fake3,
+            &closure("one"),
+            Retention::Held,
+            &[],
+        )
+    });
+    assert_eq!(applied.unwrap(), Applied::Reconciled);
+    // Two runs, so the apply run and the activation each end with their own
+    // settlement, and an admission contributes no separate line.
+    assert_eq!(
+        lines,
+        vec![
+            "✓ environment `stack` settled".to_owned(),
+            "✓ environment `stack` settled".to_owned(),
+        ]
+    );
 }
 
+/// `hold` asks the runtime whether the project's containers are running, so a
+/// stack deleted behind Effigy's back is never "held" as if it were up.
 #[test]
 fn backend_selection_records_its_reason_and_unknown_engines_refuse() {
     let recorded = selection();
@@ -1047,52 +1135,24 @@ fn backend_selection_records_its_reason_and_unknown_engines_refuse() {
     ));
 }
 
-#[test]
-fn a_bring_up_after_an_earlier_stop_activates() {
-    let home = home();
-    let root = root(home.path());
-    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
-    let stack = env("stack");
-    let fake = Fake::new();
-    bring_up(
-        &ctx,
-        &stack,
-        &fake,
-        &closure("one"),
-        Retention::Persistent,
-        &[],
-    )
-    .unwrap();
-    take_down(&ctx, &stack, Operation::Down, &fake, None).unwrap();
-    assert_eq!(record(&ctx, &stack).state, EnvState::Stopped);
-    // Only a stop during this bring-up's integrations refuses activation.
-    assert_eq!(
-        bring_up(
-            &ctx,
-            &stack,
-            &fake,
-            &closure("one"),
-            Retention::Persistent,
-            &[]
-        )
-        .unwrap(),
-        Applied::Reconciled
-    );
-    assert!(record(&ctx, &stack).active());
-    assert_eq!(fake.calls(), ["apply", "stop", "apply"]);
-    assert_store_sound(&ctx);
-}
-
 /// The settlement budget is the settlement's own: a context opened long
 /// before a settlement still hands that settlement the whole of it, and the
-/// next settlement gets another (effigy#447).
+/// next settlement gets another (effigy#447). No wall clock is involved:
+/// the parent operation's hours-long deadline and the settlement's own short
+/// budget are orders apart, so an inherited deadline is unmistakable without
+/// sleeping.
 #[test]
 fn a_settlement_gets_the_full_budget_when_it_starts() {
     let home = home();
     let root = root(home.path());
-    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
-    // Activation time passes before settlement begins.
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    let budget = std::time::Duration::from_millis(300);
+    let ctx =
+        EnvContext::with_cleanup_budget(&root, CancelToken::default(), budget).expect("context");
+    let parent_remaining = ctx
+        .cx
+        .operation()
+        .remaining()
+        .expect("a finite parent budget");
     for attempt in 0..2 {
         let remaining = ctx
             .cleanup()
@@ -1101,8 +1161,12 @@ fn a_settlement_gets_the_full_budget_when_it_starts() {
             .remaining()
             .expect("a finite settlement budget");
         assert!(
-            remaining >= CLEANUP_BUDGET - std::time::Duration::from_millis(50),
-            "settlement {attempt} got {remaining:?} of {CLEANUP_BUDGET:?}"
+            remaining <= budget,
+            "settlement {attempt} outlived its own {budget:?} budget: {remaining:?}"
+        );
+        assert!(
+            remaining < parent_remaining,
+            "settlement {attempt} inherited the parent deadline instead of starting its own: {remaining:?} of {parent_remaining:?}"
         );
     }
 }
@@ -1111,29 +1175,30 @@ fn a_settlement_gets_the_full_budget_when_it_starts() {
 /// environment context opened, so an activation slower than that budget left
 /// its settlement already expired and the record timed out. Each settlement
 /// now starts its own bounded budget: the activation below spends all of the
-/// budget it was given, and both of its runs still settle afterwards. On the
-/// one-shot context this returned `Err` from the apply run's settle.
+/// budget it was given, and both of its runs still settle afterwards; then a
+/// failed activation settles on its own budget too. On the one-shot context
+/// this returned `Err` from the apply run's settle.
 #[test]
-fn a_bring_up_that_outlives_its_budget_still_settles() {
+fn settlements_start_their_own_budget_after_slow_or_failed_activations() {
     assert_eq!(CLEANUP_BUDGET, std::time::Duration::from_secs(60));
-    let home = home();
-    let root = root(home.path());
+    let home1 = home();
+    let root1 = root(home1.path());
     // The settlement budget the activation spends entirely.
-    let ctx = EnvContext::with_cleanup_budget(
-        &root,
+    let ctx1 = EnvContext::with_cleanup_budget(
+        &root1,
         CancelToken::default(),
         std::time::Duration::from_millis(700),
     )
     .unwrap();
-    let stack = env("stack");
-    let fake = Fake::new();
-    let render = closure("one");
+    let stack1 = env("stack");
+    let fake1 = Fake::new();
+    let render1 = closure("one");
     let started = std::time::Instant::now();
     let applied = reconcile(
-        &ctx,
-        &stack,
+        &ctx1,
+        &stack1,
         Up {
-            render: Some(&render),
+            render: Some(&render1),
             project: PROJECT,
             backend: &selection(),
             retention: Retention::Held,
@@ -1144,24 +1209,65 @@ fn a_bring_up_that_outlives_its_budget_still_settles() {
         || {
             // A cold stack's bring-up, longer than the settlement budget.
             std::thread::sleep(std::time::Duration::from_millis(900));
-            fake.apply()
+            fake1.apply()
         },
     )
     .unwrap()
     .applied;
     assert_eq!(applied, Applied::Reconciled);
     assert!(
-        started.elapsed() > ctx.cleanup_budget(),
+        started.elapsed() > ctx1.cleanup_budget(),
         "the activation did not outlive the budget: {:?}",
         started.elapsed()
     );
     // The activation run that follows the slow apply also settles on a budget
     // of its own, and publishes `active`.
     std::thread::sleep(std::time::Duration::from_millis(900));
-    activate(&ctx, &stack, &[]).unwrap();
-    assert!(record(&ctx, &stack).active());
-    assert_eq!(fake.calls(), ["apply"]);
-    assert_store_sound(&ctx);
+    activate(&ctx1, &stack1, &[]).unwrap();
+    assert!(record(&ctx1, &stack1).active());
+    assert_eq!(fake1.calls(), ["apply"]);
+    assert_store_sound(&ctx1);
+
+    // Phase 2: a failed activation settles on its own budget too, so the
+    // record is left settled and the next up reconciles it from what is
+    // running (effigy#447).
+    let home2 = home();
+    let root2 = root(home2.path());
+    let ctx2 = EnvContext::with_cleanup_budget(
+        &root2,
+        CancelToken::default(),
+        std::time::Duration::from_millis(700),
+    )
+    .unwrap();
+    let stack2 = env("stack");
+    let fake2 = Fake::new();
+    fake2.queue(Err(BackendError::NotStarted("runtime refused".into())));
+    let render2 = closure("one");
+    let failed = reconcile(
+        &ctx2,
+        &stack2,
+        Up {
+            render: Some(&render2),
+            project: PROJECT,
+            backend: &selection(),
+            retention: Retention::Held,
+            workdir: std::path::Path::new("."),
+            primary_service: "app",
+            compose_files: &[],
+        },
+        || {
+            std::thread::sleep(std::time::Duration::from_millis(900));
+            fake2.apply()
+        },
+    );
+    assert!(matches!(failed, Err(EnvError::Backend(_))), "{failed:?}");
+    assert!(!record(&ctx2, &stack2).active());
+    assert_store_sound(&ctx2);
+    // The run settled: the retry applies once, with no predecessor residue.
+    bring_up(&ctx2, &stack2, &fake2, &render2, Retention::Held, &[]).unwrap();
+    assert!(record(&ctx2, &stack2).active());
+    assert_eq!(fake2.calls(), ["apply"]);
+    assert_store_sound(&ctx2);
 }
 
 /// The operator sees which phase a transition is in: one live step per
@@ -1170,28 +1276,6 @@ fn a_bring_up_that_outlives_its_budget_still_settles() {
 /// like a hang and an expired settle is named where it happened (effigy#461,
 /// effigy#447). The frame text itself is proven by
 /// `environment::reconcile::tests`; this pins the finish lines a piped run sees.
-#[test]
-fn a_transition_names_its_wait_and_its_settlement() {
-    let home = home();
-    let root = root(home.path());
-    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
-    let stack = env("stack");
-    let fake = Fake::new();
-    let (applied, lines) = effigy_ui::steps::capture_lines(|| {
-        bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[])
-    });
-    assert_eq!(applied.unwrap(), Applied::Reconciled);
-    // Two runs, so the apply run and the activation each end with their own
-    // settlement, and an admission contributes no separate line.
-    assert_eq!(
-        lines,
-        vec![
-            "✓ environment `stack` settled".to_owned(),
-            "✓ environment `stack` settled".to_owned(),
-        ]
-    );
-}
-
 /// An activation stopped after its backend effect settles without dispatching
 /// another one, and without an expired budget: the settle's context starts
 /// when the settle starts (effigy#447).
@@ -1229,49 +1313,6 @@ fn an_interrupted_activation_settles_without_another_effect() {
     let settled = EnvContext::new(&root, CancelToken::default()).unwrap();
     assert!(!record(&settled, &stack).active());
     assert_store_sound(&settled);
-}
-
-/// A failed activation settles on its own budget too, so the record is left
-/// settled and the next up reconciles it from what is running (effigy#447).
-#[test]
-fn a_failed_activation_settles_on_its_own_budget() {
-    let home = home();
-    let root = root(home.path());
-    let ctx = EnvContext::with_cleanup_budget(
-        &root,
-        CancelToken::default(),
-        std::time::Duration::from_millis(700),
-    )
-    .unwrap();
-    let stack = env("stack");
-    let fake = Fake::new();
-    fake.queue(Err(BackendError::NotStarted("runtime refused".into())));
-    let render = closure("one");
-    let failed = reconcile(
-        &ctx,
-        &stack,
-        Up {
-            render: Some(&render),
-            project: PROJECT,
-            backend: &selection(),
-            retention: Retention::Held,
-            workdir: std::path::Path::new("."),
-            primary_service: "app",
-            compose_files: &[],
-        },
-        || {
-            std::thread::sleep(std::time::Duration::from_millis(900));
-            fake.apply()
-        },
-    );
-    assert!(matches!(failed, Err(EnvError::Backend(_))), "{failed:?}");
-    assert!(!record(&ctx, &stack).active());
-    assert_store_sound(&ctx);
-    // The run settled: the retry applies once, with no predecessor residue.
-    bring_up(&ctx, &stack, &fake, &render, Retention::Held, &[]).unwrap();
-    assert!(record(&ctx, &stack).active());
-    assert_eq!(fake.calls(), ["apply"]);
-    assert_store_sound(&ctx);
 }
 
 #[test]

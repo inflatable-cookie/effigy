@@ -948,7 +948,7 @@ mod tests {
     use super::*;
     use nix::unistd::geteuid;
     use std::os::unix::fs::PermissionsExt;
-    use std::time::{Duration, SystemTime};
+    use std::time::{Duration, Instant, SystemTime};
 
     fn args(paths: &[&str]) -> Vec<OsString> {
         ["nerdctl", "--profile", "effigy", "--", "compose"]
@@ -1083,25 +1083,6 @@ mod tests {
     }
 
     #[test]
-    fn a_transferred_descriptor_keeps_the_lock_after_the_owner_drops() {
-        let home = tempfile::tempdir().expect("home");
-        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
-        let path = env_path(&invocation);
-        let mut file = invocation.interpolation.expect("owner");
-        let received = file._lock.try_clone().expect("duplicate description");
-        FAIL_NEXT_REMOVE.with(|armed| armed.set(true));
-        assert!(file.remove().is_err(), "preserve the entry after failure");
-        drop(file);
-        let candidate = File::open(&path).expect("independent description");
-        let candidate = match Flock::lock(candidate, FlockArg::LockExclusiveNonblock) {
-            Err((candidate, _)) => candidate,
-            Ok(_) => panic!("transferred descriptor lost its lock"),
-        };
-        drop(received);
-        assert!(Flock::lock(candidate, FlockArg::LockExclusiveNonblock).is_ok());
-    }
-
-    #[test]
     fn scm_rights_handoff_keeps_the_locked_inode_after_owner_drop() {
         use nix::sys::socket::{recvmsg, sendmsg, ControlMessage, ControlMessageOwned, MsgFlags};
         use std::io::{IoSlice, IoSliceMut};
@@ -1161,6 +1142,25 @@ mod tests {
             original_directory.st_ino
         );
         drop(transfer);
+        drop(file);
+        let candidate = File::open(&path).expect("independent description");
+        let candidate = match Flock::lock(candidate, FlockArg::LockExclusiveNonblock) {
+            Err((candidate, _)) => candidate,
+            Ok(_) => panic!("transferred descriptor lost its lock"),
+        };
+        drop(received);
+        assert!(Flock::lock(candidate, FlockArg::LockExclusiveNonblock).is_ok());
+
+        // The same lock survival through a duplicated descriptor: after a
+        // failed removal and the owner's drop, the duplicate still holds
+        // the lock.
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
+        let path = env_path(&invocation);
+        let mut file = invocation.interpolation.expect("owner");
+        let received = file._lock.try_clone().expect("duplicate description");
+        FAIL_NEXT_REMOVE.with(|armed| armed.set(true));
+        assert!(file.remove().is_err(), "preserve the entry after failure");
         drop(file);
         let candidate = File::open(&path).expect("independent description");
         let candidate = match Flock::lock(candidate, FlockArg::LockExclusiveNonblock) {
@@ -1430,15 +1430,38 @@ if s.recv(1) != b'q':
     }
 
     #[test]
-    fn dropping_an_owner_after_failed_removal_does_not_retry() {
+    fn refused_removals_neither_delete_nor_retry() {
+        // Phase 1: a failed removal leaves the entry; dropping the owner
+        // after the failure never retries implicitly.
         let home = tempfile::tempdir().expect("home");
         let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
         let path = env_path(&invocation);
         let mut file = invocation.interpolation.expect("owner");
         FAIL_NEXT_REMOVE.with(|armed| armed.set(true));
-        assert!(file.remove().is_err());
+        match file.remove() {
+            Err(error) if error.kind() == std::io::ErrorKind::Other => {
+                assert_eq!(error.to_string(), "injected removal failure")
+            }
+            other => panic!("expected the injected failure, got {other:?}"),
+        }
         drop(file);
         assert!(path.exists(), "failed cleanup remains visible");
+
+        // Phase 2: a live owner whose mode changed is refused and left in
+        // place.
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
+        let path = env_path(&invocation);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("mode");
+        let mut file = invocation.interpolation.expect("owner");
+        match file.remove() {
+            Err(error) if error.kind() == std::io::ErrorKind::InvalidData => assert_eq!(
+                error.to_string(),
+                "the held interpolation file is no longer trusted"
+            ),
+            other => panic!("expected the trust refusal, got {other:?}"),
+        }
+        assert!(path.exists(), "untrusted file remains");
     }
 
     #[test]
@@ -1476,10 +1499,8 @@ if s.recv(1) != b'q':
             !compose_dir(home.path()).exists(),
             "a host backend writes no interpolation file"
         );
-    }
 
-    #[test]
-    fn an_invocation_with_nothing_to_deliver_is_unchanged() {
+        // An invocation with nothing to deliver is likewise unchanged.
         let home = tempfile::tempdir().expect("home");
         let invocation = args(&["ps"]);
         let resolved = invoke(home.path(), &invocation, &[]).expect("unchanged invocation");
@@ -1535,26 +1556,6 @@ if s.recv(1) != b'q':
     }
 
     #[test]
-    fn a_hardlinked_compose_file_is_never_swept() {
-        let home = tempfile::tempdir().expect("home");
-        let outside = tempfile::tempdir().expect("outside");
-        fs::create_dir_all(compose_dir(home.path())).expect("compose-env");
-        fs::set_permissions(compose_dir(home.path()), fs::Permissions::from_mode(0o700))
-            .expect("mode");
-        let name = format!("{FILE_PREFIX}{}{FILE_SUFFIX}", "1".repeat(32));
-        let shared = compose_dir(home.path()).join(&name);
-        let target = outside.path().join("victim.env");
-        fs::write(&target, "KEEP=me\n").expect("target");
-        fs::hard_link(&target, &shared).expect("hardlink");
-        let _held = invoke(home.path(), &args(&["up"]), &secret("fresh")).expect("invocation");
-        assert!(
-            shared.exists(),
-            "a hard-linked compose file is not single-link and is kept"
-        );
-        assert_eq!(fs::read_to_string(&target).expect("target"), "KEEP=me\n");
-    }
-
-    #[test]
     fn a_failed_write_removes_the_partial_file() {
         let home = tempfile::tempdir().expect("home");
         FAIL_NEXT_WRITE.with(|armed| armed.set(true));
@@ -1567,7 +1568,7 @@ if s.recv(1) != b'q':
     }
 
     #[test]
-    fn a_hardlinked_or_symlinked_legacy_name_is_never_swept() {
+    fn non_single_link_candidates_are_never_swept_or_followed() {
         let home = tempfile::tempdir().expect("home");
         let outside = tempfile::tempdir().expect("outside");
         fs::create_dir_all(compose_dir(home.path())).expect("compose-env");
@@ -1579,6 +1580,13 @@ if s.recv(1) != b'q':
         fs::hard_link(&target, &hardlink).expect("hardlink");
         let symlink = compose_dir(home.path()).join("bbbbbbbbbbbbbbbb.env");
         std::os::unix::fs::symlink(&target, &symlink).expect("symlink");
+        // Compose-pattern candidates get the same non-single-link guard.
+        let compose_hardlink =
+            compose_dir(home.path()).join(format!("{FILE_PREFIX}{}{FILE_SUFFIX}", "1".repeat(32)));
+        fs::hard_link(&target, &compose_hardlink).expect("hardlink");
+        let compose_symlink =
+            compose_dir(home.path()).join(format!("{FILE_PREFIX}{}{FILE_SUFFIX}", "2".repeat(32)));
+        std::os::unix::fs::symlink(&target, &compose_symlink).expect("symlink");
         let _held = invoke(home.path(), &args(&["up"]), &secret("fresh")).expect("invocation");
         assert!(
             hardlink.exists(),
@@ -1587,6 +1595,14 @@ if s.recv(1) != b'q':
         assert!(
             symlink.symlink_metadata().is_ok(),
             "a symlink is never followed or removed"
+        );
+        assert!(
+            compose_hardlink.exists(),
+            "a hard-linked compose file is not single-link and is kept"
+        );
+        assert!(
+            compose_symlink.symlink_metadata().is_ok(),
+            "a symlinked compose candidate is never followed or removed"
         );
         assert_eq!(fs::read_to_string(&target).expect("target"), "KEEP=me\n");
     }
@@ -1660,17 +1676,6 @@ if s.recv(1) != b'q':
     }
 
     #[test]
-    fn a_live_owner_with_changed_mode_is_never_removed() {
-        let home = tempfile::tempdir().expect("home");
-        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
-        let path = env_path(&invocation);
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("mode");
-        let mut file = invocation.interpolation.expect("owner");
-        assert!(file.remove().is_err());
-        assert!(path.exists(), "untrusted file remains");
-    }
-
-    #[test]
     fn a_foreign_original_is_refused_before_any_rename() {
         let home = tempfile::tempdir().expect("home");
         let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
@@ -1738,13 +1743,15 @@ if s.recv(1) != b'q':
     }
 
     #[test]
-    fn creation_waits_for_the_cooperative_directory_lock() {
+    fn the_cooperative_directory_lock_serializes_creation_and_removal() {
+        // Phase 1: creation waits for the lock instead of racing it.
         let home = tempfile::tempdir().expect("home");
         let directory = open_private_directory(home.path()).expect("directory");
         let held = lock_directory(&directory).expect("directory lock");
         let (started_tx, started_rx) = std::sync::mpsc::channel();
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         let root = home.path().to_path_buf();
+        let worker_start = Instant::now();
         let worker = std::thread::spawn(move || {
             started_tx.send(()).expect("started");
             let invocation = invoke(&root, &args(&["up"]), &secret("value"));
@@ -1752,15 +1759,20 @@ if s.recv(1) != b'q':
         });
         started_rx.recv().expect("worker started");
         assert!(done_rx.recv_timeout(Duration::from_millis(100)).is_err());
+        // Keep holding past the blocked check: the worker must wait out the
+        // whole hold, so its elapsed time lower-bounds the wait.
+        std::thread::sleep(Duration::from_millis(300));
         drop(held);
         assert!(done_rx
             .recv_timeout(Duration::from_secs(5))
             .expect("creation finished"));
         worker.join().expect("worker");
-    }
+        assert!(
+            worker_start.elapsed() >= Duration::from_millis(350),
+            "creation waited for the lock release"
+        );
 
-    #[test]
-    fn removal_waits_for_the_cooperative_directory_lock() {
+        // Phase 2: removal waits for the lock the same way.
         let home = tempfile::tempdir().expect("home");
         let invocation = invoke(home.path(), &args(&["up"]), &secret("value")).expect("invocation");
         let path = env_path(&invocation);
@@ -1769,6 +1781,7 @@ if s.recv(1) != b'q':
         let held = lock_directory(&directory).expect("directory lock");
         let (started_tx, started_rx) = std::sync::mpsc::channel();
         let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker_start = Instant::now();
         let worker = std::thread::spawn(move || {
             started_tx.send(()).expect("started");
             done_tx.send(file.remove().is_ok()).expect("done");
@@ -1776,11 +1789,16 @@ if s.recv(1) != b'q':
         started_rx.recv().expect("worker started");
         assert!(done_rx.recv_timeout(Duration::from_millis(100)).is_err());
         assert!(path.exists(), "the held lock prevents removal");
+        std::thread::sleep(Duration::from_millis(300));
         drop(held);
         assert!(done_rx
             .recv_timeout(Duration::from_secs(5))
             .expect("removal finished"));
         worker.join().expect("worker");
+        assert!(
+            worker_start.elapsed() >= Duration::from_millis(350),
+            "removal waited for the lock release"
+        );
         assert!(!path.exists());
     }
 
@@ -1979,23 +1997,6 @@ if s.recv(1) != b'q':
             .expect_err("an interior NUL is refused");
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         assert!(source.exists(), "nothing moved");
-    }
-
-    #[test]
-    fn a_symlinked_compose_candidate_is_never_followed_or_removed() {
-        let home = tempfile::tempdir().expect("home");
-        let outside = tempfile::tempdir().expect("outside");
-        fs::create_dir_all(compose_dir(home.path())).expect("compose-env");
-        fs::set_permissions(compose_dir(home.path()), fs::Permissions::from_mode(0o700))
-            .expect("mode");
-        let victim = outside.path().join("victim.env");
-        fs::write(&victim, "KEEP=me\n").expect("victim");
-        let link =
-            compose_dir(home.path()).join(format!("{FILE_PREFIX}{}{FILE_SUFFIX}", "2".repeat(32)));
-        std::os::unix::fs::symlink(&victim, &link).expect("symlink");
-        let _held = invoke(home.path(), &args(&["up"]), &secret("fresh")).expect("invocation");
-        assert!(link.symlink_metadata().is_ok(), "the symlink is kept");
-        assert_eq!(fs::read_to_string(&victim).expect("victim"), "KEEP=me\n");
     }
 
     #[test]

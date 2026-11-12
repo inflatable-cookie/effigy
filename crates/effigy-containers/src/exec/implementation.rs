@@ -1204,11 +1204,10 @@ mod legacy_admission_tests {
                 serde_json::json!([record]).to_string().as_bytes(),
             )
             .expect_err("an incomplete inspect record is not proof of identity");
-        let rendered = error.to_string();
-        assert!(rendered.contains("refused"), "{rendered}");
-        assert!(rendered.contains("State.Status"), "{rendered}");
-        assert!(!rendered.contains("signal"), "{rendered}");
-        assert!(!rendered.contains("exit code"), "{rendered}");
+        assert_eq!(
+            error.to_string(),
+            "inspect owned binding refused: binding unavailable: canonical container identity is unverified: inspect record missing State.Status"
+        );
     }
 
     #[test]
@@ -3660,6 +3659,21 @@ mod inventory_tests {
         assert!(inventory.failure_summary().is_none());
         assert_eq!(docker_probes.get(), 1);
         assert_eq!(colima_probes.get(), 1);
+
+        // The Colima-only shape: Docker is proven inactive (probing panics),
+        // Colima participates and reports nothing running; the inventory
+        // stays complete and empty.
+        let inventory = collect_running_compose_container_inventory(
+            RuntimeParticipation::Inactive,
+            || panic!("inactive docker must not be probed"),
+            RuntimeParticipation::Participating,
+            || Ok((vec!["effigy".to_owned()], Vec::new())),
+            |_| Ok(Vec::new()),
+        );
+
+        assert!(inventory.is_complete());
+        assert!(inventory.rows.is_empty());
+        assert!(inventory.failure_summary().is_none());
     }
 
     #[test]
@@ -3815,23 +3829,6 @@ mod inventory_tests {
             .contains("docker not found"));
     }
 
-    #[test]
-    fn inactive_optional_runtime_never_poisons_a_complete_empty_inventory() {
-        // The Colima-only shape: Docker Desktop is installed but proven
-        // inactive, Colima participates and reports nothing running.
-        let inventory = collect_running_compose_container_inventory(
-            RuntimeParticipation::Inactive,
-            || panic!("inactive docker must not be probed"),
-            RuntimeParticipation::Participating,
-            || Ok((vec!["effigy".to_owned()], Vec::new())),
-            |_| Ok(Vec::new()),
-        );
-
-        assert!(inventory.is_complete());
-        assert!(inventory.rows.is_empty());
-        assert!(inventory.failure_summary().is_none());
-    }
-
     /// Collect with an explicit Docker verdict while counting Docker probes
     /// and injecting a connection failure.
     fn collect_with_docker_failure(
@@ -3880,10 +3877,34 @@ mod inventory_tests {
         result
     }
 
+    /// A broken docker config still participates and reports the docker
+    /// failure exactly: the probe runs once, the inventory is incomplete,
+    /// and the single failure row names the docker backend and its error.
+    fn assert_broken_config_reports_docker_failure(
+        participation: RuntimeParticipation,
+        what: &str,
+    ) {
+        assert_eq!(participation, RuntimeParticipation::Participating, "{what}");
+        let (docker_probes, inventory) = collect_with_docker_failure(participation);
+        assert_eq!(docker_probes, 1, "{what}: Docker is still probed");
+        assert!(!inventory.is_complete(), "{what}: fail closed");
+        assert_eq!(
+            inventory.failures,
+            [RuntimeInventoryFailure {
+                backend: "docker".to_owned(),
+                profile: "default".to_owned(),
+                error: "runtime ps failed (exit code 1)\nstdout:\n\nstderr:\nCannot connect to the Docker daemon at unix:///var/run/docker.sock".to_owned(),
+                stopped_profile: false,
+            }],
+            "{what}"
+        );
+    }
+
     #[test]
-    fn trailing_space_config_directory_participates_and_reports_docker_failure() {
+    fn broken_docker_configs_participate_and_report_the_docker_failure() {
         use super::super::participation::environment_participation_for_test;
 
+        // A trailing space in the config directory still participates.
         let root = tempfile::tempdir().expect("create docker config fixture");
         let config_dir = root.path().join("config ");
         let context_dir = config_dir.join("contexts").join("meta").join("remote");
@@ -3898,89 +3919,45 @@ mod inventory_tests {
             "{\"Name\": \"remote\", \"Endpoints\": {\"docker\": {\"Host\": \"tcp://10.0.0.5:2375\"}}}",
         )
         .expect("write context meta");
-
         let participation = with_docker_config(&config_dir, environment_participation_for_test);
-        assert_eq!(participation, RuntimeParticipation::Participating);
+        assert_broken_config_reports_docker_failure(participation, "trailing space config dir");
 
-        let (docker_probes, inventory) = collect_with_docker_failure(participation);
-        assert_eq!(docker_probes, 1);
-        assert!(!inventory.is_complete());
-        assert_eq!(inventory.failures[0].backend, "docker");
-        assert!(inventory
-            .failure_summary()
-            .expect("docker failure")
-            .contains("Cannot connect to the Docker daemon"));
-    }
-
-    #[test]
-    fn schema_invalid_config_participates_and_reports_docker_failure() {
-        use super::super::participation::environment_participation_for_test;
-
+        // A schema-invalid config stays participating and fails closed.
         for raw in ["[1, 2, 3]", "{\"currentContext\": 42}"] {
             let root = tempfile::tempdir().expect("create docker config fixture");
             std::fs::write(root.path().join("config.json"), raw).expect("write invalid config");
-
             let participation = with_docker_config(root.path(), environment_participation_for_test);
-            assert_eq!(
-                participation,
-                RuntimeParticipation::Participating,
-                "invalid config must stay participating: {raw}"
+            assert_broken_config_reports_docker_failure(participation, raw);
+        }
+
+        // A non-Unicode DOCKER_HOST override stays participating.
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let _lock = crate::test_env_lock();
+            let previous_config = std::env::var_os("DOCKER_CONFIG");
+            let previous_host = std::env::var_os("DOCKER_HOST");
+            let previous_context = std::env::var_os("DOCKER_CONTEXT");
+            std::env::remove_var("DOCKER_CONFIG");
+            std::env::set_var(
+                "DOCKER_HOST",
+                std::ffi::OsStr::from_bytes(b"unix:///tmp/\xff\xfe.sock"),
             );
-
-            let (docker_probes, inventory) = collect_with_docker_failure(participation);
-            assert_eq!(
-                docker_probes, 1,
-                "invalid config must still probe Docker: {raw}"
-            );
-            assert!(
-                !inventory.is_complete(),
-                "invalid config must fail closed: {raw}"
-            );
-            assert!(inventory
-                .failure_summary()
-                .expect("docker failure")
-                .contains("Cannot connect to the Docker daemon"));
+            std::env::remove_var("DOCKER_CONTEXT");
+            let participation = environment_participation_for_test();
+            match previous_config {
+                Some(value) => std::env::set_var("DOCKER_CONFIG", value),
+                None => std::env::remove_var("DOCKER_CONFIG"),
+            }
+            match previous_host {
+                Some(value) => std::env::set_var("DOCKER_HOST", value),
+                None => std::env::remove_var("DOCKER_HOST"),
+            }
+            match previous_context {
+                Some(value) => std::env::set_var("DOCKER_CONTEXT", value),
+                None => std::env::remove_var("DOCKER_CONTEXT"),
+            }
+            assert_broken_config_reports_docker_failure(participation, "non-unicode DOCKER_HOST");
         }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn non_unicode_docker_override_participates_and_reports_docker_failure() {
-        use super::super::participation::environment_participation_for_test;
-        use std::os::unix::ffi::OsStrExt;
-
-        let _lock = crate::test_env_lock();
-        let previous_config = std::env::var_os("DOCKER_CONFIG");
-        let previous_host = std::env::var_os("DOCKER_HOST");
-        let previous_context = std::env::var_os("DOCKER_CONTEXT");
-        std::env::remove_var("DOCKER_CONFIG");
-        std::env::set_var(
-            "DOCKER_HOST",
-            std::ffi::OsStr::from_bytes(b"unix:///tmp/\xff\xfe.sock"),
-        );
-        std::env::remove_var("DOCKER_CONTEXT");
-        let participation = environment_participation_for_test();
-        match previous_config {
-            Some(value) => std::env::set_var("DOCKER_CONFIG", value),
-            None => std::env::remove_var("DOCKER_CONFIG"),
-        }
-        match previous_host {
-            Some(value) => std::env::set_var("DOCKER_HOST", value),
-            None => std::env::remove_var("DOCKER_HOST"),
-        }
-        match previous_context {
-            Some(value) => std::env::set_var("DOCKER_CONTEXT", value),
-            None => std::env::remove_var("DOCKER_CONTEXT"),
-        }
-
-        assert_eq!(participation, RuntimeParticipation::Participating);
-
-        let (docker_probes, inventory) = collect_with_docker_failure(participation);
-        assert_eq!(docker_probes, 1);
-        assert!(!inventory.is_complete());
-        assert!(inventory
-            .failure_summary()
-            .expect("docker failure")
-            .contains("Cannot connect to the Docker daemon"));
     }
 }

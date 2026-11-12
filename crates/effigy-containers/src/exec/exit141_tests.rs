@@ -552,135 +552,127 @@ impl Drop for ExpireCaptureOnDrop<'_> {
     }
 }
 
-/// A slow inspect that finishes inside the caller's absolute budget settles,
-/// and its observation keeps the full native identity/binding.
-/// A client whose output writer outlives it: cancelling the capture signals
-/// only the client's process group, and the still-attached writer dies of
-/// SIGPIPE only once Effigy closes its own read end.
-#[test]
-fn exit141_cancelled_capture_client_never_signals_the_attached_writer() {
-    let fixture = Fixture::new();
-    fixture.control(json!({
-        "ps": {"mode": "running"},
-        "inspect": {"mode": "owned"},
-        "up": {"mode": "ok"},
-    }));
-    let program = fixture.docker();
-    let start = Instant::now();
-    let budget = Duration::from_millis(600);
-    let deadline = start + budget;
-    let clock = super::capture_test_clock::control(start);
-    let shared_clock = clock.shared();
-    let error = std::thread::scope(|scope| {
-        let capture = scope.spawn(|| {
-            let _binding = shared_clock.enter();
-            run_command_capture_with_absolute_deadline(
-                &fixture.root,
-                program.to_str().expect("private path"),
-                &["attach"],
-                "private attached capture",
-                deadline,
-                budget,
-            )
-        });
-        let expire = ExpireCaptureOnDrop(&clock, deadline);
-        let client = fixture.wait_json("capture-client.json", Duration::from_secs(5));
-        let writer = fixture.wait_json("service-writer.json", Duration::from_secs(5));
-        assert_ne!(client["pgrp"], writer["pgrp"], "the writer is independent");
-        assert_eq!(client["stdout"]["inode"], writer["stdout"]["inode"]);
-        // Expire the original deadline only after authenticating the phase.
-        // No production clock or timeout origin is moved by this fixture.
-        drop(expire);
-        capture.join().expect("capture control thread")
-    })
-    .expect_err("a client that never exits is cancelled");
-    let message = error.to_string();
-    assert!(message.contains("timed out"), "{message}");
-    assert!(
-        message.contains("writer provenance and settlement unknown"),
-        "the cancelled capture says what it could not prove: {message}"
-    );
-    assert!(
-        !message.contains("stdout/stderr EOF verified"),
-        "the writer never closed the pipe by itself: {message}"
-    );
-    let client = fixture.wait_json("capture-client.json", Duration::from_secs(5));
-    assert_eq!(
-        client["stdout"]["kind"], "fifo",
-        "the captured client inherits an Effigy pipe"
-    );
-    let client_pid = client["pid"].as_i64().expect("client pid");
-    assert!(
-        fixture.wait_pid_gone(client_pid, Duration::from_secs(5)),
-        "Effigy positively reaped its owned client"
-    );
-    let writer = fixture.wait_json("service-writer.json", Duration::from_secs(5));
-    assert_eq!(
-        writer["stdout"]["kind"], "fifo",
-        "the service writer inherits the same Effigy pipe"
-    );
-    let witness = fixture.wait_json("witness.json", Duration::from_secs(15));
-    assert_eq!(
-        witness["signal"],
-        json!(13),
-        "the writer settled by SIGPIPE (141 = 128 + 13), not by any signal Effigy sent: {witness}"
-    );
-    let writer_pid = writer["pid"].as_i64().expect("writer pid");
-    assert!(
-        fixture.wait_pid_gone(writer_pid, Duration::from_secs(5)),
-        "the fixture writer settled"
-    );
-    let witness_pid = witness["witness_pid"].as_i64().expect("witness pid");
-    assert!(
-        fixture.wait_pid_gone(witness_pid, Duration::from_secs(5)),
-        "the fixture witness settled"
-    );
-}
-
-/// Cancelling before an independent writer exists truthfully verifies EOF.
-/// This is the startup phase the post-writer proof must not assume away.
-#[test]
-fn exit141_capture_cancelled_before_writer_start_verifies_eof() {
-    let fixture = Fixture::new();
-    fixture.control(json!({"attach": {"mode": "client-only"}}));
-    let program = fixture.docker();
-    let start = Instant::now();
-    let budget = Duration::from_millis(600);
-    let deadline = start + budget;
-    let clock = super::capture_test_clock::control(start);
-    let shared_clock = clock.shared();
-    let error = std::thread::scope(|scope| {
-        let capture = scope.spawn(|| {
-            let _binding = shared_clock.enter();
-            run_command_capture_with_absolute_deadline(
-                &fixture.root,
-                program.to_str().expect("private path"),
-                &["attach"],
-                "private early capture",
-                deadline,
-                budget,
-            )
-        });
-        let expire = ExpireCaptureOnDrop(&clock, deadline);
-        let client = fixture.wait_json("capture-client.json", Duration::from_secs(5));
-        assert_eq!(client["stdout"]["kind"], "fifo");
-        drop(expire);
-        capture.join().expect("capture control thread")
-    })
-    .expect_err("the client is cancelled at its original deadline");
-    let message = error.to_string();
-    assert!(message.contains("timed out"), "{message}");
-    assert!(message.contains("stdout/stderr EOF verified"), "{message}");
-    assert!(!message.contains("writer provenance and settlement unknown"));
-    assert!(!fixture.root.join("service-writer.json").exists());
-    assert!(!fixture.root.join("witness-started.json").exists());
-    let client = fixture.wait_json("capture-client.json", Duration::from_secs(5));
-    assert!(fixture.pid_gone(client["pid"].as_i64().expect("client pid")));
-}
-
 /// The detached Compose launch owns no reader lifetime: its client writes to a
 /// regular file, and a service writer that outlives the reaped client keeps
 /// writing there and never sees SIGPIPE.
+#[test]
+fn exit141_cancelled_captures_distinguish_writer_from_eof() {
+    // Phase 1: cancelling before an independent writer exists truthfully
+    // verifies EOF. This is the startup phase the post-writer proof must
+    // not assume away.
+    {
+        let fixture = Fixture::new();
+        fixture.control(json!({"attach": {"mode": "client-only"}}));
+        let program = fixture.docker();
+        let start = Instant::now();
+        let budget = Duration::from_millis(600);
+        let deadline = start + budget;
+        let clock = super::capture_test_clock::control(start);
+        let shared_clock = clock.shared();
+        let error = std::thread::scope(|scope| {
+            let capture = scope.spawn(|| {
+                let _binding = shared_clock.enter();
+                run_command_capture_with_absolute_deadline(
+                    &fixture.root,
+                    program.to_str().expect("private path"),
+                    &["attach"],
+                    "private early capture",
+                    deadline,
+                    budget,
+                )
+            });
+            let expire = ExpireCaptureOnDrop(&clock, deadline);
+            let client = fixture.wait_json("capture-client.json", Duration::from_secs(5));
+            assert_eq!(client["stdout"]["kind"], "fifo");
+            drop(expire);
+            capture.join().expect("capture control thread")
+        })
+        .expect_err("the client is cancelled at its original deadline");
+        assert_eq!(
+            error.to_string(),
+            "private early capture failed (no exit code: the command ended on a signal)\nstdout:\n\nstderr:\n[effigy] command timed out after 0s: owned capture child terminated and reaped; stdout/stderr EOF verified"
+        );
+        assert!(!fixture.root.join("service-writer.json").exists());
+        assert!(!fixture.root.join("witness-started.json").exists());
+        let client = fixture.wait_json("capture-client.json", Duration::from_secs(5));
+        assert!(fixture.pid_gone(client["pid"].as_i64().expect("client pid")));
+    }
+    // Phase 2: with an attached writer the cancelled capture says what
+    // it could not prove instead of claiming EOF.
+    {
+        let fixture = Fixture::new();
+        fixture.control(json!({
+            "ps": {"mode": "running"},
+            "inspect": {"mode": "owned"},
+            "up": {"mode": "ok"},
+        }));
+        let program = fixture.docker();
+        let start = Instant::now();
+        let budget = Duration::from_millis(600);
+        let deadline = start + budget;
+        let clock = super::capture_test_clock::control(start);
+        let shared_clock = clock.shared();
+        let error = std::thread::scope(|scope| {
+            let capture = scope.spawn(|| {
+                let _binding = shared_clock.enter();
+                run_command_capture_with_absolute_deadline(
+                    &fixture.root,
+                    program.to_str().expect("private path"),
+                    &["attach"],
+                    "private attached capture",
+                    deadline,
+                    budget,
+                )
+            });
+            let expire = ExpireCaptureOnDrop(&clock, deadline);
+            let client = fixture.wait_json("capture-client.json", Duration::from_secs(5));
+            let writer = fixture.wait_json("service-writer.json", Duration::from_secs(5));
+            assert_ne!(client["pgrp"], writer["pgrp"], "the writer is independent");
+            assert_eq!(client["stdout"]["inode"], writer["stdout"]["inode"]);
+            // Expire the original deadline only after authenticating the phase.
+            // No production clock or timeout origin is moved by this fixture.
+            drop(expire);
+            capture.join().expect("capture control thread")
+        })
+        .expect_err("a client that never exits is cancelled");
+        assert_eq!(
+            error.to_string(),
+            "private attached capture failed (no exit code: the command ended on a signal)\nstdout:\n\nstderr:\n[effigy] command timed out after 0s: capture unavailable: child exited but inherited pipe EOF was not verified; writer provenance and settlement unknown"
+        );
+        let client = fixture.wait_json("capture-client.json", Duration::from_secs(5));
+        assert_eq!(
+            client["stdout"]["kind"], "fifo",
+            "the captured client inherits an Effigy pipe"
+        );
+        let client_pid = client["pid"].as_i64().expect("client pid");
+        assert!(
+            fixture.wait_pid_gone(client_pid, Duration::from_secs(5)),
+            "Effigy positively reaped its owned client"
+        );
+        let writer = fixture.wait_json("service-writer.json", Duration::from_secs(5));
+        assert_eq!(
+            writer["stdout"]["kind"], "fifo",
+            "the service writer inherits the same Effigy pipe"
+        );
+        let witness = fixture.wait_json("witness.json", Duration::from_secs(15));
+        assert_eq!(
+            witness["signal"],
+            json!(13),
+            "the writer settled by SIGPIPE (141 = 128 + 13), not by any signal Effigy sent: {witness}"
+        );
+        let writer_pid = writer["pid"].as_i64().expect("writer pid");
+        assert!(
+            fixture.wait_pid_gone(writer_pid, Duration::from_secs(5)),
+            "the fixture writer settled"
+        );
+        let witness_pid = witness["witness_pid"].as_i64().expect("witness pid");
+        assert!(
+            fixture.wait_pid_gone(witness_pid, Duration::from_secs(5)),
+            "the fixture witness settled"
+        );
+    }
+}
+
 #[test]
 fn exit141_detached_client_exit_keeps_the_service_writer_on_a_regular_file() {
     let fixture = Fixture::new();

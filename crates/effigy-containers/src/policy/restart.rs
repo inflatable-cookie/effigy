@@ -393,8 +393,15 @@ mod tests {
     fn an_unreadable_file_is_an_error_named_with_its_path() {
         let (directory, files) = files(&["services:\n  app:\n    image: one\n"]);
         let missing = directory.path().join("gone.compose.yml");
-        let error = undeclared_services(&[files[0].clone(), missing]).expect_err("unreadable");
-        assert!(error.contains("gone.compose.yml"), "{error}");
+        let error =
+            undeclared_services(&[files[0].clone(), missing.clone()]).expect_err("unreadable");
+        assert_eq!(
+            error,
+            format!(
+                "{}: No such file or directory (os error 2)",
+                missing.display()
+            )
+        );
     }
 
     /// One inspect record of a shared container, with the render label given

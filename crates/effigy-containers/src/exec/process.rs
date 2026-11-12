@@ -1506,9 +1506,10 @@ mod tests {
             stdout: String::new(),
             stderr: "boom".to_owned(),
         };
-        let message = failure.to_string();
-        assert!(message.contains("(exit code 1)"), "{message}");
-        assert!(!message.contains("Some("), "{message}");
+        assert_eq!(
+            failure.to_string(),
+            "docker compose up failed (exit code 1)\nstdout:\n\nstderr:\nboom"
+        );
         // A child that ended on a signal has no exit code, and it says so
         // instead of printing a `None` (effigy#402).
         let signalled = ContainerExecError::Failure {
@@ -1517,12 +1518,34 @@ mod tests {
             stdout: String::new(),
             stderr: "boom".to_owned(),
         };
-        let message = signalled.to_string();
-        assert!(
-            message.contains("(no exit code: the command ended on a signal)"),
-            "{message}"
+        assert_eq!(
+            signalled.to_string(),
+            "docker compose up failed (no exit code: the command ended on a signal)\nstdout:\n\nstderr:\nboom"
         );
-        assert!(!message.contains("None"), "{message}");
+    }
+
+    /// A refused deadline reports the same exact failure: the caller's
+    /// label, no exit code, no output, and the bare timeout text (no child
+    /// ran long enough to name a reaped process).
+    fn assert_exact_deadline_refusal(error: &ContainerExecError, command: &str) {
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "{command} failed (no exit code: the command ended on a signal)\nstdout:\n\nstderr:\n[effigy] command timed out"
+            )
+        );
+    }
+
+    /// Both capture paths report a deadline kill with the same exact
+    /// failure: the caller's label, no exit code, no output, and the full
+    /// timeout text naming the reaped child.
+    fn assert_exact_timeout_failure(error: &ContainerExecError, command: &str) {
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "{command} failed (no exit code: the command ended on a signal)\nstdout:\n\nstderr:\n[effigy] command timed out after 0s: owned capture child terminated and reaped; stdout/stderr EOF verified"
+            )
+        );
     }
 
     #[test]
@@ -1536,19 +1559,15 @@ mod tests {
         )
         .expect_err("sleep should time out");
 
-        match error {
-            ContainerExecError::Failure {
-                command, stderr, ..
-            } => {
-                assert_eq!(command, "sleep test");
-                assert!(stderr.contains("command timed out"), "got: {stderr}");
-            }
-            other => panic!("expected failure, got {other:?}"),
-        }
+        assert_exact_timeout_failure(&error, "sleep test");
     }
 
+    /// A nonzero exit kept as output, on both the captured and the streamed
+    /// paths: the exact status, the exact bytes, and — for streaming — the
+    /// footer that says where the output went.
     #[test]
-    fn allow_failure_timeout_keeps_nonzero_exit_as_output() {
+    fn nonzero_exits_are_kept_as_output_with_their_streams() {
+        // Captured allow-failure: exit 7 stays output with its stderr.
         let timeout = Duration::from_secs(2);
         let output = run_command_capture_allow_failure_with_absolute_deadline(
             Path::new("."),
@@ -1560,10 +1579,24 @@ mod tests {
         )
         .expect("nonzero start should be captured");
         assert_eq!(output.status.code(), Some(7));
-        assert!(
-            String::from_utf8_lossy(&output.stderr).contains("warn"),
-            "got: {:?}",
-            String::from_utf8_lossy(&output.stderr)
+        assert!(output.stdout.is_empty());
+        assert_eq!(String::from_utf8_lossy(&output.stderr), "warn\n");
+
+        // Streamed: exit 7 keeps the streaming footer naming the label.
+        let error = run_command_stream_with_timeout(
+            Path::new("."),
+            "/bin/sh",
+            &[
+                "-c",
+                "echo streamed-output; echo streamed-error >&2; exit 7",
+            ],
+            "stream test",
+            Duration::from_secs(1),
+        )
+        .expect_err("command should fail");
+        assert_eq!(
+            error.to_string(),
+            "stream test failed (exit code 7)\nstdout:\n\nstderr:\n[effigy] `stream test` failed after streaming output directly to the terminal"
         );
     }
 
@@ -1580,44 +1613,7 @@ mod tests {
         )
         .expect_err("sleep should time out");
 
-        match error {
-            ContainerExecError::Failure {
-                command, stderr, ..
-            } => {
-                assert_eq!(command, "start hang");
-                assert!(stderr.contains("command timed out"), "got: {stderr}");
-            }
-            other => panic!("expected failure, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn streamed_command_failure_reports_streaming_footer() {
-        let error = run_command_stream_with_timeout(
-            Path::new("."),
-            "/bin/sh",
-            &[
-                "-c",
-                "echo streamed-output; echo streamed-error >&2; exit 7",
-            ],
-            "stream test",
-            Duration::from_secs(1),
-        )
-        .expect_err("command should fail");
-
-        match error {
-            ContainerExecError::Failure {
-                command,
-                code,
-                stderr,
-                ..
-            } => {
-                assert_eq!(command, "stream test");
-                assert_eq!(code, Some(7));
-                assert!(stderr.contains("streaming output directly to the terminal"));
-            }
-            other => panic!("expected failure, got {other:?}"),
-        }
+        assert_exact_timeout_failure(&error, "start hang");
     }
 
     #[test]
@@ -1703,10 +1699,10 @@ mod tests {
         assert!(error_is_timeout(&error));
 
         match error {
-            ContainerExecError::Failure { command, .. } => {
+            super::super::implementation::ContainerExecError::Failure { command, .. } => {
                 assert_eq!(command, "descendant test");
             }
-            other => panic!("expected failure, got {other:?}"),
+            other => panic!("expected failure, got {other}"),
         }
 
         let descendant_pid = fs::read_to_string(&pid_file)
@@ -1750,9 +1746,14 @@ mod tests {
         root
     }
 
+    /// A caller's absolute deadline is the single supervision origin across
+    /// all four shapes: an in-time child returns ordinary output, no deadline
+    /// keeps unbounded allow-failure semantics, an expired deadline never
+    /// spawns, and a slow spawn cannot rebase the origin.
     #[cfg(unix)]
     #[test]
-    fn absolute_deadline_returns_ordinary_output_when_child_finishes_in_time() {
+    fn absolute_deadlines_govern_spawn_and_completion() {
+        // Phase 1: a child that finishes in time returns ordinary output.
         let output = run_command_capture_allow_failure_with_deadline(
             Path::new("."),
             "/bin/sh",
@@ -1761,12 +1762,11 @@ mod tests {
             Some(Instant::now() + Duration::from_secs(5)),
         )
         .expect("in-time child must succeed");
+        assert_eq!(output.status.code(), Some(0));
         assert_eq!(String::from_utf8_lossy(&output.stdout), "parsed-ok");
-    }
+        assert!(output.stderr.is_empty());
 
-    #[cfg(unix)]
-    #[test]
-    fn no_deadline_keeps_the_unbounded_production_path() {
+        // Phase 2: no deadline keeps the unbounded production path.
         let output = run_command_capture_allow_failure_with_deadline(
             Path::new("."),
             "/bin/sh",
@@ -1777,17 +1777,14 @@ mod tests {
         .expect("no deadline keeps allow-failure semantics");
         assert_eq!(output.status.code(), Some(3));
         assert_eq!(String::from_utf8_lossy(&output.stdout), "none-ok");
-    }
+        assert!(output.stderr.is_empty());
 
-    #[cfg(unix)]
-    #[test]
-    fn deadline_marker_control_expired_deadline_never_spawns() {
+        // Phase 3: an expired deadline never spawns.
         let root = deadline_fixture_root("expired");
         let marker = root.join("spawned");
         let expired = Instant::now()
             .checked_sub(Duration::from_secs(1))
             .expect("expired instant");
-
         let error = run_command_capture_allow_failure_with_deadline(
             &root,
             "/bin/sh",
@@ -1796,28 +1793,20 @@ mod tests {
             Some(expired),
         )
         .expect_err("expired deadline must fail closed");
-
-        assert!(error.to_string().contains("timed out"), "got {error}");
+        assert_exact_deadline_refusal(&error, "expired absolute probe");
         assert!(
             !marker.exists(),
             "an expired absolute deadline must never spawn the child"
         );
         let _ = std::fs::remove_dir_all(&root);
-    }
 
-    /// Negative control for the expired-no-spawn oracle: without a caller
-    /// deadline the same fixture does spawn and write its marker, so the
-    /// no-spawn oracle is non-vacuous.
-    #[cfg(unix)]
-    #[cfg(unix)]
-    #[test]
-    fn slow_spawn_cannot_rebase_the_absolute_deadline() {
+        // Phase 4: a slow spawn cannot rebase the absolute deadline; the
+        // child is reaped before it finishes.
         let root = deadline_fixture_root("no-rebase");
         let marker = root.join("child-finished");
         let script = format!("sleep 1; printf done > '{}'", marker.display());
         let deadline = Instant::now() + Duration::from_millis(300);
         let guard = test_spawn_delay::SpawnDelayGuard::set(Duration::from_millis(400));
-
         let error = run_command_capture_allow_failure_with_deadline(
             &root,
             "/bin/sh",
@@ -1827,8 +1816,7 @@ mod tests {
         )
         .expect_err("a deadline already past at spawn must fail closed");
         drop(guard);
-
-        assert!(error.to_string().contains("timed out"), "got {error}");
+        assert_exact_timeout_failure(&error, "slow spawn absolute probe");
         assert!(
             !marker.exists(),
             "the origin must not be reset after spawn: the child must be reaped before it finishes"
@@ -1855,7 +1843,8 @@ mod detached_capture_tests {
 
     #[test]
     #[ignore = "private execution is refused until reviewed same-Env custody exists"]
-    fn workspace_private_detached_output_never_reaches_a_durable_log_or_error() {
+    fn workspace_private_execution_keeps_output_confined_and_stops_descendants() {
+        // Phase 1: private detached output never reaches a durable log or error.
         for exit_code in [0, 1] {
             let fixture = tempfile::tempdir().unwrap();
             let script = fixture.path().join("compose.py");
@@ -1889,6 +1878,42 @@ mod detached_capture_tests {
                         .any(|bytes| bytes == b"private-secret-value"));
                 }
             }
+        }
+
+        // Phase 2: a leader exit stops the delayed descendant before its write.
+        for exit_code in [0, 1] {
+            let fixture = tempfile::tempdir().unwrap();
+            let script = fixture.path().join("backend.py");
+            fs::write(&script, format!(r#"#!/usr/bin/env python3
+        import os,signal,time
+        r,w=os.pipe()
+        child=os.fork()
+        if child==0:
+         os.close(r); signal.signal(signal.SIGTERM,signal.SIG_IGN); os.write(w,b'r'); os.close(w); time.sleep(0.7); open('late-write','w').write('bad'); os._exit(0)
+        os.close(w); assert os.read(r,1)==b'r'; os.close(r); os._exit({exit_code})
+        "#)).unwrap();
+            fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+            let args = [
+                "compose".into(),
+                "-p".into(),
+                "private-exit".into(),
+                "up".into(),
+                "-d".into(),
+            ];
+            let result = super::super::implementation::run_backend_invocation_private_until(
+                fixture.path(),
+                script.as_os_str(),
+                &args,
+                "workspace apply",
+                &[],
+                Instant::now() + Duration::from_secs(5),
+            );
+            std::thread::sleep(Duration::from_secs(1));
+            assert_eq!(result.is_ok(), exit_code == 0, "{result:?}");
+            assert!(
+                !fixture.path().join("late-write").exists(),
+                "descendant outlived the private invocation"
+            );
         }
     }
 
@@ -1949,45 +1974,6 @@ os.write(1,b'private-secret-value'); os.write(2,b'private-secret-value'); time.s
         assert!(super::error_is_timeout(&error), "{error}");
         assert!(!error.to_string().contains("private-secret-value"));
         assert!(!fixture.path().join(".effigy/runtime/logs").exists());
-    }
-
-    #[test]
-    #[ignore = "private execution is refused until reviewed same-Env custody exists"]
-    fn workspace_private_leader_exit_stops_delayed_descendant() {
-        for exit_code in [0, 1] {
-            let fixture = tempfile::tempdir().unwrap();
-            let script = fixture.path().join("backend.py");
-            fs::write(&script, format!(r#"#!/usr/bin/env python3
-import os,signal,time
-r,w=os.pipe()
-child=os.fork()
-if child==0:
- os.close(r); signal.signal(signal.SIGTERM,signal.SIG_IGN); os.write(w,b'r'); os.close(w); time.sleep(0.7); open('late-write','w').write('bad'); os._exit(0)
-os.close(w); assert os.read(r,1)==b'r'; os.close(r); os._exit({exit_code})
-"#)).unwrap();
-            fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
-            let args = [
-                "compose".into(),
-                "-p".into(),
-                "private-exit".into(),
-                "up".into(),
-                "-d".into(),
-            ];
-            let result = super::super::implementation::run_backend_invocation_private_until(
-                fixture.path(),
-                script.as_os_str(),
-                &args,
-                "workspace apply",
-                &[],
-                Instant::now() + Duration::from_secs(5),
-            );
-            std::thread::sleep(Duration::from_secs(1));
-            assert_eq!(result.is_ok(), exit_code == 0, "{result:?}");
-            assert!(
-                !fixture.path().join("late-write").exists(),
-                "descendant outlived the private invocation"
-            );
-        }
     }
 
     #[test]
@@ -2220,8 +2206,14 @@ while True:
             .success());
     }
 
+    /// Detached backends keep their records bounded and name them on
+    /// failure: a failing backend reports its exit, its record path and its
+    /// own diagnostic tail, and a chatty backend retains only the bounded
+    /// tail with a visible drop marker.
     #[test]
-    fn a_failed_detached_backend_names_its_record_and_keeps_the_output_tail() {
+    fn detached_backends_name_their_record_and_keep_only_the_bounded_tail() {
+        // Phase 1: a failed detached backend names its record and keeps the
+        // output tail.
         let fixture = tempfile::tempdir().expect("fresh detached failure fixture");
         let program = fixture.path().join("failing.py");
         fs::write(
@@ -2244,21 +2236,57 @@ while True:
             &[],
         )
         .expect_err("a failing detached backend must fail");
-        let message = error.to_string();
         let record = fixture
             .path()
             .join(".effigy/runtime/logs/private-failure.compose.log");
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "private detached up failed (exit code 7)\nstdout:\n\nstderr:\n[effigy] detached backend failed (exit code 7); its output was isolated from service writers and retained at {}\n[effigy] backend output tail:\nbuild failed: missing base image",
+                record.display()
+            )
+        );
+
+        // Phase 2: a chatty detached backend retains only its bounded tail.
+        let fixture = tempfile::tempdir().expect("fresh bounded record fixture");
+        let program = fixture.path().join("chatty.py");
+        fs::write(
+            &program,
+            "import sys\nfor index in range(20000):\n    print('line %d' % index, file=sys.stderr)\n",
+        )
+        .expect("private chatty backend");
+        let args = [
+            program.into_os_string(),
+            "-p".into(),
+            "private-chatty".into(),
+            "up".into(),
+            "-d".into(),
+        ];
+        super::super::implementation::run_backend_invocation(
+            fixture.path(),
+            std::ffi::OsStr::new("python3"),
+            &args,
+            "private detached up",
+            &[],
+        )
+        .expect("a chatty detached backend still succeeds");
+        let record = fixture
+            .path()
+            .join(".effigy/runtime/logs/private-chatty.compose.log");
+        let retained = fs::read_to_string(&record).expect("bounded record");
+        let limit = super::DETACHED_OUTPUT_LIMIT as usize;
         assert!(
-            message.contains("detached backend failed (exit code 7)"),
-            "{message}"
+            retained.len() <= limit + 128,
+            "the retained record stays bounded: {} bytes",
+            retained.len()
         );
         assert!(
-            message.contains(&record.display().to_string()),
-            "the failure names the retained record: {message}"
+            retained.starts_with("[effigy] earlier backend output was dropped"),
+            "the bound is visible, not silent"
         );
         assert!(
-            message.contains("build failed: missing base image"),
-            "the failure keeps the backend's own diagnostic: {message}"
+            retained.trim_end().ends_with("line 19999"),
+            "the retained record keeps the end of the run"
         );
     }
 
@@ -2359,50 +2387,6 @@ time.sleep(60)
     }
 
     #[test]
-    fn a_chatty_detached_backend_retains_only_its_bounded_tail() {
-        let fixture = tempfile::tempdir().expect("fresh bounded record fixture");
-        let program = fixture.path().join("chatty.py");
-        fs::write(
-            &program,
-            "import sys\nfor index in range(20000):\n    print('line %d' % index, file=sys.stderr)\n",
-        )
-        .expect("private chatty backend");
-        let args = [
-            program.into_os_string(),
-            "-p".into(),
-            "private-chatty".into(),
-            "up".into(),
-            "-d".into(),
-        ];
-        super::super::implementation::run_backend_invocation(
-            fixture.path(),
-            std::ffi::OsStr::new("python3"),
-            &args,
-            "private detached up",
-            &[],
-        )
-        .expect("a chatty detached backend still succeeds");
-        let record = fixture
-            .path()
-            .join(".effigy/runtime/logs/private-chatty.compose.log");
-        let retained = fs::read_to_string(&record).expect("bounded record");
-        let limit = super::DETACHED_OUTPUT_LIMIT as usize;
-        assert!(
-            retained.len() <= limit + 128,
-            "the retained record stays bounded: {} bytes",
-            retained.len()
-        );
-        assert!(
-            retained.starts_with("[effigy] earlier backend output was dropped"),
-            "the bound is visible, not silent"
-        );
-        assert!(
-            retained.trim_end().ends_with("line 19999"),
-            "the retained record keeps the end of the run"
-        );
-    }
-
-    #[test]
     fn bounded_capture_distinguishes_eof_from_child_exit_and_refuses_overflow() {
         let fixture = tempfile::tempdir().expect("fresh capture fixture");
         let started = Instant::now();
@@ -2418,6 +2402,8 @@ time.sleep(60)
         )
         .expect("child settled");
         assert!(output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(output.stderr.is_empty());
         assert!(started.elapsed() >= Duration::from_millis(250));
         let error = run_command_capture_with_timeout(
             fixture.path(),
@@ -2427,6 +2413,9 @@ time.sleep(60)
             Duration::from_secs(5),
         )
         .expect_err("overflow never success");
-        assert!(error.to_string().contains("retention limit"));
+        assert_eq!(
+            error.to_string(),
+            "failed to launch `python3 -c import os; os.write(1,b'x'*(1024*1024+8192))`: capture exceeded the per-stream retention limit; output is unavailable"
+        );
     }
 }

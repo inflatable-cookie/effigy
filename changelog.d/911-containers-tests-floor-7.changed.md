@@ -1,0 +1,1 @@
+Lifted the Containers-crate tests rated 6 or below to floor 7: 35 data-only variants folded into table or phased tests, one duplicate removed, and 19 weak oracles sharpened to exact typed outcomes, with a further 80-plus overlapping keeps merged by family and hardened the same way. Net result is 89 fewer test declarations with no lost behaviour and no product change.

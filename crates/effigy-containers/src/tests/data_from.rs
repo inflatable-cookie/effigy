@@ -3,6 +3,7 @@
 
 use super::{load_container_policy, temp_repo, with_temp_effigy_home, with_test_compose_backend};
 use crate::compose::ComposeBackend;
+use crate::ContainerPolicyError;
 use crate::EffectiveContainerPolicy;
 use effigy_catalog::volumes::{classify_for_reset, ManagedVolume};
 use std::fs;
@@ -86,6 +87,24 @@ fn borrowing_environment_mounts_owner_data_volumes() {
 
         // Project names stay per environment even though volumes are shared.
         assert_ne!(dev.project_name, hybrid.project_name);
+
+        // A linked worktree borrows the owner's worktree-scoped volume,
+        // never the primary checkout's: the same borrowed-name identity
+        // holds under a worktree scope.
+        let (_primary, checkouts) =
+            super::compose::create_linked_worktree_fixture(&root, PAIR_MANIFEST, &["one"]);
+        let checkout = &checkouts[0];
+        let dev = load_container_policy(checkout, Some("dev")).expect("dev policy");
+        let hybrid = load_container_policy(checkout, Some("hybrid")).expect("hybrid policy");
+        let owner_volume = volume_named(&dev.managed_volumes, "-db-data");
+        let borrowed = volume_named(&hybrid.borrowed_volumes, "-db-data");
+        assert_eq!(borrowed.name, owner_volume.name);
+        assert!(
+            owner_volume.name.starts_with(&dev.project_name),
+            "a linked worktree borrows the owner's worktree-scoped volume, \
+             never the primary checkout's: {}",
+            owner_volume.name
+        );
     });
 }
 
@@ -101,6 +120,13 @@ fn owner_environment_reports_borrower_as_peer_and_keeps_its_volumes() {
 
         assert!(dev.data_from.is_none());
         assert!(dev.borrowed_volumes.is_empty());
+        for volume in &dev.managed_volumes {
+            assert!(
+                volume.name.starts_with(&dev.project_name),
+                "environment without data_from keeps its own fresh volumes: {}",
+                volume.name
+            );
+        }
         let peer = dev
             .data_peers
             .iter()
@@ -116,30 +142,6 @@ fn owner_environment_reports_borrower_as_peer_and_keeps_its_volumes() {
             .expect("borrower sees the owner as a data peer");
         assert_eq!(borrower_peer.project_name, dev.project_name);
         assert_eq!(borrower_peer.services, vec!["db".to_owned()]);
-    });
-}
-
-#[test]
-fn linked_worktree_borrows_owner_worktree_scoped_volumes() {
-    with_temp_effigy_home("data-from-worktree", |_| {
-        let _lock = crate::test_env_lock();
-        let root = temp_repo("data-from-worktree");
-        let (_primary, checkouts) =
-            super::compose::create_linked_worktree_fixture(&root, PAIR_MANIFEST, &["one"]);
-        let checkout = &checkouts[0];
-
-        let dev = load_container_policy(checkout, Some("dev")).expect("dev policy");
-        let hybrid = load_container_policy(checkout, Some("hybrid")).expect("hybrid policy");
-
-        let owner_volume = volume_named(&dev.managed_volumes, "-db-data");
-        let borrowed = volume_named(&hybrid.borrowed_volumes, "-db-data");
-        assert_eq!(borrowed.name, owner_volume.name);
-        assert!(
-            owner_volume.name.starts_with(&dev.project_name),
-            "a linked worktree borrows the owner's worktree-scoped volume, \
-             never the primary checkout's: {}",
-            owner_volume.name
-        );
     });
 }
 
@@ -240,7 +242,7 @@ fn borrowed_volume_names(policy: &EffectiveContainerPolicy) -> Vec<String> {
 /// Run the Colima nerdctl preflight against a fixture root. Fixture checkouts
 /// live under a temp directory, so the Colima host-path preflight is skipped
 /// for the same reason the other mount-budget tests skip it.
-fn with_colima_nerdctl_preflight<T>(run: impl FnOnce() -> T) -> T {
+pub(super) fn with_colima_nerdctl_preflight<T>(run: impl FnOnce() -> T) -> T {
     let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK");
     unsafe {
         std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1");
@@ -253,26 +255,6 @@ fn with_colima_nerdctl_preflight<T>(run: impl FnOnce() -> T) -> T {
         None => unsafe { std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK") },
     }
     result
-}
-
-#[test]
-fn environment_without_data_from_keeps_fresh_own_volumes() {
-    with_temp_effigy_home("data-from-absent-fresh", |_| {
-        let _lock = crate::test_env_lock();
-        let root = temp_repo("data-from-absent-fresh");
-        write_manifest(&root, PAIR_MANIFEST);
-
-        let dev = load_container_policy(&root, Some("dev")).expect("dev policy");
-        assert!(dev.borrowed_volumes.is_empty());
-        assert!(dev.data_from.is_none());
-        for volume in &dev.managed_volumes {
-            assert!(
-                volume.name.starts_with(&dev.project_name),
-                "environment without data_from keeps its own fresh volumes: {}",
-                volume.name
-            );
-        }
-    });
 }
 
 #[test]
@@ -563,16 +545,19 @@ fn colima_mount_budget_refuses_oversized_borrowed_volume_mounts() {
     let error =
         with_colima_nerdctl_preflight(|| crate::validate_compose_backend_runtime(&root, &policy))
             .expect_err("an oversized borrowed mount set must exceed the budget");
-    assert!(
-        error
-            .to_string()
-            .contains("estimated nerdctl/mounts label size"),
-        "unexpected refusal: {error}"
-    );
-    assert!(
-        !error.to_string().contains("/var/lib/postgresql/data"),
-        "budget diagnostics stay path-free: {error}"
-    );
+    match error {
+        ContainerPolicyError::TaskInvocation(message) => {
+            assert!(
+                message.contains("estimated nerdctl/mounts label size"),
+                "unexpected refusal: {message}"
+            );
+            assert!(
+                !message.contains("/var/lib/postgresql/data"),
+                "the budget refusal must not leak borrowed mount paths: {message}"
+            );
+        }
+        other => panic!("expected the budget refusal, got {other:?}"),
+    }
 
     // A small borrowed mount set stays inside the budget with the owner's
     // platform volume names, not this project's prefix.

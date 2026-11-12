@@ -504,41 +504,38 @@ mod tests {
 
     #[test]
     fn runtime_alias_infers_the_shallowest_route_host() {
-        let routes = [route("s3.acme.test"), route("admin.acme.test")];
-        let aliases = [alias()];
+        for (routes, why) in [
+            (
+                vec![route("s3.acme.test"), route("admin.acme.test")],
+                "routes at the same depth keep the front route, never a shared parent",
+            ),
+            (
+                // Inference cannot invent a higher apex from one route; a
+                // bundle says so with `base_domain` instead.
+                vec![route("s3.acme.test"), route("api.s3.acme.test")],
+                "a lone subdomain stays its own apex",
+            ),
+        ] {
+            let aliases = [alias()];
 
-        let runtime_routes = runtime_route_domains(&routes, &aliases, None, None);
+            let runtime_routes = runtime_route_domains(&routes, &aliases, None, None);
 
-        assert_eq!(
-            runtime_routes.service_alias_domains.get("postgres"),
-            Some(&vec!["postgres.s3.acme.test".to_owned()]),
-            "routes at the same depth keep the front route, never a shared parent"
-        );
+            assert_eq!(
+                runtime_routes.service_alias_domains.get("postgres"),
+                Some(&vec!["postgres.s3.acme.test".to_owned()]),
+                "{why}"
+            );
+        }
     }
 
     #[test]
-    fn runtime_alias_keeps_a_lone_subdomain_as_its_own_apex() {
-        // Inference cannot invent a higher apex from one route; a bundle says
-        // so with `base_domain` instead.
-        let routes = [route("s3.acme.test"), route("api.s3.acme.test")];
+    fn scoped_runtime_alias_rules_share_one_scope() {
         let aliases = [alias()];
 
-        let runtime_routes = runtime_route_domains(&routes, &aliases, None, None);
-
-        assert_eq!(
-            runtime_routes.service_alias_domains.get("postgres"),
-            Some(&vec!["postgres.s3.acme.test".to_owned()])
-        );
-    }
-
-    #[test]
-    fn scoped_runtime_alias_keeps_the_declared_name_for_this_scope_only() {
         // A linked worktree serves HTTP on its scoped apex. Its container
         // target still resolves the canonical declared backing-service alias,
         // because the alias lives on this scope's own Compose network.
         let routes = [route("s3.acme-wabc.test")];
-        let aliases = [alias()];
-
         let runtime_routes =
             runtime_route_domains(&routes, &aliases, Some("acme.test"), Some("acme-wabc.test"));
 
@@ -554,15 +551,12 @@ mod tests {
             vec!["s3.acme-wabc.test".to_owned()],
             "the canonical alias must never point a container back at the host gateway"
         );
-    }
 
-    #[test]
-    fn scoped_runtime_alias_yields_to_an_explicit_route_for_the_canonical_name() {
+        // An explicit scoped route keeps its gateway precedence while the
+        // canonical name still resolves locally.
         let mut mailbox = route("postgres.acme.test");
         mailbox.domain = "postgres.acme-wabc.test".to_owned();
         let routes = [mailbox];
-        let aliases = [alias()];
-
         let runtime_routes =
             runtime_route_domains(&routes, &aliases, Some("acme.test"), Some("acme-wabc.test"));
 

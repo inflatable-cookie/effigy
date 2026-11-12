@@ -7,24 +7,26 @@ fn env_lock() -> MutexGuard<'static, ()> {
 }
 
 #[test]
-fn parse_colima_running_detects_running() {
-    assert!(parse_colima_running("INFO[0000] colima is running\n", ""));
-    assert!(parse_colima_running("", "colima is running"));
-    assert!(parse_colima_running("RUNNING", ""));
-}
-
-#[test]
-fn parse_colima_running_detects_not_running() {
-    assert!(!parse_colima_running("", ""));
-    assert!(!parse_colima_running("colima is stopped", ""));
-    assert!(!parse_colima_running(
-        "",
-        r#"time="2026-04-20T23:15:01+01:00" level=fatal msg="colima is not running""#,
-    ));
-    assert!(!parse_colima_running(
-        "error: not found",
-        "profile does not exist"
-    ));
+fn parse_colima_running_states_share_one_table() {
+    for (stdout, stderr, expected) in [
+        ("INFO[0000] colima is running\n", "", true),
+        ("", "colima is running", true),
+        ("RUNNING", "", true),
+        ("", "", false),
+        ("colima is stopped", "", false),
+        (
+            "",
+            r#"time="2026-04-20T23:15:01+01:00" level=fatal msg="colima is not running""#,
+            false,
+        ),
+        ("error: not found", "profile does not exist", false),
+    ] {
+        assert_eq!(
+            parse_colima_running(stdout, stderr),
+            expected,
+            "stdout={stdout:?} stderr={stderr:?}"
+        );
+    }
 }
 
 #[test]
@@ -190,23 +192,88 @@ fn colima_command_cases() {
 }
 
 #[test]
-fn colima_start_command_defaults_to_containerd_when_docker_exists() {
+fn colima_start_command_selects_runtime_and_managed_resources() {
     let _lock = env_lock();
+    // Pin host memory so the managed resource flags are exact.
+    let previous_memory = std::env::var_os("EFFIGY_INTERNAL_HOST_MEMORY_BYTES");
+    let previous_path = std::env::var_os("PATH");
+    let previous_backend = std::env::var_os("EFFIGY_COMPOSE_BACKEND");
+    unsafe {
+        std::env::set_var(
+            "EFFIGY_INTERNAL_HOST_MEMORY_BYTES",
+            (128u64 * 1024 * 1024 * 1024).to_string(),
+        );
+    }
+
+    // Phase 1: docker on PATH but no backend override selects containerd.
     let temp = tempfile::tempdir().expect("tempdir");
     let home = temp.path().join(".effigy-home");
     let bin = temp.path().join("bin");
     std::fs::create_dir_all(&home).expect("mkdir home");
     std::fs::create_dir_all(&bin).expect("mkdir bin");
     std::fs::write(bin.join("docker"), "#!/bin/sh\n").expect("write docker");
-    let previous_path = std::env::var_os("PATH");
-    let previous_backend = std::env::var_os("EFFIGY_COMPOSE_BACKEND");
     unsafe {
         std::env::set_var("PATH", bin.display().to_string());
         std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
     }
-
     let cmd = with_test_user_config_home(&home, || colima_start_command(&test_policy("effigy")));
+    assert_eq!(cmd.program, "colima");
+    assert_eq!(
+        cmd.args,
+        [
+            "start",
+            "--profile",
+            "effigy",
+            "--runtime",
+            "containerd",
+            "--ssh-agent",
+            "--memory",
+            "32",
+            "--disk",
+            "300",
+            "--dns",
+            "1.1.1.1",
+            "--dns",
+            "8.8.8.8",
+        ]
+    );
 
+    // Phase 2: a user-global docker preference selects the docker runtime
+    // with the same managed resources and no swap flag.
+    std::fs::write(
+        home.join("config.toml"),
+        "[containers]\nbackend = \"docker\"\n",
+    )
+    .expect("write config");
+    let cmd = with_test_user_config_home(&home, || colima_start_command(&test_policy("effigy")));
+    assert_eq!(
+        cmd.args,
+        [
+            "start",
+            "--profile",
+            "effigy",
+            "--runtime",
+            "docker",
+            "--ssh-agent",
+            "--memory",
+            "32",
+            "--disk",
+            "300",
+            "--dns",
+            "1.1.1.1",
+            "--dns",
+            "8.8.8.8",
+        ]
+    );
+
+    match previous_memory {
+        Some(value) => unsafe {
+            std::env::set_var("EFFIGY_INTERNAL_HOST_MEMORY_BYTES", value);
+        },
+        None => unsafe {
+            std::env::remove_var("EFFIGY_INTERNAL_HOST_MEMORY_BYTES");
+        },
+    }
     match previous_path {
         Some(value) => unsafe {
             std::env::set_var("PATH", value);
@@ -223,44 +290,6 @@ fn colima_start_command_defaults_to_containerd_when_docker_exists() {
             std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
         },
     }
-
-    assert!(cmd
-        .args
-        .windows(2)
-        .any(|window| window == ["--runtime", "containerd"]));
-}
-
-#[test]
-fn colima_start_command_honors_user_global_docker_preference() {
-    let _lock = env_lock();
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = temp.path().join(".effigy-home");
-    std::fs::create_dir_all(&home).expect("mkdir home");
-    std::fs::write(
-        home.join("config.toml"),
-        "[containers]\nbackend = \"docker\"\n",
-    )
-    .expect("write config");
-    let previous_backend = std::env::var_os("EFFIGY_COMPOSE_BACKEND");
-    unsafe {
-        std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
-    }
-
-    let cmd = with_test_user_config_home(&home, || colima_start_command(&test_policy("effigy")));
-
-    match previous_backend {
-        Some(value) => unsafe {
-            std::env::set_var("EFFIGY_COMPOSE_BACKEND", value);
-        },
-        None => unsafe {
-            std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
-        },
-    }
-
-    assert!(cmd
-        .args
-        .windows(2)
-        .any(|window| window == ["--runtime", "docker"]));
 }
 
 #[test]
@@ -302,28 +331,6 @@ fn colima_platform_override_cases() {
             );
         }
     }
-}
-
-#[test]
-fn colima_start_command_applies_managed_resources_for_effigy_profile() {
-    let _lock = env_lock();
-    unsafe {
-        std::env::set_var(
-            "EFFIGY_INTERNAL_HOST_MEMORY_BYTES",
-            (128u64 * 1024 * 1024 * 1024).to_string(),
-        );
-    }
-    let cmd = colima_start_command(&test_policy("effigy"));
-    let expected = managed_colima_profile_resources("effigy").expect("managed resources");
-    unsafe {
-        std::env::remove_var("EFFIGY_INTERNAL_HOST_MEMORY_BYTES");
-    }
-
-    assert!(cmd.args.contains(&"--memory".to_string()));
-    assert!(cmd.args.contains(&expected.memory_gib.to_string()));
-    assert!(cmd.args.contains(&"--disk".to_string()));
-    assert!(cmd.args.contains(&expected.disk_gib.to_string()));
-    assert!(!cmd.args.contains(&"--swap".to_string()));
 }
 
 /// Managed profile resources: memory and swap scale from host memory, the
@@ -678,7 +685,7 @@ fn test_policy(profile: &str) -> EffectiveContainerPolicy {
 }
 
 #[test]
-fn profile_config_uses_explicit_colima_home_before_home() {
+fn profile_config_colima_home_resolution_prefers_explicit_then_home() {
     let _lock = env_lock();
     let root = tempfile::tempdir().expect("fixture");
     let home = root.path().join("home");
@@ -703,13 +710,9 @@ fn profile_config_uses_explicit_colima_home_before_home() {
         managed_colima_profile_drift("effigy-release"),
         Some(ManagedColimaProfileDrift::SshAgentForwardingDisabled)
     );
-}
+    drop(_env);
 
-#[test]
-fn profile_config_empty_colima_home_uses_home_default() {
-    let _lock = env_lock();
-    let root = tempfile::tempdir().expect("fixture");
-    let _env = effigy_test_support::env::ScopedEnv::set_many(&[
+    let _empty_env = effigy_test_support::env::ScopedEnv::set_many(&[
         ("HOME", root.path().as_os_str().to_owned()),
         ("COLIMA_HOME", "".into()),
     ]);

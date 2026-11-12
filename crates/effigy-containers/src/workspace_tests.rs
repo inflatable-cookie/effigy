@@ -277,43 +277,14 @@ mod library_mount_tests {
     }
 
     #[test]
-    fn skips_missing_host_paths_silently() {
+    fn unusable_library_sources_yield_no_mounts() {
         let parent = temp_dir("missing");
         let absent = parent.join("does-not-exist");
         let mounts = build_library_mounts("web", &[mount("~/missing", absent)])
             .expect("build mounts should not error");
         assert!(mounts.is_empty());
-    }
 
-    #[test]
-    fn rejects_basename_collisions_between_two_parents() {
-        let parent = temp_dir("collision");
-        let first = parent.join("a").join("php-app");
-        let second = parent.join("b").join("php-app");
-        fs::create_dir_all(&first).expect("mkdir first");
-        fs::create_dir_all(&second).expect("mkdir second");
-
-        let err = build_library_mounts(
-            "web",
-            &[
-                mount(&first.display().to_string(), first.clone()),
-                mount(&second.display().to_string(), second.clone()),
-            ],
-        )
-        .expect_err("collision should error");
-
-        let message = match err {
-            ContainerPolicyError::TaskInvocation(msg) => msg,
-            other => panic!("unexpected error variant: {other}"),
-        };
-        assert!(
-            message.contains("/workspace-libraries/php-app"),
-            "error should name the colliding container path: {message}"
-        );
-    }
-
-    #[test]
-    fn empty_input_produces_no_mounts() {
+        // Degenerate empty input builds no mounts either.
         let mounts = build_library_mounts("web", &[]).expect("build mounts");
         assert!(mounts.is_empty());
     }
@@ -657,41 +628,186 @@ mod host_git_mount_tests {
     }
 
     #[test]
-    fn gitconfig_mount_renders_read_only_when_host_file_exists() {
-        let home = temp_dir("gitconfig-present");
-        fs::write(home.join(".gitconfig"), "[user]\n  email = a@b\n").expect("write gitconfig");
-        let config = make_config("workspace-rust-bun", enabled_params());
+    fn host_mounts_render_exact_read_only_bindings() {
+        // gitconfig renders read-only when the host file exists.
+        {
+            let home = temp_dir("gitconfig-present");
+            fs::write(home.join(".gitconfig"), "[user]\n  email = a@b\n").expect("write gitconfig");
+            let config = make_config("workspace-rust-bun", enabled_params());
 
-        let mount = with_test_host_home(Some(&home), || {
-            build_host_git_config_mount(&config, "workspace")
-        })
-        .expect("expected mount");
+            let mount = with_test_host_home(Some(&home), || {
+                build_host_git_config_mount(&config, "workspace")
+            })
+            .expect("expected mount");
 
-        assert_eq!(mount.target, "/home/dev/.gitconfig");
-        assert!(mount.rendered.ends_with(":/home/dev/.gitconfig:ro"));
-        assert!(mount
-            .rendered
-            .contains(home.join(".gitconfig").to_str().unwrap()));
-    }
+            assert_eq!(mount.target, "/home/dev/.gitconfig");
+            assert_eq!(
+                mount.rendered,
+                format!(
+                    "{}:/home/dev/.gitconfig:ro",
+                    home.join(".gitconfig").display()
+                )
+            );
+        }
+        // known_hosts renders read-only when present.
+        {
+            let home = temp_dir("known-hosts");
+            fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
+            fs::write(
+                home.join(".ssh").join("known_hosts"),
+                "github.com ssh-ed25519 AAAA",
+            )
+            .expect("write known_hosts");
+            let config = make_config("node", enabled_params());
 
-    #[test]
-    fn known_hosts_mount_renders_read_only_when_present() {
-        let home = temp_dir("known-hosts");
-        fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
-        fs::write(
-            home.join(".ssh").join("known_hosts"),
-            "github.com ssh-ed25519 AAAA",
-        )
-        .expect("write known_hosts");
-        let config = make_config("node", enabled_params());
+            let mount = with_test_host_home(Some(&home), || {
+                build_host_ssh_known_hosts_mount(&config, "workspace")
+            })
+            .expect("expected mount");
 
-        let mount = with_test_host_home(Some(&home), || {
-            build_host_ssh_known_hosts_mount(&config, "workspace")
-        })
-        .expect("expected mount");
+            assert_eq!(mount.target, "/home/dev/.ssh/known_hosts");
+            assert_eq!(
+                mount.rendered,
+                format!(
+                    "{}:/home/dev/.ssh/known_hosts:ro",
+                    home.join(".ssh").join("known_hosts").display()
+                )
+            );
+        }
+        // An explicit ssh_dir_path overrides the host dir.
+        {
+            let dir = temp_dir("ssh-dir-explicit");
+            let ssh_dir = dir.join("ssh-home");
+            fs::create_dir_all(&ssh_dir).expect("mkdir ssh dir");
+            fs::write(ssh_dir.join("config"), "Host gideonreeling.co.uk\n").expect("write");
+            let mut params = enabled_params();
+            params.insert(
+                "ssh_dir_path".to_owned(),
+                toml::Value::String(ssh_dir.display().to_string()),
+            );
+            let config = make_config("workspace-rust-bun", params);
 
-        assert_eq!(mount.target, "/home/dev/.ssh/known_hosts");
-        assert!(mount.rendered.ends_with(":/home/dev/.ssh/known_hosts:ro"));
+            let mount = build_host_ssh_dir_mount(&config, "workspace").expect("expected mount");
+
+            assert_eq!(mount.target, "/home/dev/.ssh");
+            assert_eq!(
+                mount.rendered,
+                format!("{}:/home/dev/.ssh:ro", ssh_dir.display())
+            );
+        }
+        // The ssh config file mounts read-only when enabled.
+        {
+            let home = temp_dir("ssh-config-present");
+            fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
+            fs::write(
+                home.join(".ssh").join("config"),
+                "Host deploy\n  Hostname deploy.example.com\n  User deploy\n  IdentityFile ~/.ssh/id_ed25519\n  IdentitiesOnly yes\n",
+            )
+            .expect("write ssh config");
+            let mut params = enabled_params();
+            params.insert(
+                "mount_host_ssh_config".to_owned(),
+                toml::Value::Boolean(true),
+            );
+            let config = make_config("php-fpm", params);
+
+            let mount = with_test_host_home(Some(&home), || {
+                build_host_ssh_config_mount(&config, "workspace")
+            })
+            .expect("expected mount");
+
+            assert_eq!(mount.target, "/home/dev/.ssh/config");
+            assert_eq!(
+                mount.rendered,
+                format!(
+                    "{}:/home/dev/.ssh/config:ro",
+                    home.join(".ssh").join("config").display()
+                )
+            );
+        }
+        // An explicit ssh_config_path overrides the host file.
+        {
+            let dir = temp_dir("ssh-config-explicit");
+            let config_path = dir.join("ssh_config");
+            fs::write(&config_path, "Host gideonreeling.co.uk\n  User tom\n").expect("write");
+            let mut params = enabled_params();
+            params.insert(
+                "ssh_config_path".to_owned(),
+                toml::Value::String(config_path.display().to_string()),
+            );
+            let config = make_config("php-fpm", params);
+
+            let mount = build_host_ssh_config_mount(&config, "workspace").expect("expected mount");
+
+            assert_eq!(mount.target, "/home/dev/.ssh/config");
+            assert_eq!(
+                mount.rendered,
+                format!("{}:/home/dev/.ssh/config:ro", config_path.display())
+            );
+        }
+        // An explicit ssh_config_path wins over the host toggle.
+        {
+            let home = temp_dir("ssh-config-precedence-home");
+            fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
+            fs::write(home.join(".ssh").join("config"), "Host from-home\n").expect("write");
+
+            let dir = temp_dir("ssh-config-precedence-explicit");
+            let config_path = dir.join("ssh_config");
+            fs::write(&config_path, "Host from-explicit\n").expect("write");
+
+            let mut params = enabled_params();
+            params.insert(
+                "mount_host_ssh_config".to_owned(),
+                toml::Value::Boolean(true),
+            );
+            params.insert(
+                "ssh_config_path".to_owned(),
+                toml::Value::String(config_path.display().to_string()),
+            );
+            let config = make_config("php-fpm", params);
+
+            let mount = with_test_host_home(Some(&home), || {
+                build_host_ssh_config_mount(&config, "workspace")
+            })
+            .expect("expected mount");
+
+            assert_eq!(
+                mount.rendered,
+                format!("{}:/home/dev/.ssh/config:ro", config_path.display()),
+                "explicit path wins over the host toggle, leaving no host path behind"
+            );
+        }
+        // The mkcert root CA mounts read-only.
+        {
+            let _environment = RestoreEnvironmentVariable::remove(
+                effigy_gateway::private_state::PRIVATE_STATE_ROOT_ENV,
+            );
+            let dir = temp_dir("mkcert-present");
+            let pem = dir.join("rootCA.pem");
+            fs::write(
+                &pem,
+                "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n",
+            )
+            .expect("write fake mkcert root");
+            let config = make_config("php-fpm", enabled_params());
+
+            let mount = with_test_host_mkcert_root_ca(Some(&pem), || {
+                build_host_mkcert_ca_mount(&config, "workspace")
+            })
+            .expect("expected mkcert mount");
+
+            assert_eq!(
+                mount.target,
+                "/usr/local/share/ca-certificates/effigy-mkcert.crt"
+            );
+            assert_eq!(
+                mount.rendered,
+                format!(
+                    "{}:/usr/local/share/ca-certificates/effigy-mkcert.crt:ro",
+                    pem.display()
+                )
+            );
+        }
     }
 
     #[test]
@@ -718,123 +834,6 @@ mod host_git_mount_tests {
     }
 
     #[test]
-    fn ssh_dir_mount_uses_explicit_path_when_set() {
-        let dir = temp_dir("ssh-dir-explicit");
-        let ssh_dir = dir.join("ssh-home");
-        fs::create_dir_all(&ssh_dir).expect("mkdir ssh dir");
-        fs::write(ssh_dir.join("config"), "Host gideonreeling.co.uk\n").expect("write");
-        let mut params = enabled_params();
-        params.insert(
-            "ssh_dir_path".to_owned(),
-            toml::Value::String(ssh_dir.display().to_string()),
-        );
-        let config = make_config("workspace-rust-bun", params);
-
-        let mount = build_host_ssh_dir_mount(&config, "workspace").expect("expected mount");
-
-        assert_eq!(mount.target, "/home/dev/.ssh");
-        assert!(
-            mount.rendered.contains(ssh_dir.to_str().unwrap()),
-            "rendered should reference explicit dir: {}",
-            mount.rendered
-        );
-    }
-
-    #[test]
-    fn ssh_config_mount_renders_host_file_when_enabled() {
-        let home = temp_dir("ssh-config-present");
-        fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
-        fs::write(
-            home.join(".ssh").join("config"),
-            "Host deploy\n  Hostname deploy.example.com\n  User deploy\n  IdentityFile ~/.ssh/id_ed25519\n  IdentitiesOnly yes\n",
-        )
-        .expect("write ssh config");
-        let mut params = enabled_params();
-        params.insert(
-            "mount_host_ssh_config".to_owned(),
-            toml::Value::Boolean(true),
-        );
-        let config = make_config("php-fpm", params);
-
-        let mount = with_test_host_home(Some(&home), || {
-            build_host_ssh_config_mount(&config, "workspace")
-        })
-        .expect("expected mount");
-
-        assert_eq!(mount.target, "/home/dev/.ssh/config");
-        assert!(mount.rendered.ends_with(":/home/dev/.ssh/config:ro"));
-        assert!(
-            mount
-                .rendered
-                .contains(home.join(".ssh").join("config").to_str().unwrap()),
-            "rendered should reference host path: {}",
-            mount.rendered
-        );
-    }
-
-    #[test]
-    fn ssh_config_mount_uses_explicit_path_when_set() {
-        let dir = temp_dir("ssh-config-explicit");
-        let config_path = dir.join("ssh_config");
-        fs::write(&config_path, "Host gideonreeling.co.uk\n  User tom\n").expect("write");
-        let mut params = enabled_params();
-        params.insert(
-            "ssh_config_path".to_owned(),
-            toml::Value::String(config_path.display().to_string()),
-        );
-        let config = make_config("php-fpm", params);
-
-        let mount = build_host_ssh_config_mount(&config, "workspace").expect("expected mount");
-
-        assert_eq!(mount.target, "/home/dev/.ssh/config");
-        assert!(
-            mount.rendered.contains(config_path.to_str().unwrap()),
-            "rendered should reference explicit path: {}",
-            mount.rendered
-        );
-    }
-
-    #[test]
-    fn ssh_config_mount_explicit_path_wins_over_host_toggle() {
-        let home = temp_dir("ssh-config-precedence-home");
-        fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
-        fs::write(home.join(".ssh").join("config"), "Host from-home\n").expect("write");
-
-        let dir = temp_dir("ssh-config-precedence-explicit");
-        let config_path = dir.join("ssh_config");
-        fs::write(&config_path, "Host from-explicit\n").expect("write");
-
-        let mut params = enabled_params();
-        params.insert(
-            "mount_host_ssh_config".to_owned(),
-            toml::Value::Boolean(true),
-        );
-        params.insert(
-            "ssh_config_path".to_owned(),
-            toml::Value::String(config_path.display().to_string()),
-        );
-        let config = make_config("php-fpm", params);
-
-        let mount = with_test_host_home(Some(&home), || {
-            build_host_ssh_config_mount(&config, "workspace")
-        })
-        .expect("expected mount");
-
-        assert!(
-            mount.rendered.contains(config_path.to_str().unwrap()),
-            "explicit path should win over host toggle: {}",
-            mount.rendered
-        );
-        assert!(
-            !mount
-                .rendered
-                .contains(home.join(".ssh").join("config").to_str().unwrap()),
-            "host path should not be used when explicit path is set: {}",
-            mount.rendered
-        );
-    }
-
-    #[test]
     fn ssh_agent_mount_renders_when_socket_present() {
         let parent = temp_dir("agent-present");
         let socket_path = parent.join("ssh-auth.sock");
@@ -853,35 +852,6 @@ mod host_git_mount_tests {
             mount.rendered,
             format!("{}:/run/host-services/ssh-auth.sock", socket_path.display())
         );
-    }
-
-    #[test]
-    fn mkcert_ca_mount_renders_read_only_when_root_ca_present() {
-        let _environment = RestoreEnvironmentVariable::remove(
-            effigy_gateway::private_state::PRIVATE_STATE_ROOT_ENV,
-        );
-        let dir = temp_dir("mkcert-present");
-        let pem = dir.join("rootCA.pem");
-        fs::write(
-            &pem,
-            "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n",
-        )
-        .expect("write fake mkcert root");
-        let config = make_config("php-fpm", enabled_params());
-
-        let mount = with_test_host_mkcert_root_ca(Some(&pem), || {
-            build_host_mkcert_ca_mount(&config, "workspace")
-        })
-        .expect("expected mkcert mount");
-
-        assert_eq!(
-            mount.target,
-            "/usr/local/share/ca-certificates/effigy-mkcert.crt"
-        );
-        assert!(mount
-            .rendered
-            .ends_with(":/usr/local/share/ca-certificates/effigy-mkcert.crt:ro"));
-        assert!(mount.rendered.contains(pem.to_str().unwrap()));
     }
 
     #[test]
@@ -1162,6 +1132,85 @@ mod guest_isolation_tests {
     }
 
     #[test]
+    fn workspace_mount_sets_pass_isolation_and_name_each_path_once() {
+        // Phase 1: an ordinary mount set passes isolation.
+        {
+            let repo_root = temp_dir("allowed");
+            let canonical = repo_root.canonicalize().expect("canonical root");
+            let checkout = bind_mount(&canonical, "/workspace");
+            let mut mounts = vec![checkout];
+            mounts.extend(build_guest_mask_mounts(
+                "dev",
+                &canonical,
+                Path::new("/workspace"),
+            ));
+
+            enforce_guest_mount_isolation("dev", &canonical, Path::new("/workspace"), &mounts)
+                .expect("allowed");
+            let _ = fs::remove_dir_all(repo_root);
+        }
+        // Phase 2: two sources for one guest path are refused by name.
+        {
+            let repo_root = temp_dir("duplicate-target");
+            let canonical = repo_root.canonicalize().expect("canonical root");
+            fs::create_dir_all(canonical.join("one")).expect("one");
+            fs::create_dir_all(canonical.join("two")).expect("two");
+            let mounts = vec![
+                bind_mount(&canonical.join("one"), "/workspace/data"),
+                bind_mount(&canonical.join("two"), "/workspace/data"),
+            ];
+
+            let error =
+                enforce_guest_mount_isolation("dev", &canonical, Path::new("/workspace"), &mounts)
+                    .expect_err("one guest path, one source");
+            match error {
+                ContainerPolicyError::TaskInvocation(message) => assert_eq!(
+                    message,
+                    "container `dev` mounts two sources at guest path `/workspace/data`; the effective mount set must name each path once"
+                ),
+                other => panic!("expected refusal, got {other}"),
+            }
+            let _ = fs::remove_dir_all(repo_root);
+        }
+        // Phase 3: two library parents with one basename collide by name.
+        {
+            let parent = temp_dir("collision");
+            let first = parent.join("a").join("php-app");
+            let second = parent.join("b").join("php-app");
+            fs::create_dir_all(&first).expect("mkdir first");
+            fs::create_dir_all(&second).expect("mkdir second");
+
+            let err = build_library_mounts(
+                "web",
+                &[
+                    LibraryMount {
+                        raw: first.display().to_string(),
+                        host_path: first.clone(),
+                    },
+                    LibraryMount {
+                        raw: second.display().to_string(),
+                        host_path: second.clone(),
+                    },
+                ],
+            )
+            .expect_err("collision should error");
+
+            let message = match err {
+                ContainerPolicyError::TaskInvocation(msg) => msg,
+                other => panic!("unexpected error variant: {other}"),
+            };
+            assert_eq!(
+                message,
+                format!(
+                    "container `web` library mounts `{}` and `{}` both resolve to container path `/workspace-libraries/php-app`; rename one or pick a non-colliding parent directory",
+                    first.display(),
+                    second.display()
+                )
+            );
+        }
+    }
+
+    #[test]
     fn guest_masks_cover_the_checkout_store_and_local_vault_read_only() {
         let repo_root = temp_dir("masks");
         let canonical = repo_root.canonicalize().expect("canonical root");
@@ -1188,23 +1237,6 @@ mod guest_isolation_tests {
             );
             assert!(mask.named_volume.is_some(), "a mask is an empty volume");
         }
-        let _ = fs::remove_dir_all(repo_root);
-    }
-
-    #[test]
-    fn an_ordinary_workspace_mount_set_passes_isolation() {
-        let repo_root = temp_dir("allowed");
-        let canonical = repo_root.canonicalize().expect("canonical root");
-        let checkout = bind_mount(&canonical, "/workspace");
-        let mut mounts = vec![checkout];
-        mounts.extend(build_guest_mask_mounts(
-            "dev",
-            &canonical,
-            Path::new("/workspace"),
-        ));
-
-        enforce_guest_mount_isolation("dev", &canonical, Path::new("/workspace"), &mounts)
-            .expect("allowed");
         let _ = fs::remove_dir_all(repo_root);
     }
 
@@ -1769,27 +1801,6 @@ mod guest_isolation_tests {
         )
         .expect_err("an unprovable bind device must not be treated as a managed volume");
         assert!(error.to_string().contains("cannot prove"), "{error}");
-    }
-
-    #[test]
-    fn two_sources_for_one_guest_path_are_refused() {
-        let repo_root = temp_dir("duplicate-target");
-        let canonical = repo_root.canonicalize().expect("canonical root");
-        fs::create_dir_all(canonical.join("one")).expect("one");
-        fs::create_dir_all(canonical.join("two")).expect("two");
-        let mounts = vec![
-            bind_mount(&canonical.join("one"), "/workspace/data"),
-            bind_mount(&canonical.join("two"), "/workspace/data"),
-        ];
-
-        let error =
-            enforce_guest_mount_isolation("dev", &canonical, Path::new("/workspace"), &mounts)
-                .expect_err("one guest path, one source");
-        assert!(
-            error.to_string().contains("two sources at guest path"),
-            "{error}"
-        );
-        let _ = fs::remove_dir_all(repo_root);
     }
 
     #[test]

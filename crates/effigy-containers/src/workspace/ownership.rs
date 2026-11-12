@@ -660,10 +660,8 @@ services:
             WorkspaceRepairAuthority::VerifyOnly
         );
         let _ = fs::remove_dir_all(root);
-    }
 
-    #[test]
-    fn anonymous_rust_target_volume_is_owned_disposable() {
+        // An anonymous target volume classifies the same way.
         let root = temp_root("anon-target");
         let policy = policy_with_compose(
             &root,
@@ -748,10 +746,8 @@ services:
         assert_eq!(cache.rust_cache, None);
         assert_eq!(cache.repair_authority, WorkspaceRepairAuthority::Forbidden);
         let _ = fs::remove_dir_all(root);
-    }
 
-    #[test]
-    fn managed_volume_shared_with_another_service_is_verify_only() {
+        // The same shared-volume rule through `managed_volumes`.
         let root = temp_root("managed-shared");
         let mut policy = policy_with_compose(
             &root,
@@ -999,100 +995,9 @@ services:
             WorkspaceRepairAuthority::OwnedDisposable
         );
         let _ = fs::remove_dir_all(root);
-    }
 
-    #[test]
-    fn two_writable_services_still_forbid_dependency_volume() {
-        let root = temp_root("two-writers");
-        let mut policy = policy_with_compose(
-            &root,
-            r#"
-services:
-  app:
-    volumes:
-      - cbs-vendor:/var/www/cbs/vendor
-  web:
-    volumes:
-      - cbs-vendor:/var/www/cbs/vendor
-"#,
-        );
-        policy.primary_service = "app".to_owned();
-        let plan = load_workspace_ownership_plan(&policy).expect("plan");
-        let vendor = plan
-            .targets
-            .iter()
-            .find(|target| target.path == "/var/www/cbs/vendor")
-            .expect("vendor");
-        assert_eq!(vendor.repair_authority, WorkspaceRepairAuthority::Forbidden);
-        assert!(!plan
-            .owned_disposable_paths()
-            .iter()
-            .any(|path| path == "/var/www/cbs/vendor"));
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn read_only_primary_with_other_service_writer_stays_forbidden() {
-        // A different service being the writer does not grant the primary
-        // mutation authority over its own read-only consumer mount.
-        let root = temp_root("primary-reader");
-        let mut policy = policy_with_compose(
-            &root,
-            r#"
-services:
-  app:
-    volumes:
-      - cbs-vendor:/var/www/cbs/vendor:ro
-  web:
-    volumes:
-      - cbs-vendor:/var/www/cbs/vendor
-"#,
-        );
-        policy.primary_service = "app".to_owned();
-        let plan = load_workspace_ownership_plan(&policy).expect("plan");
-        let vendor = plan
-            .targets
-            .iter()
-            .find(|target| target.path == "/var/www/cbs/vendor")
-            .expect("vendor");
-        assert!(vendor.read_only);
-        assert_eq!(vendor.repair_authority, WorkspaceRepairAuthority::Forbidden);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn ambiguous_long_form_read_only_fails_closed_for_both_sides() {
-        // A malformed `read_only` value is not proof of a reader, and the
-        // primary's own mount keeps non-mutating authority.
-        let root = temp_root("ambiguous-ro");
-        let mut policy = policy_with_compose(
-            &root,
-            r#"
-services:
-  app:
-    volumes:
-      - cbs-vendor:/var/www/cbs/vendor
-  web:
-    volumes:
-      - type: volume
-        source: cbs-vendor
-        target: /var/www/cbs/vendor
-        read_only: "yes"
-"#,
-        );
-        policy.primary_service = "app".to_owned();
-        let plan = load_workspace_ownership_plan(&policy).expect("plan");
-        let vendor = plan
-            .targets
-            .iter()
-            .find(|target| target.path == "/var/www/cbs/vendor")
-            .expect("vendor");
-        assert_eq!(vendor.repair_authority, WorkspaceRepairAuthority::Forbidden);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn managed_volume_read_only_compose_consumer_does_not_make_it_shared() {
+        // The same sole-writer rule through `managed_volumes`: a read-only
+        // compose consumer does not make the volume shared.
         let root = temp_root("managed-ro-consumer");
         let mut policy = policy_with_compose(
             &root,
@@ -1123,6 +1028,77 @@ services:
             vendor.repair_authority,
             WorkspaceRepairAuthority::OwnedDisposable
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn two_writer_shapes_still_forbid_the_dependency_volume() {
+        // Whether both services write, or the primary only reads while
+        // another service writes, no side gains mutation authority over the
+        // shared dependency volume.
+        for (root_name, app_mount, primary_read_only) in [
+            ("two-writers", "cbs-vendor:/var/www/cbs/vendor", false),
+            ("primary-reader", "cbs-vendor:/var/www/cbs/vendor:ro", true),
+        ] {
+            let root = temp_root(root_name);
+            let mut policy = policy_with_compose(
+                &root,
+                &format!(
+                    "services:\n  app:\n    volumes:\n      - {app_mount}\n  web:\n    volumes:\n      - cbs-vendor:/var/www/cbs/vendor\n"
+                ),
+            );
+            policy.primary_service = "app".to_owned();
+            let plan = load_workspace_ownership_plan(&policy).expect("plan");
+            let vendor = plan
+                .targets
+                .iter()
+                .find(|target| target.path == "/var/www/cbs/vendor")
+                .expect("vendor");
+            assert_eq!(vendor.read_only, primary_read_only, "{root_name}");
+            assert_eq!(
+                vendor.repair_authority,
+                WorkspaceRepairAuthority::Forbidden,
+                "{root_name}"
+            );
+            assert!(
+                !plan
+                    .owned_disposable_paths()
+                    .iter()
+                    .any(|path| path == "/var/www/cbs/vendor"),
+                "{root_name}"
+            );
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn ambiguous_long_form_read_only_fails_closed_for_both_sides() {
+        // A malformed `read_only` value is not proof of a reader, and the
+        // primary's own mount keeps non-mutating authority.
+        let root = temp_root("ambiguous-ro");
+        let mut policy = policy_with_compose(
+            &root,
+            r#"
+services:
+  app:
+    volumes:
+      - cbs-vendor:/var/www/cbs/vendor
+  web:
+    volumes:
+      - type: volume
+        source: cbs-vendor
+        target: /var/www/cbs/vendor
+        read_only: "yes"
+"#,
+        );
+        policy.primary_service = "app".to_owned();
+        let plan = load_workspace_ownership_plan(&policy).expect("plan");
+        let vendor = plan
+            .targets
+            .iter()
+            .find(|target| target.path == "/var/www/cbs/vendor")
+            .expect("vendor");
+        assert_eq!(vendor.repair_authority, WorkspaceRepairAuthority::Forbidden);
         let _ = fs::remove_dir_all(root);
     }
 

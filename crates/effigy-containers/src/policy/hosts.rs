@@ -782,6 +782,10 @@ mod tests {
         )
         .with_scope_kind(HostScopeKind::EphemeralClone);
         assert_eq!(map.kind, HostScopeKind::EphemeralClone);
+        // The relabel touches the scope only: the single route keeps its
+        // declared name and gains the scoped effective name.
+        assert_eq!(map.routes.len(), 1);
+        assert_eq!(map.routes[0].declared, "app.test");
         assert_eq!(map.routes[0].effective, "app-wabcdef01.test");
         assert_eq!(map.host_key.as_deref(), Some("abcdef01"));
     }
@@ -809,7 +813,8 @@ mod tests {
             inferred: bool,
             apex: &'static str,
             cookie: Option<&'static str>,
-            aliased_tcp_route: Option<&'static str>,
+            aliased_tcp_routes: &'static [&'static str],
+            extra_aliases: &'static [(&'static str, &'static str, u16)],
             warning: &'static [&'static str],
         }
         let cases = [
@@ -827,8 +832,34 @@ mod tests {
                 inferred: true,
                 apex: "cbs.legacy.test",
                 cookie: Some("cbs.legacy.test"),
-                aliased_tcp_route: Some("postgres.cbs.legacy.test"),
+                aliased_tcp_routes: &["postgres.cbs.legacy.test"],
+                extra_aliases: &[],
                 warning: &["borderway.legacy.test", "base_domain"],
+            },
+            Case {
+                // The shape #281's regression came from: the site's own front
+                // route, its helper service routes, routes that share only
+                // `legacy.test`, and a wildcard tunnel route. The apex stays
+                // the primary service's host.
+                name: "the #281 cbs shape with helper routes and a wildcard",
+                routes: &[
+                    ("cbs.legacy.test", Some("web")),
+                    ("pma.cbs.legacy.test", Some("pma")),
+                    ("mailpit.cbs.legacy.test", Some("mailpit")),
+                    ("admin.cbs.legacy.test", Some("web")),
+                    ("borderway.legacy.test", Some("web")),
+                    ("cbs-mortcalc.legacy.test", Some("web")),
+                    ("*.cumberland.co.uk", None),
+                ],
+                aliases: true,
+                listeners: &[],
+                declared: None,
+                inferred: true,
+                apex: "cbs.legacy.test",
+                cookie: Some("cbs.legacy.test"),
+                aliased_tcp_routes: &["postgres.cbs.legacy.test", "mysql.cbs.legacy.test"],
+                extra_aliases: &[("mysql", "mysql", 3306)],
+                warning: &["borderway.legacy.test", "*.cumberland.co.uk"],
             },
             Case {
                 name: "a single route",
@@ -839,7 +870,8 @@ mod tests {
                 inferred: true,
                 apex: "app.test",
                 cookie: None,
-                aliased_tcp_route: Some("postgres.app.test"),
+                aliased_tcp_routes: &["postgres.app.test"],
+                extra_aliases: &[],
                 warning: &[],
             },
             Case {
@@ -851,7 +883,8 @@ mod tests {
                 inferred: false,
                 apex: "declared.test",
                 cookie: Some("declared.test"),
-                aliased_tcp_route: None,
+                aliased_tcp_routes: &[],
+                extra_aliases: &[],
                 warning: &[],
             },
             Case {
@@ -866,7 +899,8 @@ mod tests {
                 inferred: true,
                 apex: "s3.acme.test",
                 cookie: None,
-                aliased_tcp_route: None,
+                aliased_tcp_routes: &[],
+                extra_aliases: &[],
                 warning: &[
                     "not a suffix of every HTTP route",
                     "other.example",
@@ -882,7 +916,8 @@ mod tests {
                 inferred: true,
                 apex: "admin.acme.test",
                 cookie: None,
-                aliased_tcp_route: None,
+                aliased_tcp_routes: &[],
+                extra_aliases: &[],
                 warning: &["*.acme.test", "base_domain"],
             },
             Case {
@@ -894,8 +929,25 @@ mod tests {
                 inferred: true,
                 apex: "s3.acme.test",
                 cookie: None,
-                aliased_tcp_route: None,
+                aliased_tcp_routes: &[],
+                extra_aliases: &[],
                 warning: &["api.acme.test", "base_domain"],
+            },
+            Case {
+                name: "a managed listener at the apex",
+                routes: &[
+                    ("s3.acme.test", Some("silo")),
+                    ("admin.acme.test", Some("web")),
+                ],
+                aliases: false,
+                listeners: &["acme.test"],
+                declared: None,
+                inferred: true,
+                apex: "acme.test",
+                cookie: Some("acme.test"),
+                aliased_tcp_routes: &[],
+                extra_aliases: &[],
+                warning: &[],
             },
         ];
         for case in cases {
@@ -904,11 +956,18 @@ mod tests {
                 .iter()
                 .map(|(domain, service)| http(domain, true, *service))
                 .collect();
-            let aliases: Vec<EffectiveServiceAlias> = if case.aliases {
+            let mut aliases: Vec<EffectiveServiceAlias> = if case.aliases {
                 vec![alias()]
             } else {
                 Vec::new()
             };
+            for (service, label, port) in case.extra_aliases {
+                aliases.push(EffectiveServiceAlias {
+                    service: (*service).to_owned(),
+                    domain_label: (*label).to_owned(),
+                    container_port: *port,
+                });
+            }
             let listeners: Vec<String> = case
                 .listeners
                 .iter()
@@ -943,14 +1002,14 @@ mod tests {
                     case.name
                 );
             }
-            if let Some(declared) = case.aliased_tcp_route {
+            if !case.aliased_tcp_routes.is_empty() {
                 let tcp: Vec<&str> = map
                     .routes
                     .iter()
                     .filter(|route| route.kind == HostRouteKind::Tcp)
                     .map(|route| route.declared.as_str())
                     .collect();
-                assert_eq!(tcp, vec![declared], "{}: TCP alias", case.name);
+                assert_eq!(tcp, case.aliased_tcp_routes, "{}: TCP aliases", case.name);
             }
             match map.base_domain_warning.as_deref() {
                 Some(warning) => {
@@ -968,109 +1027,45 @@ mod tests {
         }
     }
 
-    /// The shape #281's regression came from: the site's own front route, its
-    /// helper service routes, routes that share only `legacy.test`, and a
-    /// wildcard tunnel route. The apex stays the primary service's host.
-    #[test]
-    fn cbs_shape_keeps_its_primary_service_apex() {
-        let map = build_host_map(
-            &[
-                http("cbs.legacy.test", true, Some("web")),
-                http("pma.cbs.legacy.test", true, Some("pma")),
-                http("mailpit.cbs.legacy.test", true, Some("mailpit")),
-                http("admin.cbs.legacy.test", true, Some("web")),
-                http("borderway.legacy.test", true, Some("web")),
-                http("cbs-mortcalc.legacy.test", true, Some("web")),
-                http("*.cumberland.co.uk", true, None),
-            ],
-            &[
-                alias(),
-                EffectiveServiceAlias {
-                    service: "mysql".to_owned(),
-                    domain_label: "mysql".to_owned(),
-                    container_port: 3306,
-                },
-            ],
-            &[],
-            None,
-            false,
-            None,
-        );
-        assert!(map.base_domain_inferred);
-        assert_eq!(map.declared_base.as_deref(), Some("cbs.legacy.test"));
-        assert_eq!(map.cookie_domain(), Some("cbs.legacy.test"));
-        assert_eq!(map.relying_party_id(), Some("cbs.legacy.test"));
-        let tcp = map
-            .routes
-            .iter()
-            .filter(|route| route.kind == HostRouteKind::Tcp)
-            .map(|route| route.effective.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            tcp,
-            vec!["postgres.cbs.legacy.test", "mysql.cbs.legacy.test"]
-        );
-        let warning = map.base_domain_warning.as_deref().expect("a warning");
-        assert!(warning.contains("borderway.legacy.test"), "{warning}");
-        assert!(warning.contains("*.cumberland.co.uk"), "{warning}");
-    }
-
     /// The pre-#007 Underlay bundle declared no `base_domain`: the front route
     /// is the S3 subdomain, and the host listeners publish the apex. The apex
     /// must stay `<host>` so the S3 route keeps its place without naming it.
-    #[test]
-    fn pre_007_hybrid_shape_infers_the_listener_apex() {
-        let map = build_host_map_including_listeners(
-            &[
-                http("s3.acme.test", true, Some("silo")),
-                http("dbgate.acme.test", true, Some("dbgate")),
-                http("mailpit.acme.test", true, Some("mailpit")),
-                http("silo.acme.test", true, Some("silo")),
-            ],
-            &[alias()],
-            &[],
-            None,
-            false,
-            None,
-            &[
-                "acme.test".to_owned(),
-                "dairy.acme.test".to_owned(),
-                "farmyard.acme.test".to_owned(),
-            ],
-        );
-        assert!(map.base_domain_inferred);
-        assert_eq!(map.base_domain_warning, None);
-        assert_eq!(map.declared_base.as_deref(), Some("acme.test"));
-        assert_eq!(map.cookie_domain(), Some("acme.test"));
-        assert_eq!(map.routes[4].declared, "postgres.acme.test");
-    }
-
     /// The same bundle's `test` profile prefixes every route with `test.`.
     #[test]
-    fn pre_007_test_shape_infers_the_test_prefixed_apex() {
-        let map = build_host_map_including_listeners(
-            &[
-                http("s3.test.acme.test", true, Some("silo")),
-                http("dbgate.test.acme.test", true, Some("dbgate")),
-                http("mailpit.test.acme.test", true, Some("mailpit")),
-                http("silo.test.acme.test", true, Some("silo")),
-            ],
-            &[alias()],
-            &[],
-            None,
-            false,
-            None,
-            &[
-                "test.acme.test".to_owned(),
-                "dairy.test.acme.test".to_owned(),
-                "farmyard.test.acme.test".to_owned(),
-            ],
-        );
-        assert!(map.base_domain_inferred);
-        assert_eq!(map.base_domain_warning, None);
-        assert_eq!(map.declared_base.as_deref(), Some("test.acme.test"));
-        assert_eq!(map.cookie_domain(), Some("test.acme.test"));
-        assert_eq!(map.routes[4].declared, "postgres.test.acme.test");
+    fn pre_007_shapes_infer_the_listener_apex() {
+        for (prefix, apex) in [("", "acme.test"), ("test.", "test.acme.test")] {
+            let map = build_host_map_including_listeners(
+                &[
+                    http(&format!("s3.{prefix}acme.test"), true, Some("silo")),
+                    http(&format!("dbgate.{prefix}acme.test"), true, Some("dbgate")),
+                    http(&format!("mailpit.{prefix}acme.test"), true, Some("mailpit")),
+                    http(&format!("silo.{prefix}acme.test"), true, Some("silo")),
+                ],
+                &[alias()],
+                &[],
+                None,
+                false,
+                None,
+                &[
+                    apex.to_owned(),
+                    format!("dairy.{apex}"),
+                    format!("farmyard.{apex}"),
+                ],
+            );
+            assert!(map.base_domain_inferred, "prefix {prefix:?}");
+            assert_eq!(map.base_domain_warning, None, "prefix {prefix:?}");
+            assert_eq!(
+                map.declared_base.as_deref(),
+                Some(apex),
+                "prefix {prefix:?}"
+            );
+            assert_eq!(map.cookie_domain(), Some(apex), "prefix {prefix:?}");
+            assert_eq!(
+                map.routes[4].declared,
+                format!("postgres.{apex}"),
+                "prefix {prefix:?}"
+            );
+        }
     }
 
     #[test]
@@ -1118,29 +1113,6 @@ mod tests {
         let mut route = http(declared, true, None);
         route.domain = domain.to_owned();
         route
-    }
-
-    #[test]
-    fn resolved_base_domain_prefers_declaration_and_infers_otherwise() {
-        let routes = [
-            http("s3.acme.test", true, Some("silo")),
-            http("admin.acme.test", true, Some("web")),
-        ];
-        assert_eq!(
-            resolve_base_domain(&routes, &[], Some("declared.test")).as_deref(),
-            Some("declared.test"),
-            "a declared apex is kept untouched"
-        );
-        assert_eq!(
-            resolve_base_domain(&routes, &["acme.test".to_owned()], None).as_deref(),
-            Some("acme.test"),
-            "a managed listener at the apex wins"
-        );
-        assert_eq!(
-            resolve_base_domain(&routes, &[], None).as_deref(),
-            Some("s3.acme.test"),
-            "without a listener the primary service's shallowest route stands in"
-        );
     }
 
     #[test]

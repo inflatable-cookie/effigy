@@ -742,15 +742,9 @@ mod tests {
     }
 
     #[test]
-    fn decoder_colima_nerdctl_matrix() {
+    fn decoder_engine_matrices_share_one_survivor() {
         decoder_matrix("Up 10 seconds", "");
-    }
-    #[test]
-    fn decoder_docker_desktop_matrix() {
         decoder_matrix("Up 10 seconds", "/owned/desktop");
-    }
-    #[test]
-    fn decoder_linux_engine_matrix() {
         decoder_matrix("running", "/owned/linux");
     }
 

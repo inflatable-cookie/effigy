@@ -229,20 +229,37 @@ mod tests {
             workdir: root.to_path_buf(),
             binding: None,
         };
-        assert!(cli.restore_recovery(None, deadline()).is_err());
-        assert!(cli.launch_program("docker", deadline()).is_err());
+        assert_eq!(
+            cli.restore_recovery(None, deadline()).unwrap_err(),
+            "backend binding missing"
+        );
+        assert_eq!(
+            cli.launch_program("docker", deadline()).unwrap_err(),
+            "backend binding missing"
+        );
         assert!(cli.restore_recovery(Some(&encoded), deadline()).is_ok());
         assert_eq!(
             cli.launch_program("docker", deadline()).unwrap(),
             binary.as_os_str()
         );
-        assert!(cli.launch_program("colima", deadline()).is_err());
+        assert_eq!(
+            cli.launch_program("colima", deadline()).unwrap_err(),
+            "backend binding differs"
+        );
         std::fs::write(&binary, b"#!/bin/sh\nexit 1\n").unwrap();
-        assert!(cli.launch_program("docker", deadline()).is_err());
+        assert_eq!(
+            cli.launch_program("docker", deadline()).unwrap_err(),
+            "backend executable moved or changed"
+        );
         let mut fresh = HostCli {
             workdir: root.to_path_buf(),
             binding: None,
         };
-        assert!(fresh.restore_recovery(Some(&encoded), deadline()).is_err());
+        assert_eq!(
+            fresh
+                .restore_recovery(Some(&encoded), deadline())
+                .unwrap_err(),
+            "backend executable moved or changed"
+        );
     }
 }

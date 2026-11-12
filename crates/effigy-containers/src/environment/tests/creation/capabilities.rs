@@ -295,7 +295,21 @@ fn attached_reference_requires_render_matching_config_hash_and_original_deadline
             fake.config_hashes.insert(PRIMARY.into(), id('e'));
         }
         let window = CreationWindow::open(&mut fake, request).unwrap();
-        assert!(window.close(&mut fake, request).is_err());
+        let close = window.close(&mut fake, request);
+        let expected = if expired {
+            crate::environment::CreationRefusal::Unknown(
+                "frozen Compose config hashes incomplete or deadline expired".to_owned(),
+            )
+        } else {
+            crate::environment::CreationRefusal::ImageMismatch(format!(
+                "{} config hash differs from render",
+                id('a')
+            ))
+        };
+        match close {
+            Err(actual) => assert_eq!(actual, expected, "expired={expired}"),
+            Ok(_) => panic!("expired={expired}: a mismatched hash must refuse"),
+        }
     }
 }
 

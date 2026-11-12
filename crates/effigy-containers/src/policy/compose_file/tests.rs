@@ -156,15 +156,10 @@ fn soundcheck_linux_arm_renders_identically_before_and_after_migration() {
     );
     let plan = round_trip(&checkout, "linux-arm");
     let compose = &plan.migration.fragments[0].compose_fragment;
-    assert!(
-        compose.contains("context: '{{ repo_root }}/infra/linux-arm'"),
-        "{compose}"
+    assert_eq!(
+        compose.trim_end(),
+        "services:\n  '{{ service_name }}':\n    build:\n      context: '{{ repo_root }}/infra/linux-arm'\n      dockerfile: Dockerfile\n    image: soundcheck-linux-arm-builder:local\n    working_dir: /workspace\n    environment:\n      CARGO_NET_OFFLINE: 'true'\n    volumes:\n    - '{{ repo_root }}:/workspace/soundcheck'\n    - '{{ repo_root }}/vendor:/workspace/soundcheck/vendor:ro'\n    - '{{ repo_root }}/infra/linux-arm/cargo-vendor.config.toml:/usr/local/cargo/config.toml:ro'\n    - '{{ repo_root }}/../soundcheck-library:/workspace/soundcheck-library'\n    - '{{ repo_root }}/../longhorn:/workspace/longhorn'\n    - '{{ project_name }}-linux-arm-target-soundcheck:/workspace/soundcheck/target'\n    - '{{ project_name }}-linux-arm-target-library:/workspace/soundcheck-library/target'\n    - '{{ project_name }}-linux-arm-cargo-registry:/usr/local/cargo/registry'"
     );
-    assert!(compose.contains("'{{ repo_root }}/vendor:/workspace/soundcheck/vendor:ro'"));
-    assert!(
-        compose.contains("'{{ repo_root }}/../soundcheck-library:/workspace/soundcheck-library'")
-    );
-    assert!(compose.contains("'{{ repo_root }}/infra/linux-arm/cargo-vendor.config.toml:/usr/local/cargo/config.toml:ro'"));
     let manifest = std::fs::read_to_string(checkout.root.join("effigy.toml")).unwrap();
     assert!(manifest.contains("[containers.\"linux-arm\".services.builder]"));
     assert!(manifest.contains("[systems.linux-arm]"));
@@ -329,7 +324,15 @@ fn migration_plan_requires_a_compose_file_declaration() {
     let error = crate::with_test_effigy_home(&checkout.home, || {
         plan_migration(&checkout.root, Some("dev")).unwrap_err()
     });
-    assert!(error.to_string().contains("nothing to migrate"), "{error}");
+    match error {
+        ContainerPolicyError::TaskInvocation(message) => {
+            assert_eq!(
+                message,
+                "container `dev` does not declare `compose_file`; nothing to migrate"
+            );
+        }
+        other => panic!("expected refusal, got {other}"),
+    }
 }
 
 #[test]
