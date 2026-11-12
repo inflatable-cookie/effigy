@@ -160,32 +160,26 @@ fn registered_non_tld_aaaa_returns_noerror_not_refused() {
     // record, bypassing the local gateway. Returning NoError-with-no-
     // answers keeps the lookup pinned to us.
     let config = test_config();
-    let table = route_table_with("dev.cumberland.co.uk");
-    let query = build_query("dev.cumberland.co.uk.", RecordType::AAAA);
+    for domain in ["dev.cumberland.co.uk", "myapp.test"] {
+        let table = route_table_with(domain);
+        let query = build_query(&format!("{domain}."), RecordType::AAAA);
 
-    let cache = DnsCache::new(Duration::from_secs(2));
-    let (response_bytes, _) = handle_dns_query(&query, &config, &table, &cache);
-    let response = Message::from_bytes(&response_bytes.unwrap()).unwrap();
+        let cache = DnsCache::new(Duration::from_secs(2));
+        let (response_bytes, resolved) = handle_dns_query(&query, &config, &table, &cache);
+        assert!(
+            !resolved,
+            "AAAA query for {domain} should not count as resolved"
+        );
+        let response = Message::from_bytes(&response_bytes.unwrap()).unwrap();
 
-    assert_eq!(response.metadata.response_code, ResponseCode::NoError);
-    assert_eq!(response.answers.len(), 0);
-}
-
-#[test]
-fn ignores_non_a_queries() {
-    let config = test_config();
-    let table = route_table_with("myapp.test");
-    let query = build_query("myapp.test.", RecordType::AAAA);
-
-    let cache = DnsCache::new(Duration::from_secs(2));
-    let (response_bytes, resolved) = handle_dns_query(&query, &config, &table, &cache);
-    assert!(!resolved, "AAAA query should not count as resolved");
-    let response = Message::from_bytes(&response_bytes.unwrap()).unwrap();
-
-    // AAAA query for .test domain — no A answers, but NoError
-    // (not Refused) to prevent slow dual-stack browser lookups.
-    assert_eq!(response.metadata.response_code, ResponseCode::NoError);
-    assert_eq!(response.answers.len(), 0);
+        // NoError with no answers prevents dual-stack clients falling back upstream.
+        assert_eq!(
+            response.metadata.response_code,
+            ResponseCode::NoError,
+            "{domain}"
+        );
+        assert!(response.answers.is_empty(), "{domain}");
+    }
 }
 
 #[test]
@@ -206,7 +200,7 @@ fn response_preserves_query_id() {
 /// A cached answer keeps both halves of what the lookup decided: whether the
 /// name resolved, and the route's own DNS address when it declares one.
 #[test]
-fn cache_stores_and_retrieves_the_answer_and_its_route_address() {
+fn cache_preserves_answers_clears_and_expires_entries() {
     let cache = DnsCache::new(Duration::from_secs(60));
     assert!(cache.get("myapp.test").is_none());
 
@@ -228,15 +222,20 @@ fn cache_stores_and_retrieves_the_answer_and_its_route_address() {
     for (domain, _, _) in cases {
         assert!(cache.get(domain).is_none(), "cleared {domain}");
     }
-}
 
-#[test]
-fn cache_expires() {
-    let cache = DnsCache::new(Duration::from_millis(1));
-    cache.put("myapp.test".to_string(), true, None);
-
-    std::thread::sleep(Duration::from_millis(10));
-    assert!(cache.get("myapp.test").is_none());
+    let expired_cache = DnsCache::new(Duration::from_millis(1));
+    expired_cache.put("myapp.test".to_string(), true, None);
+    let expired_at = std::time::Instant::now()
+        .checked_sub(Duration::from_millis(2))
+        .expect("test process has run longer than the cache TTL");
+    expired_cache
+        .entries
+        .lock()
+        .expect("cache lock")
+        .get_mut("myapp.test")
+        .expect("inserted cache entry")
+        .cached_at = expired_at;
+    assert!(expired_cache.get("myapp.test").is_none());
 }
 
 /// A route's own DNS address never outlives its route: a reload clears the

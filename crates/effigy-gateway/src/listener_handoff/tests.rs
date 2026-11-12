@@ -167,33 +167,12 @@ fn listener_handoff_adopts_real_listening_loopback_sockets() {
             "adopted descriptor must be close-on-exec"
         );
     }
-}
-
-/// Adopted listeners convert to tokio listeners without losing acceptance.
-#[test]
-fn listener_handoff_adopted_listeners_convert_to_tokio() {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("tokio runtime");
     runtime.block_on(async move {
-        let (http_listener, http_addr) = listening_socket();
-        let (https_listener, https_addr) = listening_socket();
-        let specs = [
-            spec(HANDOFF_HTTP_SOCKET_NAME, http_addr),
-            spec(HANDOFF_HTTPS_SOCKET_NAME, https_addr),
-        ];
-        let activated = [
-            (HANDOFF_HTTP_SOCKET_NAME, vec![into_owned_fd(http_listener)]),
-            (
-                HANDOFF_HTTPS_SOCKET_NAME,
-                vec![into_owned_fd(https_listener)],
-            ),
-        ];
-        let listeners = validate_and_adopt(&specs, &activated, &operator_identity())
-            .expect("adoption")
-            .into_tokio()
-            .expect("tokio conversion");
+        let listeners = listeners.into_tokio().expect("tokio conversion");
         let connect = tokio::net::TcpStream::connect(http_addr)
             .await
             .expect("connect");
@@ -468,11 +447,7 @@ fn listener_handoff_production_adoption_refuses_outside_launchd() {
         .map(|spec| spec.endpoint.port())
         .collect();
     assert_eq!(endpoints, vec![80, 443]);
-}
 
-/// The daemon refuses handoff startup outside launchd and publishes no record.
-#[test]
-fn listener_handoff_daemon_startup_refuses_without_launchd_and_writes_no_record() {
     let fixture = tempfile::tempdir().expect("fresh listener-handoff fixture");
     let config = crate::server::GatewayConfig::standard(fixture.path().to_path_buf())
         .with_listener_handoff(true);
@@ -480,15 +455,14 @@ fn listener_handoff_daemon_startup_refuses_without_launchd_and_writes_no_record(
         .enable_all()
         .build()
         .expect("tokio runtime");
-    let error = runtime
-        .block_on(crate::server::run_operator_gateway(
-            config,
-            effigy_kernel::ctx::CancelToken::default(),
-        ))
-        .expect_err("handoff adoption must refuse outside launchd");
-    let crate::error::GatewayError::ListenerHandoff(_) = &error else {
-        panic!("expected a listener handoff refusal, got {error:?}");
-    };
+    let startup = runtime.block_on(crate::server::run_operator_gateway(
+        config,
+        effigy_kernel::ctx::CancelToken::default(),
+    ));
+    assert!(matches!(
+        startup,
+        Err(crate::error::GatewayError::ListenerHandoff(_))
+    ));
     assert!(
         !fixture.path().join("gateway.pid").exists(),
         "a refused handoff start must not publish a generation record"

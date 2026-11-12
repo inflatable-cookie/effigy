@@ -938,17 +938,10 @@ fn guarded_effect_failure_retains_exact_gate_free_custody(case: &str) {
     not(feature = "workspace-private-qualification"),
     ignore = "production private apply remains refused; qualified route owns this proof"
 )]
-fn actual_late_revalidation_failure_unwinds_outside_env_and_retains_unknown() {
-    guarded_effect_failure_retains_exact_gate_free_custody("delay_final_revalidation");
-}
-
-#[test]
-#[cfg_attr(
-    not(feature = "workspace-private-qualification"),
-    ignore = "production private apply remains refused; qualified route owns this proof"
-)]
-fn actual_phase_b_publication_failure_unwinds_outside_env_and_retains_unknown() {
-    guarded_effect_failure_retains_exact_gate_free_custody("fail_publication");
+fn actual_late_failures_unwind_outside_env_and_retain_unknown() {
+    for fault in ["delay_final_revalidation", "fail_publication"] {
+        guarded_effect_failure_retains_exact_gate_free_custody(fault);
+    }
 }
 
 #[test]
