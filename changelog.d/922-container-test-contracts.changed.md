@@ -1,0 +1,1 @@
+Container tests group adjacent progress-frame cases under shared contract entries, exercise shell and exec handoff-local behavior through one host-probe fixture, and assert the complete staged-identity refusal reason.

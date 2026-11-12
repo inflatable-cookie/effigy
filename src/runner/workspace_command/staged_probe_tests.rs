@@ -445,10 +445,13 @@ fn identity_refuses_a_reply_from_another_executable() {
         reply["executable"] = other.clone();
         backend.respond(&reply);
         let mut probe = backend.linked_probe(&policy);
-        let reason = observed_unknown(&probe.identity(&claimed(), &staged, Duration::from_secs(5)));
-        assert!(
-            reason.contains("another executable than the pinned object"),
-            "{reason}"
+        assert_unknown(
+            probe.identity(&claimed(), &staged, Duration::from_secs(5)),
+            |reason| matches!(
+                reason,
+                UnknownReason::Inconsistent(message)
+                    if message == "the staged guest ran another executable than the pinned object"
+            ),
         );
     }
     assert_eq!(backend.spawns(), 2, "each refusal is one observation");
