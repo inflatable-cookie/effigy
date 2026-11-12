@@ -1343,6 +1343,15 @@ terms = [
 # The workspace builder still labels generations/fences on its own
 # containers (crates/effigy-containers/src/exec/implementation.rs), so those
 # label spellings no longer trip this entry; the journal paths still do.
+# Reviewed compatibility reads (effigy#728, contract 006): never-started
+# Created-builder recovery reads `com.effigy.checkout-generation` (the
+# checkout root's device and inode) and `com.effigy.checkout-fence` (device
+# only; the fence inode is not re-derivable) from a builder this checkout
+# created and never started. Those reads establish recovery metadata only:
+# they never revive this journal, grant a running binding or lease a fence.
+# The reads are implemented and exercised in
+# crates/effigy-containers/src/exec/implementation.rs and
+# src/runner/workspace_command/tests/builder_recovery.rs.
 paths = [
   "crates/effigy-containers/src/runtime/scope/journal.rs",
   "crates/effigy-containers/src/runtime/scope/",
