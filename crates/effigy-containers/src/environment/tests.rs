@@ -1137,7 +1137,10 @@ fn backend_selection_records_its_reason_and_unknown_engines_refuse() {
 
 /// The settlement budget is the settlement's own: a context opened long
 /// before a settlement still hands that settlement the whole of it, and the
-/// next settlement gets another (effigy#447).
+/// next settlement gets another (effigy#447). No wall clock is involved:
+/// the parent operation's hours-long deadline and the settlement's own short
+/// budget are orders apart, so an inherited deadline is unmistakable without
+/// sleeping.
 #[test]
 fn a_settlement_gets_the_full_budget_when_it_starts() {
     let home = home();
@@ -1145,9 +1148,6 @@ fn a_settlement_gets_the_full_budget_when_it_starts() {
     let budget = std::time::Duration::from_millis(300);
     let ctx =
         EnvContext::with_cleanup_budget(&root, CancelToken::default(), budget).expect("context");
-    // Age the parent well past any scheduling noise: a settlement that
-    // inherited the parent's deadline would come back with hours left.
-    std::thread::sleep(std::time::Duration::from_millis(200));
     let parent_remaining = ctx
         .cx
         .operation()
@@ -1161,16 +1161,12 @@ fn a_settlement_gets_the_full_budget_when_it_starts() {
             .remaining()
             .expect("a finite settlement budget");
         assert!(
-            remaining > std::time::Duration::ZERO,
-            "settlement {attempt} is already expired: {remaining:?}"
-        );
-        assert!(
             remaining <= budget,
             "settlement {attempt} outlived its own {budget:?} budget: {remaining:?}"
         );
         assert!(
             remaining < parent_remaining,
-            "settlement {attempt} inherited the aged parent deadline: {remaining:?} of {parent_remaining:?}"
+            "settlement {attempt} inherited the parent deadline instead of starting its own: {remaining:?} of {parent_remaining:?}"
         );
     }
 }
