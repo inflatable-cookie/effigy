@@ -19,6 +19,8 @@ use std::time::{Duration, SystemTime};
 use rustls::server::{ClientHello, ResolvesServerCert};
 use rustls::sign::CertifiedKey;
 
+use effigy_core::shell::shell_quote;
+
 use crate::error::GatewayError;
 
 /// How long a certificate whose domain no route names stays cached before the
@@ -769,14 +771,6 @@ fn macos_mkcert_ca_installed() -> bool {
             .map(|status| status.success())
             .unwrap_or(false)
     })
-}
-
-#[cfg(target_os = "macos")]
-fn shell_quote(value: &str) -> String {
-    if value.is_empty() {
-        return "''".to_owned();
-    }
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 fn format_command_output(stdout: &[u8], stderr: &[u8]) -> String {

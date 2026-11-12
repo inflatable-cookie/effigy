@@ -39,8 +39,7 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(20);
 const GRACE: Duration = Duration::from_secs(3);
 /// After a forwarded stop, how long the session gets to exit by itself.
 const SIGNAL_EXIT_BUDGET: Duration = Duration::from_secs(10);
-/// JSON output keeps this much of each stream, newest bytes last.
-const CAPTURE_TAIL: usize = 8 << 20;
+use super::tail::Tail;
 const POLL: Duration = Duration::from_millis(20);
 /// A concurrent environment run between reading the fence and the intent:
 /// the intent is refused cleanly and re-read, as an attach retries.
@@ -472,21 +471,6 @@ fn launch_error(label: &str, error: &str) -> RunnerError {
     RunnerError::TaskCommandLaunch {
         command: format!("{label} (container)"),
         error: std::io::Error::other(error.to_owned()),
-    }
-}
-
-/// A bounded capture that keeps the newest bytes.
-#[derive(Default)]
-struct Tail {
-    bytes: Vec<u8>,
-}
-impl Tail {
-    fn push(&mut self, chunk: &[u8]) {
-        self.bytes.extend_from_slice(chunk);
-        if self.bytes.len() > CAPTURE_TAIL {
-            let excess = self.bytes.len() - CAPTURE_TAIL;
-            self.bytes.drain(..excess);
-        }
     }
 }
 

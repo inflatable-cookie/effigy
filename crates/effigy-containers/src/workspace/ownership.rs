@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::{ContainerPolicyError, EffectiveContainerPolicy};
+use crate::{
+    looks_like_bind_mount_source, parse_mount_parts, ContainerPolicyError,
+    EffectiveContainerPolicy,
+};
 
 /// How a workspace path is mounted into the primary service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -319,31 +322,11 @@ pub fn rust_cache_kind(path: &str, source: Option<&str>) -> Option<WorkspaceRust
     None
 }
 
-fn parse_mount_parts(mount: &str) -> Option<(&str, &str, Option<&str>)> {
-    let mut parts = mount.splitn(3, ':');
-    let source = parts.next()?.trim();
-    let target = parts.next()?.trim();
-    if source.is_empty() || target.is_empty() {
-        return None;
-    }
-    let options = parts.next().map(str::trim);
-    Some((source, target, options))
-}
-
 fn options_are_read_only(options: &str) -> bool {
     options
         .split(',')
         .map(str::trim)
         .any(|part| part == "ro" || part == "readonly")
-}
-
-fn looks_like_bind_mount_source(source: &str) -> bool {
-    source.starts_with('/')
-        || source.starts_with("./")
-        || source.starts_with("../")
-        || source == "."
-        || source == ".."
-        || source.contains('/')
 }
 
 fn compose_external_volume_names(parsed: &serde_yaml::Value) -> std::collections::BTreeSet<String> {

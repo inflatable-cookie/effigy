@@ -4,7 +4,7 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 use ignore::WalkBuilder;
 
 use super::super::ScanError;
-use super::paths::normalize_rel_path;
+use super::paths::rel_path_str;
 
 pub fn compile_glob_set(patterns: &[String], label: &str) -> Result<Option<GlobSet>, ScanError> {
     if patterns.is_empty() {
@@ -64,10 +64,10 @@ where
 
     for entry in walk.build() {
         let entry = entry.map_err(|error| {
-            ScanError::invocation(format!(
-                "scan walk failed under {}: {error}",
-                root.display()
-            ))
+            // A walk entry that cannot be produced (unreadable directory,
+            // broken traversal) is a typed read failure naming the walk
+            // root plus the underlying error, never a bare label.
+            ScanError::read_failed(root.display(), error)
         })?;
         if !entry
             .file_type()
@@ -86,7 +86,7 @@ where
         }
 
         let rel = path.strip_prefix(root).unwrap_or(path);
-        let rel_str = normalize_rel_path(rel);
+        let rel_str = rel_path_str(rel)?;
         if rel_str.is_empty() || should_skip(rel, &rel_str, include.as_ref(), exclude.as_ref()) {
             continue;
         }
@@ -95,4 +95,34 @@ where
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_walk_root_is_a_typed_read_failure() {
+        // A walk root that cannot even be listed must fail closed as a
+        // typed `ReadFailed` naming the root, never a bare label.
+        let missing = Path::new("/definitely/not/here/effigy-scan-walk-test");
+        let error = walk_scan_files(
+            missing,
+            &[],
+            false,
+            &[],
+            &[],
+            |_, _, _, _| false,
+            |_, _, _| Ok(()),
+        )
+        .expect_err("missing walk root must fail");
+        assert!(
+            matches!(error, ScanError::ReadFailed { .. }),
+            "got: {error}"
+        );
+        assert!(
+            error.to_string().contains("effigy-scan-walk-test"),
+            "got: {error}"
+        );
+    }
 }

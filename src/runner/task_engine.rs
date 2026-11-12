@@ -21,6 +21,7 @@ mod legacy;
 mod process;
 mod remote;
 mod run;
+mod tail;
 mod spawn_env;
 mod status;
 

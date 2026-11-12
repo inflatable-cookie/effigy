@@ -254,7 +254,7 @@ impl BuiltinRuntimePorts for RunnerBuiltinPorts<'_> {
             .map(|scope| TaskRun::exclusive(workspace_root, &scope.label(), 0))
             .collect::<Result<Vec<_>, _>>()
             .map_err(runner_to_builtin)?;
-        Ok(BuiltinLockGuards::new(runs))
+        Ok(BuiltinLockGuards::new(scopes, runs))
     }
 
     fn current_working_dir(&self) -> Result<PathBuf, BuiltinError> {

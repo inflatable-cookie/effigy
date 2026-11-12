@@ -139,11 +139,11 @@ pub fn run_doctor_scan_inventory(
                     return Ok(());
                 }
             }
+            // Byte-walk read: unreadable files are a typed read failure.
+            // Non-UTF-8 bytes are not a refusal here; `analyze_file`
+            // observes them as binary below.
             let bytes = std::fs::read(path).map_err(|error| {
-                ScanError::invocation(format!(
-                    "doctor inventory read failed for {}: {error}",
-                    path.display()
-                ))
+                ScanError::read_failed(path.display(), error)
             })?;
             let identity = clean_git_identity.unwrap_or_else(|| content_identity(&bytes));
             if let Some(cached) = cached_files
@@ -226,9 +226,32 @@ fn analyze_file(
     identity: String,
     options: &PreparedOptions,
 ) -> Observation {
-    let contents = String::from_utf8_lossy(bytes);
-    let generated = is_generated_artifact(rel, &contents);
-    let lines = normalized_code_lines(rel, &contents);
+    // Non-UTF-8 files are binary for the code scanners: they carry no
+    // code lines and never match generated-content markers, instead of
+    // silently scanning replacement characters. `walk_text_scan_files`
+    // (the text-scan path) still reports unreadable/non-UTF-8 files as a
+    // typed `ScanError`; this loss-free branch only applies to the doctor
+    // inventory's byte walk, which must observe every file.
+    let Ok(contents) = std::str::from_utf8(bytes) else {
+        let stub = Observation {
+            rel_str: rel_str.to_owned(),
+            identity,
+            bytes: bytes.len(),
+            generated: false,
+            code_lines: 0,
+            total_lines: 0,
+            god_file_eligible: false,
+            duplicate_eligible: false,
+            normalized_lines: Vec::new(),
+        };
+        return Observation {
+            god_file_eligible: !options.god_files.skips_code(&stub),
+            duplicate_eligible: !options.duplicate_blocks.skips_code(&stub),
+            ..stub
+        };
+    };
+    let generated = is_generated_artifact(rel, contents);
+    let lines = normalized_code_lines(rel, contents);
     let stub = Observation {
         rel_str: rel_str.to_owned(),
         identity,
@@ -280,7 +303,7 @@ impl CacheOwner {
     fn directory_name(&self) -> String {
         let mut hasher = Sha256::new();
         hasher.update(self.scope_root.as_bytes());
-        let digest = hex_digest(hasher.finalize().as_slice());
+        let digest = hex::encode(hasher.finalize().as_slice());
         let alias = self
             .alias
             .chars()
@@ -309,7 +332,7 @@ fn config_identity(
         hasher.update(root.to_string_lossy().as_bytes());
     }
     hasher.update(format!("\0{options:?}").as_bytes());
-    format!("sha256:{}", hex_digest(hasher.finalize().as_slice()))
+    format!("sha256:{}", hex::encode(hasher.finalize().as_slice()))
 }
 
 fn content_identity(bytes: &[u8]) -> String {
@@ -317,12 +340,8 @@ fn content_identity(bytes: &[u8]) -> String {
     hasher.update(bytes);
     format!(
         "content:sha256:{}",
-        hex_digest(hasher.finalize().as_slice())
+        hex::encode(hasher.finalize().as_slice())
     )
-}
-
-fn hex_digest(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn load_cache(
@@ -1064,7 +1083,7 @@ impl Drop for OwnedGitChild {
 }
 
 fn git_budget_error() -> ScanError {
-    ScanError::invocation("doctor scan budget exhausted during git identity probe")
+    ScanError::budget_exhausted("git identity probe")
 }
 
 #[cfg(unix)]
@@ -1194,9 +1213,7 @@ fn enabled_gitignore_postures(
 
 fn ensure_budget(deadline: Option<Instant>) -> Result<(), ScanError> {
     if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-        return Err(ScanError::invocation(
-            "doctor scan budget exhausted during inventory",
-        ));
+        return Err(ScanError::budget_exhausted("inventory"));
     }
     Ok(())
 }
@@ -1655,8 +1672,53 @@ mod tests {
             Some(Instant::now()),
         )
         .expect_err("deadline should fail");
+        assert!(error.is_budget_exhausted(), "{error}");
         assert!(error.to_string().contains("budget exhausted"));
         assert!(!cache_paths(root, "root", root).current.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_inventory_file_is_a_typed_read_failure() {
+        // The byte walk lists the permissionless file, so its read fails
+        // with `PermissionDenied`: typed `ReadFailed`, not a generic string.
+        // Root can read anything, so only assert when the read refuses.
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let path = root.join("secret.rs");
+        std::fs::write(&path, b"fn secret() {}\n").expect("write");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000))
+            .expect("chmod");
+        if std::fs::read(&path).is_err() {
+            let options = options();
+            let error = run_doctor_scan_inventory(root, "root", root, &[], &options, true, None)
+                .expect_err("unreadable inventory file must fail");
+            assert!(
+                matches!(error, ScanError::ReadFailed { .. }),
+                "got: {error}"
+            );
+            assert!(error.to_string().contains("secret.rs"), "got: {error}");
+        }
+    }
+
+    #[test]
+    fn non_utf8_file_is_binary_not_lossy_text() {
+        // Non-UTF-8 bytes must not be scanned as replacement characters:
+        // the observation carries no code lines and no generated flag from
+        // content markers.
+        let rel = std::path::Path::new("src/binary.rs");
+        let bytes = vec![0xff, 0xfe, 0x62, 0x79, 0x74, 0x65, 0x73];
+        let prepared = PreparedOptions {
+            god_files: Filter::new(&[], &[]).expect("filter"),
+            duplicate_blocks: Filter::new(&[], &[]).expect("filter"),
+        };
+        let observation = analyze_file(rel, "src/binary.rs", &bytes, "id".to_owned(), &prepared);
+        assert_eq!(observation.bytes, bytes.len());
+        assert_eq!(observation.code_lines, 0);
+        assert_eq!(observation.total_lines, 0);
+        assert!(!observation.generated);
+        assert!(observation.normalized_lines.is_empty());
     }
 
     #[cfg(all(unix, test))]

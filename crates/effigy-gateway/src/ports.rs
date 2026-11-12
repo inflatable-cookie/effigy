@@ -20,10 +20,10 @@ const STABLE_BASE: u16 = 20000;
 const STABLE_SPAN: u16 = 1000;
 
 /// Lowercase hex SHA-256 digest, used for render digests and evidence.
+/// Single hashing owner is `effigy_core::git_source::sha256_hex`; this stays
+/// as a same-crate alias so existing call sites keep compiling.
 pub fn sha256_hex(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    hex::encode(hasher.finalize())
+    effigy_core::git_source::sha256_hex(bytes)
 }
 
 /// A stable host port for `owner`'s `container_port` binding.

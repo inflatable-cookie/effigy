@@ -14,7 +14,7 @@ use effigy_containers::{
 use effigy_containers::{ContainerAction, ContainerComposeInvocationPlan};
 use effigy_core::shell::shell_quote;
 use effigy_ui::theme::{resolve_color_enabled, Theme};
-use effigy_ui::OutputMode;
+use effigy_ui::{style_text, OutputMode};
 
 use crate::EffigyRuntimeError;
 use exec_args::build_interactive_container_shell_args;
@@ -432,13 +432,6 @@ fn emit_warning_lines(warnings: &[String]) {
     for warning in warnings {
         eprintln!("[warn] {warning}");
     }
-}
-
-fn style_text(enabled: bool, style: anstyle::Style, text: &str) -> String {
-    if !enabled {
-        return text.to_owned();
-    }
-    format!("{}{}{}", style.render(), text, style.render_reset())
 }
 
 #[cfg(test)]

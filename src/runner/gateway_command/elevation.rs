@@ -10,6 +10,8 @@ use std::{
     process::{Child, Output},
 };
 
+use effigy_core::shell::shell_quote;
+
 use crate::runner::error::RunnerError;
 
 use super::GATEWAY_ESCALATED_ENV;
@@ -391,14 +393,6 @@ fn stop_owned_gateway_command(child: &mut Child) {
 #[cfg(target_os = "macos")]
 fn apple_script_escape(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
-#[cfg(target_os = "macos")]
-fn shell_quote(value: &str) -> String {
-    if value.is_empty() {
-        return "''".to_owned();
-    }
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 #[cfg(test)]

@@ -6,14 +6,15 @@ use effigy_core::widgets::{KeyValue, NoticeLevel};
 use effigy_manifest::{LoadedCatalog, ManifestTask, ManifestTaskVisibility};
 use effigy_ui::theme::Theme;
 use effigy_ui::{
-    encode_json, plain_renderer, render_utf8, text_color_enabled, PlainRenderer, Renderer,
+    encode_json, plain_renderer, render_utf8, style_text, text_color_enabled, PlainRenderer,
+    Renderer,
 };
 use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::view::{
     catalog_task_label, managed_profile_display_rows, relative_display_path,
-    render_resolution_probe_block, style_text, task_run_preview, ManagedProfileDisplayRow,
+    render_resolution_probe_block, task_run_preview, ManagedProfileDisplayRow,
 };
 use crate::{EffigyTasksError, TaskSelector};
 
