@@ -91,6 +91,10 @@ pub fn take_pending() -> Vec<String> {
 /// so a manifest that composes more than once still says it once. The warning
 /// is always collected for the envelope as well as printed, because routing
 /// may load a manifest before the invocation has decided it is a JSON one.
+///
+/// A nested invocation keeps the same contract as the retired-config notice:
+/// its parent already spoke for the checkout, so stderr stays quiet. The
+/// envelope still carries the warning when the child asked for `--json`.
 pub fn warn(message: impl Into<String>) {
     let message = message.into();
     let mut ledger = lock_ledger();
@@ -98,7 +102,7 @@ pub fn warn(message: impl Into<String>) {
         return;
     }
     ledger.pending.push(message.clone());
-    if ledger.delivery != RetiredNoticeDelivery::JsonEnvelope {
+    if ledger.delivery != RetiredNoticeDelivery::JsonEnvelope && !is_nested_invocation() {
         eprintln!("{message}");
     }
 }

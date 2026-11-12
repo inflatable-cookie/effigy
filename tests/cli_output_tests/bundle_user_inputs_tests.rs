@@ -66,6 +66,10 @@ default = "8.4"
     }
 
     fn run(&self, args: &[&str]) -> Output {
+        self.run_with_env(args, &[])
+    }
+
+    fn run_with_env(&self, args: &[&str], extra: &[(&str, &str)]) -> Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
         command
             .args(args)
@@ -76,6 +80,9 @@ default = "8.4"
             .env_remove("EFFIGY_NO_LOCAL_OVERLAY")
             .env_remove("EFFIGY_WORKSPACE_CONTAINER")
             .env_remove("EFFIGY_CONTAINER_HANDOFF");
+        for (name, value) in extra {
+            command.env(name, value);
+        }
         command.output_owned().expect("run effigy")
     }
 }
@@ -173,6 +180,54 @@ fn config_inspect_leaves_bundle_inputs_null_without_a_bundle() {
     assert!(
         json["result"]["bundle_inputs"].is_null(),
         "no bundle means no bundle input report: {json}"
+    );
+}
+
+/// A nested Effigy invocation stays quiet on stderr, the same contract the
+/// retired-config notice keeps: its parent already spoke for the checkout.
+#[test]
+fn a_nested_invocation_keeps_the_warning_off_stderr() {
+    let fixture = Fixture::new("bundle-user-inputs-nested", "decodelabs");
+    fixture.write_user_config(
+        r#"
+[bundle.decodelabs]
+inputs = { php_versoin = "8.5" }
+"#,
+    );
+    let nested = fixture.run_with_env(
+        &["config", "inspect"],
+        &[("EFFIGY_INTERNAL_SUPPRESS_HEADER", "1")],
+    );
+    let stdout = stdout_of(&nested);
+    let stderr = stderr_of(&nested);
+    assert!(
+        !stderr.contains("php_versoin"),
+        "a nested invocation repeated the warning on stderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("- php_version = 8.4 (bundle default)"),
+        "the report itself is unchanged: {stdout}"
+    );
+
+    // A nested child that asked for `--json` still reports it in its own
+    // envelope: the marker hides human furniture, not the machine contract.
+    let json = fixture.run_with_env(
+        &["config", "inspect", "--json"],
+        &[("EFFIGY_INTERNAL_SUPPRESS_HEADER", "1")],
+    );
+    assert!(
+        json.status.success(),
+        "nested json command failed: {}",
+        String::from_utf8_lossy(&json.stderr)
+    );
+    let json = parse_stdout_json(&json);
+    assert!(
+        json["warnings"]
+            .as_array()
+            .is_some_and(|warnings| warnings.iter().any(|warning| warning
+                .as_str()
+                .is_some_and(|text| text.contains("php_versoin")))),
+        "nested json envelope kept its warning: {json}"
     );
 }
 
