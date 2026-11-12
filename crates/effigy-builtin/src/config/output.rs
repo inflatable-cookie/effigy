@@ -203,7 +203,9 @@ fn render_inspect_payload(
     let text = render_manifest_inspection(
         target_root,
         &loaded,
-        selected_view(selected.as_ref(), selected_rendered.as_deref()),
+        // The selected path and its one rendering travel together, so a value
+        // that cannot be rendered never reaches either surface.
+        selected.as_ref().zip(selected_rendered.as_deref()),
     )?;
     let evaluation_order = loaded
         .evaluation_order
@@ -269,26 +271,27 @@ fn render_inspect_payload(
                 })
             }),
             selected_path,
-            selected_value: match (selected.as_ref(), selected_rendered.as_deref()) {
-                (Some(entry), Some(rendered)) => Some(json!({
-                    "path": entry.path,
-                    "source": display_path(&entry.source, target_root),
-                    "value": toml_value_to_json(&entry.value),
-                    "rendered": rendered,
-                    "overrides": entry
-                        .overrides
-                        .iter()
-                        .map(|override_entry| {
-                            json!({
-                                "path": override_entry.path,
-                                "replaced_source": display_path(&override_entry.replaced_source, target_root),
-                                "by_fragment": display_path(&override_entry.by_fragment, target_root),
+            selected_value: selected.as_ref().zip(selected_rendered.as_deref()).map(
+                |(entry, rendered)| {
+                    json!({
+                        "path": entry.path,
+                        "source": display_path(&entry.source, target_root),
+                        "value": toml_value_to_json(&entry.value),
+                        "rendered": rendered,
+                        "overrides": entry
+                            .overrides
+                            .iter()
+                            .map(|override_entry| {
+                                json!({
+                                    "path": override_entry.path,
+                                    "replaced_source": display_path(&override_entry.replaced_source, target_root),
+                                    "by_fragment": display_path(&override_entry.by_fragment, target_root),
+                                })
                             })
-                        })
-                        .collect::<Vec<_>>(),
-                })),
-                _ => None,
-            },
+                            .collect::<Vec<_>>(),
+                    })
+                },
+            ),
         }),
     )
 }
@@ -590,22 +593,10 @@ impl ConfigPayload {
     }
 }
 
-/// A selected path and the one rendering of its value both surfaces show.
-/// They are resolved together, so a value that cannot be rendered never
-/// reaches either form.
-type SelectedView<'a> = Option<(&'a SelectedInspectValue, &'a str)>;
-
-fn selected_view<'a>(
-    selected: Option<&'a SelectedInspectValue>,
-    rendered: Option<&'a str>,
-) -> SelectedView<'a> {
-    selected.zip(rendered)
-}
-
 fn render_manifest_inspection(
     target_root: &Path,
     loaded: &effigy_manifest::LoadedTaskManifest,
-    selected: SelectedView<'_>,
+    selected: Option<(&SelectedInspectValue, &str)>,
 ) -> Result<String, BuiltinError> {
     let mut out = String::new();
     out.push_str("Manifest Composition\n");

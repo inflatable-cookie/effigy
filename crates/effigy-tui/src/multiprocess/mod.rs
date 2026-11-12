@@ -64,9 +64,10 @@ impl SessionEntryState {
     /// supervisor reported. A session that keeps a typed record reports that
     /// record instead, so a stop it caused is never read as a failure.
     ///
-    /// This is the one place a display record is decoded. A producer that
-    /// already holds the typed exit attaches it with [`Self::with_exit`]
-    /// instead of formatting it into a record for a consumer to parse back.
+    /// This is the one place a display record is decoded, and only a text
+    /// protocol needs it: a producer that already holds the typed exit reports
+    /// [`Self::from_exit_code`], so no consumer parses a record back into a
+    /// status.
     pub fn from_record(record: &str) -> Self {
         let record = record.trim();
         if record == "exit=0" {
@@ -118,19 +119,6 @@ impl SessionEntryState {
         match self {
             Self::Failed { exit, .. } => *exit,
             _ => None,
-        }
-    }
-
-    /// Carry a typed exit the producer observed onto a failure state, so a
-    /// consumer reads it instead of the display record. A state that already
-    /// holds one, or that is not a failure, keeps its own verdict.
-    pub fn with_exit(self, code: Option<i32>) -> Self {
-        match (self, code) {
-            (Self::Failed { detail, exit: None }, Some(code)) => Self::Failed {
-                detail,
-                exit: Some(code),
-            },
-            (state, _) => state,
         }
     }
 }

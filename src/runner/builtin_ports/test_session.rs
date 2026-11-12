@@ -63,68 +63,58 @@ struct Entry {
     exit: Option<EntryExit>,
 }
 
-/// How one attempt ended, as this session observed it.
+/// How one attempt ended, as this session observed it. Each variant carries
+/// the fact this session observed; the record the tab shows is rendered from
+/// it, so no consumer decodes display text back into a status.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum EntryExit {
-    /// The suite itself reported this exit status.
-    Reported(ReportedExit),
+    /// The suite itself reported this exit status and the run journal
+    /// recorded it.
+    Recorded(i32),
+    /// The suite itself reported this exit status, but recording it in the run
+    /// journal failed: the attempt is a failure and the code was still
+    /// observed.
+    Unrecorded { code: i32, error: String },
+    /// The attempt ended without a status this session could read, for the
+    /// reason it names (a timeout, a start failure, a settle error).
+    Unread(String),
+    /// The attempt never started.
+    NotStarted,
     /// The session ended the suite: it never reported its own status, so the
     /// attempt is a cancellation rather than a failure.
     Stopped,
 }
 
-/// One attempt's own reported result: the record the tab shows and, when this
-/// session observed it, the typed exit status behind that record. A verified
-/// wait whose run-journal recording failed still observed its code, so the
-/// code travels beside the record instead of being dropped with it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ReportedExit {
-    record: String,
-    exit: Option<i32>,
-}
-
-impl ReportedExit {
-    fn reported(record: impl Into<String>) -> Self {
-        Self {
-            record: record.into(),
-            exit: None,
-        }
-    }
-
-    fn exited(code: i32) -> Self {
-        Self {
-            record: format!("exit={code}"),
-            exit: Some(code),
-        }
-    }
-
-    fn unrecorded(code: i32, error: impl std::fmt::Display) -> Self {
-        Self {
-            record: format!("unrecorded exit: {error}"),
-            exit: Some(code),
-        }
-    }
-}
-
 impl EntryExit {
-    fn record(&self) -> &str {
+    fn record(&self) -> String {
         match self {
-            Self::Reported(reported) => &reported.record,
-            Self::Stopped => "stopped by the session",
+            Self::Recorded(code) => format!("exit={code}"),
+            Self::Unrecorded { error, .. } => format!("unrecorded exit: {error}"),
+            Self::Unread(reason) => reason.clone(),
+            Self::NotStarted => "not started".to_owned(),
+            Self::Stopped => "stopped by the session".to_owned(),
         }
     }
 
     fn state(&self) -> SessionEntryState {
         match self {
-            Self::Reported(reported) => {
-                SessionEntryState::from_record(&reported.record).with_exit(reported.exit)
-            }
+            Self::Recorded(0) => SessionEntryState::Passed,
+            Self::Recorded(code) | Self::Unrecorded { code, .. } => SessionEntryState::Failed {
+                detail: self.record(),
+                exit: Some(*code),
+            },
+            Self::Unread(_) => SessionEntryState::Failed {
+                detail: self.record(),
+                exit: None,
+            },
+            Self::NotStarted => SessionEntryState::NotStarted,
             Self::Stopped => SessionEntryState::Stopped {
                 detail: "stopped by the session".into(),
             },
         }
     }
 }
+
 struct State<'p, 'r> {
     run: RefMut<'p, &'r mut TaskRun>,
     entries: BTreeMap<String, Entry>,
@@ -237,7 +227,7 @@ impl State<'_, '_> {
             if let Some(name) = self.pending.pop_front() {
                 if let Err(error) = self.start(&name) {
                     self.entries.get_mut(&name).expect("queued suite").exit =
-                        Some(EntryExit::Reported(ReportedExit::reported("not started")));
+                        Some(EntryExit::NotStarted);
                     self.push(event(
                         &name,
                         ProcessEventKind::StartupFailed,
@@ -268,22 +258,18 @@ impl State<'_, '_> {
                     // Stop uses an independent cleanup context, even after a
                     // workload deadline or the invoking terminal is lost.
                     process.stop(&task_engine::cleanup_context(CLEANUP));
-                    entry.exit = Some(EntryExit::Reported(ReportedExit::reported("timed out")));
+                    entry.exit = Some(EntryExit::Unread("timed out".to_owned()));
                 } else if let Observed::Verified(exit, _) = process.poll() {
-                    entry.exit = Some(EntryExit::Reported(
-                        match self.run.complete(process, exit) {
-                            Ok(()) => ReportedExit::exited(exit.code),
-                            Err(error) => ReportedExit::unrecorded(exit.code, error),
+                    entry.exit = Some(match self.run.complete(process, exit) {
+                        Ok(()) => EntryExit::Recorded(exit.code),
+                        Err(error) => EntryExit::Unrecorded {
+                            code: exit.code,
+                            error: error.to_string(),
                         },
-                    ));
+                    });
                 }
                 if let Some(exit) = &entry.exit {
-                    events.push(event(
-                        name,
-                        ProcessEventKind::Exit,
-                        exit.record().to_owned(),
-                        None,
-                    ));
+                    events.push(event(name, ProcessEventKind::Exit, exit.record(), None));
                 }
             }
         }
@@ -309,12 +295,13 @@ impl State<'_, '_> {
         if let Some(process) = entry.process.as_mut() {
             if entry.exit.is_none() {
                 if let Observed::Verified(exit, _) = process.poll() {
-                    entry.exit = Some(EntryExit::Reported(
-                        match self.run.complete(process, exit) {
-                            Ok(()) => ReportedExit::exited(exit.code),
-                            Err(error) => ReportedExit::unrecorded(exit.code, error),
+                    entry.exit = Some(match self.run.complete(process, exit) {
+                        Ok(()) => EntryExit::Recorded(exit.code),
+                        Err(error) => EntryExit::Unrecorded {
+                            code: exit.code,
+                            error: error.to_string(),
                         },
-                    ));
+                    });
                 }
             }
             let report = process.stop(cleanup);
@@ -333,9 +320,7 @@ impl State<'_, '_> {
 
                 entry.exit = Some(match report.leader {
                     Observed::Verified(exit, _) => match self.run.complete(process, exit) {
-                        Ok(()) if exit.code == 0 => {
-                            EntryExit::Reported(ReportedExit::exited(exit.code))
-                        }
+                        Ok(()) if exit.code == 0 => EntryExit::Recorded(exit.code),
                         Ok(())
                             if report
                                 .signals
@@ -344,12 +329,13 @@ impl State<'_, '_> {
                         {
                             EntryExit::Stopped
                         }
-                        Ok(()) => EntryExit::Reported(ReportedExit::exited(exit.code)),
-                        Err(error) => {
-                            EntryExit::Reported(ReportedExit::unrecorded(exit.code, error))
-                        }
+                        Ok(()) => EntryExit::Recorded(exit.code),
+                        Err(error) => EntryExit::Unrecorded {
+                            code: exit.code,
+                            error: error.to_string(),
+                        },
                     },
-                    _ => EntryExit::Reported(ReportedExit::reported("unknown exit")),
+                    _ => EntryExit::Unread("unknown exit".to_owned()),
                 });
             }
             if !matches!(report.group, Observed::Verified(..) | Observed::Absent(_))
@@ -365,18 +351,13 @@ impl State<'_, '_> {
                 ));
             }
         } else if entry.exit.is_none() {
-            entry.exit = Some(EntryExit::Reported(ReportedExit::reported("not started")));
+            entry.exit = Some(EntryExit::NotStarted);
         }
         let exit = entry
             .exit
             .clone()
-            .unwrap_or_else(|| EntryExit::Reported(ReportedExit::reported("unknown exit")));
-        self.push(event(
-            name,
-            ProcessEventKind::Exit,
-            exit.record().to_owned(),
-            None,
-        ));
+            .unwrap_or_else(|| EntryExit::Unread("unknown exit".to_owned()));
+        self.push(event(name, ProcessEventKind::Exit, exit.record(), None));
         self.pending.retain(|pending| pending != name);
         Ok(())
     }
@@ -387,9 +368,8 @@ impl State<'_, '_> {
         let cleanup = task_engine::cleanup_context(CLEANUP);
         for name in names {
             if let Err(error) = self.stop_with(&name, &cleanup) {
-                self.entries.get_mut(&name).expect("known suite").exit = Some(EntryExit::Reported(
-                    ReportedExit::reported(error.to_string()),
-                ));
+                self.entries.get_mut(&name).expect("known suite").exit =
+                    Some(EntryExit::Unread(error.to_string()));
             }
         }
     }
@@ -543,15 +523,48 @@ mod tests {
         );
     }
     #[test]
+    fn a_reported_exit_builds_its_state_from_the_observed_code() {
+        // The session holds the exit it verified; the record is rendered from
+        // it for the tab, never decoded back into a status.
+        let passed = EntryExit::Recorded(0);
+        assert_eq!(passed.record(), "exit=0");
+        assert_eq!(passed.state(), SessionEntryState::Passed);
+
+        let failed = EntryExit::Recorded(7);
+        assert_eq!(failed.record(), "exit=7");
+        assert_eq!(
+            failed.state(),
+            SessionEntryState::Failed {
+                detail: "exit=7".into(),
+                exit: Some(7),
+            }
+        );
+
+        let unread = EntryExit::Unread("timed out".to_owned());
+        assert_eq!(
+            unread.state(),
+            SessionEntryState::Failed {
+                detail: "timed out".into(),
+                exit: None,
+            }
+        );
+
+        assert_eq!(EntryExit::NotStarted.state(), SessionEntryState::NotStarted);
+    }
+
+    #[test]
     fn an_unrecorded_exit_still_carries_the_code_the_session_observed() {
         // The wait verified a code, but recording it in the run journal failed.
-        // The tab shows the failure record; the typed code travels beside it so
-        // a consumer never parses the record back to learn it.
-        let reported = EntryExit::Reported(ReportedExit::unrecorded(7, "journal unavailable"));
+        // The tab shows the failure record; the attempt is a failure and its
+        // typed code travels with it.
+        let unrecorded = EntryExit::Unrecorded {
+            code: 7,
+            error: "journal unavailable".to_owned(),
+        };
 
-        assert_eq!(reported.record(), "unrecorded exit: journal unavailable");
+        assert_eq!(unrecorded.record(), "unrecorded exit: journal unavailable");
         assert_eq!(
-            reported.state(),
+            unrecorded.state(),
             SessionEntryState::Failed {
                 detail: "unrecorded exit: journal unavailable".into(),
                 exit: Some(7),
