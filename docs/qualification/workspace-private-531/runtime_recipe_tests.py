@@ -242,7 +242,7 @@ class RuntimeRecipeTests(unittest.TestCase):
     def test_old_single_glob_reproduces_the_observed_pre_depends_failure(self):
         root, debs, state = self.fixture('old-glob')
         rc, _, err, final = self.run_segments(debs, state, ['dpkg -i /debs/*.deb'])
-        self.assertNotEqual(rc, 0)
+        self.assertEqual(rc, 1, err)
         for name in OLD_775_ERRORS:
             self.assertIn(f'pre-dependency problem - not installing {name}', err)
         self.assertIn('python3-minimal pre-depends on python3.10-minimal', err)
