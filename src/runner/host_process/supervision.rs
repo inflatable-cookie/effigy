@@ -550,11 +550,9 @@ pub(super) fn spawn_generation(
     use effigy_kernel::custody::{Custody, Lifetime, ProcessSpec, Terminal};
     let environment = environment.generation(spec, dependency_env, listener)?;
     let process = ProcessSpec {
-        argv: vec![
-            OsString::from("/bin/sh"),
-            OsString::from("-c"),
-            OsString::from(spec.run.clone()),
-        ],
+        argv: ["/bin/sh", "-c", spec.run.as_str()]
+            .map(OsString::from)
+            .into(),
         cwd: spec.cwd.clone(),
         env: environment,
         grace: Duration::from_secs(spec.shutdown_grace_secs.max(1)),

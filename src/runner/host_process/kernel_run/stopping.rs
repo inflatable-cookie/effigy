@@ -197,11 +197,16 @@ pub(super) fn stop_resource_run(
         },
         action: RequestAction::Stop,
     };
-    effigy_kernel::run::request(&cx, state_root, &request).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "host process `{name}` stop request failed: {error}"
-        ))
-    })?;
+    let requested = effigy_kernel::run::request(&cx, state_root, &request);
+    // A supervisor may close between lookup and request; only verified closure
+    // discharges the refusal. Unknown state still returns its observation error.
+    if let Err(error) = &requested {
+        if !run_is_closed(repo_root, run_id)? {
+            return Err(RunnerError::task_invocation(format!(
+                "host process `{name}` stop request failed: {error}"
+            )));
+        }
+    }
     let deadline = Instant::now() + stop_pickup(shutdown_grace(policy, name));
     while let Some(current) = latest_open_run(repo_root, resource)? {
         if current.id != run_id {
@@ -292,6 +297,8 @@ pub(super) fn stop_resource_run(
         } else {
             HostStopState::Stopped
         };
+        stop.signal =
+            (settled || requested.is_ok()).then(|| "TERM then KILL after grace".to_owned());
         stop.detail = settled.then(|| "settled by the requester as gate holder".to_owned());
     }
     Ok(Some(stop))
