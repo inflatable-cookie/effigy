@@ -1,14 +1,14 @@
 use super::*;
 
 #[test]
-fn run_manifest_task_builtin_scan_duplicate_blocks_hides_warning_rows_by_default() {
+fn run_manifest_task_builtin_scan_duplicate_blocks_hides_then_lists_warning_rows() {
     let root = temp_workspace("builtin-scan-duplicate-blocks-hide-warnings");
     write_root_manifest(&root, "");
     fs::create_dir_all(root.join("src")).expect("mkdir src");
     write_duplicate_block_file(&root.join("src/alpha.rs"), "shared");
     write_duplicate_block_file(&root.join("src/beta.rs"), "shared");
 
-    let out = run_builtin_ok(root, "scan", &["duplicate-blocks"]);
+    let out = run_builtin_ok(root.to_path_buf(), "scan", &["duplicate-blocks"]);
 
     assert_output_contains_all(
         &out,
@@ -21,16 +21,6 @@ fn run_manifest_task_builtin_scan_duplicate_blocks_hides_warning_rows_by_default
             "No high or critical duplicate blocks found.",
         ],
     );
-}
-
-#[test]
-fn run_manifest_task_builtin_scan_duplicate_blocks_show_warnings_lists_locations() {
-    let root = temp_workspace("builtin-scan-duplicate-blocks-show-warnings");
-    write_root_manifest(&root, "");
-    fs::create_dir_all(root.join("src")).expect("mkdir src");
-    write_duplicate_block_file(&root.join("src/alpha.rs"), "shared");
-    write_duplicate_block_file(&root.join("src/beta.rs"), "shared");
-
     let out = run_builtin_ok(root, "scan", &["duplicate-blocks", "--show-warnings"]);
 
     assert_output_contains_all(

@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn run_doctor_reports_duplicate_blocks_when_scan_is_enabled() {
+fn run_doctor_reports_enabled_duplicate_blocks_and_skips_disabled_scan() {
     let root = temp_workspace("doctor-duplicate-blocks-enabled");
     fs::create_dir_all(root.join("src")).expect("mkdir src");
     write_manifest(
@@ -37,12 +37,7 @@ doctor = true
             "src/beta.rs:1-42",
         ],
     );
-}
 
-#[test]
-fn run_doctor_skips_duplicate_blocks_when_doctor_flag_is_disabled() {
-    let root = temp_workspace("doctor-duplicate-blocks-disabled");
-    fs::create_dir_all(root.join("src")).expect("mkdir src");
     write_manifest(
         &root.join("effigy.toml"),
         r#"[scan.duplicate_blocks]
@@ -52,9 +47,6 @@ critical = 80
 doctor = false
 "#,
     );
-    write_duplicate_block_file(&root.join("src/alpha.rs"), "shared", 38);
-    write_duplicate_block_file(&root.join("src/beta.rs"), "shared", 38);
-
     let out = run_deep_doctor_task(root, &[]).expect("doctor should succeed when scan is disabled");
 
     assert_output_excludes_all(&out, &["scan.duplicate-blocks", "src/alpha.rs"]);

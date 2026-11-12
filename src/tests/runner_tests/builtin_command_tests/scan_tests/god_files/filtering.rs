@@ -1,6 +1,67 @@
 use super::*;
 
 #[test]
+fn run_manifest_task_builtin_scan_god_files_skips_each_non_source_family_by_default() {
+    let root = temp_workspace("builtin-scan-god-files-non-source-families");
+    write_root_manifest(&root, "");
+    for directory in [
+        "src",
+        "docs/guides/code",
+        "tests",
+        "migrations",
+        "examples",
+        "fixtures",
+        "benchmarks",
+    ] {
+        fs::create_dir_all(root.join(directory)).expect("create fixture directory");
+    }
+    write_large_code_file(&root.join("src/app.ts"), 12);
+    write_large_rust_file(&root.join("docs/guides/code/example.rs"), 30);
+    fs::write(
+        root.join("pnpm-lock.yaml"),
+        (0..40)
+            .map(|idx| format!("lock_{idx}: value_{idx}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .expect("write lockfile");
+    write_large_rust_file(&root.join("tests/large_spec.rs"), 30);
+    fs::write(
+        root.join("migrations/202603051200__baseline.sql"),
+        (0..40)
+            .map(|idx| format!("insert into demo values ({idx});"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .expect("write migration");
+    write_large_rust_file(&root.join("examples/demo.rs"), 30);
+    write_large_rust_file(&root.join("fixtures/payload.rs"), 30);
+    write_large_rust_file(&root.join("benchmarks/parser.rs"), 30);
+
+    let out = run_builtin_ok(
+        root,
+        "scan",
+        &["god-files", "--threshold", "10", "--show-warnings"],
+    );
+
+    assert_output_contains_all(
+        &out,
+        &["findings: 2", "src/app.ts", "tests/large_spec.rs"],
+    );
+    assert_output_excludes_all(
+        &out,
+        &[
+            "docs/guides/code/example.rs",
+            "pnpm-lock.yaml",
+            "migrations/202603051200__baseline.sql",
+            "examples/demo.rs",
+            "fixtures/payload.rs",
+            "benchmarks/parser.rs",
+        ],
+    );
+}
+
+#[test]
 fn run_manifest_task_builtin_scan_god_files_text_ignores_docs_generated_and_gitignored_paths() {
     let root = temp_workspace("builtin-scan-god-files-text");
     write_root_manifest(&root, "");
@@ -42,89 +103,6 @@ fn run_manifest_task_builtin_scan_god_files_text_ignores_docs_generated_and_giti
     assert_output_excludes_all(
         &out,
         &["README.md", "src/generated.ts", "ignored/hidden.ts"],
-    );
-}
-
-#[test]
-fn run_manifest_task_builtin_scan_god_files_skips_docs_examples_and_lockfiles_by_default() {
-    let root = temp_workspace("builtin-scan-god-files-docs-and-lockfiles");
-    write_root_manifest(&root, "");
-    fs::create_dir_all(root.join("src")).expect("mkdir src");
-    fs::create_dir_all(root.join("docs/guides/code")).expect("mkdir docs code");
-    write_large_code_file(&root.join("src/app.ts"), 12);
-    write_large_rust_file(&root.join("docs/guides/code/example.rs"), 30);
-    fs::write(
-        root.join("pnpm-lock.yaml"),
-        (0..40)
-            .map(|idx| format!("lock_{idx}: value_{idx}"))
-            .collect::<Vec<String>>()
-            .join("\n"),
-    )
-    .expect("write lockfile");
-
-    let out = run_builtin_ok(
-        root,
-        "scan",
-        &["god-files", "--threshold", "10", "--show-warnings"],
-    );
-
-    assert_output_contains_all(&out, &["findings: 1", "src/app.ts"]);
-    assert_output_excludes_all(&out, &["docs/guides/code/example.rs", "pnpm-lock.yaml"]);
-}
-
-#[test]
-fn run_manifest_task_builtin_scan_god_files_keeps_tests_but_skips_migrations_by_default() {
-    let root = temp_workspace("builtin-scan-god-files-tests-not-migrations");
-    write_root_manifest(&root, "");
-    fs::create_dir_all(root.join("tests")).expect("mkdir tests");
-    fs::create_dir_all(root.join("migrations")).expect("mkdir migrations");
-    write_large_rust_file(&root.join("tests/large_spec.rs"), 30);
-    fs::write(
-        root.join("migrations/202603051200__baseline.sql"),
-        (0..40)
-            .map(|idx| format!("insert into demo values ({idx});"))
-            .collect::<Vec<String>>()
-            .join("\n"),
-    )
-    .expect("write migration");
-
-    let out = run_builtin_ok(
-        root,
-        "scan",
-        &["god-files", "--threshold", "10", "--show-warnings"],
-    );
-
-    assert_output_contains_all(&out, &["findings: 1", "tests/large_spec.rs"]);
-    assert_output_excludes_all(&out, &["migrations/202603051200__baseline.sql"]);
-}
-
-#[test]
-fn run_manifest_task_builtin_scan_god_files_skips_examples_fixtures_and_benchmarks_by_default() {
-    let root = temp_workspace("builtin-scan-god-files-non-prod-paths");
-    write_root_manifest(&root, "");
-    fs::create_dir_all(root.join("src")).expect("mkdir src");
-    fs::create_dir_all(root.join("examples")).expect("mkdir examples");
-    fs::create_dir_all(root.join("fixtures")).expect("mkdir fixtures");
-    fs::create_dir_all(root.join("benchmarks")).expect("mkdir benchmarks");
-    write_large_code_file(&root.join("src/app.ts"), 12);
-    write_large_rust_file(&root.join("examples/demo.rs"), 30);
-    write_large_rust_file(&root.join("fixtures/payload.rs"), 30);
-    write_large_rust_file(&root.join("benchmarks/parser.rs"), 30);
-
-    let out = run_builtin_ok(
-        root,
-        "scan",
-        &["god-files", "--threshold", "10", "--show-warnings"],
-    );
-
-    assert_output_contains_all(&out, &["findings: 1", "src/app.ts"]);
-    assert_output_excludes_all(
-        &out,
-        &[
-            "examples/demo.rs",
-            "fixtures/payload.rs",
-            "benchmarks/parser.rs",
-        ],
     );
 }
 

@@ -1903,10 +1903,11 @@ run = "pnpm start"
 }
 
 #[test]
-fn run_deploy_export_render_plan_uses_explicit_manifest_model_without_bundle() {
-    let root = temp_workspace("deploy-export-render-explicit-manifest");
+fn run_deploy_export_plans_use_explicit_manifest_models_without_writing() {
+    let root = temp_workspace("deploy-export-plans-explicit-manifest");
     setup_test_deploy_export_providers(&root);
     fs::create_dir_all(root.join("site")).expect("mkdir site");
+    fs::create_dir_all(root.join("service-web")).expect("mkdir web");
     write_root_manifest(
         &root,
         &with_deploy_providers(
@@ -1929,46 +1930,6 @@ task = "build"
 kind = "directory"
 path = "dist"
 fallback = "200.html"
-"#,
-        ),
-    );
-    write_manifest(
-        &root.join("site/effigy.toml"),
-        r#"
-[tasks.build]
-run = "pnpm build"
-"#,
-    );
-
-    let export_dir = root.join("infra/render");
-    let rendered = run_command(Command::Deploy(DeployArgs {
-        subcommand: DeploySubcommand::Export {
-            provider: "render".to_owned(),
-            env: None,
-            path: export_dir.clone(),
-            plan: true,
-        },
-        repo_override: Some(root),
-        output_json: false,
-    }))
-    .expect("run render export plan");
-
-    assert!(rendered.contains("planned render export"));
-    assert!(!export_dir.join("render.yaml").exists());
-}
-
-#[test]
-fn run_deploy_export_railway_plan_uses_explicit_manifest_model_without_bundle() {
-    let root = temp_workspace("deploy-export-railway-explicit-manifest");
-    setup_test_deploy_export_providers(&root);
-    fs::create_dir_all(root.join("service-web")).expect("mkdir web");
-    write_root_manifest(
-        &root,
-        &with_deploy_providers(
-            r#"
-[deploy.model.app]
-project_name = "plain-app"
-source_root = "."
 
 [[deploy.model.services]]
 name = "web"
@@ -1991,22 +1952,33 @@ path = "/health"
         ),
     );
     write_manifest(
+        &root.join("site/effigy.toml"),
+        "[tasks.build]\nrun = \"pnpm build\"\n",
+    );
+    write_manifest(
         &root.join("service-web/effigy.toml"),
-        r#"
-[tasks.build]
-run = "pnpm build"
-
-[tasks.serve]
-run = "pnpm start"
-"#,
+        "[tasks.build]\nrun = \"pnpm build\"\n\n[tasks.serve]\nrun = \"pnpm start\"\n",
     );
 
-    let export_dir = root.join("infra/railway");
-    let rendered = run_command(Command::Deploy(DeployArgs {
+    let render_dir = root.join("infra/render");
+    let render = run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Export {
+            provider: "render".to_owned(),
+            env: None,
+            path: render_dir.clone(),
+            plan: true,
+        },
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("run render export plan");
+
+    let railway_dir = root.join("infra/railway");
+    let railway = run_command(Command::Deploy(DeployArgs {
         subcommand: DeploySubcommand::Export {
             provider: "railway".to_owned(),
             env: None,
-            path: export_dir.clone(),
+            path: railway_dir.clone(),
             plan: true,
         },
         repo_override: Some(root),
@@ -2014,9 +1986,11 @@ run = "pnpm start"
     }))
     .expect("run railway export plan");
 
-    assert!(rendered.contains("planned railway export"));
-    assert!(!export_dir.join("services/web/railway.toml").exists());
-    assert!(!export_dir.join("report.json").exists());
+    assert!(render.contains("planned render export"));
+    assert!(!render_dir.join("render.yaml").exists());
+    assert!(railway.contains("planned railway export"));
+    assert!(!railway_dir.join("services/web/railway.toml").exists());
+    assert!(!railway_dir.join("report.json").exists());
 }
 
 /// Workspace whose shared `[deploy.model]` carries development-only values and

@@ -459,7 +459,7 @@ fn run_manifest_task_builtin_init_repair_removes_loose_effigy_gitignore_duplicat
 }
 
 #[test]
-fn run_manifest_task_builtin_init_positional_minimal_matches_default() {
+fn run_manifest_task_builtin_init_positional_minimal_and_extra_args() {
     let root = temp_workspace("builtin-init-positional-minimal");
 
     let out = run_builtin_ok(root.to_path_buf(), "init", &["minimal"]);
@@ -469,10 +469,16 @@ fn run_manifest_task_builtin_init_positional_minimal_matches_default() {
         &["[tasks]", "ping = \"printf ok\""],
     );
     assert_path_exists(&root.join("README.md"), "positional minimal readme");
+
+    let err = run_builtin_err(root.to_path_buf(), "init", &["minimal", "extra"]);
+    assert_task_invocation_error_contains(
+        err,
+        &["accepts at most one starter name", "minimal", "extra"],
+    );
 }
 
 #[test]
-fn run_manifest_task_builtin_init_unknown_starter_errors_cleanly() {
+fn run_manifest_task_builtin_init_unknown_starter_errors_without_writing() {
     let root = temp_workspace("builtin-init-unknown-starter");
 
     let err = run_builtin_err(root.to_path_buf(), "init", &["does-not-exist"]);
@@ -487,17 +493,6 @@ fn run_manifest_task_builtin_init_unknown_starter_errors_cleanly() {
     assert_path_missing(
         &root.join("effigy.toml"),
         "unknown-starter run must not write a manifest",
-    );
-}
-
-#[test]
-fn run_manifest_task_builtin_init_extra_positional_errors() {
-    let root = temp_workspace("builtin-init-extra-positional");
-
-    let err = run_builtin_err(root.to_path_buf(), "init", &["minimal", "extra"]);
-    assert_task_invocation_error_contains(
-        err,
-        &["accepts at most one starter name", "minimal", "extra"],
     );
 }
 
@@ -534,25 +529,29 @@ fn run_manifest_task_builtin_init_list_json_reports_schema_and_entries() {
 }
 
 #[test]
-fn run_manifest_task_builtin_init_list_rejects_starter_name() {
-    let root = temp_workspace("builtin-init-list-with-name");
+fn run_manifest_task_builtin_init_list_rejects_named_starter_and_write_flags() {
+    let root = temp_workspace("builtin-init-list-invalid-combinations");
+    let cases = [
+        (
+            "starter name",
+            &(["--list", "minimal"] as [&str; 2])[..],
+            "cannot be combined with a starter name",
+        ),
+        (
+            "force",
+            &(["--list", "--force"] as [&str; 2])[..],
+            "cannot be combined with `--force` or `--dry-run`",
+        ),
+    ];
 
-    let err = run_builtin_err(root.to_path_buf(), "init", &["--list", "minimal"]);
-    assert_task_invocation_error_contains(
-        err,
-        &["--list", "cannot be combined with a starter name"],
-    );
-}
-
-#[test]
-fn run_manifest_task_builtin_init_list_rejects_force_or_dry_run() {
-    let root = temp_workspace("builtin-init-list-with-force");
-
-    let err = run_builtin_err(root.to_path_buf(), "init", &["--list", "--force"]);
-    assert_task_invocation_error_contains(
-        err,
-        &["--list", "cannot be combined with `--force` or `--dry-run`"],
-    );
+    for (case, args, expected) in cases {
+        let err = run_builtin_err(root.to_path_buf(), "init", args);
+        assert_task_invocation_error_contains(err, &["--list", expected]);
+        assert_path_missing(
+            &root.join("effigy.toml"),
+            &format!("--list {case} refusal must not write a manifest"),
+        );
+    }
 }
 
 #[test]
