@@ -43,7 +43,14 @@ jobs:
       - name: Clippy
         # Repo-wide allows live in [workspace.lints.clippy] (root Cargo.toml),
         # so no -A flags are needed here — a plain clippy matches local runs.
-        run: cargo clippy --all-targets -- -D warnings
+        # Keep the workspace-wide Linux lint aligned with the local pre-native
+        # selector, including kernel fault and private qualification surfaces.
+        run: |
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo clippy --workspace --all-targets --features effigy-kernel/fault-injection -- -D warnings
+          cargo clippy -p effigy -p effigy-containers -p effigy-kernel --all-targets --features effigy/workspace-private-qualification,effigy-kernel/fault-injection -- -D warnings
+          cargo clippy -p effigy --bin effigy --test workspace_client --features workspace-private-qualification,workspace-serving-fixture -- -D warnings
+          cargo clippy -p effigy-kernel --features fault-injection,workspace-private-qualification --bin kernel-custody-fixture -- -D warnings
 
       - name: Prove real Cargo partitioner
         env:
