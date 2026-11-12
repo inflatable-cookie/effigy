@@ -1,1 +1,1 @@
-Kernel fault scenarios hold their workloads until their anchors are pinned and spread fault jobs across more shard processes.
+Kernel fault scenarios hold workloads during anchor pinning and distribute the environment fault matrix across independently scheduled parts.

@@ -131,11 +131,17 @@ fn execute(
         grace_millis: guard::GRACE.as_millis() as u64,
     };
     crate::fault_point!(ProbeRegister).map_err(failure)?;
+    let deadline_nanos = guard::deadline(cx).map_err(failure)?;
+    #[cfg(all(test, feature = "fault-injection"))]
+    if spec.cwd.join("probe-deadline").is_file() {
+        std::fs::write(spec.cwd.join("probe-deadline"), deadline_nanos.to_string())
+            .map_err(failure)?;
+    }
     client
         .send(
             &Message::Register {
                 receipt: receipt.clone(),
-                deadline_nanos: guard::deadline(cx).map_err(failure)?,
+                deadline_nanos,
             },
             cx,
         )

@@ -49,7 +49,6 @@ pub(super) trait Scenario: Sync {
 
 #[derive(Debug, Default)]
 struct Tally {
-    timing: BTreeMap<String, Duration>,
     judged: BTreeMap<Oracle, usize>,
     runs: usize,
     delivered: BTreeSet<(Point, Fault)>,
@@ -62,9 +61,6 @@ impl Tally {
         }
         for (point, fault) in &self.delivered {
             out += &format!("delivered {point:?} {fault:?}\n");
-        }
-        for (phase, spent) in &self.timing {
-            out += &format!("timing {phase} {}\n", spent.as_nanos());
         }
         out
     }
@@ -90,10 +86,6 @@ impl Tally {
                         .find(|f| format!("{f:?}") == *fault)
                         .expect("fault");
                     self.delivered.insert((point, fault));
-                }
-                ["timing", phase, nanos] => {
-                    *self.timing.entry((*phase).into()).or_default() +=
-                        Duration::from_nanos(nanos.parse().expect("nanos"));
                 }
                 _ => panic!("bad shard tally line {line}"),
             }
@@ -121,8 +113,14 @@ fn jobs(trace: &[Point], observations: usize) -> Vec<Job> {
 /// runtime, the foreign fixture and child reaping are process-wide.
 const SHARDS: usize = 12;
 /// Rotate each crossing to distribute fault types while preserving job order.
-fn job_shard(ordinal: usize) -> usize {
-    (ordinal + ordinal / Fault::ALL.len()) % SHARDS
+fn job_shard(ordinal: usize, shards: usize) -> usize {
+    (ordinal + ordinal / Fault::ALL.len()) % shards
+}
+fn job_part(ordinal: usize, parts: usize) -> usize {
+    (ordinal / Fault::ALL.len()) % parts
+}
+fn shard_count(parts: usize) -> usize {
+    (std::thread::available_parallelism().map_or(SHARDS, |n| n.get()) / parts).clamp(1, SHARDS)
 }
 
 const PLAN: &str = "EFFIGY_KERNEL_FAULT_PLAN";
@@ -131,6 +129,13 @@ const SHARD: &str = "EFFIGY_KERNEL_FAULT_SHARD";
 /// Traces `scenario`, then injects every fault at every crossing and
 /// `Unknown` at every observation, recovering and checking each time.
 pub(super) fn drive(scenario: &dyn Scenario) {
+    drive_part(scenario, 0, 1);
+}
+
+/// Each part owns disjoint ordinals of the same traced plan.
+pub(super) fn drive_part(scenario: &dyn Scenario, part: usize, parts: usize) {
+    assert!(parts > 0 && part < parts);
+    let shards = shard_count(parts);
     let started = Instant::now();
     let (trace, observations, baseline) = {
         let _foreign = ForeignGuard;
@@ -158,7 +163,7 @@ pub(super) fn drive(scenario: &dyn Scenario) {
         ),
     )
     .expect("plan");
-    let shards: Vec<_> = (0..SHARDS)
+    let children: Vec<_> = (0..shards)
         .map(|shard| {
             let child = Command::new(std::env::current_exe().expect("test binary"))
                 .args([
@@ -170,7 +175,7 @@ pub(super) fn drive(scenario: &dyn Scenario) {
                 ])
                 .env(SCENARIO, scenario.name())
                 .env(PLAN, plan.path())
-                .env(SHARD, format!("{shard}/{SHARDS}"))
+                .env(SHARD, format!("{shard}/{shards}/{part}/{parts}"))
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::inherit())
@@ -180,9 +185,9 @@ pub(super) fn drive(scenario: &dyn Scenario) {
         })
         .collect();
     let mut tally = Tally::default();
-    let mut measured = BTreeMap::new();
+    let mut measured = BTreeSet::new();
     let mut failed = Vec::new();
-    for (shard, mut child) in shards {
+    for (shard, mut child) in children {
         let status = child.wait().expect("shard wait");
         if !status.success() {
             failed.push((shard, status));
@@ -191,49 +196,42 @@ pub(super) fn drive(scenario: &dyn Scenario) {
         let encoded = std::fs::read_to_string(plan.path().join(format!("tally-{shard}")))
             .expect("shard tally");
         tally.merge(&encoded);
-        let costs = std::fs::read_to_string(plan.path().join(format!("costs-{shard}")))
-            .expect("whole-job costs");
-        for line in costs.lines() {
-            let (ordinal, nanos) = line.split_once(' ').expect("whole-job cost row");
-            let ordinal: usize = ordinal.parse().expect("job ordinal");
-            let cost = Duration::from_nanos(nanos.parse().expect("job nanoseconds"));
-            assert_eq!(job_shard(ordinal), shard, "job assigned to wrong shard");
-            assert!(measured.insert(ordinal, cost).is_none(), "duplicate job");
+        let completed = std::fs::read_to_string(plan.path().join(format!("completed-{shard}")))
+            .expect("completed jobs");
+        for line in completed.lines() {
+            let ordinal: usize = line.parse().expect("job ordinal");
+            assert_eq!(
+                job_shard(ordinal, shards),
+                shard,
+                "job assigned to wrong shard"
+            );
+            assert!(measured.insert(ordinal), "duplicate job");
         }
-        eprintln!("fault-costs {} shard {shard}\n{costs}", scenario.name());
     }
     assert!(
         failed.is_empty(),
         "{}: failed shards: {failed:?}",
         scenario.name()
     );
-    let expected = jobs(&trace, observations);
-    assert_eq!(
-        measured.keys().copied().collect::<Vec<_>>(),
-        (0..expected.len()).collect::<Vec<_>>()
-    );
-    let mut old = [Duration::ZERO; SHARDS];
-    let mut rotated = [Duration::ZERO; SHARDS];
-    for (ordinal, cost) in measured {
-        old[ordinal % SHARDS] += cost;
-        rotated[job_shard(ordinal)] += cost;
-    }
+    let expected: Vec<_> = jobs(&trace, observations)
+        .into_iter()
+        .enumerate()
+        .filter(|(ordinal, _)| job_part(*ordinal, parts) == part)
+        .collect();
+    let expected_ordinals: BTreeSet<_> = expected.iter().map(|(ordinal, _)| *ordinal).collect();
+    assert_eq!(measured, expected_ordinals);
     eprintln!(
         "fault-plan {} observations {observations} points {}",
         scenario.name(),
         encoded.join(" ")
     );
-    eprintln!(
-        "fault-scheduling {} whole-job cost sums: old {old:?}, rotated {rotated:?}",
-        scenario.name()
-    );
-    for point in &trace {
-        if scenario.variable().contains(point) {
-            continue;
-        }
-        for fault in Fault::ALL {
+    for (_, job) in &expected {
+        if let Job::Point(point, _, fault) = job {
+            if scenario.variable().contains(point) {
+                continue;
+            }
             assert!(
-                tally.delivered.contains(&(*point, fault)),
+                tally.delivered.contains(&(*point, *fault)),
                 "{}: {point:?} {fault:?} never delivered",
                 scenario.name()
             );
@@ -248,13 +246,12 @@ pub(super) fn drive(scenario: &dyn Scenario) {
         );
     }
     eprintln!(
-        "fault-suite {}: {} points, {} observations, {} faulted runs, {:?} wall, {SHARDS} shards ({:?})",
+        "fault-suite {} part {part}/{parts}: {} points, {} observations, {} faulted runs, {:?} wall, {shards} shards",
         scenario.name(),
         trace.len(),
         observations,
         tally.runs,
-        started.elapsed(),
-        tally.timing
+        started.elapsed()
     );
 }
 /// The foreign fixture ends with its process's drive work, even on panic.
@@ -296,28 +293,28 @@ fn fault_shard() {
                 .expect("point")
         })
         .collect();
-    let (index, count) = shard.split_once('/').expect("shard spec");
-    let (index, count): (usize, usize) = (
-        index.parse().expect("shard"),
-        count.parse().expect("shards"),
-    );
-    assert_eq!(count, SHARDS, "shard count differs from the plan");
+    let fields: Vec<usize> = shard
+        .split('/')
+        .map(|s| s.parse().expect("shard spec"))
+        .collect();
+    let [index, count, part, parts] = fields[..] else {
+        panic!("shard spec")
+    };
+    assert!(count > 0 && index < count && parts > 0 && part < parts);
+    assert_eq!(count, shard_count(parts));
     let _foreign = ForeignGuard;
     let mut tally = Tally::default();
-    let mut costs =
-        std::fs::File::create(plan.join(format!("costs-{index}"))).expect("whole-job costs");
+    let mut completed =
+        std::fs::File::create(plan.join(format!("completed-{index}"))).expect("completed jobs");
     for (ordinal, job) in jobs(&trace, observations)
         .into_iter()
         .enumerate()
-        .filter(|(i, _)| job_shard(*i) == index)
+        .filter(|(i, _)| job_part(*i, parts) == part && job_shard(*i, count) == index)
     {
         std::fs::write(plan.join(format!("progress-{index}")), format!("{job:?}\n"))
             .expect("shard progress");
-        let started = Instant::now();
         run_job(scenario, job, baseline, &mut tally);
-        // Includes HOME preparation, fault delivery, recovery, oracle checks
-        // and HOME drop. A missing row is incomplete work, never zero cost.
-        writeln!(costs, "{ordinal} {}", started.elapsed().as_nanos()).expect("whole-job cost");
+        writeln!(completed, "{ordinal}").expect("completed job");
     }
     std::fs::write(plan.join(format!("tally-{index}")), tally.encode()).expect("tally");
 }
@@ -329,13 +326,10 @@ fn run_job(scenario: &dyn Scenario, job: Job, baseline: Option<i32>, tally: &mut
     let home = home();
     fault::set_helper_log(Some(helper_log(&home.home())));
     scenario.prepare(&home.home());
-    let started = Instant::now();
-    let (fired, exit, phase) = match job {
-        Job::Point(point, n, fault @ (Fault::Kill | Fault::Stall)) => (
-            child(scenario, &home.home(), point, n, fault),
-            None,
-            "child",
-        ),
+    let (fired, exit) = match job {
+        Job::Point(point, n, fault @ (Fault::Kill | Fault::Stall)) => {
+            (child(scenario, &home.home(), point, n, fault), None)
+        }
         Job::Point(point, n, fault) => {
             scenario.warm();
             fault::arm_nth(point, n, fault);
@@ -347,16 +341,15 @@ fn run_job(scenario: &dyn Scenario, job: Job, baseline: Option<i32>, tally: &mut
             }
             let exit = scenario.run(&home.home());
             fault::hook(None);
-            (fault::fired(), exit, "in-process")
+            (fault::fired(), exit)
         }
         Job::Observation(index) => {
             scenario.warm();
             fault::arm_observation(index);
             let exit = scenario.run(&home.home());
-            (fault::fired(), exit, "observation")
+            (fault::fired(), exit)
         }
     };
-    *tally.timing.entry(phase.into()).or_default() += started.elapsed();
     if !fired {
         match job {
             Job::Point(point, ..) => assert!(
@@ -376,9 +369,7 @@ fn run_job(scenario: &dyn Scenario, job: Job, baseline: Option<i32>, tally: &mut
     }
     let events = fault::events();
     fault::arm(None);
-    let started = Instant::now();
     let mut world = recover(scenario, &home.home(), &label);
-    *tally.timing.entry("recover".into()).or_default() += started.elapsed();
     world.events.splice(0..0, events);
     // A failed log or status write, or a jumped wall clock, is an
     // observability fault; injected Unknown is an observation fault.
@@ -683,7 +674,7 @@ fn rotated_shards_preserve_jobs_and_distribute_each_fault() {
             .iter()
             .copied()
             .enumerate()
-            .filter(|(ordinal, _)| job_shard(*ordinal) == shard)
+            .filter(|(ordinal, _)| job_shard(*ordinal, SHARDS) == shard)
             .collect();
         assert!(assigned.windows(2).all(|pair| pair[0].0 < pair[1].0));
         for fault in Fault::ALL {
@@ -711,4 +702,23 @@ fn rotated_shards_preserve_jobs_and_distribute_each_fault() {
     }
     merged.sort_by_key(|(ordinal, _)| *ordinal);
     assert_eq!(merged, plan.into_iter().enumerate().collect::<Vec<_>>());
+    let plan = jobs(&trace, 13);
+    for (ordinal, job) in plan.iter().enumerate() {
+        if let Job::Point(_, crossing, _) = job {
+            assert_eq!(job_part(ordinal, 3), crossing % 3);
+        }
+    }
+    let mut partitioned: Vec<_> = (0..3)
+        .flat_map(|part| {
+            plan.iter()
+                .copied()
+                .enumerate()
+                .filter(move |(i, _)| job_part(*i, 3) == part)
+        })
+        .collect();
+    partitioned.sort_by_key(|(ordinal, _)| *ordinal);
+    assert_eq!(
+        partitioned,
+        plan.into_iter().enumerate().collect::<Vec<_>>()
+    );
 }
