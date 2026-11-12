@@ -346,14 +346,6 @@ pub(super) fn run_builtin_test_targets_parallel(
                             process.env(key, value);
                         }
                     }
-                    let observer_active_at_spawn = effigy_process::process_group_observer_active();
-                    if observer_active_at_spawn {
-                        #[cfg(unix)]
-                        {
-                            use std::os::unix::process::CommandExt;
-                            process.process_group(0);
-                        }
-                    }
                     if capture_output {
                         process.stdout(Stdio::piped()).stderr(Stdio::piped());
                     }
@@ -370,8 +362,6 @@ pub(super) fn run_builtin_test_targets_parallel(
                     } else {
                         None
                     };
-                    let start_observer_notified =
-                        effigy_process::notify_process_group_started(child_pid);
                     let wait_result = if capture_output {
                         child
                             .wait_with_output()
@@ -389,8 +379,6 @@ pub(super) fn run_builtin_test_targets_parallel(
                                 error,
                             })
                     };
-                    let stop_observer_notified =
-                        effigy_process::notify_process_group_stopped(child_pid);
                     if capture_child_evidence {
                         let (process_group, process_group_error) = match process_group_result {
                             Some(Ok(process_group)) => (Some(process_group), None),
@@ -426,9 +414,6 @@ pub(super) fn run_builtin_test_targets_parallel(
                                 parent_pid: std::process::id(),
                                 process_group,
                                 process_group_error,
-                                observer_active_at_spawn,
-                                start_observer_notified,
-                                stop_observer_notified,
                                 spawned: true,
                                 exit_code,
                                 signal,
