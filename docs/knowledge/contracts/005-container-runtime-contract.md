@@ -1616,8 +1616,10 @@ with the staged binary and finally `nucleus worktree unlink`, so Queue
 milestone cleanup exercises the lifecycle code under test. The
 archive copies the available original files from only this checkout's
 `.effigy/state/runs/` (exactly `<run>/<segment>`, regular files only) into
-a fresh private `0700` directory under `/Volumes/Builds/scratch/effigy/`
-— outside Queue run cleanup so the evidence survives checkout removal —
+a fresh private `0700` directory under the configured `[scratch].root`
+(`/Volumes/Stash/scratch/effigy/` on this machine, host scratch having moved
+there from `/Volumes/Builds/scratch/effigy/` in 2026-11) — outside Queue run
+cleanup so the evidence survives checkout removal —
 with a manifest binding each copy to its checkout-relative path, byte count
 and SHA-256. Empty regular segments are retained as zero-byte copies with the
 SHA-256 of empty bytes. Symlinks, nonregular files and anything outside that

@@ -146,7 +146,8 @@ The environment handover timeout in QA `80c1ea79-08d2-4465-8371-a3d0e438359c`
 at `34999093f5c6c32b71e1770a3f5364c176bd6fb4` remains unexplained
 (600.004s). Planner lead `0d76b0ea-5e87-4ec2-9f47-d4f923ecaa07` owns
 that residual and subsequent integrated QA; shard balancing does not close it.
-Private evidence manifests under `/Volumes/Builds/scratch/effigy/` are
+Private evidence manifests under `/Volumes/Builds/scratch/effigy/` (that evidence
+predates the 2026-11 move to `/Volumes/Stash/scratch/effigy/`) are
 `636-handover.jGCpYT/MANIFEST.json` (assignment/cost receipts) and
 `636-phase-diagnostic.OwegYV/MANIFEST.json` (the additional original-assignment
 diagnostic passed in 400.638s without identifying a causal dependency).
@@ -325,13 +326,20 @@ not running after a seemingly successful bring-up.
 ## Placement
 
 Fixtures live in the run's temporary directory: with `[scratch]` configured
-that is the run's directory under `<root>/effigy/` on the Builds drive, so
+that is the run's directory under `<root>/effigy/` on the Stash drive, so
 nothing lands in `/tmp`, `/private/tmp` or `/Users/Shared`. `short_tempdir` and
 `Fixture::short_home` keep a path below the Unix socket budget by using the
 temp root, then its nearest fitting `effigy/` ancestor when a nested selector
 adds path components. Outside that namespace only the immediate parent is
 considered; an unusable root is named instead of falling back to `/tmp` or the
 internal SSD.
+
+Host scratch moved from `/Volumes/Builds/scratch/effigy/` to
+`/Volumes/Stash/scratch/effigy/` in 2026-11; git history does not record the
+exact date. This machine sets `[scratch].root = "/Volumes/Stash/scratch/effigy"`
+in `~/.effigy/config.toml`, and `/Volumes/Builds` is no longer mounted. A
+current-state instruction that still names the old path is stale; a dated log,
+receipt or decision record that does is history and stays as written.
 
 Shell harnesses follow the same rule through `${TMPDIR:-/tmp}` `mktemp`
 templates; `effigy qa:docs:mktemp` fails a bare `mktemp` or a `/tmp`-shaped
@@ -345,7 +353,7 @@ diagnostics on an owned synthetic tree, including crate `tests/scripts` and
 the guest `mktemp-exempt` annotation; it does not replace the live check.
 
 Live Colima container fixtures stage under `~/.cache` until the `effigy`
-profile mounts `/Volumes/Builds/scratch`. The profile's `colima.yaml` has
+profile mounts `/Volumes/Stash/scratch`. The profile's `colima.yaml` has
 `mounts: []`, and Effigy writes no mounts, so the change is a host edit that
 needs a profile restart. Its gate is Q-016 in `questions.md`; no repository
 change can close it.
@@ -408,7 +416,7 @@ fixture's existing wait bound; repeated failed observations do not prove closure
 
 The kernel fault-injection sweep is no longer an exception: it runs in the
 run's temp root like every other fixture. The kernel fault selectors are its
-proof on the Builds volume.
+proof on the scratch volume.
 
 The adapterless republication fixture holds its initial serving phase until
 verified HTTPS succeeds, then keeps the port closed until route withdrawal and

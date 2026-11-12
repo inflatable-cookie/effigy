@@ -261,7 +261,7 @@ per run, and Effigy removes it again.
 ```toml
 # ~/.effigy/config.toml
 [scratch]
-root = "/Volumes/Builds/scratch"
+root = "/Volumes/Stash/scratch"
 ```
 
 `root` is any directory: a subdirectory with room for builds, or a volume's
@@ -372,8 +372,10 @@ observation.
   left for the sweep like any other killed run's.
 
 Worktree teardown archives future QA run logs under the configured `[scratch].root`,
-outside the disposable run directory. If scratch is unconfigured, it retains the
-existing `/Volumes/Builds/scratch/effigy` destination. An unreadable or malformed
+outside the disposable run directory. If scratch is unconfigured, it keeps the
+helper's historical `/Volumes/Builds/scratch/effigy` default — a path the
+unmounted Builds volume can no longer serve, so set `[scratch]` (this machine
+uses `/Volumes/Stash/scratch/effigy`). An unreadable or malformed
 configuration, or an unusable configured destination, reports archival failure;
 teardown still attempts its cleanup. An explicit archive base takes precedence,
 followed by the fixture-only `EFFIGY_RUN_LOG_ARCHIVE_BASE` override. Existing

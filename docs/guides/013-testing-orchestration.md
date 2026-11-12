@@ -298,10 +298,13 @@ the other fixtures cannot:
   identities and distinct effective hosts: the linked checkout's first `up`
   takes its own scope, and both checkouts stay up at the same time.
 
-It runs under `/Volumes/Builds/scratch/effigy/` with private scratch checkouts
-and removes what it created. It never starts, stops or reconfigures a runtime,
-and it does not touch another checkout's shared services: the fixture's shared
-service owns its own project name.
+It runs under the fixture script's hardcoded `/Volumes/Builds/scratch/effigy/`
+root with private scratch checkouts and removes what it created; that volume is
+no longer mounted (host scratch moved to `/Volumes/Stash/scratch/effigy/` in
+2026-11), so the script needs repointing before this proof can run. It never
+starts, stops or reconfigures a runtime, and it does not touch another
+checkout's shared services: the fixture's shared service owns its own project
+name.
 
 The selector runs both halves in one step. The live half brings the same
 fixture up on the Colima profile: a build service whose Dockerfile uses
@@ -333,10 +336,11 @@ A one-off run outside the selector uses
 `execute <staging root> <plan sha256>`; the hash must match that exact root, so
 a stale GO cannot authorise a changed plan. There is no environment marker.
 
-Staging is the environment's decision, not the proof's: the fixture stages
-under `/Volumes/Builds/scratch/effigy/` and the preflight refuses when the
-profile's VM cannot see that path, naming the mount ask. Until the approved
-Colima scratch mount lands, `qa:live:consumer-shapes` fails at that preflight —
+Staging is the environment's decision, not the proof's: the fixture script
+stages under its hardcoded `/Volumes/Builds/scratch/effigy/` root and the
+preflight refuses when the profile's VM cannot see that path, naming the mount
+ask. Until the approved Colima scratch mount lands on a volume the script
+names, `qa:live:consumer-shapes` fails at that preflight —
 deliberately, because a silent `/Users` staging root would put proof checkouts
 in the operator's home for ordinary QA. Schedule the mount before milestone QA
 on this change.
