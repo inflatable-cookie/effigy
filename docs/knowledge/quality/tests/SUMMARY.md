@@ -1,69 +1,86 @@
-# Test ratings at `b5b54db3538b57416f8cc1b8d0fb1e8ec0d0bae8`
+# Test ratings at `5db5437b48de595c5a597036da4c7013ef658b74`
 
-The tables contain 7,724 rows: 6,458 Rust and 1,266 Python tests. Thirty ignored helper entrypoints
-are marked `helper entrypoint` and excluded from scoring, leaving 7,694 scored tests.
+The tables contain 7,701 rows: 6,437 Rust and 1,264 Python tests. Thirty parent-invoked helper and
+child entrypoints are marked `helper` in the `excluded` column and excluded from scoring, leaving
+7,671 scored tests.
 
 ## Distribution (scores 0–10)
 
 | Score | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Tests | 8 | 29 | 82 | 1,574 | 2,417 | 2,796 | 788 |
+| Tests | 5 | 7 | 27 | 1,617 | 2,429 | 2,797 | 789 |
 
-Mean 8.33; median 8. 0.5% scored 5 or lower and 1.5% scored 6 or lower.
+Mean 8.35; median 8. 0.2% scored 5 or lower and 0.5% scored 6 or lower.
 
 ## Per-domain results
 
 | Domain | Table rows | Scored tests | Mean | Score ≤ 6 |
 |---|---:|---:|---:|---:|
-| T1 containers | 1,317 | 1,316 | 7.83 | 30 |
-| T2 gateway/host/managed | 627 | 625 | 8.32 | 13 |
+| T1 containers | 1,306 | 1,305 | 7.85 | 18 |
+| T2 gateway/host/managed | 623 | 621 | 8.34 | 8 |
 | T3 kernel/custody | 858 | 837 | 8.59 | 3 |
-| T4 CLI/config/engine/UI | 1,797 | 1,795 | 7.77 | 67 |
-| T5 other Rust | 1,859 | 1,857 | 8.69 | 6 |
-| T6 Python harness | 1,266 | 1,264 | 8.92 | 0 |
+| T4 CLI/config/engine/UI | 1,793 | 1,791 | 7.83 | 6 |
+| T5 other Rust | 1,857 | 1,855 | 8.69 | 4 |
+| T6 Python harness | 1,264 | 1,262 | 8.92 | 0 |
 
-## Why 132 rows still sit below 7
+## Why 39 scored tests still sit below 7
 
-119 of them are scored tests; 13 are excluded helper entrypoints.
+No row below 7 loses only cost. Every full-value row that must cross a real boundary
+(3 value, 3 effectiveness, 2 uniqueness, 0 cost) scores 8. The remaining low tail is overlap, weak
+oracles, presentation echo and fixture children.
 
 | Primary reason | Rows |
 |---|---:|
-| Weak oracle: the assertion is a substring, presence check or thin delegate where the exact outcome is available | 64 |
-| Presentation echo: pinned progress, help, prompt or colour text carries almost no behaviour (V=1) | 39 |
-| Overlap: a sharp row inside a family one sibling already covers (U=1) | 8 |
-| Fixture or helper entrypoint: no behaviour claim of its own, most `#[ignore]`d | 21 |
+| Overlap: a sharper sibling already proves the claim (U=1) | 17 |
+| Fixture or child entrypoint with no behaviour claim of its own | 9 |
+| Weak oracle: substring, thin delegate, partial assertion or an unmeasured budget (E≤2 with no overlap) | 7 |
+| Presentation echo: pinned progress, help or colour text carries almost no behaviour (V=1) | 4 |
+| Ignored or env-gated proof that never runs in the default suite | 2 |
 
-No row below 7 loses only cost. Every full-value test that must cross a real boundary
-(3 value, 3 effectiveness, 2 uniqueness, 0 cost) scores 8.
+The overlap rows are the reserved-creator-binding refusals (5), the gateway readiness poll cases
+(3), the bounded-exec refusal-accounting cases (3), the two `milestone_130acca8` wake/retry cases,
+`bootstrap_help_is_command_specific` and three resolver/deadline siblings. The fixture rows are the
+gateway adapterless, watchdog and listener children plus the CLI/workspace fixture children and the
+kernel crash fixture.
 
 ## Improvable rows
 
 These are not boundary or helper exceptions; each would reach 7 with one concrete change.
 
-- `effigy_manifest::composition::tests::extend_on_non_conflicting_path_is_silent_noop` — assert the merged array, not that the load succeeded.
-- `effigy_manifest::composition::tests::manifest_minimum_effigy_version_accepts_current_version` — assert the recorded/accepted version rather than a successful load.
-- `effigy_rhai::tests::utility::execute_rhai_script_allows_explicit_effigy_binary_paths` — assert the child ran (marker/output), not only that the call returned `Ok`.
-- `effigy_tui::terminal_text::tests::vt_logs_trims_empty_padding_lines` — assert the trimming the name claims, not that two lines survive.
-- `effigy_builtin::completion::prompt::tests::completion_shell_prompt_without_default_stays_well_formed` — assert the numbered choices and the no-default path, not one literal.
-- `effigy::tests::runner_tests::tasks_listing_tests::catalog_and_builtin_text_tests::run_tasks_lists_catalogs_and_tasks` — compare the canonical tail instead of three substrings.
-- `…::catalog_and_builtin_text_tests::run_tasks_without_catalogs_still_lists_builtin_tasks` — compare the builtin section, not five marker strings.
-- The seven `…::filter_and_managed_tests::run_tasks_with_*` rows — assert the whole filtered block as the canonical-table rows do.
-- `…::builtin_command_tests::overrides_and_config_tests::config_reference_tests::run_manifest_task_builtin_config_prints_reference` — parse the reference and assert its sections.
-- `…::config_builtin_tests::formatting_snapshot_tests::run_manifest_task_builtin_config_has_blank_line_between_sections` — assert the rendered section sequence.
-- The ten `cli_output_tests::help_and_flags_tests::*` and `tasks_rendering_tests::*help*` rows — compare the binary panel with the in-process panel table exactly; today they overlap it with substring checks.
-- `effigy::runner::workspace_command::staged_probe_tests::identity_refuses_a_reply_from_another_executable` — assert the typed reason, not `reason.contains(...)`.
-- The five `…::reserved_creator_binding::creator_binding_*_refuses_before_publication` rows — assert the typed refusal and zero publication rows.
-- `cli_output_tests::command_behavior_tests::shared_cli_container_up_cohort` — assert the cohort's output and route, not its exit status alone.
-- `cli_output_tests::command_behavior_tests::cli_container_data_seed_json_reports_seed_contract` — give it its own assertions or fold it into the helper it delegates to.
-- `…::gateway_registration::tests::gateway_readiness_reports_each_poll_and_its_blocker` and `…::gateway_readiness_waits_for_declared_service_ports_before_returning_rows` — assert the exact poll sequence and its blocker.
-- `gateway_private::detached_gateway_failure_actor` and `effigy-gateway::server::tests::milestone_130acca8_notification_wakes_the_route_worker` — assert the applied snapshot, not a wake count.
-- The four `…::managed_and_locking_tests::managed_tui_tests::*` plan rows — assert a whole plan block instead of the lines appearing.
-- The four `cli_output_tests::command_behavior_tests::cli_container_{cache,data-export,data-import,data-list}_json_*` rows — share one schema fixture with the exact field assertions instead of four separate binary runs.
+- `effigy::runner::container_command::gateway_registration::tests::gateway_readiness_reports_each_poll_and_its_blocker`
+  and `…::gateway_readiness_waits_for_declared_service_ports_before_returning_rows` — assert the exact poll sequence and its blocker.
+- The five `…::reserved_creator_binding::creator_binding_*_refuses_before_publication` rows — assert the typed refusal and zero publication rows, then keep one table entry.
+- `…::bounded_exec::tests::refusal_accounting_pending_progress_is_a_lower_bound_not_zero`,
+  `…::refusal_accounting_secret_partial_output_never_reaches_any_surface` and
+  `…::stderr_overflow_names_the_stderr_stream` — fold into the retained refusal-accounting rows that already own the stream and redaction claims.
+- `…::tests::reserved_input::a_stalled_fragment_stops_the_closure_at_the_deadline` and
+  `…::reserved_input::reserved_input_fixture_waits_for_an_ambient_path_mutator` — assert the typed reason, not the shared path-mutator helper's verdict.
+- `…::workspace_command::tests::sibling_effigy_repo_root_discovers_adjacent_and_nested_projects_checkouts`
+  — assert the resolved project roots, not their presence.
+- `effigy-gateway::server::tests::milestone_130acca8_notification_wakes_the_route_worker` and
+  `…::milestone_130acca8_refused_observation_retries_the_committed_snapshot` — assert the applied snapshot, not a wake count or retry count.
+- `gateway_private::detached_gateway_failure_actor` and `gateway_private::adapterless_listener::managed_host_adapterless_cleanup_stops_a_descendant_captured_before_its_leader_stopped`
+  — assert the recorded owner record, not that the fixture client exited.
+- `effigy-kernel::custody::anchor_spawn_overhead_is_measured` — give the anchor spawn a threshold or move it behind `#[ignore]` as a benchmark; today it measures and asserts nothing.
+- `cli_output_tests::command_behavior_tests::shared_cli_container_up_cohort` — assert the cohort's route and output, not only that its three cases reported `ok`.
+- `effigy::tests::bootstrap_cli_tests::bootstrap_help_is_command_specific` and
+  `…::v0141_bootstrap_fixtures_load_and_list_tasks` — compare the typed help panel and the listed task rows instead of substrings.
+- `…::managed_and_locking_tests::managed_supervisor_fault_tests::supervisor_fault_shard` — assert each armed fault's recorded outcome, not that a shard ran.
 
 ## Reading
 
-Round 4 (tasks #910–#918) raised the low tail and consolidated redundant cases: 422 rows left the
-tables because their tests are gone, 151 merged or new survivors arrived, and 865 rows were
-re-rated against the clarified cost rule. What remains below the floor is presentation echo and
-substring oracles, not lost custody, refusal, secret or identity coverage; the safety families in
-T1–T3 and T6 score 8–10.
+Round 4 (tasks #910–#918) raised the low tail and consolidated redundant cases. The round 4b
+close (tasks #922/#923, PRs #957–#959) then touched 65 rows, which are re-read here: 57 were
+raised, 7 kept their score, and one fell by the clarified cost rule
+(`cli_release_plan_json_mode_reports_the_whole_pipeline_without_side_effects` is a full CLI run,
+so its cost is 0 rather than 1). Nineteen merged or new survivors arrived, and 36 rows left the
+tables, either because their test was merged into a single entrypoint or because the item is now a
+plain helper. Six more T6 rows left because they named a test under a class that never declared or
+inherited it, duplicating the row for the class that does. Consolidation lowered the table row count without dropping logical scenarios: each
+`*_contract_cases` entrypoint invokes the survivors it absorbed. 51 rows moved from below the
+floor to 7 or above, so 39 scored tests remain below 7 instead of 119.
+
+The remaining low tail is overlap and fixture machinery, not lost custody, refusal, secret or
+identity coverage: the safety families in T1–T3 and T6 score 8–10. The largest single improvement
+this round came from asserting exact typed panels, typed refusals and whole rows instead of
+substring fragments.

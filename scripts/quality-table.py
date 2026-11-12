@@ -15,8 +15,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 TABLE_DIR = ROOT / "docs/knowledge/quality/tests"
-RATED_COMMIT = "b5b54db3538b57416f8cc1b8d0fb1e8ec0d0bae8"
-EXPECTED_ROWS = {"T1": 1317, "T2": 627, "T3": 858, "T4": 1797, "T5": 1859, "T6": 1264}
+RATED_COMMIT = "5db5437b48de595c5a597036da4c7013ef658b74"
+EXPECTED_ROWS = {"T1": 1306, "T2": 623, "T3": 858, "T4": 1793, "T5": 1857, "T6": 1264}
 _GIT_CACHE: dict[tuple[str, str], str | None] = {}
 
 
@@ -45,6 +45,61 @@ def rows() -> list[dict[str, str]]:
     return result
 
 
+# A raw string keeps its braces: `r"..."`, `r#"..."#`, `br#"..."#`, `cr#"..."#`.
+RAW_STRING = re.compile(r'(?:b|c)?r(#*)"')
+
+
+def skip_quoted(text: str, index: int) -> int:
+    """Return the index after a `"`-quoted Rust string, honouring escapes."""
+    index += 1
+    while index < len(text):
+        char = text[index]
+        if char == "\\":
+            index += 2
+            continue
+        if char == '"':
+            return index + 1
+        index += 1
+    return index
+
+
+def skip_block_comment(text: str, index: int) -> int:
+    """Return the index after a nested Rust block comment starting at `/*`."""
+    depth = 0
+    while index < len(text):
+        if text.startswith("/*", index):
+            depth += 1
+            index += 2
+            continue
+        if text.startswith("*/", index):
+            depth -= 1
+            index += 2
+            if depth == 0:
+                return index
+            continue
+        index += 1
+    return index
+
+
+def char_literal_end(text: str, index: int) -> int | None:
+    """Return the index after a char literal; None for a lifetime or label."""
+    if index + 1 >= len(text):
+        return None
+    if text[index + 1] == "\\":
+        cursor = index + 2
+        while cursor < len(text):
+            if text[cursor] == "\\":
+                cursor += 2
+                continue
+            if text[cursor] == "'":
+                return cursor + 1
+            cursor += 1
+        return None
+    if index + 2 < len(text) and text[index + 2] == "'" and text[index + 1] != "\n":
+        return index + 3
+    return None
+
+
 def rust_function(text: str, name: str) -> str | None:
     """Return a Rust function item, balancing braces from its body opener."""
     match = re.search(rf"\bfn\s+{re.escape(name)}\s*(?:<[^{{}}]*>)?\s*\([^{{}}]*\)[^{{;]*\{{", text, re.S)
@@ -52,26 +107,36 @@ def rust_function(text: str, name: str) -> str | None:
         return None
     start = match.start()
     depth = 0
-    in_string = False
-    escaped = False
-    for index in range(match.end() - 1, len(text)):
+    index = match.end() - 1
+    while index < len(text):
         char = text[index]
-        if in_string:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_string = False
+        if text.startswith("//", index):
+            newline = text.find("\n", index)
+            index = len(text) if newline < 0 else newline
+            continue
+        if text.startswith("/*", index):
+            index = skip_block_comment(text, index)
+            continue
+        raw = RAW_STRING.match(text, index)
+        if raw:
+            terminator = '"' + raw.group(1)
+            end = text.find(terminator, raw.end())
+            index = len(text) if end < 0 else end + len(terminator)
             continue
         if char == '"':
-            in_string = True
-        elif char == "{":
+            index = skip_quoted(text, index)
+            continue
+        if char == "'":
+            end = char_literal_end(text, index)
+            index = index + 1 if end is None else end
+            continue
+        if char == "{":
             depth += 1
         elif char == "}":
             depth -= 1
             if depth == 0:
                 return text[start:index + 1]
+        index += 1
     return None
 
 

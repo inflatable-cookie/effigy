@@ -2,10 +2,12 @@
 
 Owner: [test assurance](../test-assurance.md).
 
-The test tables are rated at `b5b54db3538b57416f8cc1b8d0fb1e8ec0d0bae8`; the code table has not yet been rated.
+The test tables are rated at `5db5437b48de595c5a597036da4c7013ef658b74`; the code table has not yet been rated.
 Round 4 re-rated every row that changed, arrived or was recorded as an exception across the B1-B9
 tranches, dropped the rows whose tests are gone, and left every untouched row's parts as they were
-rated at `4026bd67e`. Locators and body hashes are refreshed for the rows that were re-read.
+rated at `4026bd67e`. Locators and body hashes are refreshed for the rows that were re-read. The
+round 4b close re-rated the 65 rows its consolidation touched, dropped the 36 rows whose test was
+merged into a single entrypoint or is now a plain helper, and refreshed the rated commit.
 
 ## Tables
 
@@ -18,9 +20,9 @@ rated at `4026bd67e`. Locators and body hashes are refreshed for the rows that w
 
 Tom agreed to option B now: a test floor of 7, with evidenced merges and removals completed. Option C (floor 7 and mean 8.5) is a later target. The code target is TBD.
 
-Round 4 did not reach floor 7 everywhere: 132 table rows score 6 or lower — 119 scored tests and
-13 excluded helper entrypoints. [The summary](tests/SUMMARY.md) breaks them down by why and names
-the improvable ones.
+Round 4 did not reach floor 7 everywhere: 52 table rows score 6 or lower — 39 scored tests and
+13 excluded helper entrypoints (the other 17 excluded helpers score 7 or 8). [The summary](tests/SUMMARY.md)
+breaks the 39 scored rows down by why and names the improvable ones.
 
 ## Cost clarification (2026-11-12, from calibration)
 
@@ -132,10 +134,10 @@ Run an independent stratified sample of at least 60 modules, with one frontier c
 
 ## Test results at the rated commit
 
-- 7,724 table rows: 6,458 Rust and 1,266 Python. Thirty `#[ignore]` helper entrypoints are marked in the CSVs and excluded from scoring, leaving 7,694 scored tests.
-- Distribution (scored tests, scores 4–10): 8, 29, 82, 1,574, 2,417, 2,796, 788. Mean 8.33; median 8; 0.5% scored 5 or lower and 1.5% scored 6 or lower.
-- Table rows, including excluded helpers: T1 1,317; T2 627; T3 858; T4 1,797; T5 1,859; T6 1,266.
-- The 422 rows whose tests no longer exist left the table; 151 merged or new survivors arrived. Round 4 raised or consolidated the low tail, so 119 scored rows now sit below the floor of 7 (T1 30, T2 13, T3 3, T4 67, T5 6, T6 0) instead of 870 at 6 or below.
+- 7,701 table rows: 6,437 Rust and 1,264 Python. Thirty parent-invoked helper and child entrypoints are marked `helper` in the CSVs and excluded from scoring, leaving 7,671 scored tests.
+- Distribution (scored tests, scores 4–10): 5, 7, 27, 1,617, 2,429, 2,797, 789. Mean 8.35; median 8; 0.2% scored 5 or lower and 0.5% scored 6 or lower.
+- Table rows, including excluded helpers: T1 1,306; T2 623; T3 858; T4 1,793; T5 1,857; T6 1,264.
+- The 422 rows whose tests no longer exist left the table at the round 4 close, and round 4b took 36 more (merged entrypoints and converted helpers) while 19 survivors arrived; six duplicate Python rows that named a test under a class that never declared it also left the T6 table. 39 scored rows now sit below the floor of 7 (T1 18, T2 8, T3 3, T4 6, T5 4, T6 0) instead of 870 at 6 or below before round 4.
 
 An independent Claude Sonnet pass re-scored a stratified 42-test sample from scratch at `4026bd67e`:
 - 23 of 42 scores match and 38 are within ±1;
@@ -148,8 +150,15 @@ Two biases roughly cancel:
 T4 is mildly inflated (−0.86 on average). The true mean is probably about 7.9–8.0. The calibrator would also reverse 9 `keep` rows (3 to merge, 6 to improve) and adds no removals. Details: `calibration-summary.md`.
 
 The round 4 close re-rated 865 rows (151 new, 365 changed, 349 B1–B9 exception rows) against the
-clarified cost rule and recorded the new rated commit. It did not re-run the independent sample;
-the calibration above still describes the original sweep.
+clarified cost rule and recorded the new rated commit. The round 4b close re-rated the 65 rows its
+consolidation touched: 57 were raised, 7 kept their score and 1 fell to 7 by the clarified cost
+rule. Neither re-ran the independent sample; the calibration above still describes the original
+sweep.
+
+The drift tool hashes a whole Rust function item. It now skips raw strings, byte and C raw strings,
+char literals, lifetimes, line comments and nested block comments, so a brace inside one of those no
+longer ends an item early or swallows the following tests. It also forwards `--summary`, and the
+rated-commit constant and expected row counts match the tables above.
 
 ## Update policy
 
