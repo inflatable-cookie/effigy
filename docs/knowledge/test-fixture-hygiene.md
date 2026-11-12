@@ -400,6 +400,15 @@ protect another thread that creates a file during the mutation. Trusted unit
 fixtures establish and assert their directory/file permissions before testing a
 stale executable, so an unsafe directory cannot select an earlier refusal.
 
+A fixture that stands in for private state writes it 0600, and the directories
+it creates itself 0700, whatever the process umask is
+(`effigy_test_support::write_private_fixture`). `effigy qa:fixtures:umask` is
+the route that holds this: it re-runs the custody, object, publication,
+serving-host, environment and test-support fixture families under umask 0002,
+0027 and 0077, so a fixture leaning on the ambient mask fails on any host
+rather than only under a Linux native run. It is host umask coverage and never
+a substitute for native Linux qualification.
+
 Recorded-generation closure requires positive absence, zombie state or an
 identity mismatch. An unknown identity or state stays unresolved within the
 fixture's existing wait bound; repeated failed observations do not prove closure.

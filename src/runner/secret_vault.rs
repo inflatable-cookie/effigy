@@ -293,13 +293,12 @@ mod tests {
     /// task-secret reader looks. Its local-dev key is what each test adds.
     fn write_valid_vault(root: &std::path::Path) -> std::path::PathBuf {
         let vault = root.join(VAULT_RELATIVE);
-        fs::create_dir_all(vault.parent().expect("vault parent")).expect("vault dir");
         let envelope = effigy_secrets::VaultPlaintextPayload::empty()
             .encrypt_with_passphrase("vault-passphrase")
             .expect("encrypt fixture vault");
-        fs::write(
+        effigy_test_support::write_private_fixture(
             &vault,
-            envelope.to_json_pretty().expect("serialize fixture"),
+            envelope.to_json_pretty().expect("serialize fixture").as_bytes(),
         )
         .expect("write fixture vault");
         vault

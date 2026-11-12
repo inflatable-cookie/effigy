@@ -694,8 +694,11 @@ fn secrets_doctor_blocks_undeclared_stored_values() {
         .encrypt_with_passphrase("vault-passphrase")
         .expect("encrypt");
     let vault_path = root.join(".effigy/secrets/local.vault");
-    fs::create_dir_all(vault_path.parent().expect("parent")).expect("mkdir");
-    fs::write(&vault_path, envelope.to_json_pretty().expect("json")).expect("write vault");
+    effigy_test_support::write_private_fixture(
+        &vault_path,
+        envelope.to_json_pretty().expect("json").as_bytes(),
+    )
+    .expect("write vault");
 
     let error = run_command(Command::Secrets(SecretsArgs {
         subcommand: SecretsSubcommand::Doctor,
@@ -1249,9 +1252,9 @@ fn write_session_vault(
             .encrypt_with_passphrase(passphrase)
             .expect("encrypt vault")
     };
-    fs::write(
+    effigy_test_support::write_private_fixture(
         &vault_path,
-        envelope.to_json_pretty().expect("serialize vault"),
+        envelope.to_json_pretty().expect("serialize vault").as_bytes(),
     )
     .expect("write vault");
 }

@@ -1272,10 +1272,12 @@ mod tests {
             .encrypt_with_passphrase(passphrase)
             .expect("encrypt test vault");
         let vault_path = root.join(".effigy/secrets/local.vault");
-        fs::create_dir_all(vault_path.parent().expect("vault parent")).expect("mkdir vault parent");
-        fs::write(
-            vault_path,
-            envelope.to_json_pretty().expect("serialize test vault"),
+        effigy_test_support::write_private_fixture(
+            &vault_path,
+            envelope
+                .to_json_pretty()
+                .expect("serialize test vault")
+                .as_bytes(),
         )
         .expect("write test vault");
     }

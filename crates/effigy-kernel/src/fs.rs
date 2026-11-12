@@ -143,7 +143,14 @@ mod gateway_log_tests {
             );
             return;
         }
-        let root = tempfile::tempdir().unwrap();
+        // The fixture home stands in for the gateway directory, which the
+        // kernel refuses when it is group- or other-writable. A default
+        // tempdir is `0o777 & !umask`, so it must be created 0700 for this
+        // proof to hold under a permissive umask (effigy#520, effigy#949).
+        let root = tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir()
+            .unwrap();
         // SAFETY: restored before assertions and no child process is started.
         let old_umask = unsafe { libc::umask(0o777) };
         let result = open_gateway_log_append(root.path(), "gateway.stderr.log", None, None, true);
