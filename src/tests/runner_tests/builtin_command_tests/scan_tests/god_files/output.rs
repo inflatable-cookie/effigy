@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn run_manifest_task_builtin_scan_god_files_text_hides_warning_rows_by_default() {
+fn run_manifest_task_builtin_scan_god_files_hides_then_shows_warning_rows() {
     let root = temp_workspace("builtin-scan-god-files-text-hide-warnings");
     write_root_manifest(&root, "");
     fs::create_dir_all(root.join("src")).expect("mkdir src");
@@ -9,7 +9,7 @@ fn run_manifest_task_builtin_scan_god_files_text_hides_warning_rows_by_default()
     write_large_code_file(&root.join("src/high.ts"), 22);
 
     let out = run_builtin_ok(
-        root,
+        root.to_path_buf(),
         "scan",
         &[
             "god-files",
@@ -32,15 +32,6 @@ fn run_manifest_task_builtin_scan_god_files_text_hides_warning_rows_by_default()
         ],
     );
     assert_output_excludes_all(&out, &["src/warn.ts"]);
-}
-
-#[test]
-fn run_manifest_task_builtin_scan_god_files_show_warnings_lists_warning_rows() {
-    let root = temp_workspace("builtin-scan-god-files-text-show-warnings");
-    write_root_manifest(&root, "");
-    fs::create_dir_all(root.join("src")).expect("mkdir src");
-    write_large_code_file(&root.join("src/warn.ts"), 12);
-    write_large_code_file(&root.join("src/high.ts"), 22);
 
     let out = run_builtin_ok(
         root,

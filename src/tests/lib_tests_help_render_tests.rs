@@ -119,30 +119,230 @@ fn render_deps_help_shows_link_and_committed_bun_pin_operations() {
 }
 
 #[test]
-fn render_state_help_shows_the_moved_artifact_verbs_and_handoff_options() {
-    let rendered = render_help_text(HelpTopic::State);
-    assert!(rendered.contains("effigy state artifact inspect <REF|PATH>"));
-    assert!(rendered.contains("effigy state artifact stage <REF|PATH>"));
-    assert!(rendered.contains("effigy state artifact capture <SOURCE_PATH|DIR> --ref oci://<REF>"));
-    assert!(rendered.contains("--environment <LABEL>"));
-    assert!(rendered.contains("--farmyard-handoff"));
-    assert!(rendered.contains("--push"));
-    assert!(rendered.contains("oci://ghcr.io/acme/private-data:uat"));
-    assert!(!rendered.contains("effigy artifact "), "{rendered}");
-}
+fn render_command_help_preserves_each_option_panel() {
+    // These are data-only command panels: each named row keeps its own markers
+    // and exclusions while sharing the rendering assertion shape.
+    let cases = [
+        (
+            "state",
+            HelpTopic::State,
+            &[
+                "effigy state artifact inspect <REF|PATH>",
+                "effigy state artifact stage <REF|PATH>",
+                "effigy state artifact capture <SOURCE_PATH|DIR> --ref oci://<REF>",
+                "--environment <LABEL>",
+                "--farmyard-handoff",
+                "--push",
+                "oci://ghcr.io/acme/private-data:uat",
+            ][..],
+            &["effigy artifact "][..],
+        ),
+        (
+            "doctor",
+            HelpTopic::Doctor,
+            &[
+                "doctor Help",
+                "--fix",
+                "--verbose",
+                "--json",
+                "effigy doctor --fix",
+                "effigy doctor --verbose",
+                "effigy doctor <task> <args>",
+                "effigy doctor frontend/build -- --watch",
+                "container.workspace-ownership",
+            ][..],
+            &[][..],
+        ),
+        (
+            "contracts",
+            HelpTopic::Contracts,
+            &[
+                "contracts Help",
+                "effigy contracts check-json",
+                "--validate-selection",
+                "--index <PATH>",
+                "--changed-only <BASE>",
+                "--print-selected=json",
+                "--contract <PATH>",
+                "--artifact <PATH>",
+                "--json",
+            ][..],
+            &["effigy contracts validate-selection", "--fast", "--full"][..],
+        ),
+        (
+            "release status and run",
+            HelpTopic::Release,
+            &[
+                "release Help",
+                "effigy release status",
+                "effigy release gates",
+                "effigy release run",
+                "effigy release resume [--repo <PATH>] <RUN>",
+                "effigy release receipt",
+                "effigy release:verify:install",
+                "repo tasks",
+                "effigy release --plan",
+                "effigy release --plan [--repo <PATH>] [--version <SEMVER>] [--json]",
+                "effigy release run [--repo <PATH>] [--to <STAGE>] [--json]",
+                "--to <STAGE>",
+                "--plan",
+                "--version <SEMVER>",
+                "--repo <PATH>",
+                "--json",
+                "checkpoint at every boundary",
+                "reconciling an unknown tag push before any retry",
+                "Effigy-owned state outside the repo",
+                ".effigy/reports/release/gates/",
+            ][..],
+            &["simulate remain roadmap work"][..],
+        ),
+        (
+            "release retired commands",
+            HelpTopic::Release,
+            &[
+                "release Help",
+                "effigy release:metadata",
+                "effigy release:preflight",
+                "effigy release:check-binary",
+                "effigy release:proof",
+                "effigy release:verify:install",
+                "`release:evidence:validate|closeout`",
+                "retired in v0.15",
+                "effigy release receipt",
+            ][..],
+            &["--binary <PATH>"][..],
+        ),
+        (
+            "defer",
+            HelpTopic::Defer,
+            &[
+                "defer Help",
+                "effigy defer <REQUEST> [args...]",
+                "effigy --json defer <REQUEST> [args...]",
+                "--repo <PATH>",
+                "--json",
+                "Use this when you want the configured `[defer]` behavior",
+                "effigy defer prep",
+                "effigy defer release -- --dry-run",
+            ][..],
+            &[][..],
+        ),
+        (
+            "tasks",
+            HelpTopic::Tasks,
+            &[
+                "tasks Help",
+                "--resolve <SELECTOR>",
+                "List public tasks grouped by `group`",
+                "--all",
+                "visibility_reason",
+                "--json",
+                "--pretty <true|false>",
+                "effigy tasks --resolve <catalog>/<task>",
+                "effigy tasks --json --resolve test",
+                "`selectors` inventory",
+            ][..],
+            &[][..],
+        ),
+        (
+            "container",
+            HelpTopic::Container,
+            &[
+                "data pull-production",
+                "effigy container web data pull-production",
+            ][..],
+            &[][..],
+        ),
+        (
+            "test",
+            HelpTopic::Test,
+            &[
+                "test Help",
+                "always the built-in orchestrator",
+                "`tasks.test` was removed in v0.11",
+                "including `<catalog>/test` targeting",
+                "Detection Order",
+                "passthrough like `-p <package>` narrows to the named packages",
+                "--verbose-results",
+                "--tui",
+                "[suite] [runner args]",
+                "effigy test vitest user-service",
+                "effigy <catalog>/test",
+                "effigy test --plan user-service",
+                "effigy test --plan viteest user-service",
+                "Named Test Selection",
+                "effigy test user-service",
+                "prefix the suite explicitly",
+                "check `available-suites` per target",
+                "Configured suites can use managed run steps and declare `env`, `env_file`, `setup`, `teardown`, and `teardown_policy`",
+                "suggests nearest suite names",
+                "source of truth and auto-detection is skipped",
+                "Migration",
+                "ambiguous in multi-suite repos",
+                "effigy test viteest user-service",
+                "suggests `effigy test vitest user-service`",
+                "effigy test nextest user_service --nocapture",
+                "Error Recovery",
+                "Ambiguity: `effigy test user-service`",
+                "Unavailable or mistyped suite",
+                "[package_manager]",
+                "js = \"bun\"",
+                "[test]",
+                "max_parallel = 2",
+                "cargo_env_match = \"prefix-aware\"",
+                "[test.suites]",
+                "unit = \"bun x vitest run\"",
+                "[test.suites.managed]",
+                "run = [{ task = \"db:test:prepare\" }, \"cargo nextest run --workspace\"]",
+                "env = \"managed-test\"",
+                "env_file = [\".env\", \".env.test\"]",
+                "setup = [{ run = \"cargo run -p app-db --bin migrate_test_db\" }]",
+                "teardown = [{ run = \"cargo run -p app-db --bin reset_test_db\" }]",
+                "teardown_policy = \"always\"",
+                "[test.runners]",
+                "vitest = \"bun x vitest run\"",
+                "Use `--` when the remaining arguments belong to the underlying test runner",
+                "Task-ref chain with quoted args",
+                "run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]",
+                "Task-ref chain parsing is shell-like tokenization only",
+            ][..],
+            &["[tasks.test]"][..],
+        ),
+        (
+            "init",
+            HelpTopic::Init,
+            &[
+                "init Help",
+                "effigy init [--check|--apply|--repair] [--json]",
+                "effigy init --checklist [--json]",
+                "effigy init --apply-actions <ID>[,<ID>...] [--json]",
+                "effigy init <name> [--dry-run] [--force] [--json]",
+                "effigy init --list [--json]",
+                "plain `effigy init` creates missing baseline",
+                "does not create a project-local Effigy skill copy",
+                "skill.codex_project",
+                "real TTYs",
+                "--list",
+                "--check",
+                "--force",
+                "--apply",
+                "--checklist",
+                "--apply-actions <ID>[,<ID>...]",
+                "An existing root `README.md` is never overwritten",
+            ][..],
+            &["task migration"][..],
+        ),
+    ];
 
-#[test]
-fn render_doctor_help_shows_fix_and_json_options() {
-    let rendered = render_help_text(HelpTopic::Doctor);
-    assert!(rendered.contains("doctor Help"));
-    assert!(rendered.contains("--fix"));
-    assert!(rendered.contains("--verbose"));
-    assert!(rendered.contains("--json"));
-    assert!(rendered.contains("effigy doctor --fix"));
-    assert!(rendered.contains("effigy doctor --verbose"));
-    assert!(rendered.contains("effigy doctor <task> <args>"));
-    assert!(rendered.contains("effigy doctor frontend/build -- --watch"));
-    assert!(rendered.contains("container.workspace-ownership"));
+    for (panel, topic, required, absent) in cases {
+        let rendered = render_help_text(topic);
+        for marker in required {
+            assert!(rendered.contains(marker), "{panel} help missing {marker:?}");
+        }
+        for marker in absent {
+            assert!(!rendered.contains(marker), "{panel} help leaked {marker:?}");
+        }
+    }
 }
 
 #[test]
@@ -172,190 +372,6 @@ fn render_docs_help_shows_validation_options() {
     assert!(rendered.contains("--index <PATH>"));
     assert!(rendered.contains("<LOG_FILE>"));
     assert!(rendered.contains("--json"));
-}
-
-#[test]
-fn render_contracts_help_shows_validation_options() {
-    let rendered = render_help_text(HelpTopic::Contracts);
-    assert!(rendered.contains("contracts Help"));
-    assert!(rendered.contains("effigy contracts check-json"));
-    assert!(!rendered.contains("effigy contracts validate-selection"));
-    assert!(rendered.contains("--validate-selection"));
-    assert!(rendered.contains("--index <PATH>"));
-    assert!(
-        !rendered.contains("--fast"),
-        "there is one check, not a fast one"
-    );
-    assert!(
-        !rendered.contains("--full"),
-        "there is one check, not a fast and a full one"
-    );
-    assert!(rendered.contains("--changed-only <BASE>"));
-    assert!(rendered.contains("--print-selected=json"));
-    assert!(rendered.contains("--contract <PATH>"));
-    assert!(rendered.contains("--artifact <PATH>"));
-    assert!(rendered.contains("--json"));
-}
-
-#[test]
-fn render_release_help_names_the_retired_commands_and_their_repo_tasks() {
-    let rendered = render_help_text(HelpTopic::Release);
-    assert!(rendered.contains("release Help"));
-    assert!(rendered.contains("effigy release:metadata"));
-    assert!(rendered.contains("effigy release:preflight"));
-    assert!(rendered.contains("effigy release:check-binary"));
-    assert!(rendered.contains("effigy release:proof"));
-    assert!(rendered.contains("effigy release:verify:install"));
-    assert!(rendered.contains("`release:evidence:validate|closeout`"));
-    assert!(rendered.contains("retired in v0.15"));
-    assert!(rendered.contains("effigy release receipt"));
-    assert!(!rendered.contains("--binary <PATH>"));
-}
-
-#[test]
-fn render_release_help_shows_status_and_run_options() {
-    let rendered = render_help_text(HelpTopic::Release);
-    assert!(rendered.contains("release Help"));
-    assert!(rendered.contains("effigy release status"));
-    assert!(rendered.contains("effigy release gates"));
-    assert!(rendered.contains("effigy release run"));
-    assert!(rendered.contains("effigy release resume [--repo <PATH>] <RUN>"));
-    assert!(rendered.contains("effigy release receipt"));
-    assert!(rendered.contains("effigy release:verify:install"));
-    assert!(rendered.contains("repo tasks"));
-    assert!(rendered.contains("effigy release --plan"));
-    assert!(
-        rendered.contains("effigy release --plan [--repo <PATH>] [--version <SEMVER>] [--json]")
-    );
-    assert!(rendered.contains("effigy release run [--repo <PATH>] [--to <STAGE>] [--json]"));
-    assert!(rendered.contains("--to <STAGE>"));
-    assert!(rendered.contains("--plan"));
-    assert!(rendered.contains("--version <SEMVER>"));
-    assert!(rendered.contains("--repo <PATH>"));
-    assert!(rendered.contains("--json"));
-    assert!(rendered.contains("checkpoint at every boundary"));
-    assert!(rendered.contains("reconciling an unknown tag push before any retry"));
-    assert!(rendered.contains("Effigy-owned state outside the repo"));
-    assert!(rendered.contains(".effigy/reports/release/gates/"));
-    assert!(!rendered.contains("simulate remain roadmap work"));
-}
-
-#[test]
-fn render_defer_help_shows_container_and_repo_options() {
-    let rendered = render_help_text(HelpTopic::Defer);
-    assert!(rendered.contains("defer Help"));
-    assert!(rendered.contains("effigy defer <REQUEST> [args...]"));
-    assert!(rendered.contains("effigy --json defer <REQUEST> [args...]"));
-    assert!(rendered.contains("--repo <PATH>"));
-    assert!(rendered.contains("--json"));
-    assert!(rendered.contains("Use this when you want the configured `[defer]` behavior"));
-    assert!(rendered.contains("effigy defer prep"));
-    assert!(rendered.contains("effigy defer release -- --dry-run"));
-}
-
-#[test]
-fn render_tasks_help_shows_resolve_and_json_options() {
-    let rendered = render_help_text(HelpTopic::Tasks);
-    assert!(rendered.contains("tasks Help"));
-    assert!(rendered.contains("--resolve <SELECTOR>"));
-    assert!(rendered.contains("List public tasks grouped by `group`"));
-    assert!(rendered.contains("--all"));
-    assert!(rendered.contains("visibility_reason"));
-    assert!(rendered.contains("--json"));
-    assert!(rendered.contains("--pretty <true|false>"));
-    assert!(rendered.contains("effigy tasks --resolve <catalog>/<task>"));
-    assert!(rendered.contains("effigy tasks --json --resolve test"));
-    assert!(rendered.contains("`selectors` inventory"));
-}
-
-#[test]
-fn render_container_help_shows_pull_production_surface() {
-    let rendered = render_help_text(HelpTopic::Container);
-    assert!(rendered.contains("data pull-production"));
-    assert!(rendered.contains("effigy container web data pull-production"));
-}
-
-#[test]
-fn render_test_help_shows_detection_and_config() {
-    let rendered = render_help_text(HelpTopic::Test);
-    assert!(rendered.contains("test Help"));
-    assert!(rendered.contains("always the built-in orchestrator"));
-    assert!(rendered.contains("`tasks.test` was removed in v0.11"));
-    assert!(rendered.contains("including `<catalog>/test` targeting"));
-    assert!(rendered.contains("Detection Order"));
-    assert!(rendered.contains("passthrough like `-p <package>` narrows to the named packages"));
-    assert!(rendered.contains("--verbose-results"));
-    assert!(rendered.contains("--tui"));
-    assert!(rendered.contains("[suite] [runner args]"));
-    assert!(rendered.contains("effigy test vitest user-service"));
-    assert!(rendered.contains("effigy <catalog>/test"));
-    assert!(rendered.contains("effigy test --plan user-service"));
-    assert!(rendered.contains("effigy test --plan viteest user-service"));
-    assert!(rendered.contains("Named Test Selection"));
-    assert!(rendered.contains("effigy test user-service"));
-    assert!(rendered.contains("prefix the suite explicitly"));
-    assert!(rendered.contains("check `available-suites` per target"));
-    assert!(rendered.contains(
-        "Configured suites can use managed run steps and declare `env`, `env_file`, `setup`, `teardown`, and `teardown_policy`"
-    ));
-    assert!(rendered.contains("suggests nearest suite names"));
-    assert!(rendered.contains("source of truth and auto-detection is skipped"));
-    assert!(rendered.contains("Migration"));
-    assert!(rendered.contains("ambiguous in multi-suite repos"));
-    assert!(rendered.contains("effigy test viteest user-service"));
-    assert!(rendered.contains("suggests `effigy test vitest user-service`"));
-    assert!(rendered.contains("effigy test nextest user_service --nocapture"));
-    assert!(rendered.contains("Error Recovery"));
-    assert!(rendered.contains("Ambiguity: `effigy test user-service`"));
-    assert!(rendered.contains("Unavailable or mistyped suite"));
-    assert!(rendered.contains("[package_manager]"));
-    assert!(rendered.contains("js = \"bun\""));
-    assert!(rendered.contains("[test]"));
-    assert!(rendered.contains("max_parallel = 2"));
-    assert!(rendered.contains("cargo_env_match = \"prefix-aware\""));
-    assert!(rendered.contains("[test.suites]"));
-    assert!(rendered.contains("unit = \"bun x vitest run\""));
-    assert!(rendered.contains("[test.suites.managed]"));
-    assert!(rendered
-        .contains("run = [{ task = \"db:test:prepare\" }, \"cargo nextest run --workspace\"]"));
-    assert!(rendered.contains("env = \"managed-test\""));
-    assert!(rendered.contains("env_file = [\".env\", \".env.test\"]"));
-    assert!(rendered.contains("setup = [{ run = \"cargo run -p app-db --bin migrate_test_db\" }]"));
-    assert!(rendered.contains("teardown = [{ run = \"cargo run -p app-db --bin reset_test_db\" }]"));
-    assert!(rendered.contains("teardown_policy = \"always\""));
-    assert!(rendered.contains("[test.runners]"));
-    assert!(rendered.contains("vitest = \"bun x vitest run\""));
-    assert!(rendered
-        .contains("Use `--` when the remaining arguments belong to the underlying test runner"));
-    assert!(!rendered.contains("[tasks.test]"));
-    assert!(rendered.contains("Task-ref chain with quoted args"));
-    assert!(rendered.contains(
-        "run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]"
-    ));
-    assert!(rendered.contains("Task-ref chain parsing is shell-like tokenization only"));
-}
-
-#[test]
-fn render_init_help_shows_phase_scope() {
-    let rendered = render_help_text(HelpTopic::Init);
-    assert!(!rendered.contains("task migration"));
-    assert!(rendered.contains("init Help"));
-    assert!(rendered.contains("effigy init [--check|--apply|--repair] [--json]"));
-    assert!(rendered.contains("effigy init --checklist [--json]"));
-    assert!(rendered.contains("effigy init --apply-actions <ID>[,<ID>...] [--json]"));
-    assert!(rendered.contains("effigy init <name> [--dry-run] [--force] [--json]"));
-    assert!(rendered.contains("effigy init --list [--json]"));
-    assert!(rendered.contains("plain `effigy init` creates missing baseline"));
-    assert!(rendered.contains("does not create a project-local Effigy skill copy"));
-    assert!(rendered.contains("skill.codex_project"));
-    assert!(rendered.contains("real TTYs"));
-    assert!(rendered.contains("--list"));
-    assert!(rendered.contains("--check"));
-    assert!(rendered.contains("--force"));
-    assert!(rendered.contains("--apply"));
-    assert!(rendered.contains("--checklist"));
-    assert!(rendered.contains("--apply-actions <ID>[,<ID>...]"));
-    assert!(rendered.contains("An existing root `README.md` is never overwritten"));
 }
 
 #[test]
