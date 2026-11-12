@@ -33,6 +33,7 @@
 
 use std::cell::RefCell;
 use std::io::{IsTerminal, Write};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 use std::time::{Duration, Instant};
@@ -83,6 +84,12 @@ static VERBOSE: AtomicBool = AtomicBool::new(false);
 
 const TICK: Duration = Duration::from_millis(80);
 const SPINNER_TEMPLATE: &str = "{spinner} {msg}";
+/// How many of a producer's latest lines the window shows at once.
+const WINDOW_LINES: usize = 7;
+/// How many retained lines a failed producer prints before its summary.
+const FAILURE_TAIL: usize = 30;
+/// The columns a producer line may use when the terminal width is unknown.
+const DEFAULT_COLUMNS: usize = 100;
 const SUCCESS: &str = "✓";
 const FAILURE: &str = "✗";
 
@@ -324,6 +331,7 @@ struct StepInner {
     children: Mutex<Vec<Weak<StepInner>>>,
     render_lock: Mutex<()>,
     streaming: Mutex<Option<StreamingGuard>>,
+    window: Mutex<Option<Window>>,
     started: Instant,
 }
 
@@ -342,10 +350,28 @@ impl StepInner {
             source.frame_at(elapsed)
         };
         *self.label.lock().unwrap_or_else(PoisonError::into_inner) = label.clone();
-        if let Some(bar) = &self.bar {
-            bar.set_message(self.sink.style_label(&label));
-        }
+        self.set_bar_message(&label);
         true
+    }
+
+    /// One draw: the stage label, then the producer's window under it. The
+    /// window is part of the same message, so the label, its elapsed time and
+    /// the producer's latest lines are one frame and collapse together.
+    fn set_bar_message(&self, label: &str) {
+        let Some(bar) = &self.bar else {
+            return;
+        };
+        let mut message = self.sink.style_label(label);
+        let window = self.window.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(window) = window.as_ref() {
+            for line in window.visible() {
+                message.push('\n');
+                message.push_str("  ");
+                message.push_str(&self.sink.style_label(line));
+            }
+        }
+        drop(window);
+        bar.set_message(message);
     }
 }
 
@@ -387,6 +413,7 @@ impl Step {
                 children: Mutex::new(Vec::new()),
                 render_lock: Mutex::new(()),
                 streaming: Mutex::new(None),
+                window: Mutex::new(None),
                 started: Instant::now(),
             }),
         };
@@ -862,6 +889,263 @@ impl Drop for StreamingGuard {
                 multi.set_draw_target(ProgressDrawTarget::stderr());
             }
         }
+    }
+}
+
+/// The producer lines one stage shows, newest last. The visible window is a
+/// suffix of the retained tail, so a failure prints what the operator watched
+/// without reading the log a second time.
+struct Window {
+    lines: std::collections::VecDeque<String>,
+    columns: usize,
+}
+
+impl Window {
+    fn new(columns: usize) -> Self {
+        Self {
+            lines: std::collections::VecDeque::new(),
+            columns: columns.max(24),
+        }
+    }
+
+    fn push(&mut self, line: &str) {
+        self.lines
+            .push_back(bound_producer_line(line, self.columns));
+        while self.lines.len() > FAILURE_TAIL {
+            self.lines.pop_front();
+        }
+    }
+
+    fn visible(&self) -> impl Iterator<Item = &String> {
+        self.lines
+            .iter()
+            .skip(self.lines.len().saturating_sub(WINDOW_LINES))
+    }
+
+    fn tail(&self, limit: usize) -> Vec<String> {
+        self.lines
+            .iter()
+            .skip(self.lines.len().saturating_sub(limit))
+            .cloned()
+            .collect()
+    }
+}
+
+/// One producer line as the window shows it: no terminal controls, no known
+/// secret, and never wider than the window.
+fn bound_producer_line(line: &str, columns: usize) -> String {
+    let cleaned: String = line
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect();
+    let redacted = crate::human::redact(cleaned.trim());
+    let room = columns.saturating_sub(2).max(16);
+    if redacted.chars().count() <= room {
+        return redacted;
+    }
+    let mut cut: String = redacted.chars().take(room - 1).collect();
+    cut.push('…');
+    cut
+}
+
+/// A bounded live view of a producer's own output under its stage line
+/// (effigy#925). #835's live output stays; this bounds what a terminal draws.
+///
+/// The window is the step's own message, drawn through the one sink and the
+/// one spinner: about [`WINDOW_LINES`] width-truncated lines rewrite in place
+/// under the stage label, the label's elapsed time keeps moving, and the whole
+/// window collapses into the ordinary finish line. Nothing here reads the
+/// producer a second time - [`LiveOutput::observe`] receives the same lines the
+/// caller already follows - so there is one output path.
+pub struct LiveOutput {
+    step: Step,
+    log: Option<PathBuf>,
+    ignored: AtomicUsize,
+}
+
+/// Start a bounded output window under a stage line.
+///
+/// `None` when this terminal cannot show one: piped, CI, `--json`, a managed
+/// pane or a capturing test keeps the caller's existing plain or JSON output.
+/// `log` is the retained backend record the producer's stream is written to:
+/// its last 64 KiB, with a visible marker when earlier output was dropped.
+pub fn live_output(source: ProgressSource, log: Option<&Path>) -> Option<LiveOutput> {
+    if !streams_output() {
+        return None;
+    }
+    let step = Step::new_live(Arc::clone(global_sink()), None, source);
+    Some(LiveOutput::start(step, log, window_columns()))
+}
+
+/// The columns a window may draw in. `COLUMNS` is the terminal's own answer
+/// when it is set; otherwise a conventional width keeps lines from wrapping.
+fn window_columns() -> usize {
+    std::env::var("COLUMNS")
+        .ok()
+        .and_then(|columns| columns.trim().parse::<usize>().ok())
+        .filter(|columns| *columns >= 40)
+        .unwrap_or(DEFAULT_COLUMNS)
+}
+
+impl LiveOutput {
+    fn start(step: Step, log: Option<&Path>, columns: usize) -> Self {
+        *step.inner.window.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some(Window::new(columns));
+        Self {
+            step,
+            log: log.map(Path::to_path_buf),
+            ignored: AtomicUsize::new(0),
+        }
+    }
+
+    /// One complete line the producer wrote. A known nerdctl capability
+    /// warning is counted instead of echoed: it repeats for every unsupported
+    /// Compose field and says nothing the operator can act on.
+    pub fn observe(&self, line: &str) {
+        if nerdctl_ignored_compose_field(line) {
+            self.ignored.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        self.step.observe_producer_line(line);
+    }
+
+    /// The stage succeeded: the window collapses into the timed finish line.
+    pub fn succeed(&self, summary: &str) {
+        self.note_counted();
+        self.note_log();
+        self.step.succeed(&self.timed(summary));
+    }
+
+    /// The stage failed: the retained tail and the log's path, then the
+    /// ordinary failure line.
+    pub fn fail(&self, summary: &str) {
+        let sink = &self.step.inner.sink;
+        for line in self.step.producer_tail(FAILURE_TAIL) {
+            sink.write_above_bars(&format!("  {line}\n"));
+        }
+        self.note_counted();
+        self.note_log();
+        self.step.fail(&self.timed(summary));
+    }
+
+    /// The operator stopped the stage: same bounded ending, no failure tail.
+    pub fn interrupted(&self, summary: &str) {
+        self.note_counted();
+        self.note_log();
+        self.step.fail(&self.timed(summary));
+    }
+
+    /// `summary (1.2s)`: the stage line says how long the work ran.
+    fn timed(&self, summary: &str) -> String {
+        format!(
+            "{} ({})",
+            headline(summary),
+            crate::human::human_duration(self.step.inner.started.elapsed())
+        )
+    }
+
+    fn note_counted(&self) {
+        let count = self.ignored.load(Ordering::Relaxed);
+        if count == 0 {
+            return;
+        }
+        let plural = if count == 1 { "field" } else { "fields" };
+        let pointer = if self.log.is_some() { " (see log)" } else { "" };
+        self.note(&format!(
+            "nerdctl ignored {count} unsupported compose {plural}{pointer}"
+        ));
+    }
+
+    fn note_log(&self) {
+        if let Some(log) = &self.log {
+            // The record is bounded (#277): name what it actually holds rather
+            // than promising a complete stream it may have trimmed (effigy#925).
+            self.note(&format!("output log (last 64 KiB): {}", log.display()));
+        }
+    }
+
+    /// One dim line above the window: a note that is not the stage's outcome.
+    fn note(&self, line: &str) {
+        let sink = &self.step.inner.sink;
+        sink.write_above_bars(&format!("{}\n", sink.style_label(line)));
+    }
+}
+
+/// The one-line form of a producer failure: the tail already carries the
+/// detail, so a multi-line error keeps its first line.
+fn headline(summary: &str) -> String {
+    summary
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_owned()
+}
+
+/// nerdctl's structured report of a Compose field it does not support. Only
+/// the known capability warnings match: any other warning keeps its place in
+/// the window.
+fn nerdctl_ignored_compose_field(line: &str) -> bool {
+    if !line.contains("level=warning") {
+        return false;
+    }
+    let Some((_, message)) = line.split_once("msg=\"Ignoring: ") else {
+        return false;
+    };
+    if message.starts_with("volume ") {
+        return message.contains("[Labels]") || message.contains("[Driver Labels]");
+    }
+    message.starts_with("service ")
+        && message.contains("depends_on")
+        && message.contains("[Required]")
+}
+
+impl Step {
+    /// Record one producer line in this step's window and redraw it.
+    fn observe_producer_line(&self, line: &str) {
+        let _guard = self
+            .inner
+            .render_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if self.inner.finished.load(Ordering::SeqCst) {
+            return;
+        }
+        let label = self
+            .inner
+            .label
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        {
+            let mut window = self
+                .inner
+                .window
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let Some(window) = window.as_mut() else {
+                return;
+            };
+            window.push(line);
+        }
+        self.inner.set_bar_message(&label);
+    }
+
+    /// The last `limit` producer lines this step retained.
+    fn producer_tail(&self, limit: usize) -> Vec<String> {
+        self.inner
+            .window
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map(|window| window.tail(limit))
+            .unwrap_or_default()
     }
 }
 
@@ -1431,6 +1715,187 @@ mod tests {
             live_step(ProgressSource::waiting_for("web to start")).fail("web is unhealthy")
         });
         assert_eq!(second, vec!["✗ web is unhealthy".to_owned()]);
+    }
+
+    #[test]
+    fn a_live_window_bounds_its_lines_and_collapses_into_the_finish_line() {
+        let (sink, buffer, terminal) = window_sink();
+        let log = Path::new("/repo/.effigy/runtime/logs/web.compose.log");
+        let (step, bar) = terminal_step(&sink);
+        let live = LiveOutput::start(step.clone(), Some(log), 60);
+        for index in 0..20 {
+            live.observe(&format!("level=info creating layer {index}"));
+        }
+        live.observe(&format!("#42 {}", "extracting ".repeat(12)));
+        bar.force_draw();
+        let frame = last_frame(&terminal);
+        assert_eq!(
+            frame.matches("creating layer").count(),
+            WINDOW_LINES - 1,
+            "the window keeps the newest lines only: {frame}"
+        );
+        assert!(frame.contains("creating layer 19"), "{frame}");
+        assert!(!frame.contains("creating layer 12"), "{frame}");
+        assert!(
+            frame.contains('…') && !frame.contains("extracting extracting extracting extracting extracting"),
+            "a line wider than the window is cut: {frame}"
+        );
+        assert!(buffer.text().is_empty(), "nothing durable before the end");
+
+        live.succeed("The stack is up");
+        let text = buffer.text();
+        assert!(
+            text.starts_with(&format!("output log (last 64 KiB): {}\n", log.display())),
+            "{text}"
+        );
+        let ending = text.lines().last().expect("the stage's own line");
+        assert!(
+            ending.starts_with("✓ The stack is up (") && ending.ends_with(')'),
+            "the window collapses into the timed stage line: {text}"
+        );
+        terminal.0.lock().unwrap().1.clear();
+        bar.force_draw();
+        assert!(
+            !last_frame(&terminal).contains("creating layer"),
+            "a finished stage rewrites no window"
+        );
+    }
+
+    #[test]
+    fn nerdctl_capability_warnings_are_counted_and_never_echoed() {
+        let (sink, buffer, terminal) = window_sink();
+        let log = Path::new("/repo/.effigy/runtime/logs/web.compose.log");
+        let (step, bar) = terminal_step(&sink);
+        let live = LiveOutput::start(step, Some(log), 100);
+        live.observe(r#"level=warning msg="Ignoring: volume web_node_modules [Labels]""#);
+        live.observe(r#"level=warning msg="Ignoring: volume web_cache [Driver Labels]""#);
+        live.observe(
+            r#"level=warning msg="Ignoring: service web depends_on: [db] [Required]""#,
+        );
+        live.observe(r#"level=warning msg="a warning an operator needs""#);
+        live.observe(r#"level=warning msg="Ignoring: service app healthcheck [Required]""#);
+        bar.force_draw();
+        let frame = last_frame(&terminal);
+        assert!(
+            !frame.contains("web_node_modules")
+                && !frame.contains("web_cache")
+                && !frame.contains("depends_on"),
+            "known capability warnings are counted, not echoed: {frame}"
+        );
+        assert!(
+            frame.contains("a warning an operator needs")
+                && frame.contains("service app healthcheck"),
+            "any other warning keeps its place in the window: {frame}"
+        );
+
+        live.succeed("The stack is up");
+        let text = buffer.text();
+        assert!(
+            text.contains("nerdctl ignored 3 unsupported compose fields (see log)\n"),
+            "one summary line counts the ignored fields: {text}"
+        );
+        assert!(text.contains(log.to_str().unwrap()), "{text}");
+    }
+
+    #[test]
+    fn a_failed_stage_prints_its_bounded_tail_the_log_path_and_one_failure_line() {
+        let (sink, buffer, _terminal) = window_sink();
+        let log = Path::new("/repo/.effigy/runtime/logs/web.compose.log");
+        let (step, _bar) = terminal_step(&sink);
+        let live = LiveOutput::start(step, Some(log), 100);
+        for index in 0..40 {
+            live.observe(&format!("runtime line {index}"));
+        }
+        live.fail(
+            "The stack did not start: nerdctl compose up failed (exit status 1)\nstdout:\n\nstderr:\nno image",
+        );
+        let text = buffer.text();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(
+            lines.iter().filter(|line| line.contains("runtime line ")).count(),
+            FAILURE_TAIL,
+            "the failure keeps its own bounded tail: {text}"
+        );
+        assert!(text.contains("runtime line 39"), "{text}");
+        assert!(!text.contains("runtime line 9\n"), "{text}");
+        assert!(
+            text.contains(&format!("output log (last 64 KiB): {}\n", log.display())),
+            "{text}"
+        );
+        let ending = lines.last().expect("the failure line");
+        assert!(
+            ending.starts_with("✗ The stack did not start: nerdctl compose up failed (exit status 1) ("),
+            "the failure line keeps its first sentence: {text}"
+        );
+        assert!(!text.contains("no image"), "the tail is not repeated: {text}");
+    }
+
+    #[test]
+    fn a_piped_or_captured_terminal_gets_no_window() {
+        // This binary draws nothing: no terminal, no window, and the caller
+        // keeps its plain or JSON planning (the JSON envelope is unchanged).
+        let (window, _) = capture_lines(|| {
+            live_output(
+                ProgressSource::waiting_for("docker compose up to return"),
+                Some(Path::new("/repo/.effigy/runtime/logs/web.compose.log")),
+            )
+            .is_some()
+        });
+        assert!(!window);
+    }
+
+    #[test]
+    fn only_nerdctl_capability_warnings_match_the_ignored_form() {
+        for line in [
+            r#"level=warning msg="Ignoring: volume web_node_modules [Labels]""#,
+            r#"level=warning msg="Ignoring: volume web_cache [Driver Labels]""#,
+            r#"level=warning msg="Ignoring: service web depends_on: [db] [Required]""#,
+        ] {
+            assert!(nerdctl_ignored_compose_field(line), "{line}");
+        }
+        for line in [
+            r#"level=warning msg="Ignoring: volume web_data""#,
+            r#"level=warning msg="Ignoring: service web [Required]""#,
+            r#"level=warning msg="a warning an operator needs""#,
+            r#"level=info msg="Ignoring: volume web_node_modules [Labels]""#,
+            "Ignoring: volume web_node_modules [Labels]",
+        ] {
+            assert!(!nerdctl_ignored_compose_field(line), "{line}");
+        }
+    }
+
+    /// A spinner-mode sink whose bars draw into a fake terminal, and the sink's
+    /// own durable lines into a buffer.
+    fn window_sink() -> (Arc<Sink>, Buffer, FrameTerminal) {
+        let (sink, buffer) = sink(StepMode::Spinner);
+        let terminal = FrameTerminal::default();
+        sink.multi()
+            .set_draw_target(ProgressDrawTarget::term_like(Box::new(terminal.clone())));
+        (sink, buffer, terminal)
+    }
+
+    /// A live stage step whose clock the test drives, never the wall clock.
+    fn terminal_step(sink: &Arc<Sink>) -> (Step, ProgressBar) {
+        let source = ProgressSource::new(
+            ProgressFrame::default()
+                .label("Starting web stack")
+                .waiting_for("docker compose up to return"),
+        );
+        let step = Step::new_live(Arc::clone(sink), None, source);
+        let bar = step.inner.bar.as_ref().expect("a terminal step").clone();
+        bar.disable_steady_tick();
+        (step, bar)
+    }
+
+    fn last_frame(terminal: &FrameTerminal) -> String {
+        terminal
+            .0
+            .lock()
+            .unwrap()
+            .1
+            .last()
+            .cloned()
+            .unwrap_or_default()
     }
 
     fn suspend_terminal_with(sink: &Arc<Sink>) -> TerminalGuard {

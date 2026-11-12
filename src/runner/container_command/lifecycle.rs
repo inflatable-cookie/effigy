@@ -776,13 +776,18 @@ fn run_container_up_compose(
     // runtime line it read, so a runtime whose progress this parser does not
     // recognise still shows what it is waiting for (effigy#460, Q-017).
     let progress = activation_source(&plan.up_plan.label, &plan.policy.name);
-    let streaming = effigy_ui::steps::streams_output();
-    let output_step = streaming.then(|| effigy_ui::steps::streaming_step(progress.clone()));
-    let whole_stack = (!streaming).then(|| TimedStep::live(progress.clone()));
+    // The backend record keeps the stream's last bytes; the terminal gets a
+    // bounded window of its latest lines and the record's path (effigy#925).
+    let log = effigy_containers::exec::retained_backend_log_path(
+        &plan.policy.repo_root,
+        &plan.policy.project_name,
+    );
+    let live = effigy_ui::steps::live_output(progress.clone(), Some(&log));
+    let whole_stack = live.is_none().then(|| TimedStep::live(progress.clone()));
     let project = plan.policy.project_name.clone();
     let mut observe = |line: &str| {
-        if streaming {
-            effigy_ui::steps::print_line(line);
+        if let Some(live) = live.as_ref() {
+            live.observe(line);
         } else if let Some(event) = parse_compose_step_event(line) {
             progress.event(event.label(&project));
             compose_steps.observe(&event);
@@ -820,8 +825,8 @@ fn run_container_up_compose(
                 Some(deadline),
                 &mut restart_stage,
             );
-            if let Some(step) = output_step {
-                step.succeed("The stack is up");
+            if let Some(live) = live.as_ref() {
+                live.succeed("The stack is up");
             }
             if let Some(whole_stack) = whole_stack {
                 if compose_steps.touched() == 0 {
@@ -834,8 +839,8 @@ fn run_container_up_compose(
         }
         Err(_) if container_up_stop_requested(plan) => {
             compose_steps.finish_unfinished(false, "the activation was interrupted");
-            if let Some(step) = output_step {
-                step.fail("Stack activation interrupted");
+            if let Some(live) = live.as_ref() {
+                live.interrupted("Stack activation interrupted");
             }
             if let Some(whole_stack) = whole_stack {
                 whole_stack.finish_clear();
@@ -844,8 +849,8 @@ fn run_container_up_compose(
         }
         Err(error) => {
             compose_steps.finish_unfinished(false, "the runtime reported the stack as failed");
-            if let Some(step) = output_step {
-                step.fail(&format!("The stack did not start: {error}"));
+            if let Some(live) = live.as_ref() {
+                live.fail(&format!("The stack did not start: {error}"));
             }
             if let Some(whole_stack) = whole_stack {
                 whole_stack.fail(format!("the stack did not start: {error}"));

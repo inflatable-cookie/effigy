@@ -64,10 +64,11 @@ path and the milestone QA path both fail on a reintroduced bare spinner.
   (`new_spinner`, `new`, `no_length`, `with_draw_target`, `hidden`, `with_style`)
   as a second gate, so a second construction fails even inside the sink.
 - The shipped API is the gate as well: `steps::live_step(ProgressSource)`,
-  `Step::live_step`, `steps::finish_line`, and `exec::runtime_wait(label,
-  awaiting)` for the runtime fallback. The old `Renderer::spinner`/
-  `SpinnerHandle` API was unused and is deleted, so no crate can start a bare
-  spinner of its own.
+  `Step::live_step`, `steps::finish_line`, `steps::live_output(source, log)` for a
+  producer's bounded window (a stage line and, on a terminal, its latest lines
+  under it), and `exec::runtime_wait(label, awaiting)` for the runtime fallback.
+  The old `Renderer::spinner`/`SpinnerHandle` API was unused and is deleted, so
+  no crate can start a bare spinner of its own.
 
 The same operation state reaches text, JSON and the TUI. A managed entry's
 wait is one `effigy_core::managed_waits::EntryState`: the tab, the `--headless` text and
