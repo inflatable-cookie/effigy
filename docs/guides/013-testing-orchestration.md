@@ -93,10 +93,11 @@ same value.
 
 `effigy test:focused` runs arbitrary `{args}`, so it cannot know which selected
 tests nest an invocation: it supplies this checkout's uplifted
-`target/debug/effigy` for all of them, keeps an explicit `EFFIGY_EXECUTABLE`,
-and refuses before building anything when neither exists. Build the CLI once
-(`oxide build --bin effigy`) rather than letting a test discover the gap as a
-late custody failure.
+`target/debug/effigy` for all of them and keeps an explicit
+`EFFIGY_EXECUTABLE`. A checkout with no built CLI gets one build through the
+same Oxide selector route (`build --bin effigy`) before the tests start, so the
+gap is never discovered as a late custody failure inside a test that does not
+mention Effigy.
 
 ## Configuration Authority
 

@@ -166,10 +166,17 @@ class FocusedExecutableTests(unittest.TestCase):
         if root and os.path.isdir(root):
             shutil.rmtree(root, ignore_errors=True)
 
-    def _repo(self):
+    def _repo(self, build=""):
         self.repo = owned_repo()
         install_guard(self.repo, FOCUSED_WRAPPER)
         write(os.path.join(self.repo, "Cargo.toml"), "[workspace]\n")
+        # The wrapper defers a missing binary to the repository's Oxide route;
+        # a synthetic selector stands in for it so no case builds anything.
+        write(
+            os.path.join(self.repo, "scripts", "oxide-selector.sh"),
+            "#!/bin/sh\nset -eu\nprintf '%%s\\n' \"$*\" >> \"$PWD/build.argv\"\n%s\n"
+            % build,
+        )
         return self.repo
 
     def _run(self, repo, env=None):
@@ -185,14 +192,19 @@ class FocusedExecutableTests(unittest.TestCase):
             env=source_env,
         )
 
-    def test_the_selector_supplies_the_uplifted_cli(self):
-        repo = self._repo()
+    def _built(self, repo):
         executable = os.path.join(repo, "target", "debug", "effigy")
         write(executable, "#!/bin/sh\nexit 0\n")
         os.chmod(executable, 0o755)
+        return executable
+
+    def test_the_selector_supplies_the_uplifted_cli(self):
+        repo = self._repo()
+        executable = self._built(repo)
         result = self._run(repo)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(result.stdout, executable)
+        self.assertFalse(os.path.exists(os.path.join(repo, "build.argv")))
 
     def test_an_operator_choice_is_kept(self):
         repo = self._repo()
@@ -200,7 +212,21 @@ class FocusedExecutableTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(result.stdout, "/opt/effigy")
 
-    def test_a_missing_binary_refuses_with_the_instruction(self):
+    def test_a_missing_binary_is_built_once_through_the_repository_route(self):
+        # The first focused run on a checkout that never built the CLI used to
+        # fail late as a relative custody executable. One build through the
+        # same Oxide selector route supplies it instead.
+        repo = self._repo(
+            build="mkdir -p \"$PWD/target/debug\" && printf '#!/bin/sh\\nexit 0\\n' "
+            "> \"$PWD/target/debug/effigy\" && chmod +x \"$PWD/target/debug/effigy\""
+        )
+        result = self._run(repo)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, os.path.join(repo, "target", "debug", "effigy"))
+        with open(os.path.join(repo, "build.argv"), encoding="utf-8") as handle:
+            self.assertEqual(handle.read().strip(), "build --bin effigy")
+
+    def test_a_build_that_produces_nothing_refuses_with_the_instruction(self):
         repo = self._repo()
         result = self._run(repo)
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
