@@ -2,7 +2,14 @@
 //! session custody, TLS listener, schema constructor and commit/CAS path.
 use super::*;
 use crate::runner::environment::{self, workspace::*};
+use crate::runner::workspace_client::context::{
+    GuestReader, WorkspaceActivationIdentity, WorkspaceBackendDescriptor, WorkspaceChannelLocator,
+    WorkspaceHostIdentity, WorkspacePathMap, BINARY_CURRENT_PATH, CONTEXT_CURRENT_PATH,
+};
 use crate::runner::workspace_client::guest_fake::FakeGuest;
+use crate::runner::workspace_command::artifact_receipt::{
+    workspace_artifact_receipt_path, workspace_effigy_active_version_file,
+};
 use crate::runner::workspace_transport::qualification::{
     Backend, GuestDialEvidence, ResolvedAlias,
 };
@@ -19,6 +26,7 @@ use effigy_kernel::workspace_session::{
 };
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::rc::Rc;
 
 struct Guest(

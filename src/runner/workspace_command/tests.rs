@@ -12,22 +12,30 @@ use crate::runner::runtime_session_context::{
     with_runtime_session_context, PublicWorkspaceCleanupOverride, RuntimeSessionContext,
 };
 use crate::runner::test_support::effective_container_policy;
-use crate::runner::workspace_command::provisioning::persist_effigy_source_repo_root;
-use crate::runner::workspace_command::provisioning::{
-    acquire_linux_workspace_effigy_artifact_with, configured_effigy_repo_root,
-    configured_linux_workspace_artifact_source, describe_linux_workspace_artifact_refusal,
-    discover_effigy_repo_root, ensure_local_linux_workspace_effigy_artifact,
-    linux_workspace_effigy_artifact_is_current,
-    linux_workspace_effigy_artifact_receipt_matches_target, linux_workspace_effigy_cache_path,
-    linux_workspace_effigy_release_url, linux_workspace_release_cache_is_current,
-    plan_workspace_permission_prep, read_trimmed_identity_file,
-    read_trimmed_workspace_effigy_active_version, render_workspace_effigy_staging_path,
-    resolve_local_effigy_repo_root_from_paths, resolve_local_workspace_effigy_freshness_anchor,
-    run_linux_workspace_effigy_artifact_build, sibling_effigy_repo_root,
-    workspace_artifact_receipt_path, workspace_effigy_active_version_file,
-    workspace_effigy_install_identity_file, workspace_effigy_local_install_identity,
-    workspace_effigy_release_install_identity, LinuxWorkspaceArtifactSource, LinuxWorkspaceTarget,
-    WorkspacePermissionMode, EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
+use crate::runner::workspace_command::artifact_acquisition::{
+    acquire_linux_workspace_effigy_artifact_with, ensure_local_linux_workspace_effigy_artifact,
+    resolve_local_workspace_effigy_freshness_anchor, run_linux_workspace_effigy_artifact_build,
+};
+use crate::runner::workspace_command::artifact_plan::persist_effigy_source_repo_root;
+use crate::runner::workspace_command::artifact_plan::{
+    configured_effigy_repo_root, configured_linux_workspace_artifact_source,
+    discover_effigy_repo_root, resolve_local_effigy_repo_root_from_paths, sibling_effigy_repo_root,
+    LinuxWorkspaceArtifactSource, LinuxWorkspaceTarget, EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
+};
+use crate::runner::workspace_command::artifact_receipt::{
+    describe_linux_workspace_artifact_refusal, linux_workspace_effigy_artifact_is_current,
+    linux_workspace_effigy_artifact_receipt_matches_target, read_trimmed_identity_file,
+    read_trimmed_workspace_effigy_active_version, workspace_artifact_receipt_path,
+    workspace_effigy_active_version_file, workspace_effigy_install_identity_file,
+    workspace_effigy_local_install_identity, workspace_effigy_release_install_identity,
+};
+use crate::runner::workspace_command::artifact_release::{
+    linux_workspace_effigy_cache_path, linux_workspace_effigy_release_url,
+    linux_workspace_release_cache_is_current,
+};
+use crate::runner::workspace_command::guest_io::render_workspace_effigy_staging_path;
+use crate::runner::workspace_command::permission_prep::{
+    plan_workspace_permission_prep, WorkspacePermissionMode,
 };
 use crate::runner::workspace_command::session::classify_workspace_session_ownership;
 use std::sync::atomic::{AtomicU64, Ordering};

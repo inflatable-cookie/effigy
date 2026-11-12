@@ -1,0 +1,1 @@
+Failed environment admission now preserves its typed settlement result and reports unresolved effects or cleanup errors alongside the original refusal. Workspace provisioning is split into owners for artifact planning and acquisition, authenticated receipts, release downloads, source inputs, bounded reads, guest I/O, permissions and publication.

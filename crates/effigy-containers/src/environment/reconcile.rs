@@ -30,11 +30,13 @@ use effigy_kernel::id::{
 use effigy_kernel::ident::ProcessState;
 use effigy_kernel::objects::{Closure, Objects};
 use effigy_kernel::observe::{AbsenceProof, Observed, UnknownReason};
-use effigy_kernel::outcome::{CleanupOutcome, Invocation, RequiredObligation, WorkloadOutcome};
+use effigy_kernel::outcome::{
+    CleanupOutcome, Invocation, Outcome, RequiredObligation, WorkloadOutcome,
+};
 use effigy_kernel::root::StateRoot;
 use effigy_kernel::run::{
     AttachMode, Attachments, Effect, EffectSpec, Fence, Holder, Liveness, Reconciled, Run,
-    RunError, Settlement, SettlementAdapter, TransitionPermit,
+    RunError, Settled, Settlement, SettlementAdapter, TransitionPermit,
 };
 use effigy_ui::steps::{ProgressSource, Step};
 use serde_json::{json, Value};
@@ -486,6 +488,12 @@ pub enum EnvError {
     Backend(BackendError),
     Invalid(String),
     Kernel(RunError),
+    /// Admission failed after acquiring an owner. Preserve the refusal and the
+    /// full settlement result, including unresolved effects and recovery commands.
+    AdmissionCleanup {
+        cause: Box<EnvError>,
+        settlement: Result<Box<Outcome<Settled>>, Box<EnvError>>,
+    },
     /// Preserve the original refusal when cleanup also needs recovery.
     Cleanup {
         cause: Box<EnvError>,
@@ -521,6 +529,16 @@ impl std::fmt::Display for EnvError {
             Self::Backend(error) => write!(f, "{error}"),
             Self::Invalid(message) => f.write_str(message),
             Self::Kernel(error) => write!(f, "environment record: {error}"),
+            Self::AdmissionCleanup { cause, settlement } => {
+                write!(f, "{cause}")?;
+                match settlement {
+                    Ok(outcome) if outcome.cleanup() == CleanupOutcome::Incomplete => {
+                        write!(f, "; admission cleanup is incomplete: {}. Inspect with `effigy container status`", outcome.unresolved().join("; "))
+                    }
+                    Ok(_) => Ok(()),
+                    Err(error) => write!(f, "; admission cleanup requires recovery: {error}. Inspect with `effigy container status`"),
+                }
+            }
             Self::Cleanup { cause, failures } => {
                 write!(f, "{cause}")?;
                 for error in failures { write!(f, "; cleanup requires recovery: {error}")?; }
@@ -633,6 +651,26 @@ pub(super) struct EnvAdmissionFailure<'r> {
 pub(super) enum EnvAdmissionOwner<'r> {
     Run(Box<Run<'r>>),
     Guarded(Box<effigy_kernel::run::GuardedWorkspaceCleanup<'r>>),
+}
+
+impl EnvAdmissionFailure<'_> {
+    fn settle(self, ctx: &EnvContext<'_>) -> EnvError {
+        let Some(owner) = self.owner else {
+            return self.error;
+        };
+        let settlement = ctx.cleanup().and_then(|cleanup| match owner {
+            EnvAdmissionOwner::Run(run) => run
+                .settle(&cleanup, &mut EnvSettlement)
+                .map_err(EnvError::Kernel),
+            EnvAdmissionOwner::Guarded(guarded) => guarded
+                .settle(&cleanup, &mut EnvSettlement)
+                .map_err(|(error, _owner)| EnvError::Kernel(error)),
+        });
+        EnvError::AdmissionCleanup {
+            cause: Box::new(self.error),
+            settlement: settlement.map(Box::new).map_err(Box::new),
+        }
+    }
 }
 
 impl From<EnvError> for EnvAdmissionFailure<'_> {
@@ -1048,21 +1086,8 @@ impl<'r> EnvRun<'r> {
         wait: Wait,
         claim: Option<effigy_kernel::workspace_session::ActivationClaim>,
     ) -> Result<Self, EnvError> {
-        Self::admit_recoverable(ctx, env, op, wait, claim, None).map_err(|failure| {
-            if let Some(owner) = failure.owner {
-                if let Ok(cleanup) = ctx.cleanup() {
-                    match owner {
-                        EnvAdmissionOwner::Run(run) => {
-                            let _ = run.settle(&cleanup, &mut EnvSettlement);
-                        }
-                        EnvAdmissionOwner::Guarded(guarded) => {
-                            let _ = guarded.settle(&cleanup, &mut EnvSettlement);
-                        }
-                    }
-                }
-            }
-            failure.error
-        })
+        Self::admit_recoverable(ctx, env, op, wait, claim, None)
+            .map_err(|failure| failure.settle(ctx))
     }
 
     fn admit_recoverable(
@@ -2368,6 +2393,128 @@ mod tests {
     use super::super::record::Retention;
     use super::super::tests::{bring_up, closure, env, holder, home, root, Fake};
     use super::*;
+
+    fn refused_after_admission<'r>(run: EnvRun<'r>) -> EnvAdmissionFailure<'r> {
+        EnvAdmissionFailure {
+            error: EnvError::Invalid("record unreadable after admission".into()),
+            owner: Some(EnvAdmissionOwner::Run(Box::new(run.run))),
+        }
+    }
+
+    #[test]
+    fn admission_cleanup_preserves_complete_settlement_and_original_refusal() {
+        let home = home();
+        let state = root(home.path());
+        let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+        let run = EnvRun::begin(
+            &ctx,
+            &env("admission-complete"),
+            Operation::Up,
+            Wait::FailFast,
+        )
+        .unwrap();
+        let error = refused_after_admission(run).settle(&ctx);
+        assert!(error
+            .to_string()
+            .contains("record unreadable after admission"));
+        let EnvError::AdmissionCleanup { cause, settlement } = error else {
+            panic!("admission lost its settlement result");
+        };
+        assert!(matches!(*cause, EnvError::Invalid(_)));
+        assert_eq!(settlement.unwrap().cleanup(), CleanupOutcome::Complete);
+    }
+
+    #[test]
+    fn admission_cleanup_reports_typed_residue_instead_of_discarding_it() {
+        let home = home();
+        let state = root(home.path());
+        let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+        let mut run = EnvRun::begin(
+            &ctx,
+            &env("admission-residue"),
+            Operation::Up,
+            Wait::FailFast,
+        )
+        .unwrap();
+        let target = run.fence().clone();
+        permit(&mut run.run, None)
+            .unwrap()
+            .intend(EffectSpec {
+                target,
+                kind: "unowned-admission-effect".into(),
+                payload: json!({}),
+                settlement: Settlement::Release(json!({})),
+                required: true,
+            })
+            .unwrap();
+        let error = refused_after_admission(run).settle(&ctx);
+        let text = error.to_string();
+        assert!(text.contains("record unreadable after admission"));
+        assert!(text.contains("unowned-admission-effect"), "{text}");
+        assert!(text.contains("effigy container status"), "{text}");
+        let EnvError::AdmissionCleanup {
+            settlement: Ok(outcome),
+            ..
+        } = error
+        else {
+            panic!("admission lost its typed residue");
+        };
+        assert_eq!(outcome.cleanup(), CleanupOutcome::Incomplete);
+        assert_eq!(outcome.unresolved().len(), 1);
+    }
+
+    #[test]
+    fn admission_cleanup_reports_context_failure_with_the_original_refusal() {
+        let home = home();
+        let state = root(home.path());
+        let mut ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+        let run = EnvRun::begin(
+            &ctx,
+            &env("admission-budget"),
+            Operation::Up,
+            Wait::FailFast,
+        )
+        .unwrap();
+        ctx.cleanup_budget = Duration::MAX;
+        let error = refused_after_admission(run).settle(&ctx);
+        let text = error.to_string();
+        assert!(text.contains("record unreadable after admission"));
+        assert!(text.contains("cleanup budget overflow"), "{text}");
+        assert!(matches!(
+            error,
+            EnvError::AdmissionCleanup {
+                settlement: Err(_),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn admission_cleanup_preserves_kernel_settlement_failure() {
+        let home = home();
+        let state = root(home.path());
+        let mut ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+        let run = EnvRun::begin(
+            &ctx,
+            &env("admission-expired"),
+            Operation::Up,
+            Wait::FailFast,
+        )
+        .unwrap();
+        ctx.cleanup_budget = Duration::ZERO;
+        let error = refused_after_admission(run).settle(&ctx);
+        assert!(error
+            .to_string()
+            .contains("record unreadable after admission"));
+        let EnvError::AdmissionCleanup {
+            settlement: Err(error),
+            ..
+        } = error
+        else {
+            panic!("admission lost its settlement error");
+        };
+        assert!(matches!(*error, EnvError::Kernel(_)));
+    }
 
     /// The shipped adapter must be able to commit a staged activation: it
     /// threads the validated selection (and the launch that published its
