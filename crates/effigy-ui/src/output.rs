@@ -83,19 +83,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolve_text_color_enabled_follows_output_mode_when_no_color_unset() {
+    fn resolve_text_color_enabled_obeys_mode_and_no_color_precedence() {
         assert!(!resolve_text_color_enabled(OutputMode::Auto, false, false));
         assert!(resolve_text_color_enabled(OutputMode::Auto, true, false));
         assert!(resolve_text_color_enabled(OutputMode::Always, false, false));
         assert!(!resolve_text_color_enabled(OutputMode::Never, true, false));
-    }
 
-    #[test]
-    fn resolve_text_color_enabled_no_color_disables_styles() {
-        let modes = [OutputMode::Auto, OutputMode::Always, OutputMode::Never];
-        for mode in modes {
-            assert!(!resolve_text_color_enabled(mode, false, true));
-            assert!(!resolve_text_color_enabled(mode, true, true));
+        for mode in [OutputMode::Auto, OutputMode::Always, OutputMode::Never] {
+            for terminal in [false, true] {
+                assert!(
+                    !resolve_text_color_enabled(mode, terminal, true),
+                    "NO_COLOR must disable styles: {mode:?}, terminal={terminal}"
+                );
+            }
         }
     }
 }

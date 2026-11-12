@@ -17,8 +17,8 @@ fn tab_index_helpers_wrap_correctly() {
 
 #[test]
 fn toggle_follow_updates_mode_and_offset() {
-    let mut follow = HashMap::from([("api".to_owned(), false)]);
-    let mut offsets = HashMap::from([("api".to_owned(), 1usize)]);
+    let mut follow = HashMap::from([("api".to_owned(), false), ("admin".to_owned(), true)]);
+    let mut offsets = HashMap::from([("api".to_owned(), 1usize), ("admin".to_owned(), 9usize)]);
     toggle_follow_for_active(&mut follow, &mut offsets, "api", 42);
     assert_eq!(follow.get("api"), Some(&true));
     assert_eq!(offsets.get("api"), Some(&42usize));
@@ -26,6 +26,8 @@ fn toggle_follow_updates_mode_and_offset() {
     toggle_follow_for_active(&mut follow, &mut offsets, "api", 99);
     assert_eq!(follow.get("api"), Some(&false));
     assert_eq!(offsets.get("api"), Some(&42usize));
+    assert_eq!(follow.get("admin"), Some(&true));
+    assert_eq!(offsets.get("admin"), Some(&9usize));
 }
 
 #[test]

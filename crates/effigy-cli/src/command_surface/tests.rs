@@ -422,6 +422,9 @@ fn reserved_builtin_names_are_the_documented_exceptions() {
         .collect();
     reserved.sort_unstable();
     assert_eq!(reserved, ["help", "test", "version"]);
+    assert!(BUILTIN_COMMAND_NAMES.iter().all(|entry| {
+        (entry.authority == BuiltinNameAuthority::Reserved) == reserved.contains(&entry.name)
+    }));
 }
 
 /// The #290 regression: `effigy fmt` is a built-in, so a repository `fmt` task

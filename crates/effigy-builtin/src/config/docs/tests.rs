@@ -6,10 +6,21 @@ use super::{
 #[test]
 fn containers_reference_documents_optional_dns_base_domain() {
     let reference = containers_lines(ConfigDocProfile::Reference);
+    let rendered = reference.join("\n");
+    assert!(rendered.contains("# Optional TCP alias and container-host cookie apex."));
+    assert!(rendered.contains("# Defaults to the first DNS route's domain."));
 
-    assert!(reference.contains(&"# Optional TCP alias and container-host cookie apex."));
-    assert!(reference.contains(&"# Defaults to the first DNS route's domain."));
-    assert!(reference.contains(&"# base_domain = \"project.test\""));
+    let active_example = rendered.replace(
+        "# base_domain = \"project.test\"",
+        "base_domain = \"project.test\"",
+    );
+    let manifest: effigy_manifest::TaskManifest =
+        toml::from_str(&active_example).expect("documented container example parses");
+    assert_eq!(
+        manifest.containers.expect("containers section").environments["web"]
+            .dns.as_ref().expect("DNS section").base_domain.as_deref(),
+        Some("project.test")
+    );
 }
 
 #[test]

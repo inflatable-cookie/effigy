@@ -193,6 +193,9 @@ mod tests {
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0].chars().count(), lines[1].chars().count());
         assert_eq!(lines[1].chars().count(), lines[2].chars().count());
+        assert!(lines[0].starts_with('╭') && lines[0].ends_with('╮'), "{rendered}");
+        assert!(lines[1].contains("/var/www/cbs"), "{rendered}");
+        assert!(lines[2].starts_with('╰') && lines[2].ends_with('╯'), "{rendered}");
         assert!(
             lines[2].contains("v0.4.0+local.e2bcb80.dirty"),
             "bottom border should contain the full version: {rendered}"

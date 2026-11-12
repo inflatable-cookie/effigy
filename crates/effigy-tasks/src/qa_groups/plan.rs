@@ -763,7 +763,9 @@ members = [
         let group = group(ManifestQaScopePolicy::Advisory);
         let comparison =
             compare_scope(&group, &["path:docs/guide.md".to_owned()]).expect("compare");
+        assert_eq!(comparison.matches.len(), 1, "one member claims the guide");
         assert_eq!(comparison.matches[0].member_ids, vec!["docs".to_owned()]);
+        assert!(comparison.unmatched.is_empty());
     }
 
     #[test]

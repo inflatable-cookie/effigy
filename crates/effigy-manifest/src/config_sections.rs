@@ -572,6 +572,26 @@ domain_defaults = { tls = true, service = "tunnel" }
             assert_eq!(route.service.as_deref(), Some("tunnel"));
             assert_eq!(route.port, None);
         }
+
+        // The same sugar also omits unset default fields and ignores blank
+        // entries. Keep these input variants beside the expansion contract.
+        for (name, source, expected_domain) in [
+            ("without defaults", "domains = [\"a.example\"]", "a.example"),
+            (
+                "blank entries",
+                "domains = [\"\", \"  \", \"real.example\"]",
+                "real.example",
+            ),
+        ] {
+            let parsed: ManifestContainerDnsConfig =
+                toml::from_str(source).unwrap_or_else(|error| panic!("{name}: {error}"));
+            let resolved = parsed.resolved_routes();
+            assert_eq!(resolved.len(), 1, "{name}: {resolved:?}");
+            assert_eq!(resolved[0].domain, expected_domain, "{name}");
+            assert_eq!(resolved[0].tls, None, "{name}");
+            assert_eq!(resolved[0].port, None, "{name}");
+            assert_eq!(resolved[0].service, None, "{name}");
+        }
     }
 
     #[test]
@@ -637,37 +657,6 @@ routes = [
             Some("127.0.0.1:8080")
         );
         assert_eq!(parsed.routes[0].service, None);
-    }
-
-    #[test]
-    fn container_dns_domains_without_defaults_yields_unset_route_fields() {
-        let parsed: ManifestContainerDnsConfig = toml::from_str(
-            r#"
-domains = ["a.example"]
-"#,
-        )
-        .expect("parse domains-only");
-
-        let resolved = parsed.resolved_routes();
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].domain, "a.example");
-        assert_eq!(resolved[0].tls, None);
-        assert_eq!(resolved[0].port, None);
-        assert_eq!(resolved[0].service, None);
-    }
-
-    #[test]
-    fn container_dns_resolved_routes_skips_blank_domain_entries() {
-        let parsed: ManifestContainerDnsConfig = toml::from_str(
-            r#"
-domains = ["", "  ", "real.example"]
-"#,
-        )
-        .expect("parse with blanks");
-
-        let resolved = parsed.resolved_routes();
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].domain, "real.example");
     }
 
     #[test]
@@ -775,27 +764,15 @@ container = { image = "node:22", mount = "./:/workspace", shell = "bash" }
     }
 
     #[test]
-    fn container_host_mounts_accept_legacy_string_form() {
-        let parsed: ManifestContainerHostConfig = toml::from_str(
-            r#"
-mounts = ["./:/workspace", "./assets:/srv/assets:ro"]
-"#,
+    fn container_host_mounts_accept_legacy_structured_and_mixed_forms() {
+        let legacy: ManifestContainerHostConfig = toml::from_str(
+            r#"mounts = ["./:/workspace", "./assets:/srv/assets:ro"]"#,
         )
         .expect("parse legacy string mounts");
+        assert_eq!(legacy.mounts.len(), 2);
+        assert!(matches!(&legacy.mounts[0], ManifestContainerHostMount::Spec(value) if value == "./:/workspace"));
+        assert!(matches!(&legacy.mounts[1], ManifestContainerHostMount::Spec(value) if value == "./assets:/srv/assets:ro"));
 
-        assert_eq!(parsed.mounts.len(), 2);
-        match &parsed.mounts[0] {
-            ManifestContainerHostMount::Spec(value) => assert_eq!(value, "./:/workspace"),
-            ManifestContainerHostMount::Table(_) => panic!("expected spec form"),
-        }
-        match &parsed.mounts[1] {
-            ManifestContainerHostMount::Spec(value) => assert_eq!(value, "./assets:/srv/assets:ro"),
-            ManifestContainerHostMount::Table(_) => panic!("expected spec form"),
-        }
-    }
-
-    #[test]
-    fn container_host_mounts_accept_structured_external_form() {
         let parsed: ManifestContainerHostConfig = toml::from_str(
             r#"
 mounts = [
@@ -818,32 +795,22 @@ mounts = [
             }
             ManifestContainerHostMount::Spec(_) => panic!("expected table form"),
         }
-    }
 
-    #[test]
-    fn container_host_mounts_mix_legacy_and_structured_in_same_array() {
-        let parsed: ManifestContainerHostConfig = toml::from_str(
-            r#"
-mounts = [
-  "./:/workspace",
-  { host = "~/.config/effigy", container = "/etc/effigy", external = true },
-]
-"#,
+        let mixed: ManifestContainerHostConfig = toml::from_str(
+            r#"mounts = ["./:/workspace", { host = "~/.config/effigy", container = "/etc/effigy", external = true }]"#,
         )
         .expect("parse mixed mounts");
-
-        assert_eq!(parsed.mounts.len(), 2);
-        assert!(matches!(
-            parsed.mounts[0],
-            ManifestContainerHostMount::Spec(_)
-        ));
-        match &parsed.mounts[1] {
+        assert_eq!(mixed.mounts.len(), 2);
+        assert!(matches!(mixed.mounts[0], ManifestContainerHostMount::Spec(_)));
+        assert!(matches!(mixed.mounts[1], ManifestContainerHostMount::Table(_)));
+        match &mixed.mounts[1] {
             ManifestContainerHostMount::Table(table) => {
                 assert_eq!(table.host, "~/.config/effigy");
+                assert_eq!(table.container, "/etc/effigy");
                 assert!(table.external);
                 assert!(table.options.is_empty());
             }
-            ManifestContainerHostMount::Spec(_) => panic!("expected table form"),
+            ManifestContainerHostMount::Spec(_) => unreachable!("matched table above"),
         }
     }
 

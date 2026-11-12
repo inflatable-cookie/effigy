@@ -221,22 +221,23 @@ mod tests {
     };
 
     #[test]
-    fn replace_or_append_managed_block_appends_once() {
+    fn replace_or_append_managed_block_preserves_user_content_and_one_managed_block() {
         let block = format!("{MANAGED_BLOCK_START}\nhello\n{MANAGED_BLOCK_END}");
-        let updated = replace_or_append_managed_block("export PATH=\"$HOME/bin:$PATH\"\n", &block);
-        assert!(updated.contains("export PATH=\"$HOME/bin:$PATH\""));
-        assert!(updated.contains(&block));
-    }
+        let appended = replace_or_append_managed_block("export PATH=\"$HOME/bin:$PATH\"\n", &block);
+        assert_eq!(appended.matches(MANAGED_BLOCK_START).count(), 1);
+        assert_eq!(appended.matches(MANAGED_BLOCK_END).count(), 1);
+        assert!(appended.starts_with("export PATH=\"$HOME/bin:$PATH\"\n"));
+        assert!(appended.contains(&block));
 
-    #[test]
-    fn replace_or_append_managed_block_replaces_existing_block() {
         let old = format!("{MANAGED_BLOCK_START}\nold\n{MANAGED_BLOCK_END}");
         let new = format!("{MANAGED_BLOCK_START}\nnew\n{MANAGED_BLOCK_END}");
-        let updated = replace_or_append_managed_block(&format!("a\n\n{old}\n\nb\n"), &new);
-        assert!(updated.contains("\nnew\n"));
-        assert!(!updated.contains("\nold\n"));
-        assert!(updated.contains("a"));
-        assert!(updated.contains("b"));
+        let replaced = replace_or_append_managed_block(&format!("a\n\n{old}\n\nb\n"), &new);
+        assert_eq!(replaced.matches(MANAGED_BLOCK_START).count(), 1);
+        assert_eq!(replaced.matches(MANAGED_BLOCK_END).count(), 1);
+        assert!(replaced.contains("\nnew\n"));
+        assert!(!replaced.contains("\nold\n"));
+        assert!(replaced.starts_with("a\n"));
+        assert!(replaced.ends_with("\nb\n"));
     }
 
     #[test]

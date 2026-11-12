@@ -484,7 +484,9 @@ fn is_ident_byte(byte: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{configured_test_dir, detect_vitest, find_test_object, strip_js_comments};
+    use super::{
+        configured_test_dir, detect_vitest, find_test_object, strip_js_comments, TestRunner,
+    };
 
     /// What `configured_test_dir` must accept and refuse, one source per row.
     #[test]
@@ -612,7 +614,11 @@ export default { plugins: [] };
         )
         .expect("write package.json");
         let (plan, candidate) = detect_vitest(&root);
-        assert!(plan.is_some(), "dependency evidence must activate");
+        assert_eq!(
+            plan.as_ref().map(|plan| plan.runner),
+            Some(TestRunner::Vitest),
+            "dependency evidence must activate"
+        );
         assert!(candidate.available);
 
         // A config file is intent too, even without a dependency.
@@ -624,7 +630,11 @@ export default { plugins: [] };
         std::fs::write(root.join("package.json"), r#"{ "name": "x" }"#)
             .expect("write package.json");
         let (plan, candidate) = detect_vitest(&root);
-        assert!(plan.is_some(), "config evidence must activate");
+        assert_eq!(
+            plan.as_ref().map(|plan| plan.runner),
+            Some(TestRunner::Vitest),
+            "config evidence must activate"
+        );
         assert!(candidate.available);
         assert!(
             candidate.reason.contains("found `vitest.config.ts`"),
@@ -647,5 +657,6 @@ export default { plugins: [] };
             "{}",
             candidate.reason
         );
+        assert!(plan.is_none(), "installed executable cannot create a plan");
     }
 }
