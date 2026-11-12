@@ -1,8 +1,9 @@
 //! Read named mounts from the final immutable Compose closure and create the
 //! host directories an isolated mount needs.
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
+use effigy_kernel::fs::{DirFd, FsError};
 use serde_yaml::Value;
 
 use super::ContainerExecError;
@@ -117,66 +118,119 @@ fn isolated_mount_points(
 }
 
 /// Recreate missing host mount-point directories for isolated mounts before a
-/// stack is created. Returns the host paths this call created. An existing
-/// non-directory or symlink refuses: this is never permission to write through
-/// a link or replace a file.
+/// stack is created. Returns the host paths this call created.
+///
+/// Preparation is component-relative and no-follow: every component below the
+/// checkout is opened from the directory already held above it, so a symlinked
+/// ancestor or leaf refuses exactly like a symlink at the mount point itself.
+/// An existing non-directory refuses too. Creation never replaces a file,
+/// follows a link, or changes an owner or mode.
 pub fn ensure_isolated_mount_host_points(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<String>, ContainerExecError> {
     let working_dir = crate::load_container_exec_working_dir(repo_root, Some(&policy.name))
         .map_err(unavailable)?;
-    ensure_points(&isolated_mount_points(repo_root, policy, &working_dir)?)
+    ensure_points(
+        repo_root,
+        &isolated_mount_points(repo_root, policy, &working_dir)?,
+    )
 }
 
-fn ensure_points(points: &[IsolatedMountPoint]) -> Result<Vec<String>, ContainerExecError> {
+fn ensure_points(
+    repo_root: &Path,
+    points: &[IsolatedMountPoint],
+) -> Result<Vec<String>, ContainerExecError> {
+    let root = DirFd::open(repo_root).map_err(|error| {
+        unavailable(format!(
+            "cannot open checkout `{}` for isolated mount points: {error}",
+            repo_root.display()
+        ))
+    })?;
     let mut created = Vec::new();
     for point in points {
-        match host_point_presence(point)? {
-            HostPoint::Directory => continue,
-            HostPoint::Missing => {
-                std::fs::create_dir_all(&point.host_path).map_err(|error| {
-                    unavailable(format!(
-                        "cannot recreate isolated mount point `{}`: {error}",
-                        point.host_path.display()
-                    ))
-                })?;
-                created.push(point.host_path.display().to_string());
+        let relative = point.host_path.strip_prefix(repo_root).map_err(|_| {
+            unavailable(format!(
+                "isolated mount point `{}` is not inside the checkout `{}`",
+                point.host_path.display(),
+                repo_root.display()
+            ))
+        })?;
+        let components = relative_components(point, relative)?;
+        match root.create_component_path(&components, 0o777) {
+            Ok((_, made)) => {
+                if made {
+                    created.push(point.host_path.display().to_string());
+                }
             }
+            Err(error) => return Err(host_point_refusal(point, error)),
         }
     }
     Ok(created)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum HostPoint {
-    Directory,
-    Missing,
+/// The mount point's components below the checkout. `..`, a root or a prefix
+/// is never part of a host mount point: such a path would leave the checkout.
+fn relative_components<'a>(
+    point: &IsolatedMountPoint,
+    relative: &'a Path,
+) -> Result<Vec<&'a str>, ContainerExecError> {
+    relative
+        .components()
+        .map(|component| match component {
+            Component::Normal(name) => name.to_str().ok_or_else(|| {
+                unavailable(format!(
+                    "isolated mount point `{}` is not valid UTF-8",
+                    point.host_path.display()
+                ))
+            }),
+            _ => Err(unavailable(format!(
+                "isolated mount point `{}` leaves the checkout through `{}`",
+                point.host_path.display(),
+                relative.display()
+            ))),
+        })
+        .collect()
 }
 
-/// Read-only host observation for one isolated mount point. A non-directory or
-/// symlink is unavailable, never drift and never recreation authority.
-fn host_point_presence(point: &IsolatedMountPoint) -> Result<HostPoint, ContainerExecError> {
-    match std::fs::symlink_metadata(&point.host_path) {
-        Ok(metadata) if metadata.is_dir() => Ok(HostPoint::Directory),
+/// The refusal that names the object which blocked preparation. The observation
+/// below only classifies the refusal after the no-follow walk already refused:
+/// it never grants creation authority and never repairs anything.
+fn host_point_refusal(point: &IsolatedMountPoint, error: FsError) -> ContainerExecError {
+    let offending = match &error {
+        FsError::Untrusted { path, .. } | FsError::UnsupportedFilesystem { path, .. } => {
+            path.clone()
+        }
+        _ => point.host_path.clone(),
+    };
+    let follow_advice = "A host output link sits on a container-isolated path: adopt the project's output links with `oxide outputs adopt` so the path stays a real directory, or drop it from `isolated_dirs`.";
+    match std::fs::symlink_metadata(&offending) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
-            let target = std::fs::read_link(&point.host_path)
+            let target = std::fs::read_link(&offending)
                 .map(|target| target.display().to_string())
                 .unwrap_or_else(|error| format!("<unreadable: {error}>"));
-            Err(unavailable(format!(
-                "isolated mount point `{}` is a symlink to `{target}`; refusing to follow it. A host output link sits on a container-isolated path: adopt the project's output links with `oxide outputs adopt` so the path stays a real directory, or drop it from `isolated_dirs`.",
-                point.host_path.display()
-            )))
+            if offending == point.host_path {
+                unavailable(format!(
+                    "isolated mount point `{}` is a symlink to `{target}`; refusing to follow it. {follow_advice}",
+                    point.host_path.display()
+                ))
+            } else {
+                unavailable(format!(
+                    "isolated mount point `{}` is reached through a symlink at `{}` to `{target}`; refusing to follow it. {follow_advice}",
+                    point.host_path.display(),
+                    offending.display()
+                ))
+            }
         }
-        Ok(_) => Err(unavailable(format!(
-            "isolated mount point `{}` is not a directory",
+        Ok(_) => unavailable(format!(
+            "isolated mount point `{}` is not a directory: `{}` is not one",
+            point.host_path.display(),
+            offending.display()
+        )),
+        Err(_) => unavailable(format!(
+            "cannot prepare isolated mount point `{}`: {error}",
             point.host_path.display()
-        ))),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(HostPoint::Missing),
-        Err(error) => Err(unavailable(format!(
-            "cannot inspect isolated mount point `{}`: {error}",
-            point.host_path.display()
-        ))),
+        )),
     }
 }
 
@@ -231,17 +285,23 @@ mod tests {
             },
         ];
         assert_eq!(
-            ensure_points(&points).unwrap(),
+            ensure_points(fixture.path(), &points).unwrap(),
             vec![target.display().to_string()]
         );
         assert!(target.is_dir());
-        assert!(ensure_points(&points).unwrap().is_empty(), "idempotent");
+        assert!(
+            ensure_points(fixture.path(), &points).unwrap().is_empty(),
+            "idempotent"
+        );
 
         let file = fixture.path().join("apps/farmyard/node_modules");
         std::fs::write(&file, "not a directory").unwrap();
-        let error = ensure_points(&[IsolatedMountPoint {
-            host_path: file.clone(),
-        }])
+        let error = ensure_points(
+            fixture.path(),
+            &[IsolatedMountPoint {
+                host_path: file.clone(),
+            }],
+        )
         .expect_err("a file mount point refuses");
         assert!(error.to_string().contains("is not a directory"), "{error}");
 
@@ -249,8 +309,11 @@ mod tests {
         {
             let link = fixture.path().join("linked");
             std::os::unix::fs::symlink(fixture.path(), &link).unwrap();
-            let error = ensure_points(&[IsolatedMountPoint { host_path: link }])
-                .expect_err("a symlink mount point refuses");
+            let error = ensure_points(
+                fixture.path(),
+                &[IsolatedMountPoint { host_path: link }],
+            )
+            .expect_err("a symlink mount point refuses");
             let error = error.to_string();
             assert!(error.contains("symlink"), "{error}");
             assert!(
@@ -261,5 +324,103 @@ mod tests {
             assert!(error.contains("oxide outputs adopt"), "{error}");
             assert!(error.contains("drop it from `isolated_dirs`"), "{error}");
         }
+    }
+
+    /// A genuine nested mount point below the checkout is accepted: the
+    /// no-follow walk never refuses a real directory chain.
+    #[test]
+    fn plain_nested_ancestors_are_created() {
+        let fixture = tempfile::tempdir().unwrap();
+        let point = IsolatedMountPoint {
+            host_path: fixture.path().join("apps/farmyard/target"),
+        };
+        assert_eq!(
+            ensure_points(fixture.path(), std::slice::from_ref(&point)).unwrap(),
+            vec![point.host_path.display().to_string()]
+        );
+        assert!(point.host_path.is_dir());
+        assert!(fixture.path().join("apps/farmyard").is_dir());
+        assert!(
+            ensure_points(fixture.path(), std::slice::from_ref(&point))
+                .unwrap()
+                .is_empty(),
+            "a present nested mount point is reused, never reported as created"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_ancestor_is_refused_before_anything_is_created() {
+        let fixture = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(fixture.path().join("apps")).unwrap();
+        let link = fixture.path().join("apps/farmyard");
+        std::os::unix::fs::symlink(outside.path(), &link).unwrap();
+        let point = IsolatedMountPoint {
+            host_path: link.join("target"),
+        };
+        let error = ensure_points(fixture.path(), &[point])
+            .expect_err("a symlinked ancestor refuses the mount point");
+        let error = error.to_string();
+        assert!(error.contains("reached through a symlink"), "{error}");
+        assert!(
+            error.contains(&format!("at `{}` to `{}`", link.display(), outside.path().display())),
+            "the refusal names the ancestor link and its target: {error}"
+        );
+        assert!(error.contains("oxide outputs adopt"), "{error}");
+        assert!(
+            !outside.path().join("target").exists(),
+            "nothing is created through the ancestor link"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_ancestor_with_a_present_leaf_still_refuses() {
+        let fixture = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let present = outside.path().join("target");
+        std::fs::create_dir_all(&present).unwrap();
+        std::fs::create_dir_all(fixture.path().join("apps")).unwrap();
+        let link = fixture.path().join("apps/farmyard");
+        std::os::unix::fs::symlink(outside.path(), &link).unwrap();
+        let error = ensure_points(
+            fixture.path(),
+            &[IsolatedMountPoint {
+                host_path: link.join("target"),
+            }],
+        )
+        .expect_err("an existing leaf behind a link is no authority either");
+        assert!(error.to_string().contains("reached through a symlink"), "{error}");
+        assert_eq!(
+            std::fs::read_dir(&present).unwrap().count(),
+            0,
+            "the link target is observed, never written"
+        );
+    }
+
+    /// A component verified through a held directory stays authoritative: a
+    /// link swapped in at the old path cannot redirect the next creation.
+    #[cfg(unix)]
+    #[test]
+    fn a_replaced_intermediate_never_redirects_creation() {
+        let fixture = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(fixture.path().join("apps")).unwrap();
+        let root = DirFd::open(fixture.path()).unwrap();
+        let (held, created) = root.create_component_path(&["apps"], 0o777).unwrap();
+        assert!(!created, "the intermediate already existed");
+
+        let moved = fixture.path().join("moved-apps");
+        std::fs::rename(fixture.path().join("apps"), &moved).unwrap();
+        std::os::unix::fs::symlink(outside.path(), fixture.path().join("apps")).unwrap();
+
+        let (_, created) = held.create_component_path(&["farmyard", "target"], 0o777).unwrap();
+        assert!(created, "the missing leaf below the held directory is created");
+        assert!(moved.join("farmyard/target").is_dir());
+        assert!(
+            !outside.path().join("farmyard").exists(),
+            "the replaced path never receives the creation"
+        );
     }
 }

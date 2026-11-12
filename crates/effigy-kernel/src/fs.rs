@@ -513,9 +513,51 @@ impl DirFd {
             Err(error) => Err(error),
         }
     }
+    /// Open (creating when missing) a chain of directory components below this
+    /// verified directory.
+    ///
+    /// Each component is opened relative to its already-held parent with
+    /// `O_DIRECTORY | O_NOFOLLOW`, so a symlinked component is refused rather
+    /// than followed, and a path swap after a component was verified cannot
+    /// redirect a later creation. Missing components are created with `mode`
+    /// exactly as `create_dir_all` would: the process umask applies, and no
+    /// existing owner or mode is ever repaired.
+    ///
+    /// Returns the held directory and whether this call created the last
+    /// component. An empty component list opens nothing and reports no
+    /// creation.
+    pub fn create_component_path(
+        &self,
+        components: &[&str],
+        mode: u32,
+    ) -> Result<(Self, bool), FsError> {
+        let mut directory = self.clone();
+        let mut created = false;
+        for component in components {
+            let name = FileName::new(component)?;
+            let (child, made) = directory.descend_created(
+                name.as_str().as_bytes(),
+                Trust::Ancestor,
+                Some(mode),
+            )?;
+            directory = child;
+            created = made;
+        }
+        Ok((directory, created))
+    }
     fn descend(&self, name: &[u8], trust: Trust, create: Option<u32>) -> Result<Self, FsError> {
+        self.descend_created(name, trust, create).map(|(dir, _)| dir)
+    }
+    /// [`DirFd::descend`], reporting whether this call created the component.
+    fn descend_created(
+        &self,
+        name: &[u8],
+        trust: Trust,
+        create: Option<u32>,
+    ) -> Result<(Self, bool), FsError> {
         let path = self.path.join(std::ffi::OsStr::from_bytes(name));
         let cname = cstring(name, &path)?;
+        let mut created = false;
         if let Some(mode) = create {
             // SAFETY: live directory fd and NUL-terminated single component.
             if unsafe { libc::mkdirat(self.raw(), cname.as_ptr(), mode as libc::mode_t) } != 0 {
@@ -523,6 +565,8 @@ impl DirFd {
                 if error.raw_os_error() != Some(libc::EEXIST) {
                     return Err(FsError::io("mkdir", &path, &error));
                 }
+            } else {
+                created = true;
             }
         }
         let fd = open_raw(
@@ -545,7 +589,7 @@ impl DirFd {
             setup_uid: self.setup_uid,
         };
         dir.check(&dir.stat()?, trust, Kind::Dir, &dir.path)?;
-        Ok(dir)
+        Ok((dir, created))
     }
     /// Setup-only directory preparation with a checked creation mode.
     /// Existing modes are verified, never relaxed.
