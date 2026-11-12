@@ -47,6 +47,8 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Bui
             "# Or use an OCI bundle:",
             "# base = { type = \"oci\", url = \"ghcr.io/org/bundle:v1\" }",
             "# Bundle-defined inputs depend on the selected preset.",
+            "# Machine-local input values live in `~/.effigy/config.toml`: `[bundle.<name>].inputs = { name = value }`.",
+            "# A project's own `[bundle]` keys still win over the machine-local value; `effigy config --inspect` shows the effective value and its source.",
             "# Inspect the active repo bundle source: `effigy bundle inspect`",
             "# Refresh remote git or OCI sources: `effigy bundle sync`",
             "# Render the generic bundle config schema: `effigy config --schema --target bundle`",

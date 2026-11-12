@@ -67,6 +67,12 @@ Existing coverage for the first split:
 - `crates/effigy-manifest/tests/local_bundle.rs` covers path bundle defaults,
   exported Underlay/Decodelabs bundle fixtures, input validation, and removed
   `base_path` errors.
+- `crates/effigy-manifest/tests/user_bundle_inputs.rs` covers the machine-local
+  `[bundle.<name>].inputs` layer: the default → user config → repo →
+  `effigy.local.toml` precedence ladder, bundle-name matching, and the warning
+  an undeclared or wrong-typed user value produces. `effigy config inspect`
+  reports each effective value and its source (`tests/cli_output_tests/
+  bundle_user_inputs_tests.rs`).
 - `crates/effigy-manifest/tests/decodelabs_bundle.rs`,
   `underlay_bundle.rs`, and `underlay_starter.rs` cover exported bundle
   fixture compatibility.

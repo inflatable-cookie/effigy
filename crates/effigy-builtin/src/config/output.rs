@@ -17,8 +17,8 @@ use super::schema::{
 use crate::BuiltinError;
 use effigy_manifest::{
     load_task_manifest_with_inspection, load_user_config, save_user_config, user_config_path,
-    ManifestCompositionEdge, ManifestCompositionOverride, ManifestCompositionValueSource,
-    UserConfig, UserContainerBackendPreference,
+    BundleInputSource, ManifestCompositionEdge, ManifestCompositionOverride,
+    ManifestCompositionValueSource, UserConfig, UserContainerBackendPreference,
 };
 
 pub(super) fn render_config_request(
@@ -243,6 +243,20 @@ fn render_inspect_payload(
             overridden_paths,
             value_sources,
             effective_manifest: loaded.effective_manifest,
+            bundle_inputs: loaded.bundle_name.as_deref().map(|name| {
+                json!({
+                    "bundle": name,
+                    "inputs": loaded
+                        .bundle_inputs
+                        .iter()
+                        .map(|input| json!({
+                            "name": input.name,
+                            "value": toml_value_to_json(&input.value),
+                            "source": input.source,
+                        }))
+                        .collect::<Vec<_>>(),
+                })
+            }),
             selected_path,
             selected_value: selected.map(|entry| {
                 json!({
@@ -276,6 +290,7 @@ fn render_config_payload(
     let minimal = payload.minimal;
     let target = payload.target.map(ConfigSchemaTarget::as_str);
     let bundle = payload.bundle;
+    let bundle_inputs = payload.bundle_inputs;
     let runner = payload.runner.map(ConfigTestRunner::as_str);
     let manifest_path = payload.manifest_path;
     let evaluation_order = payload.evaluation_order;
@@ -300,6 +315,7 @@ fn render_config_payload(
                 "minimal": minimal,
                 "target": target,
                 "bundle": bundle,
+                "bundle_inputs": bundle_inputs,
                 "runner": runner,
                 "manifest_path": manifest_path,
                 "evaluation_order": evaluation_order,
@@ -324,6 +340,9 @@ struct ConfigPayload {
     minimal: bool,
     target: Option<ConfigSchemaTarget>,
     bundle: Option<String>,
+    /// Inspect mode only: the active bundle, its declared inputs and where
+    /// each effective value came from.
+    bundle_inputs: Option<serde_json::Value>,
     runner: Option<ConfigTestRunner>,
     manifest_path: Option<String>,
     evaluation_order: Option<Vec<String>>,
@@ -349,6 +368,7 @@ struct ConfigInspect {
     overridden_paths: Vec<serde_json::Value>,
     value_sources: Vec<serde_json::Value>,
     effective_manifest: String,
+    bundle_inputs: Option<serde_json::Value>,
     selected_path: Option<String>,
     selected_value: Option<serde_json::Value>,
 }
@@ -360,6 +380,7 @@ impl ConfigPayload {
             minimal: false,
             target: None,
             bundle: None,
+            bundle_inputs: None,
             runner: None,
             manifest_path: None,
             evaluation_order: None,
@@ -390,6 +411,7 @@ impl ConfigPayload {
             minimal,
             target,
             bundle,
+            bundle_inputs: None,
             runner,
             manifest_path: None,
             evaluation_order: None,
@@ -417,6 +439,7 @@ impl ConfigPayload {
             overridden_paths,
             value_sources,
             effective_manifest,
+            bundle_inputs,
             selected_path,
             selected_value,
         } = inspect;
@@ -425,6 +448,7 @@ impl ConfigPayload {
             minimal: false,
             target: None,
             bundle: None,
+            bundle_inputs,
             runner: None,
             manifest_path: Some(manifest_path),
             evaluation_order: Some(evaluation_order),
@@ -449,6 +473,7 @@ impl ConfigPayload {
             minimal: false,
             target: None,
             bundle: None,
+            bundle_inputs: None,
             runner: None,
             manifest_path: None,
             evaluation_order: None,
@@ -473,6 +498,7 @@ impl ConfigPayload {
             minimal: false,
             target: None,
             bundle: None,
+            bundle_inputs: None,
             runner: None,
             manifest_path: None,
             evaluation_order: None,
@@ -503,6 +529,7 @@ impl ConfigPayload {
             minimal: false,
             target: None,
             bundle: None,
+            bundle_inputs: None,
             runner: None,
             manifest_path: None,
             evaluation_order: None,
@@ -532,6 +559,7 @@ impl ConfigPayload {
             minimal: false,
             target: None,
             bundle: None,
+            bundle_inputs: None,
             runner: None,
             manifest_path: None,
             evaluation_order: None,
@@ -598,6 +626,25 @@ fn render_manifest_inspection(
         }
     }
     out.push('\n');
+
+    if let Some(name) = loaded.bundle_name.as_deref() {
+        out.push_str("Bundle Inputs\n");
+        out.push_str("-------------\n");
+        out.push_str(&format!("bundle: {name}\n"));
+        if loaded.bundle_inputs.is_empty() {
+            out.push_str("(bundle declares no inputs)\n");
+        } else {
+            for input in &loaded.bundle_inputs {
+                out.push_str(&format!(
+                    "- {} = {} ({})\n",
+                    input.name,
+                    render_bundle_input_value(&input.value),
+                    render_bundle_input_source(input.source),
+                ));
+            }
+        }
+        out.push('\n');
+    }
 
     if let Some(selected) = selected {
         out.push_str("Selected Path\n");
@@ -790,6 +837,25 @@ fn insert_value_at_path(table: &mut toml::map::Map<String, Value>, path: &str, v
 
 fn toml_value_to_json(value: &Value) -> serde_json::Value {
     serde_json::to_value(value).unwrap_or(serde_json::Value::Null)
+}
+
+/// One resolved bundle input value as `config inspect` text reads it: strings
+/// bare, everything else in TOML form.
+fn render_bundle_input_value(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
+    }
+}
+
+/// Where a resolved bundle input value came from, in the words the text view
+/// uses.
+fn render_bundle_input_source(source: BundleInputSource) -> &'static str {
+    match source {
+        BundleInputSource::Default => "bundle default",
+        BundleInputSource::UserConfig => "user config",
+        BundleInputSource::Manifest => "manifest",
+    }
 }
 
 fn render_user_config_text(

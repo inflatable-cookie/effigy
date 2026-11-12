@@ -18,6 +18,7 @@
 //! library_mounts = [
 //!   "~/Dev/legacy/libraries/php-app",
 //! ]
+//! inputs = { php_version = "8.5" }
 //!
 //! [scratch]
 //! root = "/Volumes/Builds/scratch"
@@ -37,6 +38,14 @@
 //! manifest declares `[bundle].base = "<name>"` matching one of the
 //! `[bundle.<name>]` blocks, those library paths get bind-mounted onto the
 //! workspace container under `/workspace-libraries/<basename>`.
+//!
+//! A `[bundle.<name>]` block is matched on the active bundle's declared
+//! `name` from its `bundle.toml`, for a path, git or OCI base alike. Its
+//! `inputs` table supplies machine-local values for that bundle's declared
+//! `[[inputs]]`: they sit above the bundle's own `default` and below the
+//! project's `[bundle]` keys (and `effigy.local.toml`), so a repo that sets a
+//! value keeps it. A block naming a bundle the project does not use does
+//! nothing.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -152,6 +161,11 @@ pub struct UserBundleConfig {
     /// workspace container under `/workspace-libraries/<basename>`.
     #[serde(default)]
     pub library_mounts: Vec<String>,
+    /// Machine-local values for the bundle's declared `[[inputs]]`, keyed by
+    /// declared input name. A dotted key names a nested input the same way a
+    /// repo `[bundle]` key does. Values a project manifest sets still win.
+    #[serde(default)]
+    pub inputs: BTreeMap<String, toml::Value>,
 }
 
 /// A library mount entry resolved from user-global config.
@@ -188,6 +202,17 @@ impl UserConfig {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// Returns the machine-local input values for the named bundle, or `None`
+    /// when the file has no matching block or the block sets no inputs.
+    ///
+    /// The lookup matches the bundle's declared `name` exactly, then the
+    /// `-`/`_` spelling a hand-written TOML key may use.
+    pub fn bundle_inputs_for(&self, bundle_name: &str) -> Option<&BTreeMap<String, toml::Value>> {
+        self.bundle_config_for(bundle_name)
+            .map(|cfg| &cfg.inputs)
+            .filter(|inputs| !inputs.is_empty())
     }
 
     fn bundle_config_for(&self, bundle_name: &str) -> Option<&UserBundleConfig> {
@@ -572,6 +597,40 @@ backend = "colima-nerdctl"
     }
 
     #[test]
+    fn parses_bundle_keyed_inputs() {
+        let tmp = tempdir().expect("tempdir");
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[bundle.decodelabs]
+inputs = { php_version = "8.5" }
+
+[bundle.decodelabs-library]
+inputs = { php_version = "8.5", databases = ["app", "shared"] }
+
+[bundle.mounts-only]
+library_mounts = ["/abs/path/libs"]
+"#,
+        )
+        .expect("write");
+        let cfg = load_user_config_from(&path).expect("load");
+
+        let decodelabs = cfg.bundle_inputs_for("decodelabs").expect("inputs");
+        assert_eq!(
+            decodelabs.get("php_version"),
+            Some(&toml::Value::String("8.5".to_owned()))
+        );
+        let library = cfg
+            .bundle_inputs_for("decodelabs-library")
+            .expect("library inputs");
+        assert_eq!(library.len(), 2);
+        // A block that only mounts libraries declares no inputs.
+        assert!(cfg.bundle_inputs_for("mounts-only").is_none());
+        assert!(cfg.bundle_inputs_for("unused").is_none());
+    }
+
+    #[test]
     fn unknown_field_under_bundle_block_is_rejected() {
         let tmp = tempdir().expect("tempdir");
         let path = tmp.path().join("config.toml");
@@ -589,6 +648,43 @@ unexpected_field = "nope"
         let rendered = err.to_string();
         assert!(rendered.contains("unknown field"), "{rendered}");
         assert!(rendered.contains("unexpected_field"), "{rendered}");
+    }
+
+    #[test]
+    fn nested_bundle_input_keys_survive_a_round_trip() {
+        let tmp = tempdir().expect("tempdir");
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[bundle.decodelabs.inputs]
+php_version = "8.5"
+
+[bundle.decodelabs.inputs.search]
+engine = "meilisearch"
+
+[bundle.mounts-only]
+library_mounts = ["/abs/path/libs"]
+"#,
+        )
+        .expect("write");
+        let mut cfg = load_user_config_from(&path).expect("load");
+        assert_eq!(
+            cfg.bundle_inputs_for("decodelabs")
+                .and_then(|inputs| inputs.get("php_version"))
+                .and_then(toml::Value::as_str),
+            Some("8.5")
+        );
+        cfg.containers.profile = Some("private".into());
+        save_user_config_to(&path, &cfg).expect("save");
+        let reloaded = load_user_config_from(&path).expect("reload");
+        assert_eq!(
+            reloaded.bundle_inputs_for("decodelabs"),
+            cfg.bundle_inputs_for("decodelabs")
+        );
+        // A block that only mounts libraries still reloads with no inputs.
+        assert!(reloaded.bundle_inputs_for("mounts-only").is_none());
+        assert_eq!(reloaded.library_mounts_for("mounts-only").len(), 1);
     }
 
     #[test]
