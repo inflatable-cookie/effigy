@@ -377,6 +377,43 @@ fn colima_mount_budget_admits_generated_external_data_from_volumes() {
     });
 }
 
+/// Two Compose overlays may repeat the same borrowed-volume definition. An
+/// identical `{owner_volume: {external: true}}` entry in a later overlay
+/// names the same volume again, so the merge keeps one owner identity and
+/// the preflight admits it; only definitions that disagree are conflicting
+/// (see `colima_mount_budget_refuses_unmodelled_external_volume_forms`).
+#[test]
+fn colima_mount_budget_merges_identical_borrowed_volume_definitions_across_overlays() {
+    with_temp_effigy_home("data-from-colima-identical-overlay", |_| {
+        let _lock = crate::test_env_lock();
+        let root = temp_repo("data-from-colima-identical-overlay");
+        write_manifest(&root, ACOW_SHAPED_MANIFEST);
+
+        let mut hybrid = load_container_policy(&root, Some("hybrid")).expect("hybrid policy");
+        let owner_volume = borrowed_volume_names(&hybrid)
+            .into_iter()
+            .find(|name| name.ends_with("-postgres-data"))
+            .expect("the postgres data volume is borrowed");
+        let overlay_dir = root.join("infra/dev");
+        fs::create_dir_all(&overlay_dir).expect("mkdir overlay dir");
+        let repeated = format!(
+            "services:\n  postgres:\n    volumes:\n      - {owner_volume}:/var/lib/postgresql/data\nvolumes:\n  {owner_volume}:\n    external: true\n"
+        );
+        let borrowed_before = borrowed_volume_names(&hybrid);
+        for name in ["compose.repeat-a.yml", "compose.repeat-b.yml"] {
+            let overlay = overlay_dir.join(name);
+            fs::write(&overlay, &repeated).expect("write repeated borrowed-volume overlay");
+            hybrid.compose_files.push(overlay);
+        }
+
+        with_colima_nerdctl_preflight(|| crate::validate_compose_backend_runtime(&root, &hybrid))
+            .expect("an identical repeated borrowed-volume definition merges, it does not conflict");
+
+        // The repeat adds no volume identity: the borrowing set is unchanged.
+        assert_eq!(borrowed_volume_names(&hybrid), borrowed_before);
+    });
+}
+
 /// Everything outside the exact generated external form keeps its unmodelled
 /// refusal: unknown external identities, aliases, `external: false` or
 /// malformed external values, driver options, conflicting definitions and
