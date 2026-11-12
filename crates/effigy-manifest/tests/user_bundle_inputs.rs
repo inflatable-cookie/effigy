@@ -90,6 +90,43 @@ description = "PHP version to run."
             .expect("write manifest");
     }
 
+    /// Repoint the project at a stale pin: `.effigy/sources.lock.json` records
+    /// a snapshot under `cache/sources/pinned` whose descriptor declares no
+    /// `php_version`, while the project's own `[bundle]` declaration has moved
+    /// on to `bundles/acme` (which does declare it). That is the shape of a
+    /// checkout whose pin is behind its declaration.
+    fn write_stale_pin(&self, name: &str) {
+        let object = self.repo().join(".effigy/cache/sources/pinned");
+        std::fs::create_dir_all(&object).expect("mkdir pinned snapshot");
+        std::fs::write(
+            object.join("bundle.toml"),
+            format!(
+                r#"
+[bundle]
+name = "{name}"
+description = "Pinned bundle."
+
+[[inputs]]
+name = "node_version"
+type = "string"
+default = "22"
+description = "Node version to run."
+"#
+            ),
+        )
+        .expect("write pinned descriptor");
+        std::fs::write(
+            object.join("effigy.toml"),
+            "[tasks.php]\nrun = \"echo php pinned\"\n",
+        )
+        .expect("write pinned defaults");
+        std::fs::write(
+            self.repo().join(".effigy/sources.lock.json"),
+            r#"{"version":1,"sources":{"bundle":{"declaration":{"type":"path","dir":"bundles/pinned"},"object":"cache/sources/pinned","version":"9b1f7a4c2d6e8f0a1b3c5d7e9f0a2b4c6d8e0f1a3b5c7d9e0f2a4b6c8d0e1f3a"}}}"#,
+        )
+        .expect("write source lock");
+    }
+
     /// Load the project manifest with this fixture's Effigy home active.
     fn load(&self) -> LoadedTaskManifest {
         with_test_user_config_home(&Self::effigy_home(self.owner.path()), || {
@@ -323,6 +360,39 @@ fn a_malformed_user_config_warns_instead_of_failing_every_project() {
             .iter()
             .any(|warning| warning.contains("config.toml") && warning.contains("ignoring")),
         "{warnings:?}"
+    );
+}
+
+#[test]
+fn a_stale_pin_does_not_warn_about_the_inputs_it_is_about_to_replace() {
+    let _guard = NOTICE_LEDGER.lock().expect("notice ledger lock");
+    let fixture = Fixture::new("stale-acme");
+    fixture.write_user_config(
+        r#"
+[bundle.stale-acme]
+inputs = { php_version = "8.5" }
+"#,
+    );
+    fixture.write_stale_pin("stale-acme");
+    let (loaded, warnings) = load_and_collect_warnings(&fixture);
+    // The pinned snapshot is what renders, and the value it cannot place is
+    // still ignored rather than used.
+    assert_eq!(rendered_php(&loaded), "echo php pinned");
+    assert_eq!(loaded.bundle_name.as_deref(), Some("stale-acme"));
+    let node = loaded
+        .bundle_inputs
+        .iter()
+        .find(|input| input.name == "node_version")
+        .expect("the pinned descriptor's input resolves");
+    assert_eq!(node.value.as_str(), Some("22"));
+    // A snapshot the next Prepare path replaces is not the effective bundle:
+    // judging the operator's file against it claimed the bundle did not
+    // declare an input the refreshed pin does declare (papercut 1f529edc).
+    assert!(
+        !warnings
+            .iter()
+            .any(|warning| warning.contains("php_version")),
+        "no warning judges the file against the stale pin: {warnings:?}"
     );
 }
 

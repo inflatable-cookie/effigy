@@ -233,8 +233,39 @@ pub fn open_gateway_log_append(
 
 pub(crate) const DIR_MODE: u32 = 0o700;
 pub(crate) const FILE_MODE: u32 = 0o600;
-/// Reason reported when a trusted object carries group or other bits.
+/// Reason reported when a `Trust::Private` object carries any group or other
+/// bit (`mode & 0o077`): another local account can read, write or execute it.
 pub(crate) const OPEN_MODE_REASON: &str = "group- or other-accessible mode";
+/// Reason reported when a `Trust::Operator` object carries a group or other
+/// write bit (`mode & 0o022`): another local account can write it. Read and
+/// execute bits alone are the operator's own choice and are accepted.
+pub(crate) const OPEN_WRITE_REASON: &str = "group- or other-writable mode";
+
+/// Whether a reason names one of the mode rules above rather than another
+/// trust failure (a symlinked component, a wrong owner).
+pub(crate) fn open_mode_reason(reason: &str) -> bool {
+    matches!(reason, OPEN_WRITE_REASON | OPEN_MODE_REASON)
+}
+
+/// The one sentence a group- or other-permission refusal gets, naming the rule
+/// the object broke: a write bit for `Trust::Operator`, any access bit for
+/// `Trust::Private`. `chmod 700` satisfies both. `None` for every other reason,
+/// so the caller keeps its own wording.
+pub(crate) fn open_mode_message(path: &Path, reason: &str) -> Option<String> {
+    if !open_mode_reason(reason) {
+        return None;
+    }
+    let rule = if reason == OPEN_WRITE_REASON {
+        "is writable by group or other users"
+    } else {
+        "grants group or other users access"
+    };
+    Some(format!(
+        "{} {rule}; run `chmod 700 {}`",
+        path.display(),
+        path.display()
+    ))
+}
 
 /// Fixed-shape error facts. `errno` lets callers tell ENOSPC from EPERM.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -297,10 +328,10 @@ impl FsError {
     pub(crate) fn is_not_found(&self) -> bool {
         matches!(self, Self::Io(error) if error.errno == Some(libc::ENOENT))
     }
-    /// The only defect was a group/other-accessible mode on an otherwise
+    /// The only defect was a group/other-permission mode on an otherwise
     /// trusted, operator-owned object.
     pub(crate) fn is_open_mode(&self) -> bool {
-        matches!(self, Self::Untrusted { reason, .. } if reason == OPEN_MODE_REASON)
+        matches!(self, Self::Untrusted { reason, .. } if open_mode_reason(reason))
     }
 }
 impl fmt::Display for FsError {
@@ -309,18 +340,15 @@ impl fmt::Display for FsError {
             Self::HostAuthorityRequired => f.write_str(
                 "host state is not available to a guest placement; run this on the host",
             ),
-            Self::Untrusted { path, reason } if reason == OPEN_MODE_REASON => write!(
-                f,
-                "{} is readable by other users; run `chmod 700 {}`",
-                path.display(),
-                path.display()
-            ),
-            Self::Untrusted { path, reason } => write!(
-                f,
-                "{} is not trusted state ({reason}); {}",
-                path.display(),
-                trust_next_action(reason)
-            ),
+            Self::Untrusted { path, reason } => match open_mode_message(path, reason) {
+                Some(message) => f.write_str(&message),
+                None => write!(
+                    f,
+                    "{} is not trusted state ({reason}); {}",
+                    path.display(),
+                    trust_next_action(reason)
+                ),
+            },
             Self::UnsupportedFilesystem { path, fs } => write!(
                 f,
                 "{} is on a network filesystem ({fs}); move the state root to a local disk",
@@ -1119,7 +1147,17 @@ pub(crate) fn check(
         Trust::Private => mode & 0o077 == 0,
     };
     if !mode_ok {
-        return Err(FsError::untrusted(path, OPEN_MODE_REASON));
+        // Operator refuses a write bit another account could use; Private
+        // refuses any access bit at all. The reason carries which rule, so the
+        // refusal can name it instead of calling every mode "readable".
+        return Err(FsError::untrusted(
+            path,
+            if trust == Trust::Operator {
+                OPEN_WRITE_REASON
+            } else {
+                OPEN_MODE_REASON
+            },
+        ));
     }
     if kind == Kind::File && trust == Trust::Private && stat.st_nlink as u64 > 1 {
         return Err(FsError::untrusted(path, "hard-linked file"));

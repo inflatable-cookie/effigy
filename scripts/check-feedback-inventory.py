@@ -148,10 +148,13 @@ HEX_DIGITS = frozenset('0123456789abcdefABCDEF')
 def _char_literal_end(text, index):
     """The end of a char literal at `index`, or None for a lifetime.
 
-    Only the shapes rustc accepts are recognized: one plain character, or one
-    escape — the single-character escapes, `\\x` with two hex digits, or
-    `\\u` with one to six hex digits in braces — closed by the very next quote.
-    Anything else (a lifetime, several characters, an unterminated or
+    Only the char-literal spellings this scan models are recognized: one plain
+    character, or one escape — the single-character escapes, `\\x` with two hex
+    digits, or `\\u` with one to six hex digits in braces — closed by the very
+    next quote. The braces are part of the notation, so a brace-less `\\uAB` is
+    malformed here too. This is narrower than rustc's own grammar: the escape's
+    value is not checked (its range, a surrogate, `\\x` above 0x7f), only its
+    notation. Anything else (a lifetime, several characters, an unterminated or
     malformed literal) returns None, and `code_only` leaves those columns as
     code. The scan therefore never searches past a literal's own closing
     quote: uncertain input can stay a false positive, but it can never blank
@@ -169,6 +172,8 @@ def _char_literal_end(text, index):
                 return None
             cursor += 3
         elif text[cursor] == 'u':
+            if text[cursor + 1:cursor + 2] != '{':
+                return None
             brace = text.find('}', cursor + 2, cursor + 9)
             body = text[cursor + 2:brace]
             if brace < 0 or not body or any(digit not in HEX_DIGITS for digit in body):

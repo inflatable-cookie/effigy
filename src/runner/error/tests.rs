@@ -804,6 +804,39 @@ fn a_failed_step_record_is_past_its_life_a_day_after_the_failure() {
     );
 }
 
+/// A configured root the operator already named `effigy` shows the namespace
+/// segment twice. That layout is the intended one (effigy#946): the `effigy/`
+/// child is the namespace the sweep descends into, so a record left directly
+/// under such a root would sit beside it and never be retired.
+#[test]
+fn a_record_under_a_root_named_effigy_stays_in_the_swept_namespace() {
+    let owner = tempfile::tempdir().expect("owner");
+    let root = owner.path().join("scratch").join("effigy");
+    std::fs::create_dir_all(&root).expect("configured root");
+    let run = effigy_kernel::id::RunId::new(0, [12; 10]).expect("run id");
+    let retained = crate::runner::scratch::with_test_scratch(Some(root.clone()), true, || {
+        crate::runner::scratch::retain_step_output(&run, "out", "err", false)
+    });
+    let path = std::path::Path::new(
+        retained
+            .lines()
+            .next()
+            .and_then(|line| line.strip_prefix("full failed-step output: "))
+            .expect("retained path"),
+    )
+    .to_path_buf();
+    let expected = root.join("effigy/failed-steps").join(run.to_string());
+    assert!(
+        path.starts_with(&expected),
+        "the record stays under the namespace the sweep reaches: {}",
+        path.display()
+    );
+    let later = now_ms() + 25 * 60 * 60 * 1000;
+    let report = crate::runner::scratch::sweep_at(&root, later, std::time::Duration::MAX);
+    assert_eq!(report.removed, 1, "{report:?}");
+    assert!(!path.exists(), "a later sweep retires the record");
+}
+
 /// Now, in milliseconds since the Unix epoch, as the sweep takes it.
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
@@ -827,6 +860,41 @@ fn text_command_payload_carries_its_next_action_to_the_json_form() {
         "the JSON form must name the action the text form names"
     );
     assert!(human.render_text().contains("next: run `effigy qa:plan`"));
+}
+
+#[test]
+fn a_nested_envelope_failure_carries_its_next_action_to_the_json_form() {
+    // A command that reports its own failure in the standard `--json` envelope
+    // nests the human block under `error.human`. The outer form used to reduce
+    // that payload to the generic display sentence, so `next_action` was null
+    // while the payload named the step.
+    let payload = serde_json::json!({
+        "ok": false,
+        "error": {
+            "kind": "unavailable",
+            "type": "RunnerError",
+            "message": "command `effigy test:focused` failed",
+            "details": { "exit_code": 3 },
+            "human": {
+                "what_failed": "step `lint` failed",
+                "evidence": ["exit code 3"],
+                "next_action": "run `effigy lint:feedback`",
+            },
+        },
+    })
+    .to_string();
+    let error = RunnerError::CommandJsonFailure { rendered: payload };
+    let human = error.human_error();
+    assert_eq!(human.what_failed(), "step `lint` failed");
+    assert_eq!(human.evidence_lines(), ["exit code 3"]);
+    assert_eq!(
+        human.to_json()["next_action"],
+        "run `effigy lint:feedback`",
+        "the outer JSON form carries the action the payload names"
+    );
+    assert!(human
+        .render_text()
+        .contains("next: run `effigy lint:feedback`"));
 }
 
 #[test]
