@@ -56,13 +56,24 @@ fn package_manager_profile_lines_contract_is_stable() {
     let reference = package_manager_lines(ConfigDocProfile::Reference);
     let schema = package_manager_lines(ConfigDocProfile::Schema);
 
-    assert_eq!(reference[0], "[package_manager]");
     assert_eq!(
-        reference[1],
-        "# Preferred JS/TS package manager for built-in test runners."
+        reference,
+        [
+            "[package_manager]",
+            "# Preferred JS/TS package manager for built-in test runners.",
+            "js = \"bun\"  # applies to JS/TS tooling",
+            "",
+        ]
     );
-    assert_eq!(reference[2], "js = \"bun\"  # applies to JS/TS tooling");
-    assert_eq!(schema[2], "js = \"bun\"");
+    assert_eq!(
+        schema,
+        [
+            "[package_manager]",
+            "# Preferred JS/TS package manager for built-in test runners.",
+            "js = \"bun\"",
+            "",
+        ]
+    );
 }
 
 #[test]

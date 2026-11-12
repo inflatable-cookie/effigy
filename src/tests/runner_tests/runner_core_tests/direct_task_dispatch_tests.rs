@@ -365,12 +365,13 @@ concurrent = [
     )
     .expect("managed tui plan");
 
-    assert!(output.contains("Selector: dev"), "{output}");
+    assert!(output.lines().any(|line| line == "Selector: dev"), "{output}");
     assert!(
-        output.contains("api: cargo run -p api"),
-        "tui plan should name process commands: {output}"
+        output
+            .lines()
+            .any(|line| line == "Command: api: cargo run -p api; web: vite dev"),
+        "tui plan must preserve the complete declared process order and commands: {output}"
     );
-    assert!(output.contains("web: vite dev"), "{output}");
 }
 
 #[test]

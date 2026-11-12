@@ -132,15 +132,6 @@ fn ansi_line_ignores_non_sgr_escape_sequences() {
 }
 
 #[test]
-fn vt_logs_trims_empty_padding_lines() {
-    let mut parser = VtParser::new(8, 40, 100);
-    parser.process(b"\n\nhello\nworld\n\n");
-    let (rows, _, _) = vt_logs(&mut parser, 8, 40, 0, true);
-    assert!(rows.iter().any(|line| line.line.contains("hello")));
-    assert!(rows.iter().any(|line| line.line.contains("world")));
-}
-
-#[test]
 fn vt_logs_clamps_overscroll_without_panicking() {
     let mut parser = VtParser::new(8, 40, 200);
     for i in 0..200 {

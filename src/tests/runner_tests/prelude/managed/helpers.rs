@@ -75,6 +75,48 @@ pub(in crate::runner::tests) fn run_managed_invocation(
     }
 }
 
+pub(in crate::runner::tests) fn managed_plan_process_row(
+    output: &str,
+    process_name: &str,
+) -> Vec<String> {
+    let headers = [
+        "process",
+        "role",
+        "cwd",
+        "setup",
+        "run",
+        "start-after-ms",
+        "shutdown-on-exit",
+    ];
+    let header = output
+        .lines()
+        .find(|line| line.split_whitespace().next() == Some("process"))
+        .expect("managed process table header");
+    let starts = headers.map(|heading| {
+        header
+            .find(heading)
+            .unwrap_or_else(|| panic!("process table column {heading:?} missing: {output}"))
+    });
+    let row = output
+        .lines()
+        .find(|line| {
+            line.get(..starts[1])
+                .is_some_and(|cell| cell.trim() == process_name)
+        })
+        .unwrap_or_else(|| panic!("managed process row {process_name:?} missing: {output}"));
+    starts
+        .iter()
+        .enumerate()
+        .map(|(index, start)| {
+            let end = starts.get(index + 1).copied().unwrap_or(row.len());
+            row.get(*start..end)
+                .expect("process table column boundary")
+                .trim()
+                .to_owned()
+        })
+        .collect()
+}
+
 pub(in crate::runner::tests) struct OwnedThread<T> {
     handle: Option<thread::JoinHandle<T>>,
 }

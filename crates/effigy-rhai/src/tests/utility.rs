@@ -276,7 +276,15 @@ fn execute_rhai_script_rejects_recursive_effigy_process_calls() {
 fn execute_rhai_script_allows_explicit_effigy_binary_paths() {
     let root = temp_root("explicit-effigy-binary-path");
     let binary = root.join("effigy");
-    fs::write(&binary, "#!/bin/sh\nexit 0\n").expect("write fake effigy binary");
+    let invocation = root.join("invocation.txt");
+    fs::write(
+        &binary,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nexit 0\n",
+            invocation.display()
+        ),
+    )
+    .expect("write fake effigy binary");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -298,6 +306,10 @@ fn execute_rhai_script_allows_explicit_effigy_binary_paths() {
         &callbacks(),
     )
     .expect("explicit binary path should be allowed");
+    assert_eq!(
+        fs::read_to_string(invocation).expect("child invocation"),
+        "tasks\n"
+    );
 }
 
 /// One loopback server serves all three `http::` helper forms in sequence:

@@ -1,6 +1,6 @@
 use crate::runner::tests::prelude::{
     assert_output_contains_all, run_builtin_err, run_builtin_ok, temp_workspace, write_manifest,
-    write_root_manifest,
+    write_root_manifest, RunnerError,
 };
 
 #[test]
@@ -111,8 +111,15 @@ run = "printf dev"
     );
 
     let err = run_builtin_err(root, "config", &["--inspect", "--path", "tasks.qa.run"]);
-    let rendered = err.to_string();
-    assert!(rendered.contains("config path `tasks.qa.run` was not found"));
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert_eq!(
+                message,
+                "config path `tasks.qa.run` was not found in the effective manifest"
+            )
+        }
+        other => panic!("unexpected error: {other}"),
+    }
 }
 
 #[test]

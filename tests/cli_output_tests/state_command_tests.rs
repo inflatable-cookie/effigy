@@ -57,53 +57,49 @@ fn cli_state_plan_text_is_plan_only() {
 }
 
 #[test]
-fn cli_state_plan_uses_manifest_default_stack() {
-    let root = temp_workspace("state-plan-manifest-default-stack");
-    fs::write(root.join("effigy.toml"), manifest_state_config_fixture())
-        .expect("write effigy manifest");
+fn cli_state_plan_selects_default_and_requested_manifest_stacks() {
+    let render = |workspace: &str, requested_stack: Option<&str>| {
+        let root = temp_workspace(workspace);
+        fs::write(root.join("effigy.toml"), manifest_state_config_fixture())
+            .expect("write effigy manifest");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--repo")
-        .arg(&root)
-        .arg("--json")
-        .args(["state", "plan"])
-        .env("NO_COLOR", "1")
-        .output()
-        .expect("run effigy");
+        let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+        command
+            .arg("--repo")
+            .arg(&root)
+            .arg("--json")
+            .args(["state", "plan"])
+            .env("NO_COLOR", "1");
+        if let Some(stack) = requested_stack {
+            command.args(["--stack", stack]);
+        }
+        let output = command.output().expect("run effigy");
+        assert!(
+            output.status.success(),
+            "state plan failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        parse_stdout_json(&output)["result"].clone()
+    };
 
-    assert!(
-        output.status.success(),
-        "state plan failed: {}",
-        String::from_utf8_lossy(&output.stderr)
+    let default = render("state-plan-manifest-default-stack", None);
+    assert_eq!(default["schema"], "effigy.state-stack.lineage.v1");
+    assert_eq!(default["stack_name"], "acowtancy-uat");
+    assert_eq!(
+        default["layers"]
+            .as_array()
+            .expect("default layer array")
+            .iter()
+            .map(|layer| layer["key"].as_str().expect("layer key"))
+            .collect::<Vec<_>>(),
+        ["structure", "baseline-seed", "legacy-content"]
     );
-    let payload = parse_stdout_json(&output);
-    assert_eq!(payload["result"]["stack_name"], "acowtancy-uat");
-    assert_eq!(payload["result"]["layers"][0]["key"], "structure");
-}
 
-#[test]
-fn cli_state_plan_uses_requested_manifest_stack() {
-    let root = temp_workspace("state-plan-manifest-stack");
-    fs::write(root.join("effigy.toml"), manifest_state_config_fixture())
-        .expect("write effigy manifest");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--repo")
-        .arg(&root)
-        .arg("--json")
-        .args(["state", "plan", "--stack", "prod"])
-        .env("NO_COLOR", "1")
-        .output()
-        .expect("run effigy");
-
-    assert!(
-        output.status.success(),
-        "state plan failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let payload = parse_stdout_json(&output);
-    assert_eq!(payload["result"]["schema"], "effigy.state-stack.lineage.v1");
-    assert_eq!(payload["result"]["stack_name"], "acowtancy-prod");
+    let requested = render("state-plan-manifest-stack", Some("prod"));
+    assert_eq!(requested["schema"], "effigy.state-stack.lineage.v1");
+    assert_eq!(requested["stack_name"], "acowtancy-prod");
+    assert_eq!(requested["layers"][0]["key"], "structure");
+    assert_eq!(requested["layers"].as_array().expect("prod layers").len(), 1);
 }
 
 #[test]

@@ -1,36 +1,34 @@
 use crate::runner::tests::prelude::{
-    assert_builtin_error_for_empty_manifest, assert_builtin_help_case_table,
-    assert_builtin_ok_for_empty_manifest, builtin_help_case, builtin_invocation_case,
+    assert_builtin_error_for_empty_manifest, assert_builtin_ok_for_empty_manifest,
+    builtin_invocation_case, run_builtin_ok, temp_workspace, write_root_manifest,
 };
+use effigy_ui::PlainRenderer;
 
 #[test]
 fn run_manifest_task_builtin_help_topics_render_expected_content() {
-    let cases = [
-        builtin_help_case(
-            "builtin-init-help",
-            "init",
-            &["--help"],
-            &[
-                "init Help",
-                "effigy init [--check|--apply|--repair] [--json]",
-                "effigy init --checklist [--json]",
-                "effigy init --apply-actions <ID>[,<ID>...] [--json]",
-                "effigy init <name> [--dry-run] [--force] [--json]",
-                "effigy init --list [--json]",
-            ],
-        ),
-        builtin_help_case(
-            "builtin-completion-help",
-            "completion",
-            &["--help"],
-            &[
-                "completion Help",
-                "effigy config completion [<bash|zsh|fish>] [--install|--export] [--json]",
-            ],
-        ),
-    ];
+    let init_root = temp_workspace("builtin-init-help");
+    write_root_manifest(&init_root, "");
+    let init = run_builtin_ok(init_root, "init", &["--help"]);
+    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
+    effigy_cli::help::ui::render_help(&mut renderer, effigy_cli::HelpTopic::Init)
+        .expect("render typed init help panel");
+    let expected_init = String::from_utf8(renderer.into_inner()).expect("utf8 init help");
+    assert_eq!(init, expected_init);
 
-    assert_builtin_help_case_table(&cases);
+    let completion_root = temp_workspace("builtin-completion-help");
+    write_root_manifest(&completion_root, "");
+    let completion = run_builtin_ok(completion_root, "completion", &["--help"]);
+    for line in [
+        "completion Help",
+        "Usage",
+        "effigy config completion [<bash|zsh|fish>] [--install|--export] [--json]",
+        "effigy config completion candidates [--repo <path>] [--prefix <value>] [--json]",
+    ] {
+        assert!(
+            completion.lines().any(|actual| actual == line),
+            "missing {line:?}: {completion}"
+        );
+    }
 }
 
 #[test]

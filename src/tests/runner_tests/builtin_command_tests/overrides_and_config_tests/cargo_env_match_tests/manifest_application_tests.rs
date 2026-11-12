@@ -38,7 +38,7 @@ fn assert_suite_env_only_matches(
         2,
         "expected suite env marker format `test_database_url|database_url`"
     );
-    assert!(parts[0].ends_with(expected_test_database_url));
+    assert_eq!(parts[0], expected_test_database_url);
     assert_eq!(parts[1], expected_database_url);
 }
 
@@ -264,7 +264,7 @@ env_file = ".env.test"
     assert!(out.contains("Test Results"));
     assert_suite_env_only_matches(
         &root.join("suite-env.log"),
-        "/db/from-dotenv.sqlite",
+        &root.join("db/from-dotenv.sqlite").display().to_string(),
         "postgres://process-database-url",
     );
 }
@@ -305,7 +305,7 @@ env = "TEST_DATABASE_URL"
     assert!(out.contains("Test Results"));
     assert_suite_env_only_matches(
         &root.join("suite-env.log"),
-        "/db/from-env-schema.sqlite",
+        &root.join("db/from-env-schema.sqlite").display().to_string(),
         "postgres://process-database-url",
     );
 }

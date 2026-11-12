@@ -168,16 +168,12 @@ mod tests {
     }
 
     #[test]
-    fn truncate_path_for_header_keeps_tail_when_space_is_tight() {
+    fn render_cli_header_fits_long_versions_and_truncates_long_paths() {
+        let _no_color = ScopedEnvVar::set("NO_COLOR", "1");
         assert_eq!(
             truncate_path_for_header("/Users/tom/Dev/projects/effigy", 18),
             "…/projects/effigy"
         );
-    }
-
-    #[test]
-    fn render_cli_header_width_grows_to_fit_long_version() {
-        let _no_color = ScopedEnvVar::set("NO_COLOR", "1");
         let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
         render_cli_header(
             &mut renderer,

@@ -3,9 +3,21 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{Duration, Instant};
 
+use effigy_cli::HelpTopic;
+use effigy_ui::PlainRenderer;
 use serde_json::Value;
 
 pub(super) use effigy_test_support::process::{FixtureCommandExt, OwnedChild as OwnedCliChild};
+
+pub(super) fn assert_cli_help_matches_topic(stdout: &str, topic: HelpTopic, color: bool) {
+    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color);
+    effigy_cli::help::ui::render_help(&mut renderer, topic).expect("render typed help panel");
+    let expected = String::from_utf8(renderer.into_inner()).expect("utf8 help panel");
+    assert!(
+        stdout.contains(&expected),
+        "CLI route must render the exact typed {topic:?} panel\nexpected suffix:\n{expected}\nactual:\n{stdout}"
+    );
+}
 
 pub(super) fn temp_workspace(name: &str) -> PathBuf {
     let root = effigy_test_support::Fixture::thread_lifetime(&format!("effigy-{name}-"))

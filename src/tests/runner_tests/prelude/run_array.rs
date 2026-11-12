@@ -1,7 +1,5 @@
 use super::cases::assert_case_table;
-use super::errors::{
-    assert_invocation_error_contains, assert_run_step_task_ref_parse_error_contains,
-};
+use super::errors::assert_run_step_task_ref_parse_error_contains;
 use super::harness::{
     create_workspace_dir, run_builtin_err, run_builtin_ok, temp_workspace, write_manifest,
 };
@@ -28,13 +26,6 @@ pub(in crate::runner::tests) struct RunArrayTaskOutputDerivedCase {
     pub(in crate::runner::tests) marker_rel: &'static str,
     pub(in crate::runner::tests) expected: fn(&Path) -> String,
     pub(in crate::runner::tests) setup: fn(&Path, &Path),
-}
-
-pub(in crate::runner::tests) struct RunArrayTaskInvocationErrorCase {
-    pub(in crate::runner::tests) workspace: &'static str,
-    pub(in crate::runner::tests) task: &'static str,
-    pub(in crate::runner::tests) expected: &'static [&'static str],
-    pub(in crate::runner::tests) setup: fn(&Path),
 }
 
 pub(in crate::runner::tests) struct RunArrayTaskRefParseErrorCase {
@@ -225,17 +216,6 @@ pub(in crate::runner::tests) fn assert_run_array_task_output_derived_case_table(
             assert_task_output_equals(&root, case.task, &marker, &expected);
         },
     );
-}
-
-pub(in crate::runner::tests) fn assert_run_array_task_invocation_error_case_table(
-    cases: &[RunArrayTaskInvocationErrorCase],
-) {
-    assert_case_table(cases.iter(), |case| {
-        let root = temp_workspace(case.workspace);
-        (case.setup)(&root);
-        let err = run_builtin_err(root, case.task, &[]);
-        assert_invocation_error_contains(err, case.expected);
-    });
 }
 
 pub(in crate::runner::tests) fn assert_run_array_validate_task_ref_parse_error_case_table(

@@ -1,7 +1,7 @@
 use crate::runner::tests::prelude::{
-    assert_run_array_task_invocation_error_case_table, assert_run_array_task_output_case_table,
-    write_env_files, write_task_api_env_capture_manifest, write_task_api_env_unreachable_manifest,
-    Path, RunArrayTaskInvocationErrorCase, RunArrayTaskOutputCase,
+    assert_run_array_task_output_case_table, run_builtin_err, temp_workspace, write_env_files,
+    write_task_api_env_capture_manifest, write_task_api_env_unreachable_manifest, Path,
+    RunArrayTaskOutputCase, RunnerError,
 };
 
 fn setup_task_env_file_dotenv_fallback(root: &Path, marker: &Path) {
@@ -148,12 +148,14 @@ fn run_manifest_task_run_array_env_file_precedence_contract_table() {
 
 #[test]
 fn run_manifest_task_run_array_env_file_validation_errors_are_stable() {
-    let cases = [RunArrayTaskInvocationErrorCase {
-        workspace: "run-array-env-value-task-env-file-array-empty-entry",
-        task: "api",
-        expected: &["task env_file[1] is invalid"],
-        setup: setup_task_env_file_empty_entry,
-    }];
-
-    assert_run_array_task_invocation_error_case_table(&cases);
+    let root = temp_workspace("run-array-env-value-task-env-file-array-empty-entry");
+    setup_task_env_file_empty_entry(&root);
+    let error = run_builtin_err(root, "api", &[]);
+    match error {
+        RunnerError::TaskInvocation(message) => assert_eq!(
+            message,
+            "task env_file[1] is invalid: value cannot be empty"
+        ),
+        other => panic!("unexpected error: {other}"),
+    }
 }

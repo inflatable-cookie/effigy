@@ -15,15 +15,27 @@ fn cli_config_global_json_mode_emits_machine_readable_payload() {
         .is_some_and(|text| text.contains("effigy.toml Reference")));
 }
 
-/// Forced-color styling for both row kinds the listing renders: catalog task
-/// rows (name, manifest path, run signature) and builtin rows (name, muted
-/// description). One spawn carries both claim sets; the folded
-/// `supports_colorized_output_when_forced` entry only asserted escapes
-/// anywhere in stdout, which the CLI header satisfies even when listing
-/// colorization is broken (effigy#602 mutation control mc2).
+/// Plain and forced-color rows share one listing presentation contract; the
+/// adjacent JSON test carries the same task in machine form.
 #[test]
-fn cli_tasks_colorized_output_styles_catalog_task_and_builtin_rows() {
+fn cli_tasks_color_policy_preserves_plain_and_styled_rows() {
     let root = write_catalog_build_workspace("cli-color-task-style");
+
+    let plain_output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("tasks")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .env("EFFIGY_COLOR", "always")
+        .output()
+        .expect("run effigy with NO_COLOR overriding forced color");
+    assert!(plain_output.status.success(), "{plain_output:?}");
+    let plain = String::from_utf8(plain_output.stdout).expect("utf8 stdout");
+    assert!(plain.contains("EFFIGY"));
+    assert!(plain.contains("Catalogs"));
+    assert!(plain.contains(root.file_name().expect("workspace name").to_str().expect("utf8 name")));
+    assert!(plain.contains("cattle-grid/build"));
+    assert!(!plain.contains('\u{1b}'), "NO_COLOR output: {plain}");
 
     let stdout = run_effigy(&["tasks"], Some(&root), true);
     assert!(stdout.contains("\u{1b}[1m\u{1b}[37mcattle-grid/build\u{1b}[0m"));
