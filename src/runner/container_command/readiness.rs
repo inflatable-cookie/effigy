@@ -951,6 +951,11 @@ mod tests {
     }
 
     #[test]
+    fn readiness_progress_contract_cases() {
+        the_probe_frame_names_the_runtime_read_in_flight_and_its_subjects();
+        a_readiness_timeout_names_each_exited_log_read_and_its_evidence();
+    }
+
     fn the_probe_frame_names_the_runtime_read_in_flight_and_its_subjects() {
         let progress = ProgressSource::waiting_for("the environment's services to report healthy");
         observe_parent(
@@ -1245,7 +1250,6 @@ mod tests {
         (fixture, policy, env)
     }
 
-    #[test]
     fn a_readiness_timeout_names_each_exited_log_read_and_its_evidence() {
         let (fixture, policy, _env) = exited_logs_fixture(
             "effigy-readiness-exited-logs-",

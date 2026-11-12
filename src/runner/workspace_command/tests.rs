@@ -869,7 +869,7 @@ fn workspace_linux_cache_path_is_versioned() {
     assert_eq!(
         cache_path,
         temp_home
-            .join(LinuxWorkspaceTarget::X86_64Gnu.cache_relative_dir())
+            .join(".effigy/workspace-bin/linux/x86_64-unknown-linux-gnu")
             .join(format!("v{}", env!("CARGO_PKG_VERSION")))
             .join("effigy-x86_64-unknown-linux-gnu")
     );
@@ -1439,6 +1439,11 @@ mod live_progress_tests {
     use std::time::Duration;
 
     #[test]
+    fn workspace_progress_contract_cases() {
+        container_identity_evidence_stays_in_detailed_workspace_frames();
+        download_frames_name_artifact_checksum_and_cache_waits();
+    }
+
     fn container_identity_evidence_stays_in_detailed_workspace_frames() {
         let progress = WorkspaceOpProgress::start(false, PROBE_CONTAINER_IDENTITY, false);
         progress.update(|_| {
@@ -1459,7 +1464,6 @@ mod live_progress_tests {
         progress.finish_clear();
     }
 
-    #[test]
     fn download_frames_name_artifact_checksum_and_cache_waits() {
         let ((), lines) = steps::capture_lines(|| {
             let url = "https://example.test/effigy-x86_64";

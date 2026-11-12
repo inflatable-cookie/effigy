@@ -1397,6 +1397,11 @@ mod progress_tests {
     /// names the command it puts in flight, and never the list probe that ran
     /// before it. The UI contract owns elapsed-time formatting.
     #[test]
+    fn profile_progress_contract_cases() {
+        recovery_phases_name_the_command_in_flight_on_the_fake_clock();
+        a_recreate_names_the_configuration_before_the_start_it_launches();
+    }
+
     fn recovery_phases_name_the_command_in_flight_on_the_fake_clock() {
         let progress = ProfileProgress::new(
             false,
@@ -1464,7 +1469,6 @@ mod progress_tests {
     /// A recreate names the managed-configuration write while it runs and only
     /// then the start it launches, so a stalled config is never reported as a
     /// running `colima start`.
-    #[test]
     fn a_recreate_names_the_configuration_before_the_start_it_launches() {
         let progress = ProfileProgress::new(
             false,

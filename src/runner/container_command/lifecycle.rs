@@ -2189,6 +2189,12 @@ mod tests {
     }
 
     #[test]
+    fn lifecycle_progress_contract_cases() {
+        concise_container_progress_transcript();
+        annotate_shared_service_notes_adds_text_and_json();
+        annotate_left_running_shared_services_adds_text_and_json();
+    }
+
     fn concise_container_progress_transcript() {
         use std::time::Duration;
         let progress = super::activation_source("docker compose up", "web");
@@ -2660,7 +2666,6 @@ services:
         );
     }
 
-    #[test]
     fn annotate_shared_service_notes_adds_text_and_json() {
         let policy = test_policy(vec![]);
         let mut report = up_detached_report(&policy, false, Some("ready"));
@@ -2859,7 +2864,6 @@ mounts = ["prepared:/workspace-root/prepared:ro"]
             .is_none());
     }
 
-    #[test]
     fn annotate_left_running_shared_services_adds_text_and_json() {
         let policy = test_policy(vec![
             shared_service("db", "mariadb", 8106),

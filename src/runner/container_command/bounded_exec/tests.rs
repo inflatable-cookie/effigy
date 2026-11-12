@@ -2319,50 +2319,36 @@ mod handoff_local_tests {
         assert_no_host_runtime_probes(&repo_root);
     }
 
-    /// Plain `container shell --command` under the handoff marker runs
-    /// locally without probing a host runtime. Moved here from the lifecycle
-    /// tests so it runs under the nextest harness (one process per test):
-    /// the plain parallel cargo harness shares process env, and an
-    /// unguarded concurrent PATH write can make the PATH-resolved `sh`
-    /// spawn fail with ENOENT.
+    /// Both plain shell and exec capture run locally under the handoff marker
+    /// without probing a host runtime. Keeping the shared fixture and host
+    /// probe oracle together prevents duplicate setup from obscuring the same
+    /// boundary claim.
     #[test]
-    fn handoff_container_shell_command_runs_locally_without_host_runtime() {
-        let (dir, bin_dir, repo_root) = handoff_repo("shell-command-local");
-        let home = dir.path().join("home");
-        fs::create_dir_all(&home).expect("mkdir isolated home");
-        let _lock = lock_test();
-        let _env = handoff_env(&bin_dir, &home);
-        let marker = repo_root.join("shell-marker.txt");
-
-        let output = crate::runner::container_command::lifecycle::run_container_shell(
-            &repo_root,
-            Some("web"),
-            Some("app"),
-            Some(&format!("printf handoff-shell-ok > '{}'", marker.display())),
-            false,
-        )
-        .expect("handoff shell command should run locally");
-        assert!(
-            output.contains("finished container shell for `web` service `app`"),
-            "got: {output}"
-        );
-        assert_eq!(
-            fs::read_to_string(&marker).expect("read marker"),
-            "handoff-shell-ok"
-        );
-        assert_no_host_runtime_probes(&repo_root);
-    }
-
-    /// Plain `container exec` capture under the handoff marker runs locally
-    /// without probing a host runtime. Same isolation rationale as above.
-    #[test]
-    fn handoff_container_exec_operation_runs_locally_without_host_runtime() {
+    fn handoff_shell_and_exec_run_locally_without_host_runtime() {
         let (dir, bin_dir, repo_root) = handoff_repo("exec-operation-local");
         let home = dir.path().join("home");
         fs::create_dir_all(&home).expect("mkdir isolated home");
         let _lock = lock_test();
         let _env = handoff_env(&bin_dir, &home);
-        let marker = repo_root.join("exec-marker.txt");
+        let shell_marker = repo_root.join("shell-marker.txt");
+        let shell_output = crate::runner::container_command::lifecycle::run_container_shell(
+            &repo_root,
+            Some("web"),
+            Some("app"),
+            Some(&format!("printf handoff-shell-ok > '{}'", shell_marker.display())),
+            false,
+        )
+        .expect("handoff shell command should run locally");
+        assert!(
+            shell_output.contains("finished container shell for `web` service `app`"),
+            "got: {shell_output}"
+        );
+        assert_eq!(
+            fs::read_to_string(&shell_marker).expect("read shell marker"),
+            "handoff-shell-ok"
+        );
+
+        let exec_marker = repo_root.join("exec-marker.txt");
 
         let output =
             crate::runner::container_command::lifecycle::run_container_exec_operation_capture(
@@ -2373,7 +2359,7 @@ mod handoff_local_tests {
                     command: vec![
                         "sh".to_owned(),
                         "-lc".to_owned(),
-                        format!("printf handoff-exec-ok > '{}'", marker.display()),
+                        format!("printf handoff-exec-ok > '{}'", exec_marker.display()),
                     ],
                     stdin_file: None,
                     cwd: None,
@@ -2383,7 +2369,7 @@ mod handoff_local_tests {
             .expect("handoff exec operation should run locally");
         assert!(output.status.success(), "exec failed: {output:?}");
         assert_eq!(
-            fs::read_to_string(&marker).expect("read marker"),
+            fs::read_to_string(&exec_marker).expect("read exec marker"),
             "handoff-exec-ok"
         );
         assert_no_host_runtime_probes(&repo_root);
