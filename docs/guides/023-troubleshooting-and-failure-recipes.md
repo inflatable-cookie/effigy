@@ -418,6 +418,33 @@ effigy run stop <run>
 effigy runs
 ```
 
+### Symptom: a selector waits on `oxide: waiting for the admission lock ...`
+
+The wait is Oxide's shared pool, not an Effigy task lock: another Oxide command
+holds the pool's admission lock, and the notice names the slot when that
+slot's record says it is being deleted while its current writer is unknown.
+
+```sh
+oxide status   # read-only: the pool, its slots and a pending reconciliation
+```
+
+Nothing this checkout owns is stuck, and the selector cannot report the result
+of a compilation that already finished until the lock is released. Effigy
+bounds its own step: `test:focused` declares `timeout_ms = 1800000` on the
+shell step that runs the selector, so the finite lifetime ends the wait rather
+than holding the run open forever. A foreground selector you started can also
+be stopped through its own run:
+
+```sh
+effigy runs
+effigy run stop <run>
+```
+
+Do not delete slots, edit the pool, retry into the same lock or fall back to
+plain Cargo: the lock and its deletion reconciliation belong to Oxide. Report
+the exact notice with the slot id to the Oxide owner, which owns reconciling a
+slot whose writer cannot be proven.
+
 ### Symptom: `<task>` status reads `interrupted`
 
 Its owner exited without recording a result (for example after `kill -9`).

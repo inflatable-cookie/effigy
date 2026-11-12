@@ -58,6 +58,22 @@ Nested heavy invocations inside an admitted run do not call the hook again:
 children inherit `EFFIGY_ADMITTED`, and QA-group members run inside the
 group's one admission.
 
+## Resolve the admitted image against the request's cwd
+
+The request's `cwd` and `root` are the paths Effigy ran in. A hook that reads
+the admitted workload's image from the process argv must resolve a relative
+`argv[0]` (for example `./target/debug/effigy`) against the request's `cwd`:
+resolved against the hook's own working directory it is a different path, and
+the run is refused as an unidentifiable workload whose image does not resolve.
+Effigy cannot resolve a caller's relative argv for the hook — the process
+image stays exactly as the caller typed it — so an absolute invocation
+(`"$(pwd)/target/debug/effigy"`) is the one form a hook needs to resolve
+nothing to identify.
+
+Effigy's own wait for the hook is bounded by
+`EFFIGY_ADMISSION_HOOK_TIMEOUT_MS`; an expired wait refuses the run with its
+`effigy.admission.v1` details rather than waiting forever.
+
 ## Report custody back to the hook (protocol v2)
 
 An orchestrator that must settle a run whose Effigy process died needs more
