@@ -9,7 +9,7 @@ are marked `helper entrypoint` and excluded from scoring, leaving 7,694 scored t
 |---|---:|---:|---:|---:|---:|---:|---:|
 | Tests | 8 | 29 | 82 | 1,574 | 2,417 | 2,796 | 788 |
 
-Mean 8.33; median 8. 0.5% scored 5 or lower, 1.5% scored 6 or lower, and 1.5% scored 7 or lower.
+Mean 8.33; median 8. 0.5% scored 5 or lower and 1.5% scored 6 or lower.
 
 ## Per-domain results
 

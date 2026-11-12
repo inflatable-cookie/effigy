@@ -18,7 +18,9 @@ rated at `4026bd67e`. Locators and body hashes are refreshed for the rows that w
 
 Tom agreed to option B now: a test floor of 7, with evidenced merges and removals completed. Option C (floor 7 and mean 8.5) is a later target. The code target is TBD.
 
-Round 4 closed at floor 7: 25 rows sit below it, all named in [the summary](tests/SUMMARY.md).
+Round 4 did not reach floor 7 everywhere: 132 table rows score 6 or lower — 119 scored tests and
+13 excluded helper entrypoints. [The summary](tests/SUMMARY.md) breaks them down by why and names
+the improvable ones.
 
 ## Cost clarification (2026-11-12, from calibration)
 
