@@ -1,7 +1,25 @@
 use effigy_ui::steps::ProgressFrame;
+#[path = "provisioning/artifact_acquisition.rs"]
+mod artifact_acquisition;
+#[path = "provisioning/artifact_plan.rs"]
+mod artifact_plan;
+#[path = "provisioning/artifact_receipt.rs"]
+mod artifact_receipt;
+#[path = "provisioning/artifact_release.rs"]
+mod artifact_release;
+#[path = "provisioning/deadline.rs"]
+mod deadline;
+#[path = "provisioning/guest_io.rs"]
+mod guest_io;
+#[path = "provisioning/permission_prep.rs"]
+mod permission_prep;
 pub(in crate::runner) mod permissions;
 pub(in crate::runner) mod provisioning;
+#[path = "provisioning/publication.rs"]
+mod publication;
 mod session;
+#[path = "provisioning/sources.rs"]
+mod sources;
 pub(in crate::runner) use provisioning::operator_workspace_for_policy;
 
 use effigy_cli::{ContainerArgs, ContainerSubcommand, WorkspaceArgs};

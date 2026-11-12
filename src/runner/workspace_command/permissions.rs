@@ -8,7 +8,7 @@ use effigy_containers::{
 };
 use effigy_core::shell::shell_quote;
 
-use super::provisioning::{
+use super::permission_prep::{
     is_dependency_tree_path, plan_workspace_permission_prep, WorkspacePermissionMode,
 };
 use super::RunnerError;

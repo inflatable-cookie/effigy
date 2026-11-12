@@ -132,13 +132,6 @@ pub struct ResolvedExec {
     pub command: Vec<String>,
 }
 
-impl ResolvedExec {
-    /// The command as a single string (for display purposes).
-    pub fn command_string(&self) -> String {
-        self.command.join(" ")
-    }
-}
-
 #[cfg(test)]
 #[path = "alias/tests.rs"]
 mod tests;

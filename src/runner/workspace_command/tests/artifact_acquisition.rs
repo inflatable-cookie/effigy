@@ -11,17 +11,23 @@ use crate::contract_test_support::EnvGuard;
 use crate::runner::workspace_client::context::{
     sha256_text, WorkspaceContainerIdentity, HOST_REPREPARE_COMMAND,
 };
-use crate::runner::workspace_command::provisioning::{
-    acquire_linux_workspace_effigy_artifact_with, artifact_plan, check_acquired_artifact,
-    ensure_downloaded_linux_workspace_effigy_artifact,
+use crate::runner::workspace_command::artifact_acquisition::{
+    acquire_linux_workspace_effigy_artifact_with, check_acquired_artifact,
     ensure_local_linux_workspace_effigy_artifact, linux_workspace_artifact_lock_path,
-    linux_workspace_effigy_artifact_is_current, linux_workspace_effigy_cache_path,
-    linux_workspace_effigy_release_url, prepare_workspace_artifact_with,
-    read_trimmed_identity_file, verify_guest_artifact, workspace_artifact_receipt_path,
-    workspace_effigy_active_version_file, workspace_effigy_install_identity_file,
-    workspace_effigy_local_install_identity, workspace_effigy_release_install_identity,
-    ArtifactHost, ArtifactPlan, LinuxWorkspaceArtifactSource, LinuxWorkspaceTarget,
-    ARTIFACT_LOCK_WAIT, RELEASE_FETCHES, RELEASE_FETCH_DELAY, RELEASE_FIXTURES,
+    prepare_workspace_artifact_with, ArtifactHost, ARTIFACT_LOCK_WAIT,
+};
+use crate::runner::workspace_command::artifact_plan::{
+    artifact_plan, ArtifactPlan, LinuxWorkspaceArtifactSource, LinuxWorkspaceTarget,
+};
+use crate::runner::workspace_command::artifact_receipt::{
+    linux_workspace_effigy_artifact_is_current, read_trimmed_identity_file, verify_guest_artifact,
+    workspace_artifact_receipt_path, workspace_effigy_active_version_file,
+    workspace_effigy_install_identity_file, workspace_effigy_local_install_identity,
+    workspace_effigy_release_install_identity,
+};
+use crate::runner::workspace_command::artifact_release::{
+    ensure_downloaded_linux_workspace_effigy_artifact, linux_workspace_effigy_cache_path,
+    linux_workspace_effigy_release_url, RELEASE_FETCHES, RELEASE_FETCH_DELAY, RELEASE_FIXTURES,
     RELEASE_FIXTURE_BASE_URL,
 };
 use effigy_containers::EffectiveContainerPolicy;

@@ -1,4 +1,3 @@
-use super::lifecycle_operation_plan;
 use super::status::annotate_host_process_status;
 use crate::runner::container_command::gateway_registration::deregister_gateway_routes_for_container;
 use crate::runner::container_command::support::{
@@ -8,9 +7,7 @@ use crate::runner::container_command::{closeout, deregister_runtime_gateway_rout
 use crate::runner::environment;
 use effigy_containers::environment::Operation;
 use effigy_containers::exec::shutdown_container as shutdown_container_via_exec;
-use effigy_containers::{
-    load_container_policy, ContainerLifecycleOperation, EffectiveContainerPolicy,
-};
+use effigy_containers::{load_container_policy, EffectiveContainerPolicy};
 use effigy_runtime::write::{
     run_container_down, run_container_down_all_with_hook, run_container_down_under_path_with_hook,
 };
@@ -83,9 +80,7 @@ pub(super) fn run_container_down_adapter(
     name: Option<&str>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let policy = load_container_policy(repo_root, name)?;
-    let _operation_plan =
-        lifecycle_operation_plan(repo_root, &policy, ContainerLifecycleOperation::down(false));
+    load_container_policy(repo_root, name)?;
     let rendered = run_container_down(
         repo_root,
         name,
@@ -110,9 +105,7 @@ pub(in crate::runner) fn release_managed_environment(
     name: Option<&str>,
     run: effigy_kernel::id::RunId,
 ) -> Result<String, RunnerError> {
-    let policy = load_container_policy(repo_root, name)?;
-    let _operation_plan =
-        lifecycle_operation_plan(repo_root, &policy, ContainerLifecycleOperation::down(false));
+    load_container_policy(repo_root, name)?;
     run_container_down(
         repo_root,
         name,

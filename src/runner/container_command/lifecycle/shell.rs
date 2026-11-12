@@ -1,12 +1,11 @@
 use super::down::run_container_down_adapter;
-use super::exec_operation_plan;
 use crate::runner::container_command::closeout::maybe_confirm_container_shell_exit_cleanup;
 use crate::runner::container_command::shell_prep::{
     maybe_refresh_workspace_effigy_for_shell, resolve_container_shell_session,
 };
 use crate::runner::container_command::{runtime_error_from_runner, RunnerError};
 use crate::runner::exec_command::probe_container_capabilities;
-use effigy_containers::{ContainerExecOperation, EffectiveContainerPolicy};
+use effigy_containers::EffectiveContainerPolicy;
 use effigy_runtime::shell::run_container_shell_with_resolved_session;
 use std::path::Path;
 use std::process::Output;
@@ -55,11 +54,6 @@ pub(in crate::runner::container_command) fn run_container_shell(
         ));
     }
     let (policy, service, working_dir) = resolve_container_shell_session(repo_root, name, service)?;
-    let _operation_plan = exec_operation_plan(
-        repo_root,
-        &policy,
-        ContainerExecOperation::shell(Some(service.clone()), command.map(str::to_owned), true),
-    );
     maybe_refresh_workspace_effigy_for_shell(repo_root, &policy, &service)?;
     let shell_output = run_container_shell_with_resolved_session(
         repo_root,

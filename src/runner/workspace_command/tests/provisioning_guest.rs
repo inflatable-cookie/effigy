@@ -20,12 +20,18 @@ use crate::runner::workspace_client::context::{
     ENROL_ROOT, HOST_REPREPARE_COMMAND,
 };
 use crate::runner::workspace_client::guest_fake::{hex_sha256, DiskGuest, FakeGuest};
-use crate::runner::workspace_command::provisioning::{
+use crate::runner::workspace_command::artifact_plan::EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV;
+use crate::runner::workspace_command::artifact_receipt::{
+    workspace_artifact_receipt_path, workspace_effigy_active_version_file,
+};
+use crate::runner::workspace_command::guest_io::{parse_container_identity, stage_host_bytes};
+use crate::runner::workspace_command::publication::{
+    prepare_workspace_guest, verify_pinned_guest_binary, LiveWorkspaceEntry,
+    PreparedWorkspaceGuest, WorkspacePrepareFacts,
+};
+use crate::runner::workspace_command::sources::{
     environment_generation, manifest_fragment_digest, operator_workspace_for_policy,
-    parse_container_identity, prepare_workspace_guest, stage_host_bytes,
-    verify_pinned_guest_binary, workspace_artifact_receipt_path,
-    workspace_effigy_active_version_file, LiveWorkspaceEntry, OperatorWorkspace,
-    PreparedWorkspaceGuest, WorkspacePrepareFacts, EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
+    OperatorWorkspace,
 };
 
 const ENTRY_PATH: &str = "/usr/local/bin/effigy";
@@ -146,7 +152,7 @@ fn guest_identity_exec_uses_the_selected_backend_and_full_id() {
         context: "pinned-context".into(),
         reason: effigy_containers::environment::BackendReason::EnvironmentVariable("docker".into()),
     };
-    let identity = super::super::provisioning::observed_identity_on_backend(
+    let identity = crate::runner::workspace_command::guest_io::observed_identity_on_backend(
         &root,
         &selected,
         HOST_CONTAINER_ID,
@@ -160,49 +166,59 @@ fn guest_identity_exec_uses_the_selected_backend_and_full_id() {
     assert!(calls.contains(HOST_CONTAINER_ID));
     let mut wrong = selected.clone();
     wrong.context = "wrong-context".into();
-    assert!(super::super::provisioning::observed_identity_on_backend(
-        &root,
-        &wrong,
-        HOST_CONTAINER_ID,
-        std::time::Instant::now() + std::time::Duration::from_secs(10)
-    )
-    .is_err());
+    assert!(
+        crate::runner::workspace_command::guest_io::observed_identity_on_backend(
+            &root,
+            &wrong,
+            HOST_CONTAINER_ID,
+            std::time::Instant::now() + std::time::Duration::from_secs(10)
+        )
+        .is_err()
+    );
     std::fs::write(&missing, "").unwrap();
-    assert!(super::super::provisioning::observed_identity_on_backend(
-        &root,
-        &selected,
-        HOST_CONTAINER_ID,
-        std::time::Instant::now() + std::time::Duration::from_secs(10)
-    )
-    .is_err());
+    assert!(
+        crate::runner::workspace_command::guest_io::observed_identity_on_backend(
+            &root,
+            &selected,
+            HOST_CONTAINER_ID,
+            std::time::Instant::now() + std::time::Duration::from_secs(10)
+        )
+        .is_err()
+    );
     std::fs::remove_file(&log).unwrap();
-    assert!(super::super::provisioning::observed_identity_on_backend(
-        &root,
-        &selected,
-        "short",
-        std::time::Instant::now() + std::time::Duration::from_secs(10)
-    )
-    .is_err());
-    assert!(super::super::provisioning::observed_identity_on_backend(
-        &root,
-        &selected,
-        HOST_CONTAINER_ID,
-        std::time::Instant::now() - std::time::Duration::from_millis(1)
-    )
-    .is_err());
+    assert!(
+        crate::runner::workspace_command::guest_io::observed_identity_on_backend(
+            &root,
+            &selected,
+            "short",
+            std::time::Instant::now() + std::time::Duration::from_secs(10)
+        )
+        .is_err()
+    );
+    assert!(
+        crate::runner::workspace_command::guest_io::observed_identity_on_backend(
+            &root,
+            &selected,
+            HOST_CONTAINER_ID,
+            std::time::Instant::now() - std::time::Duration::from_millis(1)
+        )
+        .is_err()
+    );
     assert!(
         !log.exists(),
         "invalid or expired observation did not spawn"
     );
     std::fs::rename(&checkout, fixture.path().join("prior-checkout")).unwrap();
     std::fs::create_dir(&checkout).unwrap();
-    assert!(super::super::provisioning::observed_identity_on_backend(
-        &root,
-        &selected,
-        HOST_CONTAINER_ID,
-        std::time::Instant::now() + std::time::Duration::from_secs(10)
-    )
-    .is_err());
+    assert!(
+        crate::runner::workspace_command::guest_io::observed_identity_on_backend(
+            &root,
+            &selected,
+            HOST_CONTAINER_ID,
+            std::time::Instant::now() + std::time::Duration::from_secs(10)
+        )
+        .is_err()
+    );
     assert!(!log.exists(), "replaced checkout did not spawn");
 }
 
@@ -270,7 +286,7 @@ fn prepare(
     prepare_workspace_guest(
         guest,
         artifact,
-        crate::runner::workspace_command::provisioning::LinuxWorkspaceTarget::X86_64Gnu,
+        crate::runner::workspace_command::artifact_plan::LinuxWorkspaceTarget::X86_64Gnu,
         WorkspacePrepareFacts {
             repo_root: repo,
             policy: &policy,
@@ -302,7 +318,7 @@ fn prepare_refusal(repo: &Path, guest: &mut FakeGuest, artifact: &Path) -> Strin
     prepare_workspace_guest(
         guest,
         artifact,
-        crate::runner::workspace_command::provisioning::LinuxWorkspaceTarget::X86_64Gnu,
+        crate::runner::workspace_command::artifact_plan::LinuxWorkspaceTarget::X86_64Gnu,
         WorkspacePrepareFacts {
             repo_root: repo,
             policy: &policy,
@@ -1603,7 +1619,7 @@ fn explicitly_selected_non_default_workspaces_prepare_and_verify_the_guest() {
         let prepared = prepare_workspace_guest(
             &mut guest,
             &artifact,
-            crate::runner::workspace_command::provisioning::LinuxWorkspaceTarget::X86_64Gnu,
+            crate::runner::workspace_command::artifact_plan::LinuxWorkspaceTarget::X86_64Gnu,
             WorkspacePrepareFacts {
                 repo_root: &repo,
                 policy: &policy,
@@ -1998,7 +2014,7 @@ fn prepare_disk(
     prepare_workspace_guest(
         guest,
         artifact,
-        crate::runner::workspace_command::provisioning::LinuxWorkspaceTarget::X86_64Gnu,
+        crate::runner::workspace_command::artifact_plan::LinuxWorkspaceTarget::X86_64Gnu,
         WorkspacePrepareFacts {
             repo_root: repo,
             policy: &policy,
@@ -2264,7 +2280,7 @@ fn a_musl_only_image_refuses_a_glibc_artifact() {
     let error = prepare_workspace_guest(
         &mut guest,
         &artifact,
-        crate::runner::workspace_command::provisioning::LinuxWorkspaceTarget::X86_64Musl,
+        crate::runner::workspace_command::artifact_plan::LinuxWorkspaceTarget::X86_64Musl,
         WorkspacePrepareFacts {
             repo_root: &repo,
             policy: &policy,
@@ -2321,7 +2337,7 @@ fn the_identity_probe_reports_the_image_c_library() {
                    libc_musl=\nlibc_glibc=\n";
     let identity = parse_container_identity(unknown, HOST_CONTAINER_ID).expect("identity");
     assert_eq!(identity.libc, "");
-    let error = crate::runner::workspace_command::provisioning::LinuxWorkspaceTarget::from_image(
+    let error = crate::runner::workspace_command::artifact_plan::LinuxWorkspaceTarget::from_image(
         &identity.platform,
         &identity.libc,
     )
@@ -2435,7 +2451,7 @@ fn concurrent_activation_publications_pin_distinct_immutable_fake_guest_contexts
                 let prepared = prepare_workspace_guest(
                     &mut *guest,
                     &artifact,
-                    crate::runner::workspace_command::provisioning::LinuxWorkspaceTarget::X86_64Gnu,
+                    crate::runner::workspace_command::artifact_plan::LinuxWorkspaceTarget::X86_64Gnu,
                     WorkspacePrepareFacts {
                         repo_root: &repo,
                         policy: &policy,

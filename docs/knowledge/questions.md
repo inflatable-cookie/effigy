@@ -608,6 +608,11 @@ Assessed 2026-10-31 (effigy#515): no repository-side fix. Effigy writes no
 Colima mounts, and the `effigy` profile's `colima.yaml` still has `mounts: []`.
 The change stays a host edit behind a profile restart, so it waits for this gate.
 
+Path update, 2026-11: `/Volumes/Builds` is no longer mounted. Host scratch now
+lives at `/Volumes/Stash/scratch/effigy/`, so the writable mount this gate asks
+for is `/Volumes/Stash/scratch`, and "Builds scratch" elsewhere in this record
+means that same scratch volume. The rest of the record stays as written.
+
 ## Q-017: Workspace client and operator feedback at v0.15
 
 Status: answered

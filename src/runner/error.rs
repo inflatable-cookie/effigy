@@ -702,6 +702,18 @@ fn lock_conflict_human(
 }
 
 fn human_error_from_details(rendered: &str, details: &serde_json::Value) -> effigy_ui::HumanError {
+    // A command that reports its own failure in the standard `--json` envelope
+    // nests the rendered three facts under `error.human`. Lifting that block
+    // keeps the outer form's `what_failed` and `next_action` equal to the ones
+    // the payload itself names, instead of reducing a nested refusal to the
+    // generic "json output available" sentence and a null action (effigy#946).
+    if let Some(human) = details
+        .get("error")
+        .and_then(|error| error.get("human"))
+        .filter(|human| human.is_object())
+    {
+        return embedded_human_error(human);
+    }
     // A detail is a string or a number (`exit_code` is a JSON number).
     let scalar = |key: &str| {
         details.get(key).and_then(|value| match value {
@@ -750,6 +762,37 @@ fn human_error_from_details(rendered: &str, details: &serde_json::Value) -> effi
         error = error.next_action(action);
     }
     error
+}
+
+/// The three facts a payload already carries as its own rendered human block.
+///
+/// A payload that is a whole `--json` envelope names what failed, its evidence
+/// and its next step under `error.human`; reading that block is the same value
+/// the inner command printed, so the outer form cannot drift from it.
+fn embedded_human_error(human: &serde_json::Value) -> effigy_ui::HumanError {
+    let text = |key: &str| {
+        human
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    };
+    let mut error = effigy_ui::HumanError::new(text("what_failed").unwrap_or("the command failed"));
+    for line in human
+        .get("evidence")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        error = error.evidence(line);
+    }
+    match text("next_action") {
+        Some(action) => error.next_action(action),
+        None => error,
+    }
 }
 
 /// A command payload that is text, not a JSON object. The text prints as

@@ -4,13 +4,26 @@
                      // reserved-publication caller is a separate task, and the
                      // selection readback helpers await the serving driver.
 
-use super::*;
+use super::super::artifact_plan::LinuxWorkspaceTarget;
+use super::super::artifact_receipt::verify_guest_artifact;
+use super::super::guest_io::{render_workspace_effigy_staging_path, ComposeWorkspaceGuest};
+use crate::runner::exec_command::{BoundedCapture, BoundedCommandBudget};
+use crate::runner::workspace_client::context::{
+    GuestReader, GuestWorkspace, WorkspaceContainerIdentity,
+};
+#[cfg(test)]
+use crate::runner::workspace_client::context::{BINARY_CURRENT_PATH, CONTEXT_CURRENT_PATH};
 use crate::runner::workspace_client::guest_probe::GuestProbeReply;
+use crate::runner::RunnerError;
+use effigy_containers::EffectiveContainerPolicy;
+use effigy_core::shell::shell_quote;
+use effigy_kernel::id::Digest;
+use std::path::Path;
+
 use crate::runner::workspace_transport::qualification::{
     GuestChannelProbe, GuestDialEvidence, ResolvedAlias,
 };
 use effigy_containers::environment::{EnvError, EnvRun};
-use effigy_kernel::id::Digest;
 use effigy_kernel::observe::{AbsenceProof, Evidence, Observed, UnknownReason};
 use effigy_kernel::workspace_session::{
     BoundPlatform, ContainerIdentity, GuestBinaryReceipt, GuestObject, LoaderFamily,
@@ -1001,6 +1014,7 @@ mod staged_probe_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::runner::workspace_client::guest_fake::FakeGuest;
 
     #[test]

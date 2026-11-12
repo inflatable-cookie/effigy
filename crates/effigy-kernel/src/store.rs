@@ -230,14 +230,10 @@ impl std::fmt::Display for StoreError {
                 "the kernel store lives on the host, and a guest placement cannot open it"
                     .to_owned()
             }
-            Self::Untrusted { path, reason } if reason == crate::fs::OPEN_MODE_REASON => format!(
-                "{} is readable by other users, so run `chmod 700 {}`",
-                path.display(),
-                path.display()
-            ),
-            Self::Untrusted { path, reason } => {
-                format!("{} is not trusted store state ({reason})", path.display())
-            }
+            Self::Untrusted { path, reason } => match crate::fs::open_mode_message(path, reason) {
+                Some(message) => message,
+                None => format!("{} is not trusted store state ({reason})", path.display()),
+            },
             Self::UnsupportedFilesystem { path, fs } => format!(
                 "{} is on a network filesystem ({fs}), and the store needs a local disk",
                 path.display()
@@ -1509,17 +1505,15 @@ fn schema_version(conn: &Connection) -> Result<i64, StoreError> {
 }
 fn read_unknown(error: &StoreError) -> UnknownReason {
     match error {
-        StoreError::Untrusted { path, reason } if reason == crate::fs::OPEN_MODE_REASON => {
-            UnknownReason::Untrusted(format!(
-                "{} is readable by other users; run `chmod 700 {}`",
-                path.display(),
-                path.display()
-            ))
+        StoreError::Untrusted { path, reason } => {
+            UnknownReason::Untrusted(match crate::fs::open_mode_message(path, reason) {
+                Some(message) => message,
+                None => format!(
+                    "{} is not trusted store state ({reason}); fix its ownership and permissions",
+                    path.display()
+                ),
+            })
         }
-        StoreError::Untrusted { path, reason } => UnknownReason::Untrusted(format!(
-            "{} is not trusted store state ({reason}); fix its ownership and permissions",
-            path.display()
-        )),
         StoreError::Busy { .. } => UnknownReason::Busy {
             phase: "store read".into(),
         },

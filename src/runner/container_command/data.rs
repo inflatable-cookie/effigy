@@ -11,7 +11,6 @@ use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 
 use effigy_cli::{BootstrapDbSeedInput, ContainerDataSubcommand, ContainerDbDumpInput};
-use effigy_containers::ContainerDataOperation;
 use effigy_data::{
     database_dump_command, dump_artifact_handoff, normalize_dump_destination_path,
     select_data_targets, select_database_service, ArtifactDataHandoff, DataDumpDestination,
@@ -123,11 +122,6 @@ pub(super) fn run_container_data_pull_production(
 ) -> Result<String, RunnerError> {
     let policy = effigy_containers::load_container_policy(repo_root, name)?;
     ensure_pull_production_prompt_target(&policy)?;
-    let _operation_plan = effigy_runtime::data::data_operation_plan(
-        repo_root,
-        &policy,
-        ContainerDataOperation::pull_production(yes),
-    );
     maybe_confirm_container_data_pull_production(&policy.name, output_json, yes)?;
     run_runtime_container_data_pull_production(
         repo_root,
@@ -231,12 +225,6 @@ pub(super) fn run_container_data_seed(
     yes: bool,
 ) -> Result<String, RunnerError> {
     let policy = effigy_containers::load_container_policy(repo_root, name)?;
-    let _operation_plan = effigy_runtime::data::data_operation_plan(
-        repo_root,
-        &policy,
-        ContainerDataOperation::seed(yes),
-    );
-
     let mut effective_db_seeds = db_seeds.to_vec();
     let mut prompt_checked = false;
     maybe_prompt_db_seed_inputs(
@@ -382,11 +370,6 @@ where
     CaptureFn: Fn(&str, &str, &Path, bool) -> Result<serde_json::Value, RunnerError>,
 {
     let policy = effigy_containers::load_container_policy(repo_root, name)?;
-    let _operation_plan = effigy_runtime::data::data_operation_plan(
-        repo_root,
-        &policy,
-        ContainerDataOperation::dump(push),
-    );
     if db_dumps.is_empty() {
         return Err(RunnerError::task_invocation(
             "container data dump requires one or more `--db-dump` values",

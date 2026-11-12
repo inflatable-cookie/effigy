@@ -336,13 +336,16 @@ fn an_unreadable_store_names_the_store_and_the_next_step() {
 
 #[test]
 fn an_open_state_root_names_the_mode_and_the_chmod() {
+    // `Trust::Operator` refuses a group or other *write* bit, so its refusal
+    // says writable; a merely readable directory of the operator's (0755) is
+    // accepted, and calling it "readable by other users" was wrong.
     let error = FsError::Untrusted {
         path: "/repo/.effigy/state".into(),
-        reason: "group- or other-accessible mode".to_owned(),
+        reason: "group- or other-writable mode".to_owned(),
     };
     assert_eq!(
         error.to_string(),
-        "/repo/.effigy/state is readable by other users; run `chmod 700 /repo/.effigy/state`"
+        "/repo/.effigy/state is writable by group or other users; run `chmod 700 /repo/.effigy/state`"
     );
     // A permission problem is unavailable, not corruption: the path and the
     // chmod it needs are the whole next step.
@@ -351,24 +354,39 @@ fn an_open_state_root_names_the_mode_and_the_chmod() {
     assert_eq!(
         store.to_string(),
         format!(
-            "the state store could not proceed: /repo/.effigy/state is readable by other users, \
-             so run `chmod 700 /repo/.effigy/state`; {}",
+            "the state store could not proceed: /repo/.effigy/state is writable by group or other \
+             users; run `chmod 700 /repo/.effigy/state`; {}",
             tail(Category::Unavailable)
         )
     );
 }
 
 #[test]
+fn a_private_open_state_root_names_its_access_rule() {
+    // `Trust::Private` refuses any group or other bit, so its message says
+    // access rather than write: 0755 is refused here and accepted above.
+    let error = FsError::Untrusted {
+        path: "/repo/.effigy/state".into(),
+        reason: "group- or other-accessible mode".to_owned(),
+    };
+    assert_eq!(
+        error.to_string(),
+        "/repo/.effigy/state grants group or other users access; run `chmod 700 /repo/.effigy/state`"
+    );
+}
+
+#[test]
 fn an_untrusted_state_root_names_the_path_and_the_retry() {
     let reason = UnknownReason::Untrusted(
-        "/repo/.effigy/state is readable by other users; run `chmod 700 /repo/.effigy/state`"
+        "/repo/.effigy/state is writable by group or other users; run `chmod 700 \
+         /repo/.effigy/state`"
             .to_owned(),
     );
     assert_eq!(
         reason.to_string(),
-        "could not tell: the state root is not trusted (/repo/.effigy/state is readable by other \
-         users; run `chmod 700 /repo/.effigy/state`); Effigy only reads state it owns, so fix the \
-         mode or ownership it names and retry"
+        "could not tell: the state root is not trusted (/repo/.effigy/state is writable by group \
+         or other users; run `chmod 700 /repo/.effigy/state`); Effigy only reads state it owns, so \
+         fix the mode or ownership it names and retry"
     );
 }
 
