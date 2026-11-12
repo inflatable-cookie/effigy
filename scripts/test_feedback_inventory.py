@@ -2,6 +2,7 @@
 """Contract tests for the feedback compiler-diagnostic gate."""
 import importlib.util
 import json
+import os
 import pathlib
 import subprocess
 import tempfile
@@ -11,6 +12,19 @@ path = pathlib.Path(__file__).with_name('check-feedback-inventory.py')
 spec = importlib.util.spec_from_file_location('feedback_inventory', path)
 lint = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(lint)
+
+
+def scratch_fixture():
+    """This run's private fixture root, under the caller's `TMPDIR`.
+
+    A fixed host path made every case depend on one machine's build drive, so
+    the suite could not run at all once that path was gone. `TMPDIR` also keeps
+    the fixture trees on this run's own scratch.
+    """
+    scratch = os.environ.get('TMPDIR')
+    if not scratch:
+        raise RuntimeError('TMPDIR is required so fixtures stay on the run scratch')
+    return tempfile.TemporaryDirectory(dir=scratch)
 
 
 def diagnostic(file, line, text):
@@ -96,7 +110,7 @@ pub fn show(label: &str) {
     crate::step(label);
 }
 """
-        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+        with scratch_fixture() as directory:
             source = pathlib.Path(directory) / 'fixture.rs'
             source.write_text(fixture)
             (pathlib.Path(directory) / 'wrapper.rs').write_text(wrapper)
@@ -139,7 +153,7 @@ pub fn show(label: &str) -> ProgressBar {
     bar
 }
 """
-        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+        with scratch_fixture() as directory:
             root = pathlib.Path(directory)
             (root / 'src').mkdir()
             (root / 'src' / 'wrapper.rs').write_text(wrapper)
@@ -189,7 +203,7 @@ impl Sink {
     bar
 }
 """
-        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+        with scratch_fixture() as directory:
             root = pathlib.Path(directory)
             missing = lint.sink_errors(root)
             self.assertEqual(len(missing), 1, missing)
@@ -214,7 +228,7 @@ pub use indicatif::ProgressBar;
 
 struct Sink;
 """
-        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+        with scratch_fixture() as directory:
             root = pathlib.Path(directory)
             sink = root / 'crates/effigy-ui/src/steps.rs'
             sink.parent.mkdir(parents=True)
@@ -259,7 +273,7 @@ fn show() {
     let bar = ProgressBar::no_length();
 }
 """
-        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+        with scratch_fixture() as directory:
             root = pathlib.Path(directory)
             (root / 'src').mkdir()
             (root / 'src' / 'code_only.rs').write_text(source)
@@ -290,7 +304,7 @@ fn show<'a>(text: &'a str) {
     let _ = (x, bar, &'static ());
 }
 """
-        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+        with scratch_fixture() as directory:
             root = pathlib.Path(directory)
             (root / 'src').mkdir()
             (root / 'src' / 'chars.rs').write_text(source)
@@ -337,7 +351,7 @@ fn show() {
 }
 """,
         }
-        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+        with scratch_fixture() as directory:
             root = pathlib.Path(directory)
             (root / 'src').mkdir()
             for name, text in sources.items():
@@ -356,6 +370,37 @@ fn show() {
             self.assertIn('let bar = ProgressBar::no_length();', matching[0])
             self.assertIn(lint.SPINNER_MIGRATION, matching[0])
 
+    def test_a_brace_less_unicode_escape_is_not_a_literal(self):
+        # The `\u` arm bounded its hex and demanded the closing quote, but never
+        # required the opening brace, so the malformed `'\uAB}'` was blanked as
+        # if it were a literal. Rustc spells the escape `'\u{AB}'`, so the
+        # braces are part of the notation: a brace-less escape is malformed text
+        # and stays visible as code, the same way `'\q` does. Either way the
+        # real call on the next line stays a call, because the scan never
+        # searches past a candidate's own closing quote.
+        malformed = r"""let broken = '\uAB}';
+let bar = ProgressBar::no_length();
+"""
+        well_formed = r"""let face = '\u{1F600}';
+let bar = ProgressBar::no_length();
+"""
+        masked = lint.code_only(malformed)
+        self.assertIn("'\\uAB}'", masked, masked)
+        self.assertIn('let bar = ProgressBar::no_length();', masked, masked)
+        # The braces are the literal, so its contents are still data.
+        self.assertNotIn('1F600', lint.code_only(well_formed))
+        with scratch_fixture() as directory:
+            root = pathlib.Path(directory)
+            (root / 'src').mkdir()
+            (root / 'src' / 'brace_less.rs').write_text(malformed)
+            (root / 'src' / 'braced.rs').write_text(well_formed)
+            errors = lint.indicatif_errors(root)
+        self.assertEqual(len(errors), 2, errors)
+        for location in ('src/brace_less.rs:2:', 'src/braced.rs:2:'):
+            matching = [error for error in errors if error.startswith(location)]
+            self.assertEqual(len(matching), 1, (location, errors))
+            self.assertIn('let bar = ProgressBar::no_length();', matching[0])
+
     def test_a_suppression_in_a_comment_or_literal_is_not_a_suppression(self):
         # The suppression scan used to read raw text, so a doc or message
         # string mentioning the attribute failed an unrelated change.
@@ -366,7 +411,7 @@ pub fn message() -> &'static str {
     r#"use #[allow(disallowed_methods)] never"#
 }
 """
-        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+        with scratch_fixture() as directory:
             root = pathlib.Path(directory)
             (root / 'src').mkdir()
             (root / 'src' / 'notes.rs').write_text(source)
@@ -383,7 +428,7 @@ fn also_hidden() {}
 
 #![allow(warnings)]
 """
-        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+        with scratch_fixture() as directory:
             root = pathlib.Path(directory)
             (root / 'src').mkdir()
             (root / 'src' / 'hidden.rs').write_text(source)
@@ -403,7 +448,7 @@ fn kept_for_later() {}
 #[expect(unused_variables)]
 fn unused(value: u8) { let _ = value; }
 """
-        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+        with scratch_fixture() as directory:
             root = pathlib.Path(directory)
             (root / 'src').mkdir()
             (root / 'src' / 'ordinary.rs').write_text(source)
