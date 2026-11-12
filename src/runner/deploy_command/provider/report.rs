@@ -84,10 +84,6 @@ impl DeployProviderCheckStatus {
     }
 }
 
-/// Resolve a provider package. A git source can fetch for seconds on a cold
-/// cache, so it draws a live step: `resolving deploy provider acme (offline)`,
-/// waiting on the exact source and pin. A path source resolves at once and
-
 pub(super) fn validate_provider_phase_report(
     provider_name: &str,
     phase: &str,

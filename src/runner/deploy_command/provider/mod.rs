@@ -106,6 +106,10 @@ pub(in crate::runner::deploy_command) struct DeployProviderPackage {
     pub warnings: Vec<String>,
 }
 
+/// Resolve a provider package. A git source can fetch for seconds on a cold
+/// cache, so it draws a live step: `resolving deploy provider acme (offline)`,
+/// waiting on the exact source and pin. A path source resolves at once and
+/// ends in one line. Its failure is what a deploy refuses on.
 pub(in crate::runner::deploy_command) fn resolve_provider_package(
     repo_root: &Path,
     provider_name: &str,
