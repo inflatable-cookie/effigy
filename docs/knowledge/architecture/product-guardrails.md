@@ -51,6 +51,22 @@ when the real cause was two named services failing their health checks.
   show that output so you know what it's actually doing rather than hiding it
   behind a spinner".
 
+- **A producer's live output on a terminal is bounded.** Tom, 2026-11-12,
+  watching `effigy` launch a Colima/nerdctl stack: "it's now showing me ALL of
+  the colima output - there's multiple pages of it". The producer's own lines
+  draw as a rolling window of about seven width-truncated lines under its
+  stage line, rewritten in place, and collapse into that stage's timed finish
+  line when the work succeeds (effigy#925). The complete stream stays in the
+  run's retained backend log and its path is printed once, dim. A failure
+  prints the last ~30 lines and that path, then one failure sentence: the tail
+  carries the detail, so a multi-line error keeps its first line. A runtime's
+  known capability warnings are counted, never echoed - nerdctl's structured
+  `level=warning msg="Ignoring: …"` report for a volume `[Labels]` or
+  `[Driver Labels]`, or a service `depends_on: … [Required]` - into one summary
+  line such as `nerdctl ignored 15 unsupported compose fields (see log)`. Any
+  other warning keeps its place in the window. Piped, CI, `--json` and
+  managed-pane output keep their existing behaviour, and no JSON field changes.
+
 - **Show what is happening as it happens.** On a terminal, any step that can
   take more than a moment and waits silently runs under an asynchronous spinner whose short label
   names the current step and its subject, for example `starting web`,
