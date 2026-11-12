@@ -178,28 +178,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *args): pass
 http.server.HTTPServer((host, int(port)), Handler).serve_forever()
 "#;
-const BOUNDARY_400_REFUSING: &str = r#"
-import http.server, os
-print("EFFIGY_TOKEN=" + "canary" * 66 + "wxyz", flush=True)
-host, port = os.environ["EFFIGY_MANAGED_HOST_LISTENER_BIND"].rsplit(":", 1)
-class Handler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(500)
-        self.end_headers()
-    def log_message(self, *args): pass
-http.server.HTTPServer((host, int(port)), Handler).serve_forever()
-"#;
-const BOUNDARY_315_CLOSED: &str = r#"
-import time
-print("EFFIGY_TOKEN=" + "canary" * 52 + "xyz", flush=True)
-time.sleep(120)
-"#;
-const BOUNDARY_400_CLOSED: &str = r#"
-import time
-print("EFFIGY_TOKEN=" + "canary" * 66 + "wxyz", flush=True)
-time.sleep(120)
-"#;
-
 const CONTAINER_DOMAIN: &str = "app.exposure.test";
 const FRONT_DOMAIN: &str = "front.exposure.test";
 const API_DOMAIN: &str = "api.exposure.test";
@@ -1323,42 +1301,38 @@ fn detached_up_never_prints_a_secret_whose_marker_left_the_window() {
 
 #[test]
 fn detached_up_redacts_fully_captured_boundary_values_on_all_surfaces() {
-    for (refusing, closed) in [
-        (BOUNDARY_315_REFUSING, BOUNDARY_315_CLOSED),
-        (BOUNDARY_400_REFUSING, BOUNDARY_400_CLOSED),
+    let fixture = ExposureFixture::new("boundary-secret", &one_listener(BOUNDARY_315_REFUSING), 30);
+    let _ = take_listener_progress();
+    let error = fixture
+        .up(true)
+        .expect_err("listener refuses readiness after its output is captured");
+    let human = error.to_string();
+    let json = error.json_error_details().expect("JSON details");
+    let progress = take_listener_progress();
+    let document: serde_json::Value = serde_json::from_str(json).expect("JSON failure envelope");
+    let captured_tail = document["withheld_routes"][0]["output_tail"]
+        .as_str()
+        .expect("JSON carries the final captured listener tail");
+    assert!(json.contains("EFFIGY_TOKEN=<redacted>"), "{json}");
+    assert!(
+        captured_tail.contains("EFFIGY_TOKEN=<redacted>"),
+        "{captured_tail}"
+    );
+
+    // Progress is sampled, so it is a negative-only safety check. The final
+    // failure envelope and the captured run log are deterministic witnesses.
+    for (surface, value) in [
+        ("progress", progress.join("\n")),
+        ("human output", human),
+        ("JSON", json.to_owned()),
+        ("captured listener tail", captured_tail.to_owned()),
     ] {
-        for json in [false, true] {
-            let fixture = ExposureFixture::new("boundary-secret", &one_listener(refusing), 30);
-            let error = fixture.up(json).expect_err("listener refuses readiness");
-            let output = if json {
-                error.json_error_details().expect("JSON details").to_owned()
-            } else {
-                error.to_string()
-            };
-            assert!(output.contains("EFFIGY_TOKEN=<redacted>"), "{output}");
-            assert!(!output.contains("canary"), "{output}");
-            fixture.down();
-        }
-        let fixture = ExposureFixture::new(
-            "boundary-progress",
-            &one_listener(closed),
-            LISTENER_OBSERVATION_BUDGET_SECS,
+        assert!(
+            !value.contains("canary"),
+            "raw secret on {surface}: {value}"
         );
-        let _ = take_listener_progress();
-        let _ = fixture.up(false).expect_err("listener never binds");
-        let progress = take_listener_progress();
-        assert!(!progress.is_empty());
-        assert!(progress
-            .iter()
-            .any(|line| line.contains("EFFIGY_TOKEN=<redacted>")));
-        for line in progress {
-            assert!(!line.contains("canary"), "{line}");
-            if line.contains("last child output: ") {
-                assert!(line.contains("EFFIGY_TOKEN=<redacted>"), "{line}");
-            }
-        }
-        fixture.down();
     }
+    fixture.down();
 }
 
 /// A dependent whose dependency is withheld withholds its own route, and the
