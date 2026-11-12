@@ -105,21 +105,17 @@ fn pinned_peer_returns_verified_transport_before_first_frame() {
 }
 
 #[test]
-fn mispinned_peer_receives_zero_application_or_credential_bytes() {
-    let (address, _pin, server) = server(false);
+fn refused_handshakes_send_zero_application_bytes() {
+    // A wrong pin, an expired certificate and a missing pin or zero budget
+    // all refuse before any application or credential byte flows.
+    let (address, _pin, wrong_pin) = server(false);
     assert!(TlsChannelTransport::connect(address, Digest::of(b"another key"), BUDGET).is_err());
-    assert!(server.join().unwrap().is_empty());
-}
+    assert!(wrong_pin.join().unwrap().is_empty());
 
-#[test]
-fn expired_pinned_peer_receives_zero_application_bytes() {
-    let (address, pin, server) = server(true);
+    let (address, pin, expired) = server(true);
     assert!(TlsChannelTransport::connect(address, pin, BUDGET).is_err());
-    assert!(server.join().unwrap().is_empty());
-}
+    assert!(expired.join().unwrap().is_empty());
 
-#[test]
-fn absent_pin_and_zero_budget_refuse_without_connecting() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let address = listener.local_addr().unwrap();
@@ -160,10 +156,18 @@ fn malformed_certificate_and_future_validity_refuse() {
 }
 
 #[test]
-fn silent_peer_cannot_hold_the_handshake_open() {
+fn copied_leaf_without_its_private_key_receives_zero_application_bytes() {
+    let (address, pin, server) = server_with_key(false, true);
+    assert!(TlsChannelTransport::connect(address, pin, BUDGET).is_err());
+    assert!(server.join().unwrap().is_empty());
+}
+
+#[test]
+fn silent_peers_cannot_hold_connections_open() {
+    // A silent peer cannot hold the handshake open ...
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
-    let server = thread::spawn(move || {
+    let silent = thread::spawn(move || {
         let mut socket = accept(&listener);
         socket.set_read_timeout(Some(BUDGET)).unwrap();
         let mut bytes = Vec::new();
@@ -175,18 +179,8 @@ fn silent_peer_cannot_hold_the_handshake_open() {
             .is_err()
     );
     assert!(started.elapsed() < BUDGET);
-    server.join().unwrap();
-}
-
-#[test]
-fn copied_leaf_without_its_private_key_receives_zero_application_bytes() {
-    let (address, pin, server) = server_with_key(false, true);
-    assert!(TlsChannelTransport::connect(address, pin, BUDGET).is_err());
-    assert!(server.join().unwrap().is_empty());
-}
-
-#[test]
-fn silent_peer_cannot_hold_a_verified_read_open() {
+    silent.join().unwrap();
+    // ... and cannot hold a verified read open either.
     let (address, pin, server) = server(false);
     let mut transport = TlsChannelTransport::connect(address, pin, BUDGET).unwrap();
     transport.operation_timeout = Duration::from_millis(100);

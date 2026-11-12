@@ -429,17 +429,17 @@ fn backend_qualification(backend: Backend, dual_stack: bool) {
     });
 }
 #[test]
-fn colima_private_channel() {
-    backend_qualification(Backend::Colima, false);
-}
-#[test]
-fn docker_desktop_private_channel() {
-    backend_qualification(Backend::DockerDesktop, false);
-    backend_qualification(Backend::DockerDesktop, true);
-}
-#[test]
-fn linux_docker_fresh_channel() {
-    backend_qualification(Backend::LinuxDocker, false);
+fn backend_private_channels_qualify() {
+    // Each backend prepares a scoped private transport; Docker Desktop also
+    // qualifies the fresh (first-run) channel shape.
+    for (backend, fresh) in [
+        (Backend::Colima, false),
+        (Backend::DockerDesktop, false),
+        (Backend::DockerDesktop, true),
+        (Backend::LinuxDocker, false),
+    ] {
+        backend_qualification(backend, fresh);
+    }
 }
 #[test]
 fn unknown_proxy_and_wrong_target_refuse_before_bind() {

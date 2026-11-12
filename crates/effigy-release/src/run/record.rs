@@ -536,10 +536,8 @@ mod tests {
         );
         assert_eq!(ReleaseStage::Publish.next(), Some(ReleaseStage::Verify));
         assert_eq!(ReleaseStage::Closeout.next(), None);
-    }
-
-    #[test]
-    fn every_stage_label_round_trips() {
+        // Every label parses back to its stage, and unknown labels parse to
+        // nothing.
         for stage in ReleaseStage::ALL {
             assert_eq!(ReleaseStage::parse(stage.label()), Some(stage));
         }

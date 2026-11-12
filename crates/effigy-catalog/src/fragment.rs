@@ -769,28 +769,25 @@ mod tests {
     use super::bundled_fragment_name_from_asset_path;
 
     #[test]
-    fn root_assets_are_not_fragment_names() {
-        assert_eq!(bundled_fragment_name_from_asset_path("README.md"), None);
-        assert_eq!(
-            bundled_fragment_name_from_asset_path("compose.override.example.yml"),
-            None
-        );
-    }
-
-    #[test]
-    fn manifest_less_directory_assets_are_not_fragments() {
-        assert_eq!(
-            bundled_fragment_name_from_asset_path("scratch/compose.fragment.yml"),
-            None
-        );
-        assert_eq!(
-            bundled_fragment_name_from_asset_path("scratch/Dockerfile"),
-            None
-        );
-        assert_eq!(
-            bundled_fragment_name_from_asset_path("scratch/configs/default.conf"),
-            None
-        );
+    fn non_fragment_asset_paths_are_rejected() {
+        // Every shape that must not resolve to a bundled fragment name:
+        // root-level files, manifest-less directories, and service.toml
+        // paths that are not first-level `<name>/service.toml`.
+        for path in [
+            "README.md",
+            "compose.override.example.yml",
+            "scratch/compose.fragment.yml",
+            "scratch/Dockerfile",
+            "scratch/configs/default.conf",
+            "group/postgres/service.toml",
+            "service.toml",
+        ] {
+            assert_eq!(
+                bundled_fragment_name_from_asset_path(path),
+                None,
+                "{path:?} must not resolve to a fragment"
+            );
+        }
     }
 
     #[test]
@@ -803,14 +800,5 @@ mod tests {
             bundled_fragment_name_from_asset_path("php-fpm/service.toml"),
             Some("php-fpm")
         );
-    }
-
-    #[test]
-    fn nested_service_toml_paths_are_rejected() {
-        assert_eq!(
-            bundled_fragment_name_from_asset_path("group/postgres/service.toml"),
-            None
-        );
-        assert_eq!(bundled_fragment_name_from_asset_path("service.toml"), None);
     }
 }

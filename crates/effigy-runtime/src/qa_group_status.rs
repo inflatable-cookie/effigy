@@ -407,8 +407,16 @@ mod tests {
         .expect("fixture directory");
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).expect("mkdir");
+        // Neither the final nor the live record exists, so loading reports
+        // None without creating anything.
         let loaded = load_qa_group_run_record(&base, "absent").expect("load");
         assert!(loaded.is_none());
+        let live_again = load_qa_group_run_record(&base, "absent").expect("load again");
+        assert!(live_again.is_none());
+        assert!(
+            fs::read_dir(&base).expect("list").next().is_none(),
+            "a missing record must not leave files behind"
+        );
         let _ = fs::remove_dir_all(&base);
     }
 }

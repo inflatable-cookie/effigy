@@ -9,12 +9,18 @@ name = "test-svc"
 [params.version]
 type = "string"
 default = "1.0"
+
+[params.api_key]
+type = "string"
+description = "Required API key"
 "#;
     let schema = ServiceSchema::parse(input, "test-svc").unwrap();
     assert_eq!(schema.service.name, "test-svc");
-    assert_eq!(schema.params.len(), 1);
+    assert_eq!(schema.params.len(), 2);
     assert_eq!(schema.params["version"].param_type, ParamType::String);
     assert!(!schema.params["version"].is_required());
+    // A param without a default is required; the required-param row folded in here.
+    assert!(schema.params["api_key"].is_required());
 }
 
 #[test]
@@ -68,20 +74,6 @@ optional = ["mariadb", "postgres", "redis"]
     assert!(schema.volumes["data"].persist);
     assert_eq!(schema.ports.default, vec![9000]);
     assert_eq!(schema.depends_on.optional.len(), 3);
-}
-
-#[test]
-fn required_param_detected() {
-    let input = r#"
-[service]
-name = "test"
-
-[params.api_key]
-type = "string"
-description = "Required API key"
-"#;
-    let schema = ServiceSchema::parse(input, "test").unwrap();
-    assert!(schema.params["api_key"].is_required());
 }
 
 #[test]

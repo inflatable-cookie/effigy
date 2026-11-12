@@ -25,9 +25,12 @@ The format is based on Keep a Changelog.
     let changelog = parse_changelog(input).expect("should parse");
 
     assert_eq!(changelog.title, "Changelog");
-    let desc = changelog.description.as_deref().unwrap();
-    assert!(desc.contains("All notable changes"));
-    assert!(desc.contains("Keep a Changelog"));
+    assert_eq!(
+        changelog.description.as_deref(),
+        Some(
+            "All notable changes to this project will be documented in this file.\nThe format is based on Keep a Changelog."
+        )
+    );
 }
 
 #[test]

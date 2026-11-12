@@ -210,6 +210,9 @@ fn empty_schema_file_resolves_to_empty_env() {
     let resolved = resolve(&path, dir.path(), &BTreeMap::new());
 
     assert!(resolved.is_empty());
+    // Undeclared dotenv values do not leak through an empty schema.
+    let seeded = BTreeMap::from([("UNDECLARED".to_owned(), "x".to_owned())]);
+    assert!(resolve(&path, dir.path(), &seeded).is_empty());
 }
 
 #[test]

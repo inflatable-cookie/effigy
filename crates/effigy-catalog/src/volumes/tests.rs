@@ -64,9 +64,17 @@ fn reset_with_keep_data_preserves_persistent() {
 fn list_volumes_command_format() {
     let cmd = list_volumes_command("my-project");
     assert_eq!(cmd.program, "docker");
-    assert!(cmd.args.contains(&"volume".to_string()));
-    assert!(cmd.args.contains(&"ls".to_string()));
-    assert!(cmd.args.iter().any(|a| a.contains("my-project-")));
+    assert_eq!(
+        cmd.args,
+        vec![
+            "volume",
+            "ls",
+            "--filter",
+            "name=my-project-",
+            "--format",
+            "{{.Name}}\t{{.Driver}}\t{{.Labels}}"
+        ]
+    );
 }
 
 #[test]
@@ -88,8 +96,7 @@ fn list_all_volumes_command_format() {
 fn inspect_volume_command_format() {
     let cmd = inspect_volume_command("my-project-db-data");
     assert_eq!(cmd.program, "docker");
-    assert!(cmd.args.contains(&"inspect".to_string()));
-    assert!(cmd.args.contains(&"my-project-db-data".to_string()));
+    assert_eq!(cmd.args, vec!["volume", "inspect", "my-project-db-data"]);
 }
 
 #[test]
@@ -169,9 +176,7 @@ fn import_volume_command_format() {
 fn remove_volume_command_format() {
     let cmd = remove_volume_command("my-project-db-data");
     assert_eq!(cmd.program, "docker");
-    assert!(cmd.args.contains(&"volume".to_string()));
-    assert!(cmd.args.contains(&"rm".to_string()));
-    assert!(cmd.args.contains(&"my-project-db-data".to_string()));
+    assert_eq!(cmd.args, vec!["volume", "rm", "my-project-db-data"]);
 }
 
 // ── ManagedVolume construction ───────────────────────────────────

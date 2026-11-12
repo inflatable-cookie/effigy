@@ -227,17 +227,23 @@ mod tests {
 
     #[test]
     fn command_plan_preserves_io_paths() {
-        let plan = DatabaseCommandPlan::new(
+        let bare = DatabaseCommandPlan::new(
             "postgres",
             DatabaseServiceKind::Postgres,
             "app",
             vec!["pg_dump".to_owned(), "app".to_owned()],
-        )
-        .stdin(PathBuf::from("seed.sql"))
-        .stdout(PathBuf::from("dump.sql"));
+        );
+        // IO redirection starts unset; the builder is what sets it.
+        assert_eq!(bare.stdin, None);
+        assert_eq!(bare.stdout, None);
+        let plan = bare
+            .stdin(PathBuf::from("seed.sql"))
+            .stdout(PathBuf::from("dump.sql"));
 
         assert_eq!(plan.service, "postgres");
         assert_eq!(plan.kind, DatabaseServiceKind::Postgres);
+        assert_eq!(plan.database, "app");
+        assert_eq!(plan.argv, vec!["pg_dump".to_owned(), "app".to_owned()]);
         assert_eq!(plan.stdin, Some(PathBuf::from("seed.sql")));
         assert_eq!(plan.stdout, Some(PathBuf::from("dump.sql")));
     }

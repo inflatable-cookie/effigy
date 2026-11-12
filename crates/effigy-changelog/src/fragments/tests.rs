@@ -130,6 +130,23 @@ fn a_non_utf8_fragment_is_refused() {
 
 #[test]
 fn names_that_collide_case_insensitively_are_ambiguous_and_both_refused() {
+    // Deterministic on every filesystem: the ambiguity refusal names both
+    // spellings and carries the refusal rule, without needing the pair to
+    // coexist on disk.
+    let diagnostic = fragment_problem_ambiguous("804-Slug.fixed.md", "804-slug.fixed.md");
+    assert_eq!(diagnostic.rule, "fragment-ambiguous");
+    assert!(
+        diagnostic.message.contains("804-Slug.fixed.md"),
+        "{}",
+        diagnostic.message
+    );
+    assert!(
+        diagnostic.message.contains("804-slug.fixed.md"),
+        "{}",
+        diagnostic.message
+    );
+    assert!(diagnostic.suggestion.is_some());
+
     let scratch = Scratch::new("ambiguous");
     let changelog = changelog_beside(&scratch);
     scratch.write("changelog.d/804-Slug.fixed.md", "One.\n");

@@ -135,7 +135,8 @@ fn skips_non_git_roots_without_creating_git_or_gitignore() {
 }
 
 #[test]
-fn appends_to_exclude_without_duplicate_and_preserves_existing_rules() {
+fn exclude_file_stewardship_appends_once_and_preserves_rules() {
+    // `.effigy` anchoring: appended once, idempotent, existing rules kept.
     let tmp = TempDir::new().expect("tempdir");
     let root = tmp.path();
     fs::create_dir(root.join(".git")).expect("git dir");
@@ -153,39 +154,21 @@ fn appends_to_exclude_without_duplicate_and_preserves_existing_rules() {
         fs::read_to_string(&exclude).expect("read"),
         "# keep me\n*.orig\n.effigy\n"
     );
-}
-
-#[test]
-fn local_overlay_is_appended_once_to_exclude() {
-    let tmp = TempDir::new().expect("tempdir");
-    let root = tmp.path();
-    fs::create_dir(root.join(".git")).expect("git dir");
-
-    let changed = ensure_local_overlay_ignored_in_git_root(root).expect("ignore");
-    let again = ensure_local_overlay_ignored_in_git_root(root).expect("ignore again");
-
-    assert!(changed);
-    assert!(!again);
+    // Local overlay: appended once and never duplicated.
+    let overlay_changed = ensure_local_overlay_ignored_in_git_root(root).expect("ignore");
+    let overlay_again = ensure_local_overlay_ignored_in_git_root(root).expect("ignore again");
+    assert!(overlay_changed);
+    assert!(!overlay_again);
     assert!(!root.join(".gitignore").exists());
     assert_eq!(
-        fs::read_to_string(root.join(".git/info/exclude")).expect("read"),
-        "effigy.local.toml\n"
+        fs::read_to_string(&exclude).expect("read"),
+        "# keep me\n*.orig\n.effigy\neffigy.local.toml\n"
     );
-}
-
-#[test]
-fn local_overlay_skips_when_alias_present() {
-    let tmp = TempDir::new().expect("tempdir");
-    let root = tmp.path();
-    fs::create_dir(root.join(".git")).expect("git dir");
-    fs::create_dir_all(root.join(".git/info")).expect("info");
+    // An already anchored overlay rule is not duplicated.
     fs::write(root.join(".git/info/exclude"), "/effigy.local.toml\n").expect("seed");
-
-    let changed = ensure_local_overlay_ignored_in_git_root(root).expect("ignore");
-
-    assert!(!changed);
+    assert!(!ensure_local_overlay_ignored_in_git_root(root).expect("ignore"));
     assert_eq!(
-        fs::read_to_string(root.join(".git/info/exclude")).expect("read"),
+        fs::read_to_string(&exclude).expect("read"),
         "/effigy.local.toml\n"
     );
 }

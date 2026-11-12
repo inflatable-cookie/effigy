@@ -685,148 +685,142 @@ fn assert_docker_stub_refuses(root: &Path, fixtures: &super::ContractFixtures, a
     );
 }
 
+/// One table over the three baked runtime states: the running fixture
+/// answers the known-running probe set, the stopped fixture answers status
+/// but refuses probes, and the unavailable fixture refuses every probe with
+/// the runtime's own sentence.
 #[test]
-fn container_status_contract_fixture_injects_a_baked_runtime_on_path() {
-    let repo = tempfile::tempdir().unwrap();
-    let mut fixtures = super::ContractFixtures::new(repo.path());
-    let args = super::expand_contract_fixture_tokens(
-        "effigy --json container web status --repo <fixture_container_status>",
-        &mut fixtures,
-    )
-    .unwrap();
-    let root = std::path::PathBuf::from(args.last().unwrap());
-    assert!(root.join("effigy.toml").is_file());
-    assert!(
-        std::fs::read_to_string(root.join("effigy.toml"))
-            .unwrap()
-            .contains("working_dir='/workspace'"),
-        "status fixture must satisfy CWD mapping so known-running can probe exec"
-    );
-    assert!(root.join("bin/colima").is_file());
-    assert_eq!(
-        fixtures
-            .row_env
-            .get("EFFIGY_COMPOSE_BACKEND")
-            .map(String::as_str),
-        Some("colima")
-    );
-    let path = fixtures.row_env.get("PATH").expect("PATH");
-    assert!(
-        path.starts_with(&format!("{}:", root.join("bin").display()))
-            || path == &root.join("bin").display().to_string(),
-        "{path}"
-    );
-    // The manifest, Compose and stub bytes are the fixture's exact inputs.
-    assert_eq!(
-        std::fs::read_to_string(root.join("effigy.toml")).unwrap(),
-        "[containers]\ndefault='web'\n[containers.web]\ncompose_file='compose.yml'\nprimary_service='app'\nprofile='effigy'\nproject_name='fixture-web-dev'\nworking_dir='/workspace'\n"
-    );
-    assert_eq!(
-        std::fs::read_to_string(root.join("compose.yml")).unwrap(),
-        "services:\n  app:\n    image: example\n"
-    );
-    assert_eq!(
-        std::fs::read_to_string(root.join("bin/docker")).unwrap(),
-        "#!/bin/sh\nprintf 'unexpected docker invocation: %s\\n' \"$*\" >&2\nexit 1\n"
-    );
-    assert_scripts_are_executable(&root);
-    // The baked runtime answers a known-running probe set, and only it.
-    let status = run_status_fixture_stub(&root, &fixtures, "colima", &["status"]);
-    assert!(status.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&status.stdout),
-        "colima is running\n"
-    );
-    let ps = run_status_fixture_stub(
-        &root,
-        &fixtures,
-        "colima",
-        &["ps", "label=com.docker.compose.project=fixture-web-dev"],
-    );
-    assert!(ps.status.success());
-    assert!(
-        String::from_utf8_lossy(&ps.stdout).contains("fixture-web-dev-app-1"),
-        "known-running ps must synthesize the project's app row: {:?}",
-        String::from_utf8_lossy(&ps.stdout)
-    );
-    assert!(
-        run_status_fixture_stub(&root, &fixtures, "colima", &["exec", "web", "true"])
-            .status
-            .success()
-    );
-    let refused = run_status_fixture_stub(&root, &fixtures, "colima", &["version"]);
-    assert!(!refused.status.success());
-    assert!(
-        String::from_utf8_lossy(&refused.stderr).starts_with("unexpected colima invocation:"),
-        "unexpected colima refusal must be the fixture's own: {:?}",
-        String::from_utf8_lossy(&refused.stderr)
-    );
-    assert_docker_stub_refuses(&root, &fixtures, &["--version"]);
-    drop(fixtures);
-    assert!(!root.exists());
-}
-
-#[test]
-fn container_status_stopped_fixture_bakes_a_not_running_runtime() {
-    let repo = tempfile::tempdir().unwrap();
-    let mut fixtures = super::ContractFixtures::new(repo.path());
-    let args = super::expand_contract_fixture_tokens(
-        "effigy --json container web status --repo <fixture_container_status_stopped>",
-        &mut fixtures,
-    )
-    .unwrap();
-    let root = std::path::PathBuf::from(args.last().unwrap());
-    assert!(root.join("effigy.toml").is_file());
-    assert_scripts_are_executable(&root);
-    let status = run_status_fixture_stub(&root, &fixtures, "colima", &["status"]);
-    assert!(status.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&status.stdout),
-        "colima is not running\n"
-    );
-    // A stopped runtime must not answer probe commands.
-    let ps = run_status_fixture_stub(&root, &fixtures, "colima", &["ps"]);
-    assert!(!ps.status.success());
-    assert!(
-        String::from_utf8_lossy(&ps.stderr).starts_with("unexpected colima invocation:"),
-        "stopped ps refusal must be the fixture's own: {:?}",
-        String::from_utf8_lossy(&ps.stderr)
-    );
-    assert_docker_stub_refuses(&root, &fixtures, &["info"]);
-    drop(fixtures);
-    assert!(!root.exists());
-}
-
-#[test]
-fn container_status_unavailable_fixture_refuses_every_runtime_probe() {
-    let repo = tempfile::tempdir().unwrap();
-    let mut fixtures = super::ContractFixtures::new(repo.path());
-    let args = super::expand_contract_fixture_tokens(
-        "effigy --json container web status --repo <fixture_container_status_unavailable>",
-        &mut fixtures,
-    )
-    .unwrap();
-    let root = std::path::PathBuf::from(args.last().unwrap());
-    assert!(root.join("effigy.toml").is_file());
-    assert_scripts_are_executable(&root);
-    let status = run_status_fixture_stub(&root, &fixtures, "colima", &["status"]);
-    assert!(!status.status.success());
-    assert!(
-        String::from_utf8_lossy(&status.stderr)
-            .contains("error retrieving current runtime: empty value"),
-        "unavailable refusal must carry the runtime's own sentence: {:?}",
-        String::from_utf8_lossy(&status.stderr)
-    );
-    let ps = run_status_fixture_stub(&root, &fixtures, "colima", &["ps"]);
-    assert!(!ps.status.success());
-    assert!(
-        String::from_utf8_lossy(&ps.stderr).starts_with("unexpected colima invocation:"),
-        "unavailable ps refusal must be the fixture's own: {:?}",
-        String::from_utf8_lossy(&ps.stderr)
-    );
-    assert_docker_stub_refuses(&root, &fixtures, &["ps"]);
-    drop(fixtures);
-    assert!(!root.exists());
+fn container_status_contract_fixtures_bake_each_runtime_state() {
+    struct Case {
+        token: &'static str,
+        status: Result<&'static str, &'static str>,
+        ps_answers: bool,
+        ps_args: &'static [&'static str],
+        docker_args: &'static [&'static str],
+    }
+    for case in [
+        Case {
+            token: "<fixture_container_status>",
+            status: Ok("colima is running\n"),
+            ps_answers: true,
+            ps_args: &["ps", "label=com.docker.compose.project=fixture-web-dev"],
+            docker_args: &["--version"],
+        },
+        Case {
+            token: "<fixture_container_status_stopped>",
+            status: Ok("colima is not running\n"),
+            ps_answers: false,
+            ps_args: &["ps"],
+            docker_args: &["info"],
+        },
+        Case {
+            token: "<fixture_container_status_unavailable>",
+            status: Err("error retrieving current runtime: empty value"),
+            ps_answers: false,
+            ps_args: &["ps"],
+            docker_args: &["ps"],
+        },
+    ] {
+        let repo = tempfile::tempdir().unwrap();
+        let mut fixtures = super::ContractFixtures::new(repo.path());
+        let args = super::expand_contract_fixture_tokens(
+            &format!("effigy --json container web status --repo {}", case.token),
+            &mut fixtures,
+        )
+        .unwrap();
+        let root = std::path::PathBuf::from(args.last().unwrap());
+        assert!(root.join("effigy.toml").is_file(), "{}", case.token);
+        assert_scripts_are_executable(&root);
+        if case.ps_answers {
+            // The running fixture's exact inputs: manifest, Compose and stub
+            // bytes plus PATH precedence so the stub answers, not a host docker.
+            assert!(
+                std::fs::read_to_string(root.join("effigy.toml"))
+                    .unwrap()
+                    .contains("working_dir='/workspace'"),
+                "status fixture must satisfy CWD mapping so known-running can probe exec"
+            );
+            assert!(root.join("bin/colima").is_file());
+            assert_eq!(
+                fixtures
+                    .row_env
+                    .get("EFFIGY_COMPOSE_BACKEND")
+                    .map(String::as_str),
+                Some("colima")
+            );
+            let path = fixtures.row_env.get("PATH").expect("PATH");
+            assert!(
+                path.starts_with(&format!("{}:", root.join("bin").display()))
+                    || path == &root.join("bin").display().to_string(),
+                "{path}"
+            );
+            assert_eq!(
+                std::fs::read_to_string(root.join("effigy.toml")).unwrap(),
+                "[containers]\ndefault='web'\n[containers.web]\ncompose_file='compose.yml'\nprimary_service='app'\nprofile='effigy'\nproject_name='fixture-web-dev'\nworking_dir='/workspace'\n"
+            );
+            assert_eq!(
+                std::fs::read_to_string(root.join("compose.yml")).unwrap(),
+                "services:\n  app:\n    image: example\n"
+            );
+            assert_eq!(
+                std::fs::read_to_string(root.join("bin/docker")).unwrap(),
+                "#!/bin/sh\nprintf 'unexpected docker invocation: %s\\n' \"$*\" >&2\nexit 1\n"
+            );
+        }
+        let status = run_status_fixture_stub(&root, &fixtures, "colima", &["status"]);
+        match case.status {
+            Ok(expected) => {
+                assert!(status.status.success(), "{}", case.token);
+                assert_eq!(
+                    String::from_utf8_lossy(&status.stdout),
+                    expected,
+                    "{}",
+                    case.token
+                );
+            }
+            Err(sentence) => {
+                assert!(!status.status.success(), "{}", case.token);
+                assert!(
+                    String::from_utf8_lossy(&status.stderr).contains(sentence),
+                    "unavailable refusal must carry the runtime's own sentence: {:?}",
+                    String::from_utf8_lossy(&status.stderr)
+                );
+            }
+        }
+        // Only the running runtime answers probes; the others refuse with
+        // the fixture's own sentence.
+        let ps = run_status_fixture_stub(&root, &fixtures, "colima", case.ps_args);
+        assert_eq!(ps.status.success(), case.ps_answers, "{}", case.token);
+        if case.ps_answers {
+            assert!(
+                String::from_utf8_lossy(&ps.stdout).contains("fixture-web-dev-app-1"),
+                "known-running ps must synthesize the project's app row: {:?}",
+                String::from_utf8_lossy(&ps.stdout)
+            );
+            assert!(
+                run_status_fixture_stub(&root, &fixtures, "colima", &["exec", "web", "true"])
+                    .status
+                    .success()
+            );
+            let refused = run_status_fixture_stub(&root, &fixtures, "colima", &["version"]);
+            assert!(!refused.status.success());
+            assert!(
+                String::from_utf8_lossy(&refused.stderr)
+                    .starts_with("unexpected colima invocation:"),
+                "unexpected colima refusal must be the fixture's own: {:?}",
+                String::from_utf8_lossy(&refused.stderr)
+            );
+        } else {
+            assert!(
+                String::from_utf8_lossy(&ps.stderr).starts_with("unexpected colima invocation:"),
+                "refused ps must be the fixture's own: {:?}",
+                String::from_utf8_lossy(&ps.stderr)
+            );
+        }
+        assert_docker_stub_refuses(&root, &fixtures, case.docker_args);
+        drop(fixtures);
+        assert!(!root.exists());
+    }
 }
 
 #[test]

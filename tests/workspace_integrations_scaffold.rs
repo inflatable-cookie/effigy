@@ -358,6 +358,7 @@ fn recovered_partial_cleanup_preserves_reverse_order_after_rerun() {
 struct SlowEffect {
     deadline: Instant,
     overshoot: bool,
+    reconciled: Vec<WorkspaceIntegrationStep>,
 }
 impl WorkspaceIntegrationAdapter for SlowEffect {
     type Error = &'static str;
@@ -371,6 +372,7 @@ impl WorkspaceIntegrationAdapter for SlowEffect {
         Ok(())
     }
     fn reconcile(&mut self, step: WorkspaceIntegrationStep, _: Instant) -> Result<(), Self::Error> {
+        self.reconciled.push(step);
         if step == WorkspaceIntegrationStep::HostIntegrations {
             if self.overshoot {
                 while Instant::now() < self.deadline {
@@ -391,17 +393,21 @@ fn slow_effect_succeeds_within_integration_budget() {
     let mut adapter = SlowEffect {
         deadline: Instant::now() + Duration::from_secs(1),
         overshoot: false,
+        reconciled: Vec::new(),
     };
     assert!(
         run_workspace_integrations(&mut adapter, &mut WorkspaceIntegrationOutcome::default())
             .is_ok()
     );
+    // Every ordered step actually reconciled; Ok alone would not prove that.
+    assert_eq!(adapter.reconciled, STEPS);
 }
 #[test]
 fn final_effect_overshoot_refuses_before_handoff() {
     let mut adapter = SlowEffect {
         deadline: Instant::now() + Duration::from_millis(5),
         overshoot: true,
+        reconciled: Vec::new(),
     };
     let mut outcome = WorkspaceIntegrationOutcome::default();
     let failure = run_workspace_integrations(&mut adapter, &mut outcome).unwrap_err();

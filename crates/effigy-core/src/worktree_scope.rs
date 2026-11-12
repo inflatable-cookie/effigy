@@ -556,21 +556,19 @@ mod tests {
         assert_eq!(git_directory(&nested).unwrap(), Some(checkout.join(".git")));
         // It never mints a second checkout, so it writes no journal of its own.
         assert!(!nested.join(".effigy").exists());
-    }
-
-    #[test]
-    fn nested_scoped_checkout_scope_reaches_its_catalog_directories() {
-        let root = tempfile::tempdir().unwrap();
-        let checkout = clone_checkout(root.path(), MARKED);
-        let nested = checkout.join("apps/site");
-        fs::create_dir_all(&nested).unwrap();
-        let token = load_or_create(&checkout).unwrap().unwrap();
-        assert_eq!(load(&nested).unwrap(), Some(token));
+        // The same reachability through the scoped loader: a nested catalog
+        // directory reads the enclosing checkout's token without minting one.
+        let scoped = tempfile::tempdir().unwrap();
+        let parent = clone_checkout(scoped.path(), MARKED);
+        let inner = parent.join("apps/site");
+        fs::create_dir_all(&inner).unwrap();
+        let token = load_or_create(&parent).unwrap().unwrap();
+        assert_eq!(load(&inner).unwrap(), Some(token));
         assert_eq!(
-            load_or_create_scoped(&nested).unwrap(),
+            load_or_create_scoped(&inner).unwrap(),
             Some((
                 ScopeKind::EphemeralClone,
-                load_or_create(&checkout).unwrap().unwrap()
+                load_or_create(&parent).unwrap().unwrap()
             ))
         );
     }

@@ -1385,13 +1385,12 @@ fn custody_foreground_reads_terminal_and_restores_foreground_group() {
 }
 
 #[test]
-fn custody_sequential_foreground_spawns_keep_the_owner_in_the_foreground() {
-    sequential_foreground_spawns(false);
-}
-
-#[test]
-fn custody_sequential_foreground_spawns_survive_tostop() {
-    sequential_foreground_spawns(true);
+fn custody_sequential_foreground_spawns_hold_the_foreground() {
+    // Without and with TOSTOP set on the terminal: sequential foreground
+    // children keep the owner in the foreground.
+    for tostop in [false, true] {
+        sequential_foreground_spawns(tostop);
+    }
 }
 
 /// Two sequential `Terminal::Foreground` children in one owner run: the first
@@ -2782,13 +2781,12 @@ fn foreground_guard_death_refuses_new_go_but_owner_closes_existing_custody() {
 }
 
 #[test]
-fn foreground_owner_kill_retains_gate_until_memory_guard_closes_group() {
-    foreground_owner_kill(false);
-}
-
-#[test]
-fn foreground_tree_owner_kill_retains_ancestor_gates_until_leaf_guard_closes_group() {
-    foreground_owner_kill(true);
+fn foreground_owner_kill_retains_gates_until_guards_close_the_group() {
+    // A plain owner kill and the tree variant: ancestor gates stay until the
+    // guard closes the group.
+    for tree in [false, true] {
+        foreground_owner_kill(tree);
+    }
 }
 
 fn foreground_owner_kill(tree: bool) {

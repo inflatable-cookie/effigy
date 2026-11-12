@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use effigy_catalog::assembly::{ComposeAssembler, ServiceDeclaration};
-use effigy_catalog::fragment::FragmentSource;
+use effigy_catalog::fragment::{CatalogFragment, FragmentSource};
+use effigy_catalog::schema::ServiceSchema;
 
 use super::bundled_resolver;
 
@@ -711,23 +712,46 @@ fn retired_minio_catalog_service_refuses_and_names_silo() {
 
 #[test]
 fn missing_required_param_error() {
-    let resolver = bundled_resolver();
-    let _fragment = resolver.resolve("nginx").unwrap();
-
-    // All bundled fragments should have defaults for all params.
-    // Verify mariadb resolves cleanly with no explicit params.
-    let assembler = ComposeAssembler::new(bundled_resolver());
+    // A fragment that declares a required param (no default) must refuse
+    // assembly when the param is absent, naming the service and the param.
+    let schema = ServiceSchema::parse(
+        "[service]\nname = \"needs-key\"\n\n[params.api_key]\ntype = \"string\"\ndescription = \"Required API key\"\n",
+        "needs-key",
+    )
+    .expect("required-param schema parses");
+    let fragment = CatalogFragment {
+        name: "needs-key".to_string(),
+        schema,
+        compose_template: "services:\n  {{ service_name }}:\n    image: test:latest\n".to_string(),
+        dockerfile: None,
+        config_variants: HashMap::new(),
+        param_variants: HashMap::new(),
+        source: FragmentSource::Baseline,
+    };
+    let resolver =
+        bundled_resolver().with_overlay(HashMap::from([("needs-key".to_string(), fragment)]));
+    let assembler = ComposeAssembler::new(resolver);
     let services = vec![ServiceDeclaration {
-        name: "db".to_string(),
-        catalog: "mariadb".to_string(),
+        name: "keyed".to_string(),
+        catalog: "needs-key".to_string(),
         params: HashMap::new(),
         variant: None,
         config: None,
     }];
 
-    // Should succeed — all params have defaults.
-    let result = assembler.assemble(&services, "test", ".", ".effigy-catalog", 1000, 1000);
-    assert!(result.is_ok());
+    let error = assembler
+        .assemble(&services, "test", ".", ".effigy-catalog", 1000, 1000)
+        .expect_err("a missing required param must be refused");
+    assert!(
+        matches!(
+            error,
+            effigy_catalog::CatalogError::MissingRequiredParam { .. }
+        ),
+        "wrong refusal kind: {error:?}"
+    );
+    let message = error.to_string();
+    assert!(message.contains("keyed"), "{message}");
+    assert!(message.contains("api_key"), "{message}");
 }
 
 #[test]

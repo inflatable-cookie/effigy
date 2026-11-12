@@ -1420,13 +1420,12 @@ fn check_workspace_sentinel_interruption(deadline: bool) {
 }
 
 #[test]
-fn workspace_sentinel_cancellation_after_spawn_retains_partial() {
-    check_workspace_sentinel_interruption(false);
-}
-
-#[test]
-fn workspace_sentinel_deadline_after_spawn_retains_partial() {
-    check_workspace_sentinel_interruption(true);
+fn workspace_sentinel_interruption_after_spawn_retains_partial() {
+    // Cancellation and deadline are the two interruption kinds; both refuse
+    // the startup and retain the started child.
+    for deadline in [false, true] {
+        check_workspace_sentinel_interruption(deadline);
+    }
 }
 
 #[test]

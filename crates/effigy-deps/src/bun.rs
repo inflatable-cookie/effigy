@@ -1017,6 +1017,7 @@ mod tests {
         let inventory = inventory_bun_library(temp.path()).unwrap();
         assert_eq!(inventory.len(), 1);
         assert_eq!(inventory[0].name, "underlay");
+        assert_eq!(inventory[0].version.as_deref(), Some("0.1.0"));
         assert_eq!(
             inventory[0].package_path,
             fs::canonicalize(temp.path()).unwrap()
