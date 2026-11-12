@@ -5,13 +5,15 @@ name: JSON Contracts
 on:
   workflow_dispatch:
   pull_request:
+    types: [opened, synchronize, reopened, closed]
 
 concurrency:
-  group: json-contracts-${{ github.ref }}
+  group: json-contracts-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   docs-links:
+    if: github.event.action != 'closed'
     name: Validate docs links
     runs-on: ubuntu-latest
     steps:
@@ -31,6 +33,7 @@ jobs:
         run: cargo run --bin effigy -- qa:docs
 
   json-contracts:
+    if: github.event.action != 'closed'
     name: Validate JSON contracts
     runs-on: ubuntu-latest
     steps:
