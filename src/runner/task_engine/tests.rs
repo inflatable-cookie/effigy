@@ -425,6 +425,93 @@ fn a_failed_run_keeps_its_scratch_and_prints_the_path() {
     assert!(marker.contains("\"keep\":true"), "{marker}");
 }
 
+/// A step whose output is relayed instead of captured still leaves a record of
+/// what it wrote, so a failure keeps the real output rather than an empty file
+/// (effigy#937, QA b0850d50).
+#[test]
+fn a_relayed_command_leaves_its_failing_output_in_the_step_record() {
+    let _guard = crate::contract_test_support::lock_test();
+    let root = tempfile::tempdir().expect("root");
+    let work = tempfile::tempdir().expect("work");
+    let catalog = catalog(root.path(), "", "root", 0);
+    let target = TaskTarget::for_catalog(root.path(), "test", &catalog);
+    let scratch_root = root.path().join("scratch-vol");
+    std::fs::create_dir(&scratch_root).expect("scratch root");
+    let config = scratch_config(&scratch_root);
+
+    let record = crate::runner::scratch::with_test_scratch(Some(config.root.clone()), true, || {
+        let mut run = begin_scratching(&target);
+        let record = crate::runner::scratch::record_relay();
+        let script = "printf 'PASS fine\\n'; printf \"FAIL cohort\\nthread 'cohort' panicked at src/lib.rs:2:5:\\nassertion failed: shared\\ntoken=abc123\\n\" >&2; exit 100";
+        let launch = crate::runner::task_engine::SpawnScope::capture();
+        let exit = crate::runner::task_engine::run_effigy_child(
+            &mut run,
+            PlainCommand {
+                command: script,
+                cwd: work.path(),
+                env: vec![],
+                // Relayed live, exactly as a `test -- --no-fail-fast` step is.
+                capture: false,
+                timeout_ms: Some(30_000),
+            },
+            vec!["/bin/sh".into(), "-c".into(), script.into()],
+            &launch,
+            true,
+        )
+        .expect("the relayed command ran");
+        assert_eq!(exit.code, 100);
+        assert!(
+            exit.stdout.is_empty() && exit.stderr.is_empty(),
+            "a relayed stream is not the caller's capture: {exit:?}"
+        );
+        let relayed = record.finish();
+        assert!(
+            relayed
+                .stderr
+                .contains("thread 'cohort' panicked at src/lib.rs:2:5:"),
+            "the relayed stream is recorded as it passes through: {relayed:?}"
+        );
+        let retained = crate::runner::scratch::retain_step_output(
+            &run.id(),
+            &relayed.stdout,
+            &relayed.stderr,
+            true,
+        );
+        let warnings = run.close(WorkloadOutcome::Failed { code: 100 });
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("scratch kept at")),
+            "{warnings:?}"
+        );
+        retained
+    });
+
+    let path = std::path::Path::new(
+        record
+            .lines()
+            .next()
+            .and_then(|line| line.strip_prefix("full failed-step output: "))
+            .expect("retained path"),
+    )
+    .to_path_buf();
+    assert!(
+        path.starts_with(config.root.join("effigy/failed-steps")),
+        "the record is on the operator's root, not in the run's scratch: {}",
+        path.display()
+    );
+    let capture = std::fs::read_to_string(&path).expect("the record exists");
+    assert!(
+        capture.contains("thread 'cohort' panicked at src/lib.rs:2:5:"),
+        "{capture}"
+    );
+    assert!(capture.contains("PASS fine"), "{capture}");
+    assert!(
+        !capture.contains("abc123"),
+        "the record is redacted: {capture}"
+    );
+}
+
 #[test]
 fn an_explicit_or_non_default_tmpdir_wins_and_no_scratch_is_created() {
     let _guard = crate::contract_test_support::lock_test();
