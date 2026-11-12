@@ -855,11 +855,20 @@ class PlanTests(Fixture):
             print('816 legacy refusal: ' + str(failure.exception))
             self.assertEqual(before, tree(self.tmp))
 
-    def test_plan_is_pure_and_writes_nothing(self):
+    def test_plan_is_pure_and_writes_only_cli_stdout(self):
         before = tree(self.tmp)
         plans = [ex.resolve_stage(s['id'], self.bindings) for s in ex.load_manifest()['stages']]
         self.assertEqual(before, tree(self.tmp))
         self.assertEqual(len(plans), 12)
+        path = self.tmp + '/bindings.json'
+        Path(path).write_text(json.dumps(self.bindings))
+        before = tree(self.tmp)
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            self.assertEqual(ex.main(['x', 'plan', path]), 0)
+        self.assertEqual(before, tree(self.tmp))
+        self.assertEqual(len(json.loads(out.getvalue())), 12)
+        self.assertEqual(err.getvalue(), '')
 
     def test_admission_is_exact_and_each_refusal_is_named(self):
         plans = {s['id']: ex.resolve_stage(s['id'], self.bindings) for s in ex.load_manifest()['stages']}
@@ -930,17 +939,6 @@ class PlanTests(Fixture):
         for key, value in cases:
             with self.subTest(key=key), self.assertRaises(ex.Refusal):
                 ex.resolve_stage('D0', dict(self.bindings, **{key: value}))
-
-    def test_plan_cli_writes_only_stdout(self):
-        path = self.tmp + '/bindings.json'
-        Path(path).write_text(json.dumps(self.bindings))
-        before = tree(self.tmp)
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            self.assertEqual(ex.main(['x', 'plan', path]), 0)
-        self.assertEqual(before, tree(self.tmp))
-        self.assertEqual(len(json.loads(out.getvalue())), 12)
-
 
 class ActivationAndClaimTests(Fixture):
     def test_execution_is_refused_without_an_owner_controlled_mechanism(self):
@@ -1228,12 +1226,37 @@ class HelperDispatchTests(Fixture):
         self.assertEqual(ex.prefetch_pinned_artifact(_io.BytesIO(data), dest, len(data), digest),
                          {'bytes': len(data), 'sha512': digest})
         self.assertEqual(stat.S_IMODE(os.lstat(dest).st_mode), 0o600)
+        foreign = b'foreign'
+        Path(dest).write_bytes(foreign)
         with self.assertRaises(ex.Collision):  # an existing name is a refusal, never adopted
             ex.prefetch_pinned_artifact(_io.BytesIO(data), dest, len(data), digest)
+        self.assertEqual(Path(dest).read_bytes(), foreign)
+        symlink = self.tmp + '/artifact-link.raw'
+        target = self.tmp + '/not-created.raw'
+        os.symlink(target, symlink)
+        with self.assertRaises(ex.Collision):
+            ex.prefetch_pinned_artifact(_io.BytesIO(data), symlink, len(data), digest)
+        self.assertFalse(os.path.lexists(target))
         with self.assertRaises(ex.Refusal):
             ex.prefetch_pinned_artifact(_io.BytesIO(data + b'x'), self.tmp + '/big.raw', len(data), digest)
+        self.assertEqual(Path(self.tmp + '/big.raw').read_bytes(), b'')
+        with self.assertRaises(ex.Refusal):
+            ex.prefetch_pinned_artifact(_io.BytesIO(data[:-1]), self.tmp + '/short.raw', len(data), digest)
+        self.assertEqual(Path(self.tmp + '/short.raw').read_bytes(), data[:-1])
         with self.assertRaises(ex.Refusal):
             ex.prefetch_pinned_artifact(_io.BytesIO(data), self.tmp + '/bad.raw', len(data), '0' * 128)
+        self.assertEqual(Path(self.tmp + '/bad.raw').read_bytes(), data)
+        calls = []
+
+        def lost_counter():
+            calls.append('sampled')
+            raise ex.Refusal('live counter lost')
+
+        with self.assertRaisesRegex(ex.Refusal, 'live counter lost'):
+            ex.prefetch_pinned_artifact(_io.BytesIO(data), self.tmp + '/counter.raw', len(data), digest,
+                                        checkpoint=lost_counter)
+        self.assertEqual(calls, ['sampled'])
+        self.assertEqual(Path(self.tmp + '/counter.raw').read_bytes(), data)
 
     def test_allocated_bytes_sees_real_blocks_and_skips_the_vm_store(self):
         root = self.bindings['control']
@@ -3966,15 +3989,6 @@ class D1WindowTests(Fixture):
         self.assertEqual(go['prior_receipt'], d0)
         self.assertEqual([c[0] for c in calls], ['d1-engine-info', 'd1-label-absent', 'd1-volume-create', 'd1-volume-inspect'])
 
-    def test_d1_window_is_one_use(self):
-        d0 = self.d0()
-        path, digest = self.freeze(self.request(d0))
-        self.run_entry(path, digest, [])
-        calls = []
-        with self.assertRaises(ex.Refusal):
-            self.run_entry(path, digest, calls)
-        self.assertEqual(calls, [])
-
     def test_d1_window_without_a_d0_reference_or_with_a_wrong_hash_refuses(self):
         d0 = self.d0()
         with self.assertRaises(ex.Refusal):
@@ -4059,16 +4073,6 @@ class D2WindowTests(Fixture):
         self.assertTrue(os.path.isdir(self.d2_out('d2-window-0001')['desktop_input_dir'] + '/oci'))
         self.assertEqual(len(list(Path(self.d2_out('d2-window-0001')['desktop_input_dir'] + '/debs').iterdir())),
                          len(runtime_inputs.DEBS))
-
-    def test_d2_window_is_one_use(self):
-        d0 = self.d0()
-        _, d1_ref = self.d1(d0)
-        path, digest = self.freeze(self.request(d1_ref))
-        self.run_entry(path, digest, [])
-        calls = []
-        with self.assertRaises(ex.Refusal):
-            self.run_entry(path, digest, calls)
-        self.assertEqual(calls, [])
 
     def test_d2_window_without_a_d1_reference_or_with_a_wrong_hash_refuses(self):
         d0 = self.d0()
@@ -4909,80 +4913,45 @@ class ColimaImageFetchTests(Fixture):
         self.assertEqual(stat.S_IMODE(os.stat(self.dest).st_mode), 0o600)
         self.assertTrue(self.monitor.check.called)  # the live counter sampled the transfer
 
-    def test_a_destination_off_the_reviewed_path_refuses(self):
-        with self.assertRaises(primitive.Refusal):
-            ex.h_prefetch_colima_image(self.ctx, dict(inputs=[self.image_dir + '/other.raw.gz']))
-        self.assertEqual(os.listdir(self.image_dir), [])
-
-    def test_a_missing_image_directory_refuses_as_a_refusal(self):
-        os.rmdir(self.image_dir)
-        with self.assertRaises(primitive.Refusal):
-            ex.h_prefetch_colima_image(self.ctx, dict(inputs=[self.dest]))
-
-    def test_the_image_directory_must_be_empty_owned_and_real(self):
-        Path(self.image_dir + '/leftover').write_bytes(b'x')
-        with self.assertRaises(primitive.Refusal):
-            ex.h_prefetch_colima_image(self.ctx, dict(inputs=[self.dest]))
-        os.remove(self.image_dir + '/leftover')
-        os.rmdir(self.image_dir)
-        elsewhere = self.tmp + '/elsewhere'
-        os.mkdir(elsewhere, 0o700)
-        os.symlink(elsewhere, self.image_dir)
-        with self.assertRaises(primitive.Refusal):
-            ex.h_prefetch_colima_image(self.ctx, dict(inputs=[self.dest]))
-        self.assertEqual(os.listdir(elsewhere), [])
-
-    def test_unknown_or_mismatched_length_refuses_before_any_byte_is_written(self):
-        for headers in ({'Content-Length': None}, {'Content-Length': str(len(FAKE_IMAGE) + 1)}):
+    def test_reviewed_destination_must_be_present_empty_owned_and_real(self):
+        with self.subTest(case='off reviewed path'):
             with self.assertRaises(primitive.Refusal):
-                self.fetch(FakeResponse(headers=headers))
-            self.assertFalse(os.path.lexists(self.dest))
-
-    def test_encoding_chunking_and_status_refuse(self):
-        cases = (FakeResponse(headers={'Content-Encoding': 'gzip'}), FakeResponse(headers={'Transfer-Encoding': 'chunked'}),
-                 FakeResponse(status=500), FakeResponse(status=404))
-        for response in cases:
+                ex.h_prefetch_colima_image(self.ctx, dict(inputs=[self.image_dir + '/other.raw.gz']))
+            self.assertEqual(os.listdir(self.image_dir), [])
+        with self.subTest(case='missing image directory'):
+            os.rmdir(self.image_dir)
             with self.assertRaises(primitive.Refusal):
-                self.fetch(response)
-            self.assertFalse(os.path.lexists(self.dest))
+                ex.h_prefetch_colima_image(self.ctx, dict(inputs=[self.dest]))
+            os.mkdir(self.image_dir, 0o700)
+        with self.subTest(case='nonempty image directory'):
+            Path(self.image_dir + '/leftover').write_bytes(b'x')
+            with self.assertRaises(primitive.Refusal):
+                ex.h_prefetch_colima_image(self.ctx, dict(inputs=[self.dest]))
+            os.remove(self.image_dir + '/leftover')
+        with self.subTest(case='symlinked image directory'):
+            os.rmdir(self.image_dir)
+            elsewhere = self.tmp + '/elsewhere'
+            os.mkdir(elsewhere, 0o700)
+            os.symlink(elsewhere, self.image_dir)
+            with self.assertRaises(primitive.Refusal):
+                ex.h_prefetch_colima_image(self.ctx, dict(inputs=[self.dest]))
+            self.assertEqual(os.listdir(elsewhere), [])
+            os.unlink(self.image_dir)
 
-    def test_over_cap_and_short_bodies_refuse_and_retain_the_partial_file(self):
-        with self.assertRaises(primitive.Refusal):
-            self.fetch(FakeResponse(body=FAKE_IMAGE + b'x', headers={'Content-Length': str(len(FAKE_IMAGE))}))
-        self.assertTrue(os.path.exists(self.dest))  # retained, not removed; never a verified image
-        os.remove(self.dest)
-        with self.assertRaises(primitive.Refusal):
-            self.fetch(FakeResponse(body=FAKE_IMAGE[:-1], headers={'Content-Length': str(len(FAKE_IMAGE))}))
-        self.assertEqual(Path(self.dest).read_bytes(), FAKE_IMAGE[:-1])
-
-    def test_a_same_length_wrong_body_refuses_on_sha512(self):
-        with self.assertRaises(primitive.Refusal):
-            self.fetch(FakeResponse(body=b'z' * len(FAKE_IMAGE)))
-        self.assertTrue(os.path.exists(self.dest))
-
-    def test_an_existing_name_or_symlink_is_a_collision_and_is_never_adopted(self):
-        Path(self.dest).write_bytes(b'foreign')
-        with self.assertRaises(ex.Collision):
-            self.fetch(FakeResponse())
-        self.assertEqual(Path(self.dest).read_bytes(), b'foreign')
-        os.remove(self.dest)
-        target = self.image_dir + '/elsewhere.raw.gz'
-        os.symlink(target, self.dest)
-        with self.assertRaises(ex.Collision):
-            self.fetch(FakeResponse())
-        self.assertFalse(os.path.lexists(target))
-
-    def test_a_lost_live_counter_stops_the_transfer_with_the_partial_retained(self):
-        calls = []
-
-        def checkpoint():
-            calls.append(1)
-            raise primitive.Refusal('live counter lost')
-        with self.assertRaises(primitive.Refusal):
-            ex.prefetch_pinned_artifact(FakeResponse(), self.dest, len(FAKE_IMAGE), FAKE_PIN['sha512'], checkpoint=checkpoint)
-        self.assertEqual(calls, [1])
-        self.assertTrue(os.path.exists(self.dest))
-
+    def test_http_length_encoding_transfer_and_status_refuse_before_write(self):
+        cases = (
+            ('unknown Content-Length', FakeResponse(headers={'Content-Length': None})),
+            ('mismatched Content-Length', FakeResponse(headers={'Content-Length': str(len(FAKE_IMAGE) + 1)})),
+            ('compressed response', FakeResponse(headers={'Content-Encoding': 'gzip'})),
+            ('chunked transfer', FakeResponse(headers={'Transfer-Encoding': 'chunked'})),
+            ('server error', FakeResponse(status=500)),
+            ('not found', FakeResponse(status=404)),
+        )
+        for label, response in cases:
+            with self.subTest(response=label):
+                with self.assertRaises(primitive.Refusal):
+                    self.fetch(response)
+                self.assertFalse(os.path.lexists(self.dest))
 
 class RedirectPolicyTests(Fixture):
     """The real opener, with http.client replaced by a scripted connection: redirects stay on allowlisted HTTPS hosts."""
@@ -4991,36 +4960,39 @@ class RedirectPolicyTests(Fixture):
         with mock.patch('http.client.HTTPSConnection', scripted_https(script, seen)):
             return REAL_OPEN(prep.COLIMA_IMAGE_URL)
 
-    def test_redirects_follow_only_allowlisted_https_hosts(self):
-        seen = []
-        conn, response = self.open([FakeResponse(b'', 302, {'Location': 'https://release-assets.githubusercontent.com/a?x=1'}),
-                                    FakeResponse()], seen)
-        self.assertEqual(response.status, 200)
-        self.assertEqual(seen[0], 'github.com')
-        self.assertEqual(seen[2], 'release-assets.githubusercontent.com')
-        self.assertEqual(seen[3], '/a?x=1')
-
-    def test_a_redirect_off_the_allowlist_or_off_https_refuses_before_connecting(self):
-        for location in ('https://evil.example/x', 'http://release-assets.githubusercontent.com/x'):
+    def test_redirect_allowlist_policy_accepts_and_refuses_expected_hops(self):
+        with self.subTest(case='allowlisted redirect'):
             seen = []
-            with self.assertRaises(primitive.Refusal):
-                self.open([FakeResponse(b'', 302, {'Location': location})], seen)
-            self.assertNotIn('evil.example', seen)
-            self.assertEqual(seen.count('github.com'), 1)  # the first hop only
+            _, response = self.open([FakeResponse(b'', 302, {'Location': 'https://release-assets.githubusercontent.com/a?x=1'}),
+                                     FakeResponse()], seen)
+            self.assertEqual(response.status, 200)
+            self.assertEqual(seen[0], 'github.com')
+            self.assertEqual(seen[2], 'release-assets.githubusercontent.com')
+            self.assertEqual(seen[3], '/a?x=1')
+
+        for label, location in (
+            ('unlisted host', 'https://evil.example/x'),
+            ('non-HTTPS scheme', 'http://release-assets.githubusercontent.com/x'),
+        ):
+            with self.subTest(case=label):
+                seen = []
+                with self.assertRaises(primitive.Refusal):
+                    self.open([FakeResponse(b'', 302, {'Location': location})], seen)
+                self.assertNotIn('evil.example', seen)
+                self.assertEqual(seen.count('github.com'), 1)
+
+        with self.subTest(case='unlisted initial host'):
+            seen = []
+            with mock.patch('http.client.HTTPSConnection', scripted_https([], seen)):
+                with self.assertRaises(primitive.Refusal):
+                    REAL_OPEN('https://example.com/x')
+            self.assertEqual(seen, [])
 
     def test_redirect_loops_and_missing_locations_refuse(self):
         with self.assertRaises(primitive.Refusal):
             self.open([FakeResponse(b'', 302, {'Location': 'https://github.com/loop'})] * 4, [])
         with self.assertRaises(primitive.Refusal):
             self.open([FakeResponse(b'', 302, {})], [])
-
-    def test_the_first_url_must_be_allowlisted(self):
-        seen = []
-        with mock.patch('http.client.HTTPSConnection', scripted_https([], seen)):
-            with self.assertRaises(primitive.Refusal):
-                REAL_OPEN('https://example.com/x')
-        self.assertEqual(seen, [])
-
 
 class C1ProofEntryTests(Fixture):
     """C1 is admitted in the proof entry as a plain request. Its window needs its original C0 receipt, and its
@@ -5445,6 +5417,7 @@ class GuestClosureNegativeTests(Fixture):
 
     def _run_named(self, routes, activation_id):
         calls = []
+        self.last_calls = calls
         stub = {'receipts': [], 'engine_id': None}
         with mock.patch.object(ex, 'verify_chain', lambda *a, **k: stub):
             receipt = self.execute('C2', self.routed(routes, calls), prior_ref=None, activation_id=activation_id)
@@ -5490,25 +5463,32 @@ class GuestClosureNegativeTests(Fixture):
         self.assertEqual(receipt['closure'], 'guest_unknown')
         self.assertNotIn('c2-guest-probe', [c[0] for c in calls])
 
-    def test_unreaped_and_setsid_child_stay_unknown(self):
-        receipt, _ = self._run_named(self.status_and(**{'c2-route-echo': closed_guest(prep.ROUTE_ECHO, unreaped=True)}),
-                                     'act-c2-unreaped')
-        self.assertEqual(receipt['closure'], 'guest_unknown')
-        receipt, _ = self._run_named(self.status_and(**{'c2-route-echo': closed_guest(prep.ROUTE_ECHO, child_session_id=99)}),
-                                     'act-c2-setsid')
-        self.assertEqual(receipt['closure'], 'guest_unknown')
-        by_id = {x['id']: x for x in receipt['steps']}
-        self.assertEqual(by_id['c2-route-echo']['guest_closure'], 'unknown')
+    def test_unreaped_and_detached_children_stay_unknown(self):
+        cases = (
+            ('unreaped', dict(unreaped=True)),
+            ('setsid child', dict(child_session_id=99)),
+        )
+        for label, fields in cases:
+            with self.subTest(child=label):
+                receipt, _ = self._run_named(
+                    self.status_and(**{'c2-route-echo': closed_guest(prep.ROUTE_ECHO, **fields)}),
+                    'act-c2-' + label.replace(' ', '-'))
+                self.assertEqual(receipt['closure'], 'guest_unknown')
+                by_id = {x['id']: x for x in receipt['steps']}
+                self.assertEqual(by_id['c2-route-echo']['guest_closure'], 'unknown')
 
-    def test_truncated_envelope_refuses_before_the_probe(self):
-        with self.assertRaisesRegex(ex.Refusal, 'route echo mismatch'):
-            self._run_named(self.status_and(**{'c2-route-echo': emit('EFFIGY-COLIMA-GUEST-1\nHEADER\n')}),
-                            'act-c2-trunc')
-
-    def test_invalid_pid_refuses_before_the_probe(self):
-        with self.assertRaisesRegex(ex.Refusal, 'guest process identity invalid'):
-            self._run_named(self.status_and(**{'c2-route-echo': closed_guest(prep.ROUTE_ECHO, pid=0)}),
-                            'act-c2-bad-pid')
+    def test_malformed_route_echo_refuses_before_the_probe(self):
+        cases = (
+            ('truncated envelope', emit('EFFIGY-COLIMA-GUEST-1\nHEADER\n'),
+             'route echo mismatch', 'act-c2-trunc'),
+            ('invalid pid', closed_guest(prep.ROUTE_ECHO, pid=0),
+             'guest process identity invalid', 'act-c2-bad-pid'),
+        )
+        for label, echo, message, activation_id in cases:
+            with self.subTest(echo=label):
+                with self.assertRaisesRegex(ex.Refusal, message):
+                    self._run_named(self.status_and(**{'c2-route-echo': echo}), activation_id)
+                self.assertNotIn('c2-guest-probe', [call[0] for call in self.last_calls])
 
     def test_missing_echo_stdout_stays_unknown_and_does_not_dispatch_the_probe(self):
         calls = []

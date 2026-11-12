@@ -118,19 +118,12 @@ class CargoRouteGuardTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("[ok] 0 plain-Cargo routes", result.stdout)
 
-    def test_escape_is_not_a_route(self):
-        repo = self._repo(
-            '[tasks]\n"ok.escape" = "EFFIGY_OXIDE_ESCAPE=cargo cargo test"\n'
-        )
-        result = run_guard(repo, CARGO_GUARD)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("[ok] 0 plain-Cargo routes", result.stdout)
-
-    def test_comment_and_cargo_env_are_not_routes(self):
+    def test_inert_cargo_forms_are_not_routes(self):
         repo = self._repo(
             "# cargo test\n[tasks]\n"
             "ok.comment = \"echo hi\"\n"
             'ok.env = "$CARGO test"\n'
+            '"ok.escape" = "EFFIGY_OXIDE_ESCAPE=cargo cargo test"\n'
         )
         result = run_guard(repo, CARGO_GUARD)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -213,23 +206,20 @@ class MktempGuardTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("has no `XXXXXX`", result.stdout)
 
-    def test_guest_exemption_same_line_passes(self):
-        repo = self._repo()
-        write(
-            os.path.join(repo, "tests", "scripts", "guest.sh"),
-            "native_dir=$(mktemp -d)  # mktemp-exempt: container guest temp\n",
-        )
-        result = run_guard(repo, MKTEMP_GUARD)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
-    def test_guest_exemption_previous_line_passes(self):
-        repo = self._repo()
-        write(
-            os.path.join(repo, "tests", "scripts", "guest.sh"),
-            "# mktemp-exempt: container guest temp\nmktemp -d\n",
-        )
-        result = run_guard(repo, MKTEMP_GUARD)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+    def test_guest_temp_exemption_accepts_both_supported_placements(self):
+        for placement, source in (
+            ("same line", "native_dir=$(mktemp -d)  # mktemp-exempt: container guest temp\n"),
+            ("previous line", "# mktemp-exempt: container guest temp\nmktemp -d\n"),
+        ):
+            with self.subTest(placement=placement):
+                repo = self._repo()
+                try:
+                    write(os.path.join(repo, "tests", "scripts", "guest.sh"), source)
+                    result = run_guard(repo, MKTEMP_GUARD)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                finally:
+                    shutil.rmtree(repo, ignore_errors=True)
+                    self.repo = None
 
     def test_string_mention_is_not_a_call(self):
         repo = self._repo()
@@ -240,75 +230,62 @@ class MktempGuardTests(unittest.TestCase):
         result = run_guard(repo, MKTEMP_GUARD)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_quoted_dollar_substitution_without_template_fails(self):
-        repo = self._repo()
-        write(
-            os.path.join(repo, "tests", "scripts", "quoted-sub.sh"),
-            'dir="$(mktemp -d)"\n',
+    def test_quoted_substitution_openers_without_templates_fail(self):
+        cases = (
+            ("dollar", 'dir="$(mktemp -d)"\n'),
+            ("backtick", 'dir="`mktemp -d`"\n'),
         )
-        result = run_guard(repo, MKTEMP_GUARD)
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("has no template", result.stdout)
-        self.assertIn("tests/scripts/quoted-sub.sh:1", result.stdout)
+        for opener, source in cases:
+            with self.subTest(opener=opener):
+                repo = self._repo()
+                try:
+                    path = os.path.join(repo, "tests", "scripts", "quoted.sh")
+                    write(path, source)
+                    result = run_guard(repo, MKTEMP_GUARD)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn("has no template", result.stdout)
+                    self.assertIn("tests/scripts/quoted.sh:1", result.stdout)
+                finally:
+                    shutil.rmtree(repo, ignore_errors=True)
+                    self.repo = None
 
-    def test_quoted_backtick_substitution_without_template_fails(self):
-        repo = self._repo()
-        write(
-            os.path.join(repo, "tests", "scripts", "quoted-tick.sh"),
-            'dir="`mktemp -d`"\n',
+    def test_quoted_substitution_checks_tmpdir_template_policy(self):
+        cases = (
+            ("hardcoded host path", 'dir="$(mktemp -d /tmp/effigy-fixture.XXXXXX)"\n', 1,
+             "ignores TMPDIR"),
+            ("TMPDIR template", 'dir="$(mktemp -d "${TMPDIR:-/tmp}/effigy-fixture.XXXXXX")"\n', 0,
+             'every harness `mktemp` honours TMPDIR'),
         )
-        result = run_guard(repo, MKTEMP_GUARD)
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("has no template", result.stdout)
-        self.assertIn("tests/scripts/quoted-tick.sh:1", result.stdout)
+        for label, source, expected_status, expected_message in cases:
+            with self.subTest(case=label):
+                repo = self._repo()
+                try:
+                    write(os.path.join(repo, "tests", "scripts", "quoted.sh"), source)
+                    result = run_guard(repo, MKTEMP_GUARD)
+                    self.assertEqual(result.returncode, expected_status, result.stdout + result.stderr)
+                    self.assertIn(expected_message, result.stdout)
+                    if expected_status:
+                        self.assertIn("tests/scripts/quoted.sh:1", result.stdout)
+                finally:
+                    shutil.rmtree(repo, ignore_errors=True)
+                    self.repo = None
 
-    def test_quoted_substitution_hardcoded_tmp_fails(self):
-        repo = self._repo()
-        write(
-            os.path.join(repo, "tests", "scripts", "quoted-host.sh"),
-            'dir="$(mktemp -d /tmp/effigy-fixture.XXXXXX)"\n',
+    def test_literals_and_escaped_substitution_openers_are_not_calls(self):
+        cases = (
+            ("single-quoted literal", "echo 'mktemp -d'\n"),
+            ("dollar", 'echo "\\$(mktemp -d)"\n'),
+            ("backtick", 'echo "\\`mktemp -d\\`"\n'),
         )
-        result = run_guard(repo, MKTEMP_GUARD)
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("ignores TMPDIR", result.stdout)
-        self.assertIn("tests/scripts/quoted-host.sh:1", result.stdout)
-
-    def test_quoted_substitution_with_tmpdir_template_passes(self):
-        repo = self._repo()
-        write(
-            os.path.join(repo, "tests", "scripts", "quoted-ok.sh"),
-            'dir="$(mktemp -d "${TMPDIR:-/tmp}/effigy-fixture.XXXXXX")"\n',
-        )
-        result = run_guard(repo, MKTEMP_GUARD)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('every harness `mktemp` honours TMPDIR', result.stdout)
-
-    def test_single_quoted_literal_is_not_a_call(self):
-        repo = self._repo()
-        write(
-            os.path.join(repo, "tests", "scripts", "single.sh"),
-            "echo 'mktemp -d'\n",
-        )
-        result = run_guard(repo, MKTEMP_GUARD)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
-    def test_escaped_dollar_opener_is_not_a_call(self):
-        repo = self._repo()
-        write(
-            os.path.join(repo, "tests", "scripts", "esc-dollar.sh"),
-            'echo "\\$(mktemp -d)"\n',
-        )
-        result = run_guard(repo, MKTEMP_GUARD)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
-    def test_escaped_backtick_opener_is_not_a_call(self):
-        repo = self._repo()
-        write(
-            os.path.join(repo, "tests", "scripts", "esc-tick.sh"),
-            'echo "\\`mktemp -d\\`"\n',
-        )
-        result = run_guard(repo, MKTEMP_GUARD)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for opener, source in cases:
+            with self.subTest(opener=opener):
+                repo = self._repo()
+                try:
+                    write(os.path.join(repo, "tests", "scripts", "escaped.sh"), source)
+                    result = run_guard(repo, MKTEMP_GUARD)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                finally:
+                    shutil.rmtree(repo, ignore_errors=True)
+                    self.repo = None
 
     def test_crate_tests_scripts_are_scanned(self):
         repo = self._repo()

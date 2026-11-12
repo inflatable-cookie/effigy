@@ -242,14 +242,16 @@ class RuntimeRecipeTests(unittest.TestCase):
     def test_old_single_glob_reproduces_the_observed_pre_depends_failure(self):
         root, debs, state = self.fixture('old-glob')
         rc, _, err, final = self.run_segments(debs, state, ['dpkg -i /debs/*.deb'])
-        self.assertNotEqual(rc, 0)
-        for name in OLD_775_ERRORS:
-            self.assertIn(f'pre-dependency problem - not installing {name}', err)
+        self.assertEqual(rc, 1, err)
+        failures = re.findall(r'pre-dependency problem - not installing ([^\s]+)', err)
+        self.assertEqual(failures, list(OLD_775_ERRORS))
         self.assertIn('python3-minimal pre-depends on python3.10-minimal', err)
         self.assertIn('python3 pre-depends on python3-minimal', err)
-        self.assertNotEqual(final.get('python3'), 'installed')
-        self.assertNotEqual(final.get('python3-minimal'), 'installed')
-        self.assertEqual(final.get('python3.10-minimal'), 'installed')  # later configuration does not undo the failure
+        installed = {name for name, status in final.items() if status == 'installed'}
+        expected_installed = {item['package'] for item in self.meta['packages']} - set(OLD_775_ERRORS)
+        self.assertEqual(installed, expected_installed)
+        self.assertEqual(set(final), expected_installed)
+        self.assertEqual(final['python3.10-minimal'], 'installed')  # later configuration does not undo the failure
         self.assertIn('Errors were encountered while processing:', err)
 
     def test_fixed_order_installs_all_22_configured_and_passes_the_completeness_check(self):

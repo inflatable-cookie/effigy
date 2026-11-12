@@ -70,21 +70,26 @@ class ChainTests(fixtures.Fixture):
         request = self.request()
         result, calls = self.run_chain(request)
         self.assertEqual(result['closure'], 'closed')
-        self.assertEqual([w['stage'] for w, _ in calls], list(chain.STAGES))
+        stages = chain.DESKTOP_STAGES if request['schema'] == chain.DESKTOP_SCHEMA else chain.STAGES
+        self.assertEqual([w['stage'] for w, _ in calls], list(stages))
         self.assertEqual(len({kw['outer_deadline'] for _, kw in calls}), 1)
         for index, (window, _) in enumerate(calls):
             stage = window['stage']
             self.assertEqual(window['duration_seconds'], ex.stage_of(ex.load_manifest(), stage)['seconds'])
             self.assertEqual(window['prior_receipt'], request['first']['prior_receipt'] if index == 0
                              else result['receipts'][index - 1])
+        if request['schema'] == chain.DESKTOP_SCHEMA:
+            self.assertNotIn('D4', request['budgets'])
         with self.assertRaises(ex.Refusal):
             self.run_chain(request)
 
     def test_unknown_stage_halts_all_successors(self):
         request = self.request()
-        result, calls = self.run_chain(request, failed='C3')
+        stages = chain.DESKTOP_STAGES if request['schema'] == chain.DESKTOP_SCHEMA else chain.STAGES
+        failed = stages[1]
+        result, calls = self.run_chain(request, failed=failed)
         self.assertEqual(result['closure'], 'guest_unknown')
-        self.assertEqual([w['stage'] for w, _ in calls], ['C2', 'C3'])
+        self.assertEqual([w['stage'] for w, _ in calls], list(stages[:2]))
 
     def test_modified_budget_or_source_refuses_before_claim(self):
         request = self.request()
@@ -154,27 +159,6 @@ class DesktopChainTests(ChainTests):
     def request(self):
         return chain.recipe(self.bindings, dict(activation_id='desktop-chain', evidence_root=self.evidence,
                                                prior_receipt=self.d0()), desktop=True)
-
-    def test_chained_window_keeps_budgets_refs_deadline_and_single_use(self):
-        request = self.request()
-        result, calls = self.run_chain(request)
-        self.assertEqual(result['closure'], 'closed')
-        self.assertEqual(request['schema'], chain.DESKTOP_SCHEMA)
-        self.assertEqual([w['stage'] for w, _ in calls], list(chain.DESKTOP_STAGES))
-        self.assertEqual(len({kw['outer_deadline'] for _, kw in calls}), 1)
-        for index, (window, _) in enumerate(calls):
-            self.assertEqual(window['duration_seconds'], ex.stage_of(ex.load_manifest(), window['stage'])['seconds'])
-            self.assertEqual(window['prior_receipt'], request['first']['prior_receipt'] if index == 0
-                             else result['receipts'][index - 1])
-        self.assertNotIn('D4', request['budgets'])
-        with self.assertRaises(ex.Refusal):
-            self.run_chain(request)
-
-    def test_unknown_stage_halts_all_successors(self):
-        result, calls = self.run_chain(self.request(), failed='D2')
-        self.assertEqual(result['closure'], 'guest_unknown')
-        self.assertEqual([w['stage'] for w, _ in calls], ['D1', 'D2'])
-
 
 if __name__ == '__main__':
     unittest.main()
