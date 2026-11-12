@@ -19,6 +19,14 @@ use effigy_secrets::{SecretValue, VaultPlaintextPayload};
 use crate::runner::error::RunnerError;
 use crate::runner::execute::preflight::ExecutionPreflight;
 use crate::runner::manifest::{load_task_manifest, TASK_MANIFEST_FILE};
+use crate::runner::secret_vault::{
+    begin_vault_write, read_effigy_vault_payload_for_local_dev,
+    read_effigy_vault_payload_with_local_dev_key, resolve_shared_effigy_vault_path,
+    write_effigy_vault_payload,
+};
+use crate::runner::secrets_command::{
+    decrypt_vault_with_progress, run_configured_vault_generate_task,
+};
 
 pub(in crate::runner) fn resolve_standard_task_secrets(
     preflight: &ExecutionPreflight,
@@ -170,11 +178,7 @@ pub(in crate::runner) fn resolve_task_secret_env(
         ));
     }
 
-    let vault_path = crate::runner::secret_vault::resolve_shared_effigy_vault_path(
-        repo_root,
-        secrets,
-        "task secret injection",
-    )?;
+    let vault_path = resolve_shared_effigy_vault_path(repo_root, secrets, "task secret injection")?;
     if !vault_path.exists() && eager_load {
         crate::runner::run_command(effigy_cli::Command::Secrets(SecretsArgs {
             subcommand: SecretsSubcommand::Init,
@@ -195,9 +199,7 @@ pub(in crate::runner) fn resolve_task_secret_env(
     let mut payload = if local_dev {
         // Only a machine with no local-dev key yet is answered by a passphrase
         // upgrade; every other failure keeps its own error.
-        match crate::runner::secret_vault::read_effigy_vault_payload_with_local_dev_key(
-            &vault_path,
-        )? {
+        match read_effigy_vault_payload_with_local_dev_key(&vault_path)? {
             Some(payload) => payload,
             None => {
                 let Some(passphrase) =
@@ -205,16 +207,9 @@ pub(in crate::runner) fn resolve_task_secret_env(
                 else {
                     return Ok(Vec::new());
                 };
-                let write = crate::runner::secret_vault::begin_vault_write(&vault_path)?;
-                let payload = crate::runner::secrets_command::decrypt_vault_with_progress(
-                    &vault_path,
-                    passphrase.expose(),
-                )?;
-                crate::runner::secret_vault::write_effigy_vault_payload(
-                    &write,
-                    &payload,
-                    passphrase.expose(),
-                )?;
+                let write = begin_vault_write(&vault_path)?;
+                let payload = decrypt_vault_with_progress(&vault_path, passphrase.expose())?;
+                write_effigy_vault_payload(&write, &payload, passphrase.expose())?;
                 payload
             }
         }
@@ -223,30 +218,20 @@ pub(in crate::runner) fn resolve_task_secret_env(
         else {
             return Ok(Vec::new());
         };
-        crate::runner::secrets_command::decrypt_vault_with_progress(
-            &vault_path,
-            passphrase.expose(),
-        )?
+        decrypt_vault_with_progress(&vault_path, passphrase.expose())?
     };
 
     let mut missing_required =
         task_required_secret_names_missing_from_payload(&payload, &task_keys);
     if !missing_required.is_empty() && eager_load {
-        crate::runner::secrets_command::run_configured_vault_generate_task(
-            repo_root,
-            Some(secrets),
-        )
-        .map(|_| ())?;
+        run_configured_vault_generate_task(repo_root, Some(secrets)).map(|_| ())?;
         payload = if local_dev {
-            crate::runner::secret_vault::read_effigy_vault_payload_for_local_dev(&vault_path)?
+            read_effigy_vault_payload_for_local_dev(&vault_path)?
         } else {
             let Some(passphrase) = read_task_secret_passphrase(&vault_path, false)? else {
                 unreachable!("required task secret generation needs an unlock passphrase")
             };
-            crate::runner::secrets_command::decrypt_vault_with_progress(
-                &vault_path,
-                passphrase.expose(),
-            )?
+            decrypt_vault_with_progress(&vault_path, passphrase.expose())?
         };
         missing_required = task_required_secret_names_missing_from_payload(&payload, &task_keys);
     }
@@ -319,11 +304,8 @@ pub(in crate::runner) fn managed_session_vault_path(
     if !matches!(secrets.backend, Some(ManifestSecretsBackend::EffigyVault)) {
         return Ok(None);
     }
-    let vault_path = crate::runner::secret_vault::resolve_shared_effigy_vault_path(
-        repo_root,
-        secrets,
-        "managed session secret access",
-    )?;
+    let vault_path =
+        resolve_shared_effigy_vault_path(repo_root, secrets, "managed session secret access")?;
     Ok(vault_path.exists().then_some(vault_path))
 }
 
