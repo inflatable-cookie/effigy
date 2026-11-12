@@ -258,8 +258,8 @@ fn render_inspect_payload(
                 })
             }),
             selected_path,
-            // A value the text form cannot render fails the inspection; `--json`
-            // never reports a placeholder instead.
+            // A value the text form cannot render fails the inspection;
+            // `--json` never reports a placeholder instead.
             selected_value: selected
                 .as_ref()
                 .map(|entry| {

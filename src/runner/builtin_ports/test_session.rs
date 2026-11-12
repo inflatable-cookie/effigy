@@ -64,8 +64,7 @@ struct Entry {
 }
 
 /// The record the tab shows for one attempt: the state's own detail where it
-/// has one, and the established display spells for the states that do not. The
-/// state itself is typed, so nothing here decodes the record back.
+/// has one, and the display spell for the states that do not.
 fn exit_record(state: &SessionEntryState) -> String {
     match state {
         SessionEntryState::Passed => "exit=0".to_owned(),

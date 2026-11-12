@@ -45,7 +45,7 @@ pub enum SessionEntryState {
     Failed {
         /// The record the session shows for this attempt.
         detail: String,
-        /// The exit the entry reported, when the session observed one.
+        /// The exit the entry reported, when it reported one.
         exit: Option<i32>,
     },
     /// The session ended the entry: it never reported an exit status of its
@@ -56,11 +56,9 @@ pub enum SessionEntryState {
 }
 
 impl SessionEntryState {
-    /// The state a session recorded as one text record: `exit=0` or another
-    /// `exit=N`, `signal=N`, `not-tracked`/`not started`, or anything else the
-    /// supervisor reported. This is the one place a record is decoded, for the
-    /// text protocols; a producer holding the typed exit reports
-    /// [`Self::from_exit_code`] instead.
+    /// The state a text record reports (`exit=N`, `signal=N`, `not started`, or
+    /// anything else). The one place a record is decoded; a producer holding
+    /// the typed exit reports [`Self::from_exit_code`] instead.
     pub fn from_record(record: &str) -> Self {
         let record = record.trim();
         if record == "exit=0" {

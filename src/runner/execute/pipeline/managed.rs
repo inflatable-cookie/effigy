@@ -360,7 +360,8 @@ impl ManagedContext<'_, '_, '_> {
         // Session vault-once stays on `resolved_root` above. Values for this
         // task still load from the selected catalog's declarations and vault.
         crate::runner::task_secrets::resolve_task_secret_env(
-            crate::runner::task_secrets::task_secret_repo_root(self.preflight, self.selection),
+            self.preflight
+                .task_execution_root(&self.selection.catalog.catalog_root),
             &self.preflight.secret_targets,
             self.selection.task,
             true,

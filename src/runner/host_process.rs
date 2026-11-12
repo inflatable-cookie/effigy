@@ -565,17 +565,10 @@ fn order_host_processes(
 }
 
 fn dependency_env_prefix(name: &str) -> String {
-    let normalized = name
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() {
-                character.to_ascii_uppercase()
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
-    format!("EFFIGY_MANAGED_HOST_{normalized}")
+    format!(
+        "EFFIGY_MANAGED_HOST_{}",
+        effigy_manifest::secret_env_name(name)
+    )
 }
 
 pub(in crate::runner) fn write_private_json(

@@ -51,8 +51,8 @@ pub(crate) use secrets::{
     reject_retired_vault_keys, retired_vault_policy_key, retired_vault_policy_line,
 };
 pub use secrets::{
-    ManifestSecretKeyConfig, ManifestSecretTarget, ManifestSecretsBackend, ManifestSecretsConfig,
-    ManifestSecretsExternalConfig, ManifestSecretsVaultConfig,
+    secret_env_name, ManifestSecretKeyConfig, ManifestSecretTarget, ManifestSecretsBackend,
+    ManifestSecretsConfig, ManifestSecretsExternalConfig, ManifestSecretsVaultConfig,
 };
 
 #[cfg(test)]
@@ -765,13 +765,16 @@ container = { image = "node:22", mount = "./:/workspace", shell = "bash" }
 
     #[test]
     fn container_host_mounts_accept_legacy_structured_and_mixed_forms() {
-        let legacy: ManifestContainerHostConfig = toml::from_str(
-            r#"mounts = ["./:/workspace", "./assets:/srv/assets:ro"]"#,
-        )
-        .expect("parse legacy string mounts");
+        let legacy: ManifestContainerHostConfig =
+            toml::from_str(r#"mounts = ["./:/workspace", "./assets:/srv/assets:ro"]"#)
+                .expect("parse legacy string mounts");
         assert_eq!(legacy.mounts.len(), 2);
-        assert!(matches!(&legacy.mounts[0], ManifestContainerHostMount::Spec(value) if value == "./:/workspace"));
-        assert!(matches!(&legacy.mounts[1], ManifestContainerHostMount::Spec(value) if value == "./assets:/srv/assets:ro"));
+        assert!(
+            matches!(&legacy.mounts[0], ManifestContainerHostMount::Spec(value) if value == "./:/workspace")
+        );
+        assert!(
+            matches!(&legacy.mounts[1], ManifestContainerHostMount::Spec(value) if value == "./assets:/srv/assets:ro")
+        );
 
         let parsed: ManifestContainerHostConfig = toml::from_str(
             r#"
@@ -801,8 +804,14 @@ mounts = [
         )
         .expect("parse mixed mounts");
         assert_eq!(mixed.mounts.len(), 2);
-        assert!(matches!(mixed.mounts[0], ManifestContainerHostMount::Spec(_)));
-        assert!(matches!(mixed.mounts[1], ManifestContainerHostMount::Table(_)));
+        assert!(matches!(
+            mixed.mounts[0],
+            ManifestContainerHostMount::Spec(_)
+        ));
+        assert!(matches!(
+            mixed.mounts[1],
+            ManifestContainerHostMount::Table(_)
+        ));
         match &mixed.mounts[1] {
             ManifestContainerHostMount::Table(table) => {
                 assert_eq!(table.host, "~/.config/effigy");

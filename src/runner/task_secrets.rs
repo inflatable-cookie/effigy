@@ -1,8 +1,9 @@
 //! The one owner of the secrets a task run delivers: which declared keys a
-//! direct-shell run injects for the targets it names, the vault read and
-//! upgrade, and the redaction of delivered values. The standard pipeline, the
-//! nested sequence engine, the managed session and the reserved host shell all
-//! ask this module.
+//! direct-shell run injects, the vault read and upgrade, and the redaction of
+//! delivered values. The standard, sequence, managed and reserved-shell routes
+//! all ask this module. A task's vault declarations and relative vault file
+//! belong to its selected catalog; an external skill source keeps the consumer
+//! root.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -10,25 +11,14 @@ use std::path::{Path, PathBuf};
 use effigy_cli::{SecretsArgs, SecretsSubcommand};
 use effigy_env::secret::SecretString;
 use effigy_manifest::{
-    ManifestManagedRun, ManifestManagedRunStep, ManifestSecretTarget, ManifestSecretsBackend,
-    ManifestTaskSecretsMode, TaskSelection,
+    secret_env_name, ManifestManagedRun, ManifestManagedRunStep, ManifestSecretTarget,
+    ManifestSecretsBackend, ManifestTaskSecretsMode, TaskSelection,
 };
 use effigy_secrets::{SecretValue, VaultPlaintextPayload};
-use effigy_ui::steps::ProgressFrame;
 
 use crate::runner::error::RunnerError;
 use crate::runner::execute::preflight::ExecutionPreflight;
 use crate::runner::manifest::{load_task_manifest, TASK_MANIFEST_FILE};
-
-/// Vault declarations and the relative vault file for an ordinary local
-/// catalog task belong to that task's selected catalog. External skill
-/// sources keep the consumer root through `task_execution_root`.
-pub(in crate::runner) fn task_secret_repo_root<'a>(
-    preflight: &'a ExecutionPreflight,
-    selection: &'a TaskSelection<'_>,
-) -> &'a Path {
-    preflight.task_execution_root(&selection.catalog.catalog_root)
-}
 
 pub(in crate::runner) fn resolve_standard_task_secrets(
     preflight: &ExecutionPreflight,
@@ -38,7 +28,7 @@ pub(in crate::runner) fn resolve_standard_task_secrets(
         return Ok(Vec::new());
     }
     resolve_task_secret_env(
-        task_secret_repo_root(preflight, selection),
+        preflight.task_execution_root(&selection.catalog.catalog_root),
         &preflight.secret_targets,
         selection.task,
         matches!(
@@ -108,8 +98,8 @@ fn collect_task_secret_env_names_from_run(run: &ManifestManagedRun, names: &mut 
 }
 
 /// The `$NAME` and `${NAME}` references a shell command names. Braced names
-/// keep whatever sits between the braces (`${1}` included); an unbraced name
-/// still has to start like a shell variable.
+/// keep what sits between the braces (`${1}` included); an unbraced one must
+/// start like a shell variable.
 fn collect_task_secret_env_names_from_shell(command: &str, names: &mut BTreeSet<String>) {
     let mut rest = command;
     while let Some(dollar) = rest.find('$') {
@@ -159,7 +149,7 @@ pub(in crate::runner) fn resolve_task_secret_env(
         .iter()
         .filter(|(name, key)| {
             key.targets.iter().any(|target| targets.contains(target))
-                && (eager_load || requested_env_names.contains(&task_secret_env_name(name)))
+                && (eager_load || requested_env_names.contains(&secret_env_name(name)))
         })
         .collect::<Vec<_>>();
     if task_keys.is_empty() {
@@ -203,9 +193,8 @@ pub(in crate::runner) fn resolve_task_secret_env(
     }
 
     let mut payload = if local_dev {
-        // Only a machine with no local-dev key yet is answered by asking for
-        // the passphrase and minting one; every other failure keeps its error
-        // instead of hiding behind an interactive upgrade.
+        // Only a machine with no local-dev key yet is answered by a passphrase
+        // upgrade; every other failure keeps its own error.
         match crate::runner::secret_vault::read_effigy_vault_payload_with_local_dev_key(
             &vault_path,
         )? {
@@ -217,7 +206,10 @@ pub(in crate::runner) fn resolve_task_secret_env(
                     return Ok(Vec::new());
                 };
                 let write = crate::runner::secret_vault::begin_vault_write(&vault_path)?;
-                let payload = read_task_secret_vault_payload(&vault_path, passphrase.expose())?;
+                let payload = crate::runner::secrets_command::decrypt_vault_with_progress(
+                    &vault_path,
+                    passphrase.expose(),
+                )?;
                 crate::runner::secret_vault::write_effigy_vault_payload(
                     &write,
                     &payload,
@@ -231,7 +223,10 @@ pub(in crate::runner) fn resolve_task_secret_env(
         else {
             return Ok(Vec::new());
         };
-        read_task_secret_vault_payload(&vault_path, passphrase.expose())?
+        crate::runner::secrets_command::decrypt_vault_with_progress(
+            &vault_path,
+            passphrase.expose(),
+        )?
     };
 
     let mut missing_required =
@@ -248,22 +243,25 @@ pub(in crate::runner) fn resolve_task_secret_env(
             let Some(passphrase) = read_task_secret_passphrase(&vault_path, false)? else {
                 unreachable!("required task secret generation needs an unlock passphrase")
             };
-            read_task_secret_vault_payload(&vault_path, passphrase.expose())?
+            crate::runner::secrets_command::decrypt_vault_with_progress(
+                &vault_path,
+                passphrase.expose(),
+            )?
         };
         missing_required = task_required_secret_names_missing_from_payload(&payload, &task_keys);
     }
 
-    let mut injected = Vec::new();
-    for (name, key) in task_keys {
-        match payload.records.get(name.as_str()) {
-            Some(record) => injected.push((
-                task_secret_env_name(name),
-                SecretString::new(record.value.expose().to_owned()),
-            )),
-            None if key.required => missing_required.push(name.to_owned()),
-            None => {}
-        }
-    }
+    let injected = task_keys
+        .iter()
+        .filter_map(|(name, _)| {
+            payload.records.get(name.as_str()).map(|record| {
+                (
+                    secret_env_name(name),
+                    SecretString::new(record.value.expose().to_owned()),
+                )
+            })
+        })
+        .collect::<Vec<_>>();
 
     if !missing_required.is_empty() {
         return Err(RunnerError::task_invocation(format!(
@@ -309,9 +307,8 @@ fn task_secret_targets(extra_targets: &[String]) -> Result<Vec<ManifestSecretTar
     Ok(targets)
 }
 
-/// The built-in vault this checkout declares and that exists on disk: the
-/// vault a managed session resolves access to before any front end renders
-/// (032, Q-007). No `[secrets]` or no vault file means nothing to resolve.
+/// The built-in vault this checkout declares and has on disk, which a managed
+/// session resolves before any front end renders (032, Q-007).
 pub(in crate::runner) fn managed_session_vault_path(
     repo_root: &Path,
 ) -> Result<Option<PathBuf>, RunnerError> {
@@ -332,11 +329,8 @@ pub(in crate::runner) fn managed_session_vault_path(
 
 /// Whether this task's preflight can run the manifest's declared
 /// `[secrets.vault].generate` hook. The hook is not in the task's `run`, so
-/// `classify_tree` cannot see it: resolving that join before admission keeps
-/// its effects inside the tree class instead of refusing them after workload
-/// go (contract 052 §3.1). Only a direct-shell task with a task-targeted
-/// required key reaches it, and only the selected catalog's declarations and
-/// vault count.
+/// `classify_tree` cannot see it; resolving that join before admission keeps
+/// its effects inside the tree class (contract 052 §3.1).
 pub(in crate::runner) fn startup_can_run_vault_generate_hook(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
@@ -344,14 +338,17 @@ pub(in crate::runner) fn startup_can_run_vault_generate_hook(
     if effigy_context::external_task_source_isolation_active()
         || !matches!(
             selection.task.secrets,
-            Some(effigy_manifest::ManifestTaskSecretsMode::Required)
+            Some(ManifestTaskSecretsMode::Required)
         )
         || !task_uses_direct_shell(selection.task.run.as_ref())
     {
         return Ok(false);
     }
-    let manifest =
-        load_task_manifest(&task_secret_repo_root(preflight, selection).join(TASK_MANIFEST_FILE))?;
+    let manifest = load_task_manifest(
+        &preflight
+            .task_execution_root(&selection.catalog.catalog_root)
+            .join(TASK_MANIFEST_FILE),
+    )?;
     let Some(secrets) = manifest.secrets.as_ref() else {
         return Ok(false);
     };
@@ -396,54 +393,14 @@ fn read_local_dev_upgrade_passphrase(
     )
 }
 
-fn read_task_secret_vault_payload(
-    vault_path: &Path,
-    passphrase: &str,
-) -> Result<VaultPlaintextPayload, RunnerError> {
-    // Decrypting the vault is the slowest part of resolving a task's secrets,
-    // and a wrong passphrase or an unreadable vault is the failure a person
-    // most needs described. The vault crate has no intra-decrypt events, so
-    // the live source names that exact wait and elapsed time.
-    let progress = crate::runner::secrets_command::SecretOpProgress::start(
-        crate::runner::secrets_command::PROBE_VAULT_DECRYPT,
-    );
-    progress.update(|_| ProgressFrame::new("decrypting vault"));
-    match crate::runner::secret_vault::read_effigy_vault_payload(vault_path, passphrase) {
-        Ok(payload) => {
-            progress.succeed("vault unlocked");
-            Ok(payload)
-        }
-        Err(error) => {
-            progress.fail("could not unlock the vault");
-            Err(error)
-        }
-    }
-}
-
-fn task_secret_env_name(name: &str) -> String {
-    name.chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() {
-                character.to_ascii_uppercase()
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
 pub(in crate::runner) fn redact_task_secret_values(
     input: &str,
     secret_env: Option<&[(&str, &SecretString)]>,
 ) -> String {
-    let Some(secret_env) = secret_env else {
-        return input.to_owned();
-    };
     let mut redacted = input.to_owned();
-    for (_, secret) in secret_env {
-        let value = secret.expose();
-        if !value.is_empty() {
-            redacted = redacted.replace(value, "[REDACTED]");
+    for (_, secret) in secret_env.unwrap_or_default() {
+        if !secret.expose().is_empty() {
+            redacted = redacted.replace(secret.expose(), "[REDACTED]");
         }
     }
     redacted

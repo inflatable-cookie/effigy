@@ -278,10 +278,8 @@ impl HostAliasResolver {
         Ok(resolved)
     }
 
-    /// Resolve what one host child delivers: its secret values (declared
-    /// aliases resolved) and the values it would otherwise inherit unchanged.
-    /// A key the child already delivers is neither resolved again nor proved as
-    /// inherited.
+    /// Resolve what one host child delivers: its secrets and inherited values,
+    /// each declared alias resolved once.
     pub(in crate::runner) fn resolve_delivered_env(
         &mut self,
         plain: &BTreeSet<String>,
@@ -529,9 +527,7 @@ pub(in crate::runner) fn resolve_host_env_inherited(
     Ok(resolved)
 }
 
-/// What one host child receives beyond the plain environment it renders: its
-/// resolved secret values and the values it would otherwise inherit unchanged.
-pub(in crate::runner) type DeliveredEnv = (Vec<(String, SecretString)>, Vec<(String, String)>);
+type DeliveredEnv = (Vec<(String, SecretString)>, Vec<(String, String)>);
 
 /// Borrow resolved secret pairs for a spawn.
 pub(in crate::runner) fn secret_env_slice(

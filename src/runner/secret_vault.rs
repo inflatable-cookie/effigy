@@ -77,8 +77,7 @@ fn declared_vault_path(
     Ok(PathBuf::from(path))
 }
 
-/// The vault file itself, read once with the failure every reader reports the
-/// same way.
+/// The vault file, with the failure every reader reports the same way.
 fn read_vault_envelope(vault_path: &Path) -> Result<effigy_secrets::VaultEnvelope, RunnerError> {
     effigy_secrets::storage::read_envelope(vault_path).map_err(|error| {
         RunnerError::task_invocation(format!(
@@ -103,10 +102,8 @@ pub(in crate::runner) fn read_effigy_vault_payload(
 
 /// Read the vault with the local-dev key, or `None` when this machine has not
 /// minted one yet. The vault is read first, so a corrupt vault fails whether or
-/// not a key exists; only a genuinely absent key path (a `NotFound` from its
-/// own symlink metadata, never `Path::exists`, which reports every failed
-/// lookup as absent) is `None`. A key path that exists but cannot be used — a
-/// dangling or looping link included — keeps its own error.
+/// not a key exists; only an absent key path (`NotFound` from its own symlink
+/// metadata) is `None`, and an unusable one keeps its error.
 pub(in crate::runner) fn read_effigy_vault_payload_with_local_dev_key(
     vault_path: &Path,
 ) -> Result<Option<VaultPlaintextPayload>, RunnerError> {
