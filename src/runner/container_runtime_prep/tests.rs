@@ -1321,7 +1321,7 @@ fn the_preflight_seals_an_unpublished_render_and_the_publisher_accepts_it() {
         use std::os::unix::fs::PermissionsExt;
         assert_eq!(sealed.receipt().digest(), render.closure.digest());
         for (relative, bytes) in render.closure.files() {
-            let path = sealed.root.join(relative);
+            let path = sealed.root().join(relative);
             assert_eq!(fs::read(&path).expect("sealed object"), *bytes);
             assert_eq!(
                 fs::metadata(&path).expect("metadata").permissions().mode() & 0o777,
@@ -1330,9 +1330,9 @@ fn the_preflight_seals_an_unpublished_render_and_the_publisher_accepts_it() {
                 path.display()
             );
         }
-        for file in &sealed.policy.compose_files {
+        for file in &sealed.policy().compose_files {
             assert!(
-                file.starts_with(&sealed.root),
+                file.starts_with(sealed.root()),
                 "the hashed input is the sealed tree: {}",
                 file.display()
             );

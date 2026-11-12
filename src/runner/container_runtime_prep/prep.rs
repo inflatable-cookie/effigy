@@ -6,7 +6,8 @@ use effigy_containers::EffectiveContainerPolicy;
 use crate::runner::container_command::support::reconcile_primary_service_tcp_alias_hosts;
 use crate::runner::error::RunnerError;
 
-use super::{ensure_primary_service_binding, prepare_host_bind_mount_dirs};
+use super::binding::ensure_primary_service_binding;
+use super::host_mounts::prepare_host_bind_mount_dirs;
 
 pub(super) fn prepare_runtime_mounts_stage(
     repo_root: &Path,
@@ -66,15 +67,22 @@ pub(super) fn reconcile_runtime_aliases_stage(
     policy: &EffectiveContainerPolicy,
     binding: &effigy_containers::exec::VerifiedComposeContainer,
 ) -> Result<(), RunnerError> {
-    reconcile_runtime_aliases_stage_using(repo_root, policy, |repo_root, policy| {
-        reconcile_primary_service_tcp_alias_hosts(repo_root, policy, binding, None).map(|_| ())
-    })
+    reconcile_primary_service_tcp_alias_hosts(repo_root, policy, binding, None).map(|_| ())
 }
 
-pub(super) fn reconcile_runtime_aliases_stage_using(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    reconcile_aliases: impl FnOnce(&Path, &EffectiveContainerPolicy) -> Result<(), RunnerError>,
+/// The order a task's exec preparation runs in. The routing decision only
+/// checks whether the primary service is running; sibling services may still be
+/// missing after a failed compose bring-up, so exec readiness follows the apply
+/// rather than standing in for it.
+pub(super) fn run_runtime_prep_steps<T>(
+    prepare_mounts: impl FnOnce() -> Result<(), RunnerError>,
+    compose_up: impl FnOnce() -> Result<(), RunnerError>,
+    ensure_exec_ready: impl FnOnce() -> Result<T, RunnerError>,
+    reconcile_aliases: impl FnOnce(T) -> Result<(), RunnerError>,
 ) -> Result<(), RunnerError> {
-    reconcile_aliases(repo_root, policy)
+    prepare_mounts()?;
+    compose_up()?;
+    let binding = ensure_exec_ready()?;
+    reconcile_aliases(binding)?;
+    Ok(())
 }
