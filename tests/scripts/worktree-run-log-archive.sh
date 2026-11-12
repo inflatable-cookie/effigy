@@ -59,6 +59,24 @@ EFFIGY_RUN_LOG_ARCHIVE_BASE="$fx/archive-base" TMPDIR="$fx/temp" sh "$helper" "$
 [ "$rc" -eq 0 ] && grep -q "archive=$fx/archive-base/" "$out" || fail "fixture override failed"
 ok "configured destination, cleanup, failure and precedence"
 
+# 1b. With no `[scratch] root` configured (the resolver exits 2) the helper
+# archives under $HOME/.effigy/run-log-archive: a private base of Effigy's own,
+# never a hardcoded volume.
+new_fixture
+mkdir -p "$repo/.effigy/state/runs/1" "$repo/.local-install/worktree-hooks" "$fx/temp" "$fx/home"
+printf 'unconfigured' >"$repo/.effigy/state/runs/1/log"
+printf '#!/bin/sh\nexit 2\n' >"$repo/.local-install/worktree-hooks/effigy"
+chmod +x "$repo/.local-install/worktree-hooks/effigy"
+HOME="$fx/home" TMPDIR="$fx/temp" sh "$helper" "$repo" >"$out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] || fail "unconfigured root exit $rc: $(cat "$out")"
+grep -q "archive=$fx/home/.effigy/run-log-archive/qa-run-logs" "$out" ||
+  fail "home archive base not used: $(cat "$out")"
+dest=$(sed -n 's/.*archive=\([^ ]*\).*/\1/p' "$out")
+[ "$(cat "$dest/1.log")" = unconfigured ] || fail "home archive bytes differ"
+[ ! -e "$fx/Builds" ] || fail "old Builds root touched when unconfigured"
+ok "unconfigured scratch falls back to the home archive base"
+rm -rf "$fx"
+
 # 1. Exact bytes, manifest binding, multiple runs/segments; no log contents
 # on stdout; archive base subdirectory is created on demand.
 new_fixture

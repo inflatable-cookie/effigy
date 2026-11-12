@@ -413,7 +413,9 @@ mod tests {
 
     #[test]
     fn short_location_accepts_normal_and_confined_deep_roots_with_kernel_sockets() {
-        let normal = PathBuf::from("/Volumes/Builds/scratch/effigy/effigy/12345678");
+        // A neutral deep root: this case proves the length rule, not any
+        // operator's scratch volume.
+        let normal = PathBuf::from("/var/tmp/effigy-fixture-scratch/effigy/12345678");
         let confined = normal.join("confined/effigy");
         for root in [normal, confined] {
             assert!(root.as_os_str().len() > SHORT_TEMP_ROOT_MAX);
