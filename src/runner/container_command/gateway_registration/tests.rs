@@ -773,9 +773,13 @@ fn gateway_readiness_reports_each_poll_and_its_blocker() {
         },
     )
     .expect_err("ports that never publish are a timeout");
-    assert!(
-        matches!(error, RunnerError::GatewayRuntimeTarget { ref phase, .. } if phase == "readiness")
-    );
+    assert!(matches!(
+        error,
+        RunnerError::GatewayRuntimeTarget {
+            phase: "readiness",
+            ..
+        }
+    ));
 
     assert!(
         waits.len() >= 2,
@@ -821,9 +825,13 @@ fn gateway_readiness_reports_a_declared_service_exit() {
         |_| {},
     )
     .expect_err("an exited declared service must fail readiness");
-    assert!(
-        matches!(error, RunnerError::GatewayRuntimeTarget { ref phase, .. } if phase == "readiness")
-    );
+    assert!(matches!(
+        error,
+        RunnerError::GatewayRuntimeTarget {
+            phase: "readiness",
+            ..
+        }
+    ));
 
     let detail = error.to_string();
     assert!(detail.contains("service `app`"), "got: {detail}");
@@ -884,9 +892,13 @@ fn gateway_readiness_permanent_port_failure_is_bounded_and_diagnostic() {
         |_| {},
     )
     .expect_err("missing published ports must time out");
-    assert!(
-        matches!(error, RunnerError::GatewayRuntimeTarget { ref phase, .. } if phase == "readiness")
-    );
+    assert!(matches!(
+        error,
+        RunnerError::GatewayRuntimeTarget {
+            phase: "readiness",
+            ..
+        }
+    ));
     let elapsed = started.elapsed();
 
     assert!(elapsed < std::time::Duration::from_millis(250));

@@ -375,6 +375,7 @@ esac
                 evidence(),
             );
         }
+        let guest_calls = external.guest_calls.clone();
         let probe: ReservedProbeFactory<'_> = Box::new(|target| {
             assert_eq!(target.container_id, CONTAINER_ID);
             Ok(creator_probe(identity.clone(), shared.clone()))
@@ -404,7 +405,7 @@ esac
                 unavailable_reason(error)
             };
             assert_eq!(
-                external.guest_calls.get(),
+                guest_calls.get(),
                 0,
                 "refused creator evidence opens no guest"
             );

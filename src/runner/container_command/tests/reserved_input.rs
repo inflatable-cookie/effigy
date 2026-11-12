@@ -1235,6 +1235,8 @@ fn a_guest_that_names_another_container_is_refused_as_a_raced_binding() {
     let facts = reobserved_decision(&plan, bound_container());
 
     let reads = backend.count();
+    let read_count = backend.reads.clone();
+    let guest_calls = backend.guest_calls.clone();
     let error = refused_reason(
         observe(
             ReservedObservationRequest {
@@ -1251,11 +1253,11 @@ fn a_guest_that_names_another_container_is_refused_as_a_raced_binding() {
 
     assert!(error.contains("another container"), "{error}");
     assert_eq!(
-        backend.count(),
+        read_count.get(),
         reads + 2,
         "refusal stops at its evidence boundary"
     );
-    assert_eq!(backend.guest_calls.get(), 0, "refused input opens no guest");
+    assert_eq!(guest_calls.get(), 0, "refused input opens no guest");
 }
 
 #[test]
@@ -1283,6 +1285,8 @@ fn a_target_the_decision_did_not_freeze_is_refused() {
     let facts = decision(inputs);
 
     let reads = backend.count();
+    let read_count = backend.reads.clone();
+    let guest_calls = backend.guest_calls.clone();
     let error = refused_reason(
         observe(
             ReservedObservationRequest {
@@ -1299,11 +1303,11 @@ fn a_target_the_decision_did_not_freeze_is_refused() {
 
     assert!(error.contains("the identity the decision froze"), "{error}");
     assert_eq!(
-        backend.count(),
+        read_count.get(),
         reads + 2,
         "refusal stops at its evidence boundary"
     );
-    assert_eq!(backend.guest_calls.get(), 0, "refused input opens no guest");
+    assert_eq!(guest_calls.get(), 0, "refused input opens no guest");
 }
 
 #[test]
@@ -1320,6 +1324,8 @@ fn an_unknown_image_platform_refuses() {
     let facts = reobserved_decision(&plan, bound_container());
 
     let reads = backend.count();
+    let read_count = backend.reads.clone();
+    let guest_calls = backend.guest_calls.clone();
     let error = unavailable_reason(
         observe(
             ReservedObservationRequest {
@@ -1336,11 +1342,11 @@ fn an_unknown_image_platform_refuses() {
 
     assert!(error.contains("image platform is unknown"), "{error}");
     assert_eq!(
-        backend.count(),
+        read_count.get(),
         reads + 3,
         "refusal stops at its evidence boundary"
     );
-    assert_eq!(backend.guest_calls.get(), 0, "refused input opens no guest");
+    assert_eq!(guest_calls.get(), 0, "refused input opens no guest");
 }
 
 #[test]
@@ -1355,6 +1361,8 @@ fn a_guest_that_disagrees_with_its_image_refuses() {
     let facts = reobserved_decision(&plan, bound_container());
 
     let reads = backend.count();
+    let read_count = backend.reads.clone();
+    let guest_calls = backend.guest_calls.clone();
     let error = refused_reason(
         observe(
             ReservedObservationRequest {
@@ -1371,11 +1379,11 @@ fn a_guest_that_disagrees_with_its_image_refuses() {
 
     assert!(error.contains("while its image reports"), "{error}");
     assert_eq!(
-        backend.count(),
+        read_count.get(),
         reads + 3,
         "refusal stops at its evidence boundary"
     );
-    assert_eq!(backend.guest_calls.get(), 0, "refused input opens no guest");
+    assert_eq!(guest_calls.get(), 0, "refused input opens no guest");
 }
 
 #[test]
@@ -1399,6 +1407,8 @@ fn emulated_execution_is_refused_rather_than_claimed() {
     let facts = reobserved_decision(&plan, bound_container());
 
     let reads = backend.count();
+    let read_count = backend.reads.clone();
+    let guest_calls = backend.guest_calls.clone();
     let error = unavailable_reason(
         observe(
             ReservedObservationRequest {
@@ -1415,11 +1425,11 @@ fn emulated_execution_is_refused_rather_than_claimed() {
 
     assert!(error.contains("emulated execution"), "{error}");
     assert_eq!(
-        backend.count(),
+        read_count.get(),
         reads + 3,
         "refusal stops at its evidence boundary"
     );
-    assert_eq!(backend.guest_calls.get(), 0, "refused input opens no guest");
+    assert_eq!(guest_calls.get(), 0, "refused input opens no guest");
 }
 
 fn other_arch_machine() -> &'static str {
@@ -1441,6 +1451,8 @@ fn an_image_without_a_provable_c_library_refuses() {
     let facts = reobserved_decision(&plan, bound_container());
 
     let reads = backend.count();
+    let read_count = backend.reads.clone();
+    let guest_calls = backend.guest_calls.clone();
     let error = refused_reason(
         observe(
             ReservedObservationRequest {
@@ -1457,11 +1469,11 @@ fn an_image_without_a_provable_c_library_refuses() {
 
     assert!(error.contains("no provable C library"), "{error}");
     assert_eq!(
-        backend.count(),
+        read_count.get(),
         reads + 3,
         "refusal stops at its evidence boundary"
     );
-    assert_eq!(backend.guest_calls.get(), 0, "refused input opens no guest");
+    assert_eq!(guest_calls.get(), 0, "refused input opens no guest");
 }
 
 #[test]
@@ -1478,6 +1490,8 @@ fn a_tampered_artifact_that_disagrees_with_its_receipt_refuses() {
     let facts = reobserved_decision(&plan, bound_container());
 
     let reads = backend.count();
+    let read_count = backend.reads.clone();
+    let guest_calls = backend.guest_calls.clone();
     let error = unavailable_reason(effigy_containers::with_test_effigy_home(
         &observation.home,
         || {
@@ -1497,11 +1511,11 @@ fn a_tampered_artifact_that_disagrees_with_its_receipt_refuses() {
 
     assert!(error.contains("receipt records sha256"), "{error}");
     assert_eq!(
-        backend.count(),
+        read_count.get(),
         reads + 4,
         "refusal stops at its evidence boundary"
     );
-    assert_eq!(backend.guest_calls.get(), 0, "refused input opens no guest");
+    assert_eq!(guest_calls.get(), 0, "refused input opens no guest");
 }
 
 #[test]
@@ -1738,6 +1752,8 @@ fn a_same_engine_but_different_profile_binding_is_refused() {
     let facts = reobserved_decision(&plan, bound_container());
 
     let reads = backend.count();
+    let read_count = backend.reads.clone();
+    let guest_calls = backend.guest_calls.clone();
     let error = refused_reason(
         observe(
             ReservedObservationRequest {
@@ -1755,11 +1771,11 @@ fn a_same_engine_but_different_profile_binding_is_refused() {
     assert!(error.contains("another-profile"), "{error}");
     assert!(error.contains("effigy"), "{error}");
     assert_eq!(
-        backend.count(),
+        read_count.get(),
         reads + 1,
         "refusal stops at its evidence boundary"
     );
-    assert_eq!(backend.guest_calls.get(), 0, "refused input opens no guest");
+    assert_eq!(guest_calls.get(), 0, "refused input opens no guest");
 }
 
 #[test]
@@ -1772,6 +1788,8 @@ fn a_policy_that_is_not_the_plans_render_is_refused() {
     let facts = reobserved_decision(&plan, bound_container());
 
     let reads = backend.count();
+    let read_count = backend.reads.clone();
+    let guest_calls = backend.guest_calls.clone();
     let error = refused_reason(
         observe(
             ReservedObservationRequest {
@@ -1792,11 +1810,11 @@ fn a_policy_that_is_not_the_plans_render_is_refused() {
         "{error}"
     );
     assert_eq!(
-        backend.count(),
+        read_count.get(),
         reads,
         "refusal stops at its evidence boundary"
     );
-    assert_eq!(backend.guest_calls.get(), 0, "refused input opens no guest");
+    assert_eq!(guest_calls.get(), 0, "refused input opens no guest");
 }
 
 /// The integration shape #452 writes, type-checked against `up_prepared`'s own
@@ -2290,6 +2308,8 @@ fn a_frozen_fresh_decision_is_refused_at_observation_too() {
     });
 
     let reads = backend.count();
+    let read_count = backend.reads.clone();
+    let guest_calls = backend.guest_calls.clone();
     let error = refused_reason(
         observe(
             ReservedObservationRequest {
@@ -2309,11 +2329,11 @@ fn a_frozen_fresh_decision_is_refused_at_observation_too() {
         "{error}"
     );
     assert_eq!(
-        backend.count(),
+        read_count.get(),
         reads + 2,
         "refusal stops at its evidence boundary"
     );
-    assert_eq!(backend.guest_calls.get(), 0, "refused input opens no guest");
+    assert_eq!(guest_calls.get(), 0, "refused input opens no guest");
 }
 
 #[path = "reserved_creator_binding.rs"]
