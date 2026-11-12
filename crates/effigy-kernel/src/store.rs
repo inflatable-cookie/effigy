@@ -230,12 +230,10 @@ impl std::fmt::Display for StoreError {
                 "the kernel store lives on the host, and a guest placement cannot open it"
                     .to_owned()
             }
-            Self::Untrusted { path, reason } => {
-                match crate::fs::open_mode_message(path, reason) {
-                    Some(message) => message,
-                    None => format!("{} is not trusted store state ({reason})", path.display()),
-                }
-            }
+            Self::Untrusted { path, reason } => match crate::fs::open_mode_message(path, reason) {
+                Some(message) => message,
+                None => format!("{} is not trusted store state ({reason})", path.display()),
+            },
             Self::UnsupportedFilesystem { path, fs } => format!(
                 "{} is on a network filesystem ({fs}), and the store needs a local disk",
                 path.display()

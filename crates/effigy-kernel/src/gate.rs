@@ -142,12 +142,10 @@ impl std::fmt::Display for GateError {
                 "{} is on a network filesystem ({fs}), and a lock needs a local disk",
                 path.display()
             ),
-            Self::Untrusted { path, reason } => {
-                match crate::fs::open_mode_message(path, reason) {
-                    Some(message) => message,
-                    None => format!("{} is not trusted gate state ({reason})", path.display()),
-                }
-            }
+            Self::Untrusted { path, reason } => match crate::fs::open_mode_message(path, reason) {
+                Some(message) => message,
+                None => format!("{} is not trusted gate state ({reason})", path.display()),
+            },
             Self::Io(error) => {
                 return write!(
                     f,

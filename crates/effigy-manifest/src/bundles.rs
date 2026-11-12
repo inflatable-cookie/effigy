@@ -469,10 +469,7 @@ fn resolve_local_bundle_inputs(
 /// a warning here would judge the operator's file against the pin Tom is about
 /// to lose (papercut 1f529edc). Withholding it keeps the one accurate warning,
 /// which `validate_source_snapshot` emits from the refreshed descriptor.
-fn user_bundle_inputs(
-    descriptor: &LocalBundleDescriptor,
-    stale: bool,
-) -> BTreeMap<String, Value> {
+fn user_bundle_inputs(descriptor: &LocalBundleDescriptor, stale: bool) -> BTreeMap<String, Value> {
     let bundle_name = descriptor.bundle.name.trim();
     let config = match crate::user_config::load_user_config() {
         Ok(config) => config,
