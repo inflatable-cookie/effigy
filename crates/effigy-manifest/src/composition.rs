@@ -5,7 +5,7 @@ use effigy_core::repo_markers::LOCAL_OVERLAY_FILE;
 use toml::Value;
 
 use super::TaskManifest;
-use crate::bundles::apply_bundle_defaults;
+use crate::bundles::{apply_bundle_defaults, BundleInputResolution};
 use crate::config_sections::{ManifestBundleConfig, ManifestDocsPolicyGraphConfig};
 use crate::ingress::{record_value_sources, ManifestInput};
 use crate::manifest_section::{
@@ -25,6 +25,13 @@ pub struct LoadedTaskManifest {
     pub value_sources: Vec<ManifestCompositionValueSource>,
     pub effective_manifest: String,
     pub bundle_root: Option<PathBuf>,
+    /// The active bundle's declared `name` from its `bundle.toml`, when the
+    /// composed manifest selected one.
+    pub bundle_name: Option<String>,
+    /// One entry per resolved bundle input: the value the render used and the
+    /// layer it came from (bundle default, machine-local user config, or this
+    /// project's `[bundle]` keys).
+    pub bundle_inputs: Vec<BundleInputResolution>,
 }
 
 impl LoadedTaskManifest {
@@ -157,7 +164,9 @@ pub fn load_task_manifest_with_inspection(
         overridden_paths: session.overridden_paths,
         value_sources,
         effective_manifest,
-        bundle_root: bundle_defaults,
+        bundle_root: bundle_defaults.root,
+        bundle_name: bundle_defaults.name,
+        bundle_inputs: bundle_defaults.inputs,
     })
 }
 

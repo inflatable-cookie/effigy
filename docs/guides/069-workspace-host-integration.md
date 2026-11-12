@@ -132,6 +132,43 @@ the container at:
 - Per-developer; the file lives in `$HOME/.effigy` and is never checked in.
 - Missing config or missing bundle block silently no-ops.
 
+### Machine-local input values
+
+The same bundle-keyed block carries `inputs`: values for the bundle's declared
+`[[inputs]]` that only your machine should use. One edit moves every project
+that selects the bundle, without touching any repo.
+
+```toml
+# ~/.effigy/config.toml
+[bundle.decodelabs]
+inputs = { php_version = "8.5" }
+
+[bundle.decodelabs-library]
+inputs = { php_version = "8.5" }
+```
+
+Precedence, lowest to highest: the bundle's own input `default`, then this
+machine-local value, then the project's `[bundle]` keys, then
+`effigy.local.toml`. A repo that sets a value keeps it.
+
+The block is matched on the bundle's declared `name` from its `bundle.toml`,
+the same way `library_mounts` is, so a path, Git or OCI bundle all match; an
+underscore spelling of a hyphenated name (`decodelabs_library`) matches too. A
+block for a bundle the project does not use does nothing.
+
+Effigy validates the values against the bundle's declared inputs. An input the
+bundle does not declare, or a value of the wrong declared type, is ignored with
+a warning that names `~/.effigy/config.toml`, the bundle and the input, and
+the layer below supplies the value instead. A warning rather than a hard error
+keeps one stale or mistyped block in a file shared by every project from
+stopping unrelated checkouts from loading.
+
+`effigy config inspect` lists the effective bundle inputs and where each value
+came from, for example `php_version = 8.5 (user config)`; `--json` carries the
+same facts under `bundle_inputs`. Set the values by editing the file — there is
+no `effigy config set` form for bundle inputs yet — and read the file back with
+`effigy config --user-inspect`.
+
 ## User-Global Container Preferences
 
 Effigy can pin the default container backend and Colima profile for

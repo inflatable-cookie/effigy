@@ -44,6 +44,47 @@ pub enum BundleInputType {
     List,
 }
 
+/// Which layer supplied one resolved bundle input value, lowest precedence
+/// first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BundleInputSource {
+    /// The `default` the bundle declares for the input in `bundle.toml`.
+    Default,
+    /// `[bundle.<name>].inputs` in the machine-local `~/.effigy/config.toml`.
+    UserConfig,
+    /// The project's own `[bundle]` key, including an `effigy.local.toml`
+    /// overlay value.
+    Manifest,
+}
+
+/// One declared bundle input with the value the render used and where that
+/// value came from.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct BundleInputResolution {
+    pub name: String,
+    pub value: Value,
+    pub source: BundleInputSource,
+}
+
+/// What resolving a project's `[bundle]` produced beyond the rendered
+/// defaults: the active bundle's local root, its declared name and one entry
+/// per resolved input.
+#[derive(Debug, Default)]
+pub(crate) struct BundleDefaults {
+    pub root: Option<PathBuf>,
+    pub name: Option<String>,
+    pub inputs: Vec<BundleInputResolution>,
+}
+
+/// What `resolve_local_bundle_defaults` read back for one bundle directory.
+struct LocalBundleDefaults {
+    defaults: Value,
+    source_path: PathBuf,
+    name: String,
+    inputs: Vec<BundleInputResolution>,
+}
+
 // The remote-source variants are introduced here so later git/OCI batches can
 // widen the same source seam without another model break.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -58,7 +99,7 @@ pub(crate) fn apply_bundle_defaults(
     manifest_path: &Path,
     input: &mut ManifestInput,
     materialized: Option<&Path>,
-) -> Result<Option<PathBuf>, ManifestError> {
+) -> Result<BundleDefaults, ManifestError> {
     let Some(bundle): Option<crate::config_sections::ManifestBundleConfig> = input
         .value
         .as_table()
@@ -72,7 +113,7 @@ pub(crate) fn apply_bundle_defaults(
         })
         .transpose()?
     else {
-        return Ok(None);
+        return Ok(BundleDefaults::default());
     };
 
     let selection = resolve_bundle_selection(manifest_path, &bundle)?;
@@ -87,11 +128,17 @@ pub(crate) fn apply_bundle_defaults(
         },
         None => resolve_materialized_bundle_source(manifest_path, &selection)?,
     };
-    let (mut defaults, source_path) = resolve_local_bundle_defaults(
+    let resolved_defaults = resolve_local_bundle_defaults(
         manifest_path,
         &resolved_source.local_path,
         &normalized_inputs,
     )?;
+    let LocalBundleDefaults {
+        mut defaults,
+        source_path,
+        name: bundle_name,
+        inputs: resolved_inputs,
+    } = resolved_defaults;
     let bundle_extend_paths = take_bundle_extend_paths(manifest_path, &mut defaults)?;
     // Both sides use the same bootstrap shape before defaults are filled, so
     // a consumer setup replaces the bundle setup instead of running both.
@@ -115,7 +162,11 @@ pub(crate) fn apply_bundle_defaults(
     )?;
     record_value_sources("", current, &source_path, &mut input.source_map);
     input.retired_config.merge(defaults.retired_config);
-    Ok(Some(resolved_source.local_path))
+    Ok(BundleDefaults {
+        root: Some(resolved_source.local_path),
+        name: Some(bundle_name),
+        inputs: resolved_inputs,
+    })
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -170,7 +221,7 @@ fn resolve_local_bundle_defaults(
     manifest_path: &Path,
     bundle_dir: &Path,
     inputs: &BTreeMap<String, Value>,
-) -> Result<(Value, PathBuf), ManifestError> {
+) -> Result<LocalBundleDefaults, ManifestError> {
     if !bundle_dir.is_dir() {
         return Err(ManifestError::Compose {
             path: manifest_path.to_path_buf(),
@@ -189,7 +240,7 @@ fn resolve_local_bundle_defaults(
         })?;
     let descriptor = parse_bundle_descriptor_source(&descriptor_path, &descriptor_source)?;
     validate_local_bundle_descriptor(manifest_path, &descriptor)?;
-    let resolved_inputs = resolve_local_bundle_inputs(manifest_path, &descriptor, inputs)?;
+    let resolved = resolve_local_bundle_inputs(manifest_path, &descriptor, inputs)?;
 
     let defaults_path = bundle_dir.join(&descriptor.bundle.defaults);
     let defaults_template =
@@ -202,7 +253,7 @@ fn resolve_local_bundle_defaults(
         &descriptor.bundle.name,
         bundle_dir,
         &defaults_template,
-        &resolved_inputs,
+        &resolved.values,
     )?;
     let defaults = toml::from_str::<Value>(&rendered).map_err(|error| ManifestError::Parse {
         path: defaults_path.clone(),
@@ -215,7 +266,12 @@ fn resolve_local_bundle_defaults(
         &rendered,
         &defaults,
     )?;
-    Ok((defaults, bundle_dir.join(&descriptor.bundle.defaults)))
+    Ok(LocalBundleDefaults {
+        defaults,
+        source_path: bundle_dir.join(&descriptor.bundle.defaults),
+        name: descriptor.bundle.name.trim().to_owned(),
+        inputs: resolved.inputs,
+    })
 }
 
 /// A retired `[secrets.vault]` key in a bundle's exported defaults.
@@ -303,11 +359,29 @@ fn validate_local_bundle_descriptor(
     Ok(())
 }
 
+/// What one project's `[bundle]` resolved to: the render inputs plus one
+/// provenance entry per declared input that has a value.
+struct ResolvedBundleInputs {
+    values: BTreeMap<String, Value>,
+    inputs: Vec<BundleInputResolution>,
+}
+
+/// Resolve one bundle's inputs from three layers, lowest precedence first:
+/// the bundle's declared `default`, the machine-local
+/// `[bundle.<name>].inputs` block in `~/.effigy/config.toml`, and the project's
+/// own `[bundle]` keys (`effigy.local.toml` is already composed into those).
+///
+/// A project value always wins. A user-global value that names an input the
+/// bundle does not declare, or that has the wrong declared type, is reported
+/// as an actionable warning naming the file, the bundle and the input, and is
+/// then ignored: the file is shared by every project on the machine, so a
+/// stale or mistyped block must not stop unrelated checkouts from loading the
+/// way a malformed project manifest does.
 fn resolve_local_bundle_inputs(
     manifest_path: &Path,
     descriptor: &LocalBundleDescriptor,
     provided: &BTreeMap<String, Value>,
-) -> Result<BTreeMap<String, Value>, ManifestError> {
+) -> Result<ResolvedBundleInputs, ManifestError> {
     let bundle_name = descriptor.bundle.name.trim();
     let declared = descriptor
         .inputs
@@ -323,14 +397,20 @@ fn resolve_local_bundle_inputs(
         }
     }
 
+    let user_inputs = user_bundle_inputs(descriptor);
     let mut resolved = BTreeMap::new();
+    let mut inputs = Vec::new();
     for input in &descriptor.inputs {
         let key = input.name.as_str();
-        let value = bundle_input_value(provided, key)
-            .cloned()
-            .or_else(|| input.default.clone());
-        match (value, input.required) {
-            (Some(value), _) => {
+        let (value, source) = if let Some(value) = bundle_input_value(provided, key) {
+            (Some(value.clone()), BundleInputSource::Manifest)
+        } else if let Some(value) = bundle_input_value(&user_inputs, key) {
+            (Some(value.clone()), BundleInputSource::UserConfig)
+        } else {
+            (input.default.clone(), BundleInputSource::Default)
+        };
+        match value {
+            Some(value) => {
                 validate_bundle_input_type(
                     manifest_path,
                     bundle_name,
@@ -338,23 +418,126 @@ fn resolve_local_bundle_inputs(
                     input.value_type,
                     &value,
                 )?;
-                insert_bundle_input_value(&mut resolved, key, value);
+                insert_bundle_input_value(&mut resolved, key, value.clone());
+                inputs.push(BundleInputResolution {
+                    name: key.to_owned(),
+                    value,
+                    source,
+                });
             }
-            (None, true) => {
+            None if input.required => {
                 return Err(ManifestError::Compose {
                     path: manifest_path.to_path_buf(),
                     detail: format!("local bundle `{bundle_name}` requires input `{key}`"),
                 });
             }
-            (None, false) => {
+            None => {
                 if input.value_type == BundleInputType::String {
-                    insert_bundle_input_value(&mut resolved, key, Value::String(String::new()));
+                    let value = Value::String(String::new());
+                    insert_bundle_input_value(&mut resolved, key, value.clone());
+                    inputs.push(BundleInputResolution {
+                        name: key.to_owned(),
+                        value,
+                        source,
+                    });
                 }
             }
         }
     }
     normalize_database_bundle_inputs(manifest_path, bundle_name, &mut resolved)?;
-    Ok(resolved)
+    Ok(ResolvedBundleInputs {
+        values: resolved,
+        inputs,
+    })
+}
+
+/// The machine-local input values for the active bundle, validated against the
+/// bundle's own `[[inputs]]`.
+///
+/// The block is matched on the bundle's declared name, the same identity
+/// `library_mounts` uses, so it applies to path, git and OCI bases alike. A
+/// block naming a bundle this project does not use is never read. Every
+/// rejected entry produces one warning and leaves that input to the layer
+/// below it.
+fn user_bundle_inputs(descriptor: &LocalBundleDescriptor) -> BTreeMap<String, Value> {
+    let bundle_name = descriptor.bundle.name.trim();
+    let config = match crate::user_config::load_user_config() {
+        Ok(config) => config,
+        Err(error) => {
+            crate::retired_notice::warn(format!(
+                "ignoring machine-local bundle inputs for bundle `{bundle_name}`: {error}"
+            ));
+            return BTreeMap::new();
+        }
+    };
+    let Some(entries) = config.bundle_inputs_for(bundle_name) else {
+        return BTreeMap::new();
+    };
+
+    let declared = descriptor
+        .inputs
+        .iter()
+        .map(|input| (input.name.as_str(), input))
+        .collect::<BTreeMap<_, _>>();
+    let config_path = crate::user_config::user_config_path()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "~/.effigy/config.toml".to_owned());
+
+    let mut accepted = BTreeMap::new();
+    for (key, value) in bundle_input_entries(entries) {
+        let Some(input) = declared.get(key.as_str()) else {
+            let declared_names = declared.keys().copied().collect::<Vec<_>>().join(", ");
+            crate::retired_notice::warn(format!(
+                "{config_path} sets `[bundle.{bundle_name}].inputs.{key}`, but bundle `{bundle_name}` does not declare that input; ignoring the machine-local value (declared inputs: {declared_names})"
+            ));
+            continue;
+        };
+        if !bundle_input_type_matches(input.value_type, &value) {
+            crate::retired_notice::warn(format!(
+                "{config_path} sets `[bundle.{bundle_name}].inputs.{key}` to {}, but bundle `{bundle_name}` declares `{key}` as {}; ignoring the machine-local value and using the project value or the bundle default",
+                render_bundle_input_value(&value),
+                bundle_input_type_name(input.value_type),
+            ));
+            continue;
+        }
+        insert_bundle_input_value(&mut accepted, &key, value);
+    }
+    accepted
+}
+
+/// Flatten a bundle's input table to leaf dotted paths, so a hand-written
+/// nested table and a dotted key mean the same input.
+fn bundle_input_entries(entries: &BTreeMap<String, Value>) -> Vec<(String, Value)> {
+    let mut leaves = Vec::new();
+    for (key, value) in entries {
+        collect_bundle_input_entries(key, value, &mut leaves);
+    }
+    leaves
+}
+
+fn collect_bundle_input_entries(prefix: &str, value: &Value, out: &mut Vec<(String, Value)>) {
+    match value {
+        Value::Table(table) => {
+            for (key, child) in table {
+                let child_prefix = if prefix.is_empty() {
+                    key.to_owned()
+                } else {
+                    format!("{prefix}.{key}")
+                };
+                collect_bundle_input_entries(&child_prefix, child, out);
+            }
+        }
+        _ => out.push((prefix.to_owned(), value.clone())),
+    }
+}
+
+/// One input value as a note reads it: strings bare, everything else in TOML
+/// form.
+fn render_bundle_input_value(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
+    }
 }
 
 fn normalize_database_bundle_inputs(
@@ -717,13 +900,7 @@ pub(super) fn validate_bundle_input_type(
     expected: BundleInputType,
     value: &Value,
 ) -> Result<(), ManifestError> {
-    let ok = match expected {
-        BundleInputType::String => value.is_str(),
-        BundleInputType::Integer => value.is_integer(),
-        BundleInputType::Bool => value.is_bool(),
-        BundleInputType::List => value.is_array(),
-    };
-    if ok {
+    if bundle_input_type_matches(expected, value) {
         return Ok(());
     }
     Err(ManifestError::Compose {
@@ -734,6 +911,15 @@ pub(super) fn validate_bundle_input_type(
             toml_type_name(value)
         ),
     })
+}
+
+fn bundle_input_type_matches(expected: BundleInputType, value: &Value) -> bool {
+    match expected {
+        BundleInputType::String => value.is_str(),
+        BundleInputType::Integer => value.is_integer(),
+        BundleInputType::Bool => value.is_bool(),
+        BundleInputType::List => value.is_array(),
+    }
 }
 
 fn bundle_input_type_name(value_type: BundleInputType) -> &'static str {

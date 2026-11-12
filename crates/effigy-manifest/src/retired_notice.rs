@@ -82,6 +82,31 @@ pub fn take_pending() -> Vec<String> {
     std::mem::take(&mut lock_ledger().pending)
 }
 
+/// Deliver one configuration warning this invocation found.
+///
+/// Unlike the retired-config notice, a warning is not recorded in the
+/// checkout marker: it is a fact about this process's own configuration, so it
+/// prints once per process to stderr in text mode and joins the JSON
+/// envelope's `warnings` in `--json` mode. Both channels dedupe exact repeats,
+/// so a manifest that composes more than once still says it once. The warning
+/// is always collected for the envelope as well as printed, because routing
+/// may load a manifest before the invocation has decided it is a JSON one.
+///
+/// A nested invocation keeps the same contract as the retired-config notice:
+/// its parent already spoke for the checkout, so stderr stays quiet. The
+/// envelope still carries the warning when the child asked for `--json`.
+pub fn warn(message: impl Into<String>) {
+    let message = message.into();
+    let mut ledger = lock_ledger();
+    if !ledger.seen.insert(message.clone()) {
+        return;
+    }
+    ledger.pending.push(message.clone());
+    if ledger.delivery != RetiredNoticeDelivery::JsonEnvelope && !is_nested_invocation() {
+        eprintln!("{message}");
+    }
+}
+
 /// Deliver one manifest's notice on this invocation's channel.
 pub(crate) fn emit(manifest_path: &Path, declaration: &RetiredConfigDeclaration) {
     let Some(notice) = declaration.notice(manifest_path) else {

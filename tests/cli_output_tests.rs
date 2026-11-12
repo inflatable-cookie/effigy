@@ -1,3 +1,5 @@
+#[path = "cli_output_tests/bundle_user_inputs_tests.rs"]
+mod bundle_user_inputs_tests;
 #[path = "cli_output_tests/command_behavior_tests.rs"]
 mod command_behavior_tests;
 #[cfg(unix)]

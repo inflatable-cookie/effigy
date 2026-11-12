@@ -71,6 +71,41 @@ Supported input types:
 Every key under `[bundle]` other than `base` must be declared in
 `bundle.toml`. Misspelled inputs fail manifest loading.
 
+## Machine-Local Input Values
+
+A repo can also leave an input to the machine. `~/.effigy/config.toml` holds
+one bundle-keyed block per bundle, matched on the bundle's declared `name`
+(for a path, Git or OCI base alike):
+
+```toml
+# ~/.effigy/config.toml
+[bundle.decodelabs]
+inputs = { php_version = "8.5" }
+```
+
+Precedence, lowest to highest:
+
+1. the bundle input's own `default`
+2. the machine-local `[bundle.<name>].inputs` value
+3. the repo's `[bundle]` keys
+4. `effigy.local.toml`
+
+A repo that sets a value keeps it, and a block naming a bundle the project does
+not select does nothing. Values are validated against the bundle's declared
+`[[inputs]]`: an undeclared input or a wrong-typed value is ignored with a
+warning naming `~/.effigy/config.toml`, the bundle and the input, and the layer
+below supplies the value. That warning — rather than a hard error — keeps one
+stale block in a file shared by every project from stopping unrelated
+checkouts from loading; a project manifest with an undeclared input still
+fails as before.
+
+This is the one-machine route to test a stack change (a new PHP version, a
+ported database) across every consumer without touching each repo or affecting
+another developer. `effigy config inspect` reports the effective value and its
+source, e.g. `php_version = 8.5 (user config)`; `--json` carries it under
+`bundle_inputs`. Edit the file to set the values; `effigy config --user-inspect`
+prints it back. See [guide 069](069-workspace-host-integration.md#machine-local-input-values).
+
 ## Override Semantics
 
 A repo manifest wins wherever it sets a value; the bundle only fills what the
