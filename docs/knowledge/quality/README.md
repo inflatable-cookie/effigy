@@ -2,7 +2,10 @@
 
 Owner: [test assurance](../test-assurance.md).
 
-The test tables are rated at `4026bd67eae1bdc51dad77bc9792795502e817f8`; the code table has not yet been rated.
+The test tables are rated at `b5b54db3538b57416f8cc1b8d0fb1e8ec0d0bae8`; the code table has not yet been rated.
+Round 4 re-rated every row that changed, arrived or was recorded as an exception across the B1-B9
+tranches, dropped the rows whose tests are gone, and left every untouched row's parts as they were
+rated at `4026bd67e`. Locators and body hashes are refreshed for the rows that were re-read.
 
 ## Tables
 
@@ -14,6 +17,19 @@ The test tables are rated at `4026bd67eae1bdc51dad77bc9792795502e817f8`; the cod
 ## Targets
 
 Tom agreed to option B now: a test floor of 7, with evidenced merges and removals completed. Option C (floor 7 and mean 8.5) is a later target. The code target is TBD.
+
+Round 4 closed at floor 7: 25 rows sit below it, all named in [the summary](tests/SUMMARY.md).
+
+## Cost clarification (2026-11-12, from calibration)
+
+- **C=0** is reserved for tests that sleep or wait on wall-clock time, run the full CLI binary end
+  to end, push to real git remotes, or take more than about 5 s.
+- Short child spawns (fake docker/nerdctl scripts, `sh -c printf`, local git init/clone, small
+  fixture processes) are **C=1**.
+- Pure in-process tests are **C=2**.
+- A test whose only loss is cost because it must cross a real boundary (actual process, socket,
+  FIFO, journal) to prove what it claims stays C=0 or 1. It isn't penalised further: its Value and
+  Effectiveness carry it.
 
 ## Test rubric
 
@@ -114,19 +130,24 @@ Run an independent stratified sample of at least 60 modules, with one frontier c
 
 ## Test results at the rated commit
 
-- 7,993 table rows: 6,736 Rust and 1,257 Python. Thirty `#[ignore]` helper entrypoints are marked in the CSVs and excluded from scoring, leaving 7,963 scored tests.
-- Distribution (scored tests, scores 2–10): 4, 3, 8, 129, 726, 1,602, 2,299, 2,468, 724. Mean 8.05; median 8; 1.8% scored 5 or lower, 10.9% scored 6 or lower, and 31% scored 7 or lower.
-- Table rows, including excluded helpers: T1 1,464; T2 633; T3 870; T4 1,847; T5 1,922; T6 1,257.
+- 7,724 table rows: 6,458 Rust and 1,266 Python. Thirty `#[ignore]` helper entrypoints are marked in the CSVs and excluded from scoring, leaving 7,694 scored tests.
+- Distribution (scored tests, scores 4–10): 8, 29, 82, 1,574, 2,417, 2,796, 788. Mean 8.33; median 8; 0.5% scored 5 or lower and 1.5% scored 6 or lower.
+- Table rows, including excluded helpers: T1 1,317; T2 627; T3 858; T4 1,797; T5 1,859; T6 1,266.
+- The 422 rows whose tests no longer exist left the table; 151 merged or new survivors arrived. Round 4 raised or consolidated the low tail, so 119 scored rows now sit below the floor of 7 (T1 30, T2 13, T3 3, T4 67, T5 6, T6 0) instead of 870 at 6 or below.
 
-An independent Claude Sonnet pass re-scored a stratified 42-test sample from scratch:
+An independent Claude Sonnet pass re-scored a stratified 42-test sample from scratch at `4026bd67e`:
 - 23 of 42 scores match and 38 are within ±1;
-- mean difference −0.14, mean absolute difference 0.57.
+- mean difference −0.14 and mean absolute difference 0.57.
 
 Two biases roughly cancel:
 - **Effectiveness is overclaimed** when a test's name promises more than its assertions check (net −6 across 16 rows).
 - **Cost is too harsh** on short child spawns (net +6 across 8 rows).
 
 T4 is mildly inflated (−0.86 on average). The true mean is probably about 7.9–8.0. The calibrator would also reverse 9 `keep` rows (3 to merge, 6 to improve) and adds no removals. Details: `calibration-summary.md`.
+
+The round 4 close re-rated 865 rows (151 new, 365 changed, 349 B1–B9 exception rows) against the
+clarified cost rule and recorded the new rated commit. It did not re-run the independent sample;
+the calibration above still describes the original sweep.
 
 ## Update policy
 
