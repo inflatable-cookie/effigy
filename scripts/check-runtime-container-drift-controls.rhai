@@ -102,7 +102,7 @@ let compose_pattern = `compose_args\(`;
 let glob = #{ glob: "*.rs" };
 
 let cwd_allow = `^src/runner/exec_command/tests\.rs$`;
-let backend_allow = `^(src/runner/doctor_ports\.rs|src/runner/exec_command/transport\.rs|src/runner/container_runtime_prep/prep\.rs|src/runner/container_command/lifecycle\.rs)$`;
+let backend_allow = `^(src/runner/doctor_ports\.rs|src/runner/exec_command/transport\.rs|src/runner/container_command/lifecycle/prepare\.rs)$`;
 let raw_allow = `^(src/runner/doctor_ports\.rs|src/runner/bootstrap_command/mod\.rs|src/runner/workspace_command/permissions_gnu_accept\.rs)$`;
 let compose_allow = `^(crates/effigy-runtime/src/container_manager\.rs|src/runner/managed_shell\.rs|src/runner/exec_command/transport\.rs|src/runner/exec_command/transport/colima\.rs|src/runner/container_runtime_prep/prep\.rs|src/runner/container_runtime_prep/mod\.rs|src/runner/container_command/support\.rs|src/runner/deferral/run\.rs|src/runner/execute/pipeline/managed\.rs|src/runner/workspace_command/provisioning\.rs)$`;
 
@@ -136,8 +136,12 @@ fs::write_file(
     "fn adapter() { let _ = resolve_compose_backend(); let _ = compose_args(policy, [\"up\"]); }\n",
 );
 fs::write_file(
-    path::join(runner, "container_command/lifecycle.rs"),
+    path::join(runner, "container_command/lifecycle/prepare.rs"),
     "fn adapter() { let _ = ComposeBackend::ColimaNerdctl; }\n",
+);
+fs::write_file(
+    path::join(runner, "container_command/lifecycle/up.rs"),
+    "fn orchestration() { let _ = ComposeBackend::ColimaNerdctl; }\n",
 );
 fs::write_file(
     path::join(runner, "bootstrap_command/mod.rs"),
@@ -211,6 +215,8 @@ expect_rejected("current_dir", cwd_hits, "src/runner/qa_group_command/execute.rs
 let backend_hits = unexpected_matches(fixture, shared_roots, backend_pattern, glob, backend_allow);
 expect_allowed("backend", backend_hits, "src/runner/doctor_ports.rs");
 expect_allowed("backend", backend_hits, "src/runner/exec_command/transport.rs");
+expect_allowed("backend", backend_hits, "src/runner/container_command/lifecycle/prepare.rs");
+expect_rejected("backend", backend_hits, "src/runner/container_command/lifecycle/up.rs");
 expect_rejected("backend", backend_hits, "src/runner/execute/pipeline/standard.rs");
 expect_rejected("backend", backend_hits, "src/runner/container_command/shell_prep.rs");
 expect_rejected("backend", backend_hits, "src/runner/environment.rs");

@@ -156,6 +156,7 @@ these callers. `deny.toml` remains the dependency policy authority.
 | Module | Responsibility |
 | --- | --- |
 | [`src/runner/container_command/*`](../../../src/runner/container_command/mod.rs) | container command-surface glue: parse resolved CLI model, call operation/runtime/data helpers, render operator output |
+| [`src/runner/container_command/lifecycle.rs`](../../../src/runner/container_command/lifecycle.rs) | shared operation plans and entrypoints; `lifecycle/` owns up, down, reset, status, stats, logs, shell and exec separately, with shared preparation, reporting and runtime integration effects |
 | [`src/runner/container_command/hosts.rs`](../../../src/runner/container_command/hosts.rs) | effective host map for one checkout: declared and scoped HTTP/TCP names |
 | [`src/runner/container_command/retire.rs`](../../../src/runner/container_command/retire.rs) | retirement over the backend's own ownership labels: containers, volumes, networks, gateway state |
 | [`src/runner/container_command/data.rs`](../../../src/runner/container_command/data.rs) | container data command glue over `effigy-data`, `effigy-state::artifact`, container operation plans, and runtime IO adapters |
