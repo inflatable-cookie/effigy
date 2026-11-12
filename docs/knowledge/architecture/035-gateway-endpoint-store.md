@@ -42,7 +42,7 @@ publication.
 
 An aliased route names its checkout's address, and the address is chosen where
 the route is written: the checkout's recorded address when its routes already
-have one, otherwise the lowest `127.1.0.1`-`127.1.0.50` address no route
+have one, otherwise the lowest `127.1.0.1`-`127.1.0.250` address no route
 references. `down` and retirement free the address by removing the routes, so
 there is no separate assignment to record, reclaim or release, and no Prepare
 step that allocates one.

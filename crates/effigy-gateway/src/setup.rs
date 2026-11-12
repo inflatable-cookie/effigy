@@ -496,8 +496,8 @@ fn managed_file(
 /// Fixed native boot job: no mutable operator script or Effigy executable runs
 /// with privilege. Every alias is explicit, and the job repeats after reboot.
 pub fn macos_boot_job() -> Vec<u8> {
-    let script = (1..=50)
-        .map(|n| format!("/sbin/ifconfig lo0 alias 127.1.0.{n} up || exit $?"))
+    let script = crate::loopback::pool()
+        .map(|address| format!("/sbin/ifconfig lo0 alias {address} up || exit $?"))
         .collect::<Vec<_>>()
         .join("; ");
     format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- {MARKER} -->\n<plist version=\"1.0\"><dict><key>Label</key><string>dev.effigy.gateway.loopback</string><key>RunAtLoad</key><true/><key>ProgramArguments</key><array><string>/bin/sh</string><string>-c</string><string>{script}</string></array></dict></plist>\n").into_bytes()
@@ -672,8 +672,8 @@ pub(crate) fn apply_macos(
         vec!["/sbin/ifconfig".into(), "lo0".into()],
     )?;
     let interfaces = String::from_utf8(interfaces).map_err(error)?;
-    for n in 1..=50 {
-        let address = format!("127.1.0.{n}");
+    for address in crate::loopback::pool() {
+        let address = address.to_string();
         if interfaces.lines().any(|line| {
             line.split_whitespace().collect::<Vec<_>>().get(..2)
                 == Some(&["inet", address.as_str()])
@@ -1714,7 +1714,10 @@ pub(crate) mod tests {
     #[test]
     fn native_boot_jobs_limit_privilege_and_preserve_global_dns() {
         let mac = String::from_utf8(macos_boot_job()).unwrap();
-        assert_eq!(mac.matches("/sbin/ifconfig lo0 alias").count(), 50);
+        assert_eq!(
+            mac.matches("/sbin/ifconfig lo0 alias").count(),
+            usize::from(crate::loopback::DEFAULT_LOOPBACK_COUNT)
+        );
         assert!(!mac.contains("__gateway-run"));
         assert!(!mac.contains("KeepAlive"));
         let linux = String::from_utf8(linux_boot_job(&[
@@ -2066,17 +2069,21 @@ pub(crate) mod tests {
             assert!(phases.contains(&"installing the gateway loopback launch job".to_owned()));
             assert!(phases.contains(&"installing the privileged bind broker".to_owned()));
             assert!(phases.contains(&"observing the loopback interface".to_owned()));
-            assert!(phases.contains(&"adding loopback address 127.1.0.1".to_owned()));
-            assert_eq!(
-                phases.last().map(String::as_str),
-                Some("adding loopback address 127.1.0.50")
+            assert!(phases.contains(&format!(
+                "adding loopback address {}",
+                crate::loopback::DEFAULT_LOOPBACK_START
+            )));
+            let last_phase = format!(
+                "adding loopback address {}",
+                crate::loopback::DEFAULT_LOOPBACK_END
             );
+            assert_eq!(phases.last().map(String::as_str), Some(last_phase.as_str()));
             assert_eq!(
                 phases
                     .iter()
                     .filter(|phase| phase.starts_with("adding loopback address "))
                     .count(),
-                50,
+                usize::from(crate::loopback::DEFAULT_LOOPBACK_COUNT),
                 "{phases:?}"
             );
         });
@@ -2093,7 +2100,10 @@ pub(crate) mod tests {
             ))
             .exists());
         // One observation of lo0 and one alias per address in the pool.
-        assert_eq!(platform.requested("/sbin/ifconfig").len(), 51);
+        assert_eq!(
+            platform.requested("/sbin/ifconfig").len(),
+            usize::from(crate::loopback::DEFAULT_LOOPBACK_COUNT) + 1
+        );
         assert_eq!(platform.requested("/bin/launchctl").len(), 1);
     }
 

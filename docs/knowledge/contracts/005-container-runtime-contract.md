@@ -1993,8 +1993,10 @@ together. Every route write also drops routes whose recorded checkout path is
 gone, for every domain, so a deleted worktree keeps neither a domain nor an
 address. There is no inventory probe, no release plan and no reuse quarantine: a
 released address is immediately allocatable, and the gateway answers DNS with a
-one-second TTL. Growing the pool beyond `127.1.0.50` is not part of this
-contract; the `lo0` aliases come from `gateway setup`.
+one-second TTL. The pool is the 250 addresses `127.1.0.1`-`127.1.0.250`, sized
+for worktree churn; one constant defines the bound, and `gateway setup` installs
+exactly one `lo0` alias per pool address, so the size never needs a second
+administrative step.
 
 Host-process status preserves an unreadable journal as `unknown`, with its
 diagnostic alongside the log locator. Stop reports retain request, custody and

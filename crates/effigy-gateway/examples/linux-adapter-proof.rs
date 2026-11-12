@@ -21,10 +21,10 @@ fn main() -> std::io::Result<()> {
         Some("probe") => {
             assert!(!nix::unistd::Uid::effective().is_root());
             for address in [
-                "127.0.0.1:80",
-                "127.0.0.1:443",
-                "127.1.0.1:80",
-                "127.1.0.50:443",
+                "127.0.0.1:80".to_owned(),
+                "127.0.0.1:443".to_owned(),
+                format!("{}:80", effigy_gateway::loopback::DEFAULT_LOOPBACK_START),
+                format!("{}:443", effigy_gateway::loopback::DEFAULT_LOOPBACK_END),
             ] {
                 let listener = std::net::TcpListener::bind(address)?;
                 assert_eq!(listener.local_addr()?.to_string(), address);

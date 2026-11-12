@@ -27,6 +27,18 @@ fn table(routes: Vec<Route>) -> RouteTable {
 }
 
 #[test]
+fn the_pool_is_one_alias_per_assignable_address() {
+    let addresses = pool().collect::<Vec<_>>();
+    assert_eq!(addresses.len(), usize::from(DEFAULT_LOOPBACK_COUNT));
+    assert_eq!(addresses.first(), Some(&DEFAULT_LOOPBACK_START));
+    assert_eq!(addresses.last(), Some(&DEFAULT_LOOPBACK_END));
+    assert!(
+        usize::from(DEFAULT_LOOPBACK_COUNT) > 50,
+        "the exhausted 50-address pool keeps its headroom"
+    );
+}
+
+#[test]
 fn another_checkouts_routes_reserve_their_addresses() {
     assert_eq!(
         claim_address(&RouteTable::new(), "/checkouts/one").expect("claim"),

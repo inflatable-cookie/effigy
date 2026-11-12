@@ -1764,7 +1764,7 @@ scoped `/etc/resolver` files and a native loopback alias boot job. If direct
 loopback port 80/443 binds are denied, a root-owned, socket-activated bind
 broker supplies only those listeners. Its setup-pinned operator UID is checked
 with `getpeereid`; allowed addresses are `127.0.0.1` and `127.1.0.1` through
-`127.1.0.50`. It transfers descriptors after the user daemon starts and drops
+`127.1.0.250`. It transfers descriptors after the user daemon starts and drops
 its copies after the daemon acknowledges adoption. It never reads routes,
 certificates or user state, or serves traffic.
 The helper image is copied into a root-owned private directory, rather than
@@ -2449,8 +2449,9 @@ unchanged stack renders the same port on every `up`.
 
 ## Loopback aliases
 
-Each checkout holds one address in the bounded `127.1.0.1`-`127.1.0.50`
-loopback pool, and its aliased routes answer with it. The route table is the
+Each checkout holds one address in the bounded `127.1.0.1`-`127.1.0.250`
+loopback pool that `gateway setup` materialises as one `lo0` alias per address,
+and its aliased routes answer with it. The route table is the
 only record: an address is in use exactly when some route references it, as its
 `dns_ip` or as its target. `up` gives a checkout the address its routes already
 answer with, or the lowest address no route references, and `down` and

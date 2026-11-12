@@ -24,11 +24,12 @@ pub fn socket_path(uid: u32) -> PathBuf {
 }
 
 // The gateway's standard endpoint and its setup-installed alias range. Keep
-// this policy independent of operator-writable JSON and request parameters.
+// this policy independent of operator-writable JSON and request parameters;
+// the range is the crate's compile-time pool, never a recorded value.
 fn allowed(address: SocketAddr) -> bool {
     matches!(address, SocketAddr::V4(addr) if
-        (*addr.ip() == Ipv4Addr::LOCALHOST ||
-         (addr.ip().octets()[..3] == [127, 1, 0] && (1..=50).contains(&addr.ip().octets()[3])))
+        (*addr.ip() == Ipv4Addr::LOCALHOST
+         || crate::loopback::pool().any(|candidate| candidate == *addr.ip()))
         && matches!(addr.port(), 80 | 443))
 }
 fn authorize(operator: u32, peer: u32, addresses: [SocketAddr; 2]) -> io::Result<()> {
@@ -353,16 +354,19 @@ mod tests {
     fn broker_refuses_wrong_uid_address_range_and_port_before_binding() {
         let good = [
             "127.0.0.1:80".parse().unwrap(),
-            "127.1.0.50:443".parse().unwrap(),
+            format!("{}:443", crate::loopback::DEFAULT_LOOPBACK_END)
+                .parse()
+                .unwrap(),
         ];
         assert!(authorize(501, 501, good).is_ok());
         assert!(authorize(501, 502, good).is_err());
+        let beyond_pool = std::net::Ipv4Addr::new(127, 1, 0, crate::loopback::DEFAULT_LOOPBACK_COUNT + 1);
         for endpoint in [
-            "0.0.0.0:80",
-            "192.168.0.1:80",
-            "127.1.0.51:80",
-            "127.2.0.1:80",
-            "127.0.0.1:81",
+            "0.0.0.0:80".to_owned(),
+            "192.168.0.1:80".to_owned(),
+            format!("{beyond_pool}:80"),
+            "127.2.0.1:80".to_owned(),
+            "127.0.0.1:81".to_owned(),
         ] {
             assert!(authorize(501, 501, [endpoint.parse().unwrap(), good[1]]).is_err());
         }
