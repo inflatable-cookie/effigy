@@ -353,6 +353,10 @@ A transition waits up to 10 minutes for the gate; idle stop does not wait.
   guest workspace-session
   commit/publication. Retained records
   remain readable after settle (effigy#510, 052 §8.12).
+- **Failed admission.** Once admission owns a run, its refusal retains the
+  original cause and the typed cleanup outcome, including residue and recovery
+  commands. Cleanup-context and settlement errors are reported alongside the
+  refusal; an incomplete settlement never becomes an ordinary clean refusal.
 - **Settlement budget.** Settlement is bounded on its own clock: admission
   makes its window once `Gate(Env)` is held, after a wait that may take ten
   minutes, and each settling holder and the run's own settle make theirs when

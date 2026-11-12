@@ -2,7 +2,7 @@
 //! backend executables. No engine, VM, real artifact or consumer is touched.
 use super::*;
 use crate::runner::execute::api::run_manifest_task_with_cwd;
-use crate::runner::workspace_command::provisioning::verify_guest_artifact;
+use crate::runner::workspace_command::artifact_receipt::verify_guest_artifact;
 use effigy_cli::TaskInvocation;
 use effigy_test_support::process::FixtureCommandExt;
 use serde_json::{json, Value};

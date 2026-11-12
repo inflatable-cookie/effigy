@@ -1,7 +1,18 @@
 //! The C publication sequence. Backend facts are observations; the session,
 //! fence, staged ticket, locator and commit receipt come from their real owners.
 
-use super::*;
+use super::super::publication::context_read_error;
+use super::staging;
+use crate::runner::workspace_client::context::v2::WorkspaceContextV2;
+use crate::runner::workspace_client::context::{
+    context_path, read_published_generation, GuestBinaryIdentity, GuestWorkspace,
+    WorkspaceContainerIdentity, WorkspaceContextInput, WorkspaceEnrolmentCredential,
+    WorkspaceEnvironmentIdentity, CHANNEL_PROTOCOL_VERSION,
+};
+use crate::runner::workspace_client::identity::GuestSelfObservation;
+use crate::runner::RunnerError;
+use std::path::PathBuf;
+
 use effigy_containers::environment::{EnvError, WorkspaceActivation};
 use effigy_kernel::id::{Digest, Generation};
 use effigy_kernel::observe::{Evidence, Observed, UnknownReason};
@@ -15,8 +26,6 @@ use effigy_kernel::workspace_session::{
 use std::time::{Duration, Instant};
 
 use crate::runner::environment::workspace::{WorkspacePublication, WorkspaceSelectionIo};
-use crate::runner::workspace_client::context::v2::WorkspaceContextV2;
-use crate::runner::workspace_client::identity::GuestSelfObservation;
 use crate::runner::workspace_transport::qualification::{
     prepare_channel, ChannelAliasPlan, ChannelPreparation, GuestChannelProbe,
 };
