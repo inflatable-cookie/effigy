@@ -60,7 +60,9 @@ impl CwdMapper {
     ///
     /// Returns the host-side path that corresponds to the given container
     /// path. Returns an error if the container path is outside the
-    /// container working directory.
+    /// container working directory. The container working directory itself
+    /// maps to the host repo root unchanged, mirroring
+    /// `host_to_container`'s empty-relative case.
     pub fn container_to_host(&self, container_path: &Path) -> Result<PathBuf, ExecError> {
         let relative = container_path
             .strip_prefix(&self.container_working_dir)
@@ -68,6 +70,9 @@ impl CwdMapper {
                 cwd: container_path.to_path_buf(),
                 repo_root: self.container_working_dir.clone(),
             })?;
+        if relative.as_os_str().is_empty() {
+            return Ok(self.host_repo_root.clone());
+        }
         Ok(self.host_repo_root.join(relative))
     }
 

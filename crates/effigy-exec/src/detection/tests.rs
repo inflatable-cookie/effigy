@@ -92,7 +92,7 @@ fn standard_probe_has_expected_checks() {
 }
 
 #[test]
-fn capabilities_from_probe_results_prefer_bash_and_parse_version() {
+fn capabilities_from_probe_results_parse_version_and_fall_back_to_sh() {
     let mut results = HashMap::new();
     results.insert(
         "effigy installation".to_string(),
@@ -120,4 +120,30 @@ fn capabilities_from_probe_results_prefer_bash_and_parse_version() {
     assert_eq!(caps.effigy_version.as_deref(), Some("0.2.13"));
     assert_eq!(caps.shell, "/bin/sh");
     assert_eq!(caps.tools.get("bash"), Some(&false));
+}
+
+/// A container that answers the bash probe runs through `/bin/bash`; the
+/// bash-miss fallback above must not be the only branch under test.
+#[test]
+fn capabilities_from_probe_results_prefer_bash_when_present() {
+    let mut results = HashMap::new();
+    results.insert(
+        "bash availability".to_string(),
+        ProbeResult {
+            success: true,
+            output: String::new(),
+        },
+    );
+    results.insert(
+        "sh availability".to_string(),
+        ProbeResult {
+            success: true,
+            output: String::new(),
+        },
+    );
+    let caps = build_capabilities_from_results(&results);
+    assert!(!caps.has_effigy);
+    assert_eq!(caps.effigy_version, None);
+    assert_eq!(caps.shell, "/bin/bash");
+    assert_eq!(caps.tools.get("bash"), Some(&true));
 }

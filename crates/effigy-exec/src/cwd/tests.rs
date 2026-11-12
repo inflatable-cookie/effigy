@@ -69,14 +69,13 @@ fn container_to_host_roundtrip() {
 }
 
 #[test]
-fn container_to_host_root() {
+fn container_to_host_root_does_not_emit_trailing_slash() {
     let m = mapper();
     let host = m.container_to_host(Path::new("/var/www/html")).unwrap();
-    // PathBuf equality currently passes. String equality does not:
-    // join("") yields "/Users/tom/projects/client/" (task 583 covering run,
-    // left/right quoted in the PR). Host→container already special-cases the
-    // empty relative; container→host does not. Recorded as a separate repair.
-    assert_eq!(host, PathBuf::from("/Users/tom/projects/client"));
+    // PathBuf equality does not catch a trailing separator, so the root case
+    // is asserted as text on both directions (see
+    // map_repo_root_does_not_emit_trailing_slash).
+    assert_eq!(host.to_string_lossy(), "/Users/tom/projects/client");
 }
 
 #[test]
