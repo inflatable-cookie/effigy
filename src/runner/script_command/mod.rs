@@ -7,8 +7,8 @@ use effigy_context::TaskSourceContext;
 use effigy_execution::ExecutionSurface;
 use effigy_rhai::{
     execute_rhai_script_with_runtime_context_and_secret_policy, install_stop_requested_flag,
-    load_script, load_script_args_from_env, required_env, EffigyCommandError, HostCallbacks,
-    HostCommandOutput, RhaiSecretPolicy, RhaiSecretTarget, ScriptContext, EFFIGY_RHAI_REPO_ROOT,
+    load_script, load_script_args_from_env, required_env, HostCallbacks, HostCommandOutput,
+    RhaiSecretPolicy, RhaiSecretTarget, ScriptContext, EFFIGY_RHAI_REPO_ROOT,
     EFFIGY_RHAI_TASK_NAME,
 };
 
@@ -25,6 +25,7 @@ use super::error::RunnerError;
 use super::runtime_session_context::current_runtime_session_context;
 
 mod feature_dispatch;
+mod nested_error;
 
 pub(in crate::runner) fn run_internal_script_run(
     args: InternalScriptRunArgs,
@@ -159,21 +160,15 @@ fn host_callbacks() -> HostCallbacks {
                 cwd.to_path_buf(),
                 ExecutionSurface::Rhai,
             )
-            .map_err(|error| error.to_string())
+            .map_err(|error| nested_error::nested_message(&error))
         }),
         run_effigy: Arc::new(|repo_root, args, force_json| {
-            run_effigy_command(repo_root, args, force_json).map_err(|error| EffigyCommandError {
-                message: error.to_string(),
-                rendered_output: error.rendered_output().unwrap_or_default().to_owned(),
-            })
+            run_effigy_command(repo_root, args, force_json)
+                .map_err(|error| nested_error::command_error(&error))
         }),
         run_feature: Arc::new(|repo_root, feature, options| {
-            feature_dispatch::run_rhai_feature(repo_root, feature, options).map_err(|error| {
-                EffigyCommandError {
-                    message: error.to_string(),
-                    rendered_output: error.rendered_output().unwrap_or_default().to_owned(),
-                }
-            })
+            feature_dispatch::run_rhai_feature(repo_root, feature, options)
+                .map_err(|error| nested_error::command_error(&error))
         }),
         container_up: Arc::new(|repo_root, name, detach| {
             run_container_helper(
@@ -185,7 +180,7 @@ fn host_callbacks() -> HostCallbacks {
                     detach,
                 },
             )
-            .map_err(|error| error.to_string())
+            .map_err(|error| nested_error::nested_message(&error))
         }),
         container_down: Arc::new(|repo_root, name, global| {
             run_container_helper(
@@ -196,7 +191,7 @@ fn host_callbacks() -> HostCallbacks {
                     global,
                 },
             )
-            .map_err(|error| error.to_string())
+            .map_err(|error| nested_error::nested_message(&error))
         }),
         container_shell: Arc::new(|repo_root, name, service, command| {
             run_container_helper(
@@ -208,11 +203,12 @@ fn host_callbacks() -> HostCallbacks {
                     bounded: None,
                 },
             )
-            .map_err(|error| error.to_string())
+            .map_err(|error| nested_error::nested_message(&error))
         }),
         container_exec: Arc::new(|repo_root, name, service, command| {
             let name = if name.is_empty() { None } else { Some(name) };
-            activate_rhai_container_exec(repo_root, name).map_err(|error| error.to_string())?;
+            activate_rhai_container_exec(repo_root, name)
+                .map_err(|error| nested_error::nested_message(&error))?;
             let output = crate::runner::container_command::run_container_exec_operation_capture(
                 repo_root,
                 name,
@@ -224,27 +220,29 @@ fn host_callbacks() -> HostCallbacks {
                     env: BTreeMap::new(),
                 },
             )
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| nested_error::nested_message(&error))?;
             Ok(host_command_output_from_process_output(output))
         }),
         container_exec_with_options: Arc::new(|repo_root, name, service, command, options| {
             let name = if name.is_empty() { None } else { Some(name) };
-            activate_rhai_container_exec(repo_root, name).map_err(|error| error.to_string())?;
+            activate_rhai_container_exec(repo_root, name)
+                .map_err(|error| nested_error::nested_message(&error))?;
             let operation = container_exec_operation_from_options(service, command, options)
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| nested_error::nested_message(&error))?;
             let output = crate::runner::container_command::run_container_exec_operation_capture(
                 repo_root, name, operation,
             )
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| nested_error::nested_message(&error))?;
             Ok(host_command_output_from_process_output(output))
         }),
         container_exec_stream: Arc::new(|repo_root, name, service, command| {
             let name = if name.is_empty() { None } else { Some(name) };
-            activate_rhai_container_exec(repo_root, name).map_err(|error| error.to_string())?;
+            activate_rhai_container_exec(repo_root, name)
+                .map_err(|error| nested_error::nested_message(&error))?;
             let output = crate::runner::container_command::run_container_exec_stream(
                 repo_root, name, service, command,
             )
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| nested_error::nested_message(&error))?;
             Ok(host_command_output_from_process_output(output))
         }),
     }

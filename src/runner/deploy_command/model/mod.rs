@@ -5,9 +5,22 @@ use std::path::Path;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use super::provider_package::DeployProviderProvenance;
+pub(in crate::runner::deploy_command) mod derive;
+pub(in crate::runner::deploy_command) mod manifest;
+pub(in crate::runner::deploy_command) mod merge;
+pub(in crate::runner::deploy_command) mod production;
+pub(in crate::runner::deploy_command) mod vocabulary;
 
-#[derive(Clone, Serialize)]
+/// Which layer supplied a resolved model key: the bound environment, the
+/// shared `[deploy.model]`, or withheld because the shared value was
+/// development-only.
+pub(in crate::runner::deploy_command) const PROVENANCE_ENVIRONMENT: &str = "environment";
+pub(in crate::runner::deploy_command) const PROVENANCE_SHARED: &str = "shared";
+pub(in crate::runner::deploy_command) const PROVENANCE_MISSING: &str = "missing";
+
+use super::provider::DeployProviderProvenance;
+
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct DeployModel {
     pub(crate) schema: String,
     pub(crate) schema_version: u64,
@@ -30,7 +43,7 @@ pub(crate) struct DeployModel {
     pub(crate) warnings: Vec<DeployWarning>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct DeployApp {
     pub(crate) name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -42,11 +55,11 @@ pub(crate) struct DeployApp {
     pub(crate) notes: Option<String>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct DeployService {
     pub(crate) name: String,
     pub(crate) role: String,
-    pub(crate) runtime: String,
+    pub(crate) runtime: vocabulary::ServiceRuntime,
     pub(crate) source_root: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) build: Option<DeployCommandStep>,
@@ -67,18 +80,18 @@ pub(crate) struct DeployService {
     pub(crate) warnings: Vec<DeployWarning>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct DeployCommandStep {
     pub(crate) command: String,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct DeployHealth {
     pub(crate) kind: String,
     pub(crate) path: String,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct DeployOutput {
     pub(crate) kind: String,
     pub(crate) path: String,
@@ -86,24 +99,24 @@ pub(crate) struct DeployOutput {
     pub(crate) fallback: Option<String>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct DeployBackingService {
     pub(crate) name: String,
     pub(crate) kind: String,
-    pub(crate) mode: String,
+    pub(crate) mode: vocabulary::BackingServiceMode,
     pub(crate) required: bool,
     pub(crate) consumers: Vec<String>,
     pub(crate) warnings: Vec<DeployWarning>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct DeployDomain {
     pub(crate) host: String,
     pub(crate) service: String,
     pub(crate) tls: String,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct DeploySecret {
     pub(crate) name: String,
     pub(crate) services: Vec<String>,

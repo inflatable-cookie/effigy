@@ -1,12 +1,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use effigy_state::{path_display, safe_path_component};
 use serde::Serialize;
 use serde_json::{to_value, Value};
 
 use crate::runner::error::RunnerError;
 
-use super::provider_package::DeployProviderProvenance;
+use super::provider::DeployProviderProvenance;
 
 pub(super) const PLAN_SCHEMA: &str = "effigy.deploy.plan.v1";
 pub(super) const APPLY_SCHEMA: &str = "effigy.deploy.apply.v1";
@@ -230,22 +231,62 @@ pub(super) fn json_value<T: Serialize>(value: &T) -> Result<Value, RunnerError> 
     to_value(value).map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
 
-pub(super) fn path_display(path: &Path, repo_root: &Path) -> String {
-    path.strip_prefix(repo_root)
-        .unwrap_or(path)
-        .display()
-        .to_string()
-}
+#[cfg(test)]
+mod tests {
+    use super::{
+        deploy_history_dir, deploy_latest_path, deploy_report_paths, read_optional_json,
+        write_json_report,
+    };
+    use serde_json::json;
+    use std::path::Path;
 
-pub(super) fn safe_path_component(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
-                ch
-            } else {
-                '-'
-            }
-        })
-        .collect()
+    #[test]
+    fn report_paths_cannot_escape_the_reports_root() {
+        let root = Path::new("/repo");
+        // `safe_path_component` is `effigy_state::paths`'s, so a `..` segment
+        // stays a file name instead of walking out of the report tree.
+        assert_eq!(
+            deploy_latest_path(root, "../../etc"),
+            root.join(".effigy/reports/deploy/..-..-etc/latest.json")
+        );
+        assert_eq!(
+            deploy_history_dir(root, "a/b"),
+            root.join(".effigy/reports/deploy/a-b/history")
+        );
+        let paths = deploy_report_paths(root, "production", "1700000000-x");
+        assert_eq!(
+            paths.latest_path,
+            root.join(".effigy/reports/deploy/production/latest.json")
+        );
+        assert_eq!(
+            paths.history_path,
+            root.join(".effigy/reports/deploy/production/history/1700000000-x.json")
+        );
+    }
+
+    #[test]
+    fn a_written_report_is_read_back_as_the_same_document() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let paths = deploy_report_paths(root.path(), "production", "attempt");
+        write_json_report(
+            root.path(),
+            &[&paths.latest_path, &paths.history_path],
+            &json!({ "schema": "effigy.deploy.plan.v1" }),
+        )
+        .expect("write both report copies");
+
+        assert_eq!(
+            read_optional_json(&paths.latest_path).expect("read latest"),
+            Some(json!({ "schema": "effigy.deploy.plan.v1" }))
+        );
+        assert_eq!(
+            read_optional_json(&paths.history_path).expect("read history"),
+            Some(json!({ "schema": "effigy.deploy.plan.v1" }))
+        );
+        // An absent report is absent, not an empty document.
+        assert_eq!(
+            read_optional_json(&root.path().join("absent.json")).expect("absent report"),
+            None
+        );
+    }
 }

@@ -3,23 +3,24 @@ use std::path::Path;
 use serde::Serialize;
 use serde_json::{to_value, Value};
 
-use super::model::DeployModel;
-use super::provider_package::{DeployProviderPackage, DeployProviderPolicy};
+use super::descriptor::DeployProviderPolicy;
+use super::DeployProviderPackage;
+use crate::runner::deploy_command::model::DeployModel;
 use crate::runner::error::RunnerError;
 
-pub(super) struct DeployProviderContextRequest<'a> {
-    pub(super) phase: &'a str,
-    pub(super) env: &'a str,
-    pub(super) provider: Value,
-    pub(super) provider_project: Option<&'a str>,
-    pub(super) package: &'a DeployProviderPackage,
-    pub(super) state: Option<&'a str>,
-    pub(super) code_ref: &'a str,
-    pub(super) release_policy: &'a str,
-    pub(super) artifact_policy: &'a str,
-    pub(super) model: &'a DeployModel,
-    pub(super) export_path: Option<&'a Path>,
-    pub(super) plan: bool,
+pub(in crate::runner::deploy_command) struct DeployProviderContextRequest<'a> {
+    pub(in crate::runner::deploy_command) phase: &'a str,
+    pub(in crate::runner::deploy_command) env: &'a str,
+    pub(in crate::runner::deploy_command) provider: Value,
+    pub(in crate::runner::deploy_command) provider_project: Option<&'a str>,
+    pub(in crate::runner::deploy_command) package: &'a DeployProviderPackage,
+    pub(in crate::runner::deploy_command) state: Option<&'a str>,
+    pub(in crate::runner::deploy_command) code_ref: &'a str,
+    pub(in crate::runner::deploy_command) release_policy: &'a str,
+    pub(in crate::runner::deploy_command) artifact_policy: &'a str,
+    pub(in crate::runner::deploy_command) model: &'a DeployModel,
+    pub(in crate::runner::deploy_command) export_path: Option<&'a Path>,
+    pub(in crate::runner::deploy_command) plan: bool,
 }
 
 #[derive(Serialize)]
@@ -55,7 +56,7 @@ struct DeployProviderContextDeploy<'a> {
     artifact_policy: &'a str,
 }
 
-pub(super) fn build_provider_context(
+pub(in crate::runner::deploy_command) fn build_provider_context(
     request: DeployProviderContextRequest<'_>,
 ) -> Result<Value, RunnerError> {
     let context = DeployProviderContext {
@@ -87,7 +88,7 @@ pub(super) fn build_provider_context(
     })
 }
 
-pub(super) fn provider_package_policy_blockers(
+pub(in crate::runner::deploy_command) fn provider_package_policy_blockers(
     provider: &str,
     policy: &DeployProviderPolicy,
 ) -> Vec<String> {

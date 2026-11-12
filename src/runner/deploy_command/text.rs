@@ -64,3 +64,53 @@ pub(super) fn render_deploy_history_text(report: &DeployHistoryReport) -> String
     }));
     lines.join("\n")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{render_deploy_history_text, render_deploy_status_text};
+    use crate::runner::deploy_command::report::{
+        DeployHistoryItem, DeployHistoryReport, DeployStatusReport, HISTORY_SCHEMA, STATUS_SCHEMA,
+    };
+
+    #[test]
+    fn history_text_names_the_environment_and_every_attempt() {
+        let report = DeployHistoryReport {
+            schema: HISTORY_SCHEMA.to_owned(),
+            schema_version: 1,
+            env: "uat".to_owned(),
+            entries: vec![DeployHistoryItem {
+                path: ".effigy/reports/deploy/uat/history/1700000000-uat-abc.json".to_owned(),
+                deployment_id: "1700000000-uat-abc".to_owned(),
+                schema: "effigy.deploy.plan.v1".to_owned(),
+                status: "planned".to_owned(),
+            }],
+            warnings: Vec::new(),
+        };
+
+        assert_eq!(
+            render_deploy_history_text(&report),
+            "[deploy] history uat (1 entries)\n- 1700000000-uat-abc [planned] .effigy/reports/deploy/uat/history/1700000000-uat-abc.json"
+        );
+    }
+
+    #[test]
+    fn status_text_says_present_or_missing_for_each_report() {
+        let report = DeployStatusReport {
+            schema: STATUS_SCHEMA.to_owned(),
+            schema_version: 1,
+            env: "production".to_owned(),
+            active_path: Some(".effigy/runtime/deploy/active/production.json".to_owned()),
+            latest_path: None,
+            active: Some(serde_json::json!({})),
+            latest: None,
+            provider_status: None,
+            provider_provenance: None,
+            warnings: Vec::new(),
+        };
+
+        assert_eq!(
+            render_deploy_status_text(&report),
+            "[deploy] status production\nactive: present\nlatest: missing"
+        );
+    }
+}

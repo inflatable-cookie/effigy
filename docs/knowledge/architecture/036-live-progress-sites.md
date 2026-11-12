@@ -132,7 +132,7 @@ of its own.
 
 | Audited site | What it was | Now | Disposition |
 | --- | --- | --- | --- |
-| `src/runner/deploy_command/provider_package.rs:251` | `steps::step(resolving_provider_label(..))` | `provider_package.rs:297-298` — source built from the exact git source and rev/ref; `live_step` at 262 | live |
+| `src/runner/deploy_command/provider/mod.rs:128` | `steps::step(resolving_provider_label(..))` | `provider::source::provider_fetch_progress` — source built from the exact git source and rev/ref; `live_step` at `provider/mod.rs:128` | live |
 
 ### Release
 
@@ -265,7 +265,7 @@ test reads the wall clock.
 | Environment gate and settle | `environment::reconcile::tests::fake_clock_frames_name_the_gate_the_reconcile_phase_and_the_refusal` |
 | Doctor | `effigy-doctor progress::tests::live_frames_name_the_probe_count_elapsed_and_check_transitions` |
 | Bootstrap | `bootstrap_command::tests::a_phase_frame_names_its_action_and_what_it_waits_on_as_time_passes` (one phase read at two times) |
-| Deploy provider fetch | `deploy_command::provider_package::tests::a_fetch_frame_names_the_exact_source_and_pin_as_time_passes` (one fetch read at two times) |
+| Deploy provider fetch | `deploy_command::provider::tests::a_fetch_frame_names_the_exact_source_and_pin_as_time_passes` (one fetch read at two times) |
 | Release | `release_command::tests::release_gate_steps_name_the_gate_and_its_outcome`, `a_release_run_step_names_the_stage_the_gate_and_the_next_stage`, `a_paused_release_run_names_what_it_waits_on` |
 | Bundle sources | `bundle_command::tests::source_steps_name_the_bundle_its_revision_and_the_outcome` |
 | Secrets | `secrets_command::tests::unlock_frames_name_sub_steps_elapsed_and_never_secrets` and `lock_frames_count_removed_files_and_never_paths` |

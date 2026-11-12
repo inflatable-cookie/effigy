@@ -144,11 +144,16 @@ Allowed backing-service `mode` values:
 The vocabulary closes the approximations Acowtancy #718 had to make: a static
 site declares `runtime = "static"` instead of `runtime = "node"`, and an
 external resource declares `mode = "external"` instead of `mode = "managed"`
-with prose warnings. Values used before this contract remain accepted for one
-release, with a `deploy-vocabulary-migration` warning pointing at the new value:
-a `role = "static"` service that still declares a non-static runtime, and a
-`managed` backing service whose warnings describe an external resource. The
-notices appear only when the model is bound to a declared environment.
+with prose warnings. Both values are decoded once, into a closed enum, and the
+decoded value is what the model reports and serializes: no stage infers an
+ownership fact from a warning's text. The pre-vocabulary `role = "static"`
+service that still declares a non-static runtime remains accepted for one
+release, with a `deploy-vocabulary-migration` warning naming the new value; the
+notice appears only when the model is bound to a declared environment. The
+former notice for a `managed` backing service "whose warnings describe an
+external resource" is retired: it classified an ownership fact by lowercasing
+free text, so a descriptive warning could silently reclassify a service. A
+declaration now reports exactly the `mode` it declares.
 
 ## Top-level model
 
