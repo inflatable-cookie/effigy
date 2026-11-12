@@ -20,9 +20,9 @@ merged into a single entrypoint or is now a plain helper, and refreshed the rate
 
 Tom agreed to option B now: a test floor of 7, with evidenced merges and removals completed. Option C (floor 7 and mean 8.5) is a later target. The code target is TBD.
 
-Round 4 did not reach floor 7 everywhere: 69 table rows score 6 or lower — 39 scored tests and
-30 excluded helper entrypoints. [The summary](tests/SUMMARY.md) breaks them down by why and names
-the improvable ones.
+Round 4 did not reach floor 7 everywhere: 52 table rows score 6 or lower — 39 scored tests and
+13 excluded helper entrypoints (the other 17 excluded helpers score 7 or 8). [The summary](tests/SUMMARY.md)
+breaks the 39 scored rows down by why and names the improvable ones.
 
 ## Cost clarification (2026-11-12, from calibration)
 
