@@ -32,13 +32,7 @@ General
         BUILTIN_TASKS_SECTION
     );
     assert_eq!(extract_tail(&stdout, "\nCatalogs\n────────\n"), expected);
-}
-
-#[test]
-fn cli_tasks_filtered_text_output_matches_canonical_fixture_tail() {
-    let root = write_catalog_build_workspace("cli-text-fixture-tail-filtered");
-
-    let stdout = run_effigy(&["tasks", "--task", "build"], Some(&root), false);
+    let filtered = run_effigy(&["tasks", "--task", "build"], Some(&root), false);
     let expected = "\
 Task Matches: build
 ───────────────────
@@ -49,8 +43,9 @@ General
 
 ";
     assert_eq!(
-        extract_tail(&stdout, "\nTask Matches: build\n───────────────────\n"),
-        expected
+        extract_tail(&filtered, "\nTask Matches: build\n───────────────────\n"),
+        expected,
+        "filtered task output must retain only the matching canonical task"
     );
 }
 
