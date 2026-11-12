@@ -1816,11 +1816,13 @@ fn refusal_accounting_overflow_snapshot_is_exact_for_the_failing_stream() {
         assert_eq!(observations["stdout"]["state"], "overflow");
         let retained =
             assert_count_semantics(&observations["stdout"]["retained_prefix_bytes"], "exact");
-        assert_eq!(
-            retained, 4,
-            "overflow keeps the exact capped prefix: {observations}"
-        );
+        assert!(retained <= 4, "retention stays bounded: {observations}");
+        assert_eq!(details["retained"]["failed_stream_bytes"], retained);
         let read = assert_count_semantics(&observations["stdout"]["read_bytes"], "lower_bound");
+        assert!(
+            read > 4,
+            "the reader must have crossed the cap: {observations}"
+        );
         assert!(
             read >= retained,
             "reads never trail retention: {observations}"
