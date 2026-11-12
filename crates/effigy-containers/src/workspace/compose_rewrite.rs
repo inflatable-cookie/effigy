@@ -1,7 +1,7 @@
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
-use crate::{parse_mount_parts, looks_like_bind_mount_source, ContainerPolicyError};
+use crate::{looks_like_bind_mount_source, parse_mount_parts, ContainerPolicyError};
 
 use super::{
     build_workspace_runtime_environment, build_workspace_runtime_mounts, is_guest_mask_target,

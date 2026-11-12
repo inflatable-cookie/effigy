@@ -21,8 +21,7 @@ pub fn should_skip_path(
     // walk path (the walk rejects non-UTF-8 paths as typed errors), never
     // on a lossy replacement.
     if rel_str.split('/').any(|component| {
-        DEFAULT_EXCLUDED_DIRS.contains(&component)
-            || GENERATED_PATH_COMPONENTS.contains(&component)
+        DEFAULT_EXCLUDED_DIRS.contains(&component) || GENERATED_PATH_COMPONENTS.contains(&component)
     }) {
         return true;
     }

@@ -529,8 +529,6 @@ pub(in crate::runner) fn environment(
     Ok(env)
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;

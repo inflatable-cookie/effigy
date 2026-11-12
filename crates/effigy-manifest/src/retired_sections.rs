@@ -194,14 +194,20 @@ mod tests {
             assert!(manifest.tasks.contains_key("build"), "{name}: task lost");
             if let Some(alias) = catalog_alias {
                 assert_eq!(
-                    manifest.catalog.as_ref().and_then(|catalog| catalog.alias.as_deref()),
+                    manifest
+                        .catalog
+                        .as_ref()
+                        .and_then(|catalog| catalog.alias.as_deref()),
                     Some(alias),
                     "{name}: surviving catalog value"
                 );
             }
             let notice = notice(&manifest);
             for fragment in expected {
-                assert!(notice.contains(fragment), "{name}: missing {fragment}: {notice}");
+                assert!(
+                    notice.contains(fragment),
+                    "{name}: missing {fragment}: {notice}"
+                );
             }
             assert_eq!(notice.matches(" is ignored").count(), 1, "{name}: {notice}");
             if name == "demos" {

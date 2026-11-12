@@ -995,8 +995,11 @@ fn window_columns() -> usize {
 
 impl LiveOutput {
     fn start(step: Step, log: Option<&Path>, columns: usize) -> Self {
-        *step.inner.window.lock().unwrap_or_else(PoisonError::into_inner) =
-            Some(Window::new(columns));
+        *step
+            .inner
+            .window
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(Window::new(columns));
         Self {
             step,
             log: log.map(Path::to_path_buf),
@@ -1080,12 +1083,7 @@ impl LiveOutput {
 /// The one-line form of a producer failure: the tail already carries the
 /// detail, so a multi-line error keeps its first line.
 fn headline(summary: &str) -> String {
-    summary
-        .lines()
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .to_owned()
+    summary.lines().next().unwrap_or_default().trim().to_owned()
 }
 
 /// nerdctl's structured report of a Compose field it does not support. Only
@@ -1360,9 +1358,7 @@ mod tests {
             detailed.detailed_frame_at(Duration::from_secs(1)),
             "waiting for the environment gate for `stack`; 1s elapsed"
         );
-        detailed.update(|_| {
-            ProgressFrame::new("reconciling the backend").count(Some((1, 3)))
-        });
+        detailed.update(|_| ProgressFrame::new("reconciling the backend").count(Some((1, 3))));
         detailed.event("run agq holds it (pid 9012, task `dev`)");
         assert_eq!(
             detailed.detailed_frame_at(Duration::from_secs(3)),
@@ -1737,7 +1733,8 @@ mod tests {
         assert!(frame.contains("creating layer 19"), "{frame}");
         assert!(!frame.contains("creating layer 12"), "{frame}");
         assert!(
-            frame.contains('…') && !frame.contains("extracting extracting extracting extracting extracting"),
+            frame.contains('…')
+                && !frame.contains("extracting extracting extracting extracting extracting"),
             "a line wider than the window is cut: {frame}"
         );
         assert!(buffer.text().is_empty(), "nothing durable before the end");
@@ -1769,9 +1766,7 @@ mod tests {
         let live = LiveOutput::start(step, Some(log), 100);
         live.observe(r#"level=warning msg="Ignoring: volume web_node_modules [Labels]""#);
         live.observe(r#"level=warning msg="Ignoring: volume web_cache [Driver Labels]""#);
-        live.observe(
-            r#"level=warning msg="Ignoring: service web depends_on: [db] [Required]""#,
-        );
+        live.observe(r#"level=warning msg="Ignoring: service web depends_on: [db] [Required]""#);
         live.observe(r#"level=warning msg="a warning an operator needs""#);
         live.observe(r#"level=warning msg="Ignoring: service app healthcheck [Required]""#);
         bar.force_draw();
@@ -1812,7 +1807,10 @@ mod tests {
         let text = buffer.text();
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(
-            lines.iter().filter(|line| line.contains("runtime line ")).count(),
+            lines
+                .iter()
+                .filter(|line| line.contains("runtime line "))
+                .count(),
             FAILURE_TAIL,
             "the failure keeps its own bounded tail: {text}"
         );
@@ -1824,10 +1822,15 @@ mod tests {
         );
         let ending = lines.last().expect("the failure line");
         assert!(
-            ending.starts_with("✗ The stack did not start: nerdctl compose up failed (exit status 1) ("),
+            ending.starts_with(
+                "✗ The stack did not start: nerdctl compose up failed (exit status 1) ("
+            ),
             "the failure line keeps its first sentence: {text}"
         );
-        assert!(!text.contains("no image"), "the tail is not repeated: {text}");
+        assert!(
+            !text.contains("no image"),
+            "the tail is not repeated: {text}"
+        );
     }
 
     #[test]

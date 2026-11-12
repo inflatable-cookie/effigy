@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::multiprocess::events::options::handle_options_overlay_key;
 use super::{empty_supervisor, state_with_processes};
+use crate::multiprocess::events::options::handle_options_overlay_key;
 
 #[test]
 fn hidden_overlay_does_not_consume_keys() {

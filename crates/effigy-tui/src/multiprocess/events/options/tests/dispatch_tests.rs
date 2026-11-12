@@ -135,7 +135,10 @@ fn escape_and_enter_cancel_close_the_options_overlay() {
 
         assert!(matches!(control, Some(LoopControl::Continue)), "{key:?}");
         assert!(!state.show_options, "{key:?}");
-        assert_eq!(state.options_index, selected_index, "cancel must not move selection");
+        assert_eq!(
+            state.options_index, selected_index,
+            "cancel must not move selection"
+        );
     }
 }
 

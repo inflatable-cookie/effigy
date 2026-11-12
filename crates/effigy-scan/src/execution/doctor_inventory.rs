@@ -142,9 +142,8 @@ pub fn run_doctor_scan_inventory(
             // Byte-walk read: unreadable files are a typed read failure.
             // Non-UTF-8 bytes are not a refusal here; `analyze_file`
             // observes them as binary below.
-            let bytes = std::fs::read(path).map_err(|error| {
-                ScanError::read_failed(path.display(), error)
-            })?;
+            let bytes = std::fs::read(path)
+                .map_err(|error| ScanError::read_failed(path.display(), error))?;
             let identity = clean_git_identity.unwrap_or_else(|| content_identity(&bytes));
             if let Some(cached) = cached_files
                 .get(rel_str)
@@ -1688,8 +1687,7 @@ mod tests {
         let root = temp.path();
         let path = root.join("secret.rs");
         std::fs::write(&path, b"fn secret() {}\n").expect("write");
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000))
-            .expect("chmod");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).expect("chmod");
         if std::fs::read(&path).is_err() {
             let options = options();
             let error = run_doctor_scan_inventory(root, "root", root, &[], &options, true, None)

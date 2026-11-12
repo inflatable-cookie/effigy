@@ -1,8 +1,8 @@
 use crate::runner::tests::prelude::{
-    assert_case_table, assert_output_excludes_all, assert_string_items_excludes_all, json_task_column,
-    parse_json_output_with_schema_version, run_tasks_from_repo, setup_root_and_catalog_a_catalog,
-    setup_root_with_catalog_tasks, temp_workspace, write_managed_dev_profile_manifest,
-    ManagedProfileListingCase,
+    assert_case_table, assert_output_excludes_all, assert_string_items_excludes_all,
+    json_task_column, parse_json_output_with_schema_version, run_tasks_from_repo,
+    setup_root_and_catalog_a_catalog, setup_root_with_catalog_tasks, temp_workspace,
+    write_managed_dev_profile_manifest, ManagedProfileListingCase,
 };
 
 #[test]
@@ -52,7 +52,9 @@ fn run_tasks_with_unmatched_filter_reports_no_matches_warning() {
     assert!(out.lines().any(|line| line == "Task Matches: missing"));
     assert!(out.lines().any(|line| line == "• warn: no matches"));
     assert_eq!(out.lines().filter(|line| line.starts_with("- ")).count(), 0);
-    assert!(!out.lines().any(|line| line.starts_with("Built-in Task Matches")));
+    assert!(!out
+        .lines()
+        .any(|line| line.starts_with("Built-in Task Matches")));
     assert!(!out.lines().any(|line| line.starts_with("Resolution:")));
 }
 
@@ -89,7 +91,10 @@ fn run_tasks_with_filter_and_resolve_renders_resolution_probe_block() {
         "catalog: catalog_a",
         "task: reset-db",
     ] {
-        assert!(out.lines().any(|actual| actual == line), "missing {line:?}: {out}");
+        assert!(
+            out.lines().any(|actual| actual == line),
+            "missing {line:?}: {out}"
+        );
     }
 }
 
@@ -104,7 +109,10 @@ fn run_tasks_with_no_matches_and_resolve_still_renders_resolution_probe_block() 
         "Resolution: missing",
         "status: error",
     ] {
-        assert!(out.lines().any(|actual| actual == line), "missing {line:?}: {out}");
+        assert!(
+            out.lines().any(|actual| actual == line),
+            "missing {line:?}: {out}"
+        );
     }
     assert_eq!(out.lines().filter(|line| line.starts_with("- ")).count(), 0);
 }

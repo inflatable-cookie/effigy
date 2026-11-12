@@ -336,7 +336,10 @@ fn cli_repo_pulse_prints_migration_guidance() {
         .expect("run effigy");
 
     assert!(!output.status.success());
-    assert!(output.stdout.is_empty(), "refusal has no stdout: {output:?}");
+    assert!(
+        output.stdout.is_empty(),
+        "refusal has no stdout: {output:?}"
+    );
     let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
     let diagnostic_lines = stderr
         .lines()
