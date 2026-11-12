@@ -300,8 +300,16 @@ mod tests {
             guards.scopes(),
             &[LockScope::Workspace, LockScope::Task("b".to_owned())]
         );
-        let rendered = format!("{guards:?}");
-        assert!(rendered.contains("Workspace"), "{rendered}");
+        // Rendered through `Display` labels, not `Debug`: lock details
+        // stay out of the human-error Debug ratchet.
+        let rendered = guards
+            .scopes()
+            .iter()
+            .map(LockScope::label)
+            .collect::<Vec<_>>()
+            .join(",");
+        assert!(rendered.contains("workspace"), "{rendered}");
+        assert!(rendered.contains("task:b"), "{rendered}");
     }
 }
 

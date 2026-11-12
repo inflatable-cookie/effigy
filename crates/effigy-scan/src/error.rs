@@ -16,6 +16,14 @@ pub enum ScanError {
     Invocation(String),
     Manifest(ManifestError),
     BudgetExhausted { phase: String },
+    /// A filesystem path that is not valid UTF-8. Scan matching, globs
+    /// and finding paths are text, so a non-UTF-8 path is a typed refusal
+    /// instead of a lossy replacement or an empty-string default.
+    NonUtf8Path { path: String },
+    /// A text scan read file bytes that are not valid UTF-8.
+    NonUtf8Contents { path: String },
+    /// A scan file or walk entry that could not be read.
+    ReadFailed { path: String, message: String },
 }
 
 impl ScanError {
@@ -34,6 +42,25 @@ impl ScanError {
     pub fn is_budget_exhausted(&self) -> bool {
         matches!(self, Self::BudgetExhausted { .. })
     }
+
+    pub fn non_utf8_path(path: impl std::fmt::Display) -> Self {
+        Self::NonUtf8Path {
+            path: path.to_string(),
+        }
+    }
+
+    pub fn non_utf8_contents(path: &std::path::Path) -> Self {
+        Self::NonUtf8Contents {
+            path: path.display().to_string(),
+        }
+    }
+
+    pub fn read_failed(path: impl std::fmt::Display, error: impl std::fmt::Display) -> Self {
+        Self::ReadFailed {
+            path: path.to_string(),
+            message: error.to_string(),
+        }
+    }
 }
 
 impl std::fmt::Display for ScanError {
@@ -43,6 +70,15 @@ impl std::fmt::Display for ScanError {
             ScanError::Manifest(error) => write!(f, "{error}"),
             ScanError::BudgetExhausted { phase } => {
                 write!(f, "doctor scan budget exhausted during {phase}")
+            }
+            ScanError::NonUtf8Path { path } => {
+                write!(f, "scan path is not valid UTF-8: {path}")
+            }
+            ScanError::NonUtf8Contents { path } => {
+                write!(f, "scan file contents are not valid UTF-8: {path}")
+            }
+            ScanError::ReadFailed { path, message } => {
+                write!(f, "scan read failed for {path}: {message}")
             }
         }
     }

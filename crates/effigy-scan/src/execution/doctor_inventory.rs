@@ -303,7 +303,7 @@ impl CacheOwner {
     fn directory_name(&self) -> String {
         let mut hasher = Sha256::new();
         hasher.update(self.scope_root.as_bytes());
-        let digest = hex_digest(hasher.finalize().as_slice());
+        let digest = hex::encode(hasher.finalize().as_slice());
         let alias = self
             .alias
             .chars()
@@ -332,7 +332,7 @@ fn config_identity(
         hasher.update(root.to_string_lossy().as_bytes());
     }
     hasher.update(format!("\0{options:?}").as_bytes());
-    format!("sha256:{}", hex_digest(hasher.finalize().as_slice()))
+    format!("sha256:{}", hex::encode(hasher.finalize().as_slice()))
 }
 
 fn content_identity(bytes: &[u8]) -> String {
@@ -340,15 +340,8 @@ fn content_identity(bytes: &[u8]) -> String {
     hasher.update(bytes);
     format!(
         "content:sha256:{}",
-        hex_digest(hasher.finalize().as_slice())
+        hex::encode(hasher.finalize().as_slice())
     )
-}
-
-fn hex_digest(bytes: &[u8]) -> String {
-    // Single hex-encoding spelling for the doctor cache: `hex::encode`.
-    // SHA-256 hashing itself stays at the call sites (`Sha256::digest`);
-    // this helper only renders digest bytes.
-    hex::encode(bytes)
 }
 
 fn load_cache(

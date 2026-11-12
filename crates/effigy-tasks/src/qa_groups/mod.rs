@@ -370,7 +370,7 @@ pub fn load_temporary_qa_group(
             canonical_file.display()
         ))
     })?;
-    let digest = format!("sha256:{}", hex_digest(Sha256::digest(&bytes).as_slice()));
+    let digest = format!("sha256:{}", hex::encode(Sha256::digest(&bytes).as_slice()));
 
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -395,12 +395,6 @@ pub fn load_temporary_qa_group(
         .map(|path| path.to_string_lossy().replace('\\', "/"))
         .unwrap_or_else(|_| canonical_file.display().to_string());
     Ok((group, relative, digest))
-}
-
-pub(crate) fn hex_digest(bytes: &[u8]) -> String {
-    // Single hex-encoding spelling: `hex::encode`. Hashing stays at the
-    // `Sha256::digest` call sites.
-    hex::encode(bytes)
 }
 
 /// Deterministic digest over a maintained group's validated definition
@@ -475,7 +469,7 @@ pub fn canonical_definition_digest(group: &effigy_manifest::ManifestQaGroup) -> 
     }
     format!(
         "sha256:{}",
-        hex_digest(Sha256::digest(canonical.as_bytes()).as_slice())
+        hex::encode(Sha256::digest(canonical.as_bytes()).as_slice())
     )
 }
 
