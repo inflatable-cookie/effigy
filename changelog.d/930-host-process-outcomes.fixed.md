@@ -1,0 +1,1 @@
+Host-process supervisors now retain cleanup and custody failures, and status reports preserve unknown observations with a diagnostic. Managed sessions refuse to continue when stop requests cannot be read, and environment inheritance uses typed declarations instead of parsing shell commands.

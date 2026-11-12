@@ -1,7 +1,7 @@
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
-use crate::ContainerPolicyError;
+use crate::{looks_like_bind_mount_source, parse_mount_parts, ContainerPolicyError};
 
 use super::{
     build_workspace_runtime_environment, build_workspace_runtime_mounts, is_guest_mask_target,
@@ -667,14 +667,6 @@ fn compact_named_volume_name(source: &str) -> String {
     format!("efv-{:016x}", hasher.finish())
 }
 
-fn parse_mount_parts(mount: &str) -> Option<(&str, &str, Option<&str>)> {
-    let mut parts = mount.splitn(3, ':');
-    let source = parts.next()?.trim();
-    let target = parts.next()?.trim();
-    let options = parts.next().map(str::trim);
-    Some((source, target, options))
-}
-
 #[allow(dead_code)]
 pub(super) fn compose_volume_ownership_target(entry: &serde_yaml::Value) -> Option<String> {
     let raw = entry.as_str()?.trim();
@@ -701,15 +693,6 @@ fn resolve_bind_mount_source(compose_dir: &Path, source: &str) -> Option<PathBuf
         compose_dir.join(source_path)
     };
     Some(resolved.canonicalize().unwrap_or(resolved))
-}
-
-fn looks_like_bind_mount_source(source: &str) -> bool {
-    source.starts_with('/')
-        || source.starts_with("./")
-        || source.starts_with("../")
-        || source == "."
-        || source == ".."
-        || source.contains('/')
 }
 
 /// Rewrite every relative path a Compose input names, so it resolves where

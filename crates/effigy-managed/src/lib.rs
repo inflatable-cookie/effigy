@@ -40,9 +40,9 @@ pub use profiles::{
     select_concurrent_profile, ResolvedConcurrentProfile, DEFAULT_MANAGED_PROFILE,
 };
 pub use run_spec::{
-    declared_env_keys, render_builtin_reference_invocation, render_run_step_sequence,
-    render_step_command_template, render_task_run_spec, resolve_run_step_env,
-    wrap_command_with_env, wrap_reference_command_in_cwd, RunSpecContext, StepEnvAccumulator,
+    render_builtin_reference_invocation, render_run_step_sequence, render_step_command_template,
+    render_task_run_spec, resolve_run_step_env, wrap_command_with_env,
+    wrap_reference_command_in_cwd, RunSpecContext, StepEnvAccumulator,
 };
 
 /// Pure-data plan shapes moved in from `runner::model::managed`.
@@ -58,6 +58,9 @@ pub struct ManagedProcessSpec {
     pub name: String,
     pub role: ManagedProcessRole,
     pub run: String,
+    /// The declared environment carried beside its command rendering. Used to
+    /// decide which inherited host values still need resolution and proof.
+    pub delivered_env: std::collections::BTreeMap<String, String>,
     /// Secret values injected through the child environment for host process
     /// launches. Kept separate from `run` so they never enter command argv.
     pub secret_env: std::collections::BTreeMap<String, String>,

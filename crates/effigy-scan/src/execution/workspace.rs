@@ -82,8 +82,15 @@ where
         exclude_patterns,
         should_skip,
         |path, rel, rel_str| {
+            // Text scans need text: unreadable files are typed read
+            // failures and non-UTF-8 bytes are typed content refusals,
+            // never a generic invocation string.
             let contents = std::fs::read_to_string(path).map_err(|error| {
-                ScanError::invocation(format!("scan read failed for {}: {error}", path.display()))
+                if error.kind() == std::io::ErrorKind::InvalidData {
+                    ScanError::non_utf8_contents(path)
+                } else {
+                    ScanError::read_failed(path.display(), error)
+                }
             })?;
             visit(path, rel, rel_str, contents)
         },
@@ -94,4 +101,60 @@ where
 pub struct ScanWorkspaceCounts {
     pub scanned_files: usize,
     pub secondary: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn collect(root: &std::path::Path) -> Result<Vec<String>, ScanError> {
+        let mut seen = Vec::new();
+        walk_text_scan_files(
+            root,
+            &[],
+            false,
+            &[],
+            &[],
+            |_, _, _, _| false,
+            |_, _, rel_str, _| {
+                seen.push(rel_str.to_owned());
+                Ok(())
+            },
+        )?;
+        Ok(seen)
+    }
+
+    #[test]
+    fn non_utf8_contents_are_a_typed_contents_refusal() {
+        // `read_to_string` fails with `InvalidData` on non-UTF-8 bytes;
+        // the text walk reports `NonUtf8Contents`, not a generic string.
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("binary.rs"), [0xff, 0xfe, 0x62]).expect("write");
+        let error = collect(temp.path()).expect_err("non-UTF-8 contents must fail");
+        assert!(
+            matches!(error, ScanError::NonUtf8Contents { .. }),
+            "got: {error}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_files_are_a_typed_read_failure() {
+        // A permissionless regular file still lists in the walk, so the
+        // text read fails with `PermissionDenied`: typed `ReadFailed`.
+        // Root can read anything, so only assert when the read refuses.
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("secret.rs");
+        std::fs::write(&path, b"fn secret() {}\n").expect("write");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).expect("chmod");
+        if std::fs::read_to_string(&path).is_err() {
+            let error = collect(temp.path()).expect_err("unreadable file must fail");
+            assert!(
+                matches!(error, ScanError::ReadFailed { .. }),
+                "got: {error}"
+            );
+            assert!(error.to_string().contains("secret.rs"), "got: {error}");
+        }
+    }
 }

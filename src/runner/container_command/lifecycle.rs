@@ -1447,7 +1447,11 @@ fn annotate_host_process_status(
     let mut text = rendered;
     for row in rows {
         text.push('\n');
-        text.push_str(&format!("[host process] {} {}", row.name, row.state));
+        text.push_str(&format!(
+            "[host process] {} {}",
+            row.name,
+            row.state.as_str()
+        ));
         if let Some(run) = &row.run {
             text.push_str(&format!(" (run {run}"));
             if let Some(pid) = row.pid {
@@ -1459,10 +1463,13 @@ fn annotate_host_process_status(
             text.push(')');
         }
         if let Some(listener) = &row.listener {
-            text.push_str(&format!(" listener {listener}"));
+            text.push_str(&format!(" listener {}", listener.as_str()));
         }
         if let Some(log) = &row.log {
             text.push_str(&format!(" log {log}"));
+        }
+        if let Some(diagnostic) = &row.diagnostic {
+            text.push_str(&format!(": {diagnostic}"));
         }
     }
     text
@@ -2477,7 +2484,7 @@ mod tests {
             }],
             managed_host_listeners: vec![crate::runner::host_process::ManagedHostListenerResult {
                 name: "api".to_owned(),
-                status: "ready".to_owned(),
+                status: crate::runner::host_process::HostLifecycleStatus::Ready,
                 runtime_generation: "runtime-1".to_owned(),
                 generation: "generation-1".to_owned(),
                 address: "127.0.0.1:21001".to_owned(),
@@ -2490,7 +2497,7 @@ mod tests {
             managed_host_listener_failures: vec![
                 crate::runner::host_process::ManagedHostListenerFailure {
                     name: "front".to_owned(),
-                    status: "failed".to_owned(),
+                    status: crate::runner::host_process::HostLifecycleStatus::Failed,
                     declared_route_domain: "acowtancy.test".to_owned(),
                     route_domain: Some("acowtancy.test".to_owned()),
                     observed_status: Some(500),

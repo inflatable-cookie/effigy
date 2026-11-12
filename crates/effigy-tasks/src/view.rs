@@ -12,6 +12,10 @@ use crate::EffigyTasksError;
 
 const DEFAULT_MANAGED_PROFILE: &str = "default";
 
+// Single styling owner is `effigy_ui::style_text`; this import is the
+// only spelling `effigy-tasks` uses.
+use effigy_ui::style_text;
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ManagedProfileDisplayRow {
     pub task: String,
@@ -19,13 +23,6 @@ pub struct ManagedProfileDisplayRow {
     pub profile: String,
     pub invocation: String,
     pub parent_task: String,
-}
-
-pub fn style_text(enabled: bool, style: anstyle::Style, text: &str) -> String {
-    if !enabled {
-        return text.to_owned();
-    }
-    format!("{}{}{}", style.render(), text, style.render_reset())
 }
 
 pub fn relative_display_path(root: &Path, path: &Path) -> String {

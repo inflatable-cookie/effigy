@@ -45,7 +45,7 @@ pub fn resolve_task_reference_run<'a>(
     task_scope_cwd: &Path,
     host_env_aliases: &'a [crate::run_spec::HostAlias],
     resolver: TaskResolverFn<'a>,
-) -> Result<(String, PathBuf), ManagedError> {
+) -> Result<(crate::run_spec::RenderedRun, PathBuf), ManagedError> {
     let context = ManagedRefContext {
         managed_task_name: managed_task_name.to_owned(),
         process_name: process_name.to_owned(),
@@ -75,7 +75,7 @@ pub fn resolve_task_reference_run<'a>(
             ))
         },
     )?;
-    Ok((resolved.command, resolved.cwd))
+    Ok((resolved.run, resolved.cwd))
 }
 
 pub(crate) fn resolve_task_reference_step<'request, 'catalog>(
@@ -101,7 +101,7 @@ pub(crate) fn resolve_task_reference_step<'request, 'catalog>(
     )?;
     Ok(wrap_reference_command_in_cwd(
         &resolved.cwd,
-        &resolved.command,
+        &resolved.run.command,
     ))
 }
 

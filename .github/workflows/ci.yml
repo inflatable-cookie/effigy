@@ -7,9 +7,10 @@ name: CI
 on:
   workflow_dispatch:
   pull_request:
+    types: [opened, synchronize, reopened, closed]
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 # Fixtures repeatedly fingerprint and launch the CLI. Debug symbols inflate those
@@ -20,6 +21,7 @@ env:
 
 jobs:
   lint:
+    if: github.event.action != 'closed'
     name: Lint & format
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -49,6 +51,7 @@ jobs:
         run: python3 -I -B tests/scripts/ci_shared_process_fixture.py
 
   test:
+    if: github.event.action != 'closed'
     name: Test (${{ matrix.os }}, ${{ matrix.shard }}/4)
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
@@ -83,6 +86,7 @@ jobs:
         run: cargo test --workspace --doc
 
   shared-process:
+    if: github.event.action != 'closed'
     name: Shared-process tests (${{ matrix.os }}, ${{ matrix.suite }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
@@ -116,6 +120,7 @@ jobs:
         run: python3 scripts/ci-shared-process.py ${{ matrix.suite }}
 
   managed-lifecycle:
+    if: github.event.action != 'closed'
     name: Managed lifecycle matrix
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -141,6 +146,7 @@ jobs:
         run: cargo run --bin effigy -- test:managed:matrix
 
   released-surface:
+    if: github.event.action != 'closed'
     name: Released Surface Baseline
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -161,6 +167,7 @@ jobs:
         run: cargo run --bin effigy -- qa:released-surface
 
   supply-chain:
+    if: github.event.action != 'closed'
     name: Supply-chain (cargo-deny)
     runs-on: ubuntu-latest
     timeout-minutes: 15

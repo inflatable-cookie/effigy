@@ -232,6 +232,34 @@ impl std::fmt::Display for MountInterpolationError {
 
 impl std::error::Error for MountInterpolationError {}
 
+/// Split one `source:target[:options]` mount string. This is the single
+/// owner of the mount grammar; `compose_rewrite`, `ownership`,
+/// `inline_workspace` and `container_runtime_prep` all project through it.
+/// Empty sources or targets are refused as `None` so callers skip
+/// malformed entries instead of rendering a half-mount.
+pub fn parse_mount_parts(mount: &str) -> Option<(&str, &str, Option<&str>)> {
+    let mut parts = mount.splitn(3, ':');
+    let source = parts.next()?.trim();
+    let target = parts.next()?.trim();
+    if source.is_empty() || target.is_empty() {
+        return None;
+    }
+    let options = parts.next().map(str::trim);
+    Some((source, target, options))
+}
+
+/// True when a mount source names a filesystem path rather than a named
+/// volume: absolute, `./`/`../`-relative, bare `.`/`..`, or containing a
+/// slash. Single owner beside `parse_mount_parts`.
+pub fn looks_like_bind_mount_source(source: &str) -> bool {
+    source.starts_with('/')
+        || source.starts_with("./")
+        || source.starts_with("../")
+        || source == "."
+        || source == ".."
+        || source.contains('/')
+}
+
 /// Resolve every host mount on a container into a `Vec<String>` of
 /// canonical mount-spec strings, preserving ordering. The returned
 /// strings are what the compose / docker-run layer consumes.

@@ -7,6 +7,8 @@ use jsonc_parser::{parse_to_value, JsonValue};
 use serde::Deserialize;
 use walkdir::{DirEntry, WalkDir};
 
+use effigy_core::shell::shell_quote;
+
 use crate::{
     canonical_existing_path, BunConsumerInventory, BunPackageInventory, BunPeerDiagnostic,
     BunPeerResolutionStatus, DependencyDepth, DependencyPackage, DepsError, ProcessRequest,
@@ -420,11 +422,6 @@ pub(crate) fn finder_metadata_cleanup_command(root: &Path) -> String {
         shell_quote(&root.display().to_string()),
         predicates.join(" -o ")
     )
-}
-
-/// POSIX single-quote a shell word, including paths with embedded quotes.
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 pub fn inspect_bun_peer_resolutions(
@@ -1269,8 +1266,10 @@ mod tests {
         // branch only, which is the precedence bug this guards.
         assert!(command.contains("\\( -name"), "{command}");
         assert!(command.contains(") -prune -exec rm -rf {} +"), "{command}");
+        // Quoting spelling is the shared `effigy_core::shell::shell_quote`
+        // form (`'"'"'`); the execution test above proves `sh` accepts it.
         assert!(
-            command.contains("'/tmp/it'\\''s a path/library'"),
+            command.contains("'/tmp/it'\"'\"'s a path/library'"),
             "{command}"
         );
         for dir in super::FINDER_METADATA_DIRS {

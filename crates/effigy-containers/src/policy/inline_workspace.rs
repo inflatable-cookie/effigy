@@ -10,6 +10,7 @@ use crate::runtime::dns::{materialize_runtime_dns_override, RuntimeDnsOverrideRo
 use crate::{DEFAULT_ATTACH_TIMEOUT_SECS, DEFAULT_COLIMA_PROFILE, DEFAULT_HEALTH_TIMEOUT_SECS};
 
 use super::model::{ContainerPolicyError, EffectiveComposeSource, EffectiveContainerPolicy};
+use crate::mount_spec::parse_mount_parts;
 
 pub fn load_inline_workspace_container_policy(
     repo_root: &Path,
@@ -168,19 +169,8 @@ fn inline_workspace_compose_mount(
             "inline workspace container `{synthetic_name}` mount `{mount}` must use `source:target` form"
         ))
     })?;
-    let resolved_source = repo_root.join(source);
-    let canonical_root = repo_root
-        .canonicalize()
-        .unwrap_or_else(|_| repo_root.to_path_buf());
-    let canonical_source = resolved_source
-        .canonicalize()
-        .unwrap_or_else(|_| resolved_source.clone());
-    if !canonical_source.starts_with(&canonical_root) {
-        return Err(ContainerPolicyError::TaskInvocation(format!(
-            "inline workspace container `{synthetic_name}` mount source `{source}` escapes the repo root"
-        )));
-    }
-    let mut rendered = format!("{}:{target}", canonical_source.display());
+    let resolved_source = resolve_mount_source(repo_root, synthetic_name, source)?;
+    let mut rendered = format!("{}:{target}", resolved_source.display());
     if let Some(options) = options.filter(|value| !value.is_empty()) {
         rendered.push(':');
         rendered.push_str(options);
@@ -188,12 +178,87 @@ fn inline_workspace_compose_mount(
     Ok(rendered)
 }
 
-fn parse_mount_parts(mount: &str) -> Option<(&str, &str, Option<&str>)> {
-    let mut parts = mount.splitn(3, ':');
-    let source = parts.next()?.trim();
-    let target = parts.next()?.trim();
-    let options = parts.next().map(str::trim);
-    Some((source, target, options))
+/// The canonical path one declared mount source names, or a refusal.
+///
+/// The declaration is only a string: `../shared` and a symlink out of the
+/// checkout both name a directory this environment does not own, and a source
+/// Compose would create for the first time must be judged before it exists. So
+/// the source is resolved against the canonical repo root — lexically first, so
+/// a `..` above the root refuses, then through the filesystem, so a link in the
+/// middle of the path refuses too. A source that does not exist yet resolves
+/// through its nearest existing ancestor and keeps the remaining components;
+/// an unreadable ancestor is an error, never an assumption.
+fn resolve_mount_source(
+    repo_root: &Path,
+    synthetic_name: &str,
+    source: &str,
+) -> Result<PathBuf, ContainerPolicyError> {
+    let root = repo_root
+        .canonicalize()
+        .map_err(|error| ContainerPolicyError::Read {
+            path: repo_root.into(),
+            error,
+        })?;
+    let escape = || {
+        ContainerPolicyError::TaskInvocation(format!(
+            "inline workspace container `{synthetic_name}` mount source `{source}` resolves outside the repo root `{}`, so the environment cannot mount it",
+            root.display()
+        ))
+    };
+    let declared = Path::new(source);
+    if source.is_empty() || declared.is_absolute() {
+        return Err(escape());
+    }
+    let mut resolved = root.clone();
+    for component in declared.components() {
+        match component {
+            std::path::Component::Normal(part) => resolved.push(part),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                // A `..` that would climb above the root is an escape even
+                // when the directory it names happens to exist.
+                if !resolved.pop() || !resolved.starts_with(&root) {
+                    return Err(escape());
+                }
+            }
+            _ => return Err(escape()),
+        }
+    }
+    let mut existing = resolved.as_path();
+    let mut remainder = Vec::new();
+    loop {
+        match existing.canonicalize() {
+            Ok(canonical) => {
+                let mut path = canonical;
+                for part in remainder.iter().rev() {
+                    path.push(part);
+                }
+                return if path.starts_with(&root) {
+                    Ok(path)
+                } else {
+                    Err(escape())
+                };
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let Some(name) = existing.file_name() else {
+                    return Err(escape());
+                };
+                remainder.push(name.to_owned());
+                let Some(parent) = existing.parent() else {
+                    return Err(escape());
+                };
+                existing = parent;
+            }
+            // An ancestor that exists but cannot be resolved is not proof that
+            // the source stays inside the checkout.
+            Err(error) => {
+                return Err(ContainerPolicyError::Read {
+                    path: existing.into(),
+                    error,
+                })
+            }
+        }
+    }
 }
 
 fn render_inline_workspace_compose(

@@ -46,6 +46,9 @@ pub(in crate::runner) const DISABLE_ENV: &str = "EFFIGY_SCRATCH";
 const NAMESPACE: &str = "effigy";
 /// Marker inside a scratch directory: who created it and whether to keep it.
 const MARKER: &str = ".effigy-scratch.json";
+/// The namespace's child holding failed-step records, one directory per run.
+/// It is not a run: the sweep descends it and judges the directories inside.
+const FAILED_STEPS: &str = "failed-steps";
 /// A concluded failure is kept this long for inspection.
 const RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
 /// A directory whose liveness cannot be decided outlives this, whoever owns
@@ -188,31 +191,277 @@ pub(in crate::runner) fn current_dir() -> Option<PathBuf> {
     current().map(|scratch| scratch.dir.clone())
 }
 
-/// Retain a failed step's capture before human evidence folds it. An explicit
-/// caller TMPDIR owns retention when the run did not allocate its own scratch.
-pub(in crate::runner) fn retain_step_output(stdout: &str, stderr: &str) -> String {
-    use std::io::Write;
-    let root = current_dir().unwrap_or_else(std::env::temp_dir);
-    let retained = (|| -> std::io::Result<PathBuf> {
-        let mut file = tempfile::Builder::new()
-            .prefix("failed-step-")
-            .suffix(".log")
-            .tempfile_in(root)?;
-        write!(
-            file,
-            "stdout:\n{}\nstderr:\n{}",
-            effigy_ui::human::redact(stdout),
-            effigy_ui::human::redact(stderr)
-        )?;
-        file.as_file().sync_all()?;
-        file.keep()
-            .map(|(_, path)| path)
-            .map_err(|error| error.error)
-    })();
-    match retained {
-        Ok(path) => format!("full failed-step output: {}", path.display()),
+/// Retain a failed step's output before human evidence folds it.
+///
+/// The record outlives the run that produced it (effigy#937): with a configured
+/// scratch root it lives in `<root>/effigy/failed-steps/<run id>/`, which a QA
+/// or harness teardown of the run's own temporary directory cannot remove, and
+/// the root's bounded sweep retires it like any other retained tree. Without a
+/// configured root the run's own scratch directory, or the caller's `TMPDIR`,
+/// receives it, and that owner's retention applies.
+///
+/// `relayed` says the streams were recorded as they passed through the runner
+/// rather than captured, so the note also carries the failure lines the summary
+/// would otherwise only have in the live output.
+pub(in crate::runner) fn retain_step_output(
+    run: &effigy_kernel::id::RunId,
+    stdout: &str,
+    stderr: &str,
+    relayed: bool,
+) -> String {
+    let body = format!(
+        "stdout:\n{}\nstderr:\n{}",
+        effigy_ui::human::redact(stdout),
+        effigy_ui::human::redact(stderr)
+    );
+    match retain_record(run, &body) {
+        Ok(path) => {
+            let mut note = format!("full failed-step output: {}", path.display());
+            if relayed {
+                for line in failure_digest(stdout, stderr) {
+                    note.push('\n');
+                    note.push_str(&line);
+                }
+            }
+            note
+        }
         Err(error) => format!("full failed-step output: could not retain capture ({error})"),
     }
+}
+
+/// Writes one record into the directory that owns this run's failed-step
+/// output, falling back to the run's own temporary directory.
+fn retain_record(run: &effigy_kernel::id::RunId, body: &str) -> std::io::Result<PathBuf> {
+    match failed_steps_dir(run) {
+        Some(dir) => write_record(&dir, body),
+        None => {
+            let root = current_dir().unwrap_or_else(std::env::temp_dir);
+            write_record(&root, body)
+        }
+    }
+}
+
+/// The durable directory this run's failed-step records live in: the
+/// configured scratch root's `effigy/failed-steps/<run id>/`. `None` when the
+/// operator configured no root, scratch is disabled, or the directory cannot
+/// be created; the caller then keeps the record in the run's own temp.
+fn failed_steps_dir(run: &effigy_kernel::id::RunId) -> Option<PathBuf> {
+    let config = config().filter(|_| !disabled_by_env())?;
+    let dir = config
+        .root
+        .join(NAMESPACE)
+        .join(FAILED_STEPS)
+        .join(run.to_string());
+    private_dir(&dir).ok()?;
+    mark_record_dir(&dir, run);
+    Some(dir)
+}
+
+/// Dates a record directory's retention from the first step it records. A
+/// directory that cannot be marked stays retained: the sweep removes only what
+/// it can read.
+fn mark_record_dir(dir: &Path, run: &effigy_kernel::id::RunId) {
+    if dir.join(MARKER).exists() {
+        return;
+    }
+    let _ = write_marker(
+        dir,
+        &Marker {
+            run: run.to_string(),
+            task: String::new(),
+            checkout: String::new(),
+            pid: std::process::id(),
+            pid_start: start_identity(std::process::id()),
+            created_ms: now_ms(),
+            keep: Some(true),
+            concluded_ms: Some(now_ms()),
+        },
+    );
+}
+
+/// Writes one private record file into `dir` and returns its path.
+fn write_record(dir: &Path, body: &str) -> std::io::Result<PathBuf> {
+    use std::io::Write;
+    let mut file = tempfile::Builder::new()
+        .prefix("failed-step-")
+        .suffix(".log")
+        .tempfile_in(dir)?;
+    file.write_all(body.as_bytes())?;
+    file.as_file().sync_all()?;
+    file.keep()
+        .map(|(_, path)| path)
+        .map_err(|error| error.error)
+}
+
+/// Most failure lines a relayed record adds to the summary, so the evidence
+/// carries the panic without the log itself being folded again.
+const DIGEST_LINES: usize = 6;
+
+/// The lines of a relayed stream a person needs from a failure: the failing
+/// test's identity and the panic or assertion under it. Bounded and redacted,
+/// like every other evidence line.
+fn failure_digest(stdout: &str, stderr: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    for line in stdout.lines().chain(stderr.lines()) {
+        let line = line.trim();
+        let failing = line.starts_with("FAIL ")
+            || line.starts_with("--- STDERR:")
+            || line.contains("panicked at")
+            || line.contains("assertion")
+            || line.starts_with("error: ");
+        if !failing {
+            continue;
+        }
+        lines.push(effigy_ui::human::bound_text(
+            line,
+            effigy_ui::human::MAX_EVIDENCE_BYTES,
+        ));
+        if lines.len() == DIGEST_LINES {
+            break;
+        }
+    }
+    lines
+}
+
+// ---------------------------------------------------------------------------
+// Relayed stream recording
+// ---------------------------------------------------------------------------
+
+/// Most bytes of one relayed stream kept for a step's failure record.
+const RELAY_TAIL: usize = 8 << 20;
+
+/// What a step relayed while it ran: the output that otherwise only reached
+/// the operator's terminal, retained so a failure can show it afterwards.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::runner) struct RelayedStreams {
+    pub(in crate::runner) stdout: String,
+    pub(in crate::runner) stderr: String,
+}
+
+impl RelayedStreams {
+    /// Whether the step relayed nothing the runner could record.
+    pub(in crate::runner) fn is_empty(&self) -> bool {
+        self.stdout.is_empty() && self.stderr.is_empty()
+    }
+}
+
+/// A bounded tail of one relayed stream, newest bytes last (the same bound the
+/// captured streams use).
+#[derive(Default)]
+struct StreamTail {
+    bytes: Vec<u8>,
+}
+
+impl StreamTail {
+    fn push(&mut self, chunk: &[u8]) {
+        self.bytes.extend_from_slice(chunk);
+        if self.bytes.len() > RELAY_TAIL {
+            let excess = self.bytes.len() - RELAY_TAIL;
+            self.bytes.drain(..excess);
+        }
+    }
+
+    fn take(&mut self) -> String {
+        String::from_utf8_lossy(&std::mem::take(&mut self.bytes)).into_owned()
+    }
+}
+
+#[derive(Default)]
+struct StepRecord {
+    stdout: StreamTail,
+    stderr: StreamTail,
+}
+
+static RELAY_RECORDS: std::sync::Mutex<Vec<Arc<std::sync::Mutex<StepRecord>>>> =
+    std::sync::Mutex::new(Vec::new());
+/// How many steps are recording, so a relay in no recording step costs one
+/// relaxed load (effigy#937).
+static RELAY_ACTIVE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// One step's record of the output it relays. A nested step opens its own; the
+/// innermost record receives what passes through it now.
+pub(in crate::runner) struct RelayRecord {
+    record: Arc<std::sync::Mutex<StepRecord>>,
+    active: bool,
+}
+
+/// Begins recording the output `run_steps` relays for one step. While a record
+/// is open, a host command whose output is not a terminal and is not captured
+/// passes its stream through the runner for it, so a nested step's real output
+/// survives its failure.
+pub(in crate::runner) fn record_relay() -> RelayRecord {
+    let record = Arc::new(std::sync::Mutex::new(StepRecord::default()));
+    RELAY_ACTIVE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    match RELAY_RECORDS.lock() {
+        Ok(mut records) => records.push(Arc::clone(&record)),
+        Err(poisoned) => poisoned.into_inner().push(Arc::clone(&record)),
+    }
+    RelayRecord {
+        record,
+        active: true,
+    }
+}
+
+impl RelayRecord {
+    /// The streams this step relayed, and the end of its recording.
+    pub(in crate::runner) fn finish(mut self) -> RelayedStreams {
+        self.end();
+        let mut record =
+            std::sync::Mutex::lock(&self.record).unwrap_or_else(std::sync::PoisonError::into_inner);
+        RelayedStreams {
+            stdout: record.stdout.take(),
+            stderr: record.stderr.take(),
+        }
+    }
+
+    fn end(&mut self) {
+        if !self.active {
+            return;
+        }
+        self.active = false;
+        RELAY_ACTIVE.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        let mut records = std::sync::Mutex::lock(&RELAY_RECORDS)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(index) = records
+            .iter()
+            .rposition(|record| Arc::ptr_eq(record, &self.record))
+        {
+            records.remove(index);
+        }
+    }
+}
+
+impl Drop for RelayRecord {
+    fn drop(&mut self) {
+        self.end();
+    }
+}
+
+/// Whether a step of a sequence is recording the output it relays. A host
+/// command uses this to decide whether its stream has to pass through the
+/// runner at all (effigy#937).
+pub(in crate::runner) fn record_relay_active() -> bool {
+    RELAY_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) > 0
+}
+
+/// Appends the bytes a command just relayed to the running step's record, so a
+/// failure keeps the output the operator watched. A relay in no recording step
+/// writes nothing.
+pub(in crate::runner) fn record_relayed(stdout: &[u8], stderr: &[u8]) {
+    if !record_relay_active() {
+        return;
+    }
+    let Some(record) = std::sync::Mutex::lock(&RELAY_RECORDS)
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .last()
+        .cloned()
+    else {
+        return;
+    };
+    let mut record =
+        std::sync::Mutex::lock(&record).unwrap_or_else(std::sync::PoisonError::into_inner);
+    record.stdout.push(stdout);
+    record.stderr.push(stderr);
 }
 
 /// Whether the innermost scope is a run that declined scratch.
@@ -821,8 +1070,9 @@ pub(in crate::runner) struct SweepReport {
 
 /// Removes this root's own expired directories, bounded in time, count and
 /// liveness checks, and only ever inside the configured root: this build's runs
-/// inside `<root>/effigy/`, and a legacy run an earlier build left directly
-/// under the root, swept where it stands.
+/// inside `<root>/effigy/`, a legacy run an earlier build left directly under
+/// the root, swept where it stands, and the failed-step records under
+/// `<root>/effigy/failed-steps/`.
 ///
 /// A marked directory goes when its conclusion is older than [`RETENTION`], or
 /// when it has no conclusion and the process that created it is gone, or when
@@ -833,20 +1083,22 @@ pub(in crate::runner) struct SweepReport {
 pub(in crate::runner) fn sweep_at(root: &Path, now_ms: i64, within: Duration) -> SweepReport {
     let deadline = Instant::now().checked_add(within);
     let mut report = SweepReport::default();
-    sweep_entries(root, true, now_ms, &mut report, deadline);
+    sweep_entries(root, SweepLevel::Root, now_ms, &mut report, deadline);
     report
 }
 
-/// Sweeps the marked run directories in `dir`, descending once from the root
-/// into this build's namespace. Both locations share one report, so the time,
-/// scan, removal and liveness bounds cover the two together.
+/// Sweeps the marked directories in `dir`, descending once from the root into
+/// this build's namespace and once more into that namespace's failed-step
+/// records. Every level shares one report, so the time, scan, removal and
+/// liveness bounds cover them together.
 ///
 /// The namespace carries no marker of its own and is never judged as a run: it
-/// is Effigy's directory, holding runs one level down. A symlink is not
+/// is Effigy's directory, holding runs and records one level down. A record
+/// directory is judged by its own marker, like a run. A symlink is not
 /// descended into, and an entry with no marker is left alone.
 fn sweep_entries(
     dir: &Path,
-    top: bool,
+    level: SweepLevel,
     now_ms: i64,
     report: &mut SweepReport,
     deadline: Option<Instant>,
@@ -866,9 +1118,16 @@ fn sweep_entries(
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
             continue;
         }
-        if top && path.file_name() == Some(OsStr::new(NAMESPACE)) {
-            sweep_entries(&path, false, now_ms, report, deadline);
-            continue;
+        match level {
+            SweepLevel::Root if path.file_name() == Some(OsStr::new(NAMESPACE)) => {
+                sweep_entries(&path, SweepLevel::Namespace, now_ms, report, deadline);
+                continue;
+            }
+            SweepLevel::Namespace if path.file_name() == Some(OsStr::new(FAILED_STEPS)) => {
+                sweep_entries(&path, SweepLevel::FailedSteps, now_ms, report, deadline);
+                continue;
+            }
+            _ => {}
         }
         let Some(marker) = read_marker(&path) else {
             continue;
@@ -885,6 +1144,18 @@ fn sweep_entries(
             }
         }
     }
+}
+
+/// Which directory a sweep step is reading: the root (this build's runs and a
+/// legacy run), the namespace (the same runs, one level down, and the
+/// failed-step records), or the records themselves, one marked directory per
+/// run. Only the records and the runs are ever judged; the two owners of a
+/// level are recognised by name and descended.
+#[derive(Clone, Copy)]
+enum SweepLevel {
+    Root,
+    Namespace,
+    FailedSteps,
 }
 
 impl SweepReport {

@@ -10,6 +10,7 @@ description = "Workspace scan engine for Effigy (options, execution, render)"
 effigy-manifest = { path = "../effigy-manifest" }
 effigy-tasks = { path = "../effigy-tasks" }
 globset = "0.4"
+hex = "0.4"
 ignore = "0.4"
 nix = { version = "0.31", default-features = false, features = ["process", "signal"] }
 serde = { version = "1", features = ["derive"] }

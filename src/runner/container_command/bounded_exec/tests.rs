@@ -2297,7 +2297,10 @@ mod handoff_local_tests {
             &repo_root,
             Some("web"),
             Some("app"),
-            Some(&format!("printf handoff-shell-ok > '{}'", shell_marker.display())),
+            Some(&format!(
+                "printf handoff-shell-ok > '{}'",
+                shell_marker.display()
+            )),
             false,
         )
         .expect("handoff shell command should run locally");

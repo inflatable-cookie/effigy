@@ -159,11 +159,19 @@ fn waiting_tabs_name_their_own_dependency_and_phase() {
     // entry names that phase, and none names another entry's wait.
     let frame = render_frame(&waits, "api", &startup, now + Duration::from_secs(2));
     let rows = frame.lines().collect::<Vec<_>>();
-    assert!(rows[0].contains('╭') && rows[2].contains('╰'), "tabs stay outlined:\n{frame}");
-    assert!(rows[3].trim().is_empty(), "single gap below tabs:\n{frame}");
-    assert!(rows[4].starts_with("startup:"), "pane content starts at left edge:\n{frame}");
     assert!(
-        !rows[4..29].iter().any(|row| row.chars().any(|ch| matches!(ch, '│' | '─' | '┌' | '┐' | '└' | '┘'))),
+        rows[0].contains('╭') && rows[2].contains('╰'),
+        "tabs stay outlined:\n{frame}"
+    );
+    assert!(rows[3].trim().is_empty(), "single gap below tabs:\n{frame}");
+    assert!(
+        rows[4].starts_with("startup:"),
+        "pane content starts at left edge:\n{frame}"
+    );
+    assert!(
+        !rows[4..29].iter().any(|row| row
+            .chars()
+            .any(|ch| matches!(ch, '│' | '─' | '┌' | '┐' | '└' | '┘'))),
         "output has no enclosing frame:\n{frame}"
     );
     assert_tab_labels(

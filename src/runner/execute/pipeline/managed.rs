@@ -423,7 +423,7 @@ fn start_managed_run(
                     .secret_env
                     .keys()
                     .cloned()
-                    .chain(effigy_managed::declared_env_keys(&process.run));
+                    .chain(process.delivered_env.keys().cloned());
                 for (key, value) in resolver
                     .resolve_delivered_env(&session_delivered, &[], child_keys, true)?
                     .1
@@ -2100,6 +2100,7 @@ working_dir = "/workspace"
             name: name.to_owned(),
             role,
             run: format!("run-{name}"),
+            delivered_env: Default::default(),
             secret_env: Default::default(),
             setup: None,
             setup_steps: Vec::new(),

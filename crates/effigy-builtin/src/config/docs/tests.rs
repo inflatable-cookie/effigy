@@ -17,8 +17,15 @@ fn containers_reference_documents_optional_dns_base_domain() {
     let manifest: effigy_manifest::TaskManifest =
         toml::from_str(&active_example).expect("documented container example parses");
     assert_eq!(
-        manifest.containers.expect("containers section").environments["web"]
-            .dns.as_ref().expect("DNS section").base_domain.as_deref(),
+        manifest
+            .containers
+            .expect("containers section")
+            .environments["web"]
+            .dns
+            .as_ref()
+            .expect("DNS section")
+            .base_domain
+            .as_deref(),
         Some("project.test")
     );
 }

@@ -99,7 +99,10 @@ fn cli_state_plan_selects_default_and_requested_manifest_stacks() {
     assert_eq!(requested["schema"], "effigy.state-stack.lineage.v1");
     assert_eq!(requested["stack_name"], "acowtancy-prod");
     assert_eq!(requested["layers"][0]["key"], "structure");
-    assert_eq!(requested["layers"].as_array().expect("prod layers").len(), 1);
+    assert_eq!(
+        requested["layers"].as_array().expect("prod layers").len(),
+        1
+    );
 }
 
 #[test]

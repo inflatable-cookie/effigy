@@ -28,6 +28,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use effigy_core::shell::shell_quote;
+
 /// One validated `[programs.<name>]` block.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::runner) struct Program {
@@ -505,10 +507,6 @@ fn shim_script(active: &Active) -> String {
     }
     script.push_str(&format!("exec {fallback} \"$@\"\n"));
     script
-}
-
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', r"'\''"))
 }
 
 #[cfg(test)]

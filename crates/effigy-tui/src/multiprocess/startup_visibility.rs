@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use effigy_core::shell::shell_quote as core_shell_quote;
 use effigy_process::{ProcessManagerError, ProcessSpec, ProcessSupervisor};
 use nix::pty::{openpty, Winsize};
 use tempfile::TempDir;
@@ -420,7 +421,8 @@ fn fixture_process(
 }
 
 fn shell_quote(path: &Path) -> String {
-    format!("'{}'", path.display().to_string().replace('\'', "'\\''"))
+    // Single quoting spelling lives in `effigy_core::shell::shell_quote`.
+    core_shell_quote(&path.display().to_string())
 }
 
 struct PtySession {

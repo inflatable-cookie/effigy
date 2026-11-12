@@ -450,6 +450,10 @@ fn run_steps(
         };
         let mut child = run.step(index, &label)?;
         let child_id = child.id();
+        // A step's output can reach the operator without being captured: it is
+        // relayed live. Record what it relays, so a failure leaves the real
+        // output in its retained record instead of an empty file (effigy#937).
+        let relayed = crate::runner::scratch::record_relay();
         let result = {
             let _parent = child.enter();
             // A step that overrides a key does not deliver the secret of that
@@ -475,6 +479,7 @@ fn run_steps(
                 &mut child,
             )
         };
+        let relayed = relayed.finish();
         let (code, stdout, mut stderr, workload) = match result {
             Ok(exit) => exit,
             Err(error) => {
@@ -522,7 +527,29 @@ fn run_steps(
             }
         };
         if code != 0 && !streams_output() {
-            let retained = crate::runner::scratch::retain_step_output(&stdout, &stderr);
+            // A step that captured its output keeps that capture; a step whose
+            // output was relayed keeps what it relayed. Either way the record
+            // holds the output this step produced, and a relayed record also
+            // names its failing lines in the summary.
+            let (recorded_stdout, recorded_stderr) = if relayed.is_empty() {
+                (stdout.as_str(), stderr.to_owned())
+            } else {
+                // The relayed stream is the step's real output; the rendered
+                // failure Effigy folded from it follows, so the record keeps
+                // both the raw panic and the sentence around it.
+                let recorded_stderr = if stderr.trim().is_empty() {
+                    relayed.stderr.clone()
+                } else {
+                    format!("{}\n{stderr}", relayed.stderr)
+                };
+                (relayed.stdout.as_str(), recorded_stderr)
+            };
+            let retained = crate::runner::scratch::retain_step_output(
+                &run.id(),
+                recorded_stdout,
+                &recorded_stderr,
+                !relayed.is_empty(),
+            );
             stderr.push_str(&format!("\n{retained}\n"));
         }
         let outcome_label = progress.strip_prefix("running ").unwrap_or(&progress);

@@ -33,8 +33,7 @@ use crate::runner::error::RunnerError;
 const GRACE: Duration = Duration::from_secs(3);
 /// After a forwarded signal, how long the group gets to exit by itself.
 const SIGNAL_EXIT_BUDGET: Duration = Duration::from_secs(10);
-/// JSON output keeps this much of each stream, newest bytes last.
-const CAPTURE_TAIL: usize = 8 << 20;
+use super::tail::Tail;
 /// Exit, signal and capture polling interval for a waiting owner.
 const POLL: Duration = Duration::from_millis(20);
 /// The journal label of an env-schema `exec()` command: part of the run,
@@ -112,10 +111,18 @@ fn run_plain_inner(
             stderr: Vec::new(),
         });
     }
-    let relay = stream
-        || !command.capture
-            && run.keyed()
-            && !(std::io::stdout().is_terminal() && std::io::stderr().is_terminal());
+    // A step of a sequence keeps a record of what it relays, so a failure has
+    // the output the operator watched (effigy#937). A host command whose
+    // output is not a terminal passes through the runner for that record, with
+    // the same bytes relayed live in the same order. An interactive terminal
+    // keeps inheritance: a child still sees the operator's own descriptors, so
+    // nothing an operator watches changes to make a record.
+    let interactive = std::io::stdout().is_terminal() && std::io::stderr().is_terminal();
+    // Only output the caller is not already capturing has to pass through for
+    // a record: a captured stream is the caller's own record already.
+    let recorded =
+        !interactive && !command.capture && crate::runner::scratch::record_relay_active();
+    let relay = stream || recorded || (!command.capture && run.keyed() && !interactive);
     let mut env = environment(command.cwd, command.env)?;
     let grant = if effigy_child {
         crate::runner::secret_session::take_child_grant()
@@ -193,6 +200,11 @@ fn run_plain_inner(
         if command.capture {
             stdout.push(&out);
             stderr.push(&err);
+        } else if relay {
+            // The step's own record keeps a bounded tail of what it relayed,
+            // so a failure can still show the output the operator watched
+            // (effigy#937). A captured stream is already the caller's.
+            crate::runner::scratch::record_relayed(&out, &err);
         }
         moved
     };
@@ -515,21 +527,6 @@ pub(in crate::runner) fn environment(
     // either: the route is Effigy's own descriptor, not a name.
     env.retain(|key, _| !crate::runner::secret_session::is_session_access_key(key));
     Ok(env)
-}
-
-/// A bounded capture that keeps the newest bytes (D1-23).
-#[derive(Default)]
-struct Tail {
-    bytes: Vec<u8>,
-}
-impl Tail {
-    fn push(&mut self, chunk: &[u8]) {
-        self.bytes.extend_from_slice(chunk);
-        if self.bytes.len() > CAPTURE_TAIL {
-            let excess = self.bytes.len() - CAPTURE_TAIL;
-            self.bytes.drain(..excess);
-        }
-    }
 }
 
 #[cfg(test)]

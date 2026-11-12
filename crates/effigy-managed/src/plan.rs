@@ -498,6 +498,75 @@ run = "bun run dev"
         .expect("plan")
     }
 
+    /// A raw command can start one child with an environment assignment and
+    /// still read its inherited value in a later statement. Its text cannot
+    /// claim that the whole workload receives that assignment (effigy#930).
+    #[test]
+    fn a_shell_prefix_cannot_hide_an_inherited_workload_value() {
+        let manifest = BOUND_DEV.replace(
+            "run = \"bun run dev\"\n",
+            r#"concurrent = [{ name = "raw", run = "env DATABASE_URL=first sh -c true && printf '%s' $DATABASE_URL" }]
+"#,
+        );
+        let plan = plan_with_alias(&manifest, true);
+        assert!(plan.processes[0].delivered_env.is_empty());
+        assert!(plan.processes[0].run.starts_with("env DATABASE_URL=first"));
+    }
+
+    /// Delivery is carried from the declaration, independently of shell
+    /// quoting and command-body mentions. Setup has its own environment.
+    #[test]
+    fn a_referenced_workload_carries_its_declared_environment() {
+        let manifest = BOUND_DEV.replace(
+            "run = \"bun run dev\"\n",
+            r#"concurrent = [{ name = "api", task = "child", setup = [{ run = "true", env = { SETUP_ONLY = "value" } }] }]
+"#,
+        );
+        let manifest = format!(
+            r#"{manifest}
+[tasks.child]
+run = "printf '%s' $COMMAND_ONLY"
+env = {{ DATABASE_URL = "postgres://app@postgres.acme.test:5432/app", QUOTED = "one 'two' three" }}
+"#,
+        );
+        let plan = plan_with_alias(&manifest, true);
+        let process = &plan.processes[0];
+        assert_eq!(
+            process.delivered_env,
+            std::collections::BTreeMap::from([
+                (
+                    "DATABASE_URL".to_owned(),
+                    "postgres://app@postgres.acme-wabcdef12.test:5432/app".to_owned()
+                ),
+                ("QUOTED".to_owned(), "one 'two' three".to_owned()),
+            ]),
+        );
+        assert!(process
+            .setup
+            .as_ref()
+            .expect("setup")
+            .contains("SETUP_ONLY"));
+    }
+
+    /// A step's accumulated environment reaches later statements; a key
+    /// introduced later cannot mask what the first statement inherits.
+    #[test]
+    fn a_sequence_carries_only_environment_delivered_from_its_first_statement() {
+        let manifest = BOUND_DEV.replace(
+            "run = \"bun run dev\"\n",
+            r#"run = [
+  { run = "printf '%s' $LATE", env = { FIRST = "one" } },
+  { run = "printf '%s' $FIRST", env = { LATE = "two" } },
+]
+"#,
+        );
+        let plan = plan_with_alias(&manifest, true);
+        assert_eq!(
+            plan.processes[0].delivered_env,
+            std::collections::BTreeMap::from([("FIRST".to_owned(), "one".to_owned())]),
+        );
+    }
+
     /// effigy#431: a container-bound session leaves its container entries on
     /// the declared name — that is what the target's own network answers — and
     /// resolves this checkout's effective alias only in the entries it places
