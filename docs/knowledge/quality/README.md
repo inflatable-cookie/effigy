@@ -2,7 +2,7 @@
 
 Owner: [test assurance](../test-assurance.md).
 
-The test tables are rated at `ROUND4C_RATED_COMMIT`; the code table has not yet been rated.
+The test tables are rated at `7a502af038b7fbc4889d6484ea78deb25c7daac5`; the code table has not yet been rated.
 Round 4 re-rated every row that changed, arrived or was recorded as an exception across the B1-B9
 tranches, dropped the rows whose tests are gone, and left every untouched row's parts as they were
 rated at `4026bd67e`. Locators and body hashes are refreshed for the rows that were re-read. The
@@ -135,10 +135,10 @@ Run an independent stratified sample of at least 60 modules, with one frontier c
 
 ## Test results at the rated commit
 
-- 7,701 table rows: 6,437 Rust and 1,264 Python. Thirty parent-invoked helper and child entrypoints are marked `helper` in the CSVs and excluded from scoring, leaving 7,671 scored tests.
-- Distribution (scored tests, scores 4–10): 5, 7, 27, 1,617, 2,429, 2,797, 789. Mean 8.35; median 8; 0.2% scored 5 or lower and 0.5% scored 6 or lower.
-- Table rows, including excluded helpers: T1 1,306; T2 623; T3 858; T4 1,793; T5 1,857; T6 1,264.
-- The 422 rows whose tests no longer exist left the table at the round 4 close, and round 4b took 36 more (merged entrypoints and converted helpers) while 19 survivors arrived; six duplicate Python rows that named a test under a class that never declared it also left the T6 table. 39 scored rows now sit below the floor of 7 (T1 18, T2 8, T3 3, T4 6, T5 4, T6 0) instead of 870 at 6 or below before round 4.
+- 7,700 table rows: 6,436 Rust and 1,264 Python. Forty parent-invoked helper and child entrypoints plus one measurement utility are marked in `excluded`, leaving 7,659 scored tests.
+- Distribution (scored tests, scores 7–10): 1,639, 2,434, 2,797, 789. Mean 8.36; median 8; no scored tests are below 7.
+- Table rows, including excluded helpers: T1 1,305; T2 623; T3 858; T4 1,793; T5 1,857; T6 1,264.
+- The 422 rows whose tests no longer exist left the table at the round 4 close, and round 4b took 36 more (merged entrypoints and converted helpers) while 19 survivors arrived; six duplicate Python rows that named a test under a class that never declared it also left the T6 table. At the round 4b close, 39 scored rows remained below the floor. Round 4c re-rated 27 behavior tests to 7 or higher, removed 10 helper entrypoints from scoring with parent-test evidence, merged one duplicate progress test into its retained survivor, and moved one measurement utility out of scored tests. The current count below 7 is zero.
 
 An independent Claude Sonnet pass re-scored a stratified 42-test sample from scratch at `4026bd67e`:
 - 23 of 42 scores match and 38 are within ±1;

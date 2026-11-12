@@ -1,4 +1,4 @@
-# Test ratings at `ROUND4C_RATED_COMMIT`
+# Test ratings at `7a502af038b7fbc4889d6484ea78deb25c7daac5`
 
 The tables contain 7,700 rows: 6,436 Rust and 1,264 Python tests. Forty parent-invoked helper and
 child entrypoints plus one measurement utility are marked in `excluded`, leaving 7,659 scored
@@ -25,12 +25,13 @@ Mean 8.36; median 8. There are no scored tests below the agreed floor of 7.
 
 ## Round 4c close
 
-The final 39 below-floor rows were re-read against their assertions. Twenty-seven scored rows now
-meet the floor. Ten fixture or child entrypoints were removed from the scored tables with their
-parent test cited as the covering route. One duplicate pending-progress test was folded into the
-retained EOF/pending snapshot test, which now checks nonzero lower bounds on both pending streams
-and verifies reads cover retained bytes. The anchor spawn timing utility remains available as an
-ignored measurement tool and is excluded from scoring; it has no behavioral threshold.
+The final 39 below-floor rows were re-read against their assertions. Twenty-seven behavior tests
+were re-rated at 7 or higher. Ten fixture or child entrypoints were removed from the scored tables
+with their parent test cited as the covering route. One duplicate pending-progress test was folded
+into the retained inherited-writer test, which checks nonzero lower bounds for both partial streams
+and that reads cover retained bytes. The anchor spawn timing utility remains available as an
+ignored measurement tool and is excluded from scoring; it has no behavioral threshold. Its table
+row is removed from scored tests.
 
 Presentation rows remain attached to the production path they verify: fake-clock reconciliation
 and restart-policy progress frames, doctor color styling, and typed general-help rendering. Their
