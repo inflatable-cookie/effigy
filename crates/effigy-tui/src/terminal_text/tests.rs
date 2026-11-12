@@ -57,9 +57,17 @@ fn format_elapsed_uses_compact_human_time() {
 #[test]
 fn runtime_meta_line_marks_restart_state() {
     let started = runtime_meta_line(Duration::from_secs(9), 0);
+    assert_eq!(started.spans.len(), 2);
     assert_eq!(started.spans[0].content.as_ref(), "started: ");
+    assert_eq!(started.spans[0].style.fg, Some(Color::LightBlue));
+    assert_eq!(started.spans[1].content.as_ref(), "9s ago");
+    assert_eq!(started.spans[1].style.fg, Some(Color::DarkGray));
     let restarted = runtime_meta_line(Duration::from_secs(9), 1);
+    assert_eq!(restarted.spans.len(), 2);
     assert_eq!(restarted.spans[0].content.as_ref(), "restarted: ");
+    assert_eq!(restarted.spans[0].style.fg, Some(Color::LightBlue));
+    assert_eq!(restarted.spans[1].content.as_ref(), "9s ago");
+    assert_eq!(restarted.spans[1].style.fg, Some(Color::DarkGray));
 }
 
 #[test]

@@ -118,22 +118,25 @@ fn export_hotkey_writes_clean_transcript_and_closes_overlay() {
 }
 
 #[test]
-fn enter_cancel_closes_overlay() {
-    let supervisor = empty_supervisor();
-    let mut state = state_with_processes(&["api"]);
-    state.show_options = true;
-    state.options_index = 4;
+fn escape_and_enter_cancel_close_the_options_overlay() {
+    for (key, selected_index) in [(KeyCode::Esc, 0), (KeyCode::Enter, 4)] {
+        let supervisor = empty_supervisor();
+        let mut state = state_with_processes(&["api"]);
+        state.show_options = true;
+        state.options_index = selected_index;
 
-    let control = handle_options_overlay_key(
-        &KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        &supervisor,
-        &mut state,
-        0,
-    )
-    .expect("cancel result");
+        let control = handle_options_overlay_key(
+            &KeyEvent::new(key, KeyModifiers::NONE),
+            &supervisor,
+            &mut state,
+            0,
+        )
+        .expect("cancel result");
 
-    assert!(matches!(control, Some(LoopControl::Continue)));
-    assert!(!state.show_options);
+        assert!(matches!(control, Some(LoopControl::Continue)), "{key:?}");
+        assert!(!state.show_options, "{key:?}");
+        assert_eq!(state.options_index, selected_index, "cancel must not move selection");
+    }
 }
 
 #[test]

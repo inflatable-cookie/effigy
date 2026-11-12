@@ -1216,14 +1216,20 @@ mod tests {
 
     #[test]
     fn restart_requires_a_process_name() {
-        assert!(restart(&[]).is_err());
-        assert!(restart(&["--repo", "."]).is_err());
+        let missing = restart(&[]).expect_err("restart without a process is refused");
+        assert!(missing.to_string().contains("process"), "{missing}");
+        let option = restart(&["--repo", "."]).expect_err("repo is not a process name");
+        assert!(option.to_string().contains("process"), "{option}");
     }
 
     #[test]
     fn restart_rejects_flags_it_does_not_take() {
         for flag in ["--detach", "--system", "--global", "--follow"] {
-            assert!(restart(&["api", flag, "web"]).is_err(), "{flag}");
+            let error = restart(&["api", flag, "web"]).expect_err(flag);
+            assert!(
+                error.to_string().contains(flag),
+                "unexpected refusal for {flag}: {error}"
+            );
         }
     }
 

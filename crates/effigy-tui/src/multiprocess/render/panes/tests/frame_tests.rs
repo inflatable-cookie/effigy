@@ -158,6 +158,14 @@ fn waiting_tabs_name_their_own_dependency_and_phase() {
     // The environment reports three of four containers healthy: every host
     // entry names that phase, and none names another entry's wait.
     let frame = render_frame(&waits, "api", &startup, now + Duration::from_secs(2));
+    let rows = frame.lines().collect::<Vec<_>>();
+    assert!(rows[0].contains('╭') && rows[2].contains('╰'), "tabs stay outlined:\n{frame}");
+    assert!(rows[3].trim().is_empty(), "single gap below tabs:\n{frame}");
+    assert!(rows[4].starts_with("startup:"), "pane content starts at left edge:\n{frame}");
+    assert!(
+        !rows[4..29].iter().any(|row| row.chars().any(|ch| matches!(ch, '│' | '─' | '┌' | '┐' | '└' | '┘'))),
+        "output has no enclosing frame:\n{frame}"
+    );
     assert_tab_labels(
         &frame,
         &[
@@ -189,33 +197,6 @@ fn waiting_tabs_name_their_own_dependency_and_phase() {
     assert!(frame.contains("waiting for api (starting)"), "{frame}");
     assert!(!frame.contains("waiting for environment"), "{frame}");
     assert_no_spinner_or_generic_wait(&frame);
-}
-
-#[test]
-fn output_has_a_single_gap_below_outlined_tabs_and_no_enclosing_frame() {
-    let now = Instant::now();
-    let waits = EntryWaits::new(four_entry_order(), None, now);
-    let frame = render_frame(&waits, "api", &HashMap::new(), now);
-    let rows = frame.lines().collect::<Vec<_>>();
-
-    assert!(
-        rows[0].contains('╭') && rows[2].contains('╰'),
-        "tabs stay outlined:\n{frame}"
-    );
-    assert!(
-        rows[3].trim().is_empty(),
-        "one blank row separates tabs and output:\n{frame}"
-    );
-    assert!(
-        rows[4].starts_with("startup:"),
-        "output uses the pane's left edge:\n{frame}"
-    );
-    assert!(
-        !rows[4..29].iter().any(|row| row
-            .chars()
-            .any(|ch| matches!(ch, '│' | '─' | '┌' | '┐' | '└' | '┘'))),
-        "output has no generated enclosing frame:\n{frame}"
-    );
 }
 
 /// A probe and readiness transition renders on one tab only: `api`'s pane

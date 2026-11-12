@@ -373,6 +373,7 @@ fn execute_rhai_script_can_list_directory_entries() {
     };
     let script = r#"
             let entries = fs::list("fixture");
+            if entries.len() != 3 { throw("entry count"); }
             if path::file_name(entries[0].to_string()) != "a.txt" { throw("first"); }
             if path::file_name(entries[1].to_string()) != "b.txt" { throw("second"); }
             if path::file_name(entries[2].to_string()) != "subdir" { throw("third"); }
@@ -801,6 +802,11 @@ fn execute_rhai_script_write_file_if_absent_fails_without_destination() {
     assert!(
         error.to_string().contains("failed to write"),
         "failure must name the write path clearly: {error}"
+    );
+    assert!(error.to_string().contains("blocker"), "{error}");
+    assert_eq!(
+        fs::read_to_string(root.join("blocker")).expect("blocker remains"),
+        "a file, not a directory"
     );
     assert!(!root.join("blocker/child.txt").exists());
     assert!(staged_payload_leftovers(&root).is_empty());

@@ -1,8 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::multiprocess::events::options::handle_options_overlay_key;
-use crate::multiprocess::events::LoopControl;
-
 use super::{empty_supervisor, state_with_processes};
 
 #[test]
@@ -20,24 +18,6 @@ fn hidden_overlay_does_not_consume_keys() {
     .expect("options key result");
 
     assert!(control.is_none());
-}
-
-#[test]
-fn esc_closes_overlay() {
-    let supervisor = empty_supervisor();
-    let mut state = state_with_processes(&["api"]);
-    state.show_options = true;
-
-    let control = handle_options_overlay_key(
-        &KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
-        &supervisor,
-        &mut state,
-        0,
-    )
-    .expect("options key result");
-
-    assert!(matches!(control, Some(LoopControl::Continue)));
-    assert!(!state.show_options);
 }
 
 #[test]

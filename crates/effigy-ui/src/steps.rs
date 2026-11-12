@@ -1129,44 +1129,38 @@ mod tests {
 
     #[test]
     fn line_mode_writes_one_line_per_finished_step() {
-        let (sink, buffer) = sink(StepMode::Lines);
-        let ok = Step::new(sink.clone(), None, "starting web");
+        let (line_sink, buffer) = sink(StepMode::Lines);
+        let ok = Step::new(line_sink.clone(), None, "starting web");
         ok.set_label("waiting for web to report healthy");
         ok.succeed("web is healthy");
-        let failed = Step::new(sink, None, "starting db");
+        let failed = Step::new(line_sink, None, "starting db");
         failed.fail("db refused connections on port 5432");
         assert_eq!(
             buffer.text(),
             "✓ web is healthy\n✗ db refused connections on port 5432\n"
         );
-    }
 
-    #[test]
-    fn a_step_that_never_finished_wrote_nothing() {
-        let (sink, buffer) = sink(StepMode::Lines);
-        let running = Step::new(sink.clone(), None, "starting web");
+        // A running or explicitly cleared step has no durable line.
+        let (running_sink, buffer) = sink(StepMode::Lines);
+        let running = Step::new(running_sink.clone(), None, "starting web");
         running.set_label("waiting for web to report healthy (attempt 4)");
         assert_eq!(buffer.text(), "");
-        let cleared = Step::new(sink, None, "starting gateway");
+        let cleared = Step::new(running_sink, None, "starting gateway");
         cleared.finish_clear();
         assert_eq!(buffer.text(), "");
-    }
 
-    #[test]
-    fn finishing_twice_writes_one_line() {
-        let (sink, buffer) = sink(StepMode::Lines);
-        let step = Step::new(sink, None, "starting web");
+        // The first terminal outcome wins; later finish calls do not append.
+        let (idempotent_sink, buffer) = sink(StepMode::Lines);
+        let step = Step::new(idempotent_sink, None, "starting web");
         step.succeed("web is healthy");
         step.succeed("web is healthy again");
         step.fail("and now it failed");
         step.finish_clear();
         assert_eq!(buffer.text(), "✓ web is healthy\n");
-    }
 
-    #[test]
-    fn an_empty_summary_falls_back_to_the_step_label() {
-        let (sink, buffer) = sink(StepMode::Lines);
-        let step = Step::new(sink, None, "starting web");
+        // An empty summary falls back to the latest user-facing label.
+        let (fallback_sink, buffer) = sink(StepMode::Lines);
+        let step = Step::new(fallback_sink, None, "starting web");
         step.set_label("web is healthy");
         step.succeed("");
         assert_eq!(buffer.text(), "✓ web is healthy\n");

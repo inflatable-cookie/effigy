@@ -617,12 +617,16 @@ mod tests {
         assert!(!hint.usage.is_empty(), "{hint:?}");
         assert!(hint.usage.iter().all(|line| line.contains("effigy tasks")));
         assert_eq!(hint.command, "effigy tasks");
+        assert!(hint.usage.iter().any(|line| line.contains("--repo")), "{hint:?}");
+        assert!(hint.did_you_mean.is_none(), "{hint:?}");
     }
 
     #[test]
     fn an_unplaceable_first_word_only_points_at_the_general_help() {
         let hint = hint(&["wibble"]);
         assert_eq!(hint.command, "");
+        assert!(hint.usage.is_empty(), "{hint:?}");
+        assert!(hint.did_you_mean.is_none(), "{hint:?}");
         assert_eq!(
             hint.help_hint(),
             "Run `effigy --help` to see supported command forms"

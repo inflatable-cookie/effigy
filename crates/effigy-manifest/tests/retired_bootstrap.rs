@@ -32,6 +32,16 @@ fn setup(manifest: &TaskManifest) -> Vec<String> {
 }
 
 #[test]
+fn retired_bootstrap_consumer_fixtures_retain_their_translation_and_refusal_contracts() {
+    longhorn_task_table_setup_entries_are_read_as_selectors();
+    contact_patch_children_load_and_only_bootstrap_refuses_them();
+    cbs_bundle_run_and_local_children_load_together();
+    jal_accounts_bundle_run_start_and_submodule_policy_load();
+    figmatic_compact_run_and_required_children_load();
+    underlay_bundle_inline_steps_run_as_tasks_and_deps_sync_refuses_in_bootstrap();
+}
+
+#[test]
 fn acowtancy_run_steps_become_setup_selectors_and_children_refuse_in_bootstrap() {
     let manifest = load("acowtancy.toml");
     assert_eq!(setup(&manifest), vec!["secrets init", "bootstrap:state"]);
@@ -54,7 +64,6 @@ fn acowtancy_run_steps_become_setup_selectors_and_children_refuse_in_bootstrap()
     assert!(notice.contains("children"), "{notice}");
 }
 
-#[test]
 fn longhorn_task_table_setup_entries_are_read_as_selectors() {
     let manifest = load("longhorn.toml");
     assert_eq!(setup(&manifest), vec!["bootstrap:deps"]);
@@ -63,7 +72,6 @@ fn longhorn_task_table_setup_entries_are_read_as_selectors() {
     assert!(manifest.retired_config.refusals().is_empty());
 }
 
-#[test]
 fn contact_patch_children_load_and_only_bootstrap_refuses_them() {
     let manifest = load("contact-patch.toml");
     assert!(manifest.tasks.contains_key("book:meta:test"));
@@ -79,7 +87,6 @@ fn contact_patch_children_load_and_only_bootstrap_refuses_them() {
     assert!(manifest.retired_config.refusals()[0].contains("[sources.<name>]"));
 }
 
-#[test]
 fn cbs_bundle_run_and_local_children_load_together() {
     let manifest = load("cbs.toml");
     assert_eq!(setup(&manifest), vec!["bootstrap:run:1"]);
@@ -98,7 +105,6 @@ fn cbs_bundle_run_and_local_children_load_together() {
     assert!(manifest.retired_config.refusals()[0].contains("[bootstrap].children"));
 }
 
-#[test]
 fn jal_accounts_bundle_run_start_and_submodule_policy_load() {
     let manifest = load("jal-accounts.toml");
     assert_eq!(setup(&manifest), vec!["bootstrap:run:1"]);
@@ -108,14 +114,12 @@ fn jal_accounts_bundle_run_start_and_submodule_policy_load() {
     assert!(manifest.retired_config.refusals().is_empty());
 }
 
-#[test]
 fn figmatic_compact_run_and_required_children_load() {
     let manifest = load("figmatic.toml");
     assert_eq!(setup(&manifest), vec!["setup"]);
     assert!(manifest.retired_config.refusals()[0].contains("[bootstrap].children"));
 }
 
-#[test]
 fn underlay_bundle_inline_steps_run_as_tasks_and_deps_sync_refuses_in_bootstrap() {
     let manifest = load("underlay-bundle.toml");
     assert_eq!(

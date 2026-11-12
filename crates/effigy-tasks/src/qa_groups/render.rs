@@ -265,6 +265,8 @@ mod tests {
         assert!(rendered.contains("needs_planner"), "{rendered}");
         assert!(rendered.contains("contract 052"), "{rendered}");
         assert!(rendered.contains("no run was created"), "{rendered}");
+        assert!(rendered.contains("• warn: needs_planner:"), "{rendered}");
+        assert!(!rendered.contains("running"), "a plan is not a run: {rendered}");
     }
 
     #[test]

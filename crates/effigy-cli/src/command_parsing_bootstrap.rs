@@ -200,7 +200,11 @@ mod tests {
     fn flags_may_precede_the_url() {
         let args = bootstrap(parse(&["--no-start", "./local-repo"]).expect("parse bootstrap"));
         assert_eq!(args.repo_url.as_deref(), Some("./local-repo"));
+        assert_eq!(args.path, None);
+        assert_eq!(args.branch, None);
         assert!(args.no_start);
+        assert!(!args.plan);
+        assert!(!args.output_json);
     }
 
     #[test]

@@ -155,60 +155,59 @@ mod tests {
     }
 
     #[test]
-    fn a_catalog_graph_table_is_ignored_and_membership_still_loads() {
-        let manifest = parse(
-            "[catalog]\nalias = \"bovine\"\n\n[catalog.graph]\nsegmented = true\n\n[tasks.build]\nrun = \"true\"\n",
-        );
-        assert_eq!(
-            manifest
-                .catalog
-                .as_ref()
-                .and_then(|catalog| catalog.alias.clone()),
-            Some("bovine".to_owned())
-        );
-        let notice = notice(&manifest);
-        assert!(notice.contains("`[catalog.graph]` is ignored"), "{notice}");
-        assert!(notice.contains("`rg` for code navigation"), "{notice}");
-    }
+    fn retired_non_scan_sections_keep_loading_with_their_specific_migration_notices() {
+        let cases = [
+            (
+                "catalog graph",
+                "[catalog]\nalias = \"bovine\"\n\n[catalog.graph]\nsegmented = true",
+                &["`[catalog.graph]` is ignored", "`rg` for code navigation"][..],
+                Some("bovine"),
+            ),
+            (
+                "demos",
+                "[demos.checkout]\ntitle = \"Checkout\"\nsummary = \"Pay for a cart\"\nrun = \"bun run demo\"",
+                &[
+                    "`[demos]` is ignored",
+                    "`[tasks.\"demo:<name>\"]`",
+                    "`[demos.checkout]`",
+                    "`[tasks.\"demo:checkout\"]`",
+                    "group = \"Demos\"",
+                ][..],
+                None,
+            ),
+            (
+                "distribution",
+                "[distribution.package]\nname = \"my-tool\"\n\n[distribution.preflight]\ndocs-task = \"qa:docs\"",
+                &["`[distribution]` is ignored", "`[release]`", "contract 054"][..],
+                None,
+            ),
+            (
+                "shell",
+                "[shell]\nrun = \"exec zsh -i\"",
+                &["`[shell]` is ignored", "${SHELL:-/bin/zsh}", "no manifest override"][..],
+                None,
+            ),
+        ];
 
-    #[test]
-    fn a_demos_table_is_ignored_with_its_conversion_recipe() {
-        let manifest = parse(
-            "[demos.checkout]\ntitle = \"Checkout\"\nsummary = \"Pay for a cart\"\nrun = \"bun run demo\"\n\n[tasks.build]\nrun = \"true\"\n",
-        );
-        assert!(manifest.tasks.contains_key("build"));
-        let notice = notice(&manifest);
-        assert!(notice.contains("`[demos]` is ignored"), "{notice}");
-        assert!(notice.contains("`[tasks.\"demo:<name>\"]`"), "{notice}");
-        assert!(notice.contains("`[demos.checkout]`"), "{notice}");
-        assert!(notice.contains("`[tasks.\"demo:checkout\"]`"), "{notice}");
-        assert!(notice.contains("group = \"Demos\""), "{notice}");
-        assert!(
-            !notice.contains("external tool"),
-            "recording sessions elsewhere is not the answer: {notice}"
-        );
-    }
-
-    #[test]
-    fn a_distribution_table_is_ignored_with_its_replacement() {
-        let manifest = parse(
-            "[distribution.package]\nname = \"my-tool\"\n\n[distribution.preflight]\ndocs-task = \"qa:docs\"\n\n[tasks.build]\nrun = \"true\"\n",
-        );
-        assert!(manifest.tasks.contains_key("build"));
-        let notice = notice(&manifest);
-        assert!(notice.contains("`[distribution]` is ignored"), "{notice}");
-        assert!(notice.contains("`[release]`"), "{notice}");
-        assert!(notice.contains("contract 054"), "{notice}");
-    }
-
-    #[test]
-    fn a_shell_table_is_ignored_with_its_replacement() {
-        let manifest = parse("[shell]\nrun = \"exec zsh -i\"\n\n[tasks.build]\nrun = \"true\"\n");
-        assert!(manifest.tasks.contains_key("build"));
-        let notice = notice(&manifest);
-        assert!(notice.contains("`[shell]` is ignored"), "{notice}");
-        assert!(notice.contains("${SHELL:-/bin/zsh}"), "{notice}");
-        assert!(notice.contains("no manifest override"), "{notice}");
+        for (name, retired, expected, catalog_alias) in cases {
+            let manifest = parse(&format!("{retired}\n\n[tasks.build]\nrun = \"true\"\n"));
+            assert!(manifest.tasks.contains_key("build"), "{name}: task lost");
+            if let Some(alias) = catalog_alias {
+                assert_eq!(
+                    manifest.catalog.as_ref().and_then(|catalog| catalog.alias.as_deref()),
+                    Some(alias),
+                    "{name}: surviving catalog value"
+                );
+            }
+            let notice = notice(&manifest);
+            for fragment in expected {
+                assert!(notice.contains(fragment), "{name}: missing {fragment}: {notice}");
+            }
+            assert_eq!(notice.matches(" is ignored").count(), 1, "{name}: {notice}");
+            if name == "demos" {
+                assert!(!notice.contains("external tool"), "{notice}");
+            }
+        }
     }
 
     #[test]
