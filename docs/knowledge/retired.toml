@@ -1457,6 +1457,10 @@ allow = [
   "CHANGELOG.md",
   "crates/effigy-containers/src/policy/render/tests.rs",
   "src/runner/container_command/support.rs",
+  # The shared-render fixture clears this variable and its fake runtime exits
+  # with a distinct code if the variable is set, so the test names the retired
+  # value only to assert its absence.
+  "src/runner/container_command/support/tests.rs",
   "tests/cli_output_tests/reset_generation_tests.rs",
   "tests/scripts/container-render-consumers.py",
   "docs/knowledge/quality/tests/",
