@@ -286,6 +286,13 @@ struct Foreign {
     child: std::sync::Mutex<std::process::Child>,
 }
 static FOREIGN: std::sync::OnceLock<Foreign> = std::sync::OnceLock::new();
+/// A whole loop of the foreign fixture's `/bin/sleep 0.05`: the latency a
+/// trap takes to run once its signal arrives.
+const FOREIGN_LOOP: Duration = Duration::from_millis(50);
+/// A loop boundary under shard load, not a per-run wait: the oracle asserts the
+/// fixture is alive and unsignalled, so waiting longer than a few loops is the
+/// finding itself.
+const FOREIGN_LOOP_BOUND: Duration = Duration::from_secs(5);
 fn foreign_fixture() -> &'static Foreign {
     FOREIGN.get_or_init(|| {
         let dir = tempfile::Builder::new()
@@ -297,9 +304,16 @@ fn foreign_fixture() -> &'static Foreign {
             .iter()
             .map(|sig| format!("trap 'echo {sig} >> \"{}\"' {sig}; ", signals.display()))
             .collect();
+        // Each completed loop appends one byte, so a reader can wait for the
+        // loop boundary that follows its own observation instead of sleeping
+        // out the worst case.
+        let ticks = dir.path().join("loops");
         let child = std::process::Command::new("/bin/sh")
             .arg("-c")
-            .arg(format!("{traps}while :; do /bin/sleep 0.05; done"))
+            .arg(format!(
+                "{traps}while :; do /bin/sleep 0.05; echo . >> \"{}\"; done",
+                ticks.display()
+            ))
             .process_group(0)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
@@ -319,8 +333,14 @@ fn foreign_pid() -> u32 {
 fn foreign_facts(world: &mut World) {
     let fixture = foreign_fixture();
     let pid = foreign_pid();
-    // A trap runs once its 50 ms sleep returns.
-    std::thread::sleep(Duration::from_millis(60));
+    // A signal delivered during this run is trapped once the sleep it
+    // interrupted returns. Wait for the loop boundary that began after this
+    // read, rather than always paying the loop's whole worst case.
+    let loops = fixture.dir.path().join("loops");
+    let seen = loop_count(&loops);
+    wait_until("foreign trap latency", FOREIGN_LOOP_BOUND, || {
+        loop_count(&loops) > seen
+    });
     let process = world::proc(pid, b"EFFIGY_CUSTODY_NONCE=");
     let mut signals: Vec<String> = std::fs::read_to_string(fixture.dir.path().join("signals"))
         .unwrap_or_default()
@@ -334,6 +354,9 @@ fn foreign_facts(world: &mut World) {
         signals.push("STOP".into());
     }
     world.foreign.push((process, signals));
+}
+fn loop_count(path: &Path) -> u64 {
+    std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
 }
 /// Ends the drive's foreign fixture: our own child and its own group.
 pub(super) fn stop_foreign() {

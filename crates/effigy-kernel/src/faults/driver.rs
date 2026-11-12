@@ -119,11 +119,19 @@ fn jobs(trace: &[Point], observations: usize) -> Vec<Job> {
 }
 /// Worker processes per drive. Shards are processes, never threads: the probe
 /// runtime, the foreign fixture and child reaping are process-wide.
-const SHARDS: usize = 6;
-/// Rotate the starting shard at each crossing. There are six faults and six
-/// shards: plain modulo puts every Stall (and its parent-side inspection) on
-/// one process, while faster fault types finish and leave that process alone.
-/// Rotation preserves job order within each shard and visits every job once.
+///
+/// Twelve on an 18-core host: a job waits on real child handshakes, store
+/// writes and closure polls far more than it computes, so a drive is bound by
+/// per-job latency, not by cores (measured `ps` pegs a shard near a tenth of
+/// one core). Twice the shards halves the wall of the longest drives, which is
+/// what the selector's total is made of once the group runs more than one
+/// drive at a time.
+const SHARDS: usize = 12;
+/// Rotate the starting shard at each crossing. Plain modulo leaves every fault
+/// type on the same few processes, while slower fault types finish and leave
+/// those processes alone. Rotation preserves job order within each shard and
+/// visits every job once; with the stride coprime to `SHARDS` it also gives
+/// every shard one crossing per fault type.
 fn job_shard(ordinal: usize) -> usize {
     (ordinal + ordinal / Fault::ALL.len()) % SHARDS
 }
@@ -674,7 +682,7 @@ fn fault_child() {
     fault::arm(None);
 }
 
-/// Exercise the same assignment used by the six re-executed shards. Keep the
+/// Exercise the same assignment used by the re-executed shards. Keep the
 /// exact crossing/fault and observation identities, not just job counts.
 #[test]
 fn rotated_shards_preserve_jobs_and_distribute_each_fault() {
@@ -699,15 +707,16 @@ fn rotated_shards_preserve_jobs_and_distribute_each_fault() {
                 1
             );
         }
-        // The old assignment concentrates one fault type on each shard.
+        // Plain modulo concentrates each fault type instead: with twelve
+        // shards one shard holds half of every fault's crossings.
         assert_eq!(
             plan.iter()
                 .enumerate()
-                .filter(|(ordinal, job)| ordinal % SHARDS == shard
+                .filter(|(ordinal, job)| *ordinal % SHARDS == shard
                     && matches!(job,
-                Job::Point(_, _, fault) if *fault == Fault::ALL[shard]))
+                Job::Point(_, _, fault) if *fault == Fault::ALL[shard % Fault::ALL.len()]))
                 .count(),
-            SHARDS
+            SHARDS / 2
         );
         merged.extend(assigned);
     }
