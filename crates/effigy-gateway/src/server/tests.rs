@@ -107,23 +107,6 @@ fn write_private_fixture_file(path: &Path, bytes: impl AsRef<[u8]>) {
     }
 }
 
-#[test]
-fn pid_file_roundtrip() {
-    let dir = gateway_dir();
-    let pid_path = dir.path().join("test.pid");
-    let version_path = pid_path.with_extension("version");
-
-    write_pid_file(&pid_path).unwrap();
-    write_gateway_version_file(&pid_path).unwrap();
-    let pid = read_pid_file(&pid_path).unwrap();
-    assert_eq!(pid, std::process::id());
-    assert!(read_gateway_version_file(&version_path).unwrap().is_some());
-
-    remove_pid_file(&pid_path);
-    assert!(!pid_path.exists());
-    assert!(!version_path.exists());
-}
-
 #[cfg(unix)]
 #[test]
 fn legacy_recovery_version_publication_refuses_symlink_without_following() {
@@ -170,6 +153,15 @@ fn server_pid_domain_accepts_only_positive_non_init_pid_t_values() {
 fn read_pid_file_rejects_invalid_pid_domain_and_malformed_values() {
     let dir = gateway_dir();
     let pid_path = dir.path().join("gateway.pid");
+    let version_path = pid_path.with_extension("version");
+
+    write_pid_file(&pid_path).unwrap();
+    write_gateway_version_file(&pid_path).unwrap();
+    assert_eq!(read_pid_file(&pid_path).unwrap(), std::process::id());
+    assert!(read_gateway_version_file(&version_path).unwrap().is_some());
+    remove_pid_file(&pid_path);
+    assert!(!pid_path.exists());
+    assert!(!version_path.exists());
 
     for value in [
         "0",
@@ -1914,8 +1906,10 @@ fn stop_records(routes: &Path) -> Vec<serde_json::Value> {
 
 /// The machine gateway observes its last route withdrawal and stays up: no idle
 /// timer is armed, so no 300 s clock starts and nothing can stop it.
+/// The machine gateway schedules no idle stop after its last route is
+/// withdrawn. The private gateway does schedule one and records its cause.
 #[test]
-fn scheduled_idle_shutdown_leaves_the_machine_gateway_running_after_its_last_route() {
+fn scheduled_idle_shutdown_stops_a_private_gateway_with_its_cause_after_the_delay() {
     let (_fixture, routes) = gateway_state();
     let clock = held_clock();
     let (idle, stopped) = idle_shutdown(&routes, &clock);
@@ -1923,27 +1917,12 @@ fn scheduled_idle_shutdown_leaves_the_machine_gateway_running_after_its_last_rou
     publish_route(&routes, "app.test");
     assert!(reload(&routes, &table, &idle, false).is_none());
     withdraw_route(&routes, "app.test");
-    assert!(
-        reload(&routes, &table, &idle, false).is_none(),
-        "the machine gateway arms no idle stop"
-    );
+    assert!(reload(&routes, &table, &idle, false).is_none());
     assert!(table.read().unwrap().is_empty());
-    assert!(
-        clock.waits.lock().unwrap().is_empty(),
-        "no idle clock starts"
-    );
+    assert!(clock.waits.lock().unwrap().is_empty());
     assert_eq!(idle.generation.load(Ordering::SeqCst), 0);
     assert!(!*stopped.borrow());
-}
 
-/// A private gateway whose route table stays empty for the idle delay stops,
-/// and its operator log names the cause before the clean exit.
-#[test]
-fn scheduled_idle_shutdown_stops_a_private_gateway_with_its_cause_after_the_delay() {
-    let (_fixture, routes) = gateway_state();
-    let clock = held_clock();
-    let (idle, stopped) = idle_shutdown(&routes, &clock);
-    let table = Arc::new(RwLock::new(RouteTable::new()));
     publish_route(&routes, "app.test");
     assert!(reload(&routes, &table, &idle, true).is_none());
     withdraw_route(&routes, "app.test");
