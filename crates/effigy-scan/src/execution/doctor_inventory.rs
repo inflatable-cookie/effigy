@@ -139,11 +139,11 @@ pub fn run_doctor_scan_inventory(
                     return Ok(());
                 }
             }
+            // Byte-walk read: unreadable files are a typed read failure.
+            // Non-UTF-8 bytes are not a refusal here; `analyze_file`
+            // observes them as binary below.
             let bytes = std::fs::read(path).map_err(|error| {
-                ScanError::invocation(format!(
-                    "doctor inventory read failed for {}: {error}",
-                    path.display()
-                ))
+                ScanError::read_failed(path.display(), error)
             })?;
             let identity = clean_git_identity.unwrap_or_else(|| content_identity(&bytes));
             if let Some(cached) = cached_files
@@ -1675,6 +1675,31 @@ mod tests {
         assert!(error.is_budget_exhausted(), "{error}");
         assert!(error.to_string().contains("budget exhausted"));
         assert!(!cache_paths(root, "root", root).current.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_inventory_file_is_a_typed_read_failure() {
+        // The byte walk lists the permissionless file, so its read fails
+        // with `PermissionDenied`: typed `ReadFailed`, not a generic string.
+        // Root can read anything, so only assert when the read refuses.
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let path = root.join("secret.rs");
+        std::fs::write(&path, b"fn secret() {}\n").expect("write");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000))
+            .expect("chmod");
+        if std::fs::read(&path).is_err() {
+            let options = options();
+            let error = run_doctor_scan_inventory(root, "root", root, &[], &options, true, None)
+                .expect_err("unreadable inventory file must fail");
+            assert!(
+                matches!(error, ScanError::ReadFailed { .. }),
+                "got: {error}"
+            );
+            assert!(error.to_string().contains("secret.rs"), "got: {error}");
+        }
     }
 
     #[test]
