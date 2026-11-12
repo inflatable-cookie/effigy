@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Owned synthetic-tree proofs for the Cargo-route and mktemp detectors.
+"""Owned synthetic-tree proofs for the Cargo-route and mktemp detectors,
+and for the wrapper `effigy test:focused` runs under.
 
 Each case copies the exact committed guard (SHA-256 matched) into a private
 repo under TMPDIR and runs that copy. Production `qa:docs:cargo-routes` and
@@ -18,6 +19,7 @@ import unittest
 SOURCE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CARGO_GUARD = "check-cargo-routes.py"
 MKTEMP_GUARD = "check-mktemp.py"
+FOCUSED_WRAPPER = "focused-executable.sh"
 
 
 def sha256_file(path):
@@ -154,6 +156,66 @@ class CargoRouteGuardTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("unrecorded plain-Cargo route: release.gates.format",
                       result.stdout)
+
+
+class FocusedExecutableTests(unittest.TestCase):
+    """`effigy test:focused` supplies the binary its nested invocations re-exec."""
+
+    def tearDown(self):
+        root = getattr(self, "repo", None)
+        if root and os.path.isdir(root):
+            shutil.rmtree(root, ignore_errors=True)
+
+    def _repo(self):
+        self.repo = owned_repo()
+        install_guard(self.repo, FOCUSED_WRAPPER)
+        write(os.path.join(self.repo, "Cargo.toml"), "[workspace]\n")
+        return self.repo
+
+    def _run(self, repo, env=None):
+        source_env = os.environ.copy()
+        source_env.pop("EFFIGY_EXECUTABLE", None)
+        source_env.update(env or {})
+        return subprocess.run(
+            ["sh", os.path.join(repo, "scripts", FOCUSED_WRAPPER), "sh", "-c",
+             "printf '%s' \"${EFFIGY_EXECUTABLE:-unset}\""],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            env=source_env,
+        )
+
+    def test_the_selector_supplies_the_uplifted_cli(self):
+        repo = self._repo()
+        executable = os.path.join(repo, "target", "debug", "effigy")
+        write(executable, "#!/bin/sh\nexit 0\n")
+        os.chmod(executable, 0o755)
+        result = self._run(repo)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, executable)
+
+    def test_an_operator_choice_is_kept(self):
+        repo = self._repo()
+        result = self._run(repo, {"EFFIGY_EXECUTABLE": "/opt/effigy"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "/opt/effigy")
+
+    def test_a_missing_binary_refuses_with_the_instruction(self):
+        repo = self._repo()
+        result = self._run(repo)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("oxide build --bin effigy", result.stderr)
+        self.assertIn("EFFIGY_EXECUTABLE", result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_the_focused_selector_runs_through_the_wrapper(self):
+        # Before this wrapper existed, `test:focused` exported nothing, so a
+        # nested invocation inside an integration test failed late as a
+        # relative custody executable (papercut 5e5f43a8).
+        with open(os.path.join(SOURCE_ROOT, "config", "tasks.toml"), encoding="utf-8") as handle:
+            lines = [line for line in handle if line.startswith('"test:focused"')]
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("sh scripts/%s sh scripts/oxide-selector.sh" % FOCUSED_WRAPPER, lines[0])
 
 
 class MktempGuardTests(unittest.TestCase):

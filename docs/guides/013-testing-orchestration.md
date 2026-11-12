@@ -91,6 +91,13 @@ Cargo invocation per step. Set `EFFIGY_EXECUTABLE`
 yourself to test against a different build; the TUI and parallel paths carry the
 same value.
 
+`effigy test:focused` runs arbitrary `{args}`, so it cannot know which selected
+tests nest an invocation: it supplies this checkout's uplifted
+`target/debug/effigy` for all of them, keeps an explicit `EFFIGY_EXECUTABLE`,
+and refuses before building anything when neither exists. Build the CLI once
+(`oxide build --bin effigy`) rather than letting a test discover the gap as a
+late custody failure.
+
 ## Configuration Authority
 
 `[test]`, `[test.suites]`, and `[test.runners]` are the only test configuration

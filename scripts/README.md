@@ -45,6 +45,8 @@ pool instead of `target/`, so the bulk of the writes stay off the internal SSD
 - `local-codesign.sh` — selects or provisions the one stable macOS code-signing
   identity that `install:local` signs each activated binary with (guide 010)
 - `oxide-selector.sh` — Cargo-to-Oxide routing for Effigy selectors
+- `focused-executable.sh` — supplies `EFFIGY_EXECUTABLE` for `test:focused`, so
+  a test that nests an Effigy invocation re-execs this checkout's CLI
 - `check-release-ci.sh` — hosted CI status helper for release proof lanes
 
 Bundle- and provider-owned scripts live under `external/` and crate fixtures;
