@@ -2346,6 +2346,7 @@ fn fork_only_anchor_cannot_obtain_the_effect_nonce_or_join_a_pty_session() {
 }
 
 #[test]
+#[ignore = "on-demand measurement utility; run only for the anchor timing report"]
 fn anchor_spawn_overhead_is_measured() {
     let mut host_load = [0f64; 3];
     // SAFETY: getloadavg writes at most three initialized doubles here.

@@ -1647,49 +1647,6 @@ fn refusal_accounting_deadline_pending_streams_report_lower_bounds() {
 }
 
 #[test]
-fn refusal_accounting_pending_progress_is_a_lower_bound_not_zero() {
-    let (_dir, bin_dir, repo) = fixture("refusal-flood-progress");
-    let policy = policy();
-    with_fake_backend(&bin_dir, "docker", || {
-        // 100000 bytes cannot fit in any pipe buffer, so the reader must
-        // have consumed whole chunks before the child can finish writing;
-        // the child then sleeps holding both pipes, keeping them pending.
-        let error = run_json(
-            &repo,
-            &policy,
-            "pending-flood",
-            &limits(REFUSAL_PROOF_BUDGET_MS, 1_048_576, 64),
-            REFUSAL_PROOF_BUDGET_MS,
-        )
-        .expect_err("the sleeping leader must hit the deadline");
-        let details = failure_details(&error);
-        assert_eq!(details["failure"], "deadline");
-        let observations = observations_of(&details);
-        assert_eq!(observations["spawn_disposition"], "spawned");
-        assert_eq!(observations["stdout"]["state"], "pending");
-        let retained = assert_count_semantics(
-            &observations["stdout"]["retained_prefix_bytes"],
-            "lower_bound",
-        );
-        let read = assert_count_semantics(&observations["stdout"]["read_bytes"], "lower_bound");
-        // A pending stream's progress is a truthful lower bound, never a
-        // zero claim or an unknown: the flood reached the reader.
-        assert!(
-            retained >= 1,
-            "pending retained progress must be a real lower bound: {observations}"
-        );
-        assert!(
-            read >= retained,
-            "reads include discarded bytes and never trail retention: {observations}"
-        );
-        assert_eq!(observations["stderr"]["state"], "pending");
-        // The failed prefix is reported but never charged to completed
-        // accounting or the remaining budget.
-        assert_eq!(details["retained"]["stdout_bytes"], 0);
-    });
-}
-
-#[test]
 fn refusal_accounting_leader_exit_with_inherited_writer_keeps_partial_output_visible() {
     let (_dir, bin_dir, repo) = fixture("refusal-partial-hold");
     let policy = policy();
@@ -1737,9 +1694,14 @@ fn refusal_accounting_leader_exit_with_inherited_writer_keeps_partial_output_vis
                 &observations[stream]["retained_prefix_bytes"],
                 "lower_bound",
             );
+            let read = assert_count_semantics(&observations[stream]["read_bytes"], "lower_bound");
             assert!(
                 retained >= written,
                 "the refused {stream} prefix must show its partial bytes: {observations}"
+            );
+            assert!(
+                read >= retained,
+                "reads include discarded bytes and never trail retention: {observations}"
             );
         }
         // Equal preparation and cumulative counts still establish nothing

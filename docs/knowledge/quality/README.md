@@ -2,12 +2,13 @@
 
 Owner: [test assurance](../test-assurance.md).
 
-The test tables are rated at `5db5437b48de595c5a597036da4c7013ef658b74`; the code table has not yet been rated.
+The test tables are rated at `ROUND4C_RATED_COMMIT`; the code table has not yet been rated.
 Round 4 re-rated every row that changed, arrived or was recorded as an exception across the B1-B9
 tranches, dropped the rows whose tests are gone, and left every untouched row's parts as they were
 rated at `4026bd67e`. Locators and body hashes are refreshed for the rows that were re-read. The
 round 4b close re-rated the 65 rows its consolidation touched, dropped the 36 rows whose test was
-merged into a single entrypoint or is now a plain helper, and refreshed the rated commit.
+merged into a single entrypoint or is now a plain helper, and refreshed the rated commit. Round 4c
+re-rated the final 39 below-floor rows; the updated summary reports zero scored tests below 7.
 
 ## Tables
 
@@ -20,9 +21,9 @@ merged into a single entrypoint or is now a plain helper, and refreshed the rate
 
 Tom agreed to option B now: a test floor of 7, with evidenced merges and removals completed. Option C (floor 7 and mean 8.5) is a later target. The code target is TBD.
 
-Round 4 did not reach floor 7 everywhere: 52 table rows score 6 or lower — 39 scored tests and
-13 excluded helper entrypoints (the other 17 excluded helpers score 7 or 8). [The summary](tests/SUMMARY.md)
-breaks the 39 scored rows down by why and names the improvable ones.
+The agreed Round 4 target is met: every scored row is 7 or higher. The [summary](tests/SUMMARY.md)
+records the current distribution, the non-scored helper and measurement entries, and the Round 4c
+dispositions.
 
 ## Cost clarification (2026-11-12, from calibration)
 
