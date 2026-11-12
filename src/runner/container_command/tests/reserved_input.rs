@@ -705,6 +705,20 @@ fn pinned_primary_uses_retained_checkout_and_scoped_token() {
     assert!(verify_pinned_primary(&state, checkout, &policy, &backend, &row).is_err());
 }
 
+fn unavailable_reason(error: EnvError) -> String {
+    match error {
+        EnvError::Kernel(effigy_kernel::run::RunError::Unavailable(reason)) => reason,
+        other => panic!("expected unavailable evidence, got {other:?}"),
+    }
+}
+
+fn refused_reason(error: EnvError) -> String {
+    match error {
+        EnvError::Kernel(effigy_kernel::run::RunError::Refused(reason)) => reason,
+        other => panic!("expected policy refusal, got {other:?}"),
+    }
+}
+
 // ------------------------------------------------------- the mode boundary
 
 #[test]
@@ -769,9 +783,10 @@ fn colima_preserves_the_admitted_profile_and_renders_the_observed_gateway() {
         .policy()
         .read_compose(override_path)
         .expect("in-memory closure");
-    assert!(
-        rendered.contains("effigy-host: 192.168.5.2") || rendered.contains("\"192.168.5.2\""),
-        "{rendered}"
+    let compose: serde_yaml::Value = serde_yaml::from_str(&rendered).expect("rendered compose");
+    assert_eq!(
+        compose["services"]["app"]["extra_hosts"]["effigy-host"].as_str(),
+        Some("192.168.5.2")
     );
     // A re-observed target that names this backend is a decision this plan can
     // freeze; an unknown successor reserves Absent for later receipt binding.
@@ -886,11 +901,16 @@ fn an_alias_address_no_observation_supplied_refuses() {
         ),
     ] {
         let mut backend = FakeBackend::container_mode(selection, addressing);
-        let error = effigy_containers::with_test_effigy_home(&home, || {
+        let error = refused_reason(effigy_containers::with_test_effigy_home(&home, || {
             plan_for(&policy, &mut backend).expect_err("no observed address")
-        })
-        .to_string();
+        }));
         assert!(error.contains(expected), "{error}");
+        assert_eq!(
+            backend.count(),
+            2,
+            "no predecessor/render work after unqualified alias"
+        );
+        assert_eq!(backend.guest_calls.get(), 0);
     }
 }
 
@@ -901,10 +921,9 @@ fn an_unknown_backend_selection_refuses_before_any_render() {
     let mut backend = FakeBackend::colima();
     backend.selection = Observed::Unknown(UnknownReason::StoreUnreadable("no record".into()));
 
-    let error = effigy_containers::with_test_effigy_home(&home, || {
+    let error = unavailable_reason(effigy_containers::with_test_effigy_home(&home, || {
         plan_for(&policy, &mut backend).expect_err("unknown selection")
-    })
-    .to_string();
+    }));
 
     assert!(error.contains("backend selection is unknown"), "{error}");
     assert_eq!(backend.count(), 1, "the plan stops at the selection");
@@ -917,15 +936,16 @@ fn an_expired_deadline_refuses_before_planning() {
     let mut backend = FakeBackend::colima();
     let expired = PublicationDeadline::new(Instant::now() - Duration::from_secs(1));
 
-    let error = plan(
-        ReservedPlanRequest {
-            policy: &policy,
-            deadline: expired,
-        },
-        &mut backend,
-    )
-    .expect_err("expired budget")
-    .to_string();
+    let error = unavailable_reason(
+        plan(
+            ReservedPlanRequest {
+                policy: &policy,
+                deadline: expired,
+            },
+            &mut backend,
+        )
+        .expect_err("expired budget"),
+    );
 
     assert!(error.contains("deadline expired"), "{error}");
     assert_eq!(backend.count(), 0, "an expired budget spawns nothing");
@@ -942,7 +962,11 @@ fn a_project_with_no_running_container_has_nothing_to_protect() {
     let planned =
         effigy_containers::with_test_effigy_home(&home, || plan_for(&policy, &mut backend));
 
-    assert!(planned.expect("plan").is_some());
+    assert_eq!(
+        planned.expect("plan").expect("container mode").predecessor,
+        PredecessorCompatibility::NoPredecessor
+    );
+    assert_eq!(backend.count(), 3);
 }
 
 #[test]
@@ -956,149 +980,71 @@ fn a_live_predecessor_on_the_renders_own_config_hash_is_compatible() {
         effigy_containers::with_test_effigy_home(&home, || plan_for(&policy, &mut backend))
             .expect("plan");
 
-    assert!(planned.is_some());
+    assert_eq!(
+        planned.expect("container mode").predecessor,
+        matching_predecessor("0123456789abcdef0123456789abcdef")
+    );
+    assert_eq!(backend.count(), 3);
 }
 
 #[test]
 fn a_live_predecessor_created_from_another_config_hash_is_refused() {
-    let (_fixture, root, home) = checkout("predecessor-changed-hash");
+    let (_fixture, root, home) = checkout("predecessor-refusals");
     let policy = rendered_policy(&root);
-    // The live container records a hash the render does not produce: applying it
-    // would recreate the container a live session is serving.
-    let mut backend = FakeBackend::colima();
-    backend.predecessor = Observed::Unknown(UnknownReason::Inconsistent(
-        "the live predecessor for service `app` was created from config `aaaa`, not the render's \
-         `bbbb`: applying would recreate it"
-            .into(),
-    ));
-
-    let error = effigy_containers::with_test_effigy_home(&home, || {
-        plan_for(&policy, &mut backend).expect_err("a changed live config hash refuses")
-    })
-    .to_string();
-
-    assert!(error.contains("live predecessor is unknown"), "{error}");
-    assert!(error.contains("would recreate it"), "{error}");
-}
-
-#[test]
-fn a_stale_record_with_an_externally_changed_live_hash_refuses() {
-    let (_fixture, root, home) = checkout("predecessor-stale-record");
-    let policy = rendered_policy(&root);
-    // The environment record still names the render Effigy published, but the
-    // live container was recreated outside Effigy from another config. Only the
-    // live Compose hash can see that; the record digest cannot.
-    let mut backend = FakeBackend::colima();
-    backend.predecessor = Observed::Unknown(UnknownReason::Inconsistent(
-        "the live predecessor for service `app` was created from config `changed-externally`"
-            .into(),
-    ));
-
-    let error = effigy_containers::with_test_effigy_home(&home, || {
-        plan_for(&policy, &mut backend).expect_err("a live hash that differs refuses")
-    })
-    .to_string();
-
-    assert!(error.contains("live predecessor is unknown"), "{error}");
-}
-
-#[test]
-fn an_unknown_live_predecessor_refuses() {
-    let (_fixture, root, home) = checkout("predecessor-unknown");
-    let policy = rendered_policy(&root);
-    let mut backend = FakeBackend::colima();
-    backend.predecessor = Observed::Unknown(UnknownReason::Injected);
-
-    let error = effigy_containers::with_test_effigy_home(&home, || {
-        plan_for(&policy, &mut backend).expect_err("unknown predecessor")
-    })
-    .to_string();
-
-    assert!(error.contains("predecessor is unknown"), "{error}");
-}
-
-#[test]
-fn an_unbudgeted_live_predecessor_refuses() {
-    let (_fixture, root, home) = checkout("predecessor-timeout");
-    let policy = rendered_policy(&root);
-    let mut backend = FakeBackend::colima();
-    backend.predecessor = Observed::Unknown(UnknownReason::TimedOut {
-        phase: "compose config hash".into(),
-    });
-
-    let error = effigy_containers::with_test_effigy_home(&home, || {
-        plan_for(&policy, &mut backend).expect_err("a timed-out predecessor read refuses")
-    })
-    .to_string();
-
-    assert!(error.contains("predecessor is unknown"), "{error}");
+    for (label, reason, detail) in [
+        ("changed hash", UnknownReason::Inconsistent("the live predecessor for service `app` was created from config `aaaa`, not the render's `bbbb`: applying would recreate it".into()), "would recreate it"),
+        ("stale record", UnknownReason::Inconsistent("the live predecessor for service `app` was created from config `changed-externally`".into()), "changed-externally"),
+        ("unknown", UnknownReason::Injected, "injected"),
+        ("unbudgeted", UnknownReason::TimedOut { phase: "compose config hash".into() }, "compose config hash"),
+    ] {
+        let mut backend = FakeBackend::colima();
+        backend.predecessor = Observed::Unknown(reason);
+        let error = unavailable_reason(effigy_containers::with_test_effigy_home(&home, || {
+            plan_for(&policy, &mut backend).expect_err(label)
+        }));
+        assert!(error.contains("live predecessor is unknown"), "{label}: {error}");
+        assert!(error.contains(detail), "{label}: {error}");
+        assert_eq!(backend.count(), 3, "{label}: stops at predecessor observation");
+        assert_eq!(backend.guest_calls.get(), 0, "{label}: no guest opened");
+    }
 }
 
 #[test]
 fn the_gated_recheck_refuses_two_valid_observations_of_different_containers() {
-    let observation = observation_checkout("predecessor-different-id");
+    let observation = observation_checkout("predecessor-transitions");
     let artifact = produced_artifact(&observation.root, host_family());
-    let mut backend = FakeBackend::colima().with_predecessor(PredecessorCompatibility::Matches(
-        vec![(CONTAINER_ID.to_owned(), "aaa111".to_owned())],
-    ));
-    backend.artifact = Observed::Verified(artifact, evidence());
-    let policy = rendered_policy(&observation.root);
-    let plan = planned_in_home(&observation, &policy, &mut backend);
-
-    // Both observations are individually valid: a live container created from a
-    // compatible hash. They name different containers, so the world changed.
-    backend.predecessor = Observed::Verified(
-        PredecessorCompatibility::Matches(vec![(
-            OTHER_CONTAINER_ID.to_owned(),
-            "aaa111".to_owned(),
-        )]),
-        evidence(),
-    );
-    let error = recheck_live_predecessor(&plan, &mut backend)
-        .expect_err("two different container ids are not the same predecessor")
-        .to_string();
-
-    assert!(error.contains("changed between preflight"), "{error}");
-}
-
-#[test]
-fn the_gated_recheck_refuses_a_predecessor_that_appeared_after_preflight() {
-    let observation = observation_checkout("predecessor-appeared");
-    let artifact = produced_artifact(&observation.root, host_family());
-    let mut backend = FakeBackend::colima();
-    backend.artifact = Observed::Verified(artifact, evidence());
-    let policy = rendered_policy(&observation.root);
-    let plan = planned_in_home(&observation, &policy, &mut backend);
-    assert_eq!(plan.predecessor, PredecessorCompatibility::NoPredecessor);
-
-    backend.predecessor = Observed::Verified(
-        PredecessorCompatibility::Matches(vec![(CONTAINER_ID.to_owned(), "aaa111".to_owned())]),
-        evidence(),
-    );
-    let error = recheck_live_predecessor(&plan, &mut backend)
-        .expect_err("absence becoming presence is a changed world")
-        .to_string();
-
-    assert!(error.contains("changed between preflight"), "{error}");
-}
-
-#[test]
-fn the_gated_recheck_refuses_a_predecessor_that_disappeared_after_preflight() {
-    let observation = observation_checkout("predecessor-disappeared");
-    let artifact = produced_artifact(&observation.root, host_family());
-    let mut backend = FakeBackend::colima().with_predecessor(PredecessorCompatibility::Matches(
-        vec![(CONTAINER_ID.to_owned(), "aaa111".to_owned())],
-    ));
-    backend.artifact = Observed::Verified(artifact, evidence());
-    let policy = rendered_policy(&observation.root);
-    let plan = planned_in_home(&observation, &policy, &mut backend);
-
-    backend.predecessor = Observed::Verified(PredecessorCompatibility::NoPredecessor, evidence());
-    let error = recheck_live_predecessor(&plan, &mut backend)
-        .expect_err("presence becoming absence is a changed world")
-        .to_string();
-
-    assert!(error.contains("changed between preflight"), "{error}");
+    let present = matching_predecessor("aaa111");
+    let other =
+        PredecessorCompatibility::Matches(vec![(OTHER_CONTAINER_ID.into(), "aaa111".into())]);
+    for (label, before, after) in [
+        ("different id", present.clone(), other),
+        (
+            "appeared",
+            PredecessorCompatibility::NoPredecessor,
+            present.clone(),
+        ),
+        (
+            "disappeared",
+            present,
+            PredecessorCompatibility::NoPredecessor,
+        ),
+    ] {
+        let mut backend = FakeBackend::colima()
+            .with_predecessor(before.clone())
+            .with_artifact(artifact.clone());
+        let policy = rendered_policy(&observation.root);
+        let plan = planned_in_home(&observation, &policy, &mut backend);
+        assert_eq!(plan.predecessor, before, "{label}");
+        backend.predecessor = Observed::Verified(after, evidence());
+        let reads = backend.count();
+        let error = refused_reason(recheck_live_predecessor(&plan, &mut backend).expect_err(label));
+        assert!(
+            error.contains("changed between preflight"),
+            "{label}: {error}"
+        );
+        assert_eq!(backend.count(), reads + 1, "{label}: live recheck required");
+        assert_eq!(backend.guest_calls.get(), 0, "{label}");
+    }
 }
 
 #[test]
@@ -1116,8 +1062,10 @@ fn the_gated_recheck_accepts_the_same_two_observations() {
         PredecessorCompatibility::Matches(vec![(CONTAINER_ID.to_owned(), "aaa111".to_owned())]),
         evidence(),
     );
+    let reads = backend.count();
     let verified = recheck_live_predecessor(&plan, &mut backend).expect("unchanged live stack");
     assert_eq!(verified.compared(), 1);
+    assert_eq!(backend.count(), reads + 1);
     assert_eq!(verified.compatibility(), &plan.predecessor);
 }
 
@@ -1130,8 +1078,14 @@ fn an_unchanged_absent_predecessor_still_rechecks() {
     let policy = rendered_policy(&observation.root);
     let plan = planned_in_home(&observation, &policy, &mut backend);
 
+    let reads = backend.count();
     let verified = recheck_live_predecessor(&plan, &mut backend).expect("still nothing running");
     assert_eq!(verified.compared(), 0);
+    assert_eq!(
+        verified.compatibility(),
+        &PredecessorCompatibility::NoPredecessor
+    );
+    assert_eq!(backend.count(), reads + 1);
 }
 
 // ------------------------------------------------------- post-apply observation
@@ -1280,20 +1234,30 @@ fn a_guest_that_names_another_container_is_refused_as_a_raced_binding() {
     );
     let facts = reobserved_decision(&plan, bound_container());
 
-    let error = observe(
-        ReservedObservationRequest {
-            repo_root: &observation.root,
-        },
-        &plan,
-        &rendered,
-        &probe,
-        &facts,
-        &mut backend,
-    )
-    .expect_err("raced binding")
-    .to_string();
+    let reads = backend.count();
+    let read_count = backend.reads.clone();
+    let guest_calls = backend.guest_calls.clone();
+    let error = refused_reason(
+        observe(
+            ReservedObservationRequest {
+                repo_root: &observation.root,
+            },
+            &plan,
+            &rendered,
+            &probe,
+            &facts,
+            &mut backend,
+        )
+        .expect_err("raced binding"),
+    );
 
     assert!(error.contains("another container"), "{error}");
+    assert_eq!(
+        read_count.get(),
+        reads + 2,
+        "refusal stops at its evidence boundary"
+    );
+    assert_eq!(guest_calls.get(), 0, "refused input opens no guest");
 }
 
 #[test]
@@ -1320,20 +1284,30 @@ fn a_target_the_decision_did_not_freeze_is_refused() {
     });
     let facts = decision(inputs);
 
-    let error = observe(
-        ReservedObservationRequest {
-            repo_root: &observation.root,
-        },
-        &plan,
-        &rendered,
-        &probe,
-        &facts,
-        &mut backend,
-    )
-    .expect_err("stale decision evidence")
-    .to_string();
+    let reads = backend.count();
+    let read_count = backend.reads.clone();
+    let guest_calls = backend.guest_calls.clone();
+    let error = refused_reason(
+        observe(
+            ReservedObservationRequest {
+                repo_root: &observation.root,
+            },
+            &plan,
+            &rendered,
+            &probe,
+            &facts,
+            &mut backend,
+        )
+        .expect_err("stale decision evidence"),
+    );
 
     assert!(error.contains("the identity the decision froze"), "{error}");
+    assert_eq!(
+        read_count.get(),
+        reads + 2,
+        "refusal stops at its evidence boundary"
+    );
+    assert_eq!(guest_calls.get(), 0, "refused input opens no guest");
 }
 
 #[test]
@@ -1349,20 +1323,30 @@ fn an_unknown_image_platform_refuses() {
     ));
     let facts = reobserved_decision(&plan, bound_container());
 
-    let error = observe(
-        ReservedObservationRequest {
-            repo_root: &observation.root,
-        },
-        &plan,
-        &rendered,
-        &probe,
-        &facts,
-        &mut backend,
-    )
-    .expect_err("unknown image platform")
-    .to_string();
+    let reads = backend.count();
+    let read_count = backend.reads.clone();
+    let guest_calls = backend.guest_calls.clone();
+    let error = unavailable_reason(
+        observe(
+            ReservedObservationRequest {
+                repo_root: &observation.root,
+            },
+            &plan,
+            &rendered,
+            &probe,
+            &facts,
+            &mut backend,
+        )
+        .expect_err("unknown image platform"),
+    );
 
     assert!(error.contains("image platform is unknown"), "{error}");
+    assert_eq!(
+        read_count.get(),
+        reads + 3,
+        "refusal stops at its evidence boundary"
+    );
+    assert_eq!(guest_calls.get(), 0, "refused input opens no guest");
 }
 
 #[test]
@@ -1376,20 +1360,30 @@ fn a_guest_that_disagrees_with_its_image_refuses() {
     backend.identity = Observed::Verified(host_identity(other_arch_machine(), "gnu"), evidence());
     let facts = reobserved_decision(&plan, bound_container());
 
-    let error = observe(
-        ReservedObservationRequest {
-            repo_root: &observation.root,
-        },
-        &plan,
-        &rendered,
-        &probe,
-        &facts,
-        &mut backend,
-    )
-    .expect_err("conflicting observations")
-    .to_string();
+    let reads = backend.count();
+    let read_count = backend.reads.clone();
+    let guest_calls = backend.guest_calls.clone();
+    let error = refused_reason(
+        observe(
+            ReservedObservationRequest {
+                repo_root: &observation.root,
+            },
+            &plan,
+            &rendered,
+            &probe,
+            &facts,
+            &mut backend,
+        )
+        .expect_err("conflicting observations"),
+    );
 
     assert!(error.contains("while its image reports"), "{error}");
+    assert_eq!(
+        read_count.get(),
+        reads + 3,
+        "refusal stops at its evidence boundary"
+    );
+    assert_eq!(guest_calls.get(), 0, "refused input opens no guest");
 }
 
 #[test]
@@ -1412,20 +1406,30 @@ fn emulated_execution_is_refused_rather_than_claimed() {
     backend.identity = Observed::Verified(host_identity(other_arch_machine(), "gnu"), evidence());
     let facts = reobserved_decision(&plan, bound_container());
 
-    let error = observe(
-        ReservedObservationRequest {
-            repo_root: &observation.root,
-        },
-        &plan,
-        &rendered,
-        &probe,
-        &facts,
-        &mut backend,
-    )
-    .expect_err("unverified emulation")
-    .to_string();
+    let reads = backend.count();
+    let read_count = backend.reads.clone();
+    let guest_calls = backend.guest_calls.clone();
+    let error = unavailable_reason(
+        observe(
+            ReservedObservationRequest {
+                repo_root: &observation.root,
+            },
+            &plan,
+            &rendered,
+            &probe,
+            &facts,
+            &mut backend,
+        )
+        .expect_err("unverified emulation"),
+    );
 
     assert!(error.contains("emulated execution"), "{error}");
+    assert_eq!(
+        read_count.get(),
+        reads + 3,
+        "refusal stops at its evidence boundary"
+    );
+    assert_eq!(guest_calls.get(), 0, "refused input opens no guest");
 }
 
 fn other_arch_machine() -> &'static str {
@@ -1446,20 +1450,30 @@ fn an_image_without_a_provable_c_library_refuses() {
     backend.identity = Observed::Verified(host_identity(host_machine(), ""), evidence());
     let facts = reobserved_decision(&plan, bound_container());
 
-    let error = observe(
-        ReservedObservationRequest {
-            repo_root: &observation.root,
-        },
-        &plan,
-        &rendered,
-        &probe,
-        &facts,
-        &mut backend,
-    )
-    .expect_err("no provable libc")
-    .to_string();
+    let reads = backend.count();
+    let read_count = backend.reads.clone();
+    let guest_calls = backend.guest_calls.clone();
+    let error = refused_reason(
+        observe(
+            ReservedObservationRequest {
+                repo_root: &observation.root,
+            },
+            &plan,
+            &rendered,
+            &probe,
+            &facts,
+            &mut backend,
+        )
+        .expect_err("no provable libc"),
+    );
 
     assert!(error.contains("no provable C library"), "{error}");
+    assert_eq!(
+        read_count.get(),
+        reads + 3,
+        "refusal stops at its evidence boundary"
+    );
+    assert_eq!(guest_calls.get(), 0, "refused input opens no guest");
 }
 
 #[test]
@@ -1475,22 +1489,33 @@ fn a_tampered_artifact_that_disagrees_with_its_receipt_refuses() {
     let probe = probe_factory();
     let facts = reobserved_decision(&plan, bound_container());
 
-    let error = effigy_containers::with_test_effigy_home(&observation.home, || {
-        observe(
-            ReservedObservationRequest {
-                repo_root: &observation.root,
-            },
-            &plan,
-            &rendered,
-            &probe,
-            &facts,
-            &mut backend,
-        )
-        .expect_err("unauthenticated artifact")
-    })
-    .to_string();
+    let reads = backend.count();
+    let read_count = backend.reads.clone();
+    let guest_calls = backend.guest_calls.clone();
+    let error = unavailable_reason(effigy_containers::with_test_effigy_home(
+        &observation.home,
+        || {
+            observe(
+                ReservedObservationRequest {
+                    repo_root: &observation.root,
+                },
+                &plan,
+                &rendered,
+                &probe,
+                &facts,
+                &mut backend,
+            )
+            .expect_err("unauthenticated artifact")
+        },
+    ));
 
     assert!(error.contains("receipt records sha256"), "{error}");
+    assert_eq!(
+        read_count.get(),
+        reads + 4,
+        "refusal stops at its evidence boundary"
+    );
+    assert_eq!(guest_calls.get(), 0, "refused input opens no guest");
 }
 
 #[test]
@@ -1674,7 +1699,7 @@ fn an_observation_that_outlives_the_budget_is_a_timeout_not_a_panic() {
     backend.takes = Some(Duration::from_millis(150));
     let expired = PublicationDeadline::new(Instant::now() + Duration::from_millis(100));
 
-    let error = effigy_containers::with_test_effigy_home(&home, || {
+    let error = unavailable_reason(effigy_containers::with_test_effigy_home(&home, || {
         plan(
             ReservedPlanRequest {
                 policy: &policy,
@@ -1683,8 +1708,7 @@ fn an_observation_that_outlives_the_budget_is_a_timeout_not_a_panic() {
             &mut backend,
         )
         .expect_err("an expired observation is not a fact")
-    })
-    .to_string();
+    }));
 
     // Either the adapter noticed the elapsed budget and reported a timeout, or
     // the planner refused the expired clock right after the read. Both refuse;
@@ -1727,21 +1751,31 @@ fn a_same_engine_but_different_profile_binding_is_refused() {
     );
     let facts = reobserved_decision(&plan, bound_container());
 
-    let error = observe(
-        ReservedObservationRequest {
-            repo_root: &observation.root,
-        },
-        &plan,
-        &rendered,
-        &probe,
-        &facts,
-        &mut backend,
-    )
-    .expect_err("another profile is another backend")
-    .to_string();
+    let reads = backend.count();
+    let read_count = backend.reads.clone();
+    let guest_calls = backend.guest_calls.clone();
+    let error = refused_reason(
+        observe(
+            ReservedObservationRequest {
+                repo_root: &observation.root,
+            },
+            &plan,
+            &rendered,
+            &probe,
+            &facts,
+            &mut backend,
+        )
+        .expect_err("another profile is another backend"),
+    );
 
     assert!(error.contains("another-profile"), "{error}");
     assert!(error.contains("effigy"), "{error}");
+    assert_eq!(
+        read_count.get(),
+        reads + 1,
+        "refusal stops at its evidence boundary"
+    );
+    assert_eq!(guest_calls.get(), 0, "refused input opens no guest");
 }
 
 #[test]
@@ -1753,24 +1787,34 @@ fn a_policy_that_is_not_the_plans_render_is_refused() {
     let probe = probe_factory();
     let facts = reobserved_decision(&plan, bound_container());
 
-    let error = observe(
-        ReservedObservationRequest {
-            repo_root: &observation.root,
-        },
-        &plan,
-        // The unrendered policy: no `effigy-host` alias, so not the plan's render.
-        &policy,
-        &probe,
-        &facts,
-        &mut backend,
-    )
-    .expect_err("another render was handed over")
-    .to_string();
+    let reads = backend.count();
+    let read_count = backend.reads.clone();
+    let guest_calls = backend.guest_calls.clone();
+    let error = refused_reason(
+        observe(
+            ReservedObservationRequest {
+                repo_root: &observation.root,
+            },
+            &plan,
+            // The unrendered policy: no `effigy-host` alias, so not the plan's render.
+            &policy,
+            &probe,
+            &facts,
+            &mut backend,
+        )
+        .expect_err("another render was handed over"),
+    );
 
     assert!(
         error.contains("another render than the planned one"),
         "{error}"
     );
+    assert_eq!(
+        read_count.get(),
+        reads,
+        "refusal stops at its evidence boundary"
+    );
+    assert_eq!(guest_calls.get(), 0, "refused input opens no guest");
 }
 
 /// The integration shape #452 writes, type-checked against `up_prepared`'s own
@@ -1820,7 +1864,8 @@ fn the_published_integration_shape_compiles_and_owns_its_probe() {
         .expect("the observation builds the owner input")
     });
     assert_eq!(input.alias.backend, Backend::Colima);
-    assert!(input.deadline > Instant::now());
+    assert_eq!(input.deadline, plan.deadline().at());
+    assert_eq!(input.alias.profile, "effigy");
 
     // And the same closure, type-checked against `up_prepared`'s parameter.
     let second_facts = facts;
@@ -2008,11 +2053,13 @@ fn a_stalled_fragment_stops_the_closure_at_the_deadline() {
 
 #[test]
 fn a_publication_never_plans_past_its_deadline_composing_pins() {
-    let (_fixture, root, home) = fragment_checkout("closure-expiry", 400);
+    let (_fixture, root, home) = fragment_checkout("closure-expiry", 2);
     let policy = rendered_policy(&root);
     let mut backend = FakeBackend::colima();
-    // One millisecond cannot cover composing 400 fragments and the rest of
-    // planning, so the publication must refuse rather than publish anyway.
+    let fragment = root.join("fragments/0001.toml");
+    std::fs::remove_file(&fragment).expect("replace fragment");
+    let _stalled = stalled(&fragment);
+    // The source cannot complete at any speed while the FIFO writer stays open.
     let expired = PublicationDeadline::new(Instant::now() + Duration::from_millis(1));
 
     let refusal = effigy_containers::with_test_effigy_home(&home, || {
@@ -2028,7 +2075,7 @@ fn a_publication_never_plans_past_its_deadline_composing_pins() {
     let error = match refusal {
         Ok(Some(_)) => panic!("a publication past its deadline must not plan"),
         Ok(None) => panic!("this checkout declares an operator workspace"),
-        Err(error) => error.to_string(),
+        Err(error) => unavailable_reason(error),
     };
     assert!(
         error.contains("deadline expired") || error.contains("source closure is unknown"),
@@ -2136,7 +2183,7 @@ fn a_stalled_manifest_refuses_at_the_deadline_before_planning() {
     });
     let error = match refusal {
         Ok(_) => panic!("a stalled manifest must not produce a plan"),
-        Err(error) => error.to_string(),
+        Err(error) => unavailable_reason(error),
     };
 
     assert!(
@@ -2260,23 +2307,33 @@ fn a_frozen_fresh_decision_is_refused_at_observation_too() {
         guest: Some(plan.guest_inputs().clone()),
     });
 
-    let error = observe(
-        ReservedObservationRequest {
-            repo_root: &observation.root,
-        },
-        &plan,
-        &rendered,
-        &probe,
-        &facts,
-        &mut backend,
-    )
-    .expect_err("a frozen fresh decision is still unattributable")
-    .to_string();
+    let reads = backend.count();
+    let read_count = backend.reads.clone();
+    let guest_calls = backend.guest_calls.clone();
+    let error = refused_reason(
+        observe(
+            ReservedObservationRequest {
+                repo_root: &observation.root,
+            },
+            &plan,
+            &rendered,
+            &probe,
+            &facts,
+            &mut backend,
+        )
+        .expect_err("a frozen fresh decision is still unattributable"),
+    );
 
     assert!(
         error.contains("no journal-bound creation receipt"),
         "{error}"
     );
+    assert_eq!(
+        read_count.get(),
+        reads + 2,
+        "refusal stops at its evidence boundary"
+    );
+    assert_eq!(guest_calls.get(), 0, "refused input opens no guest");
 }
 
 #[path = "reserved_creator_binding.rs"]

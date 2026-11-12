@@ -1633,15 +1633,14 @@ mod tests {
     fn workspace_source_preparation_refuses_before_reading_or_effects() {
         let fixture = tempfile::tempdir().unwrap();
         let manifest = fixture.path().join("effigy.toml");
-        std::fs::write(&manifest, "[tasks]\nbuild = 'echo ok'\n").unwrap();
+        std::fs::create_dir(&manifest).unwrap();
         let error = super::workspace_prepare_sources(fixture.path()).unwrap_err();
         assert!(error
             .to_string()
             .contains("step=sources status=unsupported"));
-        assert_eq!(
-            std::fs::read_to_string(manifest).unwrap(),
-            "[tasks]\nbuild = 'echo ok'\n"
-        );
+        assert!(manifest.is_dir(), "manifest must not be replaced");
+        assert_eq!(std::fs::read_dir(fixture.path()).unwrap().count(), 1);
+        assert_eq!(std::fs::read_dir(manifest).unwrap().count(), 0);
     }
 
     #[test]
@@ -2209,6 +2208,9 @@ mod tests {
             },
             Some("ui-custom".to_owned()),
         );
+        assert!(
+            matches!(error, crate::runner::error::RunnerError::ContainerWaitRefused { ref environment, .. } if environment == "web")
+        );
         let message = error.to_string();
         assert!(message.contains("answered HTTP 500"), "{message}");
         assert!(!message.contains("last container output"), "{message}");
@@ -2245,6 +2247,9 @@ mod tests {
         );
         let error = super::wait_for_container_ready(&policy, None, None, None)
             .expect_err("a definite 500 is a terminal refusal");
+        assert!(
+            matches!(error, crate::runner::error::RunnerError::ContainerWaitRefused { ref environment, .. } if environment == "web")
+        );
         let message = error.to_string();
         assert!(
             message.contains("the health check of environment `web` (primary service `app`)"),
@@ -2367,13 +2372,53 @@ mod tests {
 
     #[test]
     fn tcp_alias_hosts_script_rewrites_existing_alias_entries() {
-        let script =
-            render_tcp_alias_hosts_script(&[("db.demo.test".to_owned(), "postgres".to_owned())]);
-
-        assert!(script.contains("patch_alias 'db.demo.test' 'postgres'"));
-        assert!(script.contains("return 0"));
-        assert!(script.contains("awk -v alias=\"$alias\""));
-        assert!(script.contains("printf '%s %s\\n' \"$ip\" \"$alias\" >> /etc/hosts"));
+        use std::os::unix::fs::PermissionsExt;
+        let _lock = crate::contract_test_support::lock_test();
+        let fixture = tempfile::tempdir().expect("private hosts fixture");
+        let hosts = fixture.path().join("hosts");
+        let getent = fixture.path().join("getent");
+        std::fs::write(
+            &getent,
+            "#!/bin/sh\n[ \"$2\" != postgres ] || printf '192.0.2.7 postgres\n'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&getent, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(
+            &hosts,
+            "127.0.0.1 localhost\n192.0.2.1 db.demo.test\n192.0.2.2 db.demo.test\n",
+        )
+        .unwrap();
+        let script = render_tcp_alias_hosts_script(&[
+            ("db.demo.test".into(), "postgres".into()),
+            ("missing.demo.test".into(), "missing".into()),
+        ]);
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(script.replace(
+                "/etc/hosts",
+                &super::shell_quote(&hosts.display().to_string()),
+            ))
+            .env("TMPDIR", fixture.path())
+            .env("TMP", fixture.path())
+            .env("TEMP", fixture.path())
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    fixture.path().display(),
+                    std::env::var("PATH").unwrap()
+                ),
+            )
+            .output()
+            .expect("run private hosts script");
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(
+            std::fs::read_to_string(&hosts).unwrap(),
+            "127.0.0.1 localhost\n192.0.2.7 db.demo.test\n"
+        );
+        assert!(String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("could not resolve service `missing`"));
     }
 
     /// A private checkout whose runtime is a script recording every call. The
@@ -2689,42 +2734,6 @@ mod tests {
 
     /// A changed shared render is replaced in the one order that frees its
     /// published host port before the new container is created (effigy#377).
-    #[test]
-    fn a_changed_shared_render_stops_then_removes_before_it_starts_the_new_one() {
-        let project = "effigy-shared-mariadb-probe";
-        let container = format!("{project}-legacy_mysql-1");
-        let fixture = SharedFixture::new(
-            "effigy-shared-replace-",
-            project,
-            &container,
-            "previous-render",
-        );
-        let _env = runtime_env(&fixture);
-        let policy = fixture.policy(project, "this-render");
-
-        let notes = super::ensure_shared_services_running(&policy).expect("ensure succeeds");
-
-        assert_eq!(
-            notes,
-            vec!["replaced shared legacy_mysql (render changed)".to_owned()]
-        );
-        let calls = fixture.calls();
-        let position = |needle: &str| {
-            calls
-                .iter()
-                .position(|call| call.split(' ').any(|arg| arg == needle))
-                .unwrap_or_else(|| panic!("`{needle}` was never run: {}", calls.join("; ")))
-        };
-        assert!(
-            position("stop") < position("rm") && position("rm") < position("up"),
-            "stop, remove, then up: {calls:?}"
-        );
-        assert!(
-            !calls.iter().any(|call| call.contains("volume rm")),
-            "the shared data volume is kept: {calls:?}"
-        );
-        assert!(fixture.volume_kept());
-    }
 
     /// One `inspect` record for the shared restart-policy proof: a container
     /// `name` of `project` and `service`, rendered from `render` when one is
@@ -2800,20 +2809,36 @@ mod tests {
 
     #[test]
     fn a_shared_service_with_two_listed_containers_is_ambiguous_and_receives_no_update() {
-        let project = "effigy-shared-restart-ambiguous";
+        let project = "effigy-shared-restart-refusals";
         let name = format!("{project}-legacy_mysql-1");
-        let verified = shared_inspect_record(
-            'a',
-            &name,
-            project,
-            "legacy_mysql",
-            Some("this-render"),
-            true,
-        );
-        let (calls, _) =
-            shared_restart_run_listing(project, &name, &[verified.clone(), verified], 2);
-
-        assert!(restart_updates(&calls).is_empty(), "{calls:?}");
+        let record = |id, project, render| {
+            shared_inspect_record(id, &name, project, "legacy_mysql", Some(render), true)
+        };
+        let verified = record('a', project, "this-render");
+        let foreign = record('a', "effigy-other-project", "this-render");
+        let stale = record('a', project, "previous-render");
+        for (label, answers, rows) in [
+            ("ambiguous", vec![verified.clone(), verified.clone()], 2),
+            ("foreign project", vec![foreign.clone(), foreign], 1),
+            ("stale render", vec![stale.clone(), stale], 1),
+            (
+                "changed full id",
+                vec![verified, record('b', project, "this-render")],
+                1,
+            ),
+            ("missing identity", vec!["[]".into()], 1),
+        ] {
+            let (calls, frame) = shared_restart_run_listing(project, &name, &answers, rows);
+            assert!(restart_updates(&calls).is_empty(), "{label}: {calls:?}");
+            assert!(
+                calls.iter().any(|call| call.contains(" up ")),
+                "{label}: ensure reached apply: {calls:?}"
+            );
+            assert!(
+                frame.contains("restart: unless-stopped"),
+                "{label}: reached restart stage: {frame}"
+            );
+        }
     }
 
     /// The restart-policy updates a run sent, in order.
@@ -2851,196 +2876,102 @@ mod tests {
         assert!(!updates[0].contains(&name), "{updates:?}");
     }
 
-    #[test]
-    fn a_same_name_container_of_a_foreign_project_receives_no_shared_update() {
-        let project = "effigy-shared-restart-foreign";
-        let name = format!("{project}-legacy_mysql-1");
-        let foreign = shared_inspect_record(
-            'a',
-            &name,
-            "effigy-other-project",
-            "legacy_mysql",
-            Some("this-render"),
-            true,
-        );
-        let (calls, _) = shared_restart_run(project, &name, &[foreign.clone(), foreign]);
-
-        assert!(restart_updates(&calls).is_empty(), "{calls:?}");
-    }
-
-    #[test]
-    fn a_container_rendered_from_a_stale_render_receives_no_shared_update() {
-        let project = "effigy-shared-restart-stale";
-        let name = format!("{project}-legacy_mysql-1");
-        let stale = shared_inspect_record(
-            'a',
-            &name,
-            project,
-            "legacy_mysql",
-            Some("previous-render"),
-            true,
-        );
-        let (calls, _) = shared_restart_run(project, &name, &[stale.clone(), stale]);
-
-        assert!(restart_updates(&calls).is_empty(), "{calls:?}");
-    }
-
-    #[test]
-    fn a_shared_container_whose_full_id_changes_between_inspections_receives_no_update() {
-        let project = "effigy-shared-restart-changed";
-        let name = format!("{project}-legacy_mysql-1");
-        let first = shared_inspect_record(
-            'a',
-            &name,
-            project,
-            "legacy_mysql",
-            Some("this-render"),
-            true,
-        );
-        let replaced = shared_inspect_record(
-            'b',
-            &name,
-            project,
-            "legacy_mysql",
-            Some("this-render"),
-            true,
-        );
-        let (calls, _) = shared_restart_run(project, &name, &[first, replaced]);
-
-        assert!(restart_updates(&calls).is_empty(), "{calls:?}");
-    }
-
-    #[test]
-    fn a_shared_container_with_no_inspect_identity_receives_no_update() {
-        let project = "effigy-shared-restart-missing";
-        let name = format!("{project}-legacy_mysql-1");
-        let (calls, _) = shared_restart_run(project, &name, &["[]".to_owned()]);
-
-        assert!(restart_updates(&calls).is_empty(), "{calls:?}");
-    }
-
     /// A container created from the current render, whose render directory has
     /// vanished, is refused before anything is published, stopped, removed or
     /// started. Its identity and named volume are unchanged (ef5780da).
     #[test]
     fn a_container_from_a_vanished_render_is_refused_before_anything_changes() {
-        let project = "effigy-shared-mariadb-probe";
-        let container = format!("{project}-legacy_mysql-1");
-        let fixture = SharedFixture::new(
-            "effigy-shared-vanished-",
-            project,
-            &container,
-            "this-render",
-        );
-        let _env = runtime_env(&fixture);
-        fixture.vanish_render("this-render");
-        let policy = fixture.policy(project, "this-render");
+        for missing in ["this-render", "previous-render"] {
+            let project = "effigy-shared-mariadb-probe";
+            let container = format!("{project}-legacy_mysql-1");
+            let fixture =
+                SharedFixture::new("effigy-shared-vanished-", project, &container, missing);
+            let _env = runtime_env(&fixture);
+            fixture.vanish_render(missing);
+            let policy = fixture.policy(project, "this-render");
 
-        let error =
-            super::ensure_shared_services_with_renders(&policy, &[fixture.render("this-render")])
-                .expect_err("a vanished render with its container is refused");
+            let error = super::ensure_shared_services_with_renders(
+                &policy,
+                &[fixture.render("this-render")],
+            )
+            .expect_err("a vanished render with its container is refused");
 
-        let message = error.to_string();
-        assert!(message.contains("legacy_mysql"), "{message}");
-        assert!(message.contains(project), "{message}");
-        assert!(message.contains("is missing"), "{message}");
-        assert!(message.contains(&container), "{message}");
-        assert!(message.contains("rm -f"), "{message}");
-        assert!(message.contains("effigy container web up"), "{message}");
-        effigy_cli::parse_command(["container", "web", "up"].into_iter().map(str::to_owned))
-            .expect("the suggested container recovery command parses");
-        assert!(
-            !fixture.render_dir("this-render").exists(),
-            "the vanished render is not silently restored"
-        );
-        let calls = fixture.calls();
-        assert!(
-            calls.iter().all(|call| call.starts_with("ps ")),
-            "only the runtime listing ran: {calls:?}"
-        );
-        assert!(fixture.volume_kept(), "the named volume is preserved");
-    }
-
-    /// A container from an older render whose own render directory has vanished
-    /// is refused even when the current render is present: starting or replacing
-    /// it would stop a container whose bind sources are gone (ef5780da).
-    #[test]
-    fn a_container_from_a_vanished_older_render_is_refused() {
-        let project = "effigy-shared-mariadb-probe";
-        let container = format!("{project}-legacy_mysql-1");
-        let fixture = SharedFixture::new(
-            "effigy-shared-older-",
-            project,
-            &container,
-            "previous-render",
-        );
-        let _env = runtime_env(&fixture);
-        fixture.vanish_render("previous-render");
-        let policy = fixture.policy(project, "this-render");
-
-        let error = super::ensure_shared_services_running(&policy)
-            .expect_err("an older vanished render with its container is refused");
-
-        let message = error.to_string();
-        assert!(message.contains("is missing"), "{message}");
-        assert!(message.contains(&container), "{message}");
-        assert!(message.contains("rm -f"), "{message}");
-        assert!(
-            !fixture.render_dir("previous-render").exists(),
-            "the older render is not silently restored"
-        );
-        let calls = fixture.calls();
-        assert!(
-            calls.iter().all(|call| call.starts_with("ps ")),
-            "nothing is stopped, removed or started: {calls:?}"
-        );
-        assert!(fixture.volume_kept(), "the named volume is preserved");
+            let message = error.to_string();
+            assert!(message.contains("legacy_mysql"), "{message}");
+            assert!(message.contains(project), "{message}");
+            assert!(message.contains("is missing"), "{message}");
+            assert!(message.contains(&container), "{message}");
+            assert!(message.contains("rm -f"), "{message}");
+            assert!(message.contains("effigy container web up"), "{message}");
+            effigy_cli::parse_command(["container", "web", "up"].into_iter().map(str::to_owned))
+                .expect("the suggested container recovery command parses");
+            assert!(
+                !fixture.render_dir(missing).exists(),
+                "the vanished render is not silently restored"
+            );
+            let calls = fixture.calls();
+            assert!(
+                calls.iter().all(|call| call.starts_with("ps ")),
+                "only the runtime listing ran: {calls:?}"
+            );
+            assert!(fixture.volume_kept(), "the named volume is preserved");
+        }
     }
 
     /// A stale container whose render is present is replaced after the current
     /// render is published, with the named volume kept (effigy#377).
     #[test]
     fn a_container_from_another_render_is_replaced_after_its_render_is_published() {
-        let project = "effigy-shared-mariadb-probe";
-        let container = format!("{project}-legacy_mysql-1");
-        let fixture = SharedFixture::new(
-            "effigy-shared-replaced-",
-            project,
-            &container,
-            "previous-render",
-        );
-        let _env = runtime_env(&fixture);
-        fixture.vanish_render("this-render");
-        let policy = fixture.policy(project, "this-render");
+        for publish in [false, true] {
+            let project = "effigy-shared-mariadb-probe";
+            let container = format!("{project}-legacy_mysql-1");
+            let fixture = SharedFixture::new(
+                "effigy-shared-replaced-",
+                project,
+                &container,
+                "previous-render",
+            );
+            let _env = runtime_env(&fixture);
+            if publish {
+                fixture.vanish_render("this-render");
+            }
+            let policy = fixture.policy(project, "this-render");
 
-        let notes =
-            super::ensure_shared_services_with_renders(&policy, &[fixture.render("this-render")])
-                .expect("a changed render replaces its container");
+            let notes = if publish {
+                super::ensure_shared_services_with_renders(
+                    &policy,
+                    &[fixture.render("this-render")],
+                )
+            } else {
+                super::ensure_shared_services_running(&policy)
+            }
+            .expect("a changed render replaces its container");
 
-        assert_eq!(
-            notes,
-            vec!["replaced shared legacy_mysql (render changed)".to_owned()]
-        );
-        assert!(fixture
-            .render_dir("this-render")
-            .join("compose.yml")
-            .is_file());
-        let calls = fixture.calls();
-        let position = |needle: &str| {
-            calls
-                .iter()
-                .position(|call| call.split(' ').any(|arg| arg == needle))
-                .unwrap_or_else(|| panic!("`{needle}` was never run: {}", calls.join("; ")))
-        };
-        assert!(
-            position("stop") < position("rm") && position("rm") < position("up"),
-            "stop, remove, then up: {calls:?}"
-        );
-        assert!(
-            !calls.iter().any(|call| call.contains("volume rm")),
-            "the shared data volume is kept: {calls:?}"
-        );
-        assert!(fixture.volume_kept());
+            assert_eq!(
+                notes,
+                vec!["replaced shared legacy_mysql (render changed)".to_owned()]
+            );
+            assert!(fixture
+                .render_dir("this-render")
+                .join("compose.yml")
+                .is_file());
+            let calls = fixture.calls();
+            let position = |needle: &str| {
+                calls
+                    .iter()
+                    .position(|call| call.split(' ').any(|arg| arg == needle))
+                    .unwrap_or_else(|| panic!("`{needle}` was never run: {}", calls.join("; ")))
+            };
+            assert!(
+                position("stop") < position("rm") && position("rm") < position("up"),
+                "stop, remove, then up: {calls:?}"
+            );
+            assert!(
+                !calls.iter().any(|call| call.contains("volume rm")),
+                "the shared data volume is kept: {calls:?}"
+            );
+            assert!(fixture.volume_kept());
+        }
     }
 
     /// A vanished render with an unreadable inventory is refused: no container
@@ -3057,6 +2988,9 @@ mod tests {
             super::ensure_shared_services_with_renders(&policy, &[fixture.render("this-render")])
                 .expect_err("an unreadable inventory is refused");
 
+        assert!(
+            matches!(error, crate::runner::error::RunnerError::ContainerWaitRefused { ref environment, .. } if environment == "web")
+        );
         assert!(error.to_string().contains("daemon is down"), "{error}");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(error.json_error_details().unwrap()).unwrap()
@@ -3141,6 +3075,9 @@ mod tests {
             .files
             .insert("compose.yml".into(), b"must not publish".to_vec());
         let error = super::ensure_shared_services_with_renders(&policy, &[render]).unwrap_err();
+        assert!(
+            matches!(error, crate::runner::error::RunnerError::ContainerWaitRefused { ref environment, .. } if environment == "web")
+        );
         assert!(error.to_string().contains("daemon is down"), "{error}");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(error.json_error_details().unwrap()).unwrap()
@@ -3260,6 +3197,9 @@ mod tests {
                     .unwrap()["waiting_on"][0]["step"],
                 phase
             );
+            assert!(
+                matches!(error, crate::runner::error::RunnerError::ContainerWaitRefused { ref environment, .. } if environment == "web")
+            );
             assert!(error.to_string().contains("phase failed"), "{error}");
             assert!(!fixture
                 .calls()
@@ -3292,9 +3232,10 @@ mod tests {
             .join("compose.yml")
             .is_file());
         let calls = fixture.calls();
-        assert!(
-            calls.iter().any(|call| call.contains(" up ")),
-            "the service is created: {calls:?}"
+        assert_eq!(
+            calls.iter().filter(|call| call.contains(" up ")).count(),
+            1,
+            "one creation: {calls:?}"
         );
         assert!(
             !calls

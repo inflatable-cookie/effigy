@@ -1087,6 +1087,11 @@ mod tests {
             target_disk_gib: Some(300),
         };
 
+        let payload: serde_json::Value =
+            serde_json::from_str(&render_profile_status(&status, true)).unwrap();
+        assert_eq!(payload["disk_gib"], 100);
+        assert_eq!(payload["target_disk_gib"], 300);
+        assert_eq!(payload["disk_below_target"], true);
         let rendered = render_profile_status(&status, false);
 
         assert!(rendered.contains("disk: 100GiB (target=300GiB)"));
@@ -1125,6 +1130,11 @@ mod tests {
             target_disk_gib: Some(300),
         };
 
+        let payload: serde_json::Value =
+            serde_json::from_str(&render_profile_resize(&before, &after, true, true)).unwrap();
+        assert_eq!(payload["before"]["disk_gib"], 100);
+        assert_eq!(payload["after"]["disk_gib"], 300);
+        assert_eq!(payload["was_running"], true);
         let rendered = render_profile_resize(&before, &after, true, false);
 
         assert!(rendered.contains("resized Colima profile `effigy` in place"));
@@ -1158,21 +1168,12 @@ mod tests {
         let rendered = render_profile_purge(&before, &after, false);
 
         assert!(rendered.contains("purged Colima profile `effigy`"));
-    }
-
-    #[test]
-    fn profile_purge_renders_absent_as_info() {
-        let status = ProfileStatus {
-            profile: "effigy".to_owned(),
-            row: None,
-            target_memory_gib: Some(32),
-            target_swap_gib: Some(16),
-            target_disk_gib: Some(300),
-        };
-
-        let rendered = render_profile_purge(&status, &status, false);
-
-        assert!(rendered.contains("already absent"));
+        assert!(render_profile_purge(&after, &after, false).contains("already absent"));
+        let json: serde_json::Value =
+            serde_json::from_str(&render_profile_purge(&before, &after, true)).unwrap();
+        assert_eq!(json["before"]["exists"], true);
+        assert_eq!(json["after"]["exists"], false);
+        assert_eq!(json["profile"], "effigy");
     }
 
     #[test]

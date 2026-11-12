@@ -134,6 +134,14 @@ mod tests {
         let second = json_report(&checkout);
         assert!(!checkout.join("effigy.toml").exists());
         assert_eq!(first["scope"]["kind"], "ephemeral-clone");
+        let token = first["scope"]["token"]
+            .as_str()
+            .expect("prepared scope token");
+        assert_eq!(token.len(), 32);
+        assert_eq!(
+            fs::read_to_string(checkout.join(".git/effigy-runtime-scope")).unwrap(),
+            token
+        );
         assert_eq!(first["scope"]["token"], second["scope"]["token"]);
     }
 
@@ -160,10 +168,19 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let checkout = temp.path().join("invalid");
         fs::create_dir_all(&checkout).expect("checkout");
-        fs::write(checkout.join(".git"), "gitdir: /missing/worktree/gitdir\n")
-            .expect("invalid git pointer");
+        fs::write(
+            checkout.join(".git"),
+            format!("gitdir: {}\n", temp.path().join("missing-gitdir").display()),
+        )
+        .expect("invalid git pointer");
 
-        let error = run_container_scope(Some(checkout), true).expect_err("invalid metadata");
+        let error =
+            run_container_scope(Some(checkout.clone()), true).expect_err("invalid metadata");
+        assert!(matches!(
+            error,
+            crate::runner::error::RunnerError::TaskInvocation(_)
+        ));
+        assert!(!checkout.join(".effigy").exists());
         assert!(error
             .to_string()
             .contains("linked worktree metadata is invalid"));

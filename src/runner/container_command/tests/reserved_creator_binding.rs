@@ -375,6 +375,7 @@ esac
                 evidence(),
             );
         }
+        let guest_calls = external.guest_calls.clone();
         let probe: ReservedProbeFactory<'_> = Box::new(|target| {
             assert_eq!(target.container_id, CONTAINER_ID);
             Ok(creator_probe(identity.clone(), shared.clone()))
@@ -397,9 +398,17 @@ esac
             _ => false,
         };
         if !success {
-            let text = prepared
-                .expect_err("unproved successor cannot reach publication")
-                .to_string();
+            let error = prepared.expect_err("unproved successor cannot reach publication");
+            let text = if matches!(case, Case::WrongRun) {
+                refused_reason(error)
+            } else {
+                unavailable_reason(error)
+            };
+            assert_eq!(
+                guest_calls.get(),
+                0,
+                "refused creator evidence opens no guest"
+            );
             match case {
                 Case::WrongRun => {
                     assert!(text.contains("not created by this activation"), "{text}")

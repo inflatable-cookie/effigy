@@ -463,93 +463,61 @@ mod tests {
 
     #[test]
     fn container_stats_all_rejects_repo_override() {
-        let error = run_container(ContainerArgs {
-            subcommand: ContainerSubcommand::Stats { global: true },
-            repo_override: Some(std::path::PathBuf::from("/tmp/demo")),
-            output_json: false,
-        })
-        .expect_err("stats --global should reject --repo");
-
-        assert!(error
-            .to_string()
-            .contains("`effigy container stats --global` does not accept `--repo`"));
-    }
-
-    #[test]
-    fn container_status_all_rejects_repo_override() {
-        let error = run_container(ContainerArgs {
-            subcommand: ContainerSubcommand::Status {
-                name: None,
-                system: None,
-                global: true,
-            },
-            repo_override: Some(std::path::PathBuf::from("/tmp/demo")),
-            output_json: false,
-        })
-        .expect_err("status --global should reject --repo");
-
-        assert!(error
-            .to_string()
-            .contains("`effigy container status --global` does not accept `--repo`"));
-    }
-
-    #[test]
-    fn container_down_all_rejects_repo_override() {
-        let error = run_container(ContainerArgs {
-            subcommand: ContainerSubcommand::Down {
-                name: None,
-                system: None,
-                global: true,
-            },
-            repo_override: Some(std::path::PathBuf::from("/tmp/demo")),
-            output_json: false,
-        })
-        .expect_err("down --global should reject --repo");
-
-        assert!(error
-            .to_string()
-            .contains("`effigy container down --global` does not accept `--repo`"));
-    }
-
-    #[test]
-    fn container_volume_list_all_rejects_repo_override() {
-        let error = run_container(ContainerArgs {
-            subcommand: ContainerSubcommand::Volume {
-                subcommand: ContainerVolumeSubcommand::List {
+        for (label, subcommand) in [
+            (
+                "stats --global",
+                ContainerSubcommand::Stats { global: true },
+            ),
+            (
+                "status --global",
+                ContainerSubcommand::Status {
+                    name: None,
+                    system: None,
                     global: true,
-                    orphans: false,
-                    dormant: false,
                 },
-            },
-            repo_override: Some(std::path::PathBuf::from("/tmp/demo")),
-            output_json: false,
-        })
-        .expect_err("volume list --global should reject --repo");
-
-        assert!(error
-            .to_string()
-            .contains("`effigy container volume list --global` does not accept `--repo`"));
-    }
-
-    #[test]
-    fn container_volume_prune_global_rejects_repo_override() {
-        let error = run_container(ContainerArgs {
-            subcommand: ContainerSubcommand::Volume {
-                subcommand: ContainerVolumeSubcommand::Prune {
+            ),
+            (
+                "down --global",
+                ContainerSubcommand::Down {
+                    name: None,
+                    system: None,
                     global: true,
-                    yes: true,
-                    orphans: true,
-                    dormant: false,
                 },
-            },
-            repo_override: Some(std::path::PathBuf::from("/tmp/demo")),
-            output_json: false,
-        })
-        .expect_err("volume prune --global should reject --repo");
-
-        assert!(error
-            .to_string()
-            .contains("`effigy container volume prune --global` does not accept `--repo`"));
+            ),
+            (
+                "volume list --global",
+                ContainerSubcommand::Volume {
+                    subcommand: ContainerVolumeSubcommand::List {
+                        global: true,
+                        orphans: false,
+                        dormant: false,
+                    },
+                },
+            ),
+            (
+                "volume prune --global",
+                ContainerSubcommand::Volume {
+                    subcommand: ContainerVolumeSubcommand::Prune {
+                        global: true,
+                        yes: true,
+                        orphans: true,
+                        dormant: false,
+                    },
+                },
+            ),
+        ] {
+            let error = run_container(ContainerArgs {
+                subcommand,
+                repo_override: Some(std::path::PathBuf::from("/nonexistent/b1-repo")),
+                output_json: false,
+            })
+            .expect_err(label);
+            assert!(
+                matches!(error, RunnerError::TaskInvocation(ref message)
+                if message.contains(&format!("`effigy container {label}` does not accept `--repo`"))),
+                "{label}: {error}"
+            );
+        }
     }
 
     #[test]
