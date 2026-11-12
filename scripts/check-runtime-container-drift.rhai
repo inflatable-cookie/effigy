@@ -81,7 +81,7 @@ failure_count += check_no_unlisted_matches(
     ["src/runner", "crates/effigy-runtime/src"],
     `resolve_compose_backend|ComposeBackend`,
     #{ glob: "*.rs" },
-    `^(src/runner/doctor_ports\.rs|src/runner/exec_command/transport\.rs|src/runner/container_command/lifecycle\.rs)$`,
+    `^(src/runner/doctor_ports\.rs|src/runner/exec_command/transport\.rs|src/runner/container_command/lifecycle/prepare\.rs)$`,
 );
 
 failure_count += check_no_unlisted_matches(
@@ -113,7 +113,7 @@ failure_count += check_no_unlisted_matches(
     ["src/runner", "crates/effigy-rhai/src"],
     `run_container_exec_capture`,
     #{ glob: "*.rs" },
-    `^(src/runner/db_seed\.rs|src/runner/container_command/data\.rs|src/runner/container_command/lifecycle\.rs|src/runner/container_command/mod\.rs)$`,
+    `^(src/runner/db_seed\.rs|src/runner/container_command/data\.rs|src/runner/container_command/lifecycle(?:/exec)?\.rs|src/runner/container_command/mod\.rs)$`,
 );
 
 failure_count += check_no_unlisted_matches(
