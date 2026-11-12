@@ -126,3 +126,40 @@ pub(super) fn apply_shared_services(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::super::tests::test_policy;
+
+    /// A data command's apply passes `false` and must never start a shared
+    /// service; the ordinary task apply still does (effigy#477 review).
+    #[test]
+    fn apply_shared_services_honours_the_reconciliation_decision() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let policy = test_policy(PathBuf::from("docker-compose.yml"));
+
+        let started = AtomicBool::new(false);
+        super::apply_shared_services(&policy, false, |_| {
+            started.store(true, Ordering::SeqCst);
+            Ok(vec!["unrelated shared mysql started".to_owned()])
+        })
+        .expect("apply without shared reconciliation");
+        assert!(
+            !started.load(Ordering::SeqCst),
+            "a data command's activation must not ensure an unrelated shared service"
+        );
+
+        let started = AtomicBool::new(false);
+        super::apply_shared_services(&policy, true, |_| {
+            started.store(true, Ordering::SeqCst);
+            Ok(Vec::new())
+        })
+        .expect("apply with shared reconciliation");
+        assert!(
+            started.load(Ordering::SeqCst),
+            "the ordinary task apply still reconciles shared services"
+        );
+    }
+}

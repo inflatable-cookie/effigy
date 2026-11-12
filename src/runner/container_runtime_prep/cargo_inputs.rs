@@ -102,3 +102,69 @@ pub(super) fn refresh_changed_cargo_inputs_using(
     }
     touch_in_container(&changed)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    use super::super::tests::temp_test_dir;
+    use super::refresh_changed_cargo_inputs_using;
+
+    #[test]
+    fn host_edit_refreshes_cargo_input_before_container_check() {
+        host_edit_refreshes_cargo_input_before_container_check_using(|| {});
+    }
+
+    fn host_edit_refreshes_cargo_input_before_container_check_using(after_serial: impl FnOnce()) {
+        let _locks =
+            crate::runner::owned_children::hold_signal_proof_test_locks_after_serial(after_serial);
+        let root = temp_test_dir("cargo-host-edit");
+        let run_git = |args: &[&str]| {
+            assert!(std::process::Command::new("git")
+                .args(args)
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success());
+        };
+        run_git(&["init", "-q"]);
+        fs::write(root.join("lib.rs"), "pub fn answer() -> u8 { 1 }\n").unwrap();
+        run_git(&["add", "lib.rs"]);
+        run_git(&[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.test",
+            "commit",
+            "-qm",
+            "base",
+        ]);
+        fs::write(root.join("lib.rs"), "pub fn answer() -> u8 { 2 }\n").unwrap();
+        let source = fs::File::open(root.join("lib.rs")).unwrap();
+        source
+            .set_modified(UNIX_EPOCH + Duration::from_secs(1))
+            .unwrap();
+        let artifact = root.join("artifact");
+        fs::write(&artifact, "old").unwrap();
+        fs::File::open(&artifact)
+            .unwrap()
+            .set_modified(UNIX_EPOCH + Duration::from_secs(2))
+            .unwrap();
+        refresh_changed_cargo_inputs_using(&root, |changed| {
+            assert_eq!(changed, &[PathBuf::from("lib.rs")]);
+            source.set_modified(SystemTime::now()).unwrap();
+            Ok(())
+        })
+        .unwrap();
+        assert!(
+            fs::metadata(root.join("lib.rs"))
+                .unwrap()
+                .modified()
+                .unwrap()
+                > fs::metadata(artifact).unwrap().modified().unwrap()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+}

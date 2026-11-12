@@ -15,14 +15,24 @@ pub(super) fn prepare_host_bind_mount_dirs(
 ) -> Result<(), RunnerError> {
     let runtime_data_root = repo_root.join(".effigy/runtime/data");
     for compose_file in &policy.compose_files {
-        let raw = match policy.read_compose(compose_file) {
-            Ok(text) => text,
-            Err(_) => continue,
-        };
-        let yaml: serde_yaml::Value = match serde_yaml::from_str(&raw) {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
+        // A Compose input this preparation cannot read or parse is not a stack
+        // whose bind mounts were prepared: applying it would start services
+        // whose host directories are missing, so the reason is reported with
+        // the file that carries it instead of being skipped.
+        let raw = policy.read_compose(compose_file).map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "cannot prepare the bind mounts of container `{}`: its Compose input {} could not be read ({error}); fix or remove that input, then re-run",
+                policy.name,
+                compose_file.display()
+            ))
+        })?;
+        let yaml: serde_yaml::Value = serde_yaml::from_str(&raw).map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "cannot prepare the bind mounts of container `{}`: its Compose input {} is not valid YAML ({error}); fix that input, then re-run",
+                policy.name,
+                compose_file.display()
+            ))
+        })?;
         let Some(services) = yaml.get("services").and_then(|s| s.as_mapping()) else {
             continue;
         };
@@ -49,10 +59,16 @@ pub(super) fn prepare_host_bind_mount_dirs(
                             continue;
                         }
                     }
-                    let _ = std::fs::create_dir_all(&host_path);
+                    std::fs::create_dir_all(&host_path).map_err(|error| {
+                        RunnerError::task_invocation(format!(
+                            "cannot create bind mount directory {} for container `{}`: {error}; Compose will refuse to start the service until that path exists and is writable by you",
+                            host_path.display(),
+                            policy.name
+                        ))
+                    })?;
                     #[cfg(unix)]
                     if host_path.starts_with(&runtime_data_root) {
-                        let _ = relax_runtime_data_permissions(&host_path);
+                        grant_runtime_data_access(&host_path)?;
                     }
                 }
             }
@@ -107,42 +123,83 @@ pub(super) fn bind_mount_root(repo_root: &Path, spec: &str) -> Option<(PathBuf, 
     Some((PathBuf::from(source), target.to_owned()))
 }
 
+/// Give the container's own user the access a runtime data bind mount needs.
+///
+/// The guest side of `.effigy/runtime/data/<service>` is written by the image's
+/// user, not by the invoking host user: `mariadb` runs as its own uid 999. POSIX
+/// mode bits can only grant a foreign uid access through the `other` class, so
+/// the narrowest mode that lets such a service write is `0777` for a directory
+/// (`0750` refuses its writes and the service cannot start) and `0666` for a
+/// file the host created there. The widening is confined to that tree: every
+/// other bind source keeps the mode the host gave it.
+///
+/// Entries the service's own user created are left alone — that uid already has
+/// owner access, and the host cannot chmod them anyway. Symlinks are neither
+/// followed nor widened, so no permission outside the tree is ever changed.
 #[cfg(unix)]
-pub(super) fn relax_runtime_data_permissions(root: &Path) -> std::io::Result<()> {
+pub(super) fn grant_runtime_data_access(root: &Path) -> Result<(), RunnerError> {
     if !root.exists() {
         return Ok(());
     }
-    relax_runtime_data_permissions_entry(root)?;
-    if root.is_dir() {
+    widen_runtime_data_entry(root)?;
+    if fs::symlink_metadata(root)
+        .map_err(|error| runtime_data_error(root, "inspect", error))?
+        .is_dir()
+    {
         for entry in walk_runtime_data(root)? {
-            relax_runtime_data_permissions_entry(&entry)?;
+            widen_runtime_data_entry(&entry)?;
         }
     }
     Ok(())
 }
 
 #[cfg(unix)]
-pub(super) fn walk_runtime_data(root: &Path) -> std::io::Result<Vec<PathBuf>> {
+fn widen_runtime_data_entry(path: &Path) -> Result<(), RunnerError> {
+    let metadata =
+        fs::symlink_metadata(path).map_err(|error| runtime_data_error(path, "inspect", error))?;
+    if metadata.file_type().is_symlink() {
+        return Ok(());
+    }
+    let mode = if metadata.is_dir() { 0o777 } else { 0o666 };
+    match fs::set_permissions(path, fs::Permissions::from_mode(mode)) {
+        Ok(()) => Ok(()),
+        // The service created this entry, so its owner already has the access
+        // this widening exists for, and only that owner may chmod it.
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(()),
+        Err(error) => Err(runtime_data_error(path, "widen the mode of", error)),
+    }
+}
+
+#[cfg(unix)]
+fn runtime_data_error(path: &Path, action: &str, error: std::io::Error) -> RunnerError {
+    RunnerError::task_invocation(format!(
+        "cannot {action} runtime data path {}: {error}; the container's service user must be able to write it, so fix that path's permissions and re-run",
+        path.display()
+    ))
+}
+
+#[cfg(unix)]
+pub(super) fn walk_runtime_data(root: &Path) -> Result<Vec<PathBuf>, RunnerError> {
     let mut pending = vec![root.to_path_buf()];
     let mut discovered = Vec::new();
     while let Some(dir) = pending.pop() {
-        for entry in fs::read_dir(&dir)? {
-            let path = entry?.path();
-            if path.is_dir() {
+        let entries =
+            fs::read_dir(&dir).map_err(|error| runtime_data_error(&dir, "list", error))?;
+        for entry in entries {
+            let entry = entry.map_err(|error| runtime_data_error(&dir, "list", error))?;
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path)
+                .map_err(|error| runtime_data_error(&path, "inspect", error))?;
+            if metadata.file_type().is_symlink() {
+                continue;
+            }
+            if metadata.is_dir() {
                 pending.push(path.clone());
             }
             discovered.push(path);
         }
     }
     Ok(discovered)
-}
-
-#[cfg(unix)]
-pub(super) fn relax_runtime_data_permissions_entry(path: &Path) -> std::io::Result<()> {
-    let metadata = fs::metadata(path)?;
-    let mode = if metadata.is_dir() { 0o777 } else { 0o666 };
-    let permissions = fs::Permissions::from_mode(mode);
-    fs::set_permissions(path, permissions)
 }
 
 pub(super) fn parse_bind_mount_host_path(spec: &str) -> Option<&str> {
@@ -160,4 +217,29 @@ pub(super) fn parse_mount_parts(spec: &str) -> Option<(&str, &str, Option<&str>)
     let target = parts.next()?.trim();
     let options = parts.next().map(str::trim);
     Some((source, target, options))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_bind_mount_host_path;
+
+    #[test]
+    fn parse_bind_mount_host_path_accepts_bind_mounts_only() {
+        assert_eq!(
+            parse_bind_mount_host_path("/tmp/data:/var/lib/mysql"),
+            Some("/tmp/data")
+        );
+        assert_eq!(
+            parse_bind_mount_host_path("./runtime/mysql:/var/lib/mysql"),
+            Some("./runtime/mysql")
+        );
+        assert_eq!(
+            parse_bind_mount_host_path("~/runtime/mysql:/var/lib/mysql"),
+            Some("~/runtime/mysql")
+        );
+        assert_eq!(
+            parse_bind_mount_host_path("named-volume:/var/lib/mysql"),
+            None
+        );
+    }
 }

@@ -106,3 +106,41 @@ pub(super) fn parse_image_platform(image_inspect: &[u8]) -> Result<ObservedImage
         variant: field("Variant").unwrap_or_default(),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{image_reference, parse_image_platform, ObservedImagePlatform};
+
+    #[test]
+    fn the_observed_image_platform_reads_the_backend_report_and_refuses_the_rest() {
+        let container = br#"[{"Id": "9d1c0b6a7f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4", "Image": "sha256:abc"}]"#;
+        let image = br#"[{"Os": "linux", "Architecture": "arm64", "Variant": "v8"}]"#;
+        assert_eq!(
+            image_reference(container).expect("the container names its image"),
+            "sha256:abc"
+        );
+        assert_eq!(
+            parse_image_platform(image).expect("a complete image report"),
+            ObservedImagePlatform {
+                os: "linux".into(),
+                architecture: "arm64".into(),
+                variant: "v8".into(),
+            }
+        );
+        // An image that reports no variant is that image's answer, not an omission
+        // this host may fill in.
+        assert_eq!(
+            parse_image_platform(br#"[{"Os": "linux", "Architecture": "amd64"}]"#)
+                .expect("variant is optional")
+                .variant,
+            ""
+        );
+        // A container record that names no image, and an image record with no OS or
+        // architecture, are unknown rather than defaulted.
+        assert!(image_reference(br#"[{"Id": "9d1c"}]"#).is_err());
+        assert!(image_reference(b"not json").is_err());
+        assert!(parse_image_platform(br#"[{"Os": "linux"}]"#).is_err());
+        assert!(parse_image_platform(br#"[{"Os": "linux", "Architecture": 7}]"#).is_err());
+        assert!(parse_image_platform(b"[]").is_err());
+    }
+}

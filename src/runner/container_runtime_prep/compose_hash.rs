@@ -387,3 +387,27 @@ pub(super) fn parse_service_config_hashes(
     }
     Ok(hashes)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::parse_service_config_hashes;
+
+    #[test]
+    fn the_compose_config_hash_parser_keeps_the_backends_own_pairs() {
+        let parsed =
+            parse_service_config_hashes(b"app 0123456789abcdef\nworker fedcba9876543210\n")
+                .expect("one pair per service");
+        assert_eq!(
+            parsed.get("app").map(String::as_str),
+            Some("0123456789abcdef")
+        );
+        assert_eq!(
+            parsed.get("worker").map(String::as_str),
+            Some("fedcba9876543210")
+        );
+        // An unsupported or empty answer is never treated as compatible.
+        assert!(parse_service_config_hashes(b"").is_err());
+        assert!(parse_service_config_hashes(b"app\n").is_err());
+        assert!(parse_service_config_hashes(b" app   \n").is_err());
+    }
+}

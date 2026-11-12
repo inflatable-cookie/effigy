@@ -1194,6 +1194,90 @@ fn load_inline_workspace_container_policy_writes_compose_and_derives_exec_dir() 
     );
 }
 
+fn inline_workspace_mount(
+    root: &std::path::Path,
+    mount: &str,
+) -> Result<String, ContainerPolicyError> {
+    let inline = ManifestInlineWorkspaceContainerConfig {
+        image: Some("node:22".to_owned()),
+        mount: Some(mount.to_owned()),
+        extra: Default::default(),
+    };
+    let policy = load_inline_workspace_container_policy(root, "dev__app", &inline, None)?;
+    policy.read_compose(&policy.compose_files[0])
+}
+
+#[test]
+fn inline_workspace_mount_refuses_a_source_above_the_repo_root() {
+    let _lock = crate::test_env_lock();
+    let root = temp_repo("inline-workspace-mount-escape");
+    fs::create_dir(root.join(".git")).expect("git dir");
+    fs::create_dir_all(root.join("storage")).expect("storage dir");
+
+    // Neither path exists: the escape has to be judged before anything is
+    // created, or Compose would bind a directory outside the checkout.
+    let error = inline_workspace_mount(&root, "../escape:/workspace")
+        .expect_err("a parent escape refuses even when it does not exist");
+    assert!(
+        error.to_string().contains("resolves outside the repo root"),
+        "the refusal names the boundary: {error}"
+    );
+    assert!(
+        !root.join("../escape").exists(),
+        "a refused source is never created"
+    );
+
+    // A `..` inside the checkout is ordinary path arithmetic.
+    let inside = inline_workspace_mount(&root, "./storage/../storage/data:/workspace")
+        .expect("an inside source resolves");
+    assert!(
+        inside.contains(
+            &root
+                .canonicalize()
+                .expect("canonical root")
+                .join("storage/data")
+                .display()
+                .to_string()
+        ),
+        "the mount names the resolved host path: {inside}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn inline_workspace_mount_refuses_a_source_that_links_outside_the_repo_root() {
+    let _lock = crate::test_env_lock();
+    let root = temp_repo("inline-workspace-mount-link");
+    let outside = temp_repo("inline-workspace-mount-link-outside");
+    fs::create_dir(root.join(".git")).expect("git dir");
+    fs::create_dir_all(outside.join("data")).expect("outside data dir");
+    std::os::unix::fs::symlink(&outside, root.join("linked")).expect("symlink outside");
+
+    // The declared string is inside the checkout; the resolved path is not.
+    for mount in ["linked:/workspace", "linked/data:/workspace"] {
+        let error = inline_workspace_mount(&root, mount)
+            .expect_err("a source that resolves outside the checkout refuses");
+        assert!(
+            error.to_string().contains("resolves outside the repo root"),
+            "the refusal names the boundary for {mount}: {error}"
+        );
+    }
+}
+
+#[test]
+fn inline_workspace_mount_refuses_an_absolute_source() {
+    let _lock = crate::test_env_lock();
+    let root = temp_repo("inline-workspace-mount-absolute");
+    fs::create_dir(root.join(".git")).expect("git dir");
+
+    let error = inline_workspace_mount(&root, "/etc:/workspace")
+        .expect_err("an absolute source is not a path inside the checkout");
+    assert!(
+        error.to_string().contains("resolves outside the repo root"),
+        "the refusal names the boundary: {error}"
+    );
+}
+
 #[test]
 fn validate_container_policy_rejects_mounts_outside_repo() {
     let parent = effigy_test_support::Fixture::process_lifetime(&format!(

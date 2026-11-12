@@ -294,3 +294,21 @@ pub(super) fn inspected_config_hash(stdout: &[u8]) -> Result<(String, String), S
         label("com.docker.compose.config-hash")?,
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::inspected_config_hash;
+
+    #[test]
+    fn the_inspected_config_hash_needs_a_service_and_a_hash() {
+        let inspect = br#"[{"Config": {"Labels": {"com.docker.compose.service": "app", "com.docker.compose.config-hash": "abc123"}}}]"#;
+        assert_eq!(
+            inspected_config_hash(inspect).expect("both labels"),
+            ("app".to_owned(), "abc123".to_owned())
+        );
+        let no_hash = br#"[{"Config": {"Labels": {"com.docker.compose.service": "app"}}}]"#;
+        assert!(inspected_config_hash(no_hash).is_err());
+        assert!(inspected_config_hash(b"[]").is_err());
+        assert!(inspected_config_hash(b"not json").is_err());
+    }
+}

@@ -32,13 +32,14 @@ mod running;
 mod sealed_render;
 mod validation;
 
+pub(in crate::runner) use crate::runner::workspace_command::provisioning::BoundedReadRefusal;
+#[cfg(test)]
+pub(in crate::runner) use activation::activate_routed_container_runtime_with;
 pub(in crate::runner) use activation::{
     activate_container_runtime_for_task, activate_routed_container_runtime,
     build_runtime_activation_plan, reconcile_shared_services_for, ActivationRequest,
     ContainerTaskActivation,
 };
-#[cfg(test)]
-pub(in crate::runner) use activation::activate_routed_container_runtime_with;
 pub(in crate::runner) use binding::{
     ensure_primary_service_binding, verify_service_binding, OWNED_EXEC_VERIFICATION_TIMEOUT,
 };
@@ -52,7 +53,6 @@ pub(in crate::runner) use predecessor::{
     observed_predecessor_compatibility_with, PredecessorBackend,
 };
 pub(in crate::runner) use sealed_render::{seal_render_for_preflight, SealedRender};
-pub(in crate::runner) use crate::runner::workspace_command::provisioning::BoundedReadRefusal;
 
 #[cfg(test)]
 use activation::{
@@ -60,26 +60,16 @@ use activation::{
     runtime_activation_plan_from_request, runtime_activation_report_for_result,
 };
 #[cfg(test)]
-use cargo_inputs::refresh_changed_cargo_inputs_using;
-#[cfg(test)]
-use checkout_mount::verify_live_checkout_mount_using;
-#[cfg(test)]
 use compose_hash::{
     canonical_compose_model, compose_config_args, compose_config_output,
     compose_service_config_hashes, parse_service_config_hashes, verify_frozen_compose_reads,
 };
 #[cfg(test)]
-use exec_prep::{apply_shared_services, run_task_apply};
+use exec_prep::run_task_apply;
 #[cfg(test)]
 use gateway::ensure_runtime_gateway_readiness_stage_using;
 #[cfg(test)]
-use host_mounts::{
-    candidate_host_mount_paths, parse_bind_mount_host_path, prepare_host_bind_mount_dirs,
-};
-#[cfg(test)]
-use image_platform::{image_reference, parse_image_platform};
-#[cfg(test)]
-use predecessor::inspected_config_hash;
+use host_mounts::{candidate_host_mount_paths, prepare_host_bind_mount_dirs};
 #[cfg(test)]
 use prep::{run_runtime_compose_up_stage, run_runtime_prep_steps};
 #[cfg(test)]
