@@ -3037,8 +3037,14 @@ mod tests {
 
     #[test]
     fn sanitize_keeps_safe_chars() {
-        assert_eq!(sanitize("app-1.front"), "app-1.front");
-        assert_eq!(sanitize("app/../x"), "app-..-x");
+        for (input, expected) in [
+            ("app-1.front", "app-1.front"),
+            ("app/../x", "app-..-x"),
+            ("unsafe name", "unsafe-name"),
+            ("", ""),
+        ] {
+            assert_eq!(sanitize(input), expected, "input {input:?}");
+        }
     }
 
     /// A declared restart policy and shutdown signal reach the supervisor as

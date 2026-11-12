@@ -8379,13 +8379,10 @@ fn nested_app_pid_timeout_carries_child_owner_and_error_evidence() {
 /// cause. The gate reproduces a refusal deterministically; it does not claim
 /// to identify the trigger behind the missing QA workload.
 #[test]
-fn plain_host_process_start_refusal_fails_a_detached_activation() {
-    check_plain_host_process_start_refusal(true);
-}
-
-#[test]
-fn plain_host_process_start_refusal_cleans_up_attached_activation() {
-    check_plain_host_process_start_refusal(false);
+fn plain_host_process_start_refusal_handles_both_activation_modes() {
+    for detached in [true, false] {
+        check_plain_host_process_start_refusal(detached);
+    }
 }
 
 fn check_plain_host_process_start_refusal(detached: bool) {
