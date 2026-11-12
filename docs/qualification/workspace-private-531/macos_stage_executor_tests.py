@@ -1226,9 +1226,11 @@ class HelperDispatchTests(Fixture):
         self.assertEqual(ex.prefetch_pinned_artifact(_io.BytesIO(data), dest, len(data), digest),
                          {'bytes': len(data), 'sha512': digest})
         self.assertEqual(stat.S_IMODE(os.lstat(dest).st_mode), 0o600)
+        foreign = b'foreign'
+        Path(dest).write_bytes(foreign)
         with self.assertRaises(ex.Collision):  # an existing name is a refusal, never adopted
             ex.prefetch_pinned_artifact(_io.BytesIO(data), dest, len(data), digest)
-        self.assertEqual(Path(dest).read_bytes(), data)
+        self.assertEqual(Path(dest).read_bytes(), foreign)
         symlink = self.tmp + '/artifact-link.raw'
         target = self.tmp + '/not-created.raw'
         os.symlink(target, symlink)
