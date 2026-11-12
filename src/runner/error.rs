@@ -975,6 +975,7 @@ impl From<ScanError> for RunnerError {
         match value {
             ScanError::Invocation(message) => Self::TaskInvocation(message),
             ScanError::Manifest(error) => map_manifest_error(error),
+            ScanError::BudgetExhausted { .. } => Self::TaskInvocation(value.to_string()),
         }
     }
 }

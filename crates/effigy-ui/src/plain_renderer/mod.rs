@@ -37,10 +37,9 @@ impl<W: Write> PlainRenderer<W> {
     }
 
     pub(super) fn style_text(&self, style: Style, text: &str) -> String {
-        if !self.color_enabled {
-            return text.to_owned();
-        }
-        format!("{}{}{}", style.render(), text, style.render_reset())
+        // Sole styling spelling lives in `crate::style_text`; this method
+        // only binds the renderer's `color_enabled` flag.
+        crate::style_text(self.color_enabled, style, text)
     }
 
     fn render_text(&mut self, body: &str) -> UiResult<()> {

@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::{fs, os::unix::fs::PermissionsExt};
 
+use effigy_containers::parse_mount_parts;
 use effigy_containers::EffectiveContainerPolicy;
 
 use crate::runner::error::RunnerError;
@@ -209,14 +210,6 @@ pub(super) fn parse_bind_mount_host_path(spec: &str) -> Option<&str> {
     } else {
         None
     }
-}
-
-pub(super) fn parse_mount_parts(spec: &str) -> Option<(&str, &str, Option<&str>)> {
-    let mut parts = spec.splitn(3, ':');
-    let source = parts.next()?.trim();
-    let target = parts.next()?.trim();
-    let options = parts.next().map(str::trim);
-    Some((source, target, options))
 }
 
 #[cfg(test)]

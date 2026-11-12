@@ -752,9 +752,9 @@ mod tests {
         fn acquire_scopes(
             &self,
             _workspace_root: &Path,
-            _scopes: &[LockScope],
+            scopes: &[LockScope],
         ) -> Result<BuiltinLockGuards, BuiltinError> {
-            Ok(BuiltinLockGuards::new(()))
+            Ok(BuiltinLockGuards::new(scopes.to_vec(), ()))
         }
 
         fn current_working_dir(&self) -> Result<PathBuf, BuiltinError> {

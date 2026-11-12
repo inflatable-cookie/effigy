@@ -226,9 +226,32 @@ fn analyze_file(
     identity: String,
     options: &PreparedOptions,
 ) -> Observation {
-    let contents = String::from_utf8_lossy(bytes);
-    let generated = is_generated_artifact(rel, &contents);
-    let lines = normalized_code_lines(rel, &contents);
+    // Non-UTF-8 files are binary for the code scanners: they carry no
+    // code lines and never match generated-content markers, instead of
+    // silently scanning replacement characters. `walk_text_scan_files`
+    // (the text-scan path) still reports unreadable/non-UTF-8 files as a
+    // typed `ScanError`; this loss-free branch only applies to the doctor
+    // inventory's byte walk, which must observe every file.
+    let Ok(contents) = std::str::from_utf8(bytes) else {
+        let stub = Observation {
+            rel_str: rel_str.to_owned(),
+            identity,
+            bytes: bytes.len(),
+            generated: false,
+            code_lines: 0,
+            total_lines: 0,
+            god_file_eligible: false,
+            duplicate_eligible: false,
+            normalized_lines: Vec::new(),
+        };
+        return Observation {
+            god_file_eligible: !options.god_files.skips_code(&stub),
+            duplicate_eligible: !options.duplicate_blocks.skips_code(&stub),
+            ..stub
+        };
+    };
+    let generated = is_generated_artifact(rel, contents);
+    let lines = normalized_code_lines(rel, contents);
     let stub = Observation {
         rel_str: rel_str.to_owned(),
         identity,
@@ -322,7 +345,10 @@ fn content_identity(bytes: &[u8]) -> String {
 }
 
 fn hex_digest(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    // Single hex-encoding spelling for the doctor cache: `hex::encode`.
+    // SHA-256 hashing itself stays at the call sites (`Sha256::digest`);
+    // this helper only renders digest bytes.
+    hex::encode(bytes)
 }
 
 fn load_cache(
@@ -1064,7 +1090,7 @@ impl Drop for OwnedGitChild {
 }
 
 fn git_budget_error() -> ScanError {
-    ScanError::invocation("doctor scan budget exhausted during git identity probe")
+    ScanError::budget_exhausted("git identity probe")
 }
 
 #[cfg(unix)]
@@ -1194,9 +1220,7 @@ fn enabled_gitignore_postures(
 
 fn ensure_budget(deadline: Option<Instant>) -> Result<(), ScanError> {
     if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-        return Err(ScanError::invocation(
-            "doctor scan budget exhausted during inventory",
-        ));
+        return Err(ScanError::budget_exhausted("inventory"));
     }
     Ok(())
 }
@@ -1655,8 +1679,28 @@ mod tests {
             Some(Instant::now()),
         )
         .expect_err("deadline should fail");
+        assert!(error.is_budget_exhausted(), "{error}");
         assert!(error.to_string().contains("budget exhausted"));
         assert!(!cache_paths(root, "root", root).current.exists());
+    }
+
+    #[test]
+    fn non_utf8_file_is_binary_not_lossy_text() {
+        // Non-UTF-8 bytes must not be scanned as replacement characters:
+        // the observation carries no code lines and no generated flag from
+        // content markers.
+        let rel = std::path::Path::new("src/binary.rs");
+        let bytes = vec![0xff, 0xfe, 0x62, 0x79, 0x74, 0x65, 0x73];
+        let prepared = PreparedOptions {
+            god_files: Filter::new(&[], &[]).expect("filter"),
+            duplicate_blocks: Filter::new(&[], &[]).expect("filter"),
+        };
+        let observation = analyze_file(rel, "src/binary.rs", &bytes, "id".to_owned(), &prepared);
+        assert_eq!(observation.bytes, bytes.len());
+        assert_eq!(observation.code_lines, 0);
+        assert_eq!(observation.total_lines, 0);
+        assert!(!observation.generated);
+        assert!(observation.normalized_lines.is_empty());
     }
 
     #[cfg(all(unix, test))]

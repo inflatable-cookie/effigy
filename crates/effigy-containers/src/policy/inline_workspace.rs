@@ -10,6 +10,7 @@ use crate::runtime::dns::{materialize_runtime_dns_override, RuntimeDnsOverrideRo
 use crate::{DEFAULT_ATTACH_TIMEOUT_SECS, DEFAULT_COLIMA_PROFILE, DEFAULT_HEALTH_TIMEOUT_SECS};
 
 use super::model::{ContainerPolicyError, EffectiveComposeSource, EffectiveContainerPolicy};
+use crate::mount_spec::parse_mount_parts;
 
 pub fn load_inline_workspace_container_policy(
     repo_root: &Path,
@@ -258,14 +259,6 @@ fn resolve_mount_source(
             }
         }
     }
-}
-
-fn parse_mount_parts(mount: &str) -> Option<(&str, &str, Option<&str>)> {
-    let mut parts = mount.splitn(3, ':');
-    let source = parts.next()?.trim();
-    let target = parts.next()?.trim();
-    let options = parts.next().map(str::trim);
-    Some((source, target, options))
 }
 
 fn render_inline_workspace_compose(

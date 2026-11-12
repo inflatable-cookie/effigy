@@ -404,6 +404,9 @@ fn effigy_internal_env_prefix() -> &'static str {
 }
 
 fn shell_quote(value: &str) -> String {
+    // Fast path for safe words; quoting itself is the shared
+    // `effigy_core::shell::shell_quote` spelling so the host-invocation
+    // rewrite compares equal against `resolve_effigy_invocation_prefix`.
     if value.is_empty() {
         return "''".to_owned();
     }
@@ -413,7 +416,7 @@ fn shell_quote(value: &str) -> String {
     {
         return value.to_owned();
     }
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
+    effigy_core::shell::shell_quote(value)
 }
 
 fn driver_label(driver: effigy_manifest::ManifestContainerDriver) -> &'static str {
@@ -564,6 +567,11 @@ mod tests {
 
     #[test]
     fn managed_exec_command_rewrites_host_effigy_invocation_for_container_commands() {
+        // Pinned through the override seam so the test never depends on an
+        // ambient effigy binary in the test profile directory.
+        let _override = effigy_core::executable_override::set_scoped(Some(
+            "/tmp/host-effigy-for-rewrite-test".to_owned(),
+        ));
         let host_effigy =
             resolve_effigy_invocation_prefix().expect("resolve host effigy invocation");
         let setup = format!(

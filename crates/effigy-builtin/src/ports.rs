@@ -36,20 +36,39 @@ impl LockScope {
     }
 }
 
-/// Opaque RAII handle returned by `acquire_scopes`. The built-in layer
-/// holds it to keep the locks alive until the call scope ends and does
-/// not introspect the inner value; the runner impl keeps its runs inside.
-pub struct BuiltinLockGuards(#[allow(dead_code)] Box<dyn Any + Send>);
+/// RAII handle returned by `acquire_scopes`. The built-in layer holds it
+/// to keep the locks alive until the call scope ends. The held `scopes`
+/// name the kernel gates typed at the port boundary (`LockScope`); the
+/// runner's concrete runs stay behind the opaque `_guards` slot so the
+/// built-in crate never depends on the runner's `TaskRun` type.
+pub struct BuiltinLockGuards {
+    scopes: Vec<LockScope>,
+    #[allow(dead_code)]
+    _guards: Box<dyn Any + Send>,
+}
 
 impl BuiltinLockGuards {
-    pub fn new<T: Any + Send>(value: T) -> Self {
-        Self(Box::new(value))
+    pub fn new<T: Any + Send>(scopes: Vec<LockScope>, value: T) -> Self {
+        let mut scopes = scopes;
+        scopes.sort();
+        scopes.dedup();
+        Self {
+            scopes,
+            _guards: Box::new(value),
+        }
+    }
+
+    /// The kernel gates this handle keeps alive, in sorted order.
+    pub fn scopes(&self) -> &[LockScope] {
+        &self.scopes
     }
 }
 
 impl std::fmt::Debug for BuiltinLockGuards {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BuiltinLockGuards").finish_non_exhaustive()
+        f.debug_struct("BuiltinLockGuards")
+            .field("scopes", &self.scopes)
+            .finish_non_exhaustive()
     }
 }
 
@@ -261,6 +280,28 @@ pub trait BuiltinRuntimePorts {
     ) -> Result<String, BuiltinError> {
         let _ = target;
         Ok(suite_command.to_owned())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lock_guards_carry_their_typed_scopes() {
+        // The type-erased slot keeps the runner's `TaskRun`s alive, but the
+        // port boundary always names which kernel gates are held: a guard
+        // built for two scopes reports exactly those scopes in sorted order.
+        let guards = BuiltinLockGuards::new(
+            vec![LockScope::Task("b".to_owned()), LockScope::Workspace],
+            (),
+        );
+        assert_eq!(
+            guards.scopes(),
+            &[LockScope::Workspace, LockScope::Task("b".to_owned())]
+        );
+        let rendered = format!("{guards:?}");
+        assert!(rendered.contains("Workspace"), "{rendered}");
     }
 }
 

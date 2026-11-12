@@ -59,7 +59,7 @@ pub(super) fn run_deep_inventory(
     let elapsed = started.elapsed();
     let result = match result {
         Ok(result) => result,
-        Err(error) if error.to_string().contains("budget exhausted") => {
+        Err(error) if error.is_budget_exhausted() => {
             state.record_budget_exhausted("scan_inventory", elapsed);
             for (name, _) in SCAN_CHECK_NAMES {
                 state.record_skipped_check(name);

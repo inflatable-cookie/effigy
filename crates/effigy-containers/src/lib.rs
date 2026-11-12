@@ -9,6 +9,7 @@ pub mod health;
 pub mod host_load;
 pub mod manager;
 mod mount_spec;
+pub use mount_spec::{looks_like_bind_mount_source, parse_mount_parts};
 pub mod ops;
 pub mod policy;
 mod policy_support;

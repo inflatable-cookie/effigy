@@ -79,6 +79,35 @@ fn history_scan_filters_sorts_and_summarizes_reports() {
 }
 
 #[test]
+fn history_wrong_typed_field_is_malformed_not_silent_absence() {
+    // A present-but-wrongly-typed `lineage_id` (number, not string) must be
+    // reported as a malformed row, not silently degraded to `None`.
+    let repo = temp_state_repo("history-malformed-type");
+    let history_dir = repo.join(".effigy/reports/state/acowtancy-uat/history");
+    std::fs::create_dir_all(&history_dir).expect("create history dir");
+    std::fs::write(
+        history_dir.join("20260512T010000Z-apply-lineage-a.json"),
+        "{\n  \"schema\": \"effigy.state-stack.apply.v1\",\n  \"lineage_id\": 42,\n  \"created_at\": \"2026-05-12T01:00:00Z\",\n  \"layers\": []\n}\n",
+    )
+    .expect("write malformed report");
+    std::fs::write(
+        history_dir.join("20260512T020000Z-apply-lineage-b.json"),
+        "{\n  \"schema\": \"effigy.state-stack.apply.v1\",\n  \"lineage_id\": \"lineage-b\",\n  \"created_at\": \"2026-05-12T02:00:00Z\",\n  \"layers\": []\n}\n",
+    )
+    .expect("write valid report");
+
+    let report = StateStackHistoryReport::scan(&repo, "acowtancy-uat", None, 10, None);
+    assert_eq!(report.reports.len(), 1);
+    assert_eq!(report.reports[0].lineage_id.as_deref(), Some("lineage-b"));
+    assert_eq!(report.warnings.len(), 1);
+    assert!(
+        report.warnings[0].contains("ignored malformed state report"),
+        "{}",
+        report.warnings[0]
+    );
+}
+
+#[test]
 fn apply_report_plans_execution_and_dry_run_statuses() {
     let lineage = StateStackManifest::parse_toml(acowtancy_fixture())
         .expect("parse")

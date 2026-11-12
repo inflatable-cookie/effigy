@@ -398,7 +398,9 @@ pub fn load_temporary_qa_group(
 }
 
 pub(crate) fn hex_digest(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    // Single hex-encoding spelling: `hex::encode`. Hashing stays at the
+    // `Sha256::digest` call sites.
+    hex::encode(bytes)
 }
 
 /// Deterministic digest over a maintained group's validated definition

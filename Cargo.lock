@@ -1079,6 +1079,7 @@ version = "0.14.1"
 name = "effigy-deps"
 version = "0.14.1"
 dependencies = [
+ "effigy-core",
  "fs2",
  "globset",
  "jsonc-parser",
@@ -1363,6 +1364,7 @@ dependencies = [
  "effigy-process",
  "effigy-tasks",
  "globset",
+ "hex",
  "ignore",
  "nix 0.31.3",
  "serde",
@@ -1408,6 +1410,7 @@ dependencies = [
  "effigy-routing",
  "effigy-test-support",
  "effigy-ui",
+ "hex",
  "serde",
  "serde_json",
  "sha2 0.11.0",

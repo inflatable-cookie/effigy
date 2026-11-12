@@ -33,8 +33,7 @@ use crate::runner::error::RunnerError;
 const GRACE: Duration = Duration::from_secs(3);
 /// After a forwarded signal, how long the group gets to exit by itself.
 const SIGNAL_EXIT_BUDGET: Duration = Duration::from_secs(10);
-/// JSON output keeps this much of each stream, newest bytes last.
-const CAPTURE_TAIL: usize = 8 << 20;
+use super::tail::Tail;
 /// Exit, signal and capture polling interval for a waiting owner.
 const POLL: Duration = Duration::from_millis(20);
 /// The journal label of an env-schema `exec()` command: part of the run,
@@ -530,20 +529,7 @@ pub(in crate::runner) fn environment(
     Ok(env)
 }
 
-/// A bounded capture that keeps the newest bytes (D1-23).
-#[derive(Default)]
-struct Tail {
-    bytes: Vec<u8>,
-}
-impl Tail {
-    fn push(&mut self, chunk: &[u8]) {
-        self.bytes.extend_from_slice(chunk);
-        if self.bytes.len() > CAPTURE_TAIL {
-            let excess = self.bytes.len() - CAPTURE_TAIL;
-            self.bytes.drain(..excess);
-        }
-    }
-}
+
 
 #[cfg(test)]
 mod tests {

@@ -2,7 +2,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
@@ -111,44 +111,62 @@ fn read_state_history_item(
 ) -> Result<Option<StateStackHistoryItem>, String> {
     let raw = fs::read_to_string(path)
         .map_err(|error| format!("failed to read state report {}: {error}", path.display()))?;
-    let value: Value = serde_json::from_str(&raw)
+    // Typed record: a field with the wrong JSON type is a malformed row
+    // (reported as ignored) instead of silently degrading to a missing
+    // fact. Optional fields stay `Option` so absent facts remain absent;
+    // only the `created_at` fallback still substitutes the filename stem.
+    let record: RawStateHistoryRecord = serde_json::from_str(&raw)
         .map_err(|error| format!("ignored malformed state report {}: {error}", path.display()))?;
-    let schema = value
-        .get("schema")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
+    let schema = record.schema.clone().unwrap_or_default();
     let Some(kind) =
         StateHistoryKind::from_schema(&schema).or_else(|| StateHistoryKind::from_path(path))
     else {
         return Ok(None);
     };
-    let lineage_id = value
-        .get("lineage_id")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
-    let parent_lineage_id = value
-        .get("parent_lineage_id")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
-    let created_at = value
-        .get("created_at")
-        .and_then(Value::as_str)
-        .map(str::to_owned)
+    let created_at = record
+        .created_at
+        .clone()
         .unwrap_or_else(|| path_created_at_fallback(path));
-    let ok = value.get("ok").and_then(Value::as_bool);
-    let executed = value.get("executed").and_then(Value::as_bool);
+    let summary = state_history_summary_typed(kind, &record);
     Ok(Some(StateStackHistoryItem {
         kind,
         schema,
         path: path_display(path, repo_root),
         created_at,
-        lineage_id,
-        parent_lineage_id,
-        ok,
-        executed,
-        summary: state_history_summary(kind, &value),
+        lineage_id: record.lineage_id,
+        parent_lineage_id: record.parent_lineage_id,
+        ok: record.ok,
+        executed: record.executed,
+        summary,
     }))
+}
+
+/// Typed view of one persisted state report row.
+///
+/// Only the fields `state history` projects are decoded; unknown fields
+/// are ignored for forward compatibility. Every field is optional so an
+/// absent fact stays absent, while a present-but-wrongly-typed field fails
+/// deserialization and the row is reported as malformed.
+#[derive(Debug, Deserialize)]
+struct RawStateHistoryRecord {
+    #[serde(default)]
+    schema: Option<String>,
+    #[serde(default)]
+    lineage_id: Option<String>,
+    #[serde(default)]
+    parent_lineage_id: Option<String>,
+    #[serde(default)]
+    created_at: Option<String>,
+    #[serde(default)]
+    ok: Option<bool>,
+    #[serde(default)]
+    executed: Option<bool>,
+    #[serde(default)]
+    layers: Option<Vec<Value>>,
+    #[serde(default)]
+    captures: Option<Vec<Value>>,
+    #[serde(default)]
+    produced_layers: Option<Vec<Value>>,
 }
 
 fn path_created_at_fallback(path: &Path) -> String {
@@ -158,31 +176,33 @@ fn path_created_at_fallback(path: &Path) -> String {
         .to_owned()
 }
 
-fn state_history_summary(kind: StateHistoryKind, value: &Value) -> String {
+fn state_history_summary_typed(kind: StateHistoryKind, record: &RawStateHistoryRecord) -> String {
     match kind {
-        StateHistoryKind::Plan => value
-            .get("layers")
-            .and_then(Value::as_array)
+        StateHistoryKind::Plan => record
+            .layers
+            .as_ref()
             .map(|layers| format!("{} planned layer(s)", layers.len()))
             .unwrap_or_else(|| "plan report".to_owned()),
-        StateHistoryKind::Apply => value
-            .get("layers")
-            .and_then(Value::as_array)
+        StateHistoryKind::Apply => record
+            .layers
+            .as_ref()
             .map(|layers| format!("{} apply layer(s)", layers.len()))
             .unwrap_or_else(|| "apply report".to_owned()),
-        StateHistoryKind::Capture => value
-            .get("captures")
-            .and_then(Value::as_array)
+        StateHistoryKind::Capture => record
+            .captures
+            .as_ref()
             .map(|captures| format!("{} capture set item(s)", captures.len()))
             .or_else(|| {
-                value
-                    .get("produced_layers")
-                    .and_then(Value::as_array)
+                record
+                    .produced_layers
+                    .as_ref()
                     .map(|layers| format!("{} produced layer(s)", layers.len()))
             })
             .unwrap_or_else(|| "capture report".to_owned()),
     }
 }
+
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]

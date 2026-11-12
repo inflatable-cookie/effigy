@@ -7,6 +7,7 @@ publish = false
 description = "Machine-local dependency link models and state stores for Effigy"
 
 [dependencies]
+effigy-core = { path = "../effigy-core" }
 fs2 = "0.4"
 globset = "0.4"
 jsonc-parser = "0.33.1"
