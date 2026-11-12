@@ -30,6 +30,25 @@ fn parse_colima_running_states_share_one_table() {
 }
 
 #[test]
+fn colima_profile_health_keeps_running_unreachable_distinct() {
+    use ColimaProfileState::*;
+
+    for (list_ok, status, status_ok, ssh_ok, expected) in [
+        (true, Some("Running"), true, Some(true), RunningReachable),
+        (true, Some("Running"), false, None, RunningUnreachable),
+        (true, Some("Running"), true, Some(false), RunningUnreachable),
+        (true, Some("Stopped"), false, None, Stopped),
+        (true, None, false, None, Missing),
+        (false, None, false, None, DaemonDown),
+    ] {
+        assert_eq!(
+            classify_colima_profile_state(list_ok, status, status_ok, ssh_ok),
+            expected
+        );
+    }
+}
+
+#[test]
 fn classify_colima_observation_keeps_running_stopped_and_unavailable_apart() {
     assert_eq!(
         classify_colima_observation(true, "INFO[0000] colima is running\n", ""),
@@ -488,6 +507,9 @@ fn prepare_managed_colima_profile_writes_memory_and_swap_provision() {
         .expect("script");
     assert!(script.contains("# effigy-managed-swap"));
     assert!(script.contains("swap_gib=16"));
+    assert!(script.contains("sudo -n sh -eu"));
+    assert!(script.contains("swapon /swapfile\n"));
+    assert!(!script.contains("swapon /swapfile 2>/dev/null || true"));
 }
 
 #[test]

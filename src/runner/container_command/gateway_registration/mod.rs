@@ -2,6 +2,8 @@ use super::support::exec_error_means_runtime_not_running;
 use effigy_containers::exec::ContainerLifecycle;
 #[cfg(test)]
 use effigy_containers::exec::PublishedPort;
+use std::ffi::{OsStr, OsString};
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
@@ -604,14 +606,168 @@ fn gateway_routes_registered_against_rows(
     )
 }
 
+fn list_running_rows_with_colima_repair(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    deadline: Option<std::time::Instant>,
+) -> Result<Vec<RunningComposeContainer>, RunnerError> {
+    match list_running_compose_containers_for_policy_with_deadline(repo_root, policy, deadline) {
+        Ok(rows) => Ok(rows),
+        Err(_error) if colima_profile_is_running_but_unreachable(repo_root, policy) => {
+            let command = format!(
+                "colima stop --profile {} && colima start --profile {}",
+                policy.profile, policy.profile
+            );
+            let detail = format!(
+                "Colima profile `{}` is running but unreachable, often after a host sleep or crash. Fix: `{command}`. This stops every container on that profile.",
+                policy.profile
+            );
+            if !colima_restart_prompt_allowed(
+                io::stdin().is_terminal(),
+                io::stdout().is_terminal(),
+                std::env::args_os().any(|arg| arg == "--json"),
+            ) {
+                return Err(gateway_runtime_rows_error(detail));
+            }
+            eprint!("{detail}\nRestart this profile now? [y/N] ");
+            io::stderr().flush().map_err(|write_error| {
+                gateway_runtime_rows_error(format!(
+                    "{detail}\nfailed to write restart prompt: {write_error}"
+                ))
+            })?;
+            let mut answer = String::new();
+            io::stdin().read_line(&mut answer).map_err(|read_error| {
+                gateway_runtime_rows_error(format!(
+                    "{detail}\nfailed to read restart choice: {read_error}"
+                ))
+            })?;
+            if !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+                return Err(gateway_runtime_rows_error(detail));
+            }
+            for args in [
+                vec!["stop", "--profile", policy.profile.as_str()],
+                vec!["start", "--profile", policy.profile.as_str()],
+            ] {
+                let output = Command::new("colima")
+                    .current_dir(repo_root)
+                    .args(args)
+                    .output()
+                    .map_err(|command_error| {
+                        gateway_runtime_rows_error(format!(
+                            "{detail}\nfailed to run `{command}`: {command_error}"
+                        ))
+                    })?;
+                if !output.status.success() {
+                    return Err(gateway_runtime_rows_error(format!(
+                        "{detail}\nrestart command failed ({}): {}",
+                        output.status,
+                        String::from_utf8_lossy(&output.stderr).trim()
+                    )));
+                }
+            }
+            list_running_compose_containers_for_policy_with_deadline(
+                repo_root,
+                policy,
+                Some(Instant::now() + Duration::from_secs(30)),
+            )
+            .map_err(|retry_error| {
+                gateway_runtime_rows_error(format!(
+                    "{detail}\nprofile restarted but runtime rows remain unavailable: {retry_error}"
+                ))
+            })
+        }
+        Err(error) => Err(gateway_runtime_rows_error(error.to_string())),
+    }
+}
+
+fn colima_restart_prompt_allowed(stdin_terminal: bool, stdout_terminal: bool, json: bool) -> bool {
+    stdin_terminal && stdout_terminal && !json
+}
+
+fn colima_profile_is_running_but_unreachable(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> bool {
+    if policy.driver != effigy_manifest::ManifestContainerDriver::Colima
+        || effigy_containers::compose::resolve_compose_backend_for_repo(repo_root, policy)
+            != effigy_containers::compose::ComposeBackend::ColimaNerdctl
+    {
+        return false;
+    }
+    let probe_deadline = Instant::now() + Duration::from_secs(3);
+    let list_args = [OsString::from("list"), OsString::from("--json")];
+    let Ok(listed) = crate::runner::exec_command::run_command_capture_until(
+        repo_root,
+        OsStr::new("colima"),
+        &list_args,
+        None,
+        Some(probe_deadline),
+    ) else {
+        return false;
+    };
+    let listed_status = String::from_utf8_lossy(&listed.stdout)
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|row| {
+            row.get("name").and_then(serde_json::Value::as_str) == Some(policy.profile.as_str())
+        })
+        .and_then(|row| {
+            row.get("status")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        });
+    let status_args = [
+        OsString::from("status"),
+        OsString::from("--profile"),
+        OsString::from(policy.profile.as_str()),
+    ];
+    let status_succeeded = crate::runner::exec_command::run_command_capture_until(
+        repo_root,
+        OsStr::new("colima"),
+        &status_args,
+        None,
+        Some(Instant::now() + Duration::from_secs(3)),
+    )
+    .is_ok_and(|status| status.status.success());
+    let ssh_reachable = if listed_status
+        .as_deref()
+        .is_some_and(|status| status.eq_ignore_ascii_case("running"))
+        && status_succeeded
+    {
+        let args = [
+            OsString::from("ssh"),
+            OsString::from("--profile"),
+            OsString::from(policy.profile.as_str()),
+            OsString::from("--"),
+            OsString::from("true"),
+        ];
+        Some(
+            crate::runner::exec_command::run_command_capture_until(
+                repo_root,
+                OsStr::new("colima"),
+                &args,
+                None,
+                Some(Instant::now() + Duration::from_secs(3)),
+            )
+            .is_ok_and(|output| output.status.success()),
+        )
+    } else {
+        None
+    };
+    effigy_containers::colima::classify_colima_profile_state(
+        listed.status.success(),
+        listed_status.as_deref(),
+        status_succeeded,
+        ssh_reachable,
+    ) == effigy_containers::colima::ColimaProfileState::RunningUnreachable
+}
+
 pub(in crate::runner) fn resolve_gateway_tcp_alias_routes_for_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     deadline: Option<std::time::Instant>,
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
-    let rows =
-        list_running_compose_containers_for_policy_with_deadline(repo_root, policy, deadline)
-            .map_err(|error| gateway_runtime_rows_error(error.to_string()))?;
+    let rows = list_running_rows_with_colima_repair(repo_root, policy, deadline)?;
     let mut project_alias_routes =
         resolve_gateway_service_alias_routes(repo_root, policy, true, Some(&rows))?;
     let shared_alias_routes = resolve_gateway_shared_service_alias_routes(

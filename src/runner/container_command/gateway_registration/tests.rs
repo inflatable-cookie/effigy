@@ -1,4 +1,45 @@
 use super::*;
+
+#[test]
+fn unreachable_profile_restart_requires_interactive_non_json_output() {
+    assert!(colima_restart_prompt_allowed(true, true, false));
+    assert!(!colima_restart_prompt_allowed(false, true, false));
+    assert!(!colima_restart_prompt_allowed(true, false, false));
+    assert!(!colima_restart_prompt_allowed(true, true, true));
+}
+
+#[test]
+fn running_colima_profile_with_refused_ssh_probe_is_classified_unreachable() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = tempfile::tempdir().expect("fixture tempdir");
+    let bin = fixture.path().join("bin");
+    std::fs::create_dir_all(&bin).expect("fixture bin");
+    let colima = bin.join("colima");
+    std::fs::write(
+        &colima,
+        "#!/bin/sh\ncase \"$1\" in\n  list) printf '%s\\n' '{\"name\":\"effigy\",\"status\":\"Running\"}' ;;\n  status) exit 0 ;;\n  ssh) exit 255 ;;\n  *) exit 99 ;;\nesac\n",
+    )
+    .expect("fake Colima");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&colima).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&colima, permissions).expect("chmod");
+    }
+    let path = std::env::var("PATH").unwrap_or_default();
+    let _env = crate::contract_test_support::EnvGuard::set_many(&[
+        ("PATH", Some(format!("{}:{path}", bin.display()))),
+        ("EFFIGY_COMPOSE_BACKEND", Some("colima".to_owned())),
+    ]);
+    let mut policy = test_policy();
+    policy.repo_root = fixture.path().to_owned();
+
+    assert!(colima_profile_is_running_but_unreachable(
+        fixture.path(),
+        &policy
+    ));
+}
 #[cfg(test)]
 use effigy_containers::exec::{ContainerExecError, RunningComposeContainer};
 use effigy_containers::{EffectiveComposeSource, EffectiveServiceAlias, SharedServiceBinding};

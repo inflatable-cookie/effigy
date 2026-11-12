@@ -518,6 +518,16 @@ The engine and its precedence are one resolver,
 4. the user preference in `~/.effigy/config.toml`;
 5. the manifest driver default.
 
+When a Colima runtime read fails, Effigy checks the targeted profile's
+inventory, status and SSH reachability. A profile listed as running but
+unreachable stays distinct from stopped, missing and daemon-down states. An
+interactive non-JSON command may offer to stop and start that exact target;
+the default is No because this stops every container on the profile. Other
+calls report the repair command without restarting it. `effigy doctor` reports
+the same state. Effigy's managed swap provision runs its privileged file and
+swap operations through non-interactive `sudo`; doctor warns when the managed
+swap is not active.
+
 Prepare is the record's only writer: it records engine, context and the source
 label in `resources.backend` when it publishes the desired generation, and
 never records a guess. The reconciler reads that record; its transitions,

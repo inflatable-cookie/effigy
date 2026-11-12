@@ -1,0 +1,1 @@
+Detect Colima profiles that appear running but cannot be reached, show the targeted restart repair in doctor and runtime errors, offer restart only after an interactive confirmation, and run managed swap setup with the required privileges.
