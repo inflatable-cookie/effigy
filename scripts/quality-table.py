@@ -17,7 +17,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 TABLE_DIR = ROOT / "docs/knowledge/quality/tests"
 RATED_COMMIT = "7a502af038b7fbc4889d6484ea78deb25c7daac5"
+CODE_TABLE_DIR = ROOT / "docs/knowledge/quality/code"
+CODE_RATED_COMMIT = "a9b3213f9"
 EXPECTED_ROWS = {"T1": 1305, "T2": 623, "T3": 858, "T4": 1793, "T5": 1857, "T6": 1264}
+CODE_EXPECTED_ROWS = {"C1": 154, "C2": 63, "C3": 97, "C4": 179, "C5": 214}
 _GIT_CACHE: dict[tuple[str, str], str | None] = {}
 
 
@@ -407,14 +410,195 @@ def discover_current() -> tuple[dict[str, str], set[str], int]:
     return found, set(), macro_count
 
 
+def code_rows(table_dir: Path = CODE_TABLE_DIR) -> list[dict[str, str]]:
+    """Read the frozen code-module tables C1..C5.csv."""
+    result = []
+    for table in sorted(table_dir.glob("C[1-5].csv")):
+        with table.open(newline="", encoding="utf-8") as source:
+            for row in csv.DictReader(source):
+                row["files"] = [part.strip() for part in row["files"].split(";") if part.strip()]
+                result.append(row)
+    return result
+
+
+def code_body(files: list[str], blobs: dict[str, bytes | None]) -> str | None:
+    """sha256 over concatenated file bytes in sorted path order.
+
+    `blobs` maps a repo-relative path to its bytes (None when missing).
+    Returns None when any listed file is missing, so a partial file set
+    never compares equal to the frozen whole-module hash.
+    """
+    parts = []
+    for path in sorted(files):
+        blob = blobs.get(path)
+        if blob is None:
+            return None
+        parts.append(blob)
+    return hashlib.sha256(b"".join(parts)).hexdigest()
+
+
+# Test-support files that never carry a module row of their own (named in the
+# per-domain rating reports as excluded test obligations).
+CODE_KNOWN_TEST_SUPPORT = frozenset({
+    "src/runner/container_command/qualification.rs",
+    "src/runner/workspace_command/permissions_gnu_accept.rs",
+    "crates/effigy-tui/src/multiprocess/startup_visibility.rs",
+    "src/runner/scripted_doctor.rs",
+    "src/runner/gateway_command/fixture.rs",
+    "crates/effigy-gateway/src/server/endpoint_faults.rs",
+})
+
+
+def is_code_test_only(path: str) -> bool:
+    """Test-only product-tree files carry no module row of their own."""
+    base = path.rsplit("/", 1)[-1]
+    lowered = base.lower()
+    if path in CODE_KNOWN_TEST_SUPPORT:
+        return True
+    if path.startswith("crates/effigy-test-support/"):
+        return True
+    return ("/tests/" in path or base == "tests.rs"
+            or "test_support" in lowered or "test" in lowered
+            or "fixture" in lowered or "fake" in lowered)
+
+
+def discover_product_files(root: Path = ROOT) -> set[str]:
+    """Repo-relative .rs files under src/ and crates/*/src/, minus test-only."""
+    found = set()
+    for base in [root / "src", *sorted((root / "crates").glob("*/src"))]:
+        if not base.is_dir():
+            continue
+        for path in base.rglob("*.rs"):
+            if any(part in {"target", ".git", "vendor"} for part in path.parts):
+                continue
+            rel = path.relative_to(root).as_posix()
+            if not is_code_test_only(rel):
+                found.add(rel)
+    return found
+
+
+def code_tree_bytes(files: set[str], root: Path = ROOT) -> dict[str, bytes | None]:
+    """Read working-tree bytes for every path in `files`."""
+    blobs: dict[str, bytes | None] = {}
+    for path in files:
+        candidate = root / path
+        try:
+            blobs[path] = candidate.read_bytes()
+        except OSError:
+            blobs[path] = None
+    return blobs
+
+
+def code_drift(rated_rows: list[dict[str, str]],
+               blobs: dict[str, bytes | None],
+               product_files: set[str]) -> dict[str, object]:
+    """Pure drift classification: unchanged, changed, gone, new, splits.
+
+    `blobs` maps every row-listed path (plus anything else needed) to its
+    working-tree bytes or None. `product_files` is today's product-tree
+    file set for new-file detection.
+    """
+    covered: set[str] = set()
+    for row in rated_rows:
+        covered.update(row["files"])  # type: ignore[arg-type]
+    changed: list[str] = []
+    gone: list[tuple[str, list[str]]] = []
+    for row in rated_rows:
+        missing = [path for path in sorted(row["files"]) if blobs.get(path) is None]  # type: ignore[union-attr]
+        if missing:
+            gone.append((row["id"], missing))
+            continue
+        if code_body(row["files"], blobs) != row["body_sha"]:  # type: ignore[arg-type]
+            changed.append(row["id"])
+    gone_ids = {row_id for row_id, _ in gone}
+    new_files = sorted(product_files - covered)
+    # A "split: re-rate" group is a gone row whose path still owns new files:
+    # single-file rows watch their parent directory, directory rows watch
+    # their own tree, Rust-id rows watch the common tree of their files.
+    splits: list[tuple[str, list[str]]] = []
+    for row_id, _ in gone:
+        row = next(item for item in rated_rows if item["id"] == row_id)
+        paths = sorted(row["files"])  # type: ignore[union-attr]
+        if len(paths) == 1:
+            prefix = paths[0].rsplit("/", 1)[0] + "/" if "/" in paths[0] else ""
+        else:
+            import os.path
+            prefix = os.path.commonpath(paths) + "/"
+        owned = [path for path in new_files if path.startswith(prefix)]
+        if owned:
+            splits.append((row_id, owned))
+    return {"changed": sorted(changed), "gone": sorted(gone), "new": new_files, "splits": sorted(splits)}
+
+
+def code_report(drift: dict[str, object], total: int) -> str:
+    """Render the full human-readable code drift report."""
+    changed = drift["changed"]  # type: ignore[index]
+    gone = drift["gone"]  # type: ignore[index]
+    new_files = drift["new"]  # type: ignore[index]
+    splits = drift["splits"]  # type: ignore[index]
+    fresh = max(0, total - len(gone) - len(changed))
+    stale = len(new_files) + len(changed) + len(gone)
+    denominator = total + len(new_files)
+    percent = (100 * stale / denominator) if denominator else 0.0
+    lines = [f"code quality: {total} rows; {len(new_files)} new; {len(changed)} changed; "
+             f"{len(gone)} gone; {fresh} fresh; {percent:.1f}% stale since {CODE_RATED_COMMIT[:9]}"]
+    lines.append(f"\nchanged (body hash differs): {len(changed)}")
+    lines.extend(f"  {row_id}" for row_id in changed)
+    lines.append(f"\ngone (row files missing): {len(gone)}")
+    for row_id, missing in gone:
+        lines.append(f"  {row_id} (missing: {', '.join(missing)})")
+    lines.append(f"\nnew product files (no row): {len(new_files)}")
+    lines.extend(f"  {path}" for path in new_files)
+    lines.append(f"\nsplit: re-rate groups (new files under a gone row's path): {len(splits)}")
+    for row_id, owned in splits:
+        lines.append(f"  {row_id}")
+        lines.extend(f"    {path}" for path in owned)
+    return "\n".join(lines) + "\n"
+
+
+def code_summary_line(drift: dict[str, object], total: int) -> str:
+    changed = drift["changed"]  # type: ignore[index]
+    gone = drift["gone"]  # type: ignore[index]
+    new_files = drift["new"]  # type: ignore[index]
+    stale = len(new_files) + len(changed) + len(gone)
+    denominator = total + len(new_files)
+    percent = (100 * stale / denominator) if denominator else 0.0
+    return (f"code quality: {total} rows, {len(new_files)} new, {len(changed)} changed, "
+            f"{len(gone)} gone, {percent:.1f}% stale since {CODE_RATED_COMMIT[:9]}\n")
+
+
+def run_code_mode(summary: bool, table_dir: Path = CODE_TABLE_DIR, root: Path = ROOT) -> int:
+    rated_rows = code_rows(table_dir)
+    if not rated_rows:
+        print(f"quality-table: no code rating rows found in {table_dir}", file=sys.stderr)
+        return 2
+    wanted: set[str] = set()
+    for row in rated_rows:
+        wanted.update(row["files"])  # type: ignore[arg-type]
+    blobs = code_tree_bytes(wanted, root)
+    drift = code_drift(rated_rows, blobs, discover_product_files(root))
+    if summary:
+        print(code_summary_line(drift, len(rated_rows)), end="")
+    else:
+        print(code_report(drift, len(rated_rows)), end="")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--summary", action="store_true", help="print the milestone summary line only")
+    parser.add_argument("--code", action="store_true", help="report drift in the code-module tables instead of the test tables")
     parser.add_argument("--durations", nargs="+", metavar="JUNIT", type=Path,
                         help="summarize nextest JUnit reports and fill duration_ms")
     parser.add_argument("--top", type=int, default=50, help="slowest tests to show (default: 50)")
     parser.add_argument("--report-only", action="store_true", help="summarize without changing CSV tables")
-    args = parser.parse_args()
+    args = parser.parse_args([item for item in sys.argv[1:] if item != "--"])
+
+    if args.code:
+        if args.durations:
+            print("quality-table: --code does not take --durations", file=sys.stderr)
+            return 2
+        return run_code_mode(args.summary)
 
     if args.durations:
         missing = [path for path in args.durations if not path.is_file()]

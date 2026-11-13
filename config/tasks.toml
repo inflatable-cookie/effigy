@@ -2200,6 +2200,7 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 # docs/knowledge/test-assurance.md.
 "test:inventory" = { durable = true, visibility = "internal", group = "Maintenance", description = "Prove the test-suite census helper's reconciliation logic.", run = [{ run = "python3 scripts/test-inventory.py self-test", timeout_ms = 120000 }] }
 "qa:quality:tests" = { visibility = "internal", group = "Maintenance", description = "Report drift in the frozen test quality tables without gating QA.", run = "python3 scripts/quality-table.py {args}" }
+"qa:quality:code" = { visibility = "internal", group = "Maintenance", description = "Report drift in the frozen code-module quality tables without gating QA.", run = "python3 scripts/quality-table.py --code {args}" }
 "test:quality:table" = { visibility = "internal", group = "Maintenance", description = "Prove quality-table source hashing helpers.", run = "python3 -B tests/scripts/quality_table_tests.py" }
 # Owned synthetic-tree proofs for the Cargo-route and mktemp detectors. Live
 # qa:docs:cargo-routes and qa:docs:mktemp stay the repository checks; this
