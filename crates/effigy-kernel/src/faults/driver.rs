@@ -15,8 +15,13 @@ use std::process::{Command, Stdio};
 
 const SCENARIO: &str = "EFFIGY_KERNEL_FAULT_SCENARIO";
 const CHILD: &str = "faults::driver::fault_child";
-/// Every kernel wait in a scenario is bounded well inside this.
-const CHILD_BUDGET: Duration = Duration::from_secs(60);
+/// A fault child must cross a scenario boundary within this window. The bound
+/// measures the child's own progress, not the host's speed: a durable store
+/// commit on a contended volume took 0.7-1.3 s under load (effigy#955), so a
+/// whole run can legitimately take a minute while every step still advances.
+/// A child that stops making progress is the fault this catches, and a child
+/// the harness has stopped for inspection is not silent on its own account.
+const CHILD_PROGRESS_BUDGET: Duration = Duration::from_secs(60);
 
 /// One §12.1 scenario expressed with kernel primitives and strict fakes.
 pub(super) trait Scenario: Sync {
@@ -546,6 +551,8 @@ fn observe_everything(home: &Path) {
 
 /// Runs the scenario in a re-executed child armed with `Kill` or `Stall`.
 fn child(scenario: &dyn Scenario, home: &Path, point: Point, n: usize, fault: Fault) -> bool {
+    let progress = aux(home).join("child-progress");
+    let _ = std::fs::write(&progress, b"");
     let child = Command::new(std::env::current_exe().expect("test binary"))
         .args([
             CHILD,
@@ -558,6 +565,7 @@ fn child(scenario: &dyn Scenario, home: &Path, point: Point, n: usize, fault: Fa
         .env("HOME", home)
         .env("EFFIGY_KERNEL_TEST_FAULT", fault::env_spec(point, n, fault))
         .env("EFFIGY_KERNEL_TEST_HELPERS", helper_log(home))
+        .env("EFFIGY_KERNEL_TEST_PROGRESS", &progress)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
@@ -566,7 +574,10 @@ fn child(scenario: &dyn Scenario, home: &Path, point: Point, n: usize, fault: Fa
     let pid = child.id();
     // The child is reaped here with WUNTRACED; std's handle is not used again.
     drop(child);
-    let deadline = Instant::now() + CHILD_BUDGET;
+    // Progress is the child's own boundary counter, so the wait follows its
+    // events instead of a wall clock that also charges it for real work.
+    let mut crossed = progress_mark(&progress);
+    let mut since = Instant::now();
     let mut stalled = false;
     loop {
         let mut status = 0;
@@ -578,6 +589,10 @@ fn child(scenario: &dyn Scenario, home: &Path, point: Point, n: usize, fault: Fa
             assert_eq!(fault, Fault::Stall, "{point:?}: unexpected stop");
             stalled = true;
             inspect_stalled(scenario, home, pid, point);
+            // The harness stopped the child on purpose: its silence belongs to
+            // this inspection, so the progress window restarts at the release.
+            crossed = progress_mark(&progress);
+            since = Instant::now();
             // SAFETY: continuing our own stopped child.
             unsafe { libc::kill(pid as i32, libc::SIGCONT) };
             continue;
@@ -599,17 +614,35 @@ fn child(scenario: &dyn Scenario, home: &Path, point: Point, n: usize, fault: Fa
             );
             return stalled;
         }
-        if Instant::now() >= deadline {
+        let mark = progress_mark(&progress);
+        if mark != crossed {
+            crossed = mark;
+            since = Instant::now();
+        } else if since.elapsed() >= CHILD_PROGRESS_BUDGET {
+            let state = crate::ident::process_state(pid);
+            let ps = std::process::Command::new("/bin/ps")
+                .args(["-o", "pid=,stat=,etime=,command=", "-p", &pid.to_string()])
+                .output()
+                .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned());
+            eprintln!(
+                "child-stalled {} {point:?}#{n} mark={crossed} state={state:?} ps={ps:?}",
+                scenario.name()
+            );
             // SAFETY: our own child, recorded pid, never a pattern kill.
             unsafe { libc::kill(pid as i32, libc::SIGKILL) };
             panic!(
-                "{}: {point:?}#{n} {fault:?} child exceeded bound",
+                "{}: {point:?}#{n} {fault:?} child made no progress for {CHILD_PROGRESS_BUDGET:?} ({crossed} boundaries)",
                 scenario.name()
             );
         }
         std::thread::sleep(Duration::from_millis(2));
     }
 }
+/// How many boundaries the fault child has crossed: one appended byte each.
+fn progress_mark(path: &Path) -> u64 {
+    std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
+}
+
 /// A stopped holder is live: its gates stay held and exclusive (K2, O4).
 fn inspect_stalled(scenario: &dyn Scenario, home: &Path, pid: u32, point: Point) {
     let mut world = World::default();
@@ -655,6 +688,24 @@ fn fault_child() {
         return;
     };
     let home = PathBuf::from(std::env::var_os("HOME").expect("fault home"));
+    if let Some(path) = std::env::var_os("EFFIGY_KERNEL_TEST_PROGRESS") {
+        let path = PathBuf::from(path);
+        // One appended byte per crossing is the progress event the driver
+        // waits on; buffering would hide it, so the write stays direct.
+        let file = std::cell::RefCell::new(
+            std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(&path)
+                .ok(),
+        );
+        crate::fault::hook(Some(Box::new(move |_| {
+            use std::io::Write;
+            if let Some(file) = file.borrow_mut().as_mut() {
+                let _ = file.write_all(b".");
+            }
+        })));
+    }
     let scenario = super::scenarios::by_name(&name);
     scenario.warm();
     fault::arm_from_env();

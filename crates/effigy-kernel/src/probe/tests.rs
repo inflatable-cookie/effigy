@@ -331,3 +331,55 @@ fn probe_http_head_has_no_body_and_headers_obey_capture_limit() {
         peer.join().unwrap();
     }
 }
+
+/// The workload's window starts at release, not at the caller's first
+/// statement. A fork the scheduler delays past that window (effigy#955's
+/// loaded `spawn barrier` timeout) must not skip the registration and release
+/// boundaries, and must not extend the window it was given.
+#[cfg(feature = "fault-injection")]
+#[test]
+fn probe_setup_delay_never_spends_or_extends_the_workload_window() {
+    let executable = crate::supervise::Executable::capture(&std::path::PathBuf::from(
+        std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE").unwrap(),
+    ))
+    .unwrap();
+    let runtime = ProbeRuntime::install(executable).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let cx = cx(Duration::from_secs(30)).with_probes(runtime);
+    crate::fault::hook(Some(Box::new(|point| {
+        if point == crate::fault::Point::ProbeFork {
+            std::thread::sleep(Duration::from_millis(2000));
+        }
+    })));
+    let started = Instant::now();
+    let observed = cx.probe_process(ProbeCommand {
+        argv: vec!["/bin/sh".into(), "-c".into(), "sleep 30".into()],
+        cwd: dir.path().into(),
+        env: Default::default(),
+        deadline: Duration::from_millis(1500),
+        max_output: 64,
+    });
+    crate::fault::hook(None);
+    let trace = crate::fault::trace();
+    for point in [
+        crate::fault::Point::ProbeFork,
+        crate::fault::Point::ProbeRegister,
+        crate::fault::Point::ProbeBeforeGo,
+        crate::fault::Point::ProbeAfterGo,
+        crate::fault::Point::ProbeCloseBefore,
+    ] {
+        assert!(
+            trace.contains(&point),
+            "setup delay skipped {point:?}: {trace:?}"
+        );
+    }
+    assert!(matches!(observed, Observed::Unknown(_)), "{observed:?}");
+    // Setup (2 s) does not come out of the workload's 1.5 s window, and the
+    // window is not restarted: bound the whole call by setup + deadline +
+    // grace + the closure budget.
+    assert!(
+        started.elapsed() < Duration::from_millis(2000 + 1500 + 100 + 5000),
+        "the workload window was extended: {:?}",
+        started.elapsed()
+    );
+}

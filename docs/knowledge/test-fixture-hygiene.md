@@ -127,6 +127,40 @@ effigy#666 is consistent with it under load, but no retained record identifies
 what that run's pin actually reached.
 The recovery step's rerun settles on the recovery budget, not the one-second
 injected-scenario budget a faulted settle waits out (effigy#618).
+Whether a faulted child is stuck is measured by its own progress, not by a
+wall clock that also charges it for real work (effigy#955). A `Kill`/`Stall`
+child appends one byte per scenario boundary it crosses, and the driver fails
+the job only when that counter stands still for the same 60 s the bound always
+had; the window restarts when the harness itself has stopped the child for the
+stall inspection, so the inspection's own time is never charged to the child.
+Measured on an 18-core host at load 30-60, one durable store commit
+(`StoreCommitBefore` to `StoreCommitAfter`) took 0.7-1.3 s, and whole
+environment jobs progressed for 10-20 s while every step advanced
+(`/Volumes/Stash/scratch/effigy/955-audit/env-part-0-progress.log`), so the
+whole-run wall bound reported a healthy child as hung.
+The probe half of the observe scenario follows the same rule. `probe_process`
+gives the *workload* its window, and that window starts at release; setup — the
+runtime lock, a cold guard's start, the fork, the spawn barrier and the
+registration handshake — rides the caller's observe budget instead. A fork the
+scheduler delayed past the workload's 1.5 s window used to fail the trace with
+`Unknown(Inconsistent("timed out after 2s during spawn barrier"))` and never
+cross `ProbeRegister`, `ProbeBeforeGo`, `ProbeAfterGo` or `ProbeCloseBefore`; it
+no longer can, and the window itself is neither spent nor extended
+(`probe_setup_delay_never_spends_or_extends_the_workload_window`).
+O14's sampler follows the probe's exit instead of judging one instant. The
+guard's wake-up after `deadline + grace` belongs to the host scheduler, and the
+sampler could only confirm a probe gone between 0.2 ms and 887 ms after that
+bound (median 75 ms, p90 553 ms over 167 observations at load 14-63); a later
+observation cannot show an earlier exit, so those are upper bounds on the
+departure, and the fixed 250 ms sample was never a product promise. The oracle,
+the registered deadline, the grace period and the scenario's points,
+observations and case set are unchanged. The sampler's own ceiling is 2 s after
+that bound — about 2.25 times the worst observation — so a delayed but healthy
+guard passes. It is a hung-guard ceiling, not a promptness promise: a guard that
+acts 3 s late, or never, leaves a live probe and O14 reports it.
+`probe_evidence_follows_the_exit_event_not_one_sampled_instant` pins all three
+arms: a 0.4 s late exit is not a survivor, a probe no guard ends fails, and a
+probe that exits more than 2 s after the bound still fails.
 The six fault shards rotate the starting shard at each traced crossing. With
 six fault types, plain modulo assigned every Stall and its parent-side
 inspection to one process. Rotation spreads those jobs without changing the

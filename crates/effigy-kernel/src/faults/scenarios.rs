@@ -1063,33 +1063,145 @@ fn probe_runtime() -> std::sync::Arc<crate::probe::ProbeRuntime> {
 /// Long enough that fork, identity and registration finish under host load;
 /// the probe itself never completes, so only the deadline ends it.
 const PROBE_DEADLINE: Duration = Duration::from_millis(1500);
-/// Scheduler slack on top of deadline plus grace when sampling survivors.
-const PROBE_SLACK: Duration = Duration::from_millis(250);
+/// How long the sampler follows a probe's exit after `deadline + grace`.
+///
+/// The guard's wake-up is the host scheduler's to grant, so the sampler waits
+/// for the exit event instead of judging one instant (effigy#955). Measured on
+/// an 18-core host at load 14-63, a probe was confirmed gone between 0.2 ms and
+/// 887 ms after that bound (median 75 ms, p90 553 ms over 167 observations;
+/// those are upper bounds on the departure, because a later observation cannot
+/// show an earlier exit). 2 s is ~2.25x the worst observation, so a delayed but
+/// healthy guard passes, while a guard that acts 3 s late — or never — leaves a
+/// live probe for O14 to reject. This is a hung-guard ceiling, not a promptness
+/// promise: nothing here asserts when the scheduler runs the guard.
+const PROBE_EXIT_WAIT: Duration = Duration::from_secs(2);
 fn probe_bound() -> Duration {
-    PROBE_DEADLINE + crate::probe::GRACE + PROBE_SLACK
+    PROBE_DEADLINE + crate::probe::GRACE
 }
-/// Samples announced probe processes once their evidence bound has passed.
+fn probe_clock() -> u128 {
+    crate::ident::boot_clock()
+        .verified()
+        .expect("boot clock")
+        .elapsed
+        .as_nanos()
+}
+/// Samples announced probe processes after their evidence bound.
+///
+/// The guard's deadline, not this sampler's sleep, decides when a probe must
+/// end, and the guard's own wake-up is the host scheduler's to grant. So the
+/// sample waits for the exit event up to `wait`: a delayed guard is measured
+/// by when the probe actually left, while a guard that never acts still leaves
+/// a live probe for O14 to reject.
 fn probe_survivors(home: &Path) -> Vec<world::Proc> {
+    probe_survivors_within(home, PROBE_EXIT_WAIT)
+}
+fn probe_survivors_within(home: &Path, wait: Duration) -> Vec<world::Proc> {
     let pids = world::pids(&aux(home).join("probe-pids"));
-    if !pids.is_empty() {
-        let deadline: u128 = std::fs::read_to_string(aux(home).join("probe-deadline"))
-            .expect("registered probe deadline")
-            .parse()
-            .expect("deadline nanos");
-        let now = crate::ident::boot_clock()
-            .verified()
-            .expect("boot clock")
-            .elapsed
-            .as_nanos();
-        let remaining = (deadline + crate::probe::GRACE.as_nanos() + PROBE_SLACK.as_nanos())
-            .saturating_sub(now);
-        std::thread::sleep(Duration::from_nanos(
-            remaining.try_into().expect("probe bound"),
-        ));
+    if pids.is_empty() {
+        return vec![];
+    }
+    let deadline: u128 = std::fs::read_to_string(aux(home).join("probe-deadline"))
+        .expect("registered probe deadline")
+        .parse()
+        .expect("deadline nanos");
+    let bound = deadline + crate::probe::GRACE.as_nanos();
+    let remaining = bound.saturating_sub(probe_clock());
+    std::thread::sleep(Duration::from_nanos(
+        remaining.try_into().expect("probe bound"),
+    ));
+    let limit = probe_clock() + wait.as_nanos();
+    let live = |pid: u32| {
+        !matches!(
+            crate::ident::process_state(pid),
+            Observed::Absent(_) | Observed::Verified(crate::ident::ProcessState::Zombie, _)
+        )
+    };
+    while pids.iter().any(|pid| live(*pid)) && probe_clock() < limit {
+        std::thread::sleep(Duration::from_micros(200));
     }
     pids.into_iter()
         .map(|pid| world::proc(pid, b"EFFIGY_PROBE_NONCE="))
         .collect()
+}
+/// A guarded probe the host scheduler delays past its deadline is not a
+/// survivor: the sampler follows the exit event, and still reports a probe that
+/// a broken guard never ends — or one it leaves past the 2 s ceiling.
+#[test]
+fn probe_evidence_follows_the_exit_event_not_one_sampled_instant() {
+    let late = home();
+    let mut delayed = std::process::Command::new("/bin/sh")
+        .args(["-c", "sleep 0.4"])
+        .spawn()
+        .expect("delayed probe");
+    std::fs::write(
+        aux(&late.home()).join("probe-pids"),
+        delayed.id().to_string(),
+    )
+    .expect("announced probe");
+    // The workload's window is already over: only the guard's reaction is
+    // outstanding, exactly as when a busy host delays the guard itself.
+    let past = probe_clock().saturating_sub(500_000_000);
+    std::fs::write(aux(&late.home()).join("probe-deadline"), past.to_string())
+        .expect("registered deadline");
+    let sampled = probe_survivors(&late.home());
+    delayed.wait().expect("delayed probe");
+    assert!(!sampled[0].alive, "an exited probe is not a survivor");
+    // A guard that never acts leaves the probe alive past the sampler's own
+    // ceiling, and O14 still rejects it.
+    let hung = home();
+    let mut lingering = std::process::Command::new("/bin/sh")
+        .args(["-c", "sleep 10"])
+        .spawn()
+        .expect("lingering probe");
+    std::fs::write(
+        aux(&hung.home()).join("probe-pids"),
+        lingering.id().to_string(),
+    )
+    .expect("announced probe");
+    let past = probe_clock().saturating_sub(500_000_000);
+    std::fs::write(aux(&hung.home()).join("probe-deadline"), past.to_string())
+        .expect("registered deadline");
+    let world = World {
+        probes: probe_survivors_within(&hung.home(), Duration::from_millis(100)),
+        probe_bound: Some(probe_bound()),
+        ..World::default()
+    };
+    assert!(Oracle::O14.check(&world).is_err(), "a hung probe survives");
+    // SAFETY: our own recorded child, killed by its pid.
+    unsafe { libc::kill(lingering.id() as i32, libc::SIGKILL) };
+    let _ = lingering.wait();
+    // A guard that acts 3 s late is over the ceiling: the probe is still live
+    // when the sampler gives up, so O14 reports the survivor. This is the
+    // deliberate price of the 2 s ceiling, measured against a real process.
+    let overdue = home();
+    let mut lagging = std::process::Command::new("/bin/sh")
+        .args(["-c", "sleep 3"])
+        .spawn()
+        .expect("late probe");
+    std::fs::write(
+        aux(&overdue.home()).join("probe-pids"),
+        lagging.id().to_string(),
+    )
+    .expect("announced probe");
+    let grace = crate::probe::GRACE.as_nanos();
+    let just_due = probe_clock().saturating_sub(grace);
+    std::fs::write(
+        aux(&overdue.home()).join("probe-deadline"),
+        just_due.to_string(),
+    )
+    .expect("registered deadline");
+    let world = World {
+        probes: probe_survivors(&overdue.home()),
+        probe_bound: Some(probe_bound()),
+        ..World::default()
+    };
+    assert!(
+        Oracle::O14.check(&world).is_err(),
+        "a guard 3s late must still report a survivor"
+    );
+    // SAFETY: our own recorded child, killed by its pid.
+    unsafe { libc::kill(lagging.id() as i32, libc::SIGKILL) };
+    let _ = lagging.wait();
 }
 #[derive(Debug)]
 struct ObserveProbes;
