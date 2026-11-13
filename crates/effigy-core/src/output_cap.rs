@@ -1,3 +1,10 @@
+//! Effigy's bounded process output.
+//!
+//! When a byte cap is configured, the completeness footer certifies that
+//! Effigy's writer reached its finish point and that each foreground task run
+//! reported positive settlement of its owned process group. It does not certify
+//! that an outer sink or forwarder drained its own buffers, or that file
+//! descriptors passed outside custody were closed.
 use std::io::{self, Write};
 use std::sync::{Mutex, OnceLock, PoisonError};
 
@@ -18,6 +25,8 @@ struct State {
     incomplete: bool,
     footer_enabled: bool,
     finished: bool,
+    foreground_pending: usize,
+    foreground_incomplete: bool,
 }
 impl State {
     fn new(cap: Option<usize>) -> Self {
@@ -28,6 +37,8 @@ impl State {
             incomplete: false,
             footer_enabled: true,
             finished: false,
+            foreground_pending: 0,
+            foreground_incomplete: false,
         }
     }
     fn write(&mut self, stream: Stream, bytes: &[u8]) -> io::Result<()> {
@@ -90,7 +101,13 @@ impl State {
             self.finished = true;
             return Ok(());
         };
-        if self.finished || !self.footer_enabled || self.truncated || self.incomplete {
+        if self.finished
+            || !self.footer_enabled
+            || self.truncated
+            || self.incomplete
+            || self.foreground_pending > 0
+            || self.foreground_incomplete
+        {
             self.finished = true;
             return Ok(());
         }
@@ -102,6 +119,19 @@ impl State {
         }
         self.written += footer.len();
         Ok(())
+    }
+
+    fn foreground_started(&mut self) {
+        self.foreground_pending = self.foreground_pending.saturating_add(1);
+    }
+
+    fn foreground_settled(&mut self, positive: bool) {
+        if self.foreground_pending == 0 {
+            self.foreground_incomplete = true;
+            return;
+        }
+        self.foreground_pending -= 1;
+        self.foreground_incomplete |= !positive;
     }
 }
 
@@ -227,6 +257,23 @@ pub fn finish() -> io::Result<()> {
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .finish_with(raw_write)
+}
+
+/// Include a foreground run in the completeness decision until it settles.
+pub fn foreground_started() {
+    state()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .foreground_started();
+}
+
+/// Record whether a foreground run positively settled its owned process group.
+/// A false result permanently suppresses this process's completeness footer.
+pub fn foreground_settled(positive: bool) {
+    state()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .foreground_settled(positive);
 }
 pub fn set_footer_enabled(enabled: bool) {
     state()
@@ -461,6 +508,57 @@ mod tests {
             .unwrap();
         assert!(output.ends_with(footer(b"task output\n".len(), cap).as_slice()));
         assert!(output.len() <= cap);
+    }
+
+    #[test]
+    fn positive_foreground_settlement_allows_the_completeness_footer() {
+        let cap = minimum_cap() + 100;
+        let mut state = State::new(Some(cap));
+        state.foreground_started();
+        state.foreground_settled(true);
+        let mut output = Vec::new();
+        state
+            .finish_with(|_, bytes| {
+                output.extend_from_slice(bytes);
+                Ok(())
+            })
+            .unwrap();
+        assert!(output.ends_with(footer(0, cap).as_slice()));
+    }
+
+    #[test]
+    fn incomplete_or_pending_foreground_settlement_suppresses_the_footer() {
+        for settle in [Some(false), None] {
+            let mut state = State::new(Some(minimum_cap() + 100));
+            state.foreground_started();
+            if let Some(positive) = settle {
+                state.foreground_settled(positive);
+            }
+            let mut output = Vec::new();
+            state
+                .finish_with(|_, bytes| {
+                    output.extend_from_slice(bytes);
+                    Ok(())
+                })
+                .unwrap();
+            assert!(!output
+                .windows(b"output complete".len())
+                .any(|w| w == b"output complete"));
+        }
+    }
+
+    #[test]
+    fn no_foreground_run_keeps_capped_footer_behavior() {
+        let cap = minimum_cap() + 100;
+        let mut state = State::new(Some(cap));
+        let mut output = Vec::new();
+        state
+            .finish_with(|_, bytes| {
+                output.extend_from_slice(bytes);
+                Ok(())
+            })
+            .unwrap();
+        assert!(output.ends_with(footer(0, cap).as_slice()));
     }
 
     #[test]
