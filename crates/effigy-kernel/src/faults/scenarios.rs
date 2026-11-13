@@ -369,18 +369,9 @@ pub(super) struct AnchorPin {
 impl AnchorPin {
     pub(super) fn pin(&mut self, processes: &[OwnedProcess]) {
         for anchor in processes.iter().filter_map(|process| process.anchor()) {
-            // A recorded pid is not yet a live anchor. Once the group closes the
-            // anchor retires itself (effigy#520), so a bare `kill` could reach
-            // whatever the kernel gave that pid to next, and a signal return
-            // would then read as evidence about a process this launch never
-            // owned. Checking this launch's own generation immediately before
-            // the signal narrows that to the two calls themselves, and does not
-            // close it: a retirement plus pid reuse between the check and the
-            // `kill` can still stop, and the pin's drop later continue, an
-            // unrelated process. macOS has no atomic signal-by-identity (the
-            // same documented identity-check/numeric-signal window
-            // `custody::anchor::member_signal` records), so this narrows the
-            // window and claims nothing more.
+            // The generation check narrows, but cannot close, the race
+            // between anchor retirement and signalling a reused pid. macOS
+            // has no atomic signal-by-identity; see member_signal.
             if !world::identity_alive(&anchor) {
                 continue;
             }
@@ -494,12 +485,26 @@ impl Scenario for Steps {
         let mut failed = None;
         let mut anchors = AnchorPin::default();
         for step in self.steps {
+            // Keep each group alive during its anchor pin, then run the
+            // original workload. Fast exits otherwise race anchor retirement.
             let specs = step
                 .iter()
-                .map(|body| workload(home, body, finite()))
+                .map(|body| {
+                    let mut spec = workload(home, &format!("read -r _; {body}"), finite());
+                    spec.terminal = Terminal::Pipe;
+                    spec
+                })
                 .collect();
             let mut processes = attempt!(run, &cx, fake, Custody::spawn_all(&mut run, specs, &cx));
             anchors.pin(&processes);
+            for process in &processes {
+                attempt!(
+                    run,
+                    &cx,
+                    fake,
+                    process.write_stdin(b"\n", Instant::now() + Duration::from_secs(1))
+                );
+            }
             // The last member of a group may linger; settle stops it.
             let waited = processes.len() - usize::from(processes.len() > 1);
             for process in processes.iter_mut().take(waited) {
@@ -810,9 +815,23 @@ impl Scenario for Environment {
     }
 }
 #[test]
-fn faults_environment_up_down_handover_with_concurrent_attach() {
-    drive(&Environment);
+fn faults_environment_up_down_handover_with_concurrent_attach_part_0() {
+    super::driver::drive_part(&Environment, 0, 3);
 }
+#[test]
+fn faults_environment_up_down_handover_with_concurrent_attach_part_1() {
+    super::driver::drive_part(&Environment, 1, 3);
+}
+#[test]
+fn faults_environment_up_down_handover_with_concurrent_attach_part_2() {
+    super::driver::drive_part(&Environment, 2, 3);
+}
+// Keep every arm selected by the environment selector present at compile time.
+const _: [fn(); 3] = [
+    faults_environment_up_down_handover_with_concurrent_attach_part_0,
+    faults_environment_up_down_handover_with_concurrent_attach_part_1,
+    faults_environment_up_down_handover_with_concurrent_attach_part_2,
+];
 
 // --- A Closed predecessor with residue, followed by begin. ---
 
@@ -1049,27 +1068,26 @@ const PROBE_SLACK: Duration = Duration::from_millis(250);
 fn probe_bound() -> Duration {
     PROBE_DEADLINE + crate::probe::GRACE + PROBE_SLACK
 }
-fn wall_ms() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock")
-        .as_millis()
-}
 /// Samples announced probe processes once their evidence bound has passed.
 fn probe_survivors(home: &Path) -> Vec<world::Proc> {
-    let Some(started) = std::fs::read_to_string(aux(home).join("probe-started"))
-        .ok()
-        .and_then(|t| t.trim().parse::<u128>().ok())
-    else {
-        return vec![];
-    };
-    let due = started + probe_bound().as_millis();
-    let now = wall_ms();
-    if now < due {
-        std::thread::sleep(Duration::from_millis((due - now) as u64));
+    let pids = world::pids(&aux(home).join("probe-pids"));
+    if !pids.is_empty() {
+        let deadline: u128 = std::fs::read_to_string(aux(home).join("probe-deadline"))
+            .expect("registered probe deadline")
+            .parse()
+            .expect("deadline nanos");
+        let now = crate::ident::boot_clock()
+            .verified()
+            .expect("boot clock")
+            .elapsed
+            .as_nanos();
+        let remaining = (deadline + crate::probe::GRACE.as_nanos() + PROBE_SLACK.as_nanos())
+            .saturating_sub(now);
+        std::thread::sleep(Duration::from_nanos(
+            remaining.try_into().expect("probe bound"),
+        ));
     }
-    world::pids(&aux(home).join("probe-pids"))
-        .into_iter()
+    pids.into_iter()
         .map(|pid| world::proc(pid, b"EFFIGY_PROBE_NONCE="))
         .collect()
 }
@@ -1174,7 +1192,7 @@ impl Scenario for ObserveProbes {
         // may retire the guard, so no later crossing may depend on it. The
         // completing probe is `warm`, before arming.
         let announce = aux(home).join("probe-pids");
-        std::fs::write(aux(home).join("probe-started"), wall_ms().to_string()).ok()?;
+        std::fs::write(aux(home).join("probe-deadline"), "").ok()?;
         let hung = cx.probe_process(ProbeCommand {
             argv: vec![
                 "/bin/sh".into(),
@@ -1585,12 +1603,7 @@ fn anchor_positively_stopped(anchor: &ProcessIdentity) -> bool {
         )
 }
 
-/// One owned workload whose stdin the owner keeps (`Terminal::Pipe`), so the
-/// test holds it at a private barrier and releases it with one byte: no poll,
-/// no sleep, no extra budget, and the release works whether or not the workload
-/// has reached its `read` yet. The hold is custody of this launch only, and it
-/// releases on `Drop`, so an assertion that fails above the hold cannot strand a
-/// workload, its group and its anchor behind a blocked `read`.
+/// A private stdin barrier; Drop releases it even during unwinding.
 struct Held {
     process: Option<OwnedProcess>,
 }
@@ -1628,29 +1641,16 @@ impl Drop for Held {
     }
 }
 
-/// How this launch earns the pin premise before settlement: the original
-/// fast-exit workload, a held workload released unpinned, or a held workload
-/// whose recorded anchor is positively stopped before the release.
+/// How the launch establishes the pin premise before settlement.
 #[derive(Clone, Copy)]
 enum Lead {
-    /// `exit 0` exactly as the original (effigy#666) occurrence had it: the
-    /// workload is gone as it starts, so nothing keeps the anchor alive while a
-    /// pin would run.
+    /// The original fast exit leaves no workload to hold the anchor.
     FastExit,
     /// Held, released unpinned: the anchor retires itself (effigy#520).
     Natural,
     /// Held until its recorded anchor is positively stopped, then released.
     Pinned,
 }
-impl Lead {
-    fn held(self) -> bool {
-        !matches!(self, Self::FastExit)
-    }
-    fn pinned(self) -> bool {
-        matches!(self, Self::Pinned)
-    }
-}
-
 /// One custody launch, released only as far as `lead` allows, settled under an
 /// armed `AnchorStop`. Returns whether the point delivered.
 fn anchor_stop_delivery(home: &Home, lead: Lead) -> bool {
@@ -1668,7 +1668,11 @@ fn anchor_stop_delivery(home: &Home, lead: Lead) -> bool {
         &mut fake,
     )
     .expect("begin");
-    let body = if lead.held() { "read -r _" } else { "exit 0" };
+    let body = if matches!(lead, Lead::FastExit) {
+        "exit 0"
+    } else {
+        "read -r _"
+    };
     let mut spec = workload(&path, body, finite());
     // The owner keeps the workload's stdin: that pipe is the private barrier.
     spec.terminal = Terminal::Pipe;
@@ -1679,19 +1683,13 @@ fn anchor_stop_delivery(home: &Home, lead: Lead) -> bool {
     match lead {
         Lead::Pinned => {
             anchors.pin(std::slice::from_ref(held.process()));
-            // The pin, not the test's hope, is the state the discriminator
-            // proves: the recorded identity sits stopped until settlement stops
-            // it. The workload still holds the group open here, so the anchor
-            // cannot have retired itself (effigy#520) out from under the pin.
+            // The held workload keeps the group open until the pin is observed.
             wait_until("pinned anchor stopped", Duration::from_secs(2), || {
                 anchor_positively_stopped(&anchor)
             });
         }
         Lead::FastExit => {
-            // The original premise, established instead of raced: the group
-            // closed with the workload, so the anchor retires itself within one
-            // poll of that closure. Wait past the bound, then pin what is left
-            // and refuse to read the attempt as evidence.
+            // Establish the original fast-exit premise before attempting the pin.
             wait_until("fast-exit anchor retired", Duration::from_secs(5), || {
                 !world::identity_alive(&anchor)
             });
@@ -1710,7 +1708,7 @@ fn anchor_stop_delivery(home: &Home, lead: Lead) -> bool {
     };
     process.complete(&mut run, exit).expect("complete");
     run.finish(WorkloadOutcome::Succeeded).expect("finish");
-    if lead.pinned() {
+    if matches!(lead, Lead::Pinned) {
         // Past the anchor's poll bound a free-running anchor would be gone;
         // the pinned one must still sit at its settlement boundary.
         std::thread::sleep(Duration::from_millis(1200));
@@ -1730,19 +1728,8 @@ fn anchor_stop_delivery(home: &Home, lead: Lead) -> bool {
     delivered
 }
 
-/// The missing-delivery discriminator (effigy#618): once the recorded anchor
-/// retires itself, settlement's verified retirement crosses neither
-/// `AnchorStop` nor `AnchorStopped` — the original failure, reproduced
-/// deterministically by waiting past the anchor's poll bound — while the pin
-/// holds the recorded anchor at that boundary and delivery is deterministic.
-///
-/// effigy#678: the pinned half launched a workload that exited as it started,
-/// so the pin raced effigy#520's self-retirement of the anchor. Under later-stage
-/// load it arrived after the anchor was gone; the `kill` return said nothing
-/// about this launch and `bounded wait expired: pinned anchor stopped` failed.
-/// The workload is now held at its own stdin and released only once the pin is
-/// positive evidence, and the original premise is the first arm below — an
-/// observed control, not a race the test hopes to win.
+/// A retired anchor misses the stop points; a positively pinned one delivers.
+/// The held workload avoids the fast-exit race observed in effigy#618 and #678.
 #[test]
 fn faults_anchor_retirement_delivery_is_pinned_to_settlement() {
     let fast = home();

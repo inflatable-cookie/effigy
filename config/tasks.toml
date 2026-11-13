@@ -379,8 +379,8 @@
   { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test custody -E 'test(custody_signal_and_owner_kill_matrix_settles_without_survivors)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
 # §12.1 fault driver and oracles, and the §12.3 supervisor model matrix.
-# Measured 2026-10-19 on macOS (18 cores): faults 172–246 s wall (each drive in six
-# shard processes), matrix 16 s. Under 15 minutes, so one lane each.
+# Measured 2026-11-12 on macOS: the split fault suite took 806 s in nextest
+# at load 107 (17/17); a later run at load 78–96 took 835 s (16/17).
 # Q-013 ruling 3: the fault-injection-gated kernel and secrets proofs run at
 # milestone QA instead of staying hand-run only. Each part keeps its own
 # selector, because each owns a fixture build, nextest config and sharding.
@@ -399,9 +399,9 @@
   { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
   { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/kernel-faults-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^faults::/) & not test(/^faults::matrix::/)' --no-fail-fast --retries 0 --no-tests fail && sh scripts/record-nextest-junit.sh qa-kernel-faults", timeout_ms = 1800000 },
 ] }
-"test:kernel:faults:environment" = { durable = true, visibility = "internal", description = "Run the six-shard environment handover fault matrix at its normal bound.", group = "Maintenance", run = [
+"test:kernel:faults:environment" = { durable = true, visibility = "internal", description = "Run the environment handover fault matrix at its normal bound.", group = "Maintenance", run = [
   { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
-  { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/kernel-faults-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^faults::scenarios::faults_environment_up_down_handover_with_concurrent_attach$/)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1800000 },
+  { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/kernel-faults-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^faults::scenarios::faults_environment_up_down_handover_with_concurrent_attach_part_[012]$/)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1800000 },
 ] }
 "test:kernel:faults:controls" = { durable = true, visibility = "internal", description = "Check fault job assignment, pinned anchor delivery, recovery budgets and oracles.", group = "Maintenance", run = [
   { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
