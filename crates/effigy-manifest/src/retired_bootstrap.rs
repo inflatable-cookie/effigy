@@ -41,54 +41,50 @@ const DB_SEED_TASK: &str = "bootstrap:db-seed";
 /// still have a faithful mapping. Retired-only surfaces are recorded for
 /// `effigy bootstrap` to refuse.
 pub(crate) fn translate(root: &mut Value) -> RetiredConfigDeclaration {
-    let mut declaration = RetiredConfigDeclaration::default();
     let Some(root_table) = root.as_table_mut() else {
-        return declaration;
+        return RetiredConfigDeclaration::default();
     };
+
+    let taken_names = root_table
+        .get("tasks")
+        .and_then(Value::as_table)
+        .map(|tasks| tasks.keys().cloned().collect::<BTreeSet<_>>())
+        .unwrap_or_default();
+    let mut translation = Translation::new(taken_names);
 
     if root_table
         .get("tasks")
         .and_then(Value::as_table)
         .is_some_and(|tasks| tasks.contains_key(DB_SEED_TASK))
     {
-        declaration.record(
+        translation.declaration.record(
             "the `bootstrap:db-seed` task stays an ordinary task and is no longer a bootstrap callback",
         );
-        declaration.refuse(DB_SEED_TASK_REFUSAL);
+        translation.declaration.refuse(DB_SEED_TASK_REFUSAL);
     }
 
     let Some(bootstrap) = root_table.remove("bootstrap") else {
-        return declaration;
+        return translation.declaration;
     };
     let Value::Table(mut bootstrap) = bootstrap else {
         // Not a table: leave the type error to the manifest deserializer.
         root_table.insert("bootstrap".to_owned(), bootstrap);
-        return declaration;
+        return translation.declaration;
     };
 
-    let mut taken_names = root_table
-        .get("tasks")
-        .and_then(Value::as_table)
-        .map(|tasks| tasks.keys().cloned().collect::<BTreeSet<_>>())
-        .unwrap_or_default();
-    let mut synthesised: Vec<(String, Value)> = Vec::new();
-    let mut setup: Vec<Value> = Vec::new();
     let mut wrote_setup = false;
 
     if let Some(run) = bootstrap.remove("run") {
         wrote_setup = true;
-        declaration.record("`[bootstrap].run` is read as `setup`");
+        translation
+            .declaration
+            .record("`[bootstrap].run` is read as `setup`");
         for (index, entry) in entries(run).into_iter().enumerate() {
             translate_entry(
                 entry,
                 format!("bootstrap:run:{}", index + 1),
                 false,
-                &mut EntryOutput {
-                    setup: &mut setup,
-                    synthesised: &mut synthesised,
-                    taken_names: &mut taken_names,
-                    declaration: &mut declaration,
-                },
+                &mut translation,
             );
         }
     }
@@ -104,48 +100,27 @@ pub(crate) fn translate(root: &mut Value) -> RetiredConfigDeclaration {
                         entry,
                         format!("bootstrap:setup:{}", index + 1),
                         true,
-                        &mut EntryOutput {
-                            setup: &mut setup,
-                            synthesised: &mut synthesised,
-                            taken_names: &mut taken_names,
-                            declaration: &mut declaration,
-                        },
+                        &mut translation,
                     );
                 }
             }
             other => {
-                declaration
+                translation
+                    .declaration
                     .record("an inline `[bootstrap].setup` definition runs as an internal task");
-                synthesise_task(
-                    other,
-                    "bootstrap:setup".to_owned(),
-                    &mut EntryOutput {
-                        setup: &mut setup,
-                        synthesised: &mut synthesised,
-                        taken_names: &mut taken_names,
-                        declaration: &mut declaration,
-                    },
-                );
+                synthesise_task(other, "bootstrap:setup".to_owned(), &mut translation);
             }
         }
     }
 
     if wrote_setup {
-        bootstrap.insert("setup".to_owned(), Value::Array(setup));
+        bootstrap.insert("setup".to_owned(), Value::Array(translation.setup.clone()));
     }
 
     if let Some(start) = bootstrap.remove("start") {
         if matches!(start, Value::String(_) | Value::Array(_) | Value::Table(_)) {
-            let mut unused_setup = Vec::new();
-            let translated = translate_start(
-                start,
-                &mut EntryOutput {
-                    setup: &mut unused_setup,
-                    synthesised: &mut synthesised,
-                    taken_names: &mut taken_names,
-                    declaration: &mut declaration,
-                },
-            );
+            // A start chain writes no `setup` selector of its own.
+            let translated = translate_start(start, &mut translation);
             // A start chain becomes one internal task, so only a single
             // selector is written back here.
             if let Some(selector) = translated {
@@ -161,39 +136,54 @@ pub(crate) fn translate(root: &mut Value) -> RetiredConfigDeclaration {
         let policy = policy.clone();
         let recursive = !policy.trim().eq_ignore_ascii_case("none");
         bootstrap.insert("submodules".to_owned(), Value::Boolean(recursive));
-        declaration.record(format!(
+        translation.declaration.record(format!(
             "`[bootstrap].submodules = \"{policy}\"` is read as `submodules = {recursive}`"
         ));
     }
 
     if bootstrap.remove("children").is_some() {
-        declaration
+        translation
+            .declaration
             .record("`[bootstrap].children` is retired in favour of pinned `[sources.<name>]`");
-        declaration.refuse(CHILDREN_REFUSAL);
+        translation.declaration.refuse(CHILDREN_REFUSAL);
     }
 
     root_table.insert("bootstrap".to_owned(), Value::Table(bootstrap));
 
-    if !synthesised.is_empty() {
+    if !translation.synthesised.is_empty() {
         let tasks = root_table
             .entry("tasks".to_owned())
             .or_insert_with(|| Value::Table(toml::map::Map::new()));
         if let Value::Table(tasks) = tasks {
-            for (name, task) in synthesised {
+            for (name, task) in translation.synthesised {
                 tasks.insert(name, task);
             }
         }
     }
 
-    declaration
+    translation.declaration
 }
 
-/// Where one translated entry's selector, synthesised task or refusal goes.
-struct EntryOutput<'a> {
-    setup: &'a mut Vec<Value>,
-    synthesised: &'a mut Vec<(String, Value)>,
-    taken_names: &'a mut BTreeSet<String>,
-    declaration: &'a mut RetiredConfigDeclaration,
+/// Everything one translation pass writes: the `setup` selectors, the internal
+/// tasks it synthesises, the task names already taken, and the notices/refusals
+/// it records. One value owns all four, so no entry translation builds a
+/// four-field borrow bundle of its own.
+struct Translation {
+    setup: Vec<Value>,
+    synthesised: Vec<(String, Value)>,
+    taken_names: BTreeSet<String>,
+    declaration: RetiredConfigDeclaration,
+}
+
+impl Translation {
+    fn new(taken_names: BTreeSet<String>) -> Self {
+        Self {
+            setup: Vec::new(),
+            synthesised: Vec::new(),
+            taken_names,
+            declaration: RetiredConfigDeclaration::default(),
+        }
+    }
 }
 
 /// A retired definition holds either one entry or an ordered list of them.
@@ -212,7 +202,7 @@ fn translate_entry(
     entry: Value,
     synthesised_name: String,
     bare_strings_are_selectors: bool,
-    output: &mut EntryOutput<'_>,
+    output: &mut Translation,
 ) {
     match entry {
         Value::String(text) if bare_strings_are_selectors => {
@@ -248,7 +238,7 @@ fn translate_entry(
 }
 
 /// Build an internal task from one retired inline definition.
-fn synthesise_task(value: Value, name: String, output: &mut EntryOutput<'_>) {
+fn synthesise_task(value: Value, name: String, output: &mut Translation) {
     let mut task = toml::map::Map::new();
     task.insert(
         "visibility".to_owned(),
@@ -295,8 +285,8 @@ fn is_step_table(table: &toml::map::Map<String, Value>) -> bool {
     table.keys().all(|key| STEP_KEYS.contains(&key.as_str()))
 }
 
-fn insert_synthesised(name: String, task: Value, output: &mut EntryOutput<'_>) -> String {
-    let name = unique_task_name(name, output.taken_names);
+fn insert_synthesised(name: String, task: Value, output: &mut Translation) -> String {
+    let name = unique_task_name(name, &mut output.taken_names);
     output.synthesised.push((name.clone(), task));
     name
 }
@@ -313,7 +303,7 @@ fn unique_task_name(mut name: String, taken: &mut BTreeSet<String>) -> String {
 }
 
 /// Record one selector and the retired bootstrap subcommands it still names.
-fn push_selector(selector: String, output: &mut EntryOutput<'_>) {
+fn push_selector(selector: String, output: &mut Translation) {
     if let Some(refusal) = retired_bootstrap_subcommand(&selector) {
         output.declaration.refuse(refusal);
     }
@@ -337,7 +327,7 @@ fn retired_bootstrap_subcommand(selector: &str) -> Option<&'static str> {
 
 /// Translate a retired `start` value into one selector, or into one internal
 /// task that sequences the chain.
-fn translate_start(value: Value, output: &mut EntryOutput<'_>) -> Option<String> {
+fn translate_start(value: Value, output: &mut Translation) -> Option<String> {
     match value {
         Value::String(selector) => Some(selector),
         Value::Table(table) => {
@@ -400,7 +390,7 @@ fn start_entry_selector(entry: &Value) -> Option<String> {
     }
 }
 
-fn synthesise_start_task(steps: Vec<Value>, output: &mut EntryOutput<'_>) {
+fn synthesise_start_task(steps: Vec<Value>, output: &mut Translation) {
     let mut task = toml::map::Map::new();
     task.insert(
         "visibility".to_owned(),
@@ -410,7 +400,7 @@ fn synthesise_start_task(steps: Vec<Value>, output: &mut EntryOutput<'_>) {
     insert_synthesised("bootstrap:start".to_owned(), Value::Table(task), output);
 }
 
-fn last_synthesised_name(output: &EntryOutput<'_>) -> String {
+fn last_synthesised_name(output: &Translation) -> String {
     output
         .synthesised
         .last()

@@ -179,15 +179,14 @@ pub fn list_tasks(
 }
 
 pub fn render_task_listing_text(result: &ListTasksResult) -> Result<String, EffigyTasksError> {
-    let color_enabled = text_color_enabled();
-    let mut renderer = plain_renderer(color_enabled);
-    let theme = Theme::default();
+    let style = ListingStyle::new(text_color_enabled());
+    let mut renderer = plain_renderer(style.color_enabled);
 
     // Resolve-only shortcut: `tasks --resolve <selector>` without a filter should
     // render just the Resolution block, not the full Catalogs/Tasks/Built-in listing.
     if matches!(result.selection, ListingSelectionResult::Catalog { .. }) {
         if let Some(probe) = result.resolve_probe.as_ref() {
-            render_resolution_probe_block(&mut renderer, probe, color_enabled, true)?;
+            render_resolution_probe_block(&mut renderer, probe, style.color_enabled, true)?;
             return render_utf8(renderer.into_inner()).map_err(EffigyTasksError::from);
         }
     }
@@ -200,24 +199,21 @@ pub fn render_task_listing_text(result: &ListTasksResult) -> Result<String, Effi
         } => {
             render_catalogs_section(
                 &mut renderer,
-                color_enabled,
-                &theme,
+                &style,
                 result.catalog_count,
                 !catalog_alias_rows.is_empty(),
                 catalog_alias_rows,
             )?;
             render_tasks_section(
                 &mut renderer,
-                color_enabled,
-                &theme,
+                &style,
                 !catalog_alias_rows.is_empty(),
                 catalog_task_rows,
                 result.all,
             )?;
             render_builtin_rows_section(
                 &mut renderer,
-                color_enabled,
-                &theme,
+                &style,
                 "Built-in Tasks",
                 builtin_rows,
                 &[],
@@ -234,25 +230,17 @@ pub fn render_task_listing_text(result: &ListTasksResult) -> Result<String, Effi
                 renderer.notice(NoticeLevel::Warning, "no matches")?;
                 render_builtin_and_probe_followup_sections(
                     &mut renderer,
-                    color_enabled,
-                    &theme,
+                    &style,
                     "Built-in Task Matches",
                     builtin_rows,
                     notes,
                     result.resolve_probe.as_ref(),
                 )?;
             } else {
-                render_catalog_task_rows(
-                    &mut renderer,
-                    color_enabled,
-                    &theme,
-                    catalog_task_rows,
-                    result.all,
-                )?;
+                render_catalog_task_rows(&mut renderer, &style, catalog_task_rows, result.all)?;
                 render_builtin_and_probe_followup_sections(
                     &mut renderer,
-                    color_enabled,
-                    &theme,
+                    &style,
                     "Built-in Task Matches",
                     builtin_rows,
                     notes,
@@ -277,16 +265,10 @@ pub fn render_public_task_help(
     let visibility = crate::TaskVisibilityIndex::new(catalogs);
     let catalog_task_rows =
         project_all_catalog_task_rows(&ordered_catalogs(catalogs), root, &visibility);
-    let color_enabled = effigy_ui::color_enabled_for_text_output(output_json);
-    let mut renderer = plain_renderer(color_enabled);
+    let style = ListingStyle::new(effigy_ui::color_enabled_for_text_output(output_json));
+    let mut renderer = plain_renderer(style.color_enabled);
     renderer.section("Repository Tasks")?;
-    render_catalog_task_rows(
-        &mut renderer,
-        color_enabled,
-        &Theme::default(),
-        &catalog_task_rows,
-        false,
-    )?;
+    render_catalog_task_rows(&mut renderer, &style, &catalog_task_rows, false)?;
     render_utf8(renderer.into_inner()).map_err(EffigyTasksError::from)
 }
 
@@ -717,10 +699,39 @@ fn builtin_rows_json(rows: &[BuiltinTaskProjection]) -> Vec<Value> {
         .collect()
 }
 
+/// How the text listing styles its parts: the colour decision and the theme in
+/// one value, so no render helper takes two style parameters and every part is
+/// styled in exactly one place.
+#[derive(Clone, Copy)]
+struct ListingStyle {
+    color_enabled: bool,
+    theme: Theme,
+}
+
+impl ListingStyle {
+    fn new(color_enabled: bool) -> Self {
+        Self {
+            color_enabled,
+            theme: Theme::default(),
+        }
+    }
+
+    fn task_name(&self, text: &str) -> String {
+        style_text(self.color_enabled, self.theme.task_name, text)
+    }
+
+    fn muted(&self, text: &str) -> String {
+        style_text(self.color_enabled, self.theme.muted, text)
+    }
+
+    fn signature(&self, text: &str) -> String {
+        style_text(self.color_enabled, self.theme.task_signature, text)
+    }
+}
+
 fn render_catalogs_section(
     renderer: &mut PlainRenderer<Vec<u8>>,
-    color_enabled: bool,
-    theme: &Theme,
+    style: &ListingStyle,
     catalog_count: usize,
     has_scope_rows: bool,
     alias_rows: &[CatalogAliasProjection],
@@ -729,7 +740,7 @@ fn render_catalogs_section(
     renderer.key_values(&[KeyValue::new("count", catalog_count.to_string())])?;
     if has_scope_rows && !alias_rows.is_empty() {
         for row in alias_rows {
-            render_name_detail_row(renderer, color_enabled, theme, &row.alias, &row.manifest)?;
+            render_name_detail_row(renderer, style, &row.alias, &row.manifest)?;
         }
     } else {
         renderer.notice(NoticeLevel::Info, "none")?;
@@ -740,15 +751,14 @@ fn render_catalogs_section(
 
 fn render_tasks_section(
     renderer: &mut PlainRenderer<Vec<u8>>,
-    color_enabled: bool,
-    theme: &Theme,
+    style: &ListingStyle,
     has_scope_rows: bool,
     task_rows: &[CatalogTaskProjection],
     all: bool,
 ) -> Result<(), EffigyTasksError> {
     renderer.section("Tasks")?;
     if has_scope_rows && !task_rows.is_empty() {
-        render_catalog_task_rows(renderer, color_enabled, theme, task_rows, all)?;
+        render_catalog_task_rows(renderer, style, task_rows, all)?;
     } else {
         renderer.notice(NoticeLevel::Info, "none")?;
     }
@@ -758,8 +768,7 @@ fn render_tasks_section(
 
 fn render_catalog_task_rows(
     renderer: &mut PlainRenderer<Vec<u8>>,
-    color_enabled: bool,
-    theme: &Theme,
+    style: &ListingStyle,
     rows: &[CatalogTaskProjection],
     all: bool,
 ) -> Result<(), EffigyTasksError> {
@@ -787,8 +796,7 @@ fn render_catalog_task_rows(
             if let Some(signature) = row.task_row.as_ref() {
                 render_task_text_row(
                     renderer,
-                    color_enabled,
-                    theme,
+                    &style,
                     &row.manifest,
                     &signature.task,
                     &signature.run,
@@ -798,8 +806,7 @@ fn render_catalog_task_rows(
             for profile_row in &row.managed_profiles {
                 render_task_text_row(
                     renderer,
-                    color_enabled,
-                    theme,
+                    &style,
                     &row.manifest,
                     &profile_row.task,
                     &profile_row.run,
@@ -813,15 +820,14 @@ fn render_catalog_task_rows(
 
 fn render_builtin_rows_section(
     renderer: &mut PlainRenderer<Vec<u8>>,
-    color_enabled: bool,
-    theme: &Theme,
+    style: &ListingStyle,
     title: &str,
     rows: &[BuiltinTaskProjection],
     notes: &[String],
 ) -> Result<(), EffigyTasksError> {
     renderer.section(title)?;
     for row in rows {
-        render_name_detail_row(renderer, color_enabled, theme, &row.task, &row.description)?;
+        render_name_detail_row(renderer, style, &row.task, &row.description)?;
     }
     for notice in notes {
         renderer.notice(NoticeLevel::Info, notice)?;
@@ -831,8 +837,7 @@ fn render_builtin_rows_section(
 
 fn render_builtin_and_probe_followup_sections(
     renderer: &mut PlainRenderer<Vec<u8>>,
-    color_enabled: bool,
-    theme: &Theme,
+    style: &ListingStyle,
     builtin_title: &str,
     builtin_rows: &[BuiltinTaskProjection],
     notes: &[String],
@@ -845,21 +850,14 @@ fn render_builtin_and_probe_followup_sections(
     renderer.text("")?;
 
     if !builtin_rows.is_empty() {
-        render_builtin_rows_section(
-            renderer,
-            color_enabled,
-            theme,
-            builtin_title,
-            builtin_rows,
-            notes,
-        )?;
+        render_builtin_rows_section(renderer, &style, builtin_title, builtin_rows, notes)?;
     }
 
     if let Some(probe) = resolve_probe {
         if !builtin_rows.is_empty() {
             renderer.text("")?;
         }
-        render_resolution_probe_block(renderer, probe, color_enabled, false)?;
+        render_resolution_probe_block(renderer, probe, style.color_enabled, false)?;
     }
 
     Ok(())
@@ -867,38 +865,125 @@ fn render_builtin_and_probe_followup_sections(
 
 fn render_name_detail_row(
     renderer: &mut PlainRenderer<Vec<u8>>,
-    color_enabled: bool,
-    theme: &Theme,
+    style: &ListingStyle,
     name: &str,
     detail: &str,
 ) -> Result<(), EffigyTasksError> {
     renderer.text(&format!(
         "- {} : {}",
-        style_text(color_enabled, theme.task_name, name),
-        style_text(color_enabled, theme.muted, detail),
+        style.task_name(name),
+        style.muted(detail),
     ))?;
     Ok(())
 }
 
 fn render_task_text_row(
     renderer: &mut PlainRenderer<Vec<u8>>,
-    color_enabled: bool,
-    theme: &Theme,
+    style: &ListingStyle,
     manifest: &str,
     task_label: &str,
     signature: &str,
     description: Option<&str>,
 ) -> Result<(), EffigyTasksError> {
-    render_name_detail_row(renderer, color_enabled, theme, task_label, manifest)?;
-    renderer.text(&format!(
-        "      {}",
-        style_text(color_enabled, theme.task_signature, signature),
-    ))?;
+    render_name_detail_row(renderer, style, task_label, manifest)?;
+    renderer.text(&format!("      {}", style.signature(signature),))?;
     if let Some(description) = description {
-        renderer.text(&format!(
-            "      {}",
-            style_text(color_enabled, theme.muted, description),
-        ))?;
+        renderer.text(&format!("      {}", style.muted(description),))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+    use std::path::PathBuf;
+
+    use effigy_manifest::{LoadedCatalog, TaskManifest};
+
+    use super::{list_tasks, render_task_listing_json, render_task_listing_text, ListTasksRequest};
+
+    fn catalog(root: &str) -> LoadedCatalog {
+        let manifest: TaskManifest = toml::from_str(
+            r#"
+[tasks.build]
+description = "compile everything"
+run = "cargo build"
+
+[tasks.internal-helper]
+visibility = "internal"
+run = "cargo check"
+"#,
+        )
+        .expect("fixture manifest parses");
+        LoadedCatalog::for_test("repo", PathBuf::from(root), manifest, 0)
+    }
+
+    fn request<'a>(
+        root: &'a std::path::Path,
+        filter: Option<&'a str>,
+        deferred_builtins: &'a BTreeSet<String>,
+    ) -> ListTasksRequest<'a> {
+        ListTasksRequest {
+            all: false,
+            filter,
+            pretty_json: false,
+            resolved_root: root,
+            precedence: &[],
+            resolve_probe: None,
+            deferred_builtins,
+        }
+    }
+
+    /// The text and JSON renderings are projections of one result. The text is
+    /// the public view: it hides internal tasks unless `--all` was asked for.
+    /// The payload is the complete inventory: it lists every catalog task and
+    /// marks each with its `visibility`, so a machine consumer decides. This
+    /// test pins both halves of that distinction rather than one view drifting.
+    #[test]
+    fn the_text_view_hides_internal_tasks_that_the_payload_marks() {
+        let root = PathBuf::from("/workspace/repo");
+        let catalogs = vec![catalog("/workspace/repo")];
+        let deferred = BTreeSet::new();
+        let listing = list_tasks(request(&root, None, &deferred), &catalogs).expect("list tasks");
+
+        let text = render_task_listing_text(&listing).expect("render text");
+        let json = render_task_listing_json(&listing, false).expect("render json");
+        let payload: serde_json::Value = serde_json::from_str(&json).expect("json payload");
+
+        assert_eq!(payload["schema"], "effigy.tasks.v1");
+        assert_eq!(payload["catalog_tasks"][0]["task"], "build");
+        assert_eq!(payload["catalog_tasks"][0]["visibility"], "public");
+        assert_eq!(payload["catalog_tasks"][1]["task"], "internal-helper");
+        assert_eq!(payload["catalog_tasks"][1]["visibility"], "internal");
+        assert!(text.contains("build"), "{text}");
+        assert!(
+            text.contains("compile everything"),
+            "the description travels with the task: {text}"
+        );
+        assert!(
+            !text.contains("internal-helper"),
+            "the public text view hides internal tasks: {text}"
+        );
+    }
+
+    /// A filter with no matches is reported as such in both renderings, and the
+    /// filtered schema identifies the payload.
+    #[test]
+    fn a_filter_with_no_matches_says_so_in_text_and_json() {
+        let root = PathBuf::from("/workspace/repo");
+        let catalogs = vec![catalog("/workspace/repo")];
+        let deferred = BTreeSet::new();
+        let listing = list_tasks(request(&root, Some("absent-task"), &deferred), &catalogs)
+            .expect("list tasks");
+
+        let text = render_task_listing_text(&listing).expect("render text");
+        assert!(text.contains("Task Matches: absent-task"), "{text}");
+        assert!(text.contains("no matches"), "{text}");
+
+        let json = render_task_listing_json(&listing, false).expect("render json");
+        let payload: serde_json::Value = serde_json::from_str(&json).expect("json payload");
+        assert_eq!(payload["schema"], "effigy.tasks.filtered.v1");
+        assert_eq!(payload["filter"], "absent-task");
+        assert_eq!(payload["matches"].as_array().map(Vec::len), Some(0));
+    }
 }
