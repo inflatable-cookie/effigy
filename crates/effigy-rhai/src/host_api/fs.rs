@@ -474,7 +474,7 @@ fn read_env_entries(path: &Path) -> Result<Option<BTreeMap<String, String>>, Box
 fn update_env_file_entry(path: &Path, key: &str, value: &str) -> Result<bool, Box<EvalAltResult>> {
     let rendered_entry = format!("{key}={}", render_dotenv_value(value));
     if !path.exists() {
-        ensure_parent(&path)?;
+        ensure_parent(path)?;
         std::fs::write(path, format!("{rendered_entry}\n"))
             .map_err(|error| rhai_runtime_error(failed_to_write_path(path, error)))?;
         return Ok(true);
