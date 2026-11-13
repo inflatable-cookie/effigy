@@ -154,10 +154,13 @@ bound (median 75 ms, p90 553 ms over 167 observations at load 14-63); a later
 observation cannot show an earlier exit, so those are upper bounds on the
 departure, and the fixed 250 ms sample was never a product promise. The oracle,
 the registered deadline, the grace period and the scenario's points,
-observations and case set are unchanged. The sampler's own 20 s ceiling bounds
-only a guard that never acts at all: a guard that is merely delayed no longer
-fails, and a guard that never stops a probe still leaves a live probe for O14.
-`probe_evidence_follows_the_exit_event_not_one_sampled_instant` pins both arms.
+observations and case set are unchanged. The sampler's own ceiling is 2 s after
+that bound — about 2.25 times the worst observation — so a delayed but healthy
+guard passes. It is a hung-guard ceiling, not a promptness promise: a guard that
+acts 3 s late, or never, leaves a live probe and O14 reports it.
+`probe_evidence_follows_the_exit_event_not_one_sampled_instant` pins all three
+arms: a 0.4 s late exit is not a survivor, a probe no guard ends fails, and a
+probe that exits more than 2 s after the bound still fails.
 The six fault shards rotate the starting shard at each traced crossing. With
 six fault types, plain modulo assigned every Stall and its parent-side
 inspection to one process. Rotation spreads those jobs without changing the

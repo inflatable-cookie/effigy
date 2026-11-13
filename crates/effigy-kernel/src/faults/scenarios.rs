@@ -1063,11 +1063,18 @@ fn probe_runtime() -> std::sync::Arc<crate::probe::ProbeRuntime> {
 /// Long enough that fork, identity and registration finish under host load;
 /// the probe itself never completes, so only the deadline ends it.
 const PROBE_DEADLINE: Duration = Duration::from_millis(1500);
-/// The harness's own ceiling for a guard that never acts. A healthy guard
-/// ends the probe on its next scheduled instruction, but a saturated host can
-/// delay that instruction by an unbounded amount, so the sampler follows the
-/// probe's exit instead of judging one instant (effigy#955).
-const PROBE_EXIT_WAIT: Duration = Duration::from_secs(20);
+/// How long the sampler follows a probe's exit after `deadline + grace`.
+///
+/// The guard's wake-up is the host scheduler's to grant, so the sampler waits
+/// for the exit event instead of judging one instant (effigy#955). Measured on
+/// an 18-core host at load 14-63, a probe was confirmed gone between 0.2 ms and
+/// 887 ms after that bound (median 75 ms, p90 553 ms over 167 observations;
+/// those are upper bounds on the departure, because a later observation cannot
+/// show an earlier exit). 2 s is ~2.25x the worst observation, so a delayed but
+/// healthy guard passes, while a guard that acts 3 s late — or never — leaves a
+/// live probe for O14 to reject. This is a hung-guard ceiling, not a promptness
+/// promise: nothing here asserts when the scheduler runs the guard.
+const PROBE_EXIT_WAIT: Duration = Duration::from_secs(2);
 fn probe_bound() -> Duration {
     PROBE_DEADLINE + crate::probe::GRACE
 }
@@ -1117,8 +1124,8 @@ fn probe_survivors_within(home: &Path, wait: Duration) -> Vec<world::Proc> {
         .collect()
 }
 /// A guarded probe the host scheduler delays past its deadline is not a
-/// survivor: the sampler must follow the exit event, and must still report a
-/// probe that a broken guard never ends.
+/// survivor: the sampler follows the exit event, and still reports a probe that
+/// a broken guard never ends — or one it leaves past the 2 s ceiling.
 #[test]
 fn probe_evidence_follows_the_exit_event_not_one_sampled_instant() {
     let late = home();
@@ -1163,6 +1170,38 @@ fn probe_evidence_follows_the_exit_event_not_one_sampled_instant() {
     // SAFETY: our own recorded child, killed by its pid.
     unsafe { libc::kill(lingering.id() as i32, libc::SIGKILL) };
     let _ = lingering.wait();
+    // A guard that acts 3 s late is over the ceiling: the probe is still live
+    // when the sampler gives up, so O14 reports the survivor. This is the
+    // deliberate price of the 2 s ceiling, measured against a real process.
+    let overdue = home();
+    let mut lagging = std::process::Command::new("/bin/sh")
+        .args(["-c", "sleep 3"])
+        .spawn()
+        .expect("late probe");
+    std::fs::write(
+        aux(&overdue.home()).join("probe-pids"),
+        lagging.id().to_string(),
+    )
+    .expect("announced probe");
+    let grace = crate::probe::GRACE.as_nanos();
+    let just_due = probe_clock().saturating_sub(grace);
+    std::fs::write(
+        aux(&overdue.home()).join("probe-deadline"),
+        just_due.to_string(),
+    )
+    .expect("registered deadline");
+    let world = World {
+        probes: probe_survivors(&overdue.home()),
+        probe_bound: Some(probe_bound()),
+        ..World::default()
+    };
+    assert!(
+        Oracle::O14.check(&world).is_err(),
+        "a guard 3s late must still report a survivor"
+    );
+    // SAFETY: our own recorded child, killed by its pid.
+    unsafe { libc::kill(lagging.id() as i32, libc::SIGKILL) };
+    let _ = lagging.wait();
 }
 #[derive(Debug)]
 struct ObserveProbes;

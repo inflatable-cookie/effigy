@@ -619,6 +619,15 @@ fn child(scenario: &dyn Scenario, home: &Path, point: Point, n: usize, fault: Fa
             crossed = mark;
             since = Instant::now();
         } else if since.elapsed() >= CHILD_PROGRESS_BUDGET {
+            let state = crate::ident::process_state(pid);
+            let ps = std::process::Command::new("/bin/ps")
+                .args(["-o", "pid=,stat=,etime=,command=", "-p", &pid.to_string()])
+                .output()
+                .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned());
+            eprintln!(
+                "child-stalled {} {point:?}#{n} mark={crossed} state={state:?} ps={ps:?}",
+                scenario.name()
+            );
             // SAFETY: our own child, recorded pid, never a pattern kill.
             unsafe { libc::kill(pid as i32, libc::SIGKILL) };
             panic!(
