@@ -66,8 +66,8 @@ class InventoryTests(unittest.TestCase):
 
     def test_only_one_live_sink_is_exempt_after_a_line_shift(self):
         text = 'let bar = self.multi().add(ProgressBar::new_spinner());'
-        moved = diagnostic('crates/effigy-ui/src/steps.rs', 455, text)
-        duplicate = diagnostic('crates/effigy-ui/src/steps.rs', 456, text)
+        moved = diagnostic('crates/effigy-ui/src/steps/mod.rs', 455, text)
+        duplicate = diagnostic('crates/effigy-ui/src/steps/mod.rs', 456, text)
         moved['message']['spans'][0]['column_start'] = 36
         duplicate['message']['spans'][0]['column_start'] = 36
         self.assertEqual(lint.entries([moved]), [])
@@ -208,7 +208,7 @@ impl Sink {
             missing = lint.sink_errors(root)
             self.assertEqual(len(missing), 1, missing)
             self.assertIn('the reviewed step sink is missing', missing[0])
-            sink = root / 'crates/effigy-ui/src/steps.rs'
+            sink = root / 'crates/effigy-ui/src/steps/mod.rs'
             sink.parent.mkdir(parents=True)
             sink.write_text(reviewed)
             self.assertEqual(lint.sink_errors(root), [])
@@ -216,9 +216,9 @@ impl Sink {
             sink.write_text(reviewed + extra)
             errors = lint.sink_errors(root)
         self.assertEqual(len(errors), 2, errors)
-        self.assertIn('crates/effigy-ui/src/steps.rs:23:', errors[0])
+        self.assertIn('crates/effigy-ui/src/steps/mod.rs:23:', errors[0])
         self.assertIn('ProgressBar::no_length', errors[0])
-        self.assertIn('crates/effigy-ui/src/steps.rs:24:', errors[1])
+        self.assertIn('crates/effigy-ui/src/steps/mod.rs:24:', errors[1])
         self.assertIn('enable_steady_tick', errors[1])
 
     def test_the_sink_cannot_re_export_the_spinner_crate(self):
@@ -230,13 +230,47 @@ struct Sink;
 """
         with scratch_fixture() as directory:
             root = pathlib.Path(directory)
-            sink = root / 'crates/effigy-ui/src/steps.rs'
+            sink = root / 'crates/effigy-ui/src/steps/mod.rs'
             sink.parent.mkdir(parents=True)
             sink.write_text(reviewed)
             errors = lint.sink_errors(root)
         self.assertEqual(len(errors), 1, errors)
-        self.assertIn('crates/effigy-ui/src/steps.rs:3:', errors[0])
+        self.assertIn('crates/effigy-ui/src/steps/mod.rs:3:', errors[0])
         self.assertIn('re-export', errors[0])
+
+    def test_a_module_split_keeps_the_one_construction_rule(self):
+        # The reviewed sink is one module now. Its sibling files may name
+        # `indicatif` for their own draw target, but only `mod.rs` builds a bar;
+        # a construction in a sibling or in the module's test file is reported
+        # or exempted for the same reason as before.
+        reviewed = """use indicatif::ProgressDrawTarget;
+
+fn hide_bars() {
+    if let Some(multi) = None {
+        let _ = multi;
+    }
+    let _ = ProgressDrawTarget::hidden();
+}
+"""
+        sibling_bar = """use indicatif::ProgressBar;
+
+fn a_second_spinner() -> ProgressBar {
+    let bar = ProgressBar::no_length();
+    bar
+}
+"""
+        with scratch_fixture() as directory:
+            root = pathlib.Path(directory)
+            module = root / 'crates/effigy-ui/src/steps'
+            module.mkdir(parents=True)
+            (module / 'mod.rs').write_text(reviewed)
+            (module / 'live.rs').write_text(sibling_bar)
+            (module / 'tests.rs').write_text(sibling_bar)
+            self.assertEqual(lint.indicatif_errors(root), [])
+            errors = lint.sink_errors(root)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn('crates/effigy-ui/src/steps/live.rs:4:', errors[0])
+        self.assertIn('ProgressBar::no_length', errors[0])
 
     def test_only_code_text_is_a_use(self):
         # `code_only` decides what counts as code: literal contents (plain,

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use super::super::state::ProcessStartupState;
-use crate::core::{effigy_panel_block, ProcessExitState, EFFIGY_ACCENT, EFFIGY_MUTED};
+use crate::core::{accent, effigy_panel_block, muted, ProcessExitState};
 use crate::waits::EntryState;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -59,16 +59,16 @@ pub(super) fn render_tabs(frame: &mut Frame<'_>, area: ratatui::layout::Rect, ba
             let style = match exit_states.get(name) {
                 Some(ProcessExitState::Success) => Style::default().fg(Color::Green),
                 Some(ProcessExitState::Failure) => Style::default().fg(Color::Red),
-                Some(ProcessExitState::Stopped) => Style::default().fg(EFFIGY_MUTED),
+                Some(ProcessExitState::Stopped) => Style::default().fg(muted()),
                 None => {
                     if name == "shell" && shell_capture_mode && idx == active_index {
                         Style::default()
                             .fg(Color::Yellow)
                             .add_modifier(Modifier::BOLD)
                     } else if idx == active_index {
-                        Style::default().fg(EFFIGY_ACCENT)
+                        Style::default().fg(accent())
                     } else {
-                        Style::default().fg(EFFIGY_MUTED)
+                        Style::default().fg(muted())
                     }
                 }
             };
@@ -78,7 +78,7 @@ pub(super) fn render_tabs(frame: &mut Frame<'_>, area: ratatui::layout::Rect, ba
 
     let tabs = Tabs::new(titles)
         .select(active_index)
-        .block(panel_block(Some(" EFFIGY "), true, EFFIGY_ACCENT))
+        .block(panel_block(Some(" EFFIGY "), true, accent()))
         .highlight_style(Style::default().add_modifier(Modifier::BOLD));
     frame.render_widget(tabs, area);
 }

@@ -59,8 +59,14 @@ impl Default for Theme {
     }
 }
 
-pub fn resolve_color_enabled(mode: OutputMode, is_tty: bool) -> bool {
-    if std::env::var_os("NO_COLOR").is_some() {
+/// The one colour-enable decision: `NO_COLOR` always wins, then the explicit
+/// mode, then the terminal's answer for `Auto`.
+///
+/// Callers that already hold the three facts (a renderer constructor, a
+/// recorded invocation) use this; [`resolve_color_enabled`] is the ambient
+/// wrapper that reads `NO_COLOR` from the environment.
+pub fn resolve_color_enabled_with(mode: OutputMode, is_tty: bool, no_color: bool) -> bool {
+    if no_color {
         return false;
     }
     match mode {
@@ -70,6 +76,37 @@ pub fn resolve_color_enabled(mode: OutputMode, is_tty: bool) -> bool {
     }
 }
 
+/// Colour policy for this process's output stream: [`OutputMode::from_env`],
+/// whether that stream is a terminal, and the ambient `NO_COLOR`.
+pub fn resolve_color_enabled(mode: OutputMode, is_tty: bool) -> bool {
+    resolve_color_enabled_with(mode, is_tty, std::env::var_os("NO_COLOR").is_some())
+}
+
 pub fn is_ci_environment() -> bool {
     std::env::var_os("CI").is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_color_wins_over_every_mode_and_terminal() {
+        for mode in [OutputMode::Auto, OutputMode::Always, OutputMode::Never] {
+            for terminal in [false, true] {
+                assert!(
+                    !resolve_color_enabled_with(mode, terminal, true),
+                    "NO_COLOR must disable styles: {mode:?}, terminal={terminal}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn mode_and_terminal_decide_when_no_color_is_absent() {
+        assert!(!resolve_color_enabled_with(OutputMode::Auto, false, false));
+        assert!(resolve_color_enabled_with(OutputMode::Auto, true, false));
+        assert!(resolve_color_enabled_with(OutputMode::Always, false, false));
+        assert!(!resolve_color_enabled_with(OutputMode::Never, true, false));
+    }
 }

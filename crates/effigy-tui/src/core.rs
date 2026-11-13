@@ -29,9 +29,72 @@ pub enum ProcessExitState {
     Stopped,
 }
 
-pub const EFFIGY_ACCENT: Color = Color::Indexed(212);
-pub const EFFIGY_ACCENT_SOFT: Color = Color::Indexed(218);
-pub const EFFIGY_MUTED: Color = Color::Indexed(244);
+/// The TUI's ratatui colours are a projection of [`effigy_ui::theme::Theme`],
+/// the one palette every Effigy surface draws with: a palette change moves the
+/// CLI and the TUI together instead of leaving two hand-kept ANSI tables.
+struct Palette {
+    accent: Color,
+    accent_soft: Color,
+    muted: Color,
+}
+
+fn palette() -> &'static Palette {
+    static PALETTE: std::sync::OnceLock<Palette> = std::sync::OnceLock::new();
+    PALETTE.get_or_init(|| {
+        let theme = effigy_ui::theme::Theme::default();
+        Palette {
+            accent: ratatui_colour(theme.accent),
+            accent_soft: ratatui_colour(theme.accent_soft),
+            muted: ratatui_colour(theme.muted),
+        }
+    })
+}
+
+/// Project an `anstyle` foreground colour into the ratatui palette.
+fn ratatui_colour(style: anstyle::Style) -> Color {
+    match style.get_fg_color() {
+        Some(anstyle::Color::Ansi256(index)) => Color::Indexed(index.0),
+        Some(anstyle::Color::Ansi(colour)) => match colour {
+            anstyle::AnsiColor::Black => Color::Black,
+            anstyle::AnsiColor::Red => Color::Red,
+            anstyle::AnsiColor::Green => Color::Green,
+            anstyle::AnsiColor::Yellow => Color::Yellow,
+            anstyle::AnsiColor::Blue => Color::Blue,
+            anstyle::AnsiColor::Magenta => Color::Magenta,
+            anstyle::AnsiColor::Cyan => Color::Cyan,
+            anstyle::AnsiColor::White => Color::White,
+            anstyle::AnsiColor::BrightBlack => Color::DarkGray,
+            anstyle::AnsiColor::BrightRed => Color::LightRed,
+            anstyle::AnsiColor::BrightGreen => Color::LightGreen,
+            anstyle::AnsiColor::BrightYellow => Color::LightYellow,
+            anstyle::AnsiColor::BrightBlue => Color::LightBlue,
+            anstyle::AnsiColor::BrightMagenta => Color::LightMagenta,
+            anstyle::AnsiColor::BrightCyan => Color::LightCyan,
+            anstyle::AnsiColor::BrightWhite => Color::White,
+        },
+        Some(anstyle::Color::Rgb(rgb)) => Color::Rgb(rgb.0, rgb.1, rgb.2),
+        None => Color::Reset,
+        // `anstyle::Color` is exhaustive here; a future variant lands as the
+        // terminal's default rather than a silently wrong hue.
+        #[allow(unreachable_patterns)]
+        Some(_) => Color::Reset,
+    }
+}
+
+/// The accent the TUI's borders and active tab draw with.
+pub fn accent() -> Color {
+    palette().accent
+}
+
+/// The softer accent used for secondary marks such as the version badge.
+pub fn accent_soft() -> Color {
+    palette().accent_soft
+}
+
+/// The muted colour inactive tabs draw with.
+pub fn muted() -> Color {
+    palette().muted
+}
 
 #[derive(Debug, Clone)]
 pub struct LogEntry {
@@ -72,9 +135,7 @@ pub fn effigy_panel_block<'a>(
         block = block.title_top(
             Line::from(Span::styled(
                 title.to_owned(),
-                Style::default()
-                    .fg(EFFIGY_ACCENT)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(accent()).add_modifier(Modifier::BOLD),
             ))
             .left_aligned(),
         );
@@ -82,11 +143,7 @@ pub fn effigy_panel_block<'a>(
     if show_version {
         let version = format!(" {} ", effigy_core::build_info::display_version());
         block = block.title_bottom(
-            Line::from(Span::styled(
-                version,
-                Style::default().fg(EFFIGY_ACCENT_SOFT),
-            ))
-            .right_aligned(),
+            Line::from(Span::styled(version, Style::default().fg(accent_soft()))).right_aligned(),
         );
     }
     block
@@ -106,5 +163,42 @@ pub fn toggle_follow_for_active(
                 *offset = max_offset;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn palette_projects_the_shared_theme() {
+        let theme = effigy_ui::theme::Theme::default();
+        assert_eq!(ratatui_colour(theme.accent), accent());
+        assert_eq!(ratatui_colour(theme.accent_soft), accent_soft());
+        assert_eq!(ratatui_colour(theme.muted), muted());
+        assert_eq!(accent(), Color::Indexed(212));
+        assert_eq!(accent_soft(), Color::Indexed(218));
+        assert_eq!(muted(), Color::Indexed(244));
+    }
+
+    #[test]
+    fn ansi_and_rgb_colours_map_to_their_ratatui_counterparts() {
+        let ansi = |colour| anstyle::Style::new().fg_color(Some(anstyle::Color::Ansi(colour)));
+        assert_eq!(
+            ratatui_colour(ansi(anstyle::AnsiColor::White)),
+            Color::White
+        );
+        assert_eq!(
+            ratatui_colour(ansi(anstyle::AnsiColor::BrightBlack)),
+            Color::DarkGray
+        );
+        assert_eq!(
+            ratatui_colour(
+                anstyle::Style::new()
+                    .fg_color(Some(anstyle::Color::Rgb(anstyle::RgbColor(1, 2, 3))))
+            ),
+            Color::Rgb(1, 2, 3)
+        );
+        assert_eq!(ratatui_colour(anstyle::Style::new()), Color::Reset);
     }
 }

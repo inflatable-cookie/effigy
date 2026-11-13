@@ -18,16 +18,17 @@ chosen package list: a crate compiled only as another package's dependency is
 never linted as a package, so a wrapper there would escape a `-p` selection.
 
 A compiler diagnostic only exists for the constructors we mark, so the check
-also owns the crate itself: `indicatif` may be named in exactly one production
-file (the reviewed step sink), and that file may build exactly one
-`ProgressBar` with exactly one style and one steady tick. A fixed-label
-spinner built through another constructor (`ProgressBar::no_length`,
-`ProgressBar::new`, `ProgressBar::with_draw_target`, `ProgressStyle::
-default_spinner`, `enable_steady_tick`) is therefore reported at its own file
-and line, whether it is written directly or hidden behind a wrapper. Comments
-and literal contents are blanked before the scan, with every newline kept, so a
-message or fixture that names a constructor is not read as one and the line
-numbers stay exact.
+also owns the crate itself: `indicatif` may be named only inside the reviewed
+step sink's own module (`crates/effigy-ui/src/steps/`, split into the API, the
+progress source, streaming and terminal hand-over), and exactly one production
+file in it — `steps/mod.rs` — may build a `ProgressBar`, with exactly one style
+and one steady tick. A fixed-label spinner built through another constructor
+(`ProgressBar::no_length`, `ProgressBar::new`, `ProgressBar::with_draw_target`,
+`ProgressStyle::default_spinner`, `enable_steady_tick`) is therefore reported at
+its own file and line, whether it is written directly or hidden behind a
+wrapper, in any file of the module. Comments and literal contents are blanked
+before the scan, with every newline kept, so a message or fixture that names a
+constructor is not read as one and the line numbers stay exact.
 """
 import collections
 import json
@@ -39,7 +40,8 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 MARKER = 'feedback legacy spinner: migrate to a live progress source'
-SINK_FILE = 'crates/effigy-ui/src/steps.rs'
+SINK_MODULE = 'crates/effigy-ui/src/steps'
+SINK_FILE = f'{SINK_MODULE}/mod.rs'
 SINK_CONSTRUCTION = 'let bar = self.multi().add(ProgressBar::new_spinner());'
 # The one reviewed spinner sink: `Step::start_bar` builds the only
 # `ProgressBar` in the workspace. `config/feedback-lint/clippy.toml` disallows
@@ -287,12 +289,21 @@ def source_files(root, *directories):
             yield source
 
 
+def is_test_file(relative):
+    """Test targets are not production migration or sink obligations."""
+    return '/tests/' in relative or relative.endswith('/tests.rs')
+
+
+def in_sink_module(relative):
+    return relative == SINK_MODULE or relative.startswith(SINK_MODULE + '/')
+
+
 def indicatif_errors(root):
-    """No production file outside the reviewed sink may name indicatif."""
+    """No production file outside the reviewed sink's module may name indicatif."""
     errors = []
     for source in source_files(root, 'src', 'crates', 'tests'):
         relative = source.relative_to(root).as_posix()
-        if relative == SINK_FILE:
+        if in_sink_module(relative) or is_test_file(relative):
             continue
         text = source.read_text()
         for number, line in enumerate(code_only(text).splitlines(), 1):
@@ -302,9 +313,15 @@ def indicatif_errors(root):
 
 
 def sink_errors(root):
-    """The sink file may build only the reviewed bar, style and tick."""
+    """Only the reviewed sink file builds the bar, style and tick.
+
+    The step sink is one module now, so its streaming and terminal-hand-over
+    files may name `indicatif` for their draw target; none of them may build a
+    bar. Only `steps/mod.rs` carries the reviewed construction, once.
+    """
     source = root / SINK_FILE
-    if not source.is_file():
+    module = root / SINK_MODULE
+    if not source.is_file() or not module.is_dir():
         return [f'{SINK_FILE}: the reviewed step sink is missing; restore it before gating progress']
     errors = []
     seen = collections.Counter()
@@ -330,6 +347,17 @@ def sink_errors(root):
                 )
             continue
         errors.append(f'{SINK_FILE}:{number}: {source_line(text, number)}; {SPINNER_MIGRATION}')
+    for other in source_files(root, SINK_MODULE):
+        relative = other.relative_to(root).as_posix()
+        if relative == SINK_FILE or is_test_file(relative):
+            continue
+        other_text = other.read_text()
+        for number, line in enumerate(code_only(other_text).splitlines(), 1):
+            if any(term in line for term in SINK_BUILD_TERMS):
+                errors.append(
+                    f'{relative}:{number}: {source_line(other_text, number)}; {SPINNER_MIGRATION} '
+                    '(only the reviewed sink builds progress)'
+                )
     return errors
 
 

@@ -71,12 +71,17 @@ pub(crate) fn builtin_help_topic(command: &str) -> Option<HelpTopic> {
 
 #[cfg(test)]
 mod tests {
-    use super::{render_help, HelpRenderer, HelpResult, KeyValue, NoticeLevel, TableSpec};
-    use crate::HelpTopic;
+    use super::{
+        render_help, render_help_group_with_deferred_builtins, render_help_with_deferred_builtins,
+        HelpRenderer, HelpResult, KeyValue, NoticeLevel, TableSpec,
+    };
+    use crate::{HelpGroup, HelpTopic};
+    use std::collections::BTreeSet;
 
     #[derive(Default)]
     struct RecordingRenderer {
         sections: Vec<String>,
+        notices: Vec<String>,
         tables: Vec<TableSpec>,
     }
 
@@ -90,7 +95,8 @@ mod tests {
             Ok(())
         }
 
-        fn notice(&mut self, _level: NoticeLevel, _body: &str) -> HelpResult<()> {
+        fn notice(&mut self, _level: NoticeLevel, body: &str) -> HelpResult<()> {
+            self.notices.push(body.to_owned());
             Ok(())
         }
 
@@ -162,5 +168,98 @@ mod tests {
         assert!(release_rows
             .iter()
             .any(|row| row == &["-h, --help".to_owned(), "Print command help".to_owned()]));
+    }
+
+    /// The rows a group panel shows, with the built-ins a repository deferred.
+    fn group_rows(group: HelpGroup, deferred: &[&str]) -> Vec<Vec<String>> {
+        let mut renderer = RecordingRenderer::default();
+        let deferred = deferred
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect::<BTreeSet<String>>();
+        render_help_group_with_deferred_builtins(&mut renderer, group, &deferred)
+            .expect("render group help");
+        renderer
+            .tables
+            .into_iter()
+            .next()
+            .expect("the group table")
+            .rows
+    }
+
+    #[test]
+    fn a_deferred_builtin_hides_its_help_row_and_neighbours_survive() {
+        let all = group_rows(HelpGroup::Work, &[]);
+        let hidden = group_rows(HelpGroup::Work, &["tasks"]);
+        assert!(all.iter().any(|row| row[0] == "effigy tasks"), "{all:?}");
+        assert!(
+            !hidden.iter().any(|row| row[0] == "effigy tasks"),
+            "a repository task named `tasks` defers the built-in row: {hidden:?}"
+        );
+        assert_eq!(
+            hidden.len() + 1,
+            all.len(),
+            "only the deferred row leaves the panel"
+        );
+        assert!(
+            hidden.iter().any(|row| row[0] == "effigy <task>"),
+            "the task row itself is not a built-in: {hidden:?}"
+        );
+    }
+
+    #[test]
+    fn every_group_panel_renders_its_own_rows_and_discovery_notices() {
+        for group in HelpGroup::ALL {
+            let mut renderer = RecordingRenderer::default();
+            render_help_group_with_deferred_builtins(&mut renderer, *group, &BTreeSet::new())
+                .expect("render group help");
+            assert_eq!(renderer.sections, vec![group.title().to_owned()]);
+            assert_eq!(renderer.notices.len(), 2, "{group:?}");
+            assert!(
+                renderer
+                    .notices
+                    .iter()
+                    .any(|notice| notice.contains("never an `effigy <group> <command>` route")),
+                "{:?}",
+                renderer.notices
+            );
+            assert_eq!(renderer.tables.len(), 1, "{group:?}");
+            assert!(!renderer.tables[0].rows.is_empty(), "{group:?}");
+        }
+    }
+
+    fn general_commands(deferred: &[&str]) -> Vec<String> {
+        let mut renderer = RecordingRenderer::default();
+        let deferred = deferred
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect::<BTreeSet<String>>();
+        render_help_with_deferred_builtins(&mut renderer, HelpTopic::General, &deferred)
+            .expect("render general help");
+        renderer
+            .tables
+            .into_iter()
+            .flat_map(|table| table.rows)
+            .filter_map(|row| row.first().cloned())
+            .collect()
+    }
+
+    #[test]
+    fn general_help_hides_a_deferred_builtin_everywhere_it_appears() {
+        let all = general_commands(&[]);
+        assert!(
+            all.iter().any(|command| command == "effigy tasks"),
+            "{all:?}"
+        );
+        let hidden = general_commands(&["tasks"]);
+        assert!(
+            !hidden.iter().any(|command| command == "effigy tasks"),
+            "the deferral reaches general help: {hidden:?}"
+        );
+        assert!(
+            hidden.iter().any(|command| command == "effigy runs"),
+            "an undeferred sibling stays: {hidden:?}"
+        );
+        assert_eq!(hidden.len() + 1, all.len());
     }
 }

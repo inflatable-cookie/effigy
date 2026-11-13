@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
-use crate::value_parsing::{next_required_value, parse_repo_path};
+use super::common::{CommonArgs, CommonFlag};
+use crate::value_parsing::next_required_value;
 use crate::{unknown_argument, CliParseError, Command, HelpTopic, StateArgs, StateSubcommand};
 
 pub(super) fn parse_state_command<I>(args: I) -> Result<Command, CliParseError>
@@ -32,17 +33,19 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut stack: Option<String> = None;
     let mut kind: Option<String> = None;
     let mut limit: Option<usize> = None;
     let mut lineage: Option<String> = None;
 
     while let Some(arg) = args.next() {
+        match common.take(&arg, &mut args, HelpTopic::State)? {
+            CommonFlag::Help(topic) => return Ok(Command::Help(topic)),
+            CommonFlag::Consumed => continue,
+            CommonFlag::Unclaimed => {}
+        }
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--stack" => {
                 stack = Some(next_required_value(
                     &mut args,
@@ -86,7 +89,6 @@ where
                     },
                 )?);
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::State)),
             other if other.starts_with('-') => return Err(unknown_argument(other)),
             _ if stack.is_none() => stack = Some(arg),
             other => {
@@ -108,8 +110,8 @@ where
             limit,
             lineage,
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -118,16 +120,18 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut manifest: Option<PathBuf> = None;
     let mut stack: Option<String> = None;
     let mut write_report = false;
 
     while let Some(arg) = args.next() {
+        match common.take(&arg, &mut args, HelpTopic::State)? {
+            CommonFlag::Help(topic) => return Ok(Command::Help(topic)),
+            CommonFlag::Consumed => continue,
+            CommonFlag::Unclaimed => {}
+        }
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--write-report" => write_report = true,
             "--manifest" => {
                 manifest = Some(PathBuf::from(next_required_value(
@@ -145,7 +149,6 @@ where
                     },
                 )?);
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::State)),
             other if other.starts_with('-') => return Err(unknown_argument(other)),
             _ if manifest.is_none() && stack.is_none() => {
                 if looks_like_manifest_path(&arg) {
@@ -168,8 +171,8 @@ where
             stack,
             write_report,
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -178,17 +181,19 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut manifest: Option<PathBuf> = None;
     let mut stack: Option<String> = None;
     let mut yes = false;
     let mut skip_layers = Vec::new();
 
     while let Some(arg) = args.next() {
+        match common.take(&arg, &mut args, HelpTopic::State)? {
+            CommonFlag::Help(topic) => return Ok(Command::Help(topic)),
+            CommonFlag::Consumed => continue,
+            CommonFlag::Unclaimed => {}
+        }
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--yes" => yes = true,
             "--skip-layer" => {
                 skip_layers.push(next_required_value(
@@ -214,7 +219,6 @@ where
                     },
                 )?);
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::State)),
             other if other.starts_with('-') => return Err(unknown_argument(other)),
             _ if manifest.is_none() && stack.is_none() => {
                 if looks_like_manifest_path(&arg) {
@@ -238,8 +242,8 @@ where
             yes,
             skip_layers,
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -248,8 +252,7 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut stack: Option<String> = None;
     let mut profiles: Vec<String> = Vec::new();
     let mut key: Option<String> = None;
@@ -257,9 +260,12 @@ where
     let mut push = false;
 
     while let Some(arg) = args.next() {
+        match common.take(&arg, &mut args, HelpTopic::State)? {
+            CommonFlag::Help(topic) => return Ok(Command::Help(topic)),
+            CommonFlag::Consumed => continue,
+            CommonFlag::Unclaimed => {}
+        }
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--stack" => {
                 stack = Some(next_required_value(
                     &mut args,
@@ -278,7 +284,6 @@ where
             }
             "--yes" => yes = true,
             "--push" => push = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::State)),
             other if other.starts_with('-') => return Err(unknown_argument(other)),
             _ if stack.is_none() => stack = Some(arg),
             _ => profiles.push(arg),
@@ -304,8 +309,8 @@ where
             yes,
             push,
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -314,8 +319,7 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut manifest: Option<PathBuf> = None;
     let mut stack: Option<String> = None;
     let mut profile: Option<String> = None;
@@ -330,9 +334,12 @@ where
     let mut push = false;
 
     while let Some(arg) = args.next() {
+        match common.take(&arg, &mut args, HelpTopic::State)? {
+            CommonFlag::Help(topic) => return Ok(Command::Help(topic)),
+            CommonFlag::Consumed => continue,
+            CommonFlag::Unclaimed => {}
+        }
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--manifest" => {
                 manifest = Some(PathBuf::from(next_required_value(
                     &mut args,
@@ -407,7 +414,6 @@ where
             }
             "--yes" => yes = true,
             "--push" => push = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::State)),
             other if other.starts_with('-') => return Err(unknown_argument(other)),
             _ if stack.is_none() && manifest.is_none() => {
                 if looks_like_manifest_path(&arg) {
@@ -440,8 +446,8 @@ where
             yes,
             push,
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -486,17 +492,18 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut farmyard_handoff = false;
     let mut source: Option<String> = None;
 
     while let Some(arg) = args.next() {
+        match common.take(&arg, &mut args, HelpTopic::State)? {
+            CommonFlag::Help(topic) => return Ok(Command::Help(topic)),
+            CommonFlag::Consumed => continue,
+            CommonFlag::Unclaimed => {}
+        }
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--farmyard-handoff" => farmyard_handoff = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::State)),
             other if other.starts_with('-') => return Err(unknown_argument(other)),
             _ if source.is_none() => source = Some(arg),
             other => {
@@ -523,8 +530,8 @@ where
 
     Ok(Command::State(StateArgs {
         subcommand,
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -533,8 +540,7 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut farmyard_handoff = false;
     let mut push = false;
     let mut kind: Option<String> = None;
@@ -543,9 +549,12 @@ where
     let mut source: Option<String> = None;
 
     while let Some(arg) = args.next() {
+        match common.take(&arg, &mut args, HelpTopic::State)? {
+            CommonFlag::Help(topic) => return Ok(Command::Help(topic)),
+            CommonFlag::Consumed => continue,
+            CommonFlag::Unclaimed => {}
+        }
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--farmyard-handoff" => farmyard_handoff = true,
             "--push" => push = true,
             "--ref" => {
@@ -572,7 +581,6 @@ where
                     },
                 )?);
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::State)),
             other if other.starts_with('-') => return Err(unknown_argument(other)),
             _ if source.is_none() => source = Some(arg),
             other => {
@@ -599,8 +607,8 @@ where
             farmyard_handoff,
             push,
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 

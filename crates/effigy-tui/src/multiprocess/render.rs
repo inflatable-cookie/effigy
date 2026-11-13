@@ -263,3 +263,172 @@ pub fn render_snapshot_frame(snapshot: FrameSnapshot<'_>) -> Result<String, Stri
     }
     Ok(text)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::{InputMode, LogEntry, LogEntryKind};
+    use ratatui::backend::TestBackend;
+
+    /// Renders one frame of the same composition the runtime loop draws and
+    /// returns the whole screen as text.
+    fn frame_text(configure: impl FnOnce(&mut RenderUiState<'_>)) -> String {
+        let names = vec!["build".to_owned(), "serve".to_owned()];
+        let logs = vec![LogEntry {
+            styles: None,
+            kind: LogEntryKind::Stdout,
+            line: "compiled in 2.1s".to_owned(),
+        }];
+        let exit_states = HashMap::new();
+        let startup_states = HashMap::new();
+        let entry_waits = HashMap::new();
+        let mut terminal = Terminal::new(TestBackend::new(100, 20)).expect("test terminal");
+        terminal
+            .draw(|frame| {
+                let mut state = RenderUiState {
+                    process_names: &names,
+                    active_index: 0,
+                    active_logs: &logs,
+                    scroll_offset: 0,
+                    max_offset: 0,
+                    render_scroll_offset: 0,
+                    scrollbar_total: 0,
+                    follow: true,
+                    active_process: "build",
+                    active_startup_state: ProcessStartupState::Running,
+                    active_vt: false,
+                    input_line: "",
+                    input_mode: InputMode::Command,
+                    shell_capture_mode: false,
+                    exit_states: &exit_states,
+                    startup_states: &startup_states,
+                    entry_waits: &entry_waits,
+                    active_entry_wait: None,
+                    show_help: false,
+                    show_options: false,
+                    options_index: 0,
+                    footer_message: None,
+                    active_output_seen: true,
+                    spinner_tick: 0,
+                    active_elapsed: Duration::ZERO,
+                    active_restart_count: 0,
+                    shell_cursor: None,
+                };
+                configure(&mut state);
+                render_ui(frame, state);
+            })
+            .expect("the frame renders");
+        let buffer = terminal.backend().buffer();
+        let mut text = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                text.push_str(buffer[(x, y)].symbol());
+            }
+            text.push('\n');
+        }
+        text
+    }
+
+    #[test]
+    fn the_input_row_is_reserved_only_while_inserting_and_never_on_the_shell_tab() {
+        let area = Rect::new(0, 0, 100, 20);
+        let command = main_areas(area, false, InputMode::Command);
+        let insert = main_areas(area, false, InputMode::Insert);
+        let shell = main_areas(area, true, InputMode::Insert);
+
+        assert_eq!(command[3].height, 0, "command mode takes no input row");
+        assert_eq!(insert[3].height, 3, "insert mode owns a framed row");
+        assert_eq!(shell[3].height, 0, "the shell tab types in its own pane");
+        assert_eq!(
+            insert[2].height + 3,
+            command[2].height,
+            "the input row comes out of the output pane, not the frame"
+        );
+        for areas in [command, insert, shell] {
+            assert_eq!(areas[0].height, 3, "tab bar");
+            assert_eq!(areas[1].height, 1, "separator");
+            assert_eq!(areas[4].height, 1, "footer");
+            assert_eq!(areas[4].bottom(), area.bottom(), "the frame is filled");
+        }
+    }
+
+    #[test]
+    fn the_frame_composes_tabs_output_and_footer_legend() {
+        let text = frame_text(|_| {});
+        assert!(text.contains("build"), "{text}");
+        assert!(text.contains("serve"), "{text}");
+        assert!(text.contains("compiled in 2.1s"), "{text}");
+        assert!(text.contains("mode:command (tab)"), "{text}");
+        assert!(text.contains("help (h)"), "{text}");
+        assert!(text.contains("options (o)"), "{text}");
+    }
+
+    #[test]
+    fn the_help_overlay_replaces_the_output_pane() {
+        let text = frame_text(|state| state.show_help = true);
+        assert!(text.contains("Command Mode"), "{text}");
+        assert!(
+            !text.contains("compiled in 2.1s"),
+            "help replaces the pane rather than covering half of it: {text}"
+        );
+        assert!(
+            text.contains("help (h)"),
+            "the footer still names its toggles: {text}"
+        );
+    }
+
+    #[test]
+    fn the_options_overlay_names_the_active_process_and_its_actions() {
+        let text = frame_text(|state| {
+            state.show_options = true;
+            state.options_index = 1;
+        });
+        assert!(text.contains("Options"), "{text}");
+        assert!(text.contains("process: build"), "{text}");
+        assert!(text.contains("Disable follow (f)"), "{text}");
+        assert!(text.contains("Export transcript (y)"), "{text}");
+    }
+
+    #[test]
+    fn the_insert_row_draws_the_input_line_and_a_footer_message() {
+        let text = frame_text(|state| {
+            state.input_mode = InputMode::Insert;
+            state.input_line = "git status";
+            state.footer_message = Some("transcript exported");
+        });
+        assert!(text.contains("Input (Esc command, Enter send)"), "{text}");
+        assert!(text.contains("> git status"), "{text}");
+        assert!(text.contains("mode:insert (tab)"), "{text}");
+        assert!(text.contains("transcript exported"), "{text}");
+    }
+
+    #[test]
+    fn a_snapshot_frame_names_its_tabs_and_refuses_an_unknown_active_tab() {
+        let names = vec!["build".to_owned(), "serve".to_owned()];
+        let text = render_snapshot_frame(FrameSnapshot {
+            process_names: &names,
+            active: "serve",
+            entry_waits: &[],
+            logs: &[],
+            width: 80,
+            height: 16,
+        })
+        .expect("known active tab");
+        assert!(text.contains("build"), "{text}");
+        assert!(text.contains("serve"), "{text}");
+
+        let error = render_snapshot_frame(FrameSnapshot {
+            process_names: &names,
+            active: "lint",
+            entry_waits: &[],
+            logs: &[],
+            width: 80,
+            height: 16,
+        })
+        .expect_err("unknown active tab");
+        assert!(
+            error.contains("`lint` is not one of the session's tabs"),
+            "{error}"
+        );
+    }
+}

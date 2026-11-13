@@ -46,22 +46,7 @@ pub fn color_enabled_for_text_output(output_json: bool) -> bool {
 /// Ambient text color policy: reads `OutputMode::from_env()`, the stdout TTY
 /// status, and `NO_COLOR` to decide whether colored text should be emitted.
 pub fn text_color_enabled() -> bool {
-    resolve_text_color_enabled(
-        OutputMode::from_env(),
-        std::io::stdout().is_terminal(),
-        std::env::var_os("NO_COLOR").is_some(),
-    )
-}
-
-pub(crate) fn resolve_text_color_enabled(mode: OutputMode, is_tty: bool, no_color: bool) -> bool {
-    if no_color {
-        return false;
-    }
-    match mode {
-        OutputMode::Always => true,
-        OutputMode::Never => false,
-        OutputMode::Auto => is_tty,
-    }
+    crate::theme::resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal())
 }
 
 /// Convert a rendered byte buffer into a UTF-8 string, surfacing invalid bytes
@@ -93,19 +78,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolve_text_color_enabled_obeys_mode_and_no_color_precedence() {
-        assert!(!resolve_text_color_enabled(OutputMode::Auto, false, false));
-        assert!(resolve_text_color_enabled(OutputMode::Auto, true, false));
-        assert!(resolve_text_color_enabled(OutputMode::Always, false, false));
-        assert!(!resolve_text_color_enabled(OutputMode::Never, true, false));
+    fn text_color_policy_stays_silent_for_json_output() {
+        assert!(!color_enabled_for_text_output(true));
+        // The ambient decision itself is `theme::resolve_color_enabled`, whose
+        // precedence every mode/terminal pair is asserted against there.
+        assert_eq!(
+            color_enabled_for_text_output(false),
+            text_color_enabled(),
+            "text output follows the one ambient colour policy"
+        );
+    }
 
-        for mode in [OutputMode::Auto, OutputMode::Always, OutputMode::Never] {
-            for terminal in [false, true] {
-                assert!(
-                    !resolve_text_color_enabled(mode, terminal, true),
-                    "NO_COLOR must disable styles: {mode:?}, terminal={terminal}"
-                );
-            }
-        }
+    #[test]
+    fn render_utf8_reports_invalid_bytes_as_an_encoding_error() {
+        let error = render_utf8(vec![0xff, 0xfe]).expect_err("invalid utf-8");
+        assert!(matches!(error, UiError::Encoding(_)), "{error:?}");
     }
 }

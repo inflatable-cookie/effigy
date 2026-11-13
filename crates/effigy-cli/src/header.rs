@@ -8,7 +8,7 @@
 use std::path::Path;
 
 use effigy_ui::theme::Theme;
-use effigy_ui::{Renderer, UiResult};
+use effigy_ui::{style_text, text_color_enabled, Renderer, UiResult};
 
 /// Render the standard CLI header with the active repo root and the
 /// supplied display version string (for example `v0.3.1` or
@@ -25,47 +25,42 @@ pub fn render_cli_header<R: Renderer>(
     root: &Path,
     pkg_version: &str,
 ) -> UiResult<()> {
-    let no_color = std::env::var_os("NO_COLOR").is_some();
-    let color_mode = std::env::var("EFFIGY_COLOR")
-        .ok()
-        .unwrap_or_else(|| "auto".to_owned());
-    let use_color = !no_color && color_mode != "never";
+    let use_color = text_color_enabled();
 
     let title_line = "EFFIGY".to_owned();
     let path_line = root.display().to_string();
-    let path_line = fit_cli_header_path(&title_line, &path_line, pkg_version);
+    let path_line = fit_cli_header_path(&title_line, &path_line);
     let combined_line = format!("{title_line}  {path_line}");
     let version = format!(" {pkg_version} ");
     let inner_width = combined_line.chars().count().max(version.chars().count());
+    let padding = " ".repeat(inner_width.saturating_sub(combined_line.chars().count()));
     let top = format!("╭{}╮", "─".repeat(inner_width + 2));
-    let middle_padding = " ".repeat(inner_width.saturating_sub(combined_line.chars().count()));
-    let middle = format!("│ {combined_line}{middle_padding} │");
+    let middle = format!("│ {combined_line}{padding} │");
     let bottom_fill = (inner_width + 2).saturating_sub(version.chars().count());
     let bottom = format!("╰{}{}╯", "─".repeat(bottom_fill), version);
 
     renderer.text("")?;
     if use_color {
+        // The one styling spelling (`effigy_ui::style_text`) and the one
+        // palette (`effigy_ui::theme::Theme`) draw every coloured segment.
         let theme = Theme::default();
-        let accent = theme.accent;
-        let accent_soft = theme.accent_soft;
-        let muted = theme.muted;
-        let accent_on = format!("{}", accent.render());
-        let accent_soft_on = format!("{}", accent_soft.render());
-        let muted_on = format!("{}", muted.render());
-        let reset = format!("{}", accent.render_reset());
-        let spacer = "  ";
-        let trailing =
-            inner_width.saturating_sub(title_line.len() + spacer.len() + path_line.len());
-        let trailing_spaces = " ".repeat(trailing);
-
-        renderer.text(&format!("{accent_on}{top}{reset}"))?;
-        renderer.text(&format!(
-            "{accent_on}│ {reset}{accent_on}{title_line}{reset}{muted_on}{spacer}{path_line}{trailing_spaces}{reset}{accent_on} │{reset}"
-        ))?;
-        renderer.text(&format!(
-            "{accent_on}╰{}{reset}{accent_soft_on}{version}{reset}{accent_on}╯{reset}",
-            "─".repeat(bottom_fill)
-        ))?;
+        renderer.text(&style_text(true, theme.accent, &top))?;
+        let middle_line = format!(
+            "{}{}{}{}",
+            style_text(true, theme.accent, "│ "),
+            style_text(true, theme.accent, &title_line),
+            style_text(true, theme.muted, &format!("  {path_line}{padding}")),
+            style_text(true, theme.accent, " │"),
+        );
+        renderer.text(&middle_line)?;
+        let bottom_line = format!(
+            "{}{}{}{}",
+            style_text(true, theme.accent, "╰"),
+            style_text(true, theme.accent, &"─".repeat(bottom_fill)),
+            style_text(true, theme.accent_soft, &version),
+            style_text(true, theme.accent, "╯"),
+        );
+        renderer.text(&bottom_line)?;
     } else {
         renderer.text(&top)?;
         renderer.text(&middle)?;
@@ -75,14 +70,13 @@ pub fn render_cli_header<R: Renderer>(
     Ok(())
 }
 
-fn fit_cli_header_path(title: &str, path: &str, version: &str) -> String {
+fn fit_cli_header_path(title: &str, path: &str) -> String {
     let Some(cols) = cli_header_terminal_cols() else {
         return path.to_owned();
     };
     let min_inner_width = title.len() + 2 + 1;
     let max_inner_width = cols.saturating_sub(4).max(min_inner_width);
     let available_path_width = max_inner_width.saturating_sub(title.len() + 2);
-    let _ = version;
     truncate_path_for_header(path, available_path_width)
 }
 
@@ -134,42 +128,57 @@ mod tests {
 
     static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    struct ScopedEnvVar {
-        key: &'static str,
-        previous: Option<String>,
+    struct ScopedEnv {
+        previous: Vec<(&'static str, Option<String>)>,
         _lock: std::sync::MutexGuard<'static, ()>,
     }
 
-    impl ScopedEnvVar {
-        fn set(key: &'static str, value: &'static str) -> Self {
+    impl ScopedEnv {
+        /// Set (or remove, with `None`) several variables under the one lock
+        /// colour tests share.
+        fn set(pairs: &[(&'static str, Option<&'static str>)]) -> Self {
             let lock = TEST_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-            let previous = std::env::var(key).ok();
-            unsafe {
-                std::env::set_var(key, value);
+            let previous = pairs
+                .iter()
+                .map(|(key, _)| (*key, std::env::var(key).ok()))
+                .collect();
+            for (key, value) in pairs {
+                unsafe {
+                    match value {
+                        Some(value) => std::env::set_var(key, value),
+                        None => std::env::remove_var(key),
+                    }
+                }
             }
             Self {
-                key,
                 previous,
                 _lock: lock,
             }
         }
     }
 
-    impl Drop for ScopedEnvVar {
+    impl Drop for ScopedEnv {
         fn drop(&mut self) {
             unsafe {
-                if let Some(previous) = &self.previous {
-                    std::env::set_var(self.key, previous);
-                } else {
-                    std::env::remove_var(self.key);
+                for (key, previous) in &self.previous {
+                    match previous {
+                        Some(previous) => std::env::set_var(key, previous),
+                        None => std::env::remove_var(key),
+                    }
                 }
             }
         }
     }
 
+    fn header_text(root: &str) -> String {
+        let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
+        render_cli_header(&mut renderer, Path::new(root), "v0.4.0").expect("header");
+        String::from_utf8(renderer.into_inner()).expect("utf8")
+    }
+
     #[test]
     fn render_cli_header_fits_long_versions_and_truncates_long_paths() {
-        let _no_color = ScopedEnvVar::set("NO_COLOR", "1");
+        let _env = ScopedEnv::set(&[("NO_COLOR", Some("1")), ("EFFIGY_COLOR", None)]);
         assert_eq!(
             truncate_path_for_header("/Users/tom/Dev/projects/effigy", 18),
             "…/projects/effigy"
@@ -201,6 +210,29 @@ mod tests {
         assert!(
             lines[2].contains("v0.4.0+local.e2bcb80.dirty"),
             "bottom border should contain the full version: {rendered}"
+        );
+    }
+
+    #[test]
+    fn coloured_header_goes_through_the_shared_colour_policy() {
+        let _env = ScopedEnv::set(&[("NO_COLOR", None), ("EFFIGY_COLOR", Some("always"))]);
+        let rendered = header_text("/var/www/cbs");
+        assert!(
+            rendered.contains("\u{1b}["),
+            "EFFIGY_COLOR=always must style the banner: {rendered:?}"
+        );
+        // The styled banner keeps the same visible text as the plain one.
+        assert!(rendered.contains("EFFIGY"), "{rendered:?}");
+        assert!(rendered.contains("/var/www/cbs"), "{rendered:?}");
+        assert!(rendered.contains(" v0.4.0 "), "{rendered:?}");
+
+        // NO_COLOR wins over every mode, including `always`.
+        drop(_env);
+        let _env = ScopedEnv::set(&[("NO_COLOR", Some("1")), ("EFFIGY_COLOR", Some("always"))]);
+        let rendered = header_text("/var/www/cbs");
+        assert!(
+            !rendered.contains("\u{1b}["),
+            "NO_COLOR must win over EFFIGY_COLOR=always: {rendered:?}"
         );
     }
 }
