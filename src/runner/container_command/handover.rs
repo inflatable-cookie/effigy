@@ -395,7 +395,7 @@ pub(super) fn stop_peer_data_services(
             policy,
             &handover.environment,
             &handover.project_name,
-            || {
+            |_| {
                 effigy_runtime::signals::run_compose_plan_capture(&stop_plan)
                     .map(|_| ())
                     .map_err(|error| {
@@ -743,7 +743,11 @@ domain = "switch.test"
                         effigy_runtime::EffigyRuntimeError::task_invocation(error.to_string())
                     })
                 },
-                |_, _, effect| effect(),
+                |_, _, effect| {
+                    effect(&effigy_ui::steps::ProgressSource::waiting_for(
+                        "the test backend to stop",
+                    ))
+                },
             )
             .expect("ordinary stop");
             let table = RouteTable::load(&fixture.route_table_path()).unwrap();

@@ -61,7 +61,7 @@ pub(super) fn lifecycle_cleanup_failed_container_up(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), RunnerError> {
-    environment::stop(repo_root, policy, Operation::Down, || {
+    environment::stop(repo_root, policy, Operation::Down, |_| {
         closeout::cleanup_failed_container_up(
             repo_root,
             policy,

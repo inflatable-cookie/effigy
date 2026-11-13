@@ -21,6 +21,7 @@ use crate::signals::{
     install_stop_requested_flag, spawn_compose_plan_inherit, terminate_inherited_child_graceful,
 };
 use crate::EffigyRuntimeError;
+use effigy_ui::steps::ProgressSource;
 
 pub fn run_attached_container_session<F>(
     repo_root: &Path,
@@ -40,7 +41,9 @@ where
         health,
         owner_task,
         deregister_gateway_routes,
-        |_repo_root, _policy, effect| effect(),
+        |_repo_root, _policy, effect| {
+            effect(&ProgressSource::waiting_for("the test backend to stop"))
+        },
     )
 }
 
@@ -205,7 +208,7 @@ where
     if policy.on_task_exit == ManifestContainerOnTaskExit::Stop {
         // The transition stops host-side supervisors before the backend
         // effect, so they never race a shutting-down Compose project.
-        transition(repo_root, policy, &|| {
+        transition(repo_root, policy, &|_| {
             shutdown_container_with_manager_plan(repo_root, policy)
         })?;
         gateway_domains_removed = deregister_gateway_routes(policy)?;
