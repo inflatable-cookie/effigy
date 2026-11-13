@@ -19,6 +19,7 @@ use std::time::{Duration, SystemTime};
 use rustls::server::{ClientHello, ResolvesServerCert};
 use rustls::sign::CertifiedKey;
 
+#[cfg(target_os = "macos")]
 use effigy_core::shell::shell_quote;
 
 use crate::error::GatewayError;
