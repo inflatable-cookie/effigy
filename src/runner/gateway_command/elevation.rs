@@ -10,6 +10,7 @@ use std::{
     process::{Child, Output},
 };
 
+#[cfg(target_os = "macos")]
 use effigy_core::shell::shell_quote;
 
 use crate::runner::error::RunnerError;
