@@ -24,7 +24,7 @@ pub use identity::{
 };
 pub use signal::{
     interrupted_signal, process_group_member_ids, process_is_running, surviving_group_member_ids,
-    terminate_process_tree,
+    terminate_process_tree, ProcessTreeError,
 };
 const PROCESS_GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_millis(800);
 
