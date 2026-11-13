@@ -38,8 +38,12 @@ mod surface;
 mod transport;
 
 pub(in crate::runner) use bounded::run_command_capture_until;
+// The Compose-exec parser is the executor's own reading of a plan; a proof of
+// what will run reads it the same way rather than restating the grammar.
 #[cfg(not(test))]
 pub(in crate::runner) use bounded::{capture_command_until, CommandCaptureError};
+#[cfg(test)]
+pub(in crate::runner) use transport::parse_compose_exec_args;
 pub(in crate::runner) use transport::{
     append_color_exec_env, copy_file_into_service, copy_file_into_service_bounded,
     probe_container_capabilities, run_compose_exec, run_compose_exec_plan_with_credentials,

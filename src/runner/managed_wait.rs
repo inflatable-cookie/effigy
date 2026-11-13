@@ -527,9 +527,16 @@ impl ActivationWaits {
         } else {
             WorkloadOutcome::Failed { code: 1 }
         });
-        match self.publisher.take_recording_failure() {
-            Some(failure) => closed.and(Err(error(failure))),
-            None => closed,
+        // Both facts are reported. A run whose observations were lost and
+        // whose owner also failed to settle must not be described by only one
+        // of them: the caller decides on the joined failure either way.
+        match (closed, self.publisher.take_recording_failure()) {
+            (Ok(()), None) => Ok(()),
+            (Err(closed), None) => Err(closed),
+            (Ok(()), Some(recorded)) => Err(error(recorded)),
+            (Err(closed), Some(recorded)) => Err(error(format!(
+                "{recorded}; the activation owner also failed to settle: {closed}"
+            ))),
         }
     }
 
@@ -562,12 +569,17 @@ impl Drop for ActivationWaits {
         // is reported rather than discarded — a silently lost wait is exactly
         // the incomplete record this type exists to prevent.
         let settled = self.close(WorkloadOutcome::Interrupted);
-        let failure = self
-            .publisher
-            .take_recording_failure()
-            .map(error)
-            .or_else(|| settled.err());
-        if let Some(failure) = failure {
+        // Report every failure the drop path found, not only the first: a lost
+        // observation and a failed settle are different facts about the same
+        // run, and neither may hide the other.
+        let mut failures = Vec::new();
+        if let Some(recorded) = self.publisher.take_recording_failure() {
+            failures.push(error(recorded));
+        }
+        if let Err(settled) = settled {
+            failures.push(settled);
+        }
+        for failure in failures {
             eprintln!("warning: {failure}");
         }
     }

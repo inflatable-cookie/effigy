@@ -8,17 +8,22 @@ use effigy_containers::EffectiveContainerPolicy;
 
 use crate::runner::error::RunnerError;
 
+/// Run one preparation command through the verified container.
+///
+/// `tail` is the `compose exec` tail only (`exec … <service> <command>`): the
+/// plan builder spells the single `compose -f … -p …` prefix, so a caller can
+/// never hand the executor a second one.
 pub(super) fn run_verified_prep_capture(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     binding: &effigy_containers::exec::VerifiedComposeContainer,
-    args: &[OsString],
+    tail: &[OsString],
     label: &str,
 ) -> Result<std::process::Output, RunnerError> {
     let plan = effigy_runtime::container_manager::compose_invocation_plan_from_tail_args(
         repo_root,
         policy,
-        args.to_vec(),
+        tail.to_vec(),
         effigy_containers::ContainerAction::Exec,
         label,
     )
@@ -36,12 +41,12 @@ pub(super) fn refresh_changed_cargo_inputs(
 ) -> Result<(), RunnerError> {
     refresh_changed_cargo_inputs_using(repo_root, |changed| {
         for batch in changed.chunks(128) {
-            let args = touch_invocation_args(policy, working_dir, batch);
+            let tail = touch_invocation_tail(policy, working_dir, batch);
             run_verified_prep_capture(
                 repo_root,
                 policy,
                 binding,
-                &args,
+                &tail,
                 "refresh changed Cargo inputs",
             )
             .map_err(|error| {
@@ -54,16 +59,16 @@ pub(super) fn refresh_changed_cargo_inputs(
     })
 }
 
-/// The one container command a refresh batch runs: `compose exec -T -w
-/// <working dir> <service> touch -c -- <paths>`. The paths are the host's own
-/// path bytes, so the container refreshes exactly the files the host changed.
-fn touch_invocation_args(
+/// The one container command a refresh batch runs, as the `compose exec` tail
+/// the plan builder prefixes: `exec -T -w <working dir> <service> touch -c --
+/// <paths>`. The paths are the host's own path bytes, so the container
+/// refreshes exactly the files the host changed.
+fn touch_invocation_tail(
     policy: &EffectiveContainerPolicy,
     working_dir: &Path,
     batch: &[PathBuf],
 ) -> Vec<OsString> {
-    let mut args = effigy_containers::compose::compose_args(policy, std::iter::empty::<&str>());
-    args.extend([
+    let mut tail = vec![
         OsString::from("exec"),
         OsString::from("-T"),
         OsString::from("-w"),
@@ -72,9 +77,9 @@ fn touch_invocation_args(
         OsString::from("touch"),
         OsString::from("-c"),
         OsString::from("--"),
-    ]);
-    args.extend(batch.iter().map(|path| path.as_os_str().to_owned()));
-    args
+    ];
+    tail.extend(batch.iter().map(|path| path.as_os_str().to_owned()));
+    tail
 }
 
 pub(super) fn refresh_changed_cargo_inputs_using(
@@ -157,6 +162,7 @@ fn path_from_bytes(bytes: &[u8]) -> Result<PathBuf, RunnerError> {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
     use std::fs;
     use std::path::PathBuf;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -239,35 +245,52 @@ mod tests {
     }
 
     #[test]
-    fn a_refresh_batch_runs_one_touch_command_with_the_host_paths_verbatim() {
-        let root = temp_test_dir("cargo-refresh-argv");
+    fn a_refresh_batch_plan_carries_one_compose_prefix_and_the_touch_command() {
+        let root = temp_test_dir("cargo-refresh-plan");
         let compose = root.join("docker-compose.yml");
+        fs::write(&compose, "services: {}\n").unwrap();
         let policy = crate::runner::test_support::effective_container_policy(
             "stack",
             "demo-stack",
             "workspace",
-            compose.clone(),
+            compose,
         );
-        let args = super::touch_invocation_args(
+        let tail = super::touch_invocation_tail(
             &policy,
             std::path::Path::new("/workspace"),
-            &[
-                PathBuf::from("lib.rs"),
-                PathBuf::from("crates/a/Cargo.toml"),
-            ],
+            &[PathBuf::from("lib.rs")],
         );
-        let rendered = args
+        let plan = effigy_runtime::container_manager::compose_invocation_plan_from_tail_args(
+            &root,
+            &policy,
+            tail,
+            effigy_containers::ContainerAction::Exec,
+            "refresh changed Cargo inputs",
+        )
+        .expect("preparation plan");
+
+        // The plan is what the executor is handed: it must carry the Compose
+        // prefix once, never twice.
+        let rendered = plan
+            .args
             .iter()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         assert_eq!(
-            rendered,
-            vec![
-                "compose",
-                "-f",
-                compose.to_str().expect("fixture path"),
-                "-p",
-                "demo-stack",
+            rendered
+                .iter()
+                .filter(|token| token.as_str() == "compose")
+                .count(),
+            1,
+            "the plan carries exactly one Compose prefix: {rendered:?}"
+        );
+        let exec = rendered
+            .iter()
+            .position(|token| token == "exec")
+            .expect("compose exec");
+        assert_eq!(
+            &rendered[exec..],
+            [
                 "exec",
                 "-T",
                 "-w",
@@ -276,8 +299,27 @@ mod tests {
                 "touch",
                 "-c",
                 "--",
-                "lib.rs",
-                "crates/a/Cargo.toml",
+                "lib.rs"
+            ]
+        );
+
+        // The executor derives the arguments it runs from these fields, so the
+        // executed invocation is pinned here rather than restated.
+        let parsed = crate::runner::exec_command::parse_compose_exec_args(&plan.args)
+            .expect("the plan parses as the executor reads it");
+        assert_eq!(parsed.service, "workspace");
+        assert_eq!(
+            parsed.working_dir.as_deref(),
+            Some(std::ffi::OsStr::new("/workspace"))
+        );
+        assert!(!parsed.tty);
+        assert_eq!(
+            parsed.command,
+            [
+                OsString::from("touch"),
+                OsString::from("-c"),
+                OsString::from("--"),
+                OsString::from("lib.rs"),
             ]
         );
         fs::remove_dir_all(root).unwrap();
