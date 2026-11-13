@@ -37,7 +37,7 @@ pub(super) fn validate_docs_policy_section(
     if let Some(indexes) = docs_policy_table.get("indexes") {
         validate_docs_policy_indexes(context, indexes);
     }
-    if let Some(next_actions) = aliased(&docs_policy_table, &["next_actions", "next-actions"]) {
+    if let Some(next_actions) = aliased(docs_policy_table, &["next_actions", "next-actions"]) {
         validate_docs_policy_next_actions(context, next_actions);
     }
     if let Some(graph) = docs_policy_table.get("graph") {
@@ -81,13 +81,13 @@ fn validate_docs_policy_sources(context: &mut SchemaContext<'_, '_>, sources: &V
     );
     validate_optional_string_array_field(
         context,
-        aliased(&sources_table, &["front_doors", "front-doors"]),
+        aliased(sources_table, &["front_doors", "front-doors"]),
         "docs_policy.sources.front_doors",
         "expected array of repository-relative file paths",
     );
     validate_optional_string_array_field(
         context,
-        aliased(&sources_table, &["skill_roots", "skill-roots"]),
+        aliased(sources_table, &["skill_roots", "skill-roots"]),
         "docs_policy.sources.skill_roots",
         "expected array of repository-relative directory paths",
     );
@@ -183,7 +183,7 @@ fn validate_docs_policy_next_actions(context: &mut SchemaContext<'_, '_>, next_a
         );
         validate_optional_non_empty_string_field(
             context,
-            aliased(&entry_table, &["allowlist_file", "allowlist-file"]),
+            aliased(entry_table, &["allowlist_file", "allowlist-file"]),
             &format!("{entry_path}.allowlist_file"),
         );
     }
@@ -363,10 +363,7 @@ fn validate_docs_policy_graph_kinds(context: &mut SchemaContext<'_, '_>, kinds: 
         }
         validate_optional_enum_string_field(
             context,
-            aliased(
-                &entry_table,
-                &["default_currentness", "default-currentness"],
-            ),
+            aliased(entry_table, &["default_currentness", "default-currentness"]),
             &format!("{entry_path}.default_currentness"),
             &["current", "historical", "unknown"],
             "expected \"current\", \"historical\", or \"unknown\"",

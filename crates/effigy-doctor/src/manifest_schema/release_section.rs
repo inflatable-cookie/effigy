@@ -46,12 +46,12 @@ pub(super) fn validate_release_section(context: &mut SchemaContext<'_, '_>, rele
 
     validate_optional_non_empty_string_field(
         context,
-        aliased(&release_table, &["version_file", "version-file"]),
+        aliased(release_table, &["version_file", "version-file"]),
         "release.version_file",
     );
     validate_optional_non_empty_string_field(
         context,
-        aliased(&release_table, &["version_path", "version-path"]),
+        aliased(release_table, &["version_path", "version-path"]),
         "release.version_path",
     );
     validate_optional_non_empty_string_field(
@@ -63,20 +63,20 @@ pub(super) fn validate_release_section(context: &mut SchemaContext<'_, '_>, rele
     validate_optional_boolean_field(
         context,
         aliased(
-            &release_table,
+            release_table,
             &["initial_tag_current_version", "initial-tag-current-version"],
         ),
         "release.initial_tag_current_version",
     );
     validate_optional_string_array_field(
         context,
-        aliased(&release_table, &["sync_files", "sync-files"]),
+        aliased(release_table, &["sync_files", "sync-files"]),
         "release.sync_files",
         "expected array of strings",
     );
     validate_optional_non_empty_string_field(
         context,
-        aliased(&release_table, &["tag_format", "tag-format"]),
+        aliased(release_table, &["tag_format", "tag-format"]),
         "release.tag_format",
     );
 

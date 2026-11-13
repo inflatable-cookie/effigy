@@ -28,12 +28,12 @@ pub(super) fn validate_contracts_section(context: &mut SchemaContext<'_, '_>, co
 
     validate_optional_non_empty_string_field(
         context,
-        aliased(&table, &["schema_index", "schema-index"]),
+        aliased(table, &["schema_index", "schema-index"]),
         "contracts.schema_index",
     );
     validate_optional_non_empty_string_field(
         context,
-        aliased(&table, &["selection_contract", "selection-contract"]),
+        aliased(table, &["selection_contract", "selection-contract"]),
         "contracts.selection_contract",
     );
 }

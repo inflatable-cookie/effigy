@@ -250,6 +250,15 @@ impl ManifestSystemMount {
         }
     }
 
+    /// The declaration exactly as the manifest wrote it. Only the legacy string
+    /// form has one; a structured table has fields instead.
+    pub fn raw(&self) -> Option<&str> {
+        match self {
+            Self::Spec(spec) => Some(spec.raw()),
+            Self::Table(_) => None,
+        }
+    }
+
     pub fn source(&self) -> Option<&str> {
         match self {
             Self::Spec(spec) => spec.source(),
@@ -881,6 +890,6 @@ compose_file = "compose.yml"
         assert_eq!(mount.source(), Some("shared"));
         assert_eq!(mount.target(), Some("/workspace-root/shared"));
         assert_eq!(mount.options(), vec!["ro"]);
-        assert!(*mount == "shared:/workspace-root/shared:ro".to_owned());
+        assert_eq!(mount.raw(), Some("shared:/workspace-root/shared:ro"));
     }
 }

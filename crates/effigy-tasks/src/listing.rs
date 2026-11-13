@@ -796,7 +796,7 @@ fn render_catalog_task_rows(
             if let Some(signature) = row.task_row.as_ref() {
                 render_task_text_row(
                     renderer,
-                    &style,
+                    style,
                     &row.manifest,
                     &signature.task,
                     &signature.run,
@@ -806,7 +806,7 @@ fn render_catalog_task_rows(
             for profile_row in &row.managed_profiles {
                 render_task_text_row(
                     renderer,
-                    &style,
+                    style,
                     &row.manifest,
                     &profile_row.task,
                     &profile_row.run,
@@ -850,7 +850,7 @@ fn render_builtin_and_probe_followup_sections(
     renderer.text("")?;
 
     if !builtin_rows.is_empty() {
-        render_builtin_rows_section(renderer, &style, builtin_title, builtin_rows, notes)?;
+        render_builtin_rows_section(renderer, style, builtin_title, builtin_rows, notes)?;
     }
 
     if let Some(probe) = resolve_probe {
