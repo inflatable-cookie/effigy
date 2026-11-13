@@ -417,7 +417,7 @@ mod tests {
         plan.admission = crate::qa_groups::plan::QaGroupAdmissionPlan {
             required: true,
             member_ids: vec!["lint".to_owned()],
-            model: "one admission per group run".to_owned(),
+            model: "one admission per group run",
         };
         plan.needs_planner_reasons = Vec::new();
         plan.members = vec![crate::qa_groups::plan::QaGroupPlanMember {

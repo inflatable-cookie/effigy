@@ -5,6 +5,7 @@ use std::path::Path;
 use effigy_core::fs_probe::PathPresenceCache;
 use effigy_core::shell::shell_quote;
 
+use super::js_config::{test_dir, TestDirDeclaration};
 use super::{TestRunner, TestRunnerCandidate, TestRunnerPlan};
 
 const VITEST_CONFIG_FILES: &[&str] = &[
@@ -27,6 +28,20 @@ const VITE_CONFIG_FILES: &[&str] = &[
 
 const DEFAULT_COMMAND: &str = "vitest run";
 
+/// A config file that decides the suite's declared `test.dir`, with the reason
+/// the run cannot be narrowed when the file could not be read as JavaScript.
+struct ConfigDeclaration {
+    filename: String,
+    scan: ConfigScan,
+}
+
+enum ConfigScan {
+    /// The file declares a `test` block; its `dir` (if any) is already read.
+    TestBlock(TestDirDeclaration),
+    /// The file could not be read or tokenised.
+    Unreadable { detail: String },
+}
+
 pub(super) fn detect_vitest(repo_root: &Path) -> (Option<TestRunnerPlan>, TestRunnerCandidate) {
     let mut evidence = Vec::<String>::new();
     let mut probe = PathPresenceCache::new();
@@ -37,14 +52,12 @@ pub(super) fn detect_vitest(repo_root: &Path) -> (Option<TestRunnerPlan>, TestRu
         }
     }
 
-    let mut preferred_config: Option<(String, String)> = None;
+    let mut preferred_config: Option<ConfigDeclaration> = None;
     for filename in VITEST_CONFIG_FILES {
         if probe.child_is_file(repo_root, filename) {
             evidence.push(format!("found `{filename}`"));
             if preferred_config.is_none() {
-                if let Ok(raw) = fs::read_to_string(repo_root.join(filename)) {
-                    preferred_config = Some(((*filename).to_owned(), strip_js_comments(&raw)));
-                }
+                preferred_config = read_config(repo_root, filename, &mut evidence);
             }
         }
     }
@@ -57,12 +70,19 @@ pub(super) fn detect_vitest(repo_root: &Path) -> (Option<TestRunnerPlan>, TestRu
             let Ok(raw) = fs::read_to_string(repo_root.join(filename)) else {
                 continue;
             };
-            let stripped = strip_js_comments(&raw);
-            if find_test_object(&stripped).is_none() {
+            // A Vite config only counts when a readable `test` block makes it
+            // Vitest intent; an unreadable one is not evidence either way.
+            let Ok(declaration) = test_dir(&raw) else {
+                continue;
+            };
+            if declaration == TestDirDeclaration::NoTestBlock {
                 continue;
             }
             evidence.push(format!("found `{filename}` with a Vitest `test` block"));
-            preferred_config = Some(((*filename).to_owned(), stripped));
+            preferred_config = Some(ConfigDeclaration {
+                filename: (*filename).to_owned(),
+                scan: ConfigScan::TestBlock(declaration),
+            });
             break;
         }
     }
@@ -86,10 +106,21 @@ pub(super) fn detect_vitest(repo_root: &Path) -> (Option<TestRunnerPlan>, TestRu
     }
 
     let mut command = DEFAULT_COMMAND.to_owned();
-    if let Some((filename, raw)) = &preferred_config {
-        if let Some(dir) = configured_test_dir(raw) {
-            evidence.push(format!("`{filename}` test.dir is `{dir}`"));
-            command = format!("{DEFAULT_COMMAND} --dir {}", shell_quote(&dir));
+    if let Some(declaration) = &preferred_config {
+        match &declaration.scan {
+            ConfigScan::TestBlock(TestDirDeclaration::Dir(dir)) => {
+                evidence.push(format!("`{}` test.dir is `{dir}`", declaration.filename));
+                command = format!("{DEFAULT_COMMAND} --dir {}", shell_quote(dir));
+            }
+            ConfigScan::TestBlock(TestDirDeclaration::NoDir | TestDirDeclaration::NoTestBlock) => {}
+            ConfigScan::Unreadable { detail } => {
+                // The suite still runs, but the operator has to know the run is
+                // not narrowed: the declared dir could not be read.
+                evidence.push(format!(
+                    "`{}` could not be read as JavaScript ({detail}); the run is not narrowed to a `test.dir`",
+                    declaration.filename
+                ));
+            }
         }
     }
 
@@ -106,6 +137,44 @@ pub(super) fn detect_vitest(repo_root: &Path) -> (Option<TestRunnerPlan>, TestRu
             reason: evidence.join("; "),
         },
     )
+}
+
+/// Read one Vitest config file into a typed declaration. The file's presence is
+/// already evidence; this adds what it declares, or why it could not be read.
+fn read_config(
+    repo_root: &Path,
+    filename: &str,
+    evidence: &mut Vec<String>,
+) -> Option<ConfigDeclaration> {
+    let raw = match fs::read_to_string(repo_root.join(filename)) {
+        Ok(raw) => raw,
+        Err(error) => {
+            evidence.push(format!(
+                "`{filename}` could not be read ({error}); the run is not narrowed to a `test.dir`"
+            ));
+            return Some(ConfigDeclaration {
+                filename: filename.to_owned(),
+                scan: ConfigScan::Unreadable {
+                    detail: error.to_string(),
+                },
+            });
+        }
+    };
+    Some(ConfigDeclaration {
+        filename: filename.to_owned(),
+        scan: read_test_block(&raw),
+    })
+}
+
+/// Read the `test` block, keeping "the source could not be tokenised" distinct
+/// from "the block declares no dir" so the caller can say which happened.
+fn read_test_block(raw: &str) -> ConfigScan {
+    match test_dir(raw) {
+        Ok(declaration) => ConfigScan::TestBlock(declaration),
+        Err(error) => ConfigScan::Unreadable {
+            detail: error.to_string(),
+        },
+    }
 }
 
 fn package_json_mentions_vitest(raw: &str) -> bool {
@@ -135,467 +204,9 @@ fn scripts_contain_vitest(json: &Value) -> bool {
         })
 }
 
-fn configured_test_dir(source: &str) -> Option<String> {
-    let stripped = strip_js_comments(source);
-    let object = find_test_object(&stripped)?;
-    let dir = object_string_field(object, "dir")?;
-    let trimmed = dir.trim();
-    if trimmed.is_empty() || trimmed == "." || trimmed == "./" {
-        return None;
-    }
-    if trimmed.contains('\n') || trimmed.contains('\0') {
-        return None;
-    }
-    Some(trimmed.to_owned())
-}
-
-fn find_test_object(source: &str) -> Option<&str> {
-    let bytes = source.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        if let Some(after_key) = key_at(source, index, "test") {
-            let rest = source[after_key..].trim_start();
-            if let Some(after_colon) = rest.strip_prefix(':') {
-                let after_colon = after_colon.trim_start();
-                if after_colon.starts_with('{') {
-                    return extract_balanced_object(after_colon);
-                }
-            }
-            index = after_key;
-            continue;
-        }
-        match bytes[index] {
-            b'\'' | b'"' | b'`' => index = skip_string(bytes, index)?,
-            _ => index += 1,
-        }
-    }
-    None
-}
-
-fn object_string_field(object: &str, field: &str) -> Option<String> {
-    let bytes = object.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        if let Some(after_key) = key_at(object, index, field) {
-            let rest = object[after_key..].trim_start();
-            if let Some(after_colon) = rest.strip_prefix(':') {
-                return parse_string_literal(after_colon.trim_start());
-            }
-            index = after_key;
-            continue;
-        }
-        match bytes[index] {
-            b'\'' | b'"' | b'`' => index = skip_string(bytes, index)?,
-            _ => index += 1,
-        }
-    }
-    None
-}
-
-fn key_at(source: &str, index: usize, field: &str) -> Option<usize> {
-    if ident_at(source, index, field) {
-        return Some(index + field.len());
-    }
-    let bytes = source.as_bytes();
-    let quote = *bytes.get(index)?;
-    if quote != b'\'' && quote != b'"' && quote != b'`' {
-        return None;
-    }
-    let value = parse_string_literal(&source[index..])?;
-    if value != field {
-        return None;
-    }
-    let after = skip_string(bytes, index)?;
-    source[after..]
-        .trim_start()
-        .starts_with(':')
-        .then_some(after)
-}
-
-fn parse_string_literal(source: &str) -> Option<String> {
-    let quote = source.as_bytes().first().copied()?;
-    if quote != b'\'' && quote != b'"' && quote != b'`' {
-        return None;
-    }
-    let mut value = String::new();
-    let bytes = source.as_bytes();
-    let mut index = 1;
-    let mut escaped = false;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if escaped {
-            value.push(byte as char);
-            escaped = false;
-        } else if byte == b'\\' {
-            escaped = true;
-        } else if byte == quote {
-            if value.contains("${") {
-                return None;
-            }
-            return Some(value);
-        } else {
-            value.push(byte as char);
-        }
-        index += 1;
-    }
-    None
-}
-
-fn extract_balanced_object(source: &str) -> Option<&str> {
-    let bytes = source.as_bytes();
-    if bytes.first() != Some(&b'{') {
-        return None;
-    }
-    let mut depth = 0usize;
-    let mut index = 0;
-    let mut in_string: Option<u8> = None;
-    let mut escaped = false;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if let Some(quote) = in_string {
-            if escaped {
-                escaped = false;
-            } else if byte == b'\\' {
-                escaped = true;
-            } else if byte == quote {
-                in_string = None;
-            }
-        } else {
-            match byte {
-                b'\'' | b'"' | b'`' => in_string = Some(byte),
-                b'{' => depth += 1,
-                b'}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return Some(&source[..=index]);
-                    }
-                }
-                _ => {}
-            }
-        }
-        index += 1;
-    }
-    None
-}
-
-fn ident_at(source: &str, index: usize, ident: &str) -> bool {
-    let bytes = source.as_bytes();
-    let ident_bytes = ident.as_bytes();
-    let after = index + ident_bytes.len();
-    if bytes.get(index..after) != Some(ident_bytes) {
-        return false;
-    }
-    let prev_ok = index == 0 || !is_ident_byte(bytes[index - 1]);
-    let next_ok = after >= bytes.len() || !is_ident_byte(bytes[after]);
-    prev_ok && next_ok
-}
-
-fn skip_string(bytes: &[u8], start: usize) -> Option<usize> {
-    let quote = *bytes.get(start)?;
-    let mut index = start + 1;
-    let mut escaped = false;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if escaped {
-            escaped = false;
-        } else if byte == b'\\' {
-            escaped = true;
-        } else if byte == quote {
-            return Some(index + 1);
-        }
-        index += 1;
-    }
-    None
-}
-
-fn skip_regex_literal(bytes: &[u8], start: usize) -> Option<usize> {
-    if bytes.get(start) != Some(&b'/') {
-        return None;
-    }
-    let mut index = start + 1;
-    let mut in_class = false;
-    let mut escaped = false;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if byte == b'\n' {
-            return None;
-        }
-        if escaped {
-            escaped = false;
-            index += 1;
-            continue;
-        }
-        if byte == b'\\' {
-            escaped = true;
-            index += 1;
-            continue;
-        }
-        if byte == b'[' && !in_class {
-            in_class = true;
-            index += 1;
-            continue;
-        }
-        if byte == b']' && in_class {
-            in_class = false;
-            index += 1;
-            continue;
-        }
-        if byte == b'/' && !in_class {
-            index += 1;
-            while index < bytes.len() && bytes[index].is_ascii_alphabetic() {
-                index += 1;
-            }
-            return Some(index);
-        }
-        index += 1;
-    }
-    None
-}
-
-fn strip_js_comments(source: &str) -> String {
-    let bytes = source.as_bytes();
-    let mut out = String::with_capacity(source.len());
-    let mut index = 0;
-    let mut span_start = 0;
-    let mut in_string: Option<u8> = None;
-    let mut escaped = false;
-    let mut can_start_regex = true;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if let Some(quote) = in_string {
-            if escaped {
-                escaped = false;
-            } else if byte == b'\\' {
-                escaped = true;
-            } else if byte == quote {
-                in_string = None;
-                can_start_regex = false;
-            }
-            index += 1;
-            continue;
-        }
-        if byte == b'\'' || byte == b'"' || byte == b'`' {
-            in_string = Some(byte);
-            index += 1;
-            continue;
-        }
-        if byte.is_ascii_whitespace() {
-            index += 1;
-            continue;
-        }
-        if byte == b'/' {
-            if index + 1 < bytes.len() && bytes[index + 1] == b'/' {
-                out.push_str(&source[span_start..index]);
-                index += 2;
-                while index < bytes.len() && bytes[index] != b'\n' {
-                    index += 1;
-                }
-                span_start = index;
-                continue;
-            }
-            if index + 1 < bytes.len() && bytes[index + 1] == b'*' {
-                out.push_str(&source[span_start..index]);
-                index += 2;
-                while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/')
-                {
-                    if bytes[index] == b'\n' {
-                        out.push('\n');
-                    }
-                    index += 1;
-                }
-                index = if index + 1 < bytes.len() {
-                    index + 2
-                } else {
-                    bytes.len()
-                };
-                span_start = index;
-                continue;
-            }
-            if can_start_regex {
-                if let Some(end) = skip_regex_literal(bytes, index) {
-                    can_start_regex = false;
-                    index = end;
-                    continue;
-                }
-            }
-            can_start_regex = true;
-            index += 1;
-            continue;
-        }
-        if is_ident_start(byte) {
-            let start = index;
-            index += 1;
-            while index < bytes.len() && is_ident_byte(bytes[index]) {
-                index += 1;
-            }
-            can_start_regex = matches!(
-                &source[start..index],
-                "return"
-                    | "case"
-                    | "throw"
-                    | "else"
-                    | "new"
-                    | "typeof"
-                    | "void"
-                    | "delete"
-                    | "await"
-                    | "yield"
-                    | "in"
-                    | "of"
-                    | "instanceof"
-                    | "extends"
-            );
-            continue;
-        }
-        can_start_regex = matches!(
-            byte,
-            b'{' | b'('
-                | b'['
-                | b','
-                | b';'
-                | b':'
-                | b'?'
-                | b'='
-                | b'!'
-                | b'~'
-                | b'&'
-                | b'|'
-                | b'^'
-                | b'%'
-                | b'*'
-                | b'+'
-                | b'-'
-                | b'<'
-                | b'>'
-        );
-        index += 1;
-    }
-    out.push_str(&source[span_start..]);
-    out
-}
-
-fn is_ident_start(byte: u8) -> bool {
-    byte.is_ascii_alphabetic() || byte == b'_' || byte == b'$'
-}
-
-fn is_ident_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        configured_test_dir, detect_vitest, find_test_object, strip_js_comments, TestRunner,
-    };
-
-    /// What `configured_test_dir` must accept and refuse, one source per row.
-    #[test]
-    fn configured_test_dir_reads_and_rejects_declared_dirs() {
-        let cases: [(&str, &str, Option<&str>); 8] = [
-            (
-                "define-config",
-                r#"
-import { defineConfig } from "vitest/config";
-export default defineConfig({
-  test: {
-    globals: true,
-    dir: "./src",
-    include: ["**/*.test.ts"],
-  },
-});
-"#,
-                Some("./src"),
-            ),
-            ("dot-root", "export default { test: { dir: '.' } }", None),
-            (
-                "template-interpolation",
-                "export default { test: { dir: `${root}/src` } }",
-                None,
-            ),
-            (
-                "commented-out-only",
-                r#"
-export default {
-  test: {
-    // dir: 'old',
-    include: ['**/*.test.ts'],
-  },
-};
-"#,
-                None,
-            ),
-            (
-                "active-over-commented",
-                r#"
-export default {
-  test: {
-    // dir: 'old',
-    dir: 'src',
-  },
-};
-"#,
-                Some("src"),
-            ),
-            (
-                "quoted-property-keys",
-                r#"export default { "test": { "dir": "src" } };"#,
-                Some("src"),
-            ),
-            (
-                "regex-with-slashes",
-                r#"const matcher = /\/\//; export default { test: { dir: 'src' } };"#,
-                Some("src"),
-            ),
-            (
-                "after-division",
-                "const ratio = a / b;\nexport default { test: { dir: 'src' } };\n",
-                Some("src"),
-            ),
-        ];
-
-        for (name, source, expected) in cases {
-            assert_eq!(configured_test_dir(source).as_deref(), expected, "{name}");
-        }
-    }
-
-    /// What `find_test_object` locates and what it must ignore: comments,
-    /// strings and lookalike identifiers never count as a `test` block.
-    #[test]
-    fn find_test_object_locates_and_ignores_test_blocks() {
-        let object =
-            find_test_object("const latest = 1;\nexport default { test: { dir: 'src' } }\n")
-                .expect("test object after the lookalike identifier");
-        assert!(object.contains("dir: 'src'"));
-
-        for (name, source) in [
-            (
-                "line-comment",
-                strip_js_comments("// test: { dir: 'src' }\nexport default { plugins: [] }\n"),
-            ),
-            (
-                "block-comment",
-                strip_js_comments("/* test: { dir: 'src' } */\nexport default { plugins: [] }\n"),
-            ),
-            (
-                "string-embedded",
-                r#"export default { define: { "test: { dir: 'src' }": true } }"#.to_owned(),
-            ),
-            (
-                "comment-after-regex",
-                strip_js_comments(
-                    r#"const matcher = /\/\//; // test: { dir: 'src' }
-export default { plugins: [] };
-"#,
-                ),
-            ),
-        ] {
-            assert_eq!(find_test_object(&source), None, "{name}");
-        }
-
-        let object =
-            find_test_object(r#"export default { 'test': { dir: 'src' } };"#).expect("quoted key");
-        assert!(object.contains("dir: 'src'"));
-    }
+    use super::{detect_vitest, TestRunner};
 
     /// Package-owned intent (a dependency or a config file) activates the
     /// suite; an installed binary alone must not.
@@ -658,5 +269,89 @@ export default { plugins: [] };
             candidate.reason
         );
         assert!(plan.is_none(), "installed executable cannot create a plan");
+    }
+
+    /// A declared `test.dir` narrows the run and says so in the evidence.
+    #[test]
+    fn detect_vitest_narrows_the_command_to_a_declared_test_dir() {
+        let root = effigy_test_support::Fixture::process_lifetime(&format!(
+            "effigy-vitest-dir-{}",
+            std::process::id()
+        ))
+        .expect("fixture directory");
+        std::fs::write(
+            root.join("vitest.config.ts"),
+            "export default { test: { dir: 'src/unit tests' } }\n",
+        )
+        .expect("write config");
+
+        let (plan, candidate) = detect_vitest(&root);
+        let plan = plan.expect("a config file is intent");
+        assert_eq!(plan.command, "vitest run --dir 'src/unit tests'");
+        assert_eq!(candidate.command, plan.command);
+        assert!(
+            plan.evidence
+                .iter()
+                .any(|line| line.contains("test.dir is `src/unit tests`")),
+            "{:?}",
+            plan.evidence
+        );
+    }
+
+    /// A config that cannot be tokenised keeps the suite runnable but says the
+    /// run is not narrowed. Before the typed scan the failure was silent: the
+    /// command silently widened to the repository root with no evidence note.
+    #[test]
+    fn detect_vitest_reports_an_unreadable_config_instead_of_widening_silently() {
+        let root = effigy_test_support::Fixture::process_lifetime(&format!(
+            "effigy-vitest-unreadable-{}",
+            std::process::id()
+        ))
+        .expect("fixture directory");
+        std::fs::write(
+            root.join("vitest.config.ts"),
+            "export default { test: { dir: 'src } }\n",
+        )
+        .expect("write unterminated config");
+
+        let (plan, candidate) = detect_vitest(&root);
+        let plan = plan.expect("a config file is intent even when it cannot be read");
+        assert_eq!(
+            plan.command, "vitest run",
+            "an unreadable config cannot narrow the run"
+        );
+        assert!(
+            plan.evidence.iter().any(|line| {
+                line.contains("could not be read as JavaScript")
+                    && line.contains("unterminated string literal")
+                    && line.contains("not narrowed to a `test.dir`")
+            }),
+            "the evidence names the cause and the effect: {:?}",
+            plan.evidence
+        );
+        assert!(
+            candidate.reason.contains("not narrowed"),
+            "the candidate reason carries the note: {}",
+            candidate.reason
+        );
+    }
+
+    /// A Vite config without a readable `test` block is not Vitest intent.
+    #[test]
+    fn detect_vitest_ignores_a_vite_config_without_a_test_block() {
+        let root = effigy_test_support::Fixture::process_lifetime(&format!(
+            "effigy-vitest-vite-{}",
+            std::process::id()
+        ))
+        .expect("fixture directory");
+        std::fs::write(
+            root.join("vite.config.ts"),
+            "export default { plugins: [] }\n",
+        )
+        .expect("write vite config");
+
+        let (plan, candidate) = detect_vitest(&root);
+        assert!(plan.is_none());
+        assert!(!candidate.available);
     }
 }

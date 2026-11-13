@@ -6,6 +6,7 @@
 
 use std::path::Path;
 
+mod js_config;
 mod oxide;
 mod rust;
 mod vitest;

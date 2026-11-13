@@ -246,3 +246,157 @@ where
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use std::time::Instant;
+
+    use effigy_manifest::{LoadedCatalog, TaskManifest};
+
+    use super::{run_deep_inventory, DeepInventoryRequest};
+    use crate::contracts::check_id;
+    use crate::{DoctorCheckRunState, DoctorSeverity, DoctorState};
+
+    fn fixture(name: &str) -> std::path::PathBuf {
+        let root = effigy_test_support::Fixture::process_lifetime(name).expect("fixture dir");
+        std::fs::write(root.join("lib.rs"), "fn main() {}\n").expect("write fixture source");
+        root
+    }
+
+    fn catalog(root: &Path, scan: &str) -> LoadedCatalog {
+        let manifest: TaskManifest = toml::from_str(&format!("[scan.god_files]\n{scan}\n"))
+            .expect("fixture manifest parses");
+        LoadedCatalog::for_test("root", root.to_path_buf(), manifest, 0)
+    }
+
+    fn run(root: &Path, catalogs: &[LoadedCatalog], deadline: Option<Instant>) -> DoctorState {
+        let mut state = DoctorState::new();
+        run_deep_inventory(
+            DeepInventoryRequest {
+                workspace_root: root,
+                scope_root: root,
+                scope_alias: "root",
+                catalogs,
+                pruned_roots: &[],
+                deadline,
+                refresh: true,
+            },
+            &mut state,
+            None,
+        );
+        state
+    }
+
+    /// A scan that runs to completion records the enabled check and marks the
+    /// check the manifest disabled as skipped — the two are different states.
+    #[test]
+    fn a_completed_scan_records_the_enabled_check_and_skips_the_disabled_one() {
+        let root = fixture("effigy-doctor-deep-complete");
+        let state = run(&root, &[], None);
+
+        let god_files = state
+            .check_runs
+            .iter()
+            .find(|run| run.name == "god_files")
+            .expect("the enabled check is recorded");
+        assert_eq!(god_files.state, DoctorCheckRunState::Complete);
+        let duplicate_blocks = state
+            .check_runs
+            .iter()
+            .find(|run| run.name == "duplicate_blocks")
+            .expect("the disabled check is recorded");
+        assert_eq!(
+            duplicate_blocks.state,
+            DoctorCheckRunState::Skipped,
+            "a manifest-disabled check is skipped, not completed"
+        );
+        assert!(state.is_complete());
+        assert!(
+            state.findings.is_empty(),
+            "a clean fixture raises no findings: {:?}",
+            state.findings
+        );
+    }
+
+    /// Invalid scan options are reported as a check error that names the
+    /// section and the fix, and both checks stay skipped. The failure is not a
+    /// silent skip and not a budget stop.
+    #[test]
+    fn invalid_scan_options_record_a_named_error_and_skip_both_checks() {
+        let root = fixture("effigy-doctor-deep-invalid-options");
+        let catalogs = vec![catalog(&root, "warn = 0")];
+        let state = run(&root, &catalogs, None);
+
+        let error = state
+            .findings
+            .iter()
+            .find(|finding| finding.severity == DoctorSeverity::Error)
+            .expect("an invalid scan option is an error finding");
+        assert_eq!(error.check_id, check_id::SCAN_GOD_FILES);
+        assert!(
+            error
+                .evidence
+                .contains("god-files configuration is invalid"),
+            "the evidence names the section: {}",
+            error.evidence
+        );
+        assert!(
+            error
+                .evidence
+                .contains("thresholds must be greater than zero"),
+            "the evidence carries the reason: {}",
+            error.evidence
+        );
+        assert!(
+            error
+                .remediation
+                .contains("Fix manifest parse/schema errors first"),
+            "the remediation says what to do: {}",
+            error.remediation
+        );
+        assert_eq!(state.check_runs.len(), 2);
+        assert!(state
+            .check_runs
+            .iter()
+            .all(|run| run.state == DoctorCheckRunState::Skipped));
+        assert!(
+            state.is_complete(),
+            "invalid options are a check error, not an exhausted budget"
+        );
+    }
+
+    /// A deadline that has already passed stops the inventory at the budget:
+    /// the run is incomplete, the phase is named, and no check claims a
+    /// completion it never reached.
+    #[test]
+    fn an_expired_deadline_records_the_budget_stop_and_skips_both_checks() {
+        let root = fixture("effigy-doctor-deep-budget");
+        let state = run(&root, &[], Some(Instant::now()));
+
+        assert!(!state.is_complete(), "a stopped scan is incomplete");
+        let budget = state
+            .check_runs
+            .iter()
+            .find(|run| run.state == DoctorCheckRunState::BudgetExhausted)
+            .expect("the budget stop is recorded");
+        assert_eq!(budget.name, "scan_inventory");
+        assert_eq!(
+            state
+                .check_runs
+                .iter()
+                .filter(|run| run.state == DoctorCheckRunState::Skipped)
+                .count(),
+            2,
+            "neither scan check may claim completion"
+        );
+        assert!(
+            !state
+                .check_runs
+                .iter()
+                .any(|run| run.state == DoctorCheckRunState::Complete),
+            "a stopped scan completes nothing: {:?}",
+            state.check_runs
+        );
+    }
+}
