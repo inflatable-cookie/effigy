@@ -455,7 +455,7 @@ impl Drop for ProcessTreeCleanup {
         if self.active {
             // Child remains unreaped while this exact tree is signaled. Never
             // recover signal authority from a PID in a stale fixture file.
-            effigy_process::terminate_process_tree(self.child.id(), true);
+            let _tree = effigy_process::terminate_process_tree(self.child.id(), true);
             let _ = self.child.wait();
         }
     }
@@ -773,7 +773,7 @@ fn run_guarded_public_case(
             return GuardedPublicOutcome { stdout, stderr };
         }
         if started.elapsed() >= Duration::from_millis(deadline_ms) + Duration::from_secs(10) {
-            effigy_process::terminate_process_tree(cleanup.child.id(), true);
+            let _tree = effigy_process::terminate_process_tree(cleanup.child.id(), true);
             let _ = cleanup.child.wait();
             cleanup.active = false;
             panic!("public-path child exceeded its deadline plus 10s cleanup guard for {mode}");
