@@ -791,6 +791,7 @@ fn linux_ca_installed(fingerprint: &[u8; 32]) -> bool {
     )
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn ca_bundle_paths_contain_fingerprint<'a>(
     paths: impl IntoIterator<Item = &'a Path>,
     fingerprint: &[u8; 32],
@@ -807,6 +808,7 @@ fn certificate_fingerprint_from_file(path: &Path) -> Option<[u8; 32]> {
     Some(Sha256::digest(certificate.as_ref()).into())
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn ca_bundle_file_contains_fingerprint(path: &Path, fingerprint: &[u8; 32]) -> bool {
     std::fs::read(path)
         .ok()

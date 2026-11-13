@@ -9,13 +9,19 @@ fn trust_bundle_matches_only_the_current_fake_mkcert_ca() {
     let current_ca = rcgen::generate_simple_self_signed(vec!["current.test".into()])
         .unwrap()
         .cert
-        .pem();
+        .der()
+        .as_ref()
+        .to_vec();
     let stale_ca = rcgen::generate_simple_self_signed(vec!["stale.test".into()])
         .unwrap()
         .cert
-        .pem();
+        .der()
+        .as_ref()
+        .to_vec();
+    let current_ca_pem = test_certificate_pem(&current_ca);
+    let stale_ca_pem = test_certificate_pem(&stale_ca);
     let root_ca_path = fixture.path().join("rootCA.pem");
-    std::fs::write(&root_ca_path, &current_ca).unwrap();
+    std::fs::write(&root_ca_path, &current_ca_pem).unwrap();
 
     let mkcert = fixture.path().join("mkcert-fixture");
     std::fs::write(
@@ -32,18 +38,28 @@ fn trust_bundle_matches_only_the_current_fake_mkcert_ca() {
     let fingerprint = certificate_fingerprint_from_file(&resolved_root).unwrap();
 
     let current_bundle = fixture.path().join("current-trust-bundle.pem");
-    std::fs::write(&current_bundle, format!("{stale_ca}\n{current_ca}")).unwrap();
+    std::fs::write(&current_bundle, format!("{stale_ca_pem}\n{current_ca_pem}")).unwrap();
     assert!(ca_bundle_paths_contain_fingerprint(
         [current_bundle.as_path()],
         &fingerprint
     ));
 
     let stale_bundle = fixture.path().join("stale-trust-bundle.pem");
-    std::fs::write(&stale_bundle, &stale_ca).unwrap();
+    std::fs::write(&stale_bundle, &stale_ca_pem).unwrap();
     assert!(!ca_bundle_paths_contain_fingerprint(
         [stale_bundle.as_path()],
         &fingerprint
     ));
+}
+
+#[cfg(unix)]
+fn test_certificate_pem(der: &[u8]) -> String {
+    use base64::Engine as _;
+
+    format!(
+        "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n",
+        base64::engine::general_purpose::STANDARD.encode(der)
+    )
 }
 
 /// An empty certificate cache yields an empty resolver, whether the directory

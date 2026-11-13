@@ -1159,6 +1159,7 @@ dependencies = [
 name = "effigy-gateway"
 version = "0.14.1"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "effigy-core",
  "effigy-kernel",

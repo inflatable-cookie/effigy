@@ -50,6 +50,7 @@ effigy-core = { path = "../effigy-core" }
 fs2 = "0.4"
 
 [dev-dependencies]
+base64 = "0.22"
 effigy-test-support = { path = "../effigy-test-support" }
 tempfile = "3"
 tokio = { version = "1", features = ["full", "test-util"] }
