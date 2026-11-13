@@ -108,3 +108,24 @@ The `effigy qa` invocation completed the main suite, kernel faults and matrix, t
 | 15,405 ms | `main` / `container_hybrid_environment_switch_hands_the_whole_environment_over` |
 | 14,990 ms | `main` / `managed_matrix_death_tui_hangup` |
 | 14,690 ms | `main` / `run_supervision_matrix_recovery_stop_and_attachment_release_are_idempotent` |
+
+### Speed-round 4 scheduling A/B (2026-11-13)
+
+The same 73-test filter union was run serially (A1) and with the default
+four-thread cold-start cap (B1). This selection matches 73 tests across 88
+binaries; it is broader than the 16 mapped `cold-start` rows above, so these
+figures are selector-level evidence, not a replacement group total.
+
+| Run | Cold-start cap | Result | Nextest wall | Selector wall | Load average at start → end |
+|---|---:|---|---:|---:|---|
+| A1 | 1 | 73/73 passed | 1,397.541 s | 2,067.64 s | 79.49/78.61/76.68 → 54.99/68.93/74.61 |
+| B1 | 4 | 73/73 passed | 337.997 s | 354.40 s | 61.64/67.17/73.41 → 79.64/84.91/81.16 |
+
+The two clean runs were back to back and had no prohibited native-smoke or
+fault-injection run active. A1's selector wall includes a 9m37s first-use test
+profile compile and Oxide queueing; B1's includes a 3.47s incremental compile.
+An attempted second pair overlapped `linux_native_smoke.py`; A2 completed 73
+tests but is not clean evidence, and B2 was interrupted at 37/73 to stop the
+overlap. Neither is counted. A second clean pair and the required current-main
+JUnit refresh remain pending; the full-suite duration table above therefore
+still describes the last full QA collection, not this filtered comparison.

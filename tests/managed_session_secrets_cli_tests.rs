@@ -223,9 +223,9 @@ fn a_nested_effigy_run_started_by_user_code_never_inherits_the_session_access() 
     );
     // The session itself resolved from the caller's source. Its tab's nested
     // `effigy probe` is user code: it inherits no access. It either reports a
-    // refusal or waits on its own terminal for a passphrase nobody types. Wait
-    // for either outcome instead of observing an arbitrary 20-second window.
-    session.wait_for_any(&[PROMPT, "nested exit "], Duration::from_secs(20));
+    // refusal or waits on its own terminal for a passphrase nobody types, so
+    // this observes a bounded window instead of waiting for its exit.
+    session.settle_for(Duration::from_secs(20));
     let transcript = session.output();
     assert!(
         !transcript.contains("probe saw"),
@@ -472,22 +472,17 @@ impl PtySession {
     }
 
     fn wait_for(&mut self, needle: &str) {
-        self.wait_for_any(&[needle], WAIT);
-    }
-
-    fn wait_for_any(&mut self, needles: &[&str], window: Duration) {
-        let deadline = Instant::now() + window;
+        let deadline = Instant::now() + WAIT;
         loop {
             self.read_available(Duration::from_millis(50));
-            let output = self.output();
-            if needles.iter().any(|needle| output.contains(needle)) {
+            if self.output().contains(needle) {
                 return;
             }
             if self.child.try_wait().expect("poll session").is_some() {
                 self.drain();
                 assert!(
-                    needles.iter().any(|needle| self.output().contains(needle)),
-                    "session exited before any of {needles:?}: {}",
+                    self.output().contains(needle),
+                    "session exited before {needle:?}: {}",
                     self.output()
                 );
                 return;
@@ -497,7 +492,7 @@ impl PtySession {
                 // process's death must not leave a `dev --headless` behind.
                 self.kill_group();
                 self.drain();
-                panic!("timed out waiting for any of {needles:?}: {}", self.output());
+                panic!("timed out waiting for {needle:?}: {}", self.output());
             }
         }
     }
@@ -548,6 +543,14 @@ impl PtySession {
                 self.drain();
                 panic!("session did not settle after TERM: {}", self.output());
             }
+        }
+    }
+
+    /// Reads output for a fixed window without waiting for any milestone.
+    fn settle_for(&mut self, window: Duration) {
+        let deadline = Instant::now() + window;
+        while Instant::now() < deadline {
+            self.read_available(Duration::from_millis(100));
         }
     }
 

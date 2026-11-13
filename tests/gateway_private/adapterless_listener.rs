@@ -1553,12 +1553,9 @@ fn managed_host_listener_retries_a_failed_republication_while_the_port_answers()
     );
     let checkout = adapterless_environment(setup.fixture.path(), profile, &manifest);
     let outage_control = TcpListener::bind("127.0.0.1:0").expect("outage control listener");
-    let server_script = republication_server(
-        outage_control
-            .local_addr()
-            .expect("outage control address"),
-    )
-    .replace("answered again", "republished after a store failure");
+    let server_script =
+        republication_server(outage_control.local_addr().expect("outage control address"))
+            .replace("answered again", "republished after a store failure");
     fs::write(checkout.join("server.py"), server_script).expect("fixture server script");
     let cleanup = setup.cleanup(&effects, &checkout, profile);
     let state_path = listener_state_path(&checkout, profile, LISTENER_NAME);
