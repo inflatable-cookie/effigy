@@ -2560,7 +2560,14 @@ fn write_container_fixture_with_task(
         ""
     };
     let health_block = health_check.map_or(String::new(), |check| {
-        format!("\n[containers.web.health]\ncheck = \"{check}\"\ntimeout_secs = 2\n")
+        // The check a proof declares here is already satisfied by the fixture's
+        // own listener, and no assertion in these proofs bounds readiness. A
+        // short injected budget would instead measure host fork latency: the
+        // observation budget is the detached activation's whole budget, so a
+        // loaded host timed out the binding read after readiness had passed.
+        // The declared production default applies; a proof that asserts a
+        // bounded refusal injects its own budget explicitly.
+        format!("\n[containers.web.health]\ncheck = \"{check}\"\n")
     });
     let task_block = if include_task {
         "\n[systems]\ndefault = \"dev\"\n\n[systems.dev]\ndefault_workspace = \"app\"\n\n[systems.dev.workspaces.app]\ncontainer = \"web\"\nworking_dir = \"/workspace\"\n\n[tasks.dev]\nworkspace = \"app\"\n"

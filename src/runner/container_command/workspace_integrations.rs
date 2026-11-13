@@ -32,6 +32,12 @@ pub(super) const STEPS: [WorkspaceIntegrationStep; 5] = [
 pub trait WorkspaceIntegrationAdapter {
     type Error;
     fn integration_deadline(&self) -> Instant;
+    /// The reading every budget check below compares against. Production keeps
+    /// the monotonic clock; a proof may substitute one clock it advances itself
+    /// so budget expiry is decided by progress, never by host scheduling.
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
     fn record_step(
         &mut self,
         step: WorkspaceIntegrationStep,
@@ -104,7 +110,7 @@ pub fn run_workspace_integrations<A: WorkspaceIntegrationAdapter>(
 ) -> Result<(), IntegrationFailure<A::Error>> {
     let deadline = adapter.integration_deadline();
     for step in STEPS {
-        if Instant::now() >= deadline {
+        if adapter.now() >= deadline {
             return Err(IntegrationFailure::IntegrationBudgetExhausted);
         }
         if !outcome.attempted.contains(&step) {
@@ -116,19 +122,19 @@ pub fn run_workspace_integrations<A: WorkspaceIntegrationAdapter>(
         adapter
             .record_step(step, false)
             .map_err(IntegrationFailure::Effect)?;
-        if Instant::now() >= deadline {
+        if adapter.now() >= deadline {
             return Err(IntegrationFailure::IntegrationBudgetExhausted);
         }
         adapter
             .reconcile(step, deadline)
             .map_err(IntegrationFailure::Effect)?;
-        if Instant::now() >= deadline {
+        if adapter.now() >= deadline {
             return Err(IntegrationFailure::IntegrationBudgetExhausted);
         }
         adapter
             .record_step(step, true)
             .map_err(IntegrationFailure::Effect)?;
-        if Instant::now() >= deadline {
+        if adapter.now() >= deadline {
             return Err(IntegrationFailure::IntegrationBudgetExhausted);
         }
     }
@@ -146,11 +152,11 @@ pub fn unwind_workspace_integrations<A: WorkspaceIntegrationAdapter>(
 ) -> Result<(), &'static str> {
     let mut unsettled = Vec::new();
     while let Some(step) = outcome.attempted.pop() {
-        if Instant::now() >= deadline
+        if adapter.now() >= deadline
             || adapter.unwind(step, deadline).is_err()
-            || Instant::now() >= deadline
+            || adapter.now() >= deadline
             || adapter.clear_step(step).is_err()
-            || Instant::now() >= deadline
+            || adapter.now() >= deadline
         {
             unsettled.push(step);
         }

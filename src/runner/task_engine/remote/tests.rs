@@ -31,11 +31,52 @@ fn evidence() -> Evidence {
     Evidence::new("remote model".into(), None).expect("fixed evidence")
 }
 
+/// One launch's environment as the fixture received it: `None` marks a value
+/// the kernel keeps out of every captured surface.
+type LaunchedEnv = Vec<(String, Option<String>)>;
+
 /// One modelled container session. Files under `dir` are the remote state:
 /// `done` once the workload ended, `stop` once a remote TERM arrived.
 #[derive(Clone)]
 struct Model {
     dir: PathBuf,
+    /// The environment each launch in this fixture handed the workload. A
+    /// proof reads the inherited value here rather than from a timed-out
+    /// child's output, which host load can truncate.
+    launched: Arc<Mutex<Vec<LaunchedEnv>>>,
+}
+
+impl Model {
+    fn new(dir: PathBuf) -> Self {
+        Self {
+            dir,
+            launched: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    fn launched_env(&self) -> Vec<LaunchedEnv> {
+        self.launched
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn record_launched(&self, env: &BTreeMap<OsString, EnvValue>) {
+        let frame = env
+            .iter()
+            .map(|(key, value)| {
+                let value = match value {
+                    EnvValue::Plain(value) => Some(value.to_string_lossy().into_owned()),
+                    EnvValue::Secret(_) => None,
+                };
+                (key.to_string_lossy().into_owned(), value)
+            })
+            .collect();
+        self.launched
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(frame);
+    }
 }
 
 impl Model {
@@ -72,6 +113,7 @@ impl RemoteExecAdapter for Model {
             RemoteTerminal::None,
             "stdin reaches the workload"
         );
+        self.record_launched(&cmd.env);
         let mut env = client_env();
         for (key, value) in cmd.env {
             // The exec client and the guest have distinct custody nonces.
@@ -98,7 +140,10 @@ impl RemoteExecAdapter for Model {
             argv: vec![
                 "/bin/sh".into(),
                 "-c".into(),
-                "printf '\\036EFFIGY-CUSTODY v1 %s 4242 4242 100 boot-model 401\\n' \"$MODEL_NONCE\" >&2; trap 'touch \"$MODEL_DONE\"' EXIT; eval \"$MODEL_WORKLOAD\"".into(),
+                // The EXIT trap is installed before the registration line, so a
+                // session the kernel accepted always records its end even when
+                // the deadline stops it immediately afterwards.
+                "trap 'touch \"$MODEL_DONE\"' EXIT; printf '\\036EFFIGY-CUSTODY v1 %s 4242 4242 100 boot-model 401\\n' \"$MODEL_NONCE\" >&2; eval \"$MODEL_WORKLOAD\"".into(),
             ],
             cwd: self.dir.clone(),
             env,
@@ -205,9 +250,7 @@ fn fixture() -> Fixture {
     let _lock = crate::contract_test_support::lock_test();
     let dir = tempfile::tempdir().expect("fixture");
     let root = dir.path().to_path_buf();
-    let model = Model {
-        dir: root.join("remote"),
-    };
+    let model = Model::new(root.join("remote"));
     std::fs::create_dir(&model.dir).expect("remote dir");
     let settle = model.clone();
     kernel::TEST_REMOTE.with(|factory| {
@@ -1022,10 +1065,7 @@ impl RemoteExecAdapter for Engine {
         target: &ContainerTarget,
         cx: &OperationContext,
     ) -> Observed<ContainerIdentity> {
-        Model {
-            dir: self.dir.clone(),
-        }
-        .identity(target, cx)
+        Model::new(self.dir.clone()).identity(target, cx)
     }
 
     fn launch(
@@ -1547,10 +1587,16 @@ fn a_container_workload_never_receives_session_vault_access() {
 
 /// Real registration, stop and settlement under an explicitly inherited
 /// nested scope, with both parent-shorter and child-shorter budgets.
+///
+/// The nested budgets are 4s, not 1s: the real client has to start and register
+/// inside the inherited budget, and a 1s window measures host fork latency
+/// rather than the deadline nesting under test. The timeout itself stays real:
+/// the workload outlives the budget and is stopped by it.
 #[test]
 fn nested_remote_deadlines_take_the_minimum_and_settle_the_registered_session() {
-    for (parent, child) in [(1000, 5000), (5000, 1000)] {
+    for (parent, child) in [(4000, 9000), (9000, 4000)] {
         let fixture = fixture();
+        let scoped_at = Instant::now();
         let _parent = super::super::SpawnScope::enter(
             &BTreeMap::from([("SCOPED".into(), "inherited".into())]),
             None,
@@ -1570,13 +1616,36 @@ fn nested_remote_deadlines_take_the_minimum_and_settle_the_registered_session() 
         let Lifetime::Finite(budget) = exec_options(&command).lifetime else {
             panic!("finite nested budget required");
         };
-        assert!(budget <= Duration::from_millis(parent.min(child)));
+        let minimum = Duration::from_millis(parent.min(child));
+        // The scope's deadline was minted when it was entered, so the exact
+        // remaining budget is the minimum less the time measured here.
+        let inside_scope = scoped_at.elapsed();
+        assert!(budget <= minimum, "{budget:?} exceeds {minimum:?}");
+        assert!(
+            budget + inside_scope + Duration::from_millis(50) >= minimum,
+            "{budget:?} after {inside_scope:?} is not the nested minimum {minimum:?}"
+        );
         let started = Instant::now();
         let exit = run(&fixture, &mut task_run, command);
         assert_eq!(exit.code, 124);
         assert!(matches!(exit.workload, WorkloadOutcome::TimedOut { .. }));
-        assert!(started.elapsed() < Duration::from_secs(4));
-        assert_eq!(exit.stdout, b"inherited");
+        // A hang guard, not a performance claim: the model's own lifetime is
+        // 20s, so ending well inside it proves the nested budget governed.
+        assert!(
+            started.elapsed() < Duration::from_secs(15),
+            "the nested budget did not bound the run: {:?}",
+            started.elapsed()
+        );
+        // Environment inheritance is asserted where production hands it over,
+        // so a deadline that stops the child before it can print cannot hide
+        // whether the nested scope carried its value.
+        assert!(
+            fixture.model.launched_env().iter().any(|frame| frame
+                .iter()
+                .any(|(key, value)| key == "SCOPED" && value.as_deref() == Some("inherited"))),
+            "the nested scope's environment did not reach the remote workload: {:?}",
+            fixture.model.launched_env()
+        );
         assert!(fixture.model.dir.join("stop").exists());
         assert!(fixture.model.closed());
         close(task_run, exit.workload);

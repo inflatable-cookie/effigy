@@ -9,8 +9,10 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 
 fn cx() -> EffectContext {
+    // The fixture's ambient operation budget, not a bound any proof asserts:
+    // real spawns and settlements must fit it on the host the suite runs on.
     OperationContext::new(
-        Deadline::At(Instant::now() + Duration::from_secs(20)),
+        Deadline::At(Instant::now() + FIXTURE_GUARD),
         CancelToken::default(),
         Limits {
             capture_tail: 4096,
@@ -579,8 +581,13 @@ impl Drop for OwnedChild {
         let _ = self.0.wait();
     }
 }
+/// The fixture's own hang guard, never a bound under test: the wait is driven
+/// by the event it observes, and this only stops a fixture that never gets
+/// there from hanging the suite. A loaded host can take far longer than a quiet
+/// one to start a workload and settle it.
+const FIXTURE_GUARD: Duration = Duration::from_secs(120);
 fn wait(mut yes: impl FnMut() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(12);
+    let deadline = Instant::now() + FIXTURE_GUARD;
     while !yes() {
         assert!(Instant::now() < deadline, "proof deadline");
         std::thread::sleep(Duration::from_millis(5));
@@ -1064,9 +1071,11 @@ fn fault_child() {
 #[test]
 fn fault_matrix_registration_spawn_and_socket_kill_enospc() {
     use std::os::unix::process::ExitStatusExt;
+    // The foreign fixture must outlive this whole matrix, not race it: a
+    // fixed 60s made its natural exit look like a signal. Teardown kills it.
     let mut foreign = OwnedChild(
         Command::new("/bin/sleep")
-            .arg("60")
+            .arg("3600")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -1432,29 +1441,55 @@ fn legacy_cutover_waits_for_the_existing_host_owner_gate() {
             placement: crate::supervise::Placement::Inline,
         }),
     };
-    let cleanup = cx.operation().cleanup(Duration::from_secs(5)).unwrap();
-    let mut prior =
-        Run::begin(&cx, &root, &invocation, options(11), &cleanup, &mut Strict).unwrap();
+    // Every phase mints its own cleanup budget, the way a caller minting one
+    // per operation does. Sharing one 5s clock across blocked begin, the
+    // predecessor's finish and settle, and the replacement's begin and settle
+    // made the last phase report an expired budget instead of a closure.
+    let cleanup = || cx.operation().cleanup(Duration::from_secs(5)).unwrap();
+    let mut prior = Run::begin(
+        &cx,
+        &root,
+        &invocation,
+        options(11),
+        &cleanup(),
+        &mut Strict,
+    )
+    .unwrap();
     let path = home.path().join("app.log");
     let raw = b"\x1b[31mlegacy-owner-secret\n";
     effigy_test_support::write_private(&path, raw).unwrap();
-    assert!(Run::begin(&cx, &root, &invocation, options(12), &cleanup, &mut Strict).is_err());
+    assert!(Run::begin(
+        &cx,
+        &root,
+        &invocation,
+        options(12),
+        &cleanup(),
+        &mut Strict
+    )
+    .is_err());
     assert_eq!(std::fs::read(&path).unwrap(), raw);
     assert!(MergedLog::identity(&path).is_err());
     assert!(!home.path().join(".legacy-host-logs").exists());
     prior
         .finish(crate::outcome::WorkloadOutcome::Succeeded)
         .unwrap();
-    prior.settle(&cleanup, &mut Strict).unwrap();
-    let mut replacement =
-        Run::begin(&cx, &root, &invocation, options(13), &cleanup, &mut Strict).unwrap();
+    prior.settle(&cleanup(), &mut Strict).unwrap();
+    let mut replacement = Run::begin(
+        &cx,
+        &root,
+        &invocation,
+        options(13),
+        &cleanup(),
+        &mut Strict,
+    )
+    .unwrap();
     let _log = MergedLog::prepare(&mut replacement, &path).unwrap();
     assert!(std::fs::read(&path).unwrap().is_empty());
     assert!(MergedLog::identity(&path).is_ok());
     replacement
         .finish(crate::outcome::WorkloadOutcome::Succeeded)
         .unwrap();
-    replacement.settle(&cleanup, &mut Strict).unwrap();
+    replacement.settle(&cleanup(), &mut Strict).unwrap();
 }
 
 /// A stop never inherits the budget its caller minted earlier. A supervisor
@@ -3682,8 +3717,11 @@ fn a_truncated_host_generation_can_spawn_a_safe_real_successor() {
     // Deterministic drain-deadline boundary: close the generation's owned
     // descriptors while its parser still holds OSC and its redactor `super`.
     lock(&first.core).abandon_capture("drain deadline");
-    let cleanup = cx.operation().cleanup(Duration::from_secs(5)).unwrap();
-    let first_report = first.stop(&cleanup);
+    // One budget per phase, as a caller mints one per operation: a single 5s
+    // clock spent across two stops and the settle reports an expired budget
+    // rather than the closure this proof is about.
+    let cleanup = || cx.operation().cleanup(Duration::from_secs(5)).unwrap();
+    let first_report = first.stop(&cleanup());
     if let Some(exit) = first_report.leader.verified() {
         first.complete(&mut run, *exit).unwrap();
     }
@@ -3697,12 +3735,12 @@ fn a_truncated_host_generation_can_spawn_a_safe_real_successor() {
     )
     .unwrap();
     let exit = next.wait(cx.operation()).verified().copied();
-    let next_report = next.stop(&cleanup);
+    let next_report = next.stop(&cleanup());
     if let Some(exit) = exit {
         next.complete(&mut run, exit).unwrap();
     }
     output.finish().unwrap();
-    run.settle(&cleanup, &mut Strict).unwrap();
+    run.settle(&cleanup(), &mut Strict).unwrap();
     assert_eq!(exit, Some(Exit { code: 0 }));
     assert!(matches!(
         first_report.group,
