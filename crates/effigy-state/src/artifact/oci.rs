@@ -355,6 +355,10 @@ const FAILURE_MARKERS: &[(&str, OciFailureClass)] = &[
         "temporary failure in name resolution",
         OciFailureClass::Unreachable,
     ),
+    (
+        "invalid artifact reference",
+        OciFailureClass::InvalidReference,
+    ),
     ("invalid reference", OciFailureClass::InvalidReference),
     ("invalid repository", OciFailureClass::InvalidReference),
     ("invalid tag", OciFailureClass::InvalidReference),

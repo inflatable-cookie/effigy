@@ -55,7 +55,6 @@ impl ContainerVerdict {
         matches!(self, Self::Container(_))
     }
 }
-
 /// Interpret the four markers. The Effigy workspace entrypoint is the most
 /// specific, so it is reported first; a present marker wins over an unreadable
 /// sibling, because one proof is enough.
@@ -107,14 +106,6 @@ pub fn detect_container() -> ContainerVerdict {
         probe_marker(PODMAN_ENV_PATH),
         probe_cgroup(),
     )
-}
-
-/// Whether this process is proven to run inside a container.
-///
-/// An unreadable marker is reported as `false`: every caller runs the host path
-/// in that case. Use [`detect_container`] when the difference matters.
-pub fn process_is_inside_container() -> bool {
-    detect_container().is_container()
 }
 
 /// Whether this process is an Effigy workspace container, judged by its own

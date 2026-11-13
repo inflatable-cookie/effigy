@@ -5,7 +5,7 @@ use std::process::Command as ProcessCommand;
 
 use effigy_cli::TaskInvocation;
 
-use effigy_core::container_detection::process_is_inside_container;
+use effigy_core::container_detection::{detect_container, ContainerVerdict};
 use effigy_core::shell::{shell_quote, with_local_node_bin_path};
 use effigy_manifest::{
     load_task_manifest, ManifestContainerSecretDelivery, ManifestTask, ManifestTaskRunIn,
@@ -379,7 +379,7 @@ fn local_container_deferral_working_dir() -> Option<std::path::PathBuf> {
     let context = active_runtime_context()?;
     if should_run_container_deferral_locally(
         context.container().inside_container_handoff,
-        process_is_inside_container(),
+        detect_container(),
     ) {
         return Some(context.invocation_cwd().to_path_buf());
     }
@@ -410,9 +410,13 @@ fn local_container_secret_runtime_env_path(
 
 fn should_run_container_deferral_locally(
     inside_container_handoff: bool,
-    process_inside_container: bool,
+    process: ContainerVerdict,
 ) -> bool {
-    inside_container_handoff || process_inside_container
+    // A marker that could not be read is no proof that the deferred command
+    // would re-enter the same container, so it keeps the host path this decision
+    // has always taken. The typed verdict is what decides, and `Unknown` is
+    // named here rather than folded into a boolean at the probe.
+    inside_container_handoff || process.is_container()
 }
 
 fn deferral_runtime_activation_plan(
@@ -511,10 +515,31 @@ mod tests {
 
     #[test]
     fn container_deferral_runs_locally_for_handoff_or_container_process() {
-        assert!(super::should_run_container_deferral_locally(true, false));
-        assert!(super::should_run_container_deferral_locally(false, true));
-        assert!(super::should_run_container_deferral_locally(true, true));
-        assert!(!super::should_run_container_deferral_locally(false, false));
+        use effigy_core::container_detection::{ContainerMarker, ContainerVerdict};
+
+        let inside = || ContainerVerdict::Container(ContainerMarker::DockerEnvFile);
+        assert!(super::should_run_container_deferral_locally(
+            true,
+            ContainerVerdict::Host
+        ));
+        assert!(super::should_run_container_deferral_locally(
+            false,
+            inside()
+        ));
+        assert!(super::should_run_container_deferral_locally(true, inside()));
+        assert!(!super::should_run_container_deferral_locally(
+            false,
+            ContainerVerdict::Host
+        ));
+        // An unreadable marker is not proof of a container: the decision keeps
+        // the host path, and says so rather than collapsing at the probe.
+        assert!(!super::should_run_container_deferral_locally(
+            false,
+            ContainerVerdict::Unknown {
+                path: PathBuf::from("/proc/1/cgroup"),
+                error: "input/output error".to_owned(),
+            }
+        ));
     }
 
     #[test]

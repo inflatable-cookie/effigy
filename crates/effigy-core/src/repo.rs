@@ -28,11 +28,6 @@ impl ResolvedPath {
         }
     }
 
-    /// Whether the filesystem resolved this path.
-    pub fn is_resolved(&self) -> bool {
-        matches!(self, Self::Canonical(_))
-    }
-
     /// Take the path comparisons use.
     pub fn into_path(self) -> PathBuf {
         match self {
@@ -69,7 +64,7 @@ mod tests {
 
         let resolved = canonicalize_or_original(&requested);
 
-        assert!(resolved.is_resolved());
+        assert!(matches!(resolved, ResolvedPath::Canonical(_)));
         assert_eq!(resolved.path(), root.path().canonicalize().expect("root"));
     }
 
@@ -82,7 +77,6 @@ mod tests {
 
         let resolved = canonicalize_or_original(&missing);
 
-        assert!(!resolved.is_resolved());
         assert_eq!(resolved.path(), missing);
         let ResolvedPath::Unresolved { error, .. } = &resolved else {
             panic!("a missing path must stay unresolved");
