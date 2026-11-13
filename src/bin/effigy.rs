@@ -101,6 +101,8 @@ fn main() {
             effigy_core::output_cap::Stream::Stderr,
             format!("{error}\n").as_bytes(),
         );
+        let _ = effigy_core::output_cap::finish();
         std::process::exit(1);
     }
+    let _ = effigy_core::output_cap::finish();
 }
