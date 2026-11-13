@@ -2269,7 +2269,12 @@ mod client_order_tests {
         let op = context(CancelToken::default(), Duration::from_millis(30));
         let started = Instant::now();
         let error = write_all_with(&mut writer, &[1], &op).unwrap_err();
-        assert!(error.to_string().contains("TimedOut"));
+        // A person reads the interrupt's own sentence: the wait, the phase and
+        // the deadline. The internal variant name never reaches the message.
+        let sentence = error.to_string();
+        assert!(sentence.contains("timed out after"), "{sentence}");
+        assert!(sentence.contains("during the frame write"), "{sentence}");
+        assert!(!sentence.contains("TimedOut"), "{sentence}");
         assert!(started.elapsed() < Duration::from_secs(2));
 
         let (mut reader, _peer) = UnixStream::pair().unwrap();
@@ -2277,7 +2282,10 @@ mod client_order_tests {
         let op = context(CancelToken::default(), Duration::from_millis(30));
         let started = Instant::now();
         let error = read_exact_with(&mut reader, &mut [0], &op).unwrap_err();
-        assert!(error.to_string().contains("TimedOut"));
+        let sentence = error.to_string();
+        assert!(sentence.contains("timed out after"), "{sentence}");
+        assert!(sentence.contains("during the frame read"), "{sentence}");
+        assert!(!sentence.contains("TimedOut"), "{sentence}");
         assert!(started.elapsed() < Duration::from_secs(2));
     }
 

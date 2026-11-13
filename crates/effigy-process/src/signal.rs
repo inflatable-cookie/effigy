@@ -346,6 +346,19 @@ fn signal_targets(root_pid: i32, table: &[ProcessRow]) -> SignalTargets {
     SignalTargets { groups, processes }
 }
 
+/// A kill failure that is a refusal, or `None` when the target has gone.
+///
+/// `ESRCH` says the process or group this walk resolved no longer exists. A
+/// termination that finds its target already gone has done what it was asked:
+/// reporting that as a refusal would tell a caller an achieved `SIGKILL` was
+/// rejected, and would turn every race with a self-exiting workload into a
+/// failure. Every other failure is a target that refused the signal.
+#[cfg(unix)]
+fn refusal(error: nix::errno::Errno) -> Option<std::io::Error> {
+    let error = std::io::Error::from(error);
+    (error.raw_os_error() != Some(nix::libc::ESRCH)).then_some(error)
+}
+
 #[cfg(unix)]
 fn signal_process_tree(root_pid: i32, signal: Signal) -> Result<(), ProcessTreeError> {
     if root_pid <= 0 {
@@ -355,17 +368,21 @@ fn signal_process_tree(root_pid: i32, signal: Signal) -> Result<(), ProcessTreeE
     let mut refused = None;
     for group in targets.groups {
         if let Err(error) = kill(Pid::from_raw(-group), signal) {
-            refused = Some(error);
+            if let Some(error) = refusal(error) {
+                refused = Some(error);
+            }
         }
     }
     for process in targets.processes {
         if let Err(error) = kill(Pid::from_raw(process), signal) {
-            refused = Some(error);
+            if let Some(error) = refusal(error) {
+                refused = Some(error);
+            }
         }
     }
     match (unenumerated, refused) {
         (Some(error), _) => Err(ProcessTreeError::Unenumerated(error)),
-        (None, Some(error)) => Err(ProcessTreeError::Refused(error.into())),
+        (None, Some(error)) => Err(ProcessTreeError::Refused(error)),
         (None, None) => Ok(()),
     }
 }
@@ -423,6 +440,26 @@ mod tests {
         let table = parse_process_table("10 1 10 Z+\n11 10 10 S\n").unwrap();
         assert!(table[0].zombie);
         assert!(!table[1].zombie);
+    }
+
+    #[test]
+    fn a_target_that_is_already_gone_is_not_a_refusal() {
+        // A kill that finds its target gone has done its job: ESRCH is
+        // absence, not refusal.
+        assert!(refusal(nix::errno::Errno::ESRCH).is_none());
+        let refused = refusal(nix::errno::Errno::EPERM).expect("a refused signal");
+        assert_eq!(refused.raw_os_error(), Some(nix::libc::EPERM));
+    }
+
+    #[test]
+    fn terminating_an_absent_target_succeeds_instead_of_reporting_a_refusal() {
+        // Above the platform's maximum pid, so no live process can be
+        // signalled: the walk resolves the root, the kill answers ESRCH, and
+        // there is nothing left to terminate. Before this fix every
+        // post-group-kill ESRCH became `Refused`, so this reported a delivered
+        // SIGKILL as rejected.
+        let absent = (i32::MAX - 1) as u32;
+        assert!(terminate_process_tree(absent, true).is_ok());
     }
 
     #[test]

@@ -74,8 +74,10 @@ pub(super) fn write(
 ) -> Result<(), FrameError> {
     let mut offset = 0;
     while offset < frame.len() {
-        op.check("frame write")
-            .map_err(|error| io::Error::other(format!("{error:?}")))?;
+        // The interrupt's own sentence already names the phase and the cause;
+        // a person reads it through `Display`, never a `Debug` rendering.
+        op.check("the frame write")
+            .map_err(|error| io::Error::other(error.to_string()))?;
         match writer.write(&frame[offset..]) {
             Ok(0) => {
                 return Err(io::Error::new(io::ErrorKind::WriteZero, "frame pipe closed").into())
@@ -96,8 +98,10 @@ pub(super) fn read_exact(
 ) -> Result<(), FrameError> {
     let mut offset = 0;
     while offset < bytes.len() {
-        op.check("frame read")
-            .map_err(|error| io::Error::other(format!("{error:?}")))?;
+        // The interrupt's own sentence already names the phase and the cause;
+        // a person reads it through `Display`, never a `Debug` rendering.
+        op.check("the frame read")
+            .map_err(|error| io::Error::other(error.to_string()))?;
         match reader.read(&mut bytes[offset..]) {
             Ok(0) => {
                 return Err(
