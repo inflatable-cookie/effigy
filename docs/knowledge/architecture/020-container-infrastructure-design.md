@@ -989,7 +989,7 @@ A checkout's loopback alias is not a separate record: the gateway's route table
 is the only record of loopback ownership, so an address is in use exactly when
 some route references it as its `dns_ip` or as its target. `up` takes the
 address the checkout's routes already answer with, or the lowest address in the
-`127.1.0.1`-`127.1.0.50` pool that no route references; `down` and retirement
+`127.1.0.1`-`127.1.0.250` pool that no route references; `down` and retirement
 free it by removing those routes, and any route write drops the routes of a
 checkout path that is missing. A deleted worktree therefore keeps neither a
 domain nor an address, and no inventory across runtimes, qualified project key

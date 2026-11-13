@@ -11,17 +11,25 @@ use std::net::{Ipv4Addr, SocketAddr};
 use crate::error::GatewayError;
 use crate::routes::RouteTable;
 
+/// Number of assignable loopback addresses in the bounded pool.
+///
+/// This is the one sizing point: `gateway setup` installs exactly one `lo0`
+/// alias per pool address, and the bind broker authorises exactly this range.
+/// Queue worktree churn exhausted the earlier 50-address pool, so the pool
+/// carries the headroom a machine running many checkouts needs while staying a
+/// single bounded `/24` (effigy#949, lead 7850b4ee).
+pub const DEFAULT_LOOPBACK_COUNT: u8 = 250;
+
 /// First assignable loopback IP in the bounded pool.
 pub const DEFAULT_LOOPBACK_START: Ipv4Addr = Ipv4Addr::new(127, 1, 0, 1);
 
 /// Last assignable loopback IP in the bounded pool.
-pub const DEFAULT_LOOPBACK_END: Ipv4Addr = Ipv4Addr::new(127, 1, 0, 50);
+pub const DEFAULT_LOOPBACK_END: Ipv4Addr = Ipv4Addr::new(127, 1, 0, DEFAULT_LOOPBACK_COUNT);
 
 /// The bounded pool, lowest address first.
 pub fn pool() -> impl Iterator<Item = Ipv4Addr> {
-    let [a, b, c, _] = DEFAULT_LOOPBACK_START.octets();
-    (DEFAULT_LOOPBACK_START.octets()[3]..=DEFAULT_LOOPBACK_END.octets()[3])
-        .map(move |octet| Ipv4Addr::new(a, b, c, octet))
+    let [a, b, c, first] = DEFAULT_LOOPBACK_START.octets();
+    (first..=DEFAULT_LOOPBACK_END.octets()[3]).map(move |octet| Ipv4Addr::new(a, b, c, octet))
 }
 
 /// Every address some route already references, as a DNS answer or a target.

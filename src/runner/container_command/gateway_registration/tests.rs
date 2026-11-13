@@ -846,6 +846,7 @@ fn route_registration_reports_its_post_poll_stages() {
                 certificates.push(domain.to_owned());
                 Ok(())
             },
+            &mut |_| Ok(()),
         )
         .expect("published ports register their declared routes");
         assert!(registered_gateway_routes_match_project(
@@ -2137,6 +2138,7 @@ fn dev_handoff_gateway_readiness_for_absent_stopped_and_registered_stacks() {
             &rows,
             &mut |_| {},
             &mut |_| Ok(()),
+            &mut |_| Ok(()),
         )
         .expect("register running workspace and Zest routes");
         assert!(gateway_routes_registered_against_rows(repo, &policy, &rows).unwrap());
@@ -2184,6 +2186,7 @@ fn dev_handoff_and_registration_refuse_running_route_without_published_port() {
         &rows,
         &mut |_| {},
         &mut |_| Ok(()),
+        &mut |_| Ok(()),
     )
     .expect_err("registration must refuse too");
     for error in [handoff, registration] {
@@ -2197,4 +2200,127 @@ fn dev_handoff_and_registration_refuse_running_route_without_published_port() {
             assert!(message.contains(expected), "{message}");
         }
     }
+}
+
+/// A route write is not complete until the running gateway can serve every TLS
+/// route it registered (papercut 9604503b). A gateway that answers the route's
+/// SNI with an access-denied alert fails the registration with its own build
+/// and the restart remedy, and a non-TLS route is never probed.
+#[test]
+fn a_registered_tls_route_the_running_gateway_cannot_serve_is_refused() {
+    let route = |domain: &str, tls: bool| RegisteredGatewayRoute {
+        domain: domain.to_owned(),
+        target: Some("127.0.0.1:8100".to_owned()),
+        dns_ip: None,
+        tcp_port: None,
+        tcp_target: None,
+        tls,
+        service: Some("web".to_owned()),
+        external_target: false,
+    };
+    let routes = vec![
+        route("plain.clientname.test", false),
+        route("app.clientname.test", true),
+    ];
+    let mut probed = Vec::new();
+    let refusal = verify_registered_tls_routes(
+        &routes,
+        &mut |domain| {
+            probed.push(domain.to_owned());
+            Err(RunnerError::task_invocation(
+                "the running gateway at 127.0.0.1:443 did not complete a TLS handshake: received fatal alert: AccessDenied",
+            ))
+        },
+        &mut || "running gateway build 48e7c01".to_owned(),
+    )
+    .expect_err("a TLS route the running gateway cannot serve refuses the write");
+    let message = refusal.to_string();
+    assert_eq!(
+        probed,
+        ["app.clientname.test"],
+        "only the TLS route is probed"
+    );
+    for expected in [
+        "app.clientname.test",
+        "running gateway build 48e7c01",
+        "AccessDenied",
+        "`effigy gateway down` then `effigy gateway up`",
+        "reloads the route's certificate",
+    ] {
+        assert!(message.contains(expected), "{message}");
+    }
+
+    // A gateway that serves every route keeps the write successful, and an
+    // unknown build is still named rather than guessed.
+    let mut probed = Vec::new();
+    verify_registered_tls_routes(
+        &routes,
+        &mut |domain| {
+            probed.push(domain.to_owned());
+            Ok(())
+        },
+        &mut || "running gateway build unknown".to_owned(),
+    )
+    .expect("a served TLS route completes the write");
+    assert_eq!(probed, ["app.clientname.test"]);
+    let refusal = verify_registered_tls_routes(
+        &routes,
+        &mut |_| Err(RunnerError::task_invocation("no handshake")),
+        &mut running_gateway_build_note,
+    )
+    .expect_err("the same failure with an unreadable build record refuses");
+    assert!(
+        refusal.to_string().contains("running gateway build"),
+        "{refusal}"
+    );
+}
+
+/// The registration itself refuses when the running gateway cannot serve the
+/// TLS route it just wrote (papercut 9604503b): the route is in the table, and
+/// the refusal names the route and the command pair that fixes it, so a
+/// successful `container up` never leaves a browser-broken route behind.
+#[test]
+fn registration_refuses_when_the_running_gateway_cannot_serve_the_new_tls_route() {
+    with_test_home("post-registration-tls-probe", || {
+        let route_table_path = gateway_route_table_path().expect("route table path");
+        std::fs::create_dir_all(route_table_path.parent().expect("route table parent"))
+            .expect("mkdir route table parent");
+        let checkout = tempfile::tempdir().expect("checkout");
+        let project_path = checkout.path().display().to_string();
+        let mut policy = test_policy();
+        policy.repo_root = PathBuf::from(&project_path);
+        let rows = vec![runtime_row(&format!(
+            "demo-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tdemo-web-dev\t{project_path}\tapp\tfalse"
+        ))];
+        let refusal = finish_gateway_route_registration_with_tls(
+            &policy.repo_root,
+            &policy,
+            None,
+            &rows,
+            &mut |_| {},
+            &mut |_| Ok(()),
+            &mut |domain| {
+                assert_eq!(domain, "clientname.test", "only the TLS route is probed");
+                Err(RunnerError::task_invocation(
+                    "the running gateway at 127.0.0.1:443 did not complete a TLS handshake: received fatal alert: AccessDenied",
+                ))
+            },
+        )
+        .expect_err("a TLS route the running gateway cannot serve refuses the registration");
+        let message = refusal.to_string();
+        for expected in [
+            "clientname.test",
+            "AccessDenied",
+            "`effigy gateway down` then `effigy gateway up`",
+        ] {
+            assert!(message.contains(expected), "{message}");
+        }
+        assert!(
+            RouteTable::load(&route_table_path)
+                .expect("persisted routes")
+                .lookup("clientname.test")
+                .is_some(),
+            "the route the refusal is about is the route that was written"
+        );
+    });
 }

@@ -30,8 +30,7 @@ use crate::runner::tests::prelude::*;
 fn skip_hosted_missing_loopback_aliases(test_name: &str) -> bool {
     let _environment = crate::contract_test_support::lock_test();
     let mut first_error = None;
-    for last in 1..=50u8 {
-        let address = Ipv4Addr::new(127, 1, 0, last);
+    for address in effigy_gateway::loopback::pool() {
         match TcpListener::bind((address, 5432)) {
             Err(error) if error.kind() == std::io::ErrorKind::AddrNotAvailable => {
                 first_error.get_or_insert_with(|| format!("{address}:5432: {error:?}"));
@@ -43,8 +42,11 @@ fn skip_hosted_missing_loopback_aliases(test_name: &str) -> bool {
     }
     crate::contract_test_support::hosted_prerequisite_skip(
         test_name,
-        "configured native loopback aliases 127.1.0.1–127.1.0.50",
-        &format!("all 50 native bind probes returned AddrNotAvailable; first={first_error:?}"),
+        "configured native loopback aliases 127.1.0.1–127.1.0.250",
+        &format!(
+            "all {} native bind probes returned AddrNotAvailable; first={first_error:?}",
+            effigy_gateway::loopback::DEFAULT_LOOPBACK_COUNT
+        ),
     )
 }
 
@@ -181,8 +183,7 @@ fn reserve_alias_addresses(count: usize) -> Vec<Ipv4Addr> {
     let mut found = Vec::new();
     let mut unavailable = 0;
     let mut first_bind_error = None;
-    for last in 1..=50u8 {
-        let address = Ipv4Addr::new(127, 1, 0, last);
+    for address in effigy_gateway::loopback::pool() {
         if reserved.contains(&address) {
             continue;
         }
@@ -200,7 +201,7 @@ fn reserve_alias_addresses(count: usize) -> Vec<Ipv4Addr> {
     assert_eq!(
         found.len(),
         count,
-        "host precondition: {count} distinct 127.1.0.1–127.1.0.50 loopback aliases must support \
+        "host precondition: {count} distinct 127.1.0.1–127.1.0.250 loopback aliases must support \
          binding port 5432; found {found:?}; {unavailable} bind probes failed; \
          first error: {first_bind_error:?}. macOS requires these aliases to be configured \
          externally; this fixture never changes host network configuration"

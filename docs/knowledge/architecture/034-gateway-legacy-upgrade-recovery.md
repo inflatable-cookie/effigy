@@ -82,7 +82,7 @@ Legacy root dependencies that required separation:
   directly, which assumes root. A user daemon must report missing setup and
   leave those files to the explicit setup path, rather than silently prompting
   or failing to provide a newly registered domain's DNS.
-- Creating `lo0` aliases for the bounded `127.1.0.1`–`127.1.0.50` pool requires
+- Creating `lo0` aliases for the bounded `127.1.0.1`–`127.1.0.250` pool requires
   administrator network setup. The allocation registry is user state, separate
   from those interface changes. Alias setup may need repeating after reboot;
   "one-time" does not establish persistent interface configuration.
@@ -313,7 +313,7 @@ installs a root-owned helper image and a per-operator LaunchDaemon whose Unix
 socket is root-owned, group-connectable (0660), and under the root-owned run
 directory. Its arguments pin the operator UID. `getpeereid` must match that UID
 before the broker reads a fixed-size request. Only TCP 80 and 443 at
-127.0.0.1 or the setup-installed 127.1.0.1–50 range are accepted. No wildcard
+127.0.0.1 or the setup-installed 127.1.0.1–250 range are accepted. No wildcard
 bind, route/state reads, client accepts, TLS or HTTP processing run as root.
 The broker sends two listening descriptors using SCM_RIGHTS and retains its
 copies until the operator validates and adopts them, then acknowledges that

@@ -131,3 +131,104 @@ fn private_mkcert_program_uses_absolute_override_and_fails_closed_when_invalid()
         "an invalid explicit path must not fall back"
     );
 }
+
+/// Generate a self-signed certificate pair for a fixture route.
+fn write_self_signed_pair(certs: &Path, domain: &str) {
+    let cert = certs.join(format!("{domain}.pem"));
+    let key = certs.join(format!("{domain}-key.pem"));
+    let output = std::process::Command::new("openssl")
+        .args([
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-sha256",
+            "-days",
+            "30",
+            "-subj",
+            &format!("/CN={domain}"),
+            "-addext",
+            &format!("subjectAltName=DNS:{domain}"),
+            "-addext",
+            "basicConstraints=critical,CA:FALSE",
+            "-keyout",
+            key.to_str().expect("UTF-8 key path"),
+            "-out",
+            cert.to_str().expect("UTF-8 cert path"),
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .expect("run openssl for a fixture certificate");
+    assert!(
+        output.status.success(),
+        "openssl failed for {domain}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// The post-registration self-test (papercut 9604503b): a running gateway that
+/// serves the registered certificate completes the probe, an SNI it never
+/// loaded refuses the handshake, and a handshake that presents another route's
+/// certificate refuses too.
+#[test]
+fn route_handshake_probe_proves_the_registered_certificate_is_served() {
+    let dir = tempfile::tempdir().unwrap();
+    let certs = dir.path().join("certs");
+    std::fs::create_dir_all(&certs).unwrap();
+    for domain in ["probe.test", "other.test"] {
+        write_self_signed_pair(&certs, domain);
+    }
+    let resolver = build_sni_resolver_from_dir(&certs).unwrap();
+    assert!(resolver.has_cert("probe.test"), "fixture pair loads");
+    let resolver = Arc::new(resolver);
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let config = Arc::new(server_config_from_resolver(resolver));
+        // Three connections: the served route, an unregistered SNI and a
+        // handshake that presents the wrong registered certificate.
+        for _ in 0..3 {
+            let (stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            stream
+                .set_write_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            let session = rustls::ServerConnection::new(Arc::clone(&config)).unwrap();
+            let mut tls = rustls::StreamOwned::new(session, stream);
+            // An unregistered SNI ends the handshake with an alert here.
+            let mut byte = [0u8; 1];
+            let _ = std::io::Read::read(&mut tls, &mut byte);
+        }
+    });
+
+    let registered = certs.join("probe.test.pem");
+    probe_route_handshake(address, "probe.test", &registered, Duration::from_secs(10))
+        .expect("the running gateway serves the registered route");
+
+    let unknown = probe_route_handshake(
+        address,
+        "missing.test",
+        &registered,
+        Duration::from_secs(10),
+    )
+    .expect_err("an SNI the gateway never loaded refuses the handshake");
+    assert!(
+        unknown.to_string().contains("missing.test") || unknown.to_string().contains("handshake"),
+        "{unknown}"
+    );
+
+    let wrong = probe_route_handshake(address, "other.test", &registered, Duration::from_secs(10))
+        .expect_err("another route's certificate is not this route's certificate");
+    assert!(
+        wrong
+            .to_string()
+            .contains("has not loaded this route's certificate"),
+        "{wrong}"
+    );
+    server.join().unwrap();
+}

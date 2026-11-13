@@ -113,6 +113,22 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))
 }
 
+/// Write a fixture file that stands in for private state, creating its parent
+/// directory 0700 and the file 0600 whatever the process umask is.
+///
+/// A fixture that writes a secrets vault, custody journal or private log often
+/// creates its own state directories. Under a permissive umask those are
+/// `0o777 & !umask` and the file is `0o666 & !umask`, which the kernel refuses
+/// as untrusted (effigy#520, effigy#949); the fixture must own private modes
+/// explicitly, exactly as the product does.
+pub fn write_private_fixture(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+        fs::set_permissions(parent, private_home())?;
+    }
+    write_private(path, bytes)
+}
+
 /// A fresh directory for kernel socket fixtures, preferring a short absolute
 /// path and otherwise using the kernel's directory-relative socket support.
 /// For harnesses that need a bare `TempDir` rather than a [`Fixture`].

@@ -1529,6 +1529,16 @@
 "test:fixtures:environment:shared" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-rhai --lib --no-fail-fast --retries 0 --no-tests fail -j 8", timeout_ms = 600000 },
 ] }
+# Linux native qualification found fixture homes and a legacy log fixture whose
+# creation modes were group-writable under Ubuntu's usual umask 0002, which the
+# kernel's private-state trust then refused (effigy#520). Each mask is its own
+# leaf so a failure names the mask; host umask coverage never replaces native
+# Linux qualification.
+"qa:fixtures:umask" = { durable = true, visibility = "internal", group = "Maintenance", admission = "heavy", description = "Exercise the Linux-sensitive custody, object, publication, serving-host, environment and test-support fixtures under umask 0002, 0027 and 0077.", run = [
+  { id = "umask-0002", run = "sh scripts/qa-umask-fixtures.sh 0002", timeout_ms = 1800000 },
+  { id = "umask-0027", run = "sh scripts/qa-umask-fixtures.sh 0027", timeout_ms = 1800000 },
+  { id = "umask-0077", run = "sh scripts/qa-umask-fixtures.sh 0077", timeout_ms = 1800000 },
+] }
 "check:fixtures:environment" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-builtin -p effigy-cli -p effigy-containers -p effigy-core -p effigy-gateway -p effigy-managed -p effigy-release -p effigy-rhai -p effigy-test-support --all-targets", timeout_ms = 600000 }] }
 "lint:fixtures:environment" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-builtin -p effigy-cli -p effigy-containers -p effigy-core -p effigy-gateway -p effigy-managed -p effigy-release -p effigy-rhai -p effigy-test-support --all-targets -- -D warnings", timeout_ms = 600000 }] }
 "fmt:fixtures:environment" = { visibility = "internal", group = "Maintenance", run = "rustfmt --edition 2021 {args}" }
