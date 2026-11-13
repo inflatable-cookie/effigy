@@ -2,6 +2,8 @@
 //! processes (this test binary re-executed with one ignored helper test).
 #![allow(dead_code)]
 use effigy_kernel::ctx::*;
+use effigy_kernel::ident::ProcessIdentity;
+use effigy_kernel::observe::Observed;
 use effigy_test_support::process::{FixtureCommandExt, OwnedChild as Child};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
@@ -47,8 +49,219 @@ pub fn observe() -> ObserveContext {
     .unwrap()
 }
 /// A fresh `mktemp -d`-style HOME; every fixture write stays inside it.
-pub fn home() -> effigy_test_support::Fixture {
-    effigy_test_support::Fixture::new("effigy-kernel-").unwrap()
+pub fn home() -> Home {
+    Home::owned("effigy-kernel-")
+}
+
+/// A fixture HOME that prints the process identities it still records before
+/// its directory is removed.
+///
+/// A failing custody proof used to remove its home with nothing recorded about
+/// the processes it started, so a reviewer could not attribute or stop the exact
+/// leftovers afterwards (effigy#962). On the failure path this prints every
+/// workload PID the home published and every owner, supervisor and sentinel its
+/// kernel journal records, each with the kernel start identity and process
+/// group, before the tree goes away. A passing proof prints nothing.
+pub struct Home {
+    home: PathBuf,
+    directory: Option<HomeDirectory>,
+}
+
+/// Wait for recorded kernel helpers before removing the tree, like every other
+/// `Fixture`.
+struct OwnedDirectory(effigy_test_support::Fixture);
+/// A short socket budget home: the kernel custody proofs probe sockets under it.
+struct ShortDirectory(tempfile::TempDir);
+
+enum HomeDirectory {
+    Owned(OwnedDirectory),
+    Short(ShortDirectory),
+}
+
+impl HomeDirectory {
+    fn path(&self) -> &Path {
+        match self {
+            Self::Owned(directory) => directory.0.path(),
+            Self::Short(directory) => directory.0.path(),
+        }
+    }
+}
+
+impl Home {
+    fn owned(prefix: &str) -> Self {
+        Self::at(HomeDirectory::Owned(OwnedDirectory(
+            effigy_test_support::Fixture::new(prefix).expect("owned fixture home"),
+        )))
+    }
+
+    /// A home whose nested control sockets still fit the Unix socket budget.
+    pub fn short(prefix: &str) -> Self {
+        Self::at(HomeDirectory::Short(ShortDirectory(
+            effigy_test_support::short_tempdir(prefix).expect("short fixture home"),
+        )))
+    }
+
+    fn at(directory: HomeDirectory) -> Self {
+        let home = directory.path().to_path_buf();
+        Self {
+            home,
+            directory: Some(directory),
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        self.home.as_path()
+    }
+
+    /// Keep the tree for post-failure inspection instead of removing it.
+    pub fn keep(mut self) -> PathBuf {
+        if let Some(directory) = self.directory.take() {
+            match directory {
+                HomeDirectory::Owned(directory) => {
+                    directory.0.keep();
+                }
+                HomeDirectory::Short(directory) => {
+                    let _ = directory.0.keep();
+                }
+            }
+        }
+        self.home.clone()
+    }
+
+    /// Every process identity this home still records, one line each: the
+    /// workloads it published as `*.pid`, and the owner, supervisor and sentinel
+    /// of each run in its kernel journal.
+    pub fn recorded_identities(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        let mut published = Vec::new();
+        published_pids(self.path(), 2, &mut published);
+        published.sort();
+        for (name, pid) in published {
+            lines.push(identity_line(&format!("workload:{name}"), pid, None));
+        }
+        for (role, identity) in journal_identities(self.path()) {
+            let recorded = identity.start.clone();
+            lines.push(identity_line(&role, identity.pid, Some(recorded)));
+        }
+        lines
+    }
+}
+
+impl Drop for Home {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            return;
+        }
+        // The receipt is written to the process's own stderr, not through the
+        // test harness's capture: it must reach the operator even when the
+        // harness prints nothing else from this proof.
+        use std::io::Write;
+        let identities = self.recorded_identities();
+        let mut out = std::io::stderr().lock();
+        writeln!(
+            out,
+            "custody fixture identities before cleanup ({})",
+            self.path().display()
+        )
+        .unwrap();
+        if identities.is_empty() {
+            writeln!(out, "  none recorded").unwrap();
+        }
+        for identity in identities {
+            writeln!(out, "  {identity}").unwrap();
+        }
+        out.flush().unwrap();
+    }
+}
+
+/// The pid files a fixture publishes by rename, at most `depth` directories down.
+fn published_pids(directory: &Path, depth: usize, out: &mut Vec<(String, u32)>) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if kind.is_dir() {
+            if depth > 1 {
+                published_pids(&path, depth - 1, out);
+            }
+            continue;
+        }
+        // `*.pid.pending` is the unpublished sibling: only a completed file counts.
+        if !name.ends_with(".pid") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        if let Ok(pid) = text.trim().parse::<u32>() {
+            out.push((name, pid));
+        }
+    }
+}
+
+/// The owner, supervisor and sentinel of each run this home's journal records.
+fn journal_identities(home: &Path) -> Vec<(String, ProcessIdentity)> {
+    use effigy_kernel::{root::StateRoot, store::Store};
+    let cx = observe();
+    let root = match StateRoot::observe(&cx, home) {
+        Observed::Verified(root, _) => root,
+        _ => return Vec::new(),
+    };
+    let reader = match Store::read(&cx, &root) {
+        Observed::Verified(reader, _) => reader,
+        _ => return Vec::new(),
+    };
+    let rows = match effigy_kernel::run::recent(&reader, None, i64::MAX as usize) {
+        Observed::Verified(rows, _) => rows,
+        _ => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for row in rows {
+        let Observed::Verified(metadata, _) = effigy_kernel::run::metadata(&cx, &root, row.id)
+        else {
+            continue;
+        };
+        for (role, identity) in [
+            ("owner", metadata.owner),
+            ("supervisor", metadata.supervisor),
+            ("sentinel", metadata.sentinel),
+        ] {
+            if let Some(identity) = identity {
+                out.push((role.to_owned(), identity));
+            }
+        }
+    }
+    out
+}
+
+/// One receivable identity: the pid, its process group and the kernel start
+/// identity that is live now, beside the start identity the run recorded.
+fn identity_line(
+    role: &str,
+    pid: u32,
+    recorded: Option<effigy_kernel::ident::ProcessStartIdentity>,
+) -> String {
+    let live = match effigy_kernel::ident::process_identity(pid) {
+        Observed::Verified(identity, _) => identity.start.text(),
+        _ => "absent".to_owned(),
+    };
+    let group = match i32::try_from(pid) {
+        // SAFETY: reads the process group of one recorded fixture pid.
+        Ok(pid) => match unsafe { libc::getpgid(pid) } {
+            group if group > 0 => group.to_string(),
+            _ => "absent".to_owned(),
+        },
+        Err(_) => "absent".to_owned(),
+    };
+    format!(
+        "{role} pid={pid} pgid={group} live-start={live} recorded-start={}",
+        recorded.map_or_else(|| "-".to_owned(), |start| start.text())
+    )
 }
 
 #[derive(Debug, PartialEq, Eq)]

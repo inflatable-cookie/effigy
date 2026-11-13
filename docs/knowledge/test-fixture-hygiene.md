@@ -209,7 +209,14 @@ recorded state the suite now reads from the kernel directly.
 (`wait_kernel_helpers`), and never follows a symlink inside it. An unreadable
 journal is never read as proof that no helper exists: the wait keeps retrying
 until its bounded budget and then fails the removal naming the last
-observation. A fixture that deliberately makes a store unreadable — a corrupt
+observation. A failing kernel proof prints the identities its fixture home still
+records before that removal — each workload PID it published and the owner,
+supervisor and sentinel of every run in its journal, with the kernel start
+identity and process group — so its leftovers are attributable and stoppable by
+pid instead of by a host-level search (effigy#962).
+`failing_custody_proof_prints_recorded_identities_before_fixture_cleanup` runs
+that path through a real failing child proof and stops exactly the pids the
+receipt names. A fixture that deliberately makes a store unreadable — a corrupt
 `kernel.db`, a schema-less one or a symlink standing in for it — is holding
 its own test data, not a HOME that launched kernel helpers, so the test
 removes that data before its `Fixture` drops and cleanup settles on the
@@ -367,6 +374,17 @@ temp root, then its nearest fitting `effigy/` ancestor when a nested selector
 adds path components. Outside that namespace only the immediate parent is
 considered; an unusable root is named instead of falling back to `/tmp` or the
 internal SSD.
+
+The recovery fixtures (`builder_fixture`) follow that same root, with
+`EFFIGY_RECOVERY_FIXTURE_PARENT` for a confined worker. They used to fall back
+to `HOME`, which is unmanaged scratch: a lost volume left one under `/Users/tom`
+with its kernel children for 50 minutes (effigy#962). Their Colima guard proof
+uses the run's own root for the accepted arm and a nested temp directory for the
+refused one, so a fixture root inside the fixed Colima temp roots fails the
+proof naming that cause instead of quietly passing. Children a recovery run
+starts belong to kernel custody: the fixture waits for the recorded helpers
+before removing its tree and refuses to delete a tree a helper still writes, so
+no test-side group kill reaches outside a recorded identity.
 
 Host scratch moved from `/Volumes/Builds/scratch/effigy/` to
 `/Volumes/Stash/scratch/effigy/` in 2026-11; git history does not record the
