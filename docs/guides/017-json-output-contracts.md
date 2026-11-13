@@ -50,9 +50,16 @@ existing descriptor behavior.
 When the cap is reached, Effigy reserves room for and writes one final stderr
 line in this form: `effigy: output cap <N> bytes reached; remaining Effigy
 output discarded (output_truncated)`. It then drops further Effigy output.
-The marker is included in the cap. Values too small to contain the marker are
-refused at startup. JSON envelopes include `output_truncated` when truncation
-was already observed before the envelope is built.
+The marker is included in the cap. A capped, plain-text invocation that reaches
+normal process completion without truncation or any Effigy-side write failure
+ends with exactly one line in this form:
+`effigy: output complete (payload <written> bytes; cap <N> bytes)`. The payload
+count excludes the footer itself. Consumers can treat that
+footer as positive evidence that all Effigy output was delivered; without it,
+the stream is incomplete or unknown. The footer's reserved space and the
+overflow marker both count toward the cap. Values too small to hold both are
+refused at startup. JSON envelopes retain their `output_truncated` field and do
+not receive a text footer. Uncapped output is unchanged.
 
 
 ## Vision Alignment
