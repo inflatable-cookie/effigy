@@ -165,15 +165,11 @@ mod tests {
     }
 
     #[test]
-    fn ansi_and_rgb_colours_map_to_their_ratatui_counterparts() {
+    fn the_theme_vocabulary_projects_and_anything_else_falls_back() {
         let ansi = |colour| anstyle::Style::new().fg_color(Some(anstyle::Color::Ansi(colour)));
         assert_eq!(
             ratatui_colour(ansi(anstyle::AnsiColor::White)),
             Color::White
-        );
-        assert_eq!(
-            ratatui_colour(ansi(anstyle::AnsiColor::BrightBlack)),
-            Color::DarkGray
         );
         assert_eq!(
             ratatui_colour(
@@ -181,6 +177,10 @@ mod tests {
                     .fg_color(Some(anstyle::Color::Rgb(anstyle::RgbColor(1, 2, 3))))
             ),
             Color::Rgb(1, 2, 3)
+        );
+        assert_eq!(
+            ratatui_colour(ansi(anstyle::AnsiColor::Magenta)),
+            Color::Reset
         );
         assert_eq!(ratatui_colour(anstyle::Style::new()), Color::Reset);
     }
