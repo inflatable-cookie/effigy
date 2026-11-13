@@ -381,6 +381,15 @@
 # §12.1 fault driver and oracles, and the §12.3 supervisor model matrix.
 # Measured 2026-11-12 on macOS: the split fault suite took 806 s in nextest
 # at load 107 (17/17); a later run at load 78–96 took 835 s (16/17).
+# Round 4 measurement (2026-11-13): the QA aggregate compiles the custody
+# fixture once and reuses it. Faults/matrix/custody/handoff passed 18/18,
+# 1/1, 153/153 and 1/1 in 1026.992/132.629/67.819/6.292 s at the selector
+# level. Probe had one overlap-sensitive failure (21/22, 27.301 s); its
+# immediate focused rerun passed (43.233 s). Remote/helpers/gateway-budget
+# passed 25/25, 21/21 and 4/4; machine-facts passed 3/3 in 0.999 s within its
+# unchanged 180 s bound; secrets-vault passed 27/27 in 91.882 s. Other active
+# Effigy test/fault selectors overlapped, so these are observed timings, not
+# an isolated benchmark.
 # Q-013 ruling 3: the fault-injection-gated kernel and secrets proofs run at
 # milestone QA instead of staying hand-run only. The QA aggregate shares one
 # custody-fixture build, then runs each original nextest selection in order;

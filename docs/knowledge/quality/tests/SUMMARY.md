@@ -124,8 +124,23 @@ figures are selector-level evidence, not a replacement group total.
 The two clean runs were back to back and had no prohibited native-smoke or
 fault-injection run active. A1's selector wall includes a 9m37s first-use test
 profile compile and Oxide queueing; B1's includes a 3.47s incremental compile.
-An attempted second pair overlapped `linux_native_smoke.py`; A2 completed 73
-tests but is not clean evidence, and B2 was interrupted at 37/73 to stop the
-overlap. Neither is counted. A second clean pair and the required current-main
-JUnit refresh remain pending; the full-suite duration table above therefore
-still describes the last full QA collection, not this filtered comparison.
+An attempted second 73-test pair overlapped `linux_native_smoke.py`; A2
+completed 73 tests but is not clean evidence, and B2 was interrupted at 37/73
+to stop the overlap. Neither is counted. A second clean pair for the exact
+16-test `cold-start` group is recorded below. The required current-main JUnit
+refresh remains pending; the full-suite duration table above therefore still
+describes the last complete QA collection.
+
+The exact 16-test `cold-start` selector was run serially (A3, cap 1) and with
+the committed four-thread cap (B3). Both runs passed all 16 tests. Each test
+uses a private fixture root and listener, so this group does not share mutable
+test resources; assertions, deadlines and fixture behavior are unchanged.
+
+| Run | Cold-start cap | Result | Nextest wall | Selector wall | Load average at start → end |
+|---|---:|---|---:|---:|---|
+| A3 | 1 | 16/16 passed | 275.772 s | 292.85 s | 62.32/72.49/67.96 → 116.49/93.34/77.71 |
+| B3 | 4 | 16/16 passed | 84.070 s | 110.36 s | 99.25/92.00/77.80 → 69.89/80.96/75.00 |
+
+The pair had no native-smoke, fault-injection or milestone-QA run active.
+Load was high in both runs, so these are observed A/B values rather than an
+isolated host benchmark.
