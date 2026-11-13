@@ -1,34 +1,49 @@
 use super::*;
 
+#[cfg(unix)]
 #[test]
-fn ca_check_falls_back_only_when_the_command_is_unsupported() {
-    let fallback_called = std::cell::Cell::new(false);
-    assert!(ca_installed_from_check(MkcertCaCheck::Installed, || {
-        fallback_called.set(true);
-        false
-    }));
-    assert!(!fallback_called.get(), "an installed result is definitive");
+fn trust_bundle_matches_only_the_current_fake_mkcert_ca() {
+    use std::os::unix::fs::PermissionsExt;
 
-    assert!(!ca_installed_from_check(
-        MkcertCaCheck::NotInstalled,
-        || {
-            fallback_called.set(true);
-            true
-        }
+    let fixture = tempfile::tempdir().unwrap();
+    let current_ca = rcgen::generate_simple_self_signed(vec!["current.test".into()])
+        .unwrap()
+        .cert
+        .pem();
+    let stale_ca = rcgen::generate_simple_self_signed(vec!["stale.test".into()])
+        .unwrap()
+        .cert
+        .pem();
+    let root_ca_path = fixture.path().join("rootCA.pem");
+    std::fs::write(&root_ca_path, &current_ca).unwrap();
+
+    let mkcert = fixture.path().join("mkcert-fixture");
+    std::fs::write(
+        &mkcert,
+        "#!/bin/sh\ncase \"$1\" in\n  -CAROOT) dirname \"$0\" ;;\n  *) exit 64 ;;\nesac\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&mkcert, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let _env =
+        crate::env_test_support::EnvGuard::set_many(&[(MKCERT_BIN_ENV, Some(mkcert.as_os_str()))]);
+
+    let resolved_root = mkcert_root_ca_pem().expect("fake mkcert returns its CA root");
+    assert_eq!(resolved_root, root_ca_path);
+    let fingerprint = certificate_fingerprint_from_file(&resolved_root).unwrap();
+
+    let current_bundle = fixture.path().join("current-trust-bundle.pem");
+    std::fs::write(&current_bundle, format!("{stale_ca}\n{current_ca}")).unwrap();
+    assert!(ca_bundle_paths_contain_fingerprint(
+        [current_bundle.as_path()],
+        &fingerprint
     ));
-    assert!(
-        !fallback_called.get(),
-        "a not-installed result must not be overridden"
-    );
 
-    assert!(ca_installed_from_check(MkcertCaCheck::Unsupported, || {
-        fallback_called.set(true);
-        true
-    }));
-    assert!(
-        fallback_called.get(),
-        "unsupported checks use the OS fallback"
-    );
+    let stale_bundle = fixture.path().join("stale-trust-bundle.pem");
+    std::fs::write(&stale_bundle, &stale_ca).unwrap();
+    assert!(!ca_bundle_paths_contain_fingerprint(
+        [stale_bundle.as_path()],
+        &fingerprint
+    ));
 }
 
 /// An empty certificate cache yields an empty resolver, whether the directory
