@@ -1,19 +1,15 @@
 //! Choosing the catalog that owns a path's inherited section.
 //!
-//! A child catalog inherits a section (an env schema, a systems block, a
-//! containers block) from the nearest ancestor catalog that declares it, and
-//! the declared paths still resolve against the catalog that declared them.
-//! This module is the single owner of that rule: callers pass the section
-//! accessor and get back the declaring catalog with the section value.
+//! A child catalog inherits a section (env schema, systems, containers) from the
+//! nearest ancestor that declares it, and the declared paths still resolve
+//! against the declaring catalog. This module owns that rule.
 
 use std::path::Path;
 
 use crate::LoadedCatalog;
 
 /// The deepest catalog whose root contains `catalog_root`, including the
-/// catalog at `catalog_root` itself.
-///
-/// `None` means the path is outside every loaded catalog root.
+/// catalog at that path itself. `None` means no catalog root contains it.
 pub fn nearest_catalog<'a>(
     catalogs: &'a [LoadedCatalog],
     catalog_root: &Path,
@@ -24,12 +20,9 @@ pub fn nearest_catalog<'a>(
         .max_by_key(|catalog| catalog.depth)
 }
 
-/// The deepest catalog whose root contains `catalog_root` and whose manifest
-/// declares `section`, together with the section value it declared.
-///
-/// This is the inheritance rule for every catalog section that a child may
-/// inherit: the nearest declaring ancestor wins, and the returned catalog is
-/// the one the section's own paths resolve against.
+/// The deepest catalog that contains `catalog_root` and declares `section`,
+/// with the declared value. The nearest declaring ancestor wins, and the
+/// returned catalog is the one the section's paths resolve against.
 pub fn nearest_declaring_catalog<'a, T>(
     catalogs: &'a [LoadedCatalog],
     catalog_root: &Path,

@@ -33,14 +33,11 @@ pub type TaskResolverFn<'r> = &'r dyn for<'c> Fn(
     &std::path::Path,
 ) -> Result<TaskSelection<'c>, TaskResolveError>;
 
-/// Why a resolver could not produce a `TaskSelection`.
-///
-/// The routing crate owns the detailed `RoutingError`; this type carries the
-/// class across the manifest/managed boundary. The sentence is for people and
-/// the class is for decisions: only [`TaskResolveError::NotFound`] means "no
-/// catalog declares this task", so a caller that falls back to a same-named
-/// builtin must not do so for an unreadable catalog graph or an ambiguous
-/// selection.
+/// Why a resolver could not produce a `TaskSelection`. Routing owns the detailed
+/// `RoutingError`; this type carries the class across the manifest/managed
+/// boundary. Only [`TaskResolveError::NotFound`] means "no catalog declares this
+/// task", so a builtin fallback must not fire for an unreadable catalog graph or
+/// an ambiguous selection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskResolveError {
     /// No catalog declares the task, or the prefix names no catalog.

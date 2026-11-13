@@ -63,11 +63,9 @@ pub enum ManifestSystemMount {
     Table(ManifestSystemMountTable),
 }
 
-/// A legacy `source:target:options` mount string, decoded once.
-///
-/// The grammar lives here and nowhere else: the manifest accessors and the
-/// container policy both read these decoded parts instead of splitting the
-/// string again at each call site.
+/// A legacy `source:target:options` mount string, decoded once. The grammar
+/// lives here and nowhere else: the manifest accessors and the container policy
+/// read these parts instead of splitting the string again per call site.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManifestSystemMountSpec {
     raw: String,

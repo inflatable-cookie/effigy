@@ -1,17 +1,10 @@
 //! Narrow error boundary for the tasks crate.
 //!
-//! Two failure classes stay distinct instead of collapsing into one string:
-//!
-//! - `Message` — a selector, plan or inventory request was refused, with the
-//!   offending value and the accepted shape in its text.
-//! - `Render` — a renderer or JSON encoder refused while producing output,
-//!   carrying the typed [`effigy_ui::UiError`] so a caller can tell an I/O
-//!   failure from an encoding failure.
-//!
-//! The runner edge lifts `Message` to `RunnerError::TaskInvocation` and
-//! `Render` to `RunnerError::Ui` (`impl From<EffigyTasksError> for
-//! RunnerError` in `src/runner/error.rs`), so the class survives the crate
-//! boundary.
+//! Two failure classes stay distinct: `Message` is a refused selector, plan or
+//! inventory request; `Render` is a renderer or JSON encoder refusal carrying
+//! the typed [`effigy_ui::UiError`]. The runner edge lifts them to
+//! `RunnerError::TaskInvocation` and `RunnerError::Ui` respectively, so the
+//! class survives the crate boundary.
 
 #[derive(Debug)]
 pub enum EffigyTasksError {

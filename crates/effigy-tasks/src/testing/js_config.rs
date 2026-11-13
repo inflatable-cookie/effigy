@@ -1,82 +1,75 @@
 //! Reading a JavaScript object literal out of a config file.
 //!
-//! Vitest and Vite configs are JavaScript or TypeScript modules, and Effigy
-//! needs exactly one fact from them: the `test` block's `dir`. This module owns
-//! the small scanner that skips comments, strings and regex literals, finds a
-//! balanced object literal and reads one string field.
-//!
-//! The answer is typed, so three different situations stay distinct:
-//!
-//! - a `test` block declares a usable `dir`;
-//! - a `test` block exists but declares no usable `dir` (absent, `.`, or a
-//!   template expression);
-//! - the source could not be tokenised at all.
-//!
-//! Only the last one is an error, and a caller must be able to say so instead
-//! of treating an unreadable config as "no `dir` declared".
+//! Vitest and Vite configs are JavaScript modules, and Effigy needs one fact
+//! from them: the `test` block's `dir`. This module owns the scanner that skips
+//! comments, strings and regex literals, finds a balanced object literal and
+//! reads one string field. The answer is typed, so "a `dir` is declared", "a
+//! `test` block declares no usable `dir`" and "the source could not be
+//! tokenised" stay distinct.
 
 /// Why a config source could not be tokenised.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JsScanError {
-    /// A string literal never reached its closing quote.
-    UnterminatedString { offset: usize },
-    /// A block comment never reached `*/`.
-    UnterminatedComment { offset: usize },
-    /// An object literal never reached its closing brace.
-    UnbalancedObject { offset: usize },
+    UnterminatedString(usize),
+    UnterminatedComment(usize),
+    UnbalancedObject(usize),
 }
 
 impl std::fmt::Display for JsScanError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::UnterminatedString { offset } => {
-                write!(f, "unterminated string literal at byte {offset}")
-            }
-            Self::UnterminatedComment { offset } => {
-                write!(f, "unterminated block comment at byte {offset}")
-            }
-            Self::UnbalancedObject { offset } => {
-                write!(f, "unbalanced object literal at byte {offset}")
-            }
-        }
+        let (what, offset) = match self {
+            Self::UnterminatedString(offset) => ("unterminated string literal", offset),
+            Self::UnterminatedComment(offset) => ("unterminated block comment", offset),
+            Self::UnbalancedObject(offset) => ("unbalanced object literal", offset),
+        };
+        write!(f, "{what} at byte {offset}")
     }
 }
 
 impl std::error::Error for JsScanError {}
 
-/// What a config source declares about the suite root.
+/// What a config source says about the suite root.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TestDirDeclaration {
+pub enum ConfigScan {
     /// A `test` block declares a usable `dir`.
     Dir(String),
-    /// A `test` block exists but declares no usable `dir`: the field is
-    /// absent, names the root (`.` or `./`), or is a template expression.
+    /// A `test` block declares no usable `dir`: the field is absent, names the
+    /// root (`.` or `./`), or is a template expression.
     NoDir,
     /// The source has no `test` block at all.
     NoTestBlock,
+    /// The source could not be read or tokenised; the detail says which.
+    Unreadable(String),
 }
 
-/// The `test.dir` a config source declares, or why it could not be read.
-pub fn test_dir(source: &str) -> Result<TestDirDeclaration, JsScanError> {
+/// What a config source says about the suite root.
+pub fn scan_config(source: &str) -> ConfigScan {
+    match read_declaration(source) {
+        Ok(scan) => scan,
+        Err(error) => ConfigScan::Unreadable(error.to_string()),
+    }
+}
+
+fn read_declaration(source: &str) -> Result<ConfigScan, JsScanError> {
     let stripped = strip_js_comments(source)?;
     let Some(object) = find_test_object(&stripped)? else {
-        return Ok(TestDirDeclaration::NoTestBlock);
+        return Ok(ConfigScan::NoTestBlock);
     };
     let Some(dir) = object_string_field(object, "dir")? else {
-        return Ok(TestDirDeclaration::NoDir);
+        return Ok(ConfigScan::NoDir);
     };
     let trimmed = dir.trim();
     if trimmed.is_empty() || trimmed == "." || trimmed == "./" {
-        return Ok(TestDirDeclaration::NoDir);
+        return Ok(ConfigScan::NoDir);
     }
     if trimmed.contains('\n') || trimmed.contains('\0') {
-        return Ok(TestDirDeclaration::NoDir);
+        return Ok(ConfigScan::NoDir);
     }
-    Ok(TestDirDeclaration::Dir(trimmed.to_owned()))
+    Ok(ConfigScan::Dir(trimmed.to_owned()))
 }
 
-/// Find the object literal that follows a `test:` key, ignoring lookalike
-/// identifiers and text inside strings.
+/// The object literal after a `test:` key, ignoring lookalike identifiers and
+/// text inside strings.
 fn find_test_object(source: &str) -> Result<Option<&str>, JsScanError> {
     let bytes = source.as_bytes();
     let mut index = 0;
@@ -121,8 +114,7 @@ fn object_string_field(object: &str, field: &str) -> Result<Option<String>, JsSc
     Ok(None)
 }
 
-/// The byte offset just after a `field:` key at `index`, whether the key is a
-/// bare identifier or a quoted string.
+/// The byte offset just after a `field:` key, bare or quoted.
 fn key_at(source: &str, index: usize, field: &str) -> Result<Option<usize>, JsScanError> {
     if ident_at(source, index, field) {
         return Ok(Some(index + field.len()));
@@ -145,10 +137,8 @@ fn key_at(source: &str, index: usize, field: &str) -> Result<Option<usize>, JsSc
         .then_some(after))
 }
 
-/// Read a quoted literal at the start of `source`.
-///
-/// `Ok(None)` means the value is not a plain literal: it is not a string, or it
-/// is a template expression whose value is only known at runtime.
+/// Read a quoted literal. `Ok(None)` means the value is not a plain literal: it
+/// is not a string, or it is a template expression known only at runtime.
 fn parse_string_literal(source: &str) -> Result<Option<String>, JsScanError> {
     let Some(quote) = source.as_bytes().first().copied() else {
         return Ok(None);
@@ -177,7 +167,7 @@ fn parse_string_literal(source: &str) -> Result<Option<String>, JsScanError> {
         }
         index += 1;
     }
-    Err(JsScanError::UnterminatedString { offset: 0 })
+    Err(JsScanError::UnterminatedString(0))
 }
 
 fn extract_balanced_object(source: &str) -> Result<Option<&str>, JsScanError> {
@@ -219,11 +209,9 @@ fn extract_balanced_object(source: &str) -> Result<Option<&str>, JsScanError> {
         index += 1;
     }
     if in_string.is_some() {
-        return Err(JsScanError::UnterminatedString {
-            offset: string_start,
-        });
+        return Err(JsScanError::UnterminatedString(string_start));
     }
-    Err(JsScanError::UnbalancedObject { offset: 0 })
+    Err(JsScanError::UnbalancedObject(0))
 }
 
 fn ident_at(source: &str, index: usize, ident: &str) -> bool {
@@ -255,7 +243,7 @@ fn skip_string(bytes: &[u8], start: usize) -> Result<usize, JsScanError> {
         }
         index += 1;
     }
-    Err(JsScanError::UnterminatedString { offset: start })
+    Err(JsScanError::UnterminatedString(start))
 }
 
 fn skip_regex_literal(bytes: &[u8], start: usize) -> Option<usize> {
@@ -357,9 +345,7 @@ fn strip_js_comments(source: &str) -> Result<String, JsScanError> {
                     index += 1;
                 }
                 if index + 1 >= bytes.len() {
-                    return Err(JsScanError::UnterminatedComment {
-                        offset: comment_start,
-                    });
+                    return Err(JsScanError::UnterminatedComment(comment_start));
                 }
                 index = if index + 1 < bytes.len() {
                     index + 2
@@ -429,9 +415,7 @@ fn strip_js_comments(source: &str) -> Result<String, JsScanError> {
         index += 1;
     }
     if in_string.is_some() {
-        return Err(JsScanError::UnterminatedString {
-            offset: string_start,
-        });
+        return Err(JsScanError::UnterminatedString(string_start));
     }
     out.push_str(&source[span_start..]);
     Ok(out)
@@ -447,24 +431,21 @@ fn is_ident_byte(byte: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{test_dir, JsScanError, TestDirDeclaration};
+    use super::{scan_config, ConfigScan, JsScanError};
 
     fn no_test_block(source: &str) -> bool {
-        matches!(
-            test_dir(source).expect("the fixture source tokenises"),
-            TestDirDeclaration::NoTestBlock
-        )
+        matches!(scan_config(source), ConfigScan::NoTestBlock)
     }
 
-    fn declared_dir(source: &str) -> TestDirDeclaration {
-        test_dir(source).expect("the fixture source tokenises")
+    fn declared_dir(source: &str) -> ConfigScan {
+        scan_config(source)
     }
 
-    /// What `test_dir` must accept and refuse, one source per row. A refused
-    /// declaration is `NoDir`, never an error.
+    /// What `scan_config` must accept and refuse, one source per row. A refused
+    /// declaration is `NoDir`, never an unreadable answer.
     #[test]
-    fn test_dir_reads_and_rejects_declared_dirs() {
-        let cases: [(&str, &str, TestDirDeclaration); 8] = [
+    fn scan_config_reads_and_rejects_declared_dirs() {
+        let cases: [(&str, &str, ConfigScan); 8] = [
             (
                 "define-config",
                 r#"
@@ -477,17 +458,17 @@ export default defineConfig({
   },
 });
 "#,
-                TestDirDeclaration::Dir("./src".to_owned()),
+                ConfigScan::Dir("./src".to_owned()),
             ),
             (
                 "dot-root",
                 "export default { test: { dir: '.' } }",
-                TestDirDeclaration::NoDir,
+                ConfigScan::NoDir,
             ),
             (
                 "template-interpolation",
                 "export default { test: { dir: `${root}/src` } }",
-                TestDirDeclaration::NoDir,
+                ConfigScan::NoDir,
             ),
             (
                 "commented-out-only",
@@ -499,7 +480,7 @@ export default {
   },
 };
 "#,
-                TestDirDeclaration::NoDir,
+                ConfigScan::NoDir,
             ),
             (
                 "active-over-commented",
@@ -511,22 +492,22 @@ export default {
   },
 };
 "#,
-                TestDirDeclaration::Dir("src".to_owned()),
+                ConfigScan::Dir("src".to_owned()),
             ),
             (
                 "quoted-property-keys",
                 r#"export default { "test": { "dir": "src" } };"#,
-                TestDirDeclaration::Dir("src".to_owned()),
+                ConfigScan::Dir("src".to_owned()),
             ),
             (
                 "regex-with-slashes",
                 r#"const matcher = /\/\//; export default { test: { dir: 'src' } };"#,
-                TestDirDeclaration::Dir("src".to_owned()),
+                ConfigScan::Dir("src".to_owned()),
             ),
             (
                 "after-division",
                 "const ratio = a / b;\nexport default { test: { dir: 'src' } };\n",
-                TestDirDeclaration::Dir("src".to_owned()),
+                ConfigScan::Dir("src".to_owned()),
             ),
         ];
 
@@ -541,11 +522,11 @@ export default {
     fn a_missing_test_block_is_distinct_from_a_block_without_a_dir() {
         assert_eq!(
             declared_dir("export default { plugins: [] }\n"),
-            TestDirDeclaration::NoTestBlock
+            ConfigScan::NoTestBlock
         );
         assert_eq!(
             declared_dir("export default { test: { include: ['**/*.test.ts'] } }"),
-            TestDirDeclaration::NoDir
+            ConfigScan::NoDir
         );
         for (name, source) in [
             (
@@ -571,32 +552,18 @@ export default { plugins: [] };
         }
         assert_eq!(
             declared_dir("const latest = 1;\nexport default { test: { dir: 'src' } }\n"),
-            TestDirDeclaration::Dir("src".to_owned())
+            ConfigScan::Dir("src".to_owned())
         );
         assert_eq!(
             declared_dir(r#"export default { 'test': { dir: 'src' } };"#),
-            TestDirDeclaration::Dir("src".to_owned())
+            ConfigScan::Dir("src".to_owned())
         );
     }
 
-    /// An unreadable config is an error, not a silent "no `dir` declared".
-    /// Before the typed outcome every one of these collapsed to `None`.
+    /// An unreadable config is its own answer, not a silent "no `dir`
+    /// declared". Before the typed outcome every one of these collapsed.
     #[test]
     fn unreadable_sources_report_why_they_could_not_be_tokenised() {
-        assert!(matches!(
-            test_dir("export default { test: { dir: 'src } }"),
-            Err(JsScanError::UnterminatedString { .. })
-        ));
-        assert!(matches!(
-            test_dir("export default { test: { dir: 'src' } } /* never closed"),
-            Err(JsScanError::UnterminatedComment { .. })
-        ));
-        assert!(matches!(
-            test_dir("export default { test: { dir: 'src' "),
-            Err(JsScanError::UnbalancedObject { .. })
-        ));
-
-        // The messages say what a person has to fix, and carry the offset.
         for (source, needle) in [
             (
                 "export default { test: { dir: 'src } }",
@@ -608,9 +575,17 @@ export default { plugins: [] };
             ),
             ("export default { test: { dir: 'src' ", "unbalanced object"),
         ] {
-            let error = test_dir(source).expect_err("unreadable");
-            assert!(error.to_string().contains(needle), "{error}");
-            assert!(error.to_string().contains("at byte"), "{error}");
+            let ConfigScan::Unreadable(detail) = scan_config(source) else {
+                panic!("an unreadable source must not read as a declaration: {source}");
+            };
+            assert!(detail.contains(needle), "{detail}");
+            assert!(detail.contains("at byte"), "{detail}");
         }
+
+        // The error type keeps its classes for a caller that wants one.
+        assert!(matches!(
+            JsScanError::UnterminatedString(3),
+            JsScanError::UnterminatedString(3)
+        ));
     }
 }

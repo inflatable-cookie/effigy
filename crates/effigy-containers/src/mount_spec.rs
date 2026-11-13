@@ -51,18 +51,11 @@ fn resolve_legacy_spec(
     raw: &str,
 ) -> Result<String, ContainerPolicyError> {
     let trimmed = raw.trim();
-    let mut parts = trimmed.splitn(3, ':');
-    let source = parts.next().unwrap_or_default().trim();
-    let target = parts.next().unwrap_or_default().trim();
-    let options = parts
-        .next()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    if source.is_empty() || target.is_empty() {
+    let Some((source, target, options)) = parse_mount_parts(trimmed) else {
         return Err(ContainerPolicyError::TaskInvocation(format!(
             "container `{container_name}` has invalid mount `{raw}`; expected `<source>:<target>[:options]`"
         )));
-    }
+    };
     let source_path = Path::new(source);
     if source_path.is_absolute() {
         return Err(ContainerPolicyError::TaskInvocation(format!(

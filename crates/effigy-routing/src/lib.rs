@@ -28,11 +28,9 @@ pub use membership::{
 pub use selection::{resolve_catalog_by_prefix, select_catalog_and_task};
 
 /// Typed adapter for `select_catalog_and_task`, shaped to fit
-/// `effigy_manifest::TaskResolverFn`. Managed task orchestration takes this as
-/// a callback rather than calling the routing core directly, so the routing
-/// failure class has to survive the callback boundary: only "no catalog
-/// declares this task" may become [`TaskResolveError::NotFound`], which is the
-/// one class a caller may treat as "not a catalog task".
+/// `effigy_manifest::TaskResolverFn`. Only "no catalog declares this task" may
+/// become [`TaskResolveError::NotFound`], the one class a caller may treat as
+/// "not a catalog task".
 pub fn resolve_task_selection<'a>(
     selector: &TaskSelector,
     catalogs: &'a [LoadedCatalog],
@@ -41,10 +39,8 @@ pub fn resolve_task_selection<'a>(
     select_catalog_and_task(selector, catalogs, cwd).map_err(classify_routing_error)
 }
 
-/// Classify a routing failure for the resolver callback. The detailed
-/// `RoutingError` stays the routing owner's answer; this projects it onto the
-/// three classes the manifest/managed boundary can branch on, and the sentence
-/// stays what a person reads.
+/// Project a routing failure onto the three classes the manifest/managed
+/// boundary branches on; the sentence stays what a person reads.
 pub fn classify_routing_error(error: RoutingError) -> TaskResolveError {
     let detail = error.to_string();
     match error {

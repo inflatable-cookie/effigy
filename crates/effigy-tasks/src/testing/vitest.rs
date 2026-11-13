@@ -5,7 +5,7 @@ use std::path::Path;
 use effigy_core::fs_probe::PathPresenceCache;
 use effigy_core::shell::shell_quote;
 
-use super::js_config::{test_dir, TestDirDeclaration};
+use super::js_config::{scan_config, ConfigScan};
 use super::{TestRunner, TestRunnerCandidate, TestRunnerPlan};
 
 const VITEST_CONFIG_FILES: &[&str] = &[
@@ -28,18 +28,10 @@ const VITE_CONFIG_FILES: &[&str] = &[
 
 const DEFAULT_COMMAND: &str = "vitest run";
 
-/// A config file that decides the suite's declared `test.dir`, with the reason
-/// the run cannot be narrowed when the file could not be read as JavaScript.
+/// A config file and what it says about the suite root.
 struct ConfigDeclaration {
     filename: String,
     scan: ConfigScan,
-}
-
-enum ConfigScan {
-    /// The file declares a `test` block; its `dir` (if any) is already read.
-    TestBlock(TestDirDeclaration),
-    /// The file could not be read or tokenised.
-    Unreadable { detail: String },
 }
 
 pub(super) fn detect_vitest(repo_root: &Path) -> (Option<TestRunnerPlan>, TestRunnerCandidate) {
@@ -72,16 +64,14 @@ pub(super) fn detect_vitest(repo_root: &Path) -> (Option<TestRunnerPlan>, TestRu
             };
             // A Vite config only counts when a readable `test` block makes it
             // Vitest intent; an unreadable one is not evidence either way.
-            let Ok(declaration) = test_dir(&raw) else {
-                continue;
-            };
-            if declaration == TestDirDeclaration::NoTestBlock {
+            let scan = scan_config(&raw);
+            if matches!(scan, ConfigScan::NoTestBlock | ConfigScan::Unreadable(_)) {
                 continue;
             }
             evidence.push(format!("found `{filename}` with a Vitest `test` block"));
             preferred_config = Some(ConfigDeclaration {
                 filename: (*filename).to_owned(),
-                scan: ConfigScan::TestBlock(declaration),
+                scan,
             });
             break;
         }
@@ -108,12 +98,12 @@ pub(super) fn detect_vitest(repo_root: &Path) -> (Option<TestRunnerPlan>, TestRu
     let mut command = DEFAULT_COMMAND.to_owned();
     if let Some(declaration) = &preferred_config {
         match &declaration.scan {
-            ConfigScan::TestBlock(TestDirDeclaration::Dir(dir)) => {
+            ConfigScan::Dir(dir) => {
                 evidence.push(format!("`{}` test.dir is `{dir}`", declaration.filename));
                 command = format!("{DEFAULT_COMMAND} --dir {}", shell_quote(dir));
             }
-            ConfigScan::TestBlock(TestDirDeclaration::NoDir | TestDirDeclaration::NoTestBlock) => {}
-            ConfigScan::Unreadable { detail } => {
+            ConfigScan::NoDir | ConfigScan::NoTestBlock => {}
+            ConfigScan::Unreadable(detail) => {
                 // The suite still runs, but the operator has to know the run is
                 // not narrowed: the declared dir could not be read.
                 evidence.push(format!(
@@ -154,27 +144,14 @@ fn read_config(
             ));
             return Some(ConfigDeclaration {
                 filename: filename.to_owned(),
-                scan: ConfigScan::Unreadable {
-                    detail: error.to_string(),
-                },
+                scan: ConfigScan::Unreadable(error.to_string()),
             });
         }
     };
     Some(ConfigDeclaration {
         filename: filename.to_owned(),
-        scan: read_test_block(&raw),
+        scan: scan_config(&raw),
     })
-}
-
-/// Read the `test` block, keeping "the source could not be tokenised" distinct
-/// from "the block declares no dir" so the caller can say which happened.
-fn read_test_block(raw: &str) -> ConfigScan {
-    match test_dir(raw) {
-        Ok(declaration) => ConfigScan::TestBlock(declaration),
-        Err(error) => ConfigScan::Unreadable {
-            detail: error.to_string(),
-        },
-    }
 }
 
 fn package_json_mentions_vitest(raw: &str) -> bool {
