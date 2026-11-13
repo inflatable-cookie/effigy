@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use effigy_core::shell::shell_quote;
 use effigy_manifest::{
     resolve_task_execution_binding, LoadedCatalog, ManifestManagedRun, ManifestTaskRunIn,
-    ResolvedTaskExecutionBinding, TaskResolverFn, TaskSelection,
+    ResolvedTaskExecutionBinding, TaskResolveError, TaskResolverFn, TaskSelection,
 };
 
 use super::parser::{is_builtin_task_selector, ParsedTaskRef};
@@ -91,9 +91,25 @@ fn resolve_reference_target<'a>(
 ) -> Result<ReferenceTarget<'a>, ManagedError> {
     match resolver(&parsed.selector, catalogs, task_scope_cwd) {
         Ok(selection) => Ok(ReferenceTarget::Catalog(selection)),
-        Err(_) if is_builtin_task_selector(&parsed.selector) => Ok(ReferenceTarget::Builtin),
-        Err(message) => Err(ManagedError::task_invocation(message)),
+        Err(error) if may_fall_back_to_builtin(&error, &parsed.selector) => {
+            Ok(ReferenceTarget::Builtin)
+        }
+        Err(error) => Err(ManagedError::task_invocation(error.to_string())),
     }
+}
+
+/// Whether a failed catalog resolution may fall back to the builtin of the
+/// same name.
+///
+/// Only "no catalog declares this task" qualifies. A catalog graph that could
+/// not be read, a manifest that did not parse, or an ambiguous selection must
+/// refuse instead: treating those as "not a catalog task" would run the builtin
+/// while the declared task existed but could not be seen.
+fn may_fall_back_to_builtin(
+    error: &TaskResolveError,
+    selector: &effigy_tasks::TaskSelector,
+) -> bool {
+    error.is_not_found() && is_builtin_task_selector(selector)
 }
 
 fn render_selected_task_invocation<F>(
@@ -246,4 +262,62 @@ fn render_selected_task_run<'request, 'a>(
             resolver,
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use effigy_manifest::{LoadedCatalog, TaskResolveError, TaskResolverFn, TaskSelection};
+
+    use super::{resolve_reference_target, ReferenceTarget};
+    use crate::references::parser::parse_task_ref;
+
+    fn resolver(
+        error: TaskResolveError,
+    ) -> impl for<'c> Fn(
+        &effigy_tasks::TaskSelector,
+        &'c [LoadedCatalog],
+        &Path,
+    ) -> Result<TaskSelection<'c>, TaskResolveError> {
+        move |_, _, _| Err(error.clone())
+    }
+
+    /// A reference to a builtin name falls back only when no catalog declares
+    /// it. Before the typed failure class this arm matched every resolver
+    /// failure, so an unreadable catalog graph silently ran the builtin.
+    #[test]
+    fn a_builtin_reference_falls_back_only_when_no_catalog_declares_it() {
+        let parsed = parse_task_ref("cache").expect("a builtin reference");
+        let catalogs: Vec<LoadedCatalog> = Vec::new();
+
+        let fallback: TaskResolverFn<'_> =
+            &resolver(TaskResolveError::not_found("no catalog declares `cache`"));
+        assert!(matches!(
+            resolve_reference_target(&parsed, &catalogs, Path::new("/repo"), fallback),
+            Ok(ReferenceTarget::Builtin)
+        ));
+
+        for error in [
+            TaskResolveError::unavailable("failed to read /repo/effigy.toml"),
+            TaskResolveError::ambiguous("`cache` is declared by `repo` and `services`"),
+        ] {
+            let failing: TaskResolverFn<'_> = &resolver(error);
+            let outcome = resolve_reference_target(&parsed, &catalogs, Path::new("/repo"), failing);
+            assert!(
+                outcome.is_err(),
+                "a catalog graph that could not answer must refuse, not run the builtin"
+            );
+        }
+    }
+
+    /// A task that is not a builtin name never falls back, whatever the class.
+    #[test]
+    fn a_task_reference_never_falls_back_to_a_builtin() {
+        let parsed = parse_task_ref("build").expect("a task reference");
+        let catalogs: Vec<LoadedCatalog> = Vec::new();
+        let missing: TaskResolverFn<'_> =
+            &resolver(TaskResolveError::not_found("no catalog declares `build`"));
+        assert!(resolve_reference_target(&parsed, &catalogs, Path::new("/repo"), missing).is_err());
+    }
 }

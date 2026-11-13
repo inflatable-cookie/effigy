@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 mod bundles;
+mod catalog_section;
 mod composition;
 pub mod config_sections;
 mod ingress;
@@ -45,6 +46,9 @@ pub use bundles::{
     BundleSyncReport, CatalogSourceRoots, SourcePreparation, SourceProgress, SourceProgressEvent,
     SourceSettlement,
 };
+pub use catalog_section::{
+    env_schema_declaring_catalog, nearest_catalog, nearest_declaring_catalog,
+};
 pub use composition::{
     load_docs_policy_graph_config, load_task_manifest_with_inspection, LoadedTaskManifest,
     ManifestCompositionEdge, ManifestCompositionOverride, ManifestCompositionValueSource,
@@ -80,7 +84,7 @@ pub use execution_binding::{
     ResolvedWorkspaceContainer,
 };
 pub use loaded_catalog::{
-    env_schema_declaring_catalog, DeferredCommand, LoadedCatalog, TaskResolverFn, TaskSelection,
+    DeferredCommand, LoadedCatalog, TaskResolveError, TaskResolverFn, TaskSelection,
 };
 pub use qa_groups::{
     path_pattern_matches, validate_qa_name_grammar, ManifestQaCoverageGap, ManifestQaGroup,

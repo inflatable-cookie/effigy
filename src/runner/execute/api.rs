@@ -190,24 +190,17 @@ fn scope_root_catalog_from_catalogs<'a>(
     invocation_cwd: &Path,
     catalogs: &'a [LoadedCatalog],
 ) -> Option<&'a LoadedCatalog> {
-    catalogs
-        .iter()
-        .filter(|catalog| invocation_cwd.starts_with(&catalog.catalog_root))
-        .max_by_key(|catalog| catalog.depth)
+    effigy_manifest::nearest_catalog(catalogs, invocation_cwd)
 }
 
 fn scope_containers_config_from_catalogs<'a>(
     invocation_cwd: &Path,
     catalogs: &'a [LoadedCatalog],
 ) -> Option<&'a ManifestContainersConfig> {
-    catalogs
-        .iter()
-        .filter(|catalog| {
-            invocation_cwd.starts_with(&catalog.catalog_root)
-                && catalog.manifest.containers.is_some()
-        })
-        .max_by_key(|catalog| catalog.depth)
-        .and_then(|catalog| catalog.manifest.containers.as_ref())
+    effigy_manifest::nearest_declaring_catalog(catalogs, invocation_cwd, |catalog| {
+        catalog.manifest.containers.as_ref()
+    })
+    .map(|(_, containers)| containers)
 }
 
 fn merge_containers_config(

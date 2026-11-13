@@ -37,12 +37,12 @@ impl PreparedTasksCommand {
             },
             &self.catalogs,
         )
-        .map_err(map_effigy_tasks_error)?;
+        .map_err(RunnerError::from)?;
 
         if args.output_json {
-            render_task_listing_json(&listing, args.pretty_json).map_err(map_effigy_tasks_error)
+            render_task_listing_json(&listing, args.pretty_json).map_err(RunnerError::from)
         } else {
-            render_task_listing_text(&listing).map_err(map_effigy_tasks_error)
+            render_task_listing_text(&listing).map_err(RunnerError::from)
         }
     }
 }
@@ -82,8 +82,4 @@ pub(super) fn prepare_tasks_command(args: &TasksArgs) -> Result<PreparedTasksCom
         precedence: task_selection_precedence_notes(),
         resolve_probe,
     })
-}
-
-fn map_effigy_tasks_error(error: effigy_tasks::EffigyTasksError) -> RunnerError {
-    RunnerError::task_invocation(error.to_string())
 }
