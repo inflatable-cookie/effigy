@@ -12,13 +12,13 @@ pub(super) fn run_verified_prep_capture(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     binding: &effigy_containers::exec::VerifiedComposeContainer,
-    tail: &[OsString],
+    args: &[OsString],
     label: &str,
 ) -> Result<std::process::Output, RunnerError> {
     let plan = effigy_runtime::container_manager::compose_invocation_plan_from_tail_args(
         repo_root,
         policy,
-        tail.to_vec(),
+        args.to_vec(),
         effigy_containers::ContainerAction::Exec,
         label,
     )
@@ -36,22 +36,12 @@ pub(super) fn refresh_changed_cargo_inputs(
 ) -> Result<(), RunnerError> {
     refresh_changed_cargo_inputs_using(repo_root, |changed| {
         for batch in changed.chunks(128) {
-            let mut tail = vec![
-                OsString::from("exec"),
-                OsString::from("-T"),
-                OsString::from("-w"),
-                working_dir.as_os_str().to_owned(),
-                OsString::from(policy.primary_service.as_str()),
-                OsString::from("touch"),
-                OsString::from("-c"),
-                OsString::from("--"),
-            ];
-            tail.extend(batch.iter().map(|path| path.as_os_str().to_owned()));
+            let args = touch_invocation_args(policy, working_dir, batch);
             run_verified_prep_capture(
                 repo_root,
                 policy,
                 binding,
-                &tail,
+                &args,
                 "refresh changed Cargo inputs",
             )
             .map_err(|error| {
@@ -62,6 +52,29 @@ pub(super) fn refresh_changed_cargo_inputs(
         }
         Ok(())
     })
+}
+
+/// The one container command a refresh batch runs: `compose exec -T -w
+/// <working dir> <service> touch -c -- <paths>`. The paths are the host's own
+/// path bytes, so the container refreshes exactly the files the host changed.
+fn touch_invocation_args(
+    policy: &EffectiveContainerPolicy,
+    working_dir: &Path,
+    batch: &[PathBuf],
+) -> Vec<OsString> {
+    let mut args = effigy_containers::compose::compose_args(policy, std::iter::empty::<&str>());
+    args.extend([
+        OsString::from("exec"),
+        OsString::from("-T"),
+        OsString::from("-w"),
+        working_dir.as_os_str().to_owned(),
+        OsString::from(policy.primary_service.as_str()),
+        OsString::from("touch"),
+        OsString::from("-c"),
+        OsString::from("--"),
+    ]);
+    args.extend(batch.iter().map(|path| path.as_os_str().to_owned()));
+    args
 }
 
 pub(super) fn refresh_changed_cargo_inputs_using(
@@ -222,6 +235,51 @@ mod tests {
             Ok(())
         })
         .unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_refresh_batch_runs_one_touch_command_with_the_host_paths_verbatim() {
+        let root = temp_test_dir("cargo-refresh-argv");
+        let compose = root.join("docker-compose.yml");
+        let policy = crate::runner::test_support::effective_container_policy(
+            "stack",
+            "demo-stack",
+            "workspace",
+            compose.clone(),
+        );
+        let args = super::touch_invocation_args(
+            &policy,
+            std::path::Path::new("/workspace"),
+            &[
+                PathBuf::from("lib.rs"),
+                PathBuf::from("crates/a/Cargo.toml"),
+            ],
+        );
+        let rendered = args
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rendered,
+            vec![
+                "compose",
+                "-f",
+                compose.to_str().expect("fixture path"),
+                "-p",
+                "demo-stack",
+                "exec",
+                "-T",
+                "-w",
+                "/workspace",
+                "workspace",
+                "touch",
+                "-c",
+                "--",
+                "lib.rs",
+                "crates/a/Cargo.toml",
+            ]
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

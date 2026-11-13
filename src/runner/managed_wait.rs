@@ -329,17 +329,22 @@ impl WaitPublisher {
         // The intent already carries the complete payload, so readers decode
         // the observation even if the receipt write fails. A failed receipt is
         // still a fact about this journal: settle it as unknown rather than
-        // discard it, and report it to the run's owner.
+        // leave it reading as applied, and report both the receipt failure and
+        // any failure to settle, so neither is discarded.
         if let Err(error) = run.applied(&ticket, serde_json::Value::Null) {
-            let _ = run.unknown(
+            let mut failure =
+                format!("the managed wait observation receipt could not be written: {error}");
+            if let Err(settled) = run.unknown(
                 &ticket,
                 effigy_kernel::observe::UnknownReason::Inconsistent(format!(
                     "the observation receipt could not be written: {error}"
                 )),
-            );
-            self.record_failure(format!(
-                "the managed wait observation receipt could not be written: {error}"
-            ));
+            ) {
+                failure.push_str(&format!(
+                    "; it could not be recorded as unknown either: {settled}"
+                ));
+            }
+            self.record_failure(failure);
         }
     }
 
