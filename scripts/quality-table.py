@@ -512,15 +512,19 @@ def code_drift(rated_rows: list[dict[str, str]],
             changed.append(row["id"])
     gone_ids = {row_id for row_id, _ in gone}
     new_files = sorted(product_files - covered)
-    # A "split: re-rate" group is a gone row whose path still owns new files:
-    # single-file rows watch their parent directory, directory rows watch
-    # their own tree, Rust-id rows watch the common tree of their files.
+    # A "split: re-rate" group is a gone row whose path still owns new files.
+    # A gone single file `a/b/c.rs` watches only its stem directory `a/b/c/`:
+    # a split lands its products there (`lifecycle.rs` -> `lifecycle/`), while
+    # a new sibling elsewhere in the parent directory is just a new file.
+    # Multi-file rows watch their longest common tree.
     splits: list[tuple[str, list[str]]] = []
     for row_id, _ in gone:
         row = next(item for item in rated_rows if item["id"] == row_id)
         paths = sorted(row["files"])  # type: ignore[union-attr]
         if len(paths) == 1:
-            prefix = paths[0].rsplit("/", 1)[0] + "/" if "/" in paths[0] else ""
+            only = paths[0]
+            stem = only[:-len(".rs")] if only.endswith(".rs") else only
+            prefix = stem + "/"
         else:
             import os.path
             prefix = os.path.commonpath(paths) + "/"

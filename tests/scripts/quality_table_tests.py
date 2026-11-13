@@ -192,10 +192,14 @@ class QualityTableTests(unittest.TestCase):
              "body_sha": quality_table.code_body(["pkg/kept.rs"], {"pkg/kept.rs": b"k"})},
         ]
         blobs = {"pkg/old.rs": None, "pkg/kept.rs": b"k"}
-        product = {"pkg/kept.rs", "pkg/old/part.rs", "pkg/old/extra.rs", "elsewhere/fresh.rs"}
+        product = {"pkg/kept.rs", "pkg/old/part.rs", "pkg/old/extra.rs",
+                   "pkg/sibling.rs", "elsewhere/fresh.rs"}
         drift = quality_table.code_drift(rows, blobs, product)
         self.assertEqual(drift["gone"], [("split-row", ["pkg/old.rs"])])
-        self.assertEqual(drift["new"], ["elsewhere/fresh.rs", "pkg/old/extra.rs", "pkg/old/part.rs"])
+        self.assertEqual(drift["new"], ["elsewhere/fresh.rs", "pkg/old/extra.rs",
+                                          "pkg/old/part.rs", "pkg/sibling.rs"])
+        # Only files under the gone file's stem directory group as its split;
+        # a new sibling in the same parent directory stays a plain new file.
         self.assertEqual(drift["splits"], [("split-row", ["pkg/old/extra.rs", "pkg/old/part.rs"])])
 
     def test_code_mode_runs_against_a_small_fixture(self):
