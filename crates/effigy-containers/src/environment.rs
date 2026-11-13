@@ -25,8 +25,8 @@ pub use workspace_activation::{
 
 pub use backend::{
     effective as effective_backend, parse_inspect, project_resources, select as select_backend,
-    BackendError, BackendKind, BackendReason, BackendSelection, ColimaBackend, DockerBackend,
-    DockerTarget, EnvironmentBackend, ProjectResources, Workload,
+    BackendError, BackendKind, BackendReason, BackendSelection, DockerTarget, EnvironmentBackend,
+    ProjectResources, Workload,
 };
 pub use creation::{
     created_by, AttachedPrimaryImage, AttributedCreation, CreatedContainer, CreationOutcome,

@@ -1570,24 +1570,18 @@ impl<'r> EnvRun<'r> {
         };
         self.phase(APPLY_PHASE, None);
         if let Err(error) = outcome {
-            self.progress.detail_event(match &error {
-                BackendError::NotStarted(message) => {
-                    format!("the backend was never contacted: {message}")
-                }
-                BackendError::Uncertain(message) => {
-                    format!("the backend's answer is unproven: {message}")
-                }
+            let message = error.to_string();
+            self.progress.detail_event(if error.never_started() {
+                format!("the backend was never contacted: {message}")
+            } else {
+                format!("the backend's answer is unproven: {message}")
             });
-            let recorded = match &error {
-                BackendError::NotStarted(message) => self.run.failed(
-                    &ticket,
-                    AbsenceProof::NoFile {
-                        name: message.clone(),
-                    },
-                ),
-                BackendError::Uncertain(message) => self
-                    .run
-                    .unknown(&ticket, UnknownReason::Inconsistent(message.clone())),
+            let recorded = if error.never_started() {
+                self.run
+                    .failed(&ticket, AbsenceProof::NoFile { name: message })
+            } else {
+                self.run
+                    .unknown(&ticket, UnknownReason::Inconsistent(message))
             };
             if let Err(error) = recorded {
                 self.failed = true;
@@ -1787,27 +1781,25 @@ impl<'r> EnvRun<'r> {
         self.progress.detail_event(match &outcome {
             Ok(()) if kind == STOP_EFFECT => "the backend stopped".to_owned(),
             Ok(()) => "the backend converged".to_owned(),
-            Err(BackendError::NotStarted(message)) => {
-                format!("the backend was never contacted: {message}")
+            Err(error) if error.never_started() => {
+                format!("the backend was never contacted: {error}")
             }
-            Err(BackendError::Uncertain(message)) => {
-                format!("the backend's answer is unproven: {message}")
-            }
+            Err(error) => format!("the backend's answer is unproven: {error}"),
         });
         let recorded = match &outcome {
             Ok(()) => self
                 .run
                 .applied(&ticket, Value::Bool(true))
                 .and_then(|()| self.run.completed(&ticket, RequiredObligation::Applied)),
-            Err(BackendError::NotStarted(message)) => self.run.failed(
+            Err(error) if error.never_started() => self.run.failed(
                 &ticket,
                 AbsenceProof::NoFile {
-                    name: message.clone(),
+                    name: error.to_string(),
                 },
             ),
-            Err(BackendError::Uncertain(message)) => self
+            Err(error) => self
                 .run
-                .unknown(&ticket, UnknownReason::Inconsistent(message.clone())),
+                .unknown(&ticket, UnknownReason::Inconsistent(error.to_string())),
         };
         if let Err(error) = recorded {
             self.failed = true;

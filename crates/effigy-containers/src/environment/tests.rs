@@ -264,7 +264,7 @@ impl Fake {
         assert_eq!(project, PROJECT, "fake refuses an unmodelled project");
         let mut state = self.state.borrow_mut();
         let outcome = state.outcomes.pop_front().unwrap_or(Ok(()));
-        if !matches!(outcome, Err(BackendError::NotStarted(_))) {
+        if !matches!(&outcome, Err(error) if error.never_started()) {
             state.calls.push(action.to_owned());
             if let Some(log) = &state.log {
                 use std::io::Write;
@@ -297,9 +297,6 @@ impl Fake {
 impl EnvironmentBackend for Fake {
     fn selection(&self) -> &BackendSelection {
         &self.selection
-    }
-    fn inventory(&mut self, _: &Path, project: &str) -> Observed<Vec<Workload>> {
-        panic!("strict fake: unmodelled inventory of `{project}`")
     }
 }
 
@@ -512,7 +509,10 @@ fn backend_outcomes_are_journalled_without_manufacturing_success() {
     for (outcome, applied_calls) in [
         // The engine may have acted: the call is recorded, and the retry
         // converges the backend again.
-        (BackendError::Uncertain("timed out".into()), 2),
+        (BackendError::Uncertain("unproven".into()), 2),
+        (BackendError::TimedOut("timed out".into()), 2),
+        (BackendError::Failed("engine failed".into()), 2),
+        (BackendError::Refused("preflight refused".into()), 1),
         // Verified non-occurrence: only the retry's call reached the backend.
         (BackendError::NotStarted("colima: not found".into()), 1),
     ] {
