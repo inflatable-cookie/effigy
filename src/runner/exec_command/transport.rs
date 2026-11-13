@@ -1152,7 +1152,7 @@ pub(in crate::runner) fn probe_container_capabilities(
         let output =
             run_compose_exec(repo_root, policy, &args, true, "container capability probe")?;
         results.insert(
-            check.description,
+            check.kind,
             ProbeResult {
                 success: output.status.success(),
                 output: String::from_utf8_lossy(&output.stdout).trim().to_owned(),

@@ -129,23 +129,70 @@ impl fmt::Display for ArtifactStagingError {
 
 impl std::error::Error for ArtifactStagingError {}
 
+/// What a failed `oras` operation means, decoded once from its own output so a
+/// caller never re-reads the message to classify it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OciFailureClass {
+    /// `oras` itself could not be run.
+    ClientMissing,
+    /// The registry rejected the credentials.
+    NotAuthenticated,
+    /// The credentials lack the scope this operation needs.
+    NotPermitted,
+    /// The registry could not be reached: DNS, transport, TLS or a timeout.
+    Unreachable,
+    /// The reference is not a shape the registry accepts.
+    InvalidReference,
+    /// Nothing in the output named a class this crate knows.
+    Unclassified,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OciArtifactError {
-    InspectFailed { reference: String, message: String },
-    PullFailed { reference: String, message: String },
-    PushFailed { reference: String, message: String },
+    InspectFailed {
+        reference: String,
+        message: String,
+        class: OciFailureClass,
+    },
+    PullFailed {
+        reference: String,
+        message: String,
+        class: OciFailureClass,
+    },
+    PushFailed {
+        reference: String,
+        message: String,
+        class: OciFailureClass,
+    },
+}
+
+impl OciArtifactError {
+    /// What went wrong, for a caller deciding how to report it.
+    pub fn class(&self) -> OciFailureClass {
+        match self {
+            Self::InspectFailed { class, .. }
+            | Self::PullFailed { class, .. }
+            | Self::PushFailed { class, .. } => *class,
+        }
+    }
 }
 
 impl fmt::Display for OciArtifactError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InspectFailed { reference, message } => {
+            Self::InspectFailed {
+                reference, message, ..
+            } => {
                 write!(f, "failed to inspect OCI artifact `{reference}`: {message}")
             }
-            Self::PullFailed { reference, message } => {
+            Self::PullFailed {
+                reference, message, ..
+            } => {
                 write!(f, "failed to pull OCI artifact `{reference}`: {message}")
             }
-            Self::PushFailed { reference, message } => {
+            Self::PushFailed {
+                reference, message, ..
+            } => {
                 write!(f, "failed to push OCI artifact `{reference}`: {message}")
             }
         }

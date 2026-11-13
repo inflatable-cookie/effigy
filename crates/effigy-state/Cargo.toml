@@ -7,6 +7,7 @@ publish = false
 description = "State stack manifest and lineage planning substrate for Effigy"
 
 [dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 effigy-manifest = { path = "../effigy-manifest" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

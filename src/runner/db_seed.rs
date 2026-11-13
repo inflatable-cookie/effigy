@@ -1271,7 +1271,7 @@ mod tests {
     use effigy_state::artifact::{
         OciArtifactAdapter, OciArtifactDescriptor, OciArtifactError, OciArtifactInspectRequest,
         OciArtifactPullReport, OciArtifactPullRequest, OciArtifactPushReport,
-        OciArtifactPushRequest,
+        OciArtifactPushRequest, OciFailureClass,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -1905,6 +1905,7 @@ database = "app"
                 return Err(OciArtifactError::PullFailed {
                     reference: request.reference.redacted(),
                     message: "second pull refused".to_owned(),
+                    class: OciFailureClass::Unclassified,
                 });
             }
             let pulled_root = request.destination_root.join("fake-pull");

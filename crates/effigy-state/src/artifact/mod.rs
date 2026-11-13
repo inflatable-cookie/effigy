@@ -11,7 +11,7 @@ mod reports;
 mod staging;
 mod util;
 
-pub use errors::{ArtifactRefError, ArtifactStagingError, OciArtifactError};
+pub use errors::{ArtifactRefError, ArtifactStagingError, OciArtifactError, OciFailureClass};
 pub use metadata::{ArtifactMetadata, ARTIFACT_METADATA_SCHEMA};
 pub use oci::{
     parse_oras_descriptor, parse_oras_pull_files, sanitize_process_output, OciArtifactAdapter,

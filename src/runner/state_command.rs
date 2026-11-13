@@ -853,7 +853,7 @@ fn load_composed_state_value(repo_root: &Path) -> Result<toml::Value, RunnerErro
 }
 
 fn default_capture_set_key() -> String {
-    chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string()
+    effigy_state::utc_compact_timestamp(std::time::SystemTime::now())
 }
 
 fn build_state_stack_capture_report(

@@ -4,8 +4,8 @@ use effigy_cli::StateSubcommand;
 use effigy_state::artifact::{
     default_local_artifact_root, stage_local_artifact, stage_oci_artifact, ArtifactKind,
     ArtifactSourceRef, LocalArtifactRef, LocalArtifactStagingRequest, OciArtifactAdapter,
-    OciArtifactDescriptor, OciArtifactInspectRequest, OciArtifactPullRequest,
-    OciArtifactPushRequest, OciArtifactStagingRequest,
+    OciArtifactDescriptor, OciArtifactError, OciArtifactInspectRequest, OciArtifactPullRequest,
+    OciArtifactPushRequest, OciArtifactStagingRequest, OciFailureClass,
 };
 pub(super) use effigy_state::artifact::{infer_kind_from_primary_files, OrasCliArtifactAdapter};
 use serde_json::{json, Value};
@@ -216,7 +216,7 @@ pub(in crate::runner) fn capture_artifact_report_with_adapter(
                     metadata_path: staged.metadata_path.clone(),
                     primary_files: staged.metadata.primary_files.clone(),
                 })
-                .map_err(|error| RunnerError::task_invocation(error.to_string()))?,
+                .map_err(oci_runner_error)?,
         )
     } else {
         None
@@ -271,7 +271,7 @@ pub(in crate::runner) fn stage_artifact_report(
                     reference: oci.clone(),
                     destination_root: pull_root,
                 })
-                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+                .map_err(oci_runner_error)?;
             let kind = infer_kind_from_primary_files(&pull.primary_files);
             let mut staging = OciArtifactStagingRequest::new(
                 oci,
@@ -289,6 +289,23 @@ pub(in crate::runner) fn stage_artifact_report(
         }
     };
     Ok(report)
+}
+
+/// A failed `oras` operation keeps the class it decoded: a refusal is the
+/// request itself, and everything else is an environment that did not answer.
+/// Before this, every OCI failure reached the caller as a refused invocation.
+fn oci_runner_error(error: OciArtifactError) -> RunnerError {
+    match error.class() {
+        OciFailureClass::ClientMissing => {
+            RunnerError::environment_unavailable("OCI client (`oras`)", error.to_string())
+        }
+        OciFailureClass::NotAuthenticated
+        | OciFailureClass::NotPermitted
+        | OciFailureClass::InvalidReference => RunnerError::task_invocation(error.to_string()),
+        OciFailureClass::Unreachable | OciFailureClass::Unclassified => {
+            RunnerError::environment_unavailable("OCI registry", error.to_string())
+        }
+    }
 }
 
 fn parse_artifact_source(source: &str) -> Result<ArtifactSourceRef, RunnerError> {
@@ -336,7 +353,7 @@ fn inspect_report(
                     .inspect(&OciArtifactInspectRequest {
                         reference: oci.clone(),
                     })
-                    .map_err(|error| RunnerError::task_invocation(error.to_string()))?,
+                    .map_err(oci_runner_error)?,
                 None => OciArtifactDescriptor::new(oci),
             };
             let handoff = farmyard_handoff.then(|| {
@@ -549,8 +566,45 @@ mod tests {
     use super::*;
     use effigy_state::artifact::{
         LocalArtifactRef, OciArtifactError, OciArtifactPullReport, OciArtifactPushReport,
+        OciFailureClass,
     };
     use std::fs;
+
+    /// A registry that could not be reached is an environment that did not
+    /// answer, not a refused request: the class decides the category.
+    #[test]
+    fn unreachable_registry_is_unavailable_not_a_refusal() {
+        let error = oci_runner_error(OciArtifactError::PullFailed {
+            reference: "ghcr.io/acme/private:latest".to_owned(),
+            message: "dial tcp: i/o timeout; check the registry hostname".to_owned(),
+            class: OciFailureClass::Unreachable,
+        });
+        assert!(
+            matches!(error, RunnerError::EnvironmentUnavailable { .. }),
+            "{error:?}"
+        );
+        assert_eq!(
+            error.category(),
+            effigy_kernel::human::Category::Unavailable
+        );
+        assert!(
+            !error.to_string().contains("container status"),
+            "no command name is invented: {error}"
+        );
+    }
+
+    /// A rejected credential is the request: the caller fixes it by logging in,
+    /// so it stays a refusal.
+    #[test]
+    fn rejected_credentials_stay_a_refusal() {
+        let error = oci_runner_error(OciArtifactError::PushFailed {
+            reference: "ghcr.io/acme/private:latest".to_owned(),
+            message: "unauthorized".to_owned(),
+            class: OciFailureClass::NotAuthenticated,
+        });
+        assert_eq!(error.category(), effigy_kernel::human::Category::Refused);
+        assert!(error.to_string().contains("unauthorized"));
+    }
 
     #[test]
     fn inspect_local_file_reports_farmyard_handoff_shape() {
@@ -873,6 +927,7 @@ mod tests {
                 reference: request.reference.redacted(),
                 message: "unauthorized; authenticate first with `oras login ghcr.io` and retry"
                     .to_owned(),
+                class: OciFailureClass::NotAuthenticated,
             })
         }
     }

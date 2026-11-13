@@ -9,6 +9,7 @@ use effigy_containers::{
     },
     load_all_container_policies, EffectiveContainerPolicy,
 };
+use effigy_core::repo;
 use effigy_core::repo_markers::has_task_manifest;
 
 use crate::EffigyRuntimeError;
@@ -94,11 +95,12 @@ pub(crate) fn filter_running_environments_for_scope(
     scope_root: &Path,
     name: Option<&str>,
 ) -> Vec<DiscoveredRunningEnvironment> {
-    let canonical_scope = canonicalize_or_original(scope_root);
+    let canonical_scope = repo::canonicalize_or_original(scope_root).into_path();
     environments
         .into_iter()
         .filter(|environment| {
-            let repo_root = canonicalize_or_original(Path::new(&environment.repo_root));
+            let repo_root =
+                repo::canonicalize_or_original(Path::new(&environment.repo_root)).into_path();
             repo_root.starts_with(&canonical_scope)
                 && name.is_none_or(|requested| environment.policy.name == requested)
         })
@@ -107,7 +109,7 @@ pub(crate) fn filter_running_environments_for_scope(
 
 pub(crate) fn discover_effigy_repos_under(scope_root: &Path) -> Vec<PathBuf> {
     let mut discovered = BTreeSet::new();
-    let mut stack = vec![canonicalize_or_original(scope_root)];
+    let mut stack = vec![repo::canonicalize_or_original(scope_root).into_path()];
 
     while let Some(dir) = stack.pop() {
         if has_task_manifest(&dir) {
@@ -195,10 +197,6 @@ fn skip_effigy_repo_discovery_dir(name: &std::ffi::OsStr) -> bool {
             | Some("target")
             | Some("vendor")
     )
-}
-
-fn canonicalize_or_original(path: &Path) -> PathBuf {
-    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 #[cfg(test)]

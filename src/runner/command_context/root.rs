@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use effigy_cli::Command;
+use effigy_core::repo;
 use effigy_core::resolver::{resolve_target_root, ResolvedTarget};
 
 use crate::runner::error::RunnerError;
@@ -13,7 +14,9 @@ pub(in crate::runner) fn resolve_repo_root(
         let cwd_matches = cwd == context.invocation_cwd();
         let override_matches = match (repo_override.as_deref(), context.repo_override()) {
             (None, None) => true,
-            (Some(requested), Some(active)) => canonicalize_or_original(requested) == active,
+            (Some(requested), Some(active)) => {
+                repo::canonicalize_or_original(requested).path() == active
+            }
             _ => false,
         };
         if cwd_matches && override_matches {
@@ -34,8 +37,4 @@ pub(in crate::runner) fn resolve_command_root(cmd: &Command) -> PathBuf {
         Ok(resolved) => resolved.resolved_root,
         Err(_) => cwd,
     }
-}
-
-fn canonicalize_or_original(path: &std::path::Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }

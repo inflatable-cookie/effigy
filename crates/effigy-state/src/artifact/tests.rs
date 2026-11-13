@@ -1,8 +1,10 @@
+use super::oci::{classify_oras_output, next_action, OciOperation};
 use super::{
     default_local_artifact_root, parse_oras_descriptor, parse_oras_pull_files,
     sanitize_process_output, stage_local_artifact, stage_oci_artifact, ArtifactKind,
     ArtifactMetadata, ArtifactRefError, ArtifactSourceRef, LocalArtifactStagingRequest,
-    OciArtifactDescriptor, OciArtifactStagingRequest, ARTIFACT_METADATA_SCHEMA,
+    OciArtifactDescriptor, OciArtifactError, OciArtifactRef, OciArtifactStagingRequest,
+    OciFailureClass, ARTIFACT_METADATA_SCHEMA,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -469,4 +471,81 @@ fn parse_oras_pull_files_keeps_paths_relative_to_the_pull_root() {
     );
     assert!(parse_oras_pull_files(pulled_root, b"not json").is_none());
     assert!(parse_oras_pull_files(pulled_root, br#"{"files":[{"path":1}]}"#).is_none());
+}
+
+/// Every class a caller can act on is decoded from `oras`'s own words, in one
+/// precedence order: an expired token is authentication, not a denied request.
+#[test]
+fn oras_output_classifies_once_into_typed_classes() {
+    for (detail, expected) in [
+        (
+            "Error: ghcr.io/acme/private:latest: unauthorized: authentication required",
+            OciFailureClass::NotAuthenticated,
+        ),
+        ("not logged in", OciFailureClass::NotAuthenticated),
+        (
+            "requested access to the resource is denied",
+            OciFailureClass::NotPermitted,
+        ),
+        ("insufficient_scope", OciFailureClass::NotPermitted),
+        (
+            "dial tcp: lookup ghcr.io: no such host",
+            OciFailureClass::Unreachable,
+        ),
+        (
+            "Get \"https://ghcr.io/v2/\": net/http: TLS handshake timeout",
+            OciFailureClass::Unreachable,
+        ),
+        (
+            "invalid reference: missing repository",
+            OciFailureClass::InvalidReference,
+        ),
+        (
+            "the registry said something else",
+            OciFailureClass::Unclassified,
+        ),
+    ] {
+        assert_eq!(classify_oras_output(detail), expected, "{detail}");
+    }
+}
+
+/// The class decides the next action, and a refusal never claims the registry
+/// was unreachable.
+#[test]
+fn each_class_asks_for_its_own_next_action() {
+    let reference = OciArtifactRef::parse("ghcr.io/acme/private:latest").expect("ref");
+    let login = next_action(
+        OciFailureClass::NotAuthenticated,
+        OciOperation::Pull,
+        &reference,
+    );
+    assert!(login.contains("oras login ghcr.io"), "{login}");
+    let push = next_action(
+        OciFailureClass::NotPermitted,
+        OciOperation::Push,
+        &reference,
+    );
+    assert!(push.contains("push access"), "{push}");
+    let unreachable = next_action(OciFailureClass::Unreachable, OciOperation::Pull, &reference);
+    assert!(unreachable.contains("reachability"), "{unreachable}");
+    let missing = next_action(
+        OciFailureClass::ClientMissing,
+        OciOperation::Pull,
+        &reference,
+    );
+    assert!(missing.contains("install ORAS"), "{missing}");
+}
+
+/// A failure carries its class, so a caller decides without reading the detail.
+#[test]
+fn oci_failure_keeps_the_class_a_caller_decides_on() {
+    let error = OciArtifactError::PullFailed {
+        reference: "ghcr.io/acme/private:latest".to_owned(),
+        message: "dial tcp: i/o timeout; check the registry hostname".to_owned(),
+        class: OciFailureClass::Unreachable,
+    };
+    assert_eq!(error.class(), OciFailureClass::Unreachable);
+    assert!(error
+        .to_string()
+        .starts_with("failed to pull OCI artifact `ghcr.io/acme/private:latest`: dial tcp"));
 }

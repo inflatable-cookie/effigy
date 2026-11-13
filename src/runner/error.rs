@@ -142,6 +142,13 @@ pub enum RunnerError {
         phase: &'static str,
         detail: String,
     },
+    /// A capability the command needs is missing from this environment, so
+    /// retrying unchanged asks the same question again (effigy#972). Nothing
+    /// ran, so this never invents a command name or an exit code.
+    EnvironmentUnavailable {
+        capability: &'static str,
+        detail: String,
+    },
     TaskCatalogsMissing {
         root: PathBuf,
     },
@@ -404,6 +411,7 @@ impl RunnerError {
             | RunnerError::TaskManifestRead { .. }
             | RunnerError::TaskCommandLaunch { .. }
             | RunnerError::TaskCommandFailure { .. }
+            | RunnerError::EnvironmentUnavailable { .. }
             | RunnerError::BoundedExecFailure { .. }
             | RunnerError::DepsOperationNonZero { .. }
             | RunnerError::ManagedProcess(_)
@@ -494,6 +502,18 @@ impl RunnerError {
     ) -> Self {
         Self::ContainerRuntimePolicy {
             phase,
+            detail: detail.into(),
+        }
+    }
+
+    /// A capability this environment does not have: the detail says which and
+    /// what to do about it.
+    pub(in crate::runner) fn environment_unavailable(
+        capability: &'static str,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self::EnvironmentUnavailable {
+            capability,
             detail: detail.into(),
         }
     }
@@ -877,12 +897,9 @@ impl From<EffigyRuntimeError> for RunnerError {
             EffigyRuntimeError::Cwd(error) => Self::Cwd(error),
             EffigyRuntimeError::Ui(message) => Self::Ui(message),
             EffigyRuntimeError::TaskInvocation(message) => Self::TaskInvocation(message),
-            EffigyRuntimeError::Unavailable(message) => Self::TaskCommandFailure {
-                command: "container status".to_owned(),
-                code: None,
-                stdout: String::new(),
-                stderr: message,
-            },
+            EffigyRuntimeError::Unavailable { capability, detail } => {
+                Self::environment_unavailable(capability.label(), detail)
+            }
             EffigyRuntimeError::TaskCommandLaunch { command, error } => {
                 Self::TaskCommandLaunch { command, error }
             }

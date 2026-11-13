@@ -907,3 +907,28 @@ fn command_payload_without_an_action_keeps_a_valid_null() {
     assert_eq!(json["what_failed"], "the lock is held");
     assert!(json["next_action"].is_null());
 }
+
+/// A missing capability keeps its own class and sentence. It used to arrive as
+/// a command failure against a command nobody ran, which told a person to read
+/// the output of `container status` instead of fixing the engine.
+#[test]
+fn a_missing_capability_is_reported_as_the_environment_it_lacks() {
+    let error = RunnerError::from(effigy_runtime::EffigyRuntimeError::unavailable(
+        effigy_runtime::Capability::ContainerRuntime,
+        "engine not found",
+    ));
+    assert!(
+        matches!(error, RunnerError::EnvironmentUnavailable { .. }),
+        "{error:?}"
+    );
+    assert_eq!(
+        error.category(),
+        effigy_kernel::human::Category::Unavailable
+    );
+    let rendered = error.to_string();
+    assert_eq!(
+        rendered, "the container runtime is unavailable: engine not found",
+        "the sentence names the environment, not a fabricated command"
+    );
+    assert!(!rendered.contains("container status"));
+}

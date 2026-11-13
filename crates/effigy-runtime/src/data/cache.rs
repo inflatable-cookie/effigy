@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Output;
 
 use effigy_catalog::volumes::{
@@ -7,6 +7,7 @@ use effigy_catalog::volumes::{
     volume_cache_kind_batch_command, volume_usage_batch_command, DockerCommand,
 };
 use effigy_containers::ContainerCacheGlobalEntry;
+use effigy_core::repo;
 
 use super::planning::{
     cache_kind_from_volume_name, collect_global_cache_entries_from_names, effigy_owned_project,
@@ -172,15 +173,12 @@ pub(super) fn project_is_running(
     repo_root: &Path,
     project_name: &str,
 ) -> Result<bool, EffigyRuntimeError> {
-    let target_root = canonicalize_or_original(repo_root);
+    let target_root = repo::canonicalize_or_original(repo_root);
     Ok(discover_running_environments()?
         .into_iter()
         .any(|environment| {
-            canonicalize_or_original(Path::new(&environment.repo_root)) == target_root
+            repo::canonicalize_or_original(Path::new(&environment.repo_root)).path()
+                == target_root.path()
                 && environment.policy.project_name == project_name
         }))
-}
-
-fn canonicalize_or_original(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }

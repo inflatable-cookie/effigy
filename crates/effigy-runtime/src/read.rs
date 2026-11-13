@@ -29,7 +29,7 @@ use crate::container_manager::{
 use crate::signals::{
     run_compose_plan_capture, run_runtime_plan_capture, spawn_runtime_plan_inherit,
 };
-use crate::EffigyRuntimeError;
+use crate::{Capability, EffigyRuntimeError};
 pub(crate) use discovery::{
     discover_effigy_repos_under, discover_running_environments,
     filter_running_environments_for_scope, DiscoveredRunningEnvironment,
@@ -54,15 +54,19 @@ pub fn run_container_status(
         Ok(RuntimeObservation::Running) => true,
         Ok(RuntimeObservation::Stopped) => false,
         Ok(RuntimeObservation::Unavailable { detail }) => {
-            return Err(EffigyRuntimeError::unavailable(format!(
-                "container runtime observation is unavailable: {detail}"
-            )));
+            return Err(EffigyRuntimeError::unavailable(
+                Capability::ContainerRuntime,
+                detail,
+            ));
         }
         Err(ContainerExecError::Launch { command, error }) => {
             return Err(EffigyRuntimeError::TaskCommandLaunch { command, error });
         }
         Err(error) => {
-            return Err(EffigyRuntimeError::unavailable(error.to_string()));
+            return Err(EffigyRuntimeError::unavailable(
+                Capability::ContainerRuntime,
+                error.to_string(),
+            ));
         }
     };
     let _manager_report = lifecycle_operation_report(
