@@ -411,6 +411,23 @@ fn every_builtin_top_level_command_is_classified() {
     }
 }
 
+/// A retired word keeps its classification but is never offered as a live
+/// command; the completion menu and candidate discovery read this set.
+#[test]
+fn only_retired_words_leave_the_live_command_inventory() {
+    let live = live_builtin_command_names().collect::<Vec<_>>();
+    for entry in BUILTIN_COMMAND_NAMES {
+        assert_eq!(
+            live.contains(&entry.name),
+            !entry.retired,
+            "`{}` live/retired classification must match its `retired` flag",
+            entry.name
+        );
+    }
+    assert!(live.contains(&"test") && live.contains(&"skill") && live.contains(&"runs"));
+    assert!(!live.contains(&"demo"));
+}
+
 /// The reserved set is the deliberate exception, not an accident: `test`
 /// (contract 038) plus the two meta routes that describe Effigy itself.
 #[test]

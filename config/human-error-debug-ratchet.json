@@ -2,7 +2,7 @@
   "schema": 1,
   "description": "Debug format specifiers in human-facing error construction. Lower with scripts/check-human-error-debug.py --write-baseline; never raise it.",
   "files": {
-    "crates/effigy-builtin/src/init/agent.rs": 1,
+    "crates/effigy-builtin/src/init/agent/skills.rs": 1,
     "crates/effigy-builtin/src/init/request.rs": 1,
     "crates/effigy-builtin/src/init/wizard_test_support.rs": 1,
     "crates/effigy-containers/src/policy/inline_workspace.rs": 1,

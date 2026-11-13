@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
+use super::blocks::write_file;
 use super::check;
 use super::contract::{INSTALLED_SKILL_ROOTS, INTERNAL_SKILL_METADATA_BLOCK, SKILL_FILES};
 use super::{AgentCheck, AgentCheckStatus, AgentInitJob};
@@ -218,17 +219,6 @@ fn inject_internal_skill_metadata(contents: &str) -> String {
     next.push_str(INTERNAL_SKILL_METADATA_BLOCK);
     next.push_str(&contents[insert_at..]);
     next
-}
-
-fn write_file(path: &Path, contents: &str) -> Result<(), BuiltinError> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| BuiltinError::task_invocation_failed_write(parent, error))?;
-        }
-    }
-    std::fs::write(path, contents.as_bytes())
-        .map_err(|error| BuiltinError::task_invocation_failed_write(path, error))
 }
 
 #[cfg(test)]

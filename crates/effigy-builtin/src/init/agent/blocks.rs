@@ -221,7 +221,7 @@ fn normalize_effigy_gitignore_file(
     replace_or_append_block(existing, start_marker, end_marker, desired_block)
 }
 
-fn write_file(path: &Path, contents: &str) -> Result<(), BuiltinError> {
+pub(super) fn write_file(path: &Path, contents: &str) -> Result<(), BuiltinError> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent)

@@ -130,7 +130,7 @@ impl CommandLine {
         {
             tokens.next();
         }
-        while tokens.peek().is_some_and(|token| is_env_assignment(token)) {
+        while tokens.peek().is_some_and(is_env_assignment) {
             tokens.next();
         }
 
