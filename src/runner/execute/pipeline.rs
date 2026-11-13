@@ -8,14 +8,15 @@ pub(super) mod standard;
 use effigy_cli::TaskInvocation;
 use effigy_manifest::ManifestTaskRunIn;
 
-use super::api::{
-    effective_runtime_inputs, ensure_inline_workspace_supported,
-    resolve_execution_binding_resolution, ExecutionBindingKind, InlineWorkspaceCapabilitySurface,
+use super::binding::{
+    ensure_inline_workspace_supported, resolve_execution_binding_resolution, ExecutionBindingKind,
+    InlineWorkspaceCapabilitySurface,
 };
 use super::json_payload::PlannedRuntimeTarget;
 use super::planning::ExecutionPreflight;
 use super::render::render_task_plan;
 use super::routing::planned_container_target;
+use super::runtime_inputs::effective_runtime_inputs;
 use super::selection::{resolve_task_selection, SelectionResolution};
 use crate::runner::error::RunnerError;
 use effigy_managed::resolve_managed_task_plan;
@@ -174,8 +175,8 @@ fn plan_command_shape(
         )?;
         let host_placed = matches!(
             binding.binding(),
-            super::api::ContainerExecutionBinding::None
-                | super::api::ContainerExecutionBinding::Host
+            super::binding::ContainerExecutionBinding::None
+                | super::binding::ContainerExecutionBinding::Host
         ) || super::workspace_seeded::inside_container_handoff();
         let host_env_aliases =
             super::host_alias::session_host_plan_env_aliases(preflight, selection)?;

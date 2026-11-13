@@ -3,7 +3,6 @@
 
 use std::path::Path;
 
-use effigy_containers::compose::compose_args;
 use effigy_containers::EffectiveContainerPolicy;
 
 use crate::runner::error::RunnerError;
@@ -23,19 +22,7 @@ pub(super) fn verify_live_checkout_mount(
         repo_root,
         working_dir,
         |probe_path| {
-            let workdir = working_dir.to_string_lossy();
-            let args = compose_args(
-                policy,
-                [
-                    "exec",
-                    "-T",
-                    "-w",
-                    workdir.as_ref(),
-                    policy.primary_service.as_str(),
-                    "cat",
-                    probe_path,
-                ],
-            );
+            let args = exec_tail(policy, working_dir, "cat", probe_path);
             let output = run_verified_prep_capture(
                 repo_root,
                 policy,
@@ -47,20 +34,7 @@ pub(super) fn verify_live_checkout_mount(
             Ok(output.stdout)
         },
         |probe_path| {
-            let workdir = working_dir.to_string_lossy();
-            let args = compose_args(
-                policy,
-                [
-                    "exec",
-                    "-T",
-                    "-w",
-                    workdir.as_ref(),
-                    policy.primary_service.as_str(),
-                    "touch",
-                    "--",
-                    probe_path,
-                ],
-            );
+            let args = exec_tail(policy, working_dir, "touch", probe_path);
             run_verified_prep_capture(
                 repo_root,
                 policy,
@@ -72,6 +46,25 @@ pub(super) fn verify_live_checkout_mount(
             Ok(())
         },
     )
+}
+
+/// The `compose exec` tail one probe runs: the service's own working directory
+/// and the probe command, as argv the plan builder owns the prefix for.
+fn exec_tail(
+    policy: &EffectiveContainerPolicy,
+    working_dir: &Path,
+    program: &str,
+    argument: &str,
+) -> Vec<std::ffi::OsString> {
+    vec![
+        "exec".into(),
+        "-T".into(),
+        "-w".into(),
+        working_dir.as_os_str().to_owned(),
+        policy.primary_service.as_str().into(),
+        program.into(),
+        argument.into(),
+    ]
 }
 
 pub(super) fn verify_live_checkout_mount_using(

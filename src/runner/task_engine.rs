@@ -45,7 +45,7 @@ pub(in crate::runner) use run::{
     WorkspaceAdmission, MANAGED_RUN_PROVENANCE,
 };
 pub(in crate::runner) use status::{
-    run_liveness, task_status, RunLiveness, RunView, TaskStatusView, HISTORY_LIMIT,
+    run_liveness, task_status, RunLiveness, RunView, TaskState, TaskStatusView, HISTORY_LIMIT,
 };
 
 #[cfg(test)]
@@ -91,7 +91,7 @@ pub(in crate::runner) fn root_task_status_for_tests(
 /// on a live owner.
 #[cfg(test)]
 pub(in crate::runner) fn root_task_state_for_tests(root: &std::path::Path, task: &str) -> String {
-    root_task_status_for_tests(root, task).state
+    root_task_status_for_tests(root, task).state.to_string()
 }
 
 /// Cancellation is checked before admission/spawn as well as while waiting.

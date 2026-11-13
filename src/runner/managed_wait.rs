@@ -134,21 +134,24 @@ impl WaitLedger {
     }
 
     pub(in crate::runner) fn read(&self, entry: &str) -> Option<EntryState> {
-        self.read_all()
+        self.read_all()?
             .into_iter()
             .find(|state| state.entry == entry)
     }
 
-    pub(in crate::runner) fn read_all(&self) -> Vec<EntryState> {
-        let Some(snapshot) = self.snapshot() else {
-            return Vec::new();
-        };
+    /// Every entry this ledger observed, or `None` when it has no observation
+    /// at all. An unobserved host graph is not a complete empty one: the
+    /// environment owner publishes its host graph only once it has observed
+    /// it, and a reader that treated the absence as `[]` would report a
+    /// finished graph that never existed.
+    pub(in crate::runner) fn read_all(&self) -> Option<Vec<EntryState>> {
+        let snapshot = self.snapshot()?;
         match self.source {
-            Source::Run(_) => snapshot.entries.into_values().collect(),
+            Source::Run(_) => Some(snapshot.entries.into_values().collect()),
             Source::Environment { .. } => {
-                let mut hosts = snapshot.hosts.unwrap_or_default();
+                let mut hosts = snapshot.hosts?;
                 hosts.sort_by(|left, right| left.entry.cmp(&right.entry));
-                hosts
+                Some(hosts)
             }
         }
     }
@@ -210,6 +213,10 @@ fn read_run(repo: &Path, run: RunId) -> Option<Snapshot> {
 pub(in crate::runner) struct WaitPublisher {
     run: Weak<Mutex<Run<'static>>>,
     snapshot: Arc<Mutex<Snapshot>>,
+    /// The first observation the owner could not record. It is kept rather
+    /// than discarded so the run's owner reports an incomplete wait journal
+    /// instead of a complete one.
+    recording_failure: Arc<Mutex<Option<String>>>,
     #[cfg(test)]
     _fixture_owner: Option<Arc<Mutex<Run<'static>>>>,
 }
@@ -240,8 +247,28 @@ impl WaitPublisher {
                 parent,
                 ..Snapshot::default()
             })),
+            recording_failure: Arc::new(Mutex::new(None)),
             #[cfg(test)]
             _fixture_owner: None,
+        }
+    }
+
+    /// The first observation this publisher could not record, if any. A run
+    /// owner that reads `Some` must not report its wait journal as complete.
+    pub(in crate::runner) fn take_recording_failure(&self) -> Option<String> {
+        self.recording_failure
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+    }
+
+    fn record_failure(&self, failure: impl std::fmt::Display) {
+        let mut recorded = self
+            .recording_failure
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if recorded.is_none() {
+            *recorded = Some(failure.to_string());
         }
     }
 
@@ -270,6 +297,9 @@ impl WaitPublisher {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         change(&mut snapshot);
         let Some(run) = self.run.upgrade() else {
+            // The owner is gone, so this observation has no journal to live
+            // in. Name that instead of dropping it without trace.
+            self.record_failure("the managed wait owner is gone; the observation was not recorded");
             return;
         };
         let mut run = run
@@ -287,8 +317,29 @@ impl WaitPublisher {
             settlement: Settlement::Retain,
             required: false,
         };
-        if let Ok(ticket) = run.intend(spec) {
-            let _ = run.applied(&ticket, serde_json::Value::Null);
+        let ticket = match run.intend(spec) {
+            Ok(ticket) => ticket,
+            Err(error) => {
+                self.record_failure(format!(
+                    "the managed wait observation could not be recorded: {error}"
+                ));
+                return;
+            }
+        };
+        // The intent already carries the complete payload, so readers decode
+        // the observation even if the receipt write fails. A failed receipt is
+        // still a fact about this journal: settle it as unknown rather than
+        // discard it, and report it to the run's owner.
+        if let Err(error) = run.applied(&ticket, serde_json::Value::Null) {
+            let _ = run.unknown(
+                &ticket,
+                effigy_kernel::observe::UnknownReason::Inconsistent(format!(
+                    "the observation receipt could not be written: {error}"
+                )),
+            );
+            self.record_failure(format!(
+                "the managed wait observation receipt could not be written: {error}"
+            ));
         }
     }
 
@@ -466,11 +517,15 @@ impl ActivationWaits {
     }
 
     pub(in crate::runner) fn finish(&mut self, success: bool) -> Result<(), RunnerError> {
-        self.close(if success {
+        let closed = self.close(if success {
             WorkloadOutcome::Succeeded
         } else {
             WorkloadOutcome::Failed { code: 1 }
-        })
+        });
+        match self.publisher.take_recording_failure() {
+            Some(failure) => closed.and(Err(error(failure))),
+            None => closed,
+        }
     }
 
     fn close(&mut self, outcome: WorkloadOutcome) -> Result<(), RunnerError> {
@@ -493,7 +548,23 @@ impl ActivationWaits {
 
 impl Drop for ActivationWaits {
     fn drop(&mut self) {
-        let _ = self.close(WorkloadOutcome::Interrupted);
+        if self.run.is_none() {
+            return;
+        }
+        // A drop is the path taken when the caller never reached `finish`:
+        // a panic or an early return. The run is settled as interrupted so its
+        // journal is not left intended, and a failure to settle an observation
+        // is reported rather than discarded — a silently lost wait is exactly
+        // the incomplete record this type exists to prevent.
+        let settled = self.close(WorkloadOutcome::Interrupted);
+        let failure = self
+            .publisher
+            .take_recording_failure()
+            .map(error)
+            .or_else(|| settled.err());
+        if let Some(failure) = failure {
+            eprintln!("warning: {failure}");
+        }
     }
 }
 
@@ -565,8 +636,8 @@ mod tests {
         }
         let mut ordered = entries.to_vec();
         ordered.sort_by(|left, right| left.entry.cmp(&right.entry));
-        assert_eq!(task.read_all(), ordered);
-        assert_eq!(hosts.read_all(), ordered);
+        assert_eq!(task.read_all(), Some(ordered.clone()));
+        assert_eq!(hosts.read_all(), Some(ordered));
         assert_eq!(hosts.read_phase(), Some(waiting("environment")));
         assert_eq!(task.environment_identity().as_deref(), Some("app/one"));
         assert!(!repo.path().join(".effigy/runtime/waits").exists());
@@ -595,7 +666,11 @@ mod tests {
             ..waiting("environment")
         });
         assert_ne!(first.run_id(), second.run_id());
-        assert!(second.source(repo.path()).read_all().is_empty());
+        assert_eq!(
+            second.source(repo.path()).read_all(),
+            None,
+            "a run that never observed an entry has no observed graph at all"
+        );
         assert_eq!(second.source(repo.path()).read_progress(), None);
         second.publish(&waiting("second"));
         assert!(first.source(repo.path()).read("second").is_none());
@@ -623,6 +698,39 @@ mod tests {
             .detail
             .unwrap()
             .contains("without a terminal observation"));
+    }
+
+    #[test]
+    fn an_unobserved_host_graph_reads_as_absent_not_as_a_complete_empty_one() {
+        let repo = tempfile::tempdir().unwrap();
+        let publisher = WaitPublisher::fixture(repo.path(), Some("app"));
+        let empty = publisher.environment_source(repo.path(), "app");
+        // Publishing nothing leaves no observation at all; it is not the same
+        // fact as an environment whose host graph is complete and empty.
+        assert_eq!(empty.read_all(), None);
+        assert_eq!(empty.read("api"), None);
+        publisher.publish_hosts(&[]);
+        assert_eq!(
+            publisher.environment_source(repo.path(), "app").read_all(),
+            Some(Vec::new())
+        );
+    }
+
+    #[test]
+    fn an_observation_the_journal_refuses_is_reported_not_discarded() {
+        let repo = tempfile::tempdir().unwrap();
+        let mut activation = ActivationWaits::begin(repo.path(), "app", None).unwrap();
+        let publisher = activation.publisher().clone();
+        publisher.publish(&waiting("api"));
+        assert!(publisher.take_recording_failure().is_none());
+        activation.finish(true).unwrap();
+        // The owner has settled: a later observation cannot be recorded, and
+        // the publisher must name that instead of dropping it silently.
+        publisher.publish(&waiting("late"));
+        let failure = publisher
+            .take_recording_failure()
+            .expect("a refused observation is reported");
+        assert!(failure.contains("not recorded"), "{failure}");
     }
 
     #[test]

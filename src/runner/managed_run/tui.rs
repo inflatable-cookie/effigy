@@ -107,6 +107,7 @@ impl RunSource {
         let mut states = self
             .wait_ledger
             .read_all()
+            .unwrap_or_default()
             .into_iter()
             .filter(EntryState::holds_a_wait)
             .collect::<Vec<_>>();

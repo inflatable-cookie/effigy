@@ -1,9 +1,9 @@
 //! Refreshing the container's view of the Cargo inputs the host changed, so an
 //! incremental build never reuses an object file for edited source.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use effigy_containers::compose::compose_args;
 use effigy_containers::EffectiveContainerPolicy;
 
 use crate::runner::error::RunnerError;
@@ -12,13 +12,13 @@ pub(super) fn run_verified_prep_capture(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     binding: &effigy_containers::exec::VerifiedComposeContainer,
-    args: &[std::ffi::OsString],
+    tail: &[OsString],
     label: &str,
 ) -> Result<std::process::Output, RunnerError> {
     let plan = effigy_runtime::container_manager::compose_invocation_plan_from_tail_args(
         repo_root,
         policy,
-        args.to_vec(),
+        tail.to_vec(),
         effigy_containers::ContainerAction::Exec,
         label,
     )
@@ -36,23 +36,22 @@ pub(super) fn refresh_changed_cargo_inputs(
 ) -> Result<(), RunnerError> {
     refresh_changed_cargo_inputs_using(repo_root, |changed| {
         for batch in changed.chunks(128) {
-            let workdir = working_dir.to_string_lossy();
-            let mut args = vec![
-                "exec".to_owned(),
-                "-T".to_owned(),
-                "-w".to_owned(),
-                workdir.into_owned(),
-                policy.primary_service.clone(),
-                "touch".to_owned(),
-                "-c".to_owned(),
-                "--".to_owned(),
+            let mut tail = vec![
+                OsString::from("exec"),
+                OsString::from("-T"),
+                OsString::from("-w"),
+                working_dir.as_os_str().to_owned(),
+                OsString::from(policy.primary_service.as_str()),
+                OsString::from("touch"),
+                OsString::from("-c"),
+                OsString::from("--"),
             ];
-            args.extend(batch.iter().map(|path| path.to_string_lossy().into_owned()));
+            tail.extend(batch.iter().map(|path| path.as_os_str().to_owned()));
             run_verified_prep_capture(
                 repo_root,
                 policy,
                 binding,
-                &compose_args(policy, args.iter().map(String::as_str)),
+                &tail,
                 "refresh changed Cargo inputs",
             )
             .map_err(|error| {
@@ -69,8 +68,37 @@ pub(super) fn refresh_changed_cargo_inputs_using(
     repo_root: &Path,
     touch_in_container: impl FnOnce(&[PathBuf]) -> Result<(), RunnerError>,
 ) -> Result<(), RunnerError> {
+    let changed = changed_cargo_inputs(repo_root)?;
+    if changed.is_empty() {
+        return Ok(());
+    }
+    touch_in_container(&changed)
+}
+
+/// Every Cargo input the host has changed or added since `HEAD`.
+///
+/// `git diff HEAD` only names tracked files, so a source file that is new and
+/// untracked would otherwise keep the container's stale view of that path; the
+/// untracked set is included for the same reason. Names are carried as path
+/// bytes, never as lossy text: a name that cannot be decoded is still the name
+/// the container must refresh, so `touch` receives the exact bytes and a
+/// platform that cannot carry them refuses instead of refreshing the wrong
+/// path.
+fn changed_cargo_inputs(repo_root: &Path) -> Result<Vec<PathBuf>, RunnerError> {
+    let mut changed = git_paths(repo_root, &["diff", "--name-only", "-z", "HEAD", "--"])?;
+    changed.extend(git_paths(
+        repo_root,
+        &["ls-files", "--others", "--exclude-standard", "-z"],
+    )?);
+    changed.retain(|path| is_cargo_input(path) && repo_root.join(path).is_file());
+    changed.sort();
+    changed.dedup();
+    Ok(changed)
+}
+
+fn git_paths(repo_root: &Path, args: &[&str]) -> Result<Vec<PathBuf>, RunnerError> {
     let output = std::process::Command::new("git")
-        .args(["diff", "--name-only", "-z", "HEAD", "--"])
+        .args(args)
         .current_dir(repo_root)
         .output()
         .map_err(|error| {
@@ -83,24 +111,35 @@ pub(super) fn refresh_changed_cargo_inputs_using(
             String::from_utf8_lossy(&output.stderr)
         )));
     }
-    let changed = output
+    output
         .stdout
         .split(|byte| *byte == 0)
         .filter(|bytes| !bytes.is_empty())
-        .map(|bytes| std::path::PathBuf::from(String::from_utf8_lossy(bytes).as_ref()))
-        .filter(|path| {
-            path.extension().is_some_and(|ext| ext == "rs")
-                || matches!(
-                    path.file_name().and_then(|name| name.to_str()),
-                    Some("Cargo.toml" | "Cargo.lock")
-                )
+        .map(path_from_bytes)
+        .collect()
+}
+
+fn is_cargo_input(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| extension == "rs")
+        || path.file_name().is_some_and(|name| {
+            name == std::ffi::OsStr::new("Cargo.toml") || name == std::ffi::OsStr::new("Cargo.lock")
         })
-        .filter(|path| repo_root.join(path).is_file())
-        .collect::<Vec<_>>();
-    if changed.is_empty() {
-        return Ok(());
-    }
-    touch_in_container(&changed)
+}
+
+/// A repository path is carried as its own bytes.
+#[cfg(unix)]
+fn path_from_bytes(bytes: &[u8]) -> Result<PathBuf, RunnerError> {
+    use std::os::unix::ffi::OsStringExt;
+    Ok(PathBuf::from(OsString::from_vec(bytes.to_vec())))
+}
+
+#[cfg(not(unix))]
+fn path_from_bytes(bytes: &[u8]) -> Result<PathBuf, RunnerError> {
+    std::str::from_utf8(bytes).map(PathBuf::from).map_err(|_| {
+        RunnerError::task_invocation(
+            "cannot refresh changed Cargo inputs: a repository path is not valid UTF-8 on this platform",
+        )
+    })
 }
 
 #[cfg(test)]
@@ -112,19 +151,11 @@ mod tests {
     use super::super::tests::temp_test_dir;
     use super::refresh_changed_cargo_inputs_using;
 
-    #[test]
-    fn host_edit_refreshes_cargo_input_before_container_check() {
-        host_edit_refreshes_cargo_input_before_container_check_using(|| {});
-    }
-
-    fn host_edit_refreshes_cargo_input_before_container_check_using(after_serial: impl FnOnce()) {
-        let _locks =
-            crate::runner::owned_children::hold_signal_proof_test_locks_after_serial(after_serial);
-        let root = temp_test_dir("cargo-host-edit");
+    fn init_repo(root: &std::path::Path) {
         let run_git = |args: &[&str]| {
             assert!(std::process::Command::new("git")
                 .args(args)
-                .current_dir(&root)
+                .current_dir(root)
                 .status()
                 .unwrap()
                 .success());
@@ -141,6 +172,18 @@ mod tests {
             "-qm",
             "base",
         ]);
+    }
+
+    #[test]
+    fn host_edit_refreshes_cargo_input_before_container_check() {
+        host_edit_refreshes_cargo_input_before_container_check_using(|| {});
+    }
+
+    fn host_edit_refreshes_cargo_input_before_container_check_using(after_serial: impl FnOnce()) {
+        let _locks =
+            crate::runner::owned_children::hold_signal_proof_test_locks_after_serial(after_serial);
+        let root = temp_test_dir("cargo-host-edit");
+        init_repo(&root);
         fs::write(root.join("lib.rs"), "pub fn answer() -> u8 { 2 }\n").unwrap();
         let source = fs::File::open(root.join("lib.rs")).unwrap();
         source
@@ -166,5 +209,39 @@ mod tests {
                 > fs::metadata(artifact).unwrap().modified().unwrap()
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_untracked_new_cargo_input_is_refreshed_too() {
+        let root = temp_test_dir("cargo-untracked-input");
+        init_repo(&root);
+        fs::write(root.join("new.rs"), "pub fn added() -> u8 { 3 }\n").unwrap();
+        fs::write(root.join("notes.md"), "not a Cargo input\n").unwrap();
+        refresh_changed_cargo_inputs_using(&root, |changed| {
+            assert_eq!(changed, &[PathBuf::from("new.rs")]);
+            Ok(())
+        })
+        .unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A Cargo input is named by its own bytes. Decoding the name lossily would
+    /// refresh a different file than the one the container compiles, so the
+    /// decoder is the thing under test: macOS volumes refuse to create such a
+    /// name, but the bytes git reports must still survive unchanged.
+    #[cfg(unix)]
+    #[test]
+    fn a_name_that_is_not_utf8_is_carried_as_its_own_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let bytes = b"odd\xff.rs";
+        let path = super::path_from_bytes(bytes).expect("a Unix path carries arbitrary bytes");
+        assert_eq!(path.as_os_str().as_bytes(), bytes);
+        assert!(super::is_cargo_input(&path));
+        assert_ne!(
+            path.as_os_str().to_string_lossy(),
+            String::from_utf8(bytes.to_vec()).unwrap_or_default(),
+            "the name is never round-tripped through text"
+        );
     }
 }

@@ -7,7 +7,7 @@ use super::super::super::managed_shell::{
 };
 use super::super::super::runtime_session_context::current_runtime_session_context;
 use super::super::super::workspace_command::run_workspace_with_repo_root_and_cleanup_override;
-use super::super::api::{
+use super::super::binding::{
     ensure_inline_workspace_supported, resolve_execution_binding_resolution,
     ContainerExecutionBinding, InlineWorkspaceCapabilitySurface,
 };
@@ -322,7 +322,7 @@ fn run_managed_control(
 struct ManagedContext<'a, 'catalog, 'aliases> {
     preflight: &'a ExecutionPreflight,
     selection: &'a TaskSelection<'catalog>,
-    binding_resolution: &'a super::super::api::ExecutionBindingResolution,
+    binding_resolution: &'a super::super::binding::ExecutionBindingResolution,
     container_handoff: bool,
     /// The scoped alias resolution this host session's environments use.
     host_aliases: &'aliases mut Option<super::super::host_alias::HostAliasResolver>,
@@ -1004,7 +1004,7 @@ struct ManagedSetupContext<'a, 'catalog> {
     preflight: &'a ExecutionPreflight,
     selection: &'a TaskSelection<'catalog>,
     env_schema_resolved: &'a Option<effigy_env::resolver::ResolvedEnv>,
-    binding_resolution: &'a super::super::api::ExecutionBindingResolution,
+    binding_resolution: &'a super::super::binding::ExecutionBindingResolution,
     container_binding: &'a ContainerExecutionBinding,
     container_handoff: bool,
     managed_task_secret_pairs: &'a [(String, SecretString)],
@@ -1061,7 +1061,7 @@ fn run_managed_setup_steps(
         }
         if matches!(
             binding_resolution.kind(),
-            super::super::api::ExecutionBindingKind::NamedContainer
+            super::super::binding::ExecutionBindingKind::NamedContainer
         ) && !plan_has_lifecycle
         {
             // The typed engine, as for host setup: each step is a child run
@@ -1133,16 +1133,16 @@ fn build_managed_gateway_command(
         "managed gateway startup",
     )?;
     let requested_container_name = match binding_resolution.kind() {
-        super::super::api::ExecutionBindingKind::NamedContainer => {
+        super::super::binding::ExecutionBindingKind::NamedContainer => {
             binding_resolution.requested_container_name()
         }
-        super::super::api::ExecutionBindingKind::InlineContainer => {
+        super::super::binding::ExecutionBindingKind::InlineContainer => {
             return Err(RunnerError::task_invocation(
                 "`gateway = true` requires a workspace-backed container binding on the task",
             ));
         }
-        super::super::api::ExecutionBindingKind::Host
-        | super::super::api::ExecutionBindingKind::None => {
+        super::super::binding::ExecutionBindingKind::Host
+        | super::super::binding::ExecutionBindingKind::None => {
             return Err(RunnerError::task_invocation(
                 "`gateway = true` requires a workspace-backed container binding on the task",
             ));

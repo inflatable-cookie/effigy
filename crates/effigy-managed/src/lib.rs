@@ -1,7 +1,7 @@
 //! Managed task orchestration for Effigy.
 //!
 //! Moved out of the runner binary in batch 240. Owns the managed task
-//! scheduler, run-spec rendering, env resolution, references, profiles,
+//! run-spec rendering, env resolution, references, profiles,
 //! the runtime session loop, and the plan-shape structs.
 
 use std::path::{Path, PathBuf};
@@ -23,7 +23,6 @@ pub mod references;
 pub mod render_support;
 pub mod run_spec;
 pub mod runtime;
-pub mod scheduler;
 
 pub use command::resolve_managed_task_plan;
 pub use effigy_core::builtin_tasks::BUILTIN_TASKS;

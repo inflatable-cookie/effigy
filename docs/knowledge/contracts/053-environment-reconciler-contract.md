@@ -208,7 +208,7 @@ fails without saying so.
 | Level 2 PTY work | Not conflated. 052 §8.6/§8.11 keep attach, reconnect, terminal input and real PTY as Level 2; nothing in #533 claims them. |
 | #529 helper custody | Its landed identity/ACK and anchor checks are preserved. Ordinary `Terminal::Discard` remains refused; the compile-time qualification candidate and its current limits are described above. |
 | #526 interpolation cleanup | Not this task's owner and untouched. Interpolation files are already per-invocation with a lock and a sweep (`policy/render/vm.rs`); #533 neither changes nor claims them. |
-| Discard refused | Unchanged. `run_private_detached_command`, `support/workspace_private.rs` and `Terminal::Discard` all still refuse; no Discard route was enabled. |
+| Discard refused | Unchanged. `run_private_detached_command` and `Terminal::Discard` still refuse; no Discard route was enabled. The unowned runner-side `support/workspace_private.rs` scaffold was retired in effigy#971, leaving the containers-side owner as the only refusal definition. |
 | Production workspace apply | Refused by name, as the section above records. No backend process starts. |
 
 ## 1. Purpose

@@ -19,9 +19,6 @@
 //! The re-exports below are this module's surface: a caller keeps naming
 //! `support::<item>`, and the item's own module stays free to change.
 
-#[allow(dead_code)]
-pub(in crate::runner) mod workspace_private;
-
 mod container_readiness;
 mod gateway_aliases;
 mod host_ports;

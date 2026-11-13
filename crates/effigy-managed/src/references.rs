@@ -154,3 +154,174 @@ pub fn expand_reference_placeholders(
         .replace("{repo}", &repo_rendered)
         .replace("{cwd}", &cwd_rendered)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::context::{ManagedRefContext, StepRefContext};
+    use super::parser::{is_builtin_task_selector, merge_args_rendered, parse_task_ref};
+    use super::{expand_reference_placeholders, resolve_task_reference_run};
+    use effigy_manifest::{load_task_manifest, LoadedCatalog, TaskSelection};
+    use effigy_tasks::CatalogSelectionMode;
+    use std::path::Path;
+
+    fn catalog(root: &Path, manifest: &str) -> LoadedCatalog {
+        std::fs::write(root.join("effigy.toml"), manifest).expect("write manifest");
+        let manifest = load_task_manifest(&root.join("effigy.toml")).expect("manifest");
+        LoadedCatalog {
+            alias: "root".to_owned(),
+            catalog_root: root.to_path_buf(),
+            manifest_path: root.join("effigy.toml"),
+            bundle_root: None,
+            manifest,
+            effective_digest: None,
+            defer_run: None,
+            deferred_builtins: Default::default(),
+            depth: 0,
+        }
+    }
+
+    fn select<'c>(
+        selector: &effigy_tasks::TaskSelector,
+        catalogs: &'c [LoadedCatalog],
+    ) -> Result<TaskSelection<'c>, String> {
+        let catalog = catalogs.first().ok_or("no catalog")?;
+        let task = catalog
+            .manifest
+            .tasks
+            .get(&selector.task_name)
+            .ok_or_else(|| format!("unknown task `{}`", selector.task_name))?;
+        Ok(TaskSelection {
+            catalog,
+            task,
+            mode: CatalogSelectionMode::CwdNearest,
+            evidence: vec!["fixture".to_owned()],
+            surface: effigy_core::task_selection::TaskSurface::Published,
+        })
+    }
+
+    #[test]
+    fn a_reference_keeps_its_selector_and_shell_quoted_arguments() {
+        let parsed = parse_task_ref("docs check links 'two words.rs'").expect("parse reference");
+        assert_eq!(parsed.selector.task_name, "docs");
+        assert_eq!(parsed.selector_rendered, "docs");
+        assert_eq!(parsed.args_rendered, "'check' 'links' 'two words.rs'");
+        assert_eq!(
+            merge_args_rendered(&parsed.args_rendered, "'extra' 'a b'"),
+            "'check' 'links' 'two words.rs' 'extra' 'a b'"
+        );
+        assert_eq!(merge_args_rendered("", ""), "");
+        assert_eq!(merge_args_rendered("left", ""), "left");
+        assert_eq!(merge_args_rendered("", "right"), "right");
+    }
+
+    #[test]
+    fn an_invalid_reference_is_named_by_the_step_that_declared_it() {
+        let error = parse_task_ref("docs 'unterminated").expect_err("unbalanced quotes");
+        let step = StepRefContext {
+            task_name: "release".to_owned(),
+            task_ref: "{ task = \"docs 'unterminated\" }".to_owned(),
+        };
+        let named = step.invalid(error.to_string());
+        let text = named.to_string();
+        assert!(text.contains("task `release` run step task ref"), "{text}");
+        assert!(text.contains("is invalid"), "{text}");
+
+        let managed = ManagedRefContext {
+            managed_task_name: "dev".to_owned(),
+            process_name: "serve".to_owned(),
+            task_ref: "docs 'unterminated".to_owned(),
+        };
+        let invalid = managed.invalid("bad quotes").to_string();
+        assert!(invalid.contains("dev"), "{invalid}");
+        assert!(invalid.contains("serve"), "{invalid}");
+        assert!(invalid.contains("bad quotes"), "{invalid}");
+    }
+
+    #[test]
+    fn placeholders_are_shell_quoted_so_a_path_with_spaces_stays_one_argument() {
+        let expanded = expand_reference_placeholders(
+            "{ task = \"docs check {repo}/README.md {cwd}\" }",
+            Path::new("/tmp/repo with spaces"),
+            Path::new("/tmp/work"),
+        );
+        assert!(
+            expanded.contains("'/tmp/repo with spaces'/README.md"),
+            "{expanded}"
+        );
+        assert!(expanded.contains("'/tmp/work'"), "{expanded}");
+    }
+
+    #[test]
+    fn a_reference_resolves_through_the_repository_resolver_not_a_second_lookup() {
+        let home = tempfile::tempdir().expect("fixture");
+        let catalogs = [catalog(
+            home.path(),
+            r#"
+[tasks.build]
+run = "echo building"
+"#,
+        )];
+        let (rendered, cwd) = resolve_task_reference_run(
+            "release",
+            "publish",
+            "build --release",
+            &catalogs,
+            home.path(),
+            &[],
+            &|selector, catalogs, _| select(selector, catalogs),
+        )
+        .expect("resolve reference");
+        assert!(rendered.command.contains("echo building"), "{rendered:?}");
+        assert_eq!(cwd, home.path());
+    }
+
+    #[test]
+    fn a_task_without_a_run_command_names_the_reference_that_named_it() {
+        let home = tempfile::tempdir().expect("fixture");
+        let catalogs = [catalog(
+            home.path(),
+            r#"
+[tasks.empty]
+description = "no run declared"
+"#,
+        )];
+        let error = resolve_task_reference_run(
+            "release",
+            "publish",
+            "empty",
+            &catalogs,
+            home.path(),
+            &[],
+            &|selector, catalogs, _| select(selector, catalogs),
+        )
+        .expect_err("a task without `run` cannot be referenced");
+        let text = error.to_string();
+        assert!(text.contains("has no `run` command"), "{text}");
+        assert!(text.contains("empty"), "{text}");
+    }
+
+    #[test]
+    fn an_unknown_reference_keeps_the_resolvers_own_refusal() {
+        let home = tempfile::tempdir().expect("fixture");
+        let catalogs = [catalog(home.path(), "[tasks.build]\nrun = \"true\"\n")];
+        let error = resolve_task_reference_run(
+            "release",
+            "publish",
+            "missing",
+            &catalogs,
+            home.path(),
+            &[],
+            &|selector, catalogs, _| select(selector, catalogs),
+        )
+        .expect_err("unknown reference");
+        assert!(
+            error.to_string().contains("unknown task `missing`"),
+            "{error}"
+        );
+
+        let selector = parse_task_ref("changelog")
+            .expect("builtin reference")
+            .selector;
+        assert!(is_builtin_task_selector(&selector));
+    }
+}

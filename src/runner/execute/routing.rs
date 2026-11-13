@@ -4,7 +4,7 @@ use effigy_manifest::{
     ManifestTaskRunIn,
 };
 
-use super::api::{
+use super::binding::{
     ensure_inline_workspace_supported, resolve_execution_binding_resolution, ExecutionBindingKind,
     InlineWorkspaceCapabilitySurface,
 };

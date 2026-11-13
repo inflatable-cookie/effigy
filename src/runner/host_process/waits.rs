@@ -70,7 +70,10 @@ pub(in crate::runner) fn attributed_environment_failure(
     reason: &str,
     ledger: &WaitLedger,
 ) -> String {
-    let published = ledger.read_all();
+    // An unobserved graph names no failure; the reason stands on its own.
+    let Some(published) = ledger.read_all() else {
+        return reason.to_owned();
+    };
     let failed = published
         .iter()
         .find(|state| state.phase == effigy_core::managed_waits::EntryPhase::Failed)
@@ -663,6 +666,7 @@ mod tests {
         publisher
             .environment_source(checkout, ENVIRONMENT)
             .read_all()
+            .expect("observed host graph")
     }
 
     pub(super) fn state_of<'a>(states: &'a [EntryState], entry: &str) -> &'a EntryState {
@@ -692,7 +696,8 @@ mod tests {
 
     impl FakeLauncher<'_> {
         fn observe(&mut self) {
-            self.frames.push(self.ledger.read_all());
+            self.frames
+                .push(self.ledger.read_all().expect("observed host graph"));
         }
     }
 
@@ -1001,6 +1006,7 @@ mod environment_tests {
         assert_eq!(
             ledger
                 .read_all()
+                .expect("observed host graph")
                 .iter()
                 .map(|state| state.entry.as_str())
                 .collect::<Vec<_>>(),
@@ -1008,11 +1014,15 @@ mod environment_tests {
             "the activation snapshot contains every declared host"
         );
         assert!(
-            ledger.read_all().iter().all(|state| state.waiting_on
-                == Some(WaitOn::Environment {
-                    healthy: None,
-                    total: None
-                })),
+            ledger
+                .read_all()
+                .expect("observed host graph")
+                .iter()
+                .all(|state| state.waiting_on
+                    == Some(WaitOn::Environment {
+                        healthy: None,
+                        total: None
+                    })),
             "a count reset is not proof that the environment became ready"
         );
         phase.phase = EntryPhase::Waiting;
@@ -1023,7 +1033,7 @@ mod environment_tests {
         phase.elapsed_ms = 9_000;
         graph.observe_environment_phase(&phase, clock.at());
         assert_eq!(ledger.read_phase(), Some(phase.clone()));
-        for state in ledger.read_all() {
+        for state in ledger.read_all().expect("observed host graph") {
             assert_eq!(
                 state.waiting_on, phase.waiting_on,
                 "{} carries the same 3/4 observation",
@@ -1042,6 +1052,7 @@ mod environment_tests {
         assert!(
             ledger
                 .read_all()
+                .expect("observed host graph")
                 .iter()
                 .all(|state| state.elapsed_ms == 2_000),
             "child host clocks keep refreshing after the managed parent's graph is dropped"
@@ -1051,7 +1062,7 @@ mod environment_tests {
         phase.detail = Some("web is unhealthy after 3 failed checks".to_owned());
         graph.observe_environment_phase(&phase, clock.at());
         assert_eq!(ledger.read_phase(), Some(phase));
-        for state in ledger.read_all() {
+        for state in ledger.read_all().expect("observed host graph") {
             assert_eq!(state.phase, EntryPhase::NotStarted);
             let cause = state
                 .not_started_because
@@ -1204,7 +1215,7 @@ mod environment_tests {
                 .map(|state| state.entry.clone())
                 .collect::<Vec<_>>()
         };
-        let prelaunch = ledger.read_all();
+        let prelaunch = ledger.read_all().expect("observed host graph");
         assert_eq!(names(&prelaunch), vec!["admin", "api", "front"]);
         assert!(prelaunch
             .iter()
@@ -1227,7 +1238,7 @@ mod environment_tests {
         let mut planner = HostWaitGraph::for_policy(&policy, &all, &activation, clock.at());
         assert!(ledger.activation_started());
         assert_eq!(
-            names(&ledger.read_all()),
+            names(&ledger.read_all().expect("observed host graph")),
             names(&prelaunch),
             "the first host publication is complete"
         );
@@ -1239,7 +1250,7 @@ mod environment_tests {
             parent.environment_ready(now);
             parent.publish_all(now);
             assert_eq!(
-                state_of(&ledger.read_all(), "api").waiting_on,
+                state_of(&ledger.read_all().expect("observed host graph"), "api").waiting_on,
                 Some(WaitOn::Probe {
                     probe: "GET / -> 200".to_owned()
                 })
@@ -1249,7 +1260,7 @@ mod environment_tests {
         let reason = "environment web did not come up: up exited 1 after 4s";
         parent.environment_failed(reason, clock.at());
         parent.settle_all(clock.at());
-        let terminal = ledger.read_all();
+        let terminal = ledger.read_all().expect("observed host graph");
         assert_eq!(state_of(&terminal, "api").phase, EntryPhase::Failed);
         assert!(state_of(&terminal, "api")
             .detail
@@ -1273,7 +1284,7 @@ mod environment_tests {
         drop(activation);
         assert_eq!(
             ledger.read_all(),
-            terminal,
+            Some(terminal.clone()),
             "terminal failure detail survives owner settlement"
         );
         let foreign_parent = WaitPublisher::fixture(&checkout, Some(ENVIRONMENT));
@@ -1281,7 +1292,7 @@ mod environment_tests {
         foreign.publish_hosts(&[]);
         assert_eq!(
             ledger.read_all(),
-            terminal,
+            Some(terminal.clone()),
             "a successive foreign-parent activation cannot replace this view"
         );
     }
