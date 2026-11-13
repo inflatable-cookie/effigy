@@ -2158,27 +2158,62 @@ print('detached diagnostic',file=sys.stderr)
         assert!(retained.contains("detached diagnostic"), "{retained}");
         let inventory = fixture.path().join("inventory.py");
         fs::write(&inventory,r#"import os,json,time,stat
-json.dump({'pid':os.getpid(),'group':os.getpgrp(),'stdout_fifo':stat.S_ISFIFO(os.fstat(1).st_mode),'stdout_inode':os.fstat(1).st_ino},open('inventory-identities.json','w'))
+record = {'pid':os.getpid(),'group':os.getpgrp(),'stdout_fifo':stat.S_ISFIFO(os.fstat(1).st_mode),'stdout_inode':os.fstat(1).st_ino}
+json.dump(record,open('inventory-identities.json.tmp','w'))
+os.replace('inventory-identities.json.tmp','inventory-identities.json')
 while True:
  os.write(1,b'x'*8192)
  os.write(2,b'y'*8192)
 "#).expect("private hung inventory");
-        let started = Instant::now();
-        let failure = run_command_capture_with_timeout(
-            fixture.path(),
-            "python3",
-            &[inventory.to_str().expect("private path")],
-            "private inventory",
-            Duration::from_millis(500),
-        )
-        .expect_err("bounded inventory refuses");
+        // Every fact this proof reads is published by the inventory itself, so
+        // the caller's deadline is held at a frozen reading until that
+        // publication exists and only then spent: the cancellation, the reap
+        // and the EOF drain stay real, while a loaded host can no longer kill
+        // the workload before its first statement runs.
+        let bound = Duration::from_millis(500);
+        let root = fixture.path().to_path_buf();
+        let capture_clock = super::capture_test_clock::control(Instant::now());
+        let shared = capture_clock.shared();
+        let published = fixture.path().join("inventory-identities.json");
+        let (failure, cancelled_for) = std::thread::scope(|scope| {
+            let capture = scope.spawn(move || {
+                let _binding = shared.enter();
+                run_command_capture_with_timeout(
+                    &root,
+                    "python3",
+                    &[inventory.to_str().expect("private path")],
+                    "private inventory",
+                    bound,
+                )
+            });
+            let publication_guard = Instant::now() + Duration::from_secs(60);
+            while !published.exists() {
+                assert!(
+                    Instant::now() < publication_guard,
+                    "the inventory never published its identity"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            // Past every deadline the capture could have derived from the
+            // frozen reading: the same 500ms bound is spent here, not extended.
+            capture_clock.advance(Instant::now() + bound + Duration::from_secs(1));
+            // The bound below measures this cancellation, not the workload's
+            // start or the publication wait that preceded it.
+            let cancelled = Instant::now();
+            let failure = capture.join().expect("bounded inventory thread");
+            (failure, cancelled.elapsed())
+        });
+        let failure = failure.expect_err("bounded inventory refuses");
         assert!(
             failure
                 .to_string()
                 .contains("terminated and reaped; stdout/stderr EOF verified"),
             "{failure}"
         );
-        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(
+            cancelled_for < Duration::from_secs(5),
+            "the cancelled capture took {cancelled_for:?} to reap and drain"
+        );
         probe(&mut sentinel, &mut reader, "after-inventory");
         let inventory_identity: serde_json::Value = serde_json::from_slice(
             &fs::read(fixture.path().join("inventory-identities.json"))

@@ -358,6 +358,15 @@ fn managed_delivery_custody_rejects_a_secret_in_argv_break_probe() {
     assert!(owner.close(WorkloadOutcome::NotStarted).is_empty());
 }
 
+/// Publish a marker atomically: the reader sees the name only once the whole
+/// content is there. A plain write creates the name first, so a reader that
+/// polls for existence can read an empty file and get an empty path back.
+fn publish(path: &Path, bytes: &[u8]) {
+    let staged = path.with_extension("partial");
+    fs::write(&staged, bytes).expect("stage marker");
+    fs::rename(&staged, path).expect("publish marker");
+}
+
 #[test]
 fn secret_delivery_custody_helper() {
     let Some(root) = std::env::var_os("EFFIGY_DELIVERY_HELPER_ROOT") else {
@@ -369,7 +378,7 @@ fn secret_delivery_custody_helper() {
     let file = prepare_in(&mut owner, &overrides, &mut env, true, Some(&root))
         .unwrap()
         .unwrap();
-    fs::write(root.join("ready"), file.as_os_str().as_encoded_bytes()).unwrap();
+    publish(&root.join("ready"), file.as_os_str().as_encoded_bytes());
     loop {
         if root.join("close").exists() {
             assert!(owner

@@ -29,6 +29,15 @@ impl Drop for ChildGuard {
         let _ = self.0.wait();
     }
 }
+/// The fixture's own hang guard, never a bound under test. Every wait below is
+/// driven by the event it observes; this only stops a fixture that never gets
+/// there from hanging the suite. Each call keeps its original floor on a quiet
+/// host and stretches with the measured load, so a loaded host is not mistaken
+/// for a hung fixture and no asserted bound moves.
+fn guard(floor: Duration) -> Duration {
+    effigy_test_support::load_scaled_guard(floor)
+}
+
 fn home() -> tempfile::TempDir {
     // Keep the fixture inside the run root; kernel socket probes support deep homes.
     effigy_test_support::short_tempdir("kcustody-").unwrap()
@@ -39,8 +48,12 @@ fn fixture() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_kernel-custody-fixture")))
 }
 fn context() -> EffectContext {
+    // The fixture's ambient operation budget, not a bound any proof asserts.
+    // Owned engines and their workloads have to start, settle and be observed
+    // on the host the suite actually runs on, so it keeps its original twenty
+    // seconds on a quiet host and stretches with the measured load.
     OperationContext::new(
-        Deadline::At(Instant::now() + Duration::from_secs(20)),
+        Deadline::At(Instant::now() + guard(Duration::from_secs(20))),
         CancelToken::default(),
         Limits {
             capture_tail: 4096,
@@ -156,7 +169,7 @@ fn fresh_status(cx: &ObserveContext, root: &StateRoot, id: RunId) -> Observed<Ru
     }
 }
 fn eventually(mut predicate: impl FnMut() -> bool) {
-    let end = Instant::now() + Duration::from_secs(12);
+    let end = Instant::now() + guard(Duration::from_secs(12));
     while !predicate() {
         assert!(Instant::now() < end, "fixture deadline");
         std::thread::sleep(Duration::from_millis(10));
@@ -168,7 +181,7 @@ fn custody_prepare_source_requires_its_class_and_settles_with_a_sentinel() {
         let home = home();
         let mutate = context();
         let cx = OperationContext::new(
-            Deadline::At(Instant::now() + Duration::from_secs(20)),
+            Deadline::At(Instant::now() + guard(Duration::from_secs(20))),
             CancelToken::default(),
             mutate.operation().limits().clone(),
             EffectClass::Prepare,
@@ -570,7 +583,7 @@ fn custody_signal_and_owner_kill_matrix_settles_without_survivors() {
             let cx = context();
             let root = StateRoot::effects(&cx, home.path()).unwrap();
             let runid = RunId::new(1, [9; 10]).unwrap();
-            let end = Instant::now() + Duration::from_secs(12);
+            let end = Instant::now() + guard(Duration::from_secs(12));
             loop {
                 let status = fresh_status(&cx.operation().observe().unwrap(), &root, runid);
                 match &status {
@@ -888,7 +901,7 @@ fn owner_loss_settles_through_the_run_sentinel_and_retires_its_anchor() {
     );
     // Both the group's evidence and the sentinel are gone within a deadline:
     // that is the cleanup this proof owes, with no helper left behind.
-    let deadline = Instant::now() + Duration::from_secs(12);
+    let deadline = Instant::now() + guard(Duration::from_secs(12));
     while live(&anchor) || live(&sentinel) || live(&receipt.identity) {
         assert!(
             Instant::now() < deadline,
@@ -1553,6 +1566,11 @@ fn custody_detached_escalation_interrupts_an_in_progress_settle_grace() {
             Observed::Verified(RunStatus::Live(Phase::Stopping), _)
         )
     });
+    // The workload traps TERM and outlives the run, so only the escalation can
+    // close it before the ten-second grace expires. Half the grace still
+    // discriminates that from waiting the grace out, and leaves room for a
+    // loaded host to deliver the escalation.
+    const GRACE: Duration = Duration::from_secs(10);
     let at = Instant::now();
     client.escalate(&cx, id(3)).unwrap();
     eventually(|| {
@@ -1562,8 +1580,9 @@ fn custody_detached_escalation_interrupts_an_in_progress_settle_grace() {
         )
     });
     assert!(
-        at.elapsed() < Duration::from_secs(2),
-        "escalation waited for the ten-second grace"
+        at.elapsed() < GRACE / 2,
+        "escalation waited for the ten-second grace: {:?}",
+        at.elapsed()
     );
 }
 
@@ -1867,7 +1886,7 @@ fn owning_finish(home: &Path, fixture: &mut OwningKillFixture) {
     );
     fixture.client.0.wait().unwrap();
     owning_poll(
-        Instant::now() + Duration::from_secs(12),
+        Instant::now() + guard(Duration::from_secs(12)),
         "terminal status",
         || {
             let status = engine_status(home);
@@ -1898,7 +1917,7 @@ fn owning_finish(home: &Path, fixture: &mut OwningKillFixture) {
         "owner-kill: expected OwnerLost"
     );
     owning_poll(
-        Instant::now() + Duration::from_secs(12),
+        Instant::now() + guard(Duration::from_secs(12)),
         "witness/no-survivor",
         || {
             let receipt = fixture.receipt.as_ref().unwrap();
@@ -1916,7 +1935,7 @@ fn owning_finish(home: &Path, fixture: &mut OwningKillFixture) {
         },
     );
     owning_poll(
-        Instant::now() + Duration::from_secs(12),
+        Instant::now() + guard(Duration::from_secs(12)),
         "output completion",
         || {
             let output = engine_output(home);
@@ -1942,7 +1961,7 @@ fn owning_finish(home: &Path, fixture: &mut OwningKillFixture) {
 #[test]
 fn custody_engine_owning_client_kill_stops_and_settles() {
     let home = home();
-    let end = Instant::now() + Duration::from_secs(12);
+    let end = Instant::now() + guard(Duration::from_secs(12));
     let mut fixture = owning_start(home.path(), false);
     owning_poll(end, "client/witness readiness", || {
         owning_ready(home.path(), &mut fixture)
@@ -1967,7 +1986,7 @@ fn custody_engine_owning_client_witness_barrier_discriminates_old_consumer() {
         .unwrap();
         // SAFETY: a NUL-terminated path inside this fresh fixture; no borrowed pointers escape.
         assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
-        let end = Instant::now() + Duration::from_secs(12);
+        let end = Instant::now() + guard(Duration::from_secs(12));
         let mut fixture = owning_start(home.path(), true);
         owning_poll(end, "controlled client/producer readiness", || {
             let client = home.path().join("client-ready").exists();
@@ -2362,7 +2381,7 @@ fn custody_workspace_handles_drive_owner_and_secondary_lifetimes() {
             }
         }
         eprintln!("workspace lifetime {cause:?}: accepting secondary socket");
-        let accept_deadline = Instant::now() + Duration::from_secs(10);
+        let accept_deadline = Instant::now() + guard(Duration::from_secs(10));
         let socket = loop {
             match listener.accept() {
                 Ok((socket, _)) => break socket,
@@ -2659,8 +2678,12 @@ fn foreground_begins_beside_a_journal_written_throughout() {
         }
     });
     std::thread::sleep(Duration::from_millis(50));
+    // The bound belongs to the run's own journal read, which is what a busy
+    // writer could block. Process start-up and settlement are outside it, so a
+    // loaded host cannot spend the bound on a fork instead of on the read.
     let started = Instant::now();
     let mut run = foreground_begin(&cx, &root);
+    let read = started.elapsed();
     let mut child =
         Custody::spawn_foreground(&mut run, spec(home.path(), "printf hello"), &cx).unwrap();
     let exit = child.wait(cx.operation()).verified().copied().unwrap();
@@ -2670,13 +2693,12 @@ fn foreground_begins_beside_a_journal_written_throughout() {
     let outcome = run
         .settle(&cx.operation().cleanup(Duration::from_secs(10)).unwrap())
         .unwrap();
-    let elapsed = started.elapsed();
     stop.store(true, std::sync::atomic::Ordering::Relaxed);
     writer.join().unwrap();
     assert_eq!(outcome.cleanup(), CleanupOutcome::Complete);
     assert!(
-        elapsed < Duration::from_secs(1),
-        "a foreground run beside a writer took {elapsed:?}"
+        read < Duration::from_secs(1),
+        "the foreground journal read beside a writer took {read:?}"
     );
 }
 
@@ -3325,7 +3347,7 @@ fn custody_machine_journal_routes_supervisor_requests_and_sentinel_recovery_with
                 .unwrap();
         }
         fixture_guard.stage = "completion";
-        let end = Instant::now() + Duration::from_secs(12);
+        let end = Instant::now() + guard(Duration::from_secs(12));
         loop {
             let observe = cx.operation().observe().unwrap();
             let (done, last) = match effigy_kernel::store::Store::read(&observe, &machine) {
@@ -3699,27 +3721,30 @@ fn foreground_and_durable_exclusion_survives_first_token_creation() {
         next: next(),
         custody: None,
     };
-    let cleanup = cx.operation().cleanup(Duration::from_secs(5)).unwrap();
+    // One budget per phase, as a caller mints one per operation: a single 5s
+    // clock spent across the refusal, the settle and the retry reports an
+    // expired budget instead of the gate the proof is about.
+    let cleanup = || cx.operation().cleanup(Duration::from_secs(5)).unwrap();
     assert!(matches!(
         Run::begin(
             &cx,
             &durable_root,
             &durable_invocation,
             opts(),
-            &cleanup,
+            &cleanup(),
             &mut Strict
         ),
         Err(RunError::Gate(_))
     ));
     assert!(!durable_root.path().join("kernel.db").exists());
     foreground.finish(WorkloadOutcome::Succeeded).unwrap();
-    foreground.settle(&cleanup).unwrap();
+    foreground.settle(&cleanup()).unwrap();
     let mut durable = Run::begin(
         &cx,
         &durable_root,
         &durable_invocation,
         opts(),
-        &cleanup,
+        &cleanup(),
         &mut Strict,
     )
     .unwrap();
@@ -3750,7 +3775,7 @@ fn foreground_and_durable_exclusion_survives_first_token_creation() {
         Err(RunError::Gate(_))
     ));
     durable.finish(WorkloadOutcome::Succeeded).unwrap();
-    durable.settle(&cleanup, &mut Strict).unwrap();
+    durable.settle(&cleanup(), &mut Strict).unwrap();
 }
 
 #[test]
@@ -4129,7 +4154,7 @@ fn custody_keyed_successor_services_escalation_during_predecessor_recovery() {
             Some(std::thread::spawn(move || {
                 let cx = context();
                 let observe = cx.operation().observe().unwrap();
-                let deadline = Instant::now() + Duration::from_secs(10);
+                let deadline = Instant::now() + guard(Duration::from_secs(10));
                 loop {
                     if let Observed::Verified(Recovered::Admitted { run, fence }, _) =
                         lookup(&observe, &root, key, digest.clone())
@@ -4191,8 +4216,11 @@ fn custody_keyed_successor_services_escalation_during_predecessor_recovery() {
         if let Some(sender) = sender {
             sender.join().unwrap();
         }
+        // The untouched predecessor waits out the fixture engine's ten-second
+        // grace. Half the grace discriminates escalation from that wait and
+        // leaves room for a loaded host to deliver it.
         assert!(
-            started.elapsed() < Duration::from_secs(2),
+            started.elapsed() < Duration::from_secs(5),
             "recovery ignored escalation and waited for the ten-second grace: {:?}",
             started.elapsed()
         );

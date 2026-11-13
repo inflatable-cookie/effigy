@@ -4,6 +4,12 @@ mod workspace_integrations;
 use std::time::{Duration, Instant};
 use workspace_integrations::*;
 
+/// Every budget proof below advances this clock explicitly, so expiry is
+/// decided by the step that spends it and never by host scheduling.
+fn clock() -> Instant {
+    Instant::now()
+}
+
 struct Fake {
     deadline: Instant,
     events: Vec<(WorkspaceIntegrationStep, &'static str)>,
@@ -258,6 +264,7 @@ fn expired_cleanup_budget_retains_attempt_for_retry() {
 }
 
 struct StalledRecord {
+    clock: Instant,
     deadline: Instant,
     effects: usize,
 }
@@ -266,10 +273,12 @@ impl WorkspaceIntegrationAdapter for StalledRecord {
     fn integration_deadline(&self) -> Instant {
         self.deadline
     }
+    fn now(&self) -> Instant {
+        self.clock
+    }
     fn record_step(&mut self, _: WorkspaceIntegrationStep, _: bool) -> Result<(), ()> {
-        while Instant::now() < self.deadline {
-            std::thread::yield_now();
-        }
+        // This adapter spends the whole remaining budget recording the attempt.
+        self.clock = self.deadline;
         Ok(())
     }
     fn clear_step(&mut self, _: WorkspaceIntegrationStep) -> Result<(), ()> {
@@ -285,8 +294,10 @@ impl WorkspaceIntegrationAdapter for StalledRecord {
 }
 #[test]
 fn deadline_is_checked_after_record_before_effect() {
+    let base = clock();
     let mut f = StalledRecord {
-        deadline: Instant::now() + Duration::from_millis(5),
+        clock: base,
+        deadline: base + Duration::from_secs(1),
         effects: 0,
     };
     assert!(matches!(
@@ -356,6 +367,7 @@ fn recovered_partial_cleanup_preserves_reverse_order_after_rerun() {
 }
 
 struct SlowEffect {
+    clock: Instant,
     deadline: Instant,
     overshoot: bool,
     reconciled: Vec<WorkspaceIntegrationStep>,
@@ -364,6 +376,9 @@ impl WorkspaceIntegrationAdapter for SlowEffect {
     type Error = &'static str;
     fn integration_deadline(&self) -> Instant {
         self.deadline
+    }
+    fn now(&self) -> Instant {
+        self.clock
     }
     fn record_step(&mut self, _: WorkspaceIntegrationStep, _: bool) -> Result<(), Self::Error> {
         Ok(())
@@ -374,13 +389,12 @@ impl WorkspaceIntegrationAdapter for SlowEffect {
     fn reconcile(&mut self, step: WorkspaceIntegrationStep, _: Instant) -> Result<(), Self::Error> {
         self.reconciled.push(step);
         if step == WorkspaceIntegrationStep::HostIntegrations {
-            if self.overshoot {
-                while Instant::now() < self.deadline {
-                    std::thread::yield_now();
-                }
+            // The final effect is the slow one: inside the budget or past it.
+            self.clock = if self.overshoot {
+                self.deadline
             } else {
-                std::thread::sleep(Duration::from_millis(5));
-            }
+                self.clock + Duration::from_millis(1)
+            };
         }
         Ok(())
     }
@@ -390,8 +404,10 @@ impl WorkspaceIntegrationAdapter for SlowEffect {
 }
 #[test]
 fn slow_effect_succeeds_within_integration_budget() {
+    let base = clock();
     let mut adapter = SlowEffect {
-        deadline: Instant::now() + Duration::from_secs(1),
+        clock: base,
+        deadline: base + Duration::from_secs(1),
         overshoot: false,
         reconciled: Vec::new(),
     };
@@ -404,23 +420,22 @@ fn slow_effect_succeeds_within_integration_budget() {
 }
 #[test]
 fn final_effect_overshoot_refuses_before_handoff() {
+    let base = clock();
     let mut adapter = SlowEffect {
-        deadline: Instant::now() + Duration::from_millis(5),
+        clock: base,
+        deadline: base + Duration::from_secs(1),
         overshoot: true,
         reconciled: Vec::new(),
     };
     let mut outcome = WorkspaceIntegrationOutcome::default();
     let failure = run_workspace_integrations(&mut adapter, &mut outcome).unwrap_err();
     assert_eq!(failure.to_string(), "integration budget exhausted");
-    assert!(unwind_workspace_integrations(
-        &mut adapter,
-        &mut outcome,
-        Instant::now() + Duration::from_secs(1)
-    )
-    .is_ok());
+    let cleanup_deadline = adapter.deadline + Duration::from_secs(1);
+    assert!(unwind_workspace_integrations(&mut adapter, &mut outcome, cleanup_deadline).is_ok());
 }
 
 struct MidBudget {
+    clock: Instant,
     deadline: Instant,
     ran: Vec<WorkspaceIntegrationStep>,
     undone: Vec<WorkspaceIntegrationStep>,
@@ -430,15 +445,17 @@ impl WorkspaceIntegrationAdapter for MidBudget {
     fn integration_deadline(&self) -> Instant {
         self.deadline
     }
+    fn now(&self) -> Instant {
+        self.clock
+    }
     fn record_step(
         &mut self,
         step: WorkspaceIntegrationStep,
         completed: bool,
     ) -> Result<(), Self::Error> {
         if step == WorkspaceIntegrationStep::Permissions && !completed {
-            while Instant::now() < self.deadline {
-                std::thread::yield_now();
-            }
+            // Recording this attempt is what spends the remaining budget.
+            self.clock = self.deadline;
         }
         Ok(())
     }
@@ -456,8 +473,10 @@ impl WorkspaceIntegrationAdapter for MidBudget {
 }
 #[test]
 fn budget_expiry_before_later_step_refuses_and_unwinds_attempts() {
+    let base = clock();
     let mut adapter = MidBudget {
-        deadline: Instant::now() + Duration::from_millis(5),
+        clock: base,
+        deadline: base + Duration::from_secs(1),
         ran: vec![],
         undone: vec![],
     };
@@ -467,12 +486,8 @@ fn budget_expiry_before_later_step_refuses_and_unwinds_attempts() {
         Err(IntegrationFailure::IntegrationBudgetExhausted)
     ));
     assert_eq!(adapter.ran, vec![WorkspaceIntegrationStep::Readiness]);
-    assert!(unwind_workspace_integrations(
-        &mut adapter,
-        &mut outcome,
-        Instant::now() + Duration::from_secs(1)
-    )
-    .is_ok());
+    let cleanup_deadline = adapter.deadline + Duration::from_secs(1);
+    assert!(unwind_workspace_integrations(&mut adapter, &mut outcome, cleanup_deadline).is_ok());
     assert_eq!(
         adapter.undone,
         vec![
@@ -497,6 +512,7 @@ fn malformed_recovery_order_is_refused() {
 }
 
 struct SlowUnwind {
+    clock: Instant,
     deadline: Instant,
     clears: usize,
 }
@@ -504,6 +520,9 @@ impl WorkspaceIntegrationAdapter for SlowUnwind {
     type Error = ();
     fn integration_deadline(&self) -> Instant {
         self.deadline
+    }
+    fn now(&self) -> Instant {
+        self.clock
     }
     fn record_step(&mut self, _: WorkspaceIntegrationStep, _: bool) -> Result<(), ()> {
         Ok(())
@@ -516,16 +535,17 @@ impl WorkspaceIntegrationAdapter for SlowUnwind {
         Ok(())
     }
     fn unwind(&mut self, _: WorkspaceIntegrationStep, deadline: Instant) -> Result<(), ()> {
-        while Instant::now() < deadline {
-            std::thread::yield_now();
-        }
+        // The withdrawal itself outlives the cleanup budget it was given.
+        self.clock = deadline;
         Ok(())
     }
 }
 #[test]
 fn cleanup_overshoot_does_not_clear_attempt() {
+    let base = clock();
     let mut adapter = SlowUnwind {
-        deadline: Instant::now() + Duration::from_secs(1),
+        clock: base,
+        deadline: base + Duration::from_secs(1),
         clears: 0,
     };
     let mut outcome =
@@ -534,13 +554,14 @@ fn cleanup_overshoot_does_not_clear_attempt() {
     assert!(unwind_workspace_integrations(
         &mut adapter,
         &mut outcome,
-        Instant::now() + Duration::from_millis(5)
+        base + Duration::from_secs(1)
     )
     .is_err());
     assert_eq!(adapter.clears, 0);
 }
 
 struct LateClear {
+    clock: Instant,
     integration_deadline: Instant,
     cleanup_deadline: Instant,
     journal_has_attempt: bool,
@@ -552,15 +573,17 @@ impl WorkspaceIntegrationAdapter for LateClear {
     fn integration_deadline(&self) -> Instant {
         self.integration_deadline
     }
+    fn now(&self) -> Instant {
+        self.clock
+    }
     fn record_step(&mut self, _: WorkspaceIntegrationStep, _: bool) -> Result<(), ()> {
         self.journal_has_attempt = true;
         Ok(())
     }
     fn clear_step(&mut self, _: WorkspaceIntegrationStep) -> Result<(), ()> {
+        // The clear completes, but only after its cleanup budget is gone.
         if self.delay_clear {
-            while Instant::now() < self.cleanup_deadline {
-                std::thread::yield_now();
-            }
+            self.clock = self.cleanup_deadline;
         }
         self.journal_has_attempt = false;
         Ok(())
@@ -578,11 +601,12 @@ impl WorkspaceIntegrationAdapter for LateClear {
 }
 #[test]
 fn late_completed_clear_refuses_then_reconciles_safely() {
-    // Allow ample scheduling time to enter clear_step, which waits until the
-    // deadline itself. The assertions below verify that clear actually ran.
-    let cleanup_deadline = Instant::now() + Duration::from_secs(2);
+    // The clear itself spends the cleanup budget; nothing here waits on a clock.
+    let base = clock();
+    let cleanup_deadline = base + Duration::from_secs(2);
     let mut adapter = LateClear {
-        integration_deadline: Instant::now() + Duration::from_secs(60),
+        clock: base,
+        integration_deadline: base + Duration::from_secs(60),
         cleanup_deadline,
         journal_has_attempt: true,
         effect_present: true,
@@ -601,7 +625,7 @@ fn late_completed_clear_refuses_then_reconciles_safely() {
     assert!(unwind_workspace_integrations(
         &mut adapter,
         &mut outcome,
-        Instant::now() + Duration::from_secs(1)
+        cleanup_deadline + Duration::from_secs(1)
     )
     .is_ok());
     // Simulate reloading the now-empty fake journal and rerunning integration.
