@@ -40,6 +40,20 @@ JSON form; use global `--json` to wrap its text result.
 Task and draft text runs keep the framed header off stdout. Presentation goes to
 stderr so command substitution receives only the task bytes.
 
+### Opt-in Effigy output cap
+
+Set `EFFIGY_OUTPUT_CAP_BYTES` to cap the cumulative bytes Effigy itself writes
+to stdout and stderr. The default is uncapped. Child processes that inherit
+Effigy's file descriptors are outside this budget; their output keeps its
+existing descriptor behavior.
+
+When the cap is reached, Effigy reserves room for and writes one final stderr
+line in this form: `effigy: output cap <N> bytes reached; remaining Effigy
+output discarded (output_truncated)`. It then drops further Effigy output.
+The marker is included in the cap. Values too small to contain the marker are
+refused at startup. JSON envelopes include `output_truncated` when truncation
+was already observed before the envelope is built.
+
 
 ## Vision Alignment
 
@@ -82,6 +96,7 @@ effigy --json test --plan
   },
   "result": {},
   "warnings": [],
+  "output_truncated": false,
   "error": null
 }
 ```

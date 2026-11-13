@@ -12,10 +12,15 @@ use effigy_cli::{
 use effigy_context::EffigyRuntimeContext;
 use effigy_core::widgets::MessageBlock;
 use effigy_ui::{OutputMode, PlainRenderer, Renderer};
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
 pub fn run_cli(raw_args: Vec<String>) {
+    if let Err(error) = effigy_core::output_cap::configure_from_env() {
+        let message = format!("effigy: {error}\n");
+        let _ = std::io::stderr().write_all(message.as_bytes());
+        std::process::exit(2);
+    }
     let original_args = raw_args.clone();
     let requested_root_json = runtime_flag_present_before_passthrough(&raw_args, "--json");
     // One argv snapshot feeds the targeted usage of every argument error below:

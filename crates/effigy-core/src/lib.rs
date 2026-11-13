@@ -17,6 +17,7 @@ pub mod git_source;
 pub mod git_worktree;
 pub mod host_alias;
 pub mod managed_waits;
+pub mod output_cap;
 pub mod path_error_text;
 pub mod path_probe;
 pub mod repo;

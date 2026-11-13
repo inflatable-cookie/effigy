@@ -757,7 +757,7 @@ fn global_sink() -> &'static Arc<Sink> {
     SINK.get_or_init(|| {
         let mode = StepMode::from_u8(MODE.load(Ordering::SeqCst));
         let color = resolve_color_enabled(OutputMode::from_env(), std::io::stderr().is_terminal());
-        Sink::new(mode, color, std::io::stderr())
+        Sink::new(mode, color, crate::output::ProcessStderr)
     })
 }
 

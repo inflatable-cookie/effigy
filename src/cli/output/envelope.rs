@@ -107,6 +107,7 @@ fn build_json_envelope_success_with_binary(
         },
         "result": result,
         "warnings": retired_config_warnings(),
+        "output_truncated": effigy_ui::output::output_was_truncated(),
         "error": serde_json::Value::Null,
     })
 }
@@ -141,6 +142,7 @@ pub fn build_json_envelope_error(
         },
         "result": serde_json::Value::Null,
         "warnings": retired_config_warnings(),
+        "output_truncated": effigy_ui::output::output_was_truncated(),
         "error": {
             // The three kinds a person reads (K4): `kind` is the category and
             // `type` names the error's own type, so a machine reader gets the
@@ -154,11 +156,11 @@ pub fn build_json_envelope_error(
 }
 
 fn print_json_payload(payload: &serde_json::Value) {
-    println!(
-        "{}",
-        serde_json::to_string_pretty(payload).unwrap_or_else(|_| {
-            "{\"ok\":false,\"error\":{\"kind\":\"JsonEncodeError\"}}".to_owned()
-        })
+    let output = serde_json::to_string_pretty(payload)
+        .unwrap_or_else(|_| "{\"ok\":false,\"error\":{\"kind\":\"JsonEncodeError\"}}".to_owned());
+    let _ = effigy_ui::output::write_process_output(
+        effigy_ui::output::OutputStream::Stdout,
+        format!("{output}\n").as_bytes(),
     );
 }
 

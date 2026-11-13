@@ -18,6 +18,7 @@ fn build_json_envelope_success_sets_contract_shape() {
     assert_eq!(payload["command"]["kind"], "task");
     assert_eq!(payload["command"]["name"], "build");
     assert_eq!(payload["result"]["done"], true);
+    assert_eq!(payload["output_truncated"], false);
     assert_eq!(payload["error"], serde_json::Value::Null);
 }
 
@@ -45,6 +46,7 @@ fn build_json_envelope_error_sets_contract_shape() {
     assert_eq!(payload["error"]["type"], "RunnerError");
     assert_eq!(payload["error"]["message"], "boom");
     assert_eq!(payload["error"]["details"]["code"], 1);
+    assert_eq!(payload["output_truncated"], false);
 }
 
 #[test]

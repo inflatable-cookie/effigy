@@ -41,7 +41,6 @@ use effigy_ui::steps::ProgressFrame;
 
 use std::cell::RefCell;
 use std::ffi::OsString;
-use std::io::Write;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
@@ -472,7 +471,10 @@ fn exchange(
         let exited = hook.poll();
         let (out, err) = hook.take_stream_output();
         if !err.is_empty() {
-            let _ = std::io::stderr().write_all(&err);
+            let _ = effigy_ui::output::write_process_output(
+                effigy_ui::output::OutputStream::Stderr,
+                &err,
+            );
         }
         delivery.stdout.extend_from_slice(&out);
         // A hook may acknowledge and then exit: the acknowledgement is the
@@ -653,7 +655,10 @@ pub(super) fn admit(
                     });
                 }
                 _ => {
-                    let _ = std::io::stderr().write_all(&err);
+                    let _ = effigy_ui::output::write_process_output(
+                        effigy_ui::output::OutputStream::Stderr,
+                        &err,
+                    );
                 }
             }
         }
@@ -1035,6 +1040,9 @@ fn decision_line(stdout: &[u8], exited: bool) -> Option<String> {
         .iter()
         .position(|byte| *byte == b'\n')
         .or_else(|| (exited && !stdout.is_empty()).then_some(stdout.len()))?;
+    if end > DECISION_MAX {
+        return None;
+    }
     Some(String::from_utf8_lossy(&stdout[..end]).trim().to_owned())
 }
 
@@ -1281,5 +1289,13 @@ mod tests {
         assert_eq!(decision_line(b"admit\n", false).as_deref(), Some("admit"));
         assert_eq!(decision_line(b"admit", true).as_deref(), Some("admit"));
         assert_eq!(decision_line(b"", true), None);
+    }
+
+    #[test]
+    fn an_oversized_deny_line_is_not_parsed_as_a_reason() {
+        let mut stdout = vec![b'd'; DECISION_MAX + 1];
+        stdout[..4].copy_from_slice(b"deny");
+        stdout.push(b'\n');
+        assert_eq!(decision_line(&stdout, false), None);
     }
 }
