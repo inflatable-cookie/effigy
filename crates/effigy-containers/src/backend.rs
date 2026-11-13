@@ -11,7 +11,7 @@ use effigy_kernel::observe::Observed;
 use effigy_kernel::store::BackendMetadata;
 use effigy_manifest::ManifestContainerDriver;
 
-use crate::{BackendId, ContainerBackendRegistry, ContainerPolicyError, EffectiveContainerPolicy};
+use crate::{BackendId, ContainerPolicyError, EffectiveContainerPolicy};
 
 /// Legacy v0.14 per-checkout backend file. Read for one release; never written.
 const LEGACY_BACKEND_FILE: &str = ".effigy/runtime/compose/.effigy-runtime.json";
@@ -64,11 +64,11 @@ impl ExactBackend {
     }
 }
 
-fn from_engine(engine: &str) -> BackendId {
-    if engine == BackendId::docker_compose().as_str() {
-        BackendId::docker_compose()
-    } else {
-        BackendId::colima_nerdctl()
+fn from_engine(engine: &str) -> Result<BackendId, String> {
+    match engine {
+        "docker-compose" => Ok(BackendId::docker_compose()),
+        "colima-nerdctl" => Ok(BackendId::colima_nerdctl()),
+        _ => Err(format!("recorded backend `{engine}` is not a known engine")),
     }
 }
 
@@ -85,10 +85,10 @@ pub fn exact_backend(
     if chosen.is_none() {
         match crate::policy::render::recorded_backend(repo_root, name) {
             Observed::Verified(Some(record), _) => {
-                chosen = Some((
-                    from_engine(&record.engine),
-                    BackendSource::Recorded(record.source),
-                ));
+                match from_engine(&record.engine) {
+                    Ok(id) => chosen = Some((id, BackendSource::Recorded(record.source))),
+                    Err(reason) => unknown = Some(reason),
+                }
             }
             Observed::Verified(None, _) | Observed::Absent(_) => {}
             Observed::Unknown(reason) => unknown = Some(format!("{reason}")),
@@ -111,11 +111,6 @@ pub fn exact_backend(
             };
             (id, BackendSource::DriverDefault)
         });
-    let mut detection = crate::ContainerBackendDetection::from_env_and_path();
-    detection.backend_override = Some(id);
-    let id = ContainerBackendRegistry::defaults()
-        .detect_backend(&detection)
-        .unwrap_or_else(|_| BackendId::colima_nerdctl());
     ExactBackend {
         id,
         source,
@@ -201,10 +196,11 @@ fn legacy_backend(repo_root: &Path, name: &str) -> Result<Option<BackendId>, Str
     };
     let parsed = toml::from_str::<LegacyBackendFile>(&source)
         .map_err(|error| format!("{}: {error}", path.display()))?;
-    Ok(parsed
+    parsed
         .containers
         .get(name)
-        .map(|entry| from_engine(&entry.backend)))
+        .map(|entry| from_engine(&entry.backend))
+        .transpose()
 }
 
 #[cfg(test)]
