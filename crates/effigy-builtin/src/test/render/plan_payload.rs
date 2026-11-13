@@ -41,7 +41,7 @@ pub(super) fn build_builtin_test_plan_payload(
                     "suite_env_files": suite.suite_env_files,
                     "setup_steps": suite.setup_steps,
                     "teardown_steps": suite.teardown_steps,
-                    "teardown_policy": suite.teardown_policy,
+                    "teardown_policy": suite.teardown_policy.as_str(),
                     "default": suite.is_default,
                 })).collect::<Vec<serde_json::Value>>(),
                 "fallback_chain": target.fallback_chain,

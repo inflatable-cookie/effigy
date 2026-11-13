@@ -44,7 +44,10 @@ const SECTION_SCAN: &[&str] = &[
 const SECTION_TASKS_MINIMAL: &[&str] = &[
     "[tasks]",
     "# Compact task command mappings.",
-    "test = \"bun x vitest run\"",
+    // `tasks.test` was removed in v0.11 because `effigy test` is always the
+    // built-in orchestrator, so the starter maps a named task instead of a
+    // reserved one it would have to refuse.
+    "check = \"bun x vitest run\"",
     "",
 ];
 

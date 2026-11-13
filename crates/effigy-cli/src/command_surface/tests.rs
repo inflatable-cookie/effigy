@@ -6,7 +6,7 @@ use super::{
 };
 use crate::builtin_names::{
     builtin_command_name, builtin_escape_spelling, is_deferred_builtin_command,
-    BuiltinNameAuthority, BUILTIN_COMMAND_NAMES,
+    live_builtin_command_names, BuiltinNameAuthority, BUILTIN_COMMAND_NAMES,
 };
 use crate::{parse_command, Command, HelpTopic, TaskInvocation};
 use effigy_core::builtin_tasks::BUILTIN_TASKS;

@@ -99,6 +99,18 @@ pub enum ManifestTestSuiteTeardownPolicy {
     OnSuccess,
 }
 
+impl ManifestTestSuiteTeardownPolicy {
+    /// The kebab-case spelling the manifest accepts and the JSON payloads and
+    /// text renderings show. One owner for both, so the wire word a manifest
+    /// declares is the word a report repeats.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Always => "always",
+            Self::OnSuccess => "on-success",
+        }
+    }
+}
+
 #[allow(dead_code)]
 impl ManifestTestSuite {
     pub fn is_default(&self) -> bool {
@@ -155,5 +167,35 @@ impl ManifestTestSuite {
             ManifestTestSuite::Command(_) => ManifestTestSuiteTeardownPolicy::OnSuccess,
             ManifestTestSuite::Config(table) => table.teardown_policy,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ManifestTestSuiteTable, ManifestTestSuiteTeardownPolicy};
+
+    #[test]
+    fn the_declared_and_rendered_teardown_policy_spellings_are_one_contract() {
+        for (spelling, policy) in [
+            ("always", ManifestTestSuiteTeardownPolicy::Always),
+            ("on-success", ManifestTestSuiteTeardownPolicy::OnSuccess),
+        ] {
+            let declared = format!("run = \"cargo nextest run\"\nteardown_policy = \"{spelling}\"");
+            let table = toml::from_str::<ManifestTestSuiteTable>(&declared)
+                .expect("a declared teardown policy parses");
+            assert_eq!(table.teardown_policy, policy);
+            // A report repeats the word the manifest accepted, not a second
+            // spelling of the same policy.
+            assert_eq!(table.teardown_policy.as_str(), spelling);
+        }
+        // The default a suite that declares nothing gets is the documented
+        // `on-success` policy.
+        let table = toml::from_str::<ManifestTestSuiteTable>("run = \"cargo nextest run\"")
+            .expect("a suite without a policy parses");
+        assert_eq!(
+            table.teardown_policy,
+            ManifestTestSuiteTeardownPolicy::OnSuccess
+        );
+        assert_eq!(table.teardown_policy.as_str(), "on-success");
     }
 }

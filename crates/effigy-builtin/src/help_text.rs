@@ -1,3 +1,5 @@
+use super::text_doc::TextDoc;
+
 pub(super) enum HelpSection<'a> {
     Plain {
         heading: &'a str,
@@ -9,27 +11,30 @@ pub(super) enum HelpSection<'a> {
     },
 }
 
+/// Render one built-in help panel as plain text.
+///
+/// The document builder owns line, blank-line and bullet spelling; this module
+/// only decides the panel's shape: a `Title Help` heading, then one block per
+/// section separated by a single blank line.
 pub(super) fn render_titled_help(title: &str, sections: &[HelpSection<'_>]) -> String {
-    let mut lines = vec![format!("{title} Help"), String::new()];
-    for (index, section) in sections.iter().enumerate() {
+    let mut doc = TextDoc::new();
+    doc.line(format!("{title} Help"));
+    for section in sections {
+        doc.blank();
         match section {
-            HelpSection::Plain {
-                heading,
-                lines: body,
-            } => {
-                lines.push((*heading).to_owned());
-                lines.extend(body.iter().map(|line| (*line).to_owned()));
+            HelpSection::Plain { heading, lines } => {
+                doc.line(*heading);
+                for line in *lines {
+                    doc.line(*line);
+                }
             }
             HelpSection::Bulleted { heading, items } => {
-                lines.push((*heading).to_owned());
-                lines.extend(items.iter().map(|item| format!("- {item}")));
+                doc.line(*heading);
+                doc.bullets(items);
             }
         }
-        if index + 1 != sections.len() {
-            lines.push(String::new());
-        }
     }
-    lines.join("\n")
+    doc.finish()
 }
 
 #[cfg(test)]
