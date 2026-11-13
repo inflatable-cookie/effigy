@@ -12,7 +12,10 @@ the old snapshot. Column semantics are in `README.md`.
 Round 5 landed as splits and repairs, so the table was re-rated rather than
 patched: at `e458614d8` the frozen table reported 95 new, 150 changed and 2 gone
 rows (30.8% stale). Every drifted row was re-read at current main with the same
-rubric and the same one-line `file:line` evidence standard.
+rubric and the same evidence standard: each of the 244 re-scored and new rows
+carries a one-line `reason` whose text ends in a concrete `path:line` citation
+for the mechanism it describes, and the 555 rows whose files did not change keep
+their frozen reason and `body_sha` verbatim.
 
 | Work | Count |
 |---|---|
