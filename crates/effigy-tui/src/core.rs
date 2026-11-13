@@ -51,33 +51,16 @@ fn palette() -> &'static Palette {
 }
 
 /// Project an `anstyle` foreground colour into the ratatui palette.
+///
+/// The shared theme draws with ANSI-256, plus ANSI white for task names; a
+/// colour outside that vocabulary falls back to the terminal default rather
+/// than a guessed hue.
 fn ratatui_colour(style: anstyle::Style) -> Color {
     match style.get_fg_color() {
         Some(anstyle::Color::Ansi256(index)) => Color::Indexed(index.0),
-        Some(anstyle::Color::Ansi(colour)) => match colour {
-            anstyle::AnsiColor::Black => Color::Black,
-            anstyle::AnsiColor::Red => Color::Red,
-            anstyle::AnsiColor::Green => Color::Green,
-            anstyle::AnsiColor::Yellow => Color::Yellow,
-            anstyle::AnsiColor::Blue => Color::Blue,
-            anstyle::AnsiColor::Magenta => Color::Magenta,
-            anstyle::AnsiColor::Cyan => Color::Cyan,
-            anstyle::AnsiColor::White => Color::White,
-            anstyle::AnsiColor::BrightBlack => Color::DarkGray,
-            anstyle::AnsiColor::BrightRed => Color::LightRed,
-            anstyle::AnsiColor::BrightGreen => Color::LightGreen,
-            anstyle::AnsiColor::BrightYellow => Color::LightYellow,
-            anstyle::AnsiColor::BrightBlue => Color::LightBlue,
-            anstyle::AnsiColor::BrightMagenta => Color::LightMagenta,
-            anstyle::AnsiColor::BrightCyan => Color::LightCyan,
-            anstyle::AnsiColor::BrightWhite => Color::White,
-        },
+        Some(anstyle::Color::Ansi(anstyle::AnsiColor::White)) => Color::White,
         Some(anstyle::Color::Rgb(rgb)) => Color::Rgb(rgb.0, rgb.1, rgb.2),
-        None => Color::Reset,
-        // `anstyle::Color` is exhaustive here; a future variant lands as the
-        // terminal's default rather than a silently wrong hue.
-        #[allow(unreachable_patterns)]
-        Some(_) => Color::Reset,
+        _ => Color::Reset,
     }
 }
 
