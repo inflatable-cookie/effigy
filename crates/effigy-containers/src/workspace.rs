@@ -4,8 +4,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use effigy_manifest::{
-    LibraryMount, ManifestContainerConfig, ManifestSystemMount, ManifestSystemMountTable,
-    ManifestWorkspaceConfig,
+    LibraryMount, ManifestContainerConfig, ManifestSystemMount, ManifestSystemMountSpec,
+    ManifestSystemMountTable, ManifestWorkspaceConfig,
 };
 
 use crate::{ContainerPolicyError, EffectiveContainerPolicy};
@@ -1151,8 +1151,8 @@ fn parse_workspace_extra_mount(
     mount: &ManifestSystemMount,
 ) -> Result<ParsedWorkspaceExtraMount, ContainerPolicyError> {
     match mount {
-        ManifestSystemMount::Spec(raw) => {
-            parse_legacy_workspace_extra_mount(repo_root, container_name, workspace_root, raw)
+        ManifestSystemMount::Spec(spec) => {
+            parse_legacy_workspace_extra_mount(repo_root, container_name, workspace_root, spec)
         }
         ManifestSystemMount::Table(table) => {
             parse_structured_workspace_extra_mount(repo_root, container_name, workspace_root, table)
@@ -1164,18 +1164,12 @@ fn parse_legacy_workspace_extra_mount(
     repo_root: &Path,
     container_name: &str,
     workspace_root: &Path,
-    raw: &str,
+    spec: &ManifestSystemMountSpec,
 ) -> Result<ParsedWorkspaceExtraMount, ContainerPolicyError> {
-    let mut parts = raw.splitn(3, ':');
-    let source_raw = parts.next().unwrap_or_default().trim();
-    let target_raw = parts
-        .next()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let options = parts
-        .next()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
+    let raw = spec.raw();
+    let source_raw = spec.source().unwrap_or_default();
+    let target_raw = spec.target();
+    let options = spec.options_spec();
     if source_raw.is_empty() {
         return Err(ContainerPolicyError::TaskInvocation(format!(
             "container `{container_name}` workspace extra mount `{raw}` is invalid: source path is empty"

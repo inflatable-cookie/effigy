@@ -74,8 +74,8 @@ pub use config_sections::{
     ManifestReleaseConfig, ManifestScanConfig, ManifestSecretKeyConfig, ManifestSecretTarget,
     ManifestSecretsBackend, ManifestSecretsConfig, ManifestSecretsExternalConfig,
     ManifestSecretsVaultConfig, ManifestSourceUpdate, ManifestSystemConfig, ManifestSystemMount,
-    ManifestSystemMountTable, ManifestSystemsConfig, ManifestTaskDefaultsConfig,
-    ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
+    ManifestSystemMountSpec, ManifestSystemMountTable, ManifestSystemsConfig,
+    ManifestTaskDefaultsConfig, ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
 };
 pub use execution_binding::{
     resolve_task_execution_binding, resolve_task_execution_binding_from_parts,

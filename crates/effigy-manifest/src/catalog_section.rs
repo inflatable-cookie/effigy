@@ -62,7 +62,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{env_schema_declaring_catalog, nearest_catalog, nearest_declaring_catalog};
-    use crate::{LoadedCatalog, TaskManifest};
+    use crate::LoadedCatalog;
 
     fn loaded_catalog(alias: &str, root: &str, manifest_body: &str, depth: usize) -> LoadedCatalog {
         LoadedCatalog::for_test(

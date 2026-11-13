@@ -58,8 +58,71 @@ pub struct ManifestWorkspaceConfig {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ManifestSystemMount {
-    Spec(String),
+    /// A legacy `source:target:options` string, decoded once at load.
+    Spec(ManifestSystemMountSpec),
     Table(ManifestSystemMountTable),
+}
+
+/// A legacy `source:target:options` mount string, decoded once.
+///
+/// The grammar lives here and nowhere else: the manifest accessors and the
+/// container policy both read these decoded parts instead of splitting the
+/// string again at each call site.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManifestSystemMountSpec {
+    raw: String,
+    source: Option<String>,
+    target: Option<String>,
+    options: Option<String>,
+}
+
+impl ManifestSystemMountSpec {
+    pub fn parse(raw: impl Into<String>) -> Self {
+        let raw = raw.into();
+        let mut parts = raw.splitn(3, ':');
+        let mut next = || {
+            parts
+                .next()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+        };
+        let source = next();
+        let target = next();
+        let options = next();
+        Self {
+            raw,
+            source,
+            target,
+            options,
+        }
+    }
+
+    /// The declaration exactly as the manifest wrote it.
+    pub fn raw(&self) -> &str {
+        &self.raw
+    }
+
+    pub fn source(&self) -> Option<&str> {
+        self.source.as_deref()
+    }
+
+    pub fn target(&self) -> Option<&str> {
+        self.target.as_deref()
+    }
+
+    /// The options field as written, before it is split on commas.
+    pub fn options_spec(&self) -> Option<&str> {
+        self.options.as_deref()
+    }
+
+    /// The comma-separated options, decoded.
+    pub fn options(&self) -> Vec<&str> {
+        self.options
+            .as_deref()
+            .map(|options| options.split(',').collect())
+            .unwrap_or_default()
+    }
 }
 
 impl<'de> serde::Deserialize<'de> for ManifestSystemMount {
@@ -80,14 +143,18 @@ impl<'de> serde::Deserialize<'de> for ManifestSystemMount {
             where
                 E: serde::de::Error,
             {
-                Ok(ManifestSystemMount::Spec(value.to_owned()))
+                Ok(ManifestSystemMount::Spec(ManifestSystemMountSpec::parse(
+                    value,
+                )))
             }
 
             fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
             where
                 E: serde::de::Error,
             {
-                Ok(ManifestSystemMount::Spec(value))
+                Ok(ManifestSystemMount::Spec(ManifestSystemMountSpec::parse(
+                    value,
+                )))
             }
 
             fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
@@ -185,24 +252,29 @@ impl ManifestSystemMount {
 
     pub fn source(&self) -> Option<&str> {
         match self {
-            Self::Spec(spec) => legacy_mount_parts(spec).0,
+            Self::Spec(spec) => spec.source(),
             Self::Table(table) => table.source.as_deref(),
         }
     }
 
     pub fn target(&self) -> Option<&str> {
         match self {
-            Self::Spec(spec) => legacy_mount_parts(spec).1,
+            Self::Spec(spec) => spec.target(),
             Self::Table(table) => table.target.as_deref(),
+        }
+    }
+
+    /// The options field as the manifest wrote it, before the comma split.
+    pub fn options_spec(&self) -> Option<&str> {
+        match self {
+            Self::Spec(spec) => spec.options_spec(),
+            Self::Table(_) => None,
         }
     }
 
     pub fn options(&self) -> Vec<&str> {
         match self {
-            Self::Spec(spec) => legacy_mount_parts(spec)
-                .2
-                .map(|options| options.split(',').collect())
-                .unwrap_or_default(),
+            Self::Spec(spec) => spec.options(),
             Self::Table(table) => table.options.iter().map(String::as_str).collect(),
         }
     }
@@ -234,32 +306,15 @@ impl ManifestSystemMount {
     }
 }
 
-fn legacy_mount_parts(spec: &str) -> (Option<&str>, Option<&str>, Option<&str>) {
-    let mut parts = spec.splitn(3, ':');
-    let source = parts
-        .next()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let target = parts
-        .next()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let options = parts
-        .next()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    (source, target, options)
-}
-
 impl PartialEq<String> for ManifestSystemMount {
     fn eq(&self, other: &String) -> bool {
-        matches!(self, Self::Spec(spec) if spec == other)
+        matches!(self, Self::Spec(spec) if spec.raw() == other)
     }
 }
 
 impl PartialEq<&str> for ManifestSystemMount {
     fn eq(&self, other: &&str) -> bool {
-        matches!(self, Self::Spec(spec) if spec == other)
+        matches!(self, Self::Spec(spec) if spec.raw() == *other)
     }
 }
 
@@ -748,4 +803,84 @@ pub struct ManifestDataConfig {
 pub struct ManifestDataTargetConfig {
     pub service: String,
     pub database: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ManifestSystemMount, ManifestSystemMountSpec};
+
+    /// The legacy grammar decodes once into typed parts, and every accessor
+    /// reads those parts rather than splitting the declaration again.
+    #[test]
+    fn a_legacy_mount_spec_decodes_into_typed_parts() {
+        let spec = ManifestSystemMountSpec::parse("shared:/workspace-root/shared:ro,cached");
+        assert_eq!(spec.raw(), "shared:/workspace-root/shared:ro,cached");
+        assert_eq!(spec.source(), Some("shared"));
+        assert_eq!(spec.target(), Some("/workspace-root/shared"));
+        assert_eq!(spec.options_spec(), Some("ro,cached"));
+        assert_eq!(spec.options(), vec!["ro", "cached"]);
+
+        let mount = ManifestSystemMount::Spec(spec);
+        assert_eq!(mount.source(), Some("shared"));
+        assert_eq!(mount.target(), Some("/workspace-root/shared"));
+        assert_eq!(mount.options(), vec!["ro", "cached"]);
+        assert!(mount.is_catalog(), "a legacy spec is a catalog member");
+    }
+
+    /// Parts are trimmed and empty parts stay absent, so a short declaration
+    /// does not invent a target or options.
+    #[test]
+    fn a_legacy_mount_spec_keeps_absent_parts_absent() {
+        for (raw, source, target, options) in [
+            ("../book", Some("../book"), None, None),
+            (
+                " ../book : /workspace-root/book ",
+                Some("../book"),
+                Some("/workspace-root/book"),
+                None,
+            ),
+            (":/target", None, Some("/target"), None),
+            ("::", None, None, None),
+        ] {
+            let spec = ManifestSystemMountSpec::parse(raw);
+            assert_eq!(spec.source(), source, "{raw}");
+            assert_eq!(spec.target(), target, "{raw}");
+            assert_eq!(spec.options_spec(), options, "{raw}");
+        }
+    }
+
+    /// A mount declared as a string in a manifest keeps its declaration and
+    /// decodes through the same grammar as the enum accessors.
+    #[test]
+    fn a_manifest_string_mount_decodes_at_load() {
+        let manifest = toml::from_str::<crate::TaskManifest>(
+            r#"
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+working_dir = "."
+mounts = ["shared:/workspace-root/shared:ro"]
+
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "compose.yml"
+"#,
+        )
+        .expect("manifest parses");
+
+        let workspace =
+            &manifest.systems.as_ref().expect("systems").systems["dev"].workspaces["app"];
+        let mount = workspace.mounts.first().expect("one mount");
+        assert_eq!(mount.source(), Some("shared"));
+        assert_eq!(mount.target(), Some("/workspace-root/shared"));
+        assert_eq!(mount.options(), vec!["ro"]);
+        assert!(*mount == "shared:/workspace-root/shared:ro".to_owned());
+    }
 }
