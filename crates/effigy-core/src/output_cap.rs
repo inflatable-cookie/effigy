@@ -44,12 +44,22 @@ impl State {
             .saturating_sub(marker.len())
             .saturating_sub(self.written);
         let accepted = complete_lines(bytes, available);
-        emit(stream, &bytes[..accepted])?;
         self.written += accepted;
+        if accepted > 0 {
+            if let Err(error) = emit(stream, &bytes[..accepted]) {
+                // An emitter may have written a prefix before returning an
+                // error. Charge the whole attempt, reserve and attempt the
+                // marker once, then latch so ignored errors cannot retry it.
+                self.truncated = true;
+                self.written += marker.len();
+                let _ = emit(Stream::Stderr, &marker);
+                return Err(error);
+            }
+        }
         if accepted != bytes.len() {
-            emit(Stream::Stderr, &marker)?;
             self.written += marker.len();
             self.truncated = true;
+            emit(Stream::Stderr, &marker)?;
         }
         Ok(())
     }
@@ -291,5 +301,72 @@ mod tests {
         assert!(validate_cap(Some(cap)).is_ok());
         assert!(validate_cap(Some(cap - 1)).is_err());
         assert!(validate_cap(None).is_ok());
+    }
+
+    #[test]
+    fn a_partial_payload_write_error_charges_and_latches_before_retry() {
+        let cap = 120;
+        let mut state = State::new(Some(cap));
+        let mut calls = 0;
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let mut emit = |stream, bytes: &[u8]| {
+            calls += 1;
+            match (calls, stream) {
+                (1, Stream::Stdout) => {
+                    out.extend_from_slice(&bytes[..4]);
+                    Err(io::Error::other("payload write failed after a prefix"))
+                }
+                (2, Stream::Stderr) => {
+                    err.extend_from_slice(bytes);
+                    Ok(())
+                }
+                _ => panic!("unexpected emit attempt {calls}"),
+            }
+        };
+
+        assert!(state
+            .write_with(
+                Stream::Stdout,
+                b"first line\nsecond line is too long to fit\n",
+                &mut emit,
+            )
+            .is_err());
+        state
+            .write_with(Stream::Stdout, b"later\n", &mut emit)
+            .unwrap();
+
+        assert_eq!(calls, 2);
+        assert_eq!(out, b"firs");
+        assert_eq!(err, marker(cap));
+        assert_eq!(state.written, b"first line\n".len() + marker(cap).len());
+        assert!(state.written <= cap);
+        assert!(state.truncated);
+    }
+
+    #[test]
+    fn a_partial_marker_write_error_is_not_retried() {
+        let cap = 110;
+        let mut state = State::new(Some(cap));
+        let mut calls = 0;
+        let mut output = Vec::new();
+        let mut emit = |_, bytes: &[u8]| {
+            calls += 1;
+            output.extend_from_slice(&bytes[..5]);
+            Err(io::Error::other("marker write failed after a prefix"))
+        };
+
+        assert!(state
+            .write_with(Stream::Stdout, &[b'x'; 300], &mut emit)
+            .is_err());
+        state
+            .write_with(Stream::Stdout, b"later\n", &mut emit)
+            .unwrap();
+
+        assert_eq!(calls, 1);
+        assert_eq!(output, marker(cap)[..5]);
+        assert_eq!(state.written, marker(cap).len());
+        assert!(state.written <= cap);
+        assert!(state.truncated);
     }
 }
