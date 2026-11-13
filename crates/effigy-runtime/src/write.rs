@@ -74,14 +74,41 @@ where
     // up (effigy#313, effigy#974). A runtime that narrates nothing this parser
     // recognises leaves the transition's own `stopping the backend` sub-step,
     // which still names the teardown it awaits with its elapsed wait.
+    let survivors = std::cell::RefCell::new(Vec::new());
     let stopped = transition(repo_root, &policy, &|progress| {
         if prepared {
+            let started = std::time::Instant::now();
             let project = policy.project_name.clone();
             run_shutdown_compose_watched(repo_root, &policy, &mut |line| {
                 if let Some(sub_step) = shutdown_sub_step(&project, line) {
                     progress.update(|_| ProgressFrame::new(sub_step));
                 }
             })?;
+            // A teardown the runtime reports as done is only done when its
+            // containers are gone. Survivors stay a warning on the operation,
+            // never a second step and never a failed stop: the backend exit
+            // is the authority, and the transition already published stopped.
+            // (Review on effigy#974: dropping the old inventory read made a
+            // `compose down` that left a container behind read as clean.)
+            *survivors.borrow_mut() =
+                effigy_containers::exec::list_compose_containers_for_policy_including_stopped(
+                    repo_root, &policy,
+                )
+                .ok()
+                .map(|rows| {
+                    rows.into_iter()
+                        .filter(|row| !row.oneoff)
+                        .map(|row| row.container_name)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if let Some(note) = surviving_teardown_note(
+                &policy.project_name,
+                &survivors.borrow(),
+                started.elapsed(),
+            ) {
+                eprintln!("{note}");
+            }
         }
         Ok(())
     });
@@ -337,9 +364,46 @@ fn shutdown_sub_step(project: &str, line: &str) -> Option<String> {
     effigy_containers::exec::parse_compose_step_event(line).map(|event| event.label(project))
 }
 
+/// A teardown that left containers behind warns on the operation: names every
+/// surviving service, the teardown's elapsed time and the commands that
+/// inspect it. `None` when the inventory is empty, so a clean `compose down`
+/// stays a success with no second line. Survivors never fail the stop: the
+/// backend exit is the authority, and the transition already published
+/// stopped (a handover fake lists its peer unconditionally, and a real
+/// inventory can lag the removal).
+///
+/// Pure over the post-teardown inventory, so the survivor wording is
+/// testable without a terminal or a runtime.
+fn surviving_teardown_note(
+    project: &str,
+    remaining: &[String],
+    elapsed: std::time::Duration,
+) -> Option<String> {
+    if remaining.is_empty() {
+        return None;
+    }
+    let mut services = remaining
+        .iter()
+        .map(|container| effigy_containers::exec::service_from_container_name(project, container))
+        .collect::<Vec<_>>();
+    services.sort();
+    services.dedup();
+    let held = services.join(", ");
+    let (is_are, it_them) = if services.len() == 1 {
+        ("is", "it")
+    } else {
+        ("are", "them")
+    };
+    Some(format!(
+        "[warn] {held} {is_are} still present after the teardown ({}); inspect {it_them} with `effigy container status` and `effigy container logs --service {}`. The environment stays in a state its own `effigy container up` or `effigy container down` recovers from.",
+        effigy_ui::human::human_duration(elapsed),
+        services.first().expect("a survivor names its service"),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::shutdown_sub_step;
+    use super::{shutdown_sub_step, surviving_teardown_note};
     use effigy_ui::steps::{ProgressFrame, ProgressSource};
 
     /// The runtime's stopping/removing lines move the transition's sub-step;
@@ -381,5 +445,53 @@ mod tests {
             let _source = progress;
         });
         assert!(lines.is_empty(), "no step of its own: {lines:?}");
+    }
+
+    /// An empty post-teardown inventory is a success with no second line.
+    #[test]
+    fn an_empty_post_teardown_inventory_is_no_note() {
+        assert!(
+            surviving_teardown_note("demo-web-dev", &[], std::time::Duration::from_secs(3))
+                .is_none()
+        );
+    }
+
+    /// Survivors warn on the operation without failing the stop: the note
+    /// names every surviving service, the teardown's elapsed time and the
+    /// commands that inspect it, so a `compose down` that left a container
+    /// behind never reads as clean. The stop itself stays a success: the
+    /// backend exit is the authority.
+    #[test]
+    fn surviving_containers_warn_with_their_services() {
+        let note = surviving_teardown_note(
+            "demo-web-dev",
+            &[
+                "demo-web-dev-web-1".to_owned(),
+                "demo-web-dev-db-1".to_owned(),
+            ],
+            std::time::Duration::from_secs(11),
+        )
+        .expect("survivors warn");
+        assert!(
+            note.contains("[warn] db, web are still present after the teardown"),
+            "{note}"
+        );
+        assert!(note.contains("11s"), "{note}");
+        assert!(note.contains("`effigy container status`"), "{note}");
+        assert!(
+            note.contains("`effigy container logs --service db`"),
+            "{note}"
+        );
+
+        let single = surviving_teardown_note(
+            "demo-web-dev",
+            &["demo-web-dev-web-1".to_owned()],
+            std::time::Duration::from_secs(11),
+        )
+        .expect("a single survivor warns");
+        assert!(
+            single.contains("[warn] web is still present after the teardown"),
+            "{single}"
+        );
     }
 }
