@@ -815,12 +815,13 @@ fn ca_bundle_file_contains_fingerprint(path: &Path, fingerprint: &[u8; 32]) -> b
 
 fn pem_bundle_contains_fingerprint(pem: &[u8], fingerprint: &[u8; 32]) -> bool {
     let mut reader = pem;
-    rustls_pemfile::certs(&mut reader)
+    let contains = rustls_pemfile::certs(&mut reader)
         .filter_map(Result::ok)
         .any(|certificate| {
             let found: [u8; 32] = Sha256::digest(certificate.as_ref()).into();
             &found == fingerprint
-        })
+        });
+    contains
 }
 
 fn format_command_output(stdout: &[u8], stderr: &[u8]) -> String {
