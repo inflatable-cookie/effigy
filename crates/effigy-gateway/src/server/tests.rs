@@ -116,7 +116,9 @@ fn legacy_recovery_version_publication_refuses_symlink_without_following() {
     std::fs::write(&outside, b"sentinel").unwrap();
     symlink(&outside, &version_path).unwrap();
     write_pid_file(&pid_path).unwrap();
-    let error = write_gateway_version_file(&pid_path).expect_err("symlink version must refuse");
+    let error =
+        identity::publish_gateway_version(&pid_path, &effigy_core::build_info::active_version())
+            .expect_err("symlink version must refuse");
     assert!(error
         .to_string()
         .contains("gateway record replacement target is unsafe"));
@@ -138,6 +140,20 @@ fn read_missing_pid_file_returns_not_running() {
     assert!(matches!(result.unwrap_err(), GatewayError::NotRunning));
 }
 
+#[cfg(unix)]
+#[test]
+fn read_pid_file_refuses_a_symlink_instead_of_following_it() {
+    use std::os::unix::fs::symlink;
+
+    let dir = gateway_dir();
+    let target = dir.path().join("outside-pid");
+    let pid_path = dir.path().join("gateway.pid");
+    std::fs::write(&target, std::process::id().to_string()).unwrap();
+    symlink(&target, &pid_path).unwrap();
+
+    assert!(read_pid_file(&pid_path).is_err());
+}
+
 #[test]
 fn server_pid_domain_accepts_only_positive_non_init_pid_t_values() {
     assert_eq!(checked_gateway_pid(0), None);
@@ -154,10 +170,12 @@ fn read_pid_file_rejects_invalid_pid_domain_and_malformed_values() {
     let version_path = pid_path.with_extension("version");
 
     write_pid_file(&pid_path).unwrap();
-    write_gateway_version_file(&pid_path).unwrap();
+    identity::publish_gateway_version(&pid_path, &effigy_core::build_info::active_version())
+        .unwrap();
     assert_eq!(read_pid_file(&pid_path).unwrap(), std::process::id());
-    assert!(read_gateway_version_file(&version_path).unwrap().is_some());
-    remove_pid_file(&pid_path);
+    assert!(identity::read_gateway_version(&pid_path).unwrap().is_some());
+    std::fs::remove_file(&pid_path).unwrap();
+    std::fs::remove_file(&version_path).unwrap();
     assert!(!pid_path.exists());
     assert!(!version_path.exists());
 

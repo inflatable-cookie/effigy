@@ -50,11 +50,13 @@ effigy-core = { path = "../effigy-core" }
 fs2 = "0.4"
 
 [dev-dependencies]
+base64 = "0.22"
 effigy-test-support = { path = "../effigy-test-support" }
 tempfile = "3"
 tokio = { version = "1", features = ["full", "test-util"] }
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
 serde_json = "1"
+rcgen = { version = "0.14", default-features = false, features = ["ring", "crypto"] }
 
 [lints]
 workspace = true

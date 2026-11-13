@@ -27,6 +27,9 @@ use tracing::{debug, error, info};
 use crate::dns::{run_dns_server, run_dns_server_on, DnsCache, DnsConfig};
 use crate::error::GatewayError;
 use crate::identity::{self, GatewayIdentityProbe, GatewayRecordSnapshot};
+pub use crate::identity::{probe_gateway_process, GatewayProcessProbe};
+#[cfg(all(unix, test))]
+use crate::identity::{probe_gateway_process_with, PsProbeOutput};
 use crate::proxy::{
     run_proxy_server, run_proxy_server_on, run_tls_proxy_server, run_tls_proxy_server_on,
     ProxyConfig,
@@ -410,38 +413,21 @@ fn write_pid_file(path: &Path) -> Result<(), GatewayError> {
     Ok(())
 }
 
-fn gateway_version_file_for(pid_file_path: &Path) -> PathBuf {
-    pid_file_path.with_extension("version")
-}
-
-fn write_gateway_version_file(pid_path: &Path) -> Result<(), GatewayError> {
-    identity::publish_gateway_version(pid_path, &effigy_core::build_info::active_version())
-}
-
-fn read_gateway_version_file(path: &Path) -> Result<Option<String>, GatewayError> {
-    if !path.exists() {
-        return Ok(None);
-    }
-    let raw = std::fs::read_to_string(path)?;
-    let value = raw.trim();
-    if value.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(value.to_owned()))
-}
-
 /// Read the PID from a PID file.
 pub fn read_pid_file(path: &Path) -> Result<u32, GatewayError> {
-    if !path.exists() {
-        return Err(GatewayError::NotRunning);
-    }
-    let content = std::fs::read_to_string(path)?;
-    let pid = content
-        .trim()
-        .parse::<u32>()
-        .map_err(|_| GatewayError::NotRunning)?;
-    checked_gateway_pid(pid).ok_or(GatewayError::NotRunning)?;
-    Ok(pid)
+    identity::read_pid(path)
+        .map_err(|error| match error {
+            GatewayError::Io(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::InvalidData
+                ) =>
+            {
+                GatewayError::NotRunning
+            }
+            other => other,
+        })?
+        .ok_or(GatewayError::NotRunning)
 }
 
 /// Convert a persisted gateway PID to the positive signed type used by Unix
@@ -450,55 +436,6 @@ pub fn read_pid_file(path: &Path) -> Result<u32, GatewayError> {
 pub fn checked_gateway_pid(pid: u32) -> Option<i32> {
     let pid_t = i32::try_from(pid).ok()?;
     (pid_t > 1).then_some(pid_t)
-}
-
-/// Remove the PID file.
-#[cfg(test)]
-fn remove_pid_file(path: &Path) {
-    let _ = std::fs::remove_file(path);
-    let _ = std::fs::remove_file(gateway_version_file_for(path));
-}
-
-/// Outcome of probing whether a recorded gateway PID is alive.
-///
-/// A probe that cannot run or returns ambiguous output is [`Self::Unknown`],
-/// not [`Self::ConfirmedAbsent`]. Lifecycle decisions must branch on this
-/// value instead of collapsing it to a `bool`, so an unavailable probe can
-/// never be reported as a stopped gateway.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GatewayProcessProbe {
-    /// A live, non-zombie process with exactly this PID was confirmed.
-    Running,
-    /// The probe confirmed that no live process with this PID exists.
-    ConfirmedAbsent,
-    /// The probe was unavailable or its output could not be interpreted.
-    Unknown,
-}
-
-impl GatewayProcessProbe {
-    /// True only when the probe confirmed a running process.
-    pub fn is_running(self) -> bool {
-        matches!(self, Self::Running)
-    }
-
-    /// True only when the probe confirmed the process is gone.
-    pub fn is_confirmed_absent(self) -> bool {
-        matches!(self, Self::ConfirmedAbsent)
-    }
-
-    /// True only when the probe could not determine the process state.
-    pub fn is_unknown(self) -> bool {
-        matches!(self, Self::Unknown)
-    }
-
-    /// Stable label used by the rendered and JSON diagnosis.
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Running => "running",
-            Self::ConfirmedAbsent => "confirmed-absent",
-            Self::Unknown => "unknown",
-        }
-    }
 }
 
 /// Which persisted record shape a read-only diagnosis observed.
@@ -717,110 +654,6 @@ fn identity_permission_denied_error(error: &GatewayError) -> bool {
     )
 }
 
-/// Captured `ps` invocation result used to classify a probe.
-#[cfg(unix)]
-#[derive(Debug, Clone)]
-struct PsProbeOutput {
-    /// Whether `ps` exited zero.
-    success: bool,
-    /// Standard output bytes.
-    stdout: Vec<u8>,
-    /// Standard error bytes.
-    stderr: Vec<u8>,
-}
-
-/// Probe whether the process with `pid` is alive.
-///
-/// A `ps` launch failure, a non-empty diagnostic from a failed `ps`, or
-/// malformed/ambiguous rows all yield [`GatewayProcessProbe::Unknown`]. Only a
-/// completed `ps` with no matching row (the documented absent result on macOS
-/// and Linux) or an exact zombie row is [`GatewayProcessProbe::ConfirmedAbsent`].
-#[cfg(unix)]
-pub fn probe_gateway_process(pid: u32) -> GatewayProcessProbe {
-    probe_gateway_process_with(pid, |pid_t| {
-        let pid_text = pid_t.to_string();
-        let output = std::process::Command::new("ps")
-            .args(["-p", pid_text.as_str(), "-o", "pid=", "-o", "stat="])
-            .output()
-            .ok()?;
-        Some(PsProbeOutput {
-            success: output.status.success(),
-            stdout: output.stdout,
-            stderr: output.stderr,
-        })
-    })
-}
-
-#[cfg(unix)]
-fn probe_gateway_process_with(
-    pid: u32,
-    probe: impl FnOnce(i32) -> Option<PsProbeOutput>,
-) -> GatewayProcessProbe {
-    let Some(pid_t) = checked_gateway_pid(pid) else {
-        // PID 0, PID 1, and values outside the signed PID domain can never be
-        // the gateway, so no probe is dispatched.
-        return GatewayProcessProbe::ConfirmedAbsent;
-    };
-    let Some(output) = probe(pid_t) else {
-        return GatewayProcessProbe::Unknown;
-    };
-    if !output.success {
-        // `ps -p <pid>` exits non-zero with no output when no process matches
-        // (macOS and Linux). Any diagnostic output means `ps` itself failed,
-        // which is not proof of absence.
-        return if output.stdout.is_empty() && output.stderr.is_empty() {
-            GatewayProcessProbe::ConfirmedAbsent
-        } else {
-            GatewayProcessProbe::Unknown
-        };
-    }
-    classify_ps_rows(pid_t, &output.stdout)
-}
-
-#[cfg(unix)]
-fn classify_ps_rows(pid_t: i32, stdout: &[u8]) -> GatewayProcessProbe {
-    let output = String::from_utf8_lossy(stdout);
-    let mut rows = output
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty());
-    let Some(row) = rows.next() else {
-        return GatewayProcessProbe::Unknown;
-    };
-    if rows.next().is_some() {
-        return GatewayProcessProbe::Unknown;
-    }
-
-    let mut fields = row.split_whitespace();
-    let Some(row_pid) = fields.next().and_then(|pid| pid.parse::<i32>().ok()) else {
-        return GatewayProcessProbe::Unknown;
-    };
-    let Some(state) = fields.next() else {
-        return GatewayProcessProbe::Unknown;
-    };
-    if row_pid != pid_t || fields.next().is_some() {
-        return GatewayProcessProbe::Unknown;
-    }
-    if state.starts_with('Z') {
-        // A zombie has already exited; it cannot serve traffic and its parent
-        // will reap it, so it counts as confirmed absent for lifecycle use.
-        GatewayProcessProbe::ConfirmedAbsent
-    } else {
-        GatewayProcessProbe::Running
-    }
-}
-
-#[cfg(not(unix))]
-pub fn probe_gateway_process(pid: u32) -> GatewayProcessProbe {
-    // On non-Unix there is no portable probe; report a valid domain as running
-    // so lifecycle callers never claim a stop they did not observe.
-    if checked_gateway_pid(pid).is_some() {
-        GatewayProcessProbe::Running
-    } else {
-        GatewayProcessProbe::ConfirmedAbsent
-    }
-}
-
 /// Get the status of the gateway, if running.
 pub fn get_status(config: &GatewayConfig) -> Result<GatewayStatus, GatewayError> {
     get_verified_gateway_status(config).map(|verified| verified.status)
@@ -917,9 +750,7 @@ fn get_verified_gateway_status_with_probes(
             https_addr,
             route_count: table.len(),
             routes: table.all_routes().into_iter().cloned().collect(),
-            binary_version: read_gateway_version_file(&gateway_version_file_for(
-                &config.pid_file_path,
-            ))?,
+            binary_version: identity::read_gateway_version(&config.pid_file_path)?,
         },
         snapshot,
     })
@@ -1369,7 +1200,10 @@ async fn run_gateway_with_cancel(
         )
     });
     if config.is_private() {
-        write_gateway_version_file(&config.pid_file_path)?;
+        identity::publish_gateway_version(
+            &config.pid_file_path,
+            &effigy_core::build_info::active_version(),
+        )?;
     }
     if let (Some(listeners), Some(guard)) = (&private_listeners, &mut private_record_guard) {
         let record = PrivateGatewayAddressRecord {
@@ -1710,7 +1544,10 @@ async fn run_gateway_with_cancel(
             &config.pid_file_path,
             operator_uid,
         )?);
-        write_gateway_version_file(&config.pid_file_path)?;
+        identity::publish_gateway_version(
+            &config.pid_file_path,
+            &effigy_core::build_info::active_version(),
+        )?;
     }
     #[cfg(not(unix))]
     tokio::spawn(async move {

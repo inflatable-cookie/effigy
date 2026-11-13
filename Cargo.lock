@@ -1159,6 +1159,7 @@ dependencies = [
 name = "effigy-gateway"
 version = "0.14.1"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "effigy-core",
  "effigy-kernel",
@@ -1175,6 +1176,7 @@ dependencies = [
  "libc",
  "nix 0.31.3",
  "notify",
+ "rcgen",
  "reqwest",
  "rustls",
  "rustls-pemfile",

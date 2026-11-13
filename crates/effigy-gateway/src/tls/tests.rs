@@ -1,5 +1,67 @@
 use super::*;
 
+#[cfg(unix)]
+#[test]
+fn trust_bundle_matches_only_the_current_fake_mkcert_ca() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = tempfile::tempdir().unwrap();
+    let current_ca = rcgen::generate_simple_self_signed(vec!["current.test".into()])
+        .unwrap()
+        .cert
+        .der()
+        .as_ref()
+        .to_vec();
+    let stale_ca = rcgen::generate_simple_self_signed(vec!["stale.test".into()])
+        .unwrap()
+        .cert
+        .der()
+        .as_ref()
+        .to_vec();
+    let current_ca_pem = test_certificate_pem(&current_ca);
+    let stale_ca_pem = test_certificate_pem(&stale_ca);
+    let root_ca_path = fixture.path().join("rootCA.pem");
+    std::fs::write(&root_ca_path, &current_ca_pem).unwrap();
+
+    let mkcert = fixture.path().join("mkcert-fixture");
+    std::fs::write(
+        &mkcert,
+        "#!/bin/sh\ncase \"$1\" in\n  -CAROOT) dirname \"$0\" ;;\n  *) exit 64 ;;\nesac\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&mkcert, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let _env =
+        crate::env_test_support::EnvGuard::set_many(&[(MKCERT_BIN_ENV, Some(mkcert.as_os_str()))]);
+
+    let resolved_root = mkcert_root_ca_pem().expect("fake mkcert returns its CA root");
+    assert_eq!(resolved_root, root_ca_path);
+    let fingerprint = certificate_fingerprint_from_file(&resolved_root).unwrap();
+
+    let current_bundle = fixture.path().join("current-trust-bundle.pem");
+    std::fs::write(&current_bundle, format!("{stale_ca_pem}\n{current_ca_pem}")).unwrap();
+    assert!(ca_bundle_paths_contain_fingerprint(
+        [current_bundle.as_path()],
+        &fingerprint
+    ));
+
+    let stale_bundle = fixture.path().join("stale-trust-bundle.pem");
+    std::fs::write(&stale_bundle, &stale_ca_pem).unwrap();
+    assert!(!ca_bundle_paths_contain_fingerprint(
+        [stale_bundle.as_path()],
+        &fingerprint
+    ));
+}
+
+#[cfg(unix)]
+fn test_certificate_pem(der: &[u8]) -> String {
+    use base64::Engine as _;
+
+    format!(
+        "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n",
+        base64::engine::general_purpose::STANDARD.encode(der)
+    )
+}
+
 /// An empty certificate cache yields an empty resolver, whether the directory
 /// is empty or not created yet.
 #[test]
