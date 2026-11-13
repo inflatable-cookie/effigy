@@ -246,9 +246,9 @@ impl BuiltinRuntimePorts for RunnerBuiltinPorts<'_> {
         workspace_root: &Path,
         scopes: &[BuiltinLockScope],
     ) -> Result<BuiltinLockGuards, BuiltinError> {
-        let mut scopes = scopes.to_vec();
-        scopes.sort();
-        scopes.dedup();
+        // One owner decides the order and uniqueness of the gates a hold
+        // names; this impl only creates one kernel run per scope.
+        let scopes = BuiltinLockScope::sorted_unique(scopes);
         let runs = scopes
             .iter()
             .map(|scope| TaskRun::exclusive(workspace_root, &scope.label(), 0))

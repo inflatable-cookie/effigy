@@ -26,6 +26,18 @@ pub enum LockScope {
 }
 
 impl LockScope {
+    /// The canonical order and uniqueness of the gates a hold names.
+    ///
+    /// One owner: the guard and every caller that must observe the order
+    /// before it builds a guard (the runner creates one kernel run per scope)
+    /// derive the same list, so two holds for the same scopes are identical.
+    pub fn sorted_unique(scopes: &[LockScope]) -> Vec<LockScope> {
+        let mut scopes = scopes.to_vec();
+        scopes.sort();
+        scopes.dedup();
+        scopes
+    }
+
     pub fn label(&self) -> String {
         match self {
             Self::Workspace => "workspace".to_owned(),
@@ -49,11 +61,8 @@ pub struct BuiltinLockGuards {
 
 impl BuiltinLockGuards {
     pub fn new<T: Any + Send>(scopes: Vec<LockScope>, value: T) -> Self {
-        let mut scopes = scopes;
-        scopes.sort();
-        scopes.dedup();
         Self {
-            scopes,
+            scopes: LockScope::sorted_unique(&scopes),
             _guards: Box::new(value),
         }
     }
@@ -283,6 +292,56 @@ pub trait BuiltinRuntimePorts {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use effigy_cli::{Command, DoctorArgs, TaskInvocation, TasksArgs};
+    use effigy_manifest::LoadedCatalog;
+    use std::collections::BTreeSet;
+    use std::path::{Path, PathBuf};
+
+    /// A runtime port that implements only the required entry points and keeps
+    /// every optional capability at its default.
+    struct BarePorts;
+
+    impl BuiltinRuntimePorts for BarePorts {
+        fn acquire_scopes(
+            &self,
+            _workspace_root: &Path,
+            _scopes: &[LockScope],
+        ) -> Result<BuiltinLockGuards, BuiltinError> {
+            unreachable!("the contract test never runs a task")
+        }
+
+        fn current_working_dir(&self) -> Result<PathBuf, BuiltinError> {
+            unreachable!("the contract test never runs a task")
+        }
+
+        fn run_manifest_task_with_cwd(
+            &self,
+            _task: &TaskInvocation,
+            _cwd: PathBuf,
+        ) -> Result<String, BuiltinError> {
+            unreachable!("the contract test never runs a task")
+        }
+
+        fn run_doctor(&self, _args: DoctorArgs) -> Result<String, BuiltinError> {
+            unreachable!("the contract test never runs a task")
+        }
+
+        fn run_tasks(&self, _args: TasksArgs) -> Result<String, BuiltinError> {
+            unreachable!("the contract test never runs a task")
+        }
+
+        fn run_command(&self, _command: Command) -> Result<String, BuiltinError> {
+            unreachable!("the contract test never runs a task")
+        }
+
+        fn deferred_builtins_from_catalogs(
+            &self,
+            _catalogs: &[LoadedCatalog],
+            _resolved_root: &Path,
+        ) -> BTreeSet<String> {
+            BTreeSet::new()
+        }
+    }
 
     #[test]
     fn lock_guards_carry_their_typed_scopes() {
@@ -307,6 +366,92 @@ mod tests {
             .join(",");
         assert!(rendered.contains("workspace"), "{rendered}");
         assert!(rendered.contains("task:b"), "{rendered}");
+    }
+
+    #[test]
+    fn one_rule_orders_and_dedups_the_gates_a_hold_names() {
+        let scopes = vec![
+            LockScope::Task("a".to_owned()),
+            LockScope::Profile {
+                task: "dev".to_owned(),
+                profile: "default".to_owned(),
+            },
+            LockScope::Shared("dev-stack".to_owned()),
+            LockScope::Task("a".to_owned()),
+            LockScope::Workspace,
+        ];
+        let canonical = LockScope::sorted_unique(&scopes);
+        assert_eq!(
+            canonical,
+            vec![
+                LockScope::Workspace,
+                LockScope::Shared("dev-stack".to_owned()),
+                LockScope::Task("a".to_owned()),
+                LockScope::Profile {
+                    task: "dev".to_owned(),
+                    profile: "default".to_owned(),
+                },
+            ]
+        );
+        // The list a caller observes before building the guard is the list
+        // the guard holds.
+        let guards = BuiltinLockGuards::new(scopes, ());
+        assert_eq!(guards.scopes(), canonical.as_slice());
+        assert_eq!(
+            canonical.iter().map(LockScope::label).collect::<Vec<_>>(),
+            vec![
+                "workspace",
+                "shared:dev-stack",
+                "task:a",
+                "profile:dev/default"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_port_without_capabilities_claims_none_of_them() {
+        // Every optional default is a neutral answer, never an invented
+        // capability: no scratch directory, no custody, no TUI source, no
+        // alias resolution and no published alias proof.
+        let ports = BarePorts;
+        assert!(ports.host_scratch_env().is_empty());
+        assert!(ports
+            .host_suite_env_aliases(Path::new("/repo"))
+            .unwrap()
+            .is_empty());
+        assert!(ports
+            .resolve_host_suite_inherited_env(Path::new("/repo"), "suite", &BTreeSet::new())
+            .unwrap()
+            .is_empty());
+        ports
+            .prove_host_suite_aliases(Path::new("/repo"), "suite", &["text"])
+            .expect("a port that delivers no alias proves nothing");
+        assert!(!ports.builtin_test_child_evidence_enabled());
+        assert!(!ports.custody_holds_host_suites());
+        assert!(!ports.has_test_tui_source());
+        assert!(ports.test_tui_source(Vec::new()).unwrap().is_none());
+        assert!(ports.host_suite_custody("suite").unwrap().is_none());
+    }
+
+    #[test]
+    fn container_routing_fails_closed_when_a_port_cannot_route() {
+        // The pair is the contract: a port that cannot activate a container
+        // refuses with the reason, rather than silently running the suite on
+        // the host.
+        let error = BarePorts
+            .prepare_container_suite_target(Path::new("/repo"), "web")
+            .expect_err("a bare port cannot activate a container target");
+        assert_eq!(
+            error.to_string(),
+            "container suite execution is not available in this runtime"
+        );
+    }
+
+    #[test]
+    fn an_unrecorded_suite_outcome_is_not_a_pass() {
+        let outcome = HostSuiteOutcome::default();
+        assert_eq!(outcome.code, None);
+        assert!(!outcome.stopped);
     }
 }
 
