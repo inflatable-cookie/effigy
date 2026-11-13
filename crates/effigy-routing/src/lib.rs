@@ -28,9 +28,8 @@ pub use membership::{
 pub use selection::{resolve_catalog_by_prefix, select_catalog_and_task};
 
 /// Typed adapter for `select_catalog_and_task`, shaped to fit
-/// `effigy_manifest::TaskResolverFn`. Only "no catalog declares this task" may
-/// become [`TaskResolveError::NotFound`], the one class a caller may treat as
-/// "not a catalog task".
+/// `effigy_manifest::TaskResolverFn`: only "no catalog declares this task"
+/// becomes [`TaskResolveError::NotFound`].
 pub fn resolve_task_selection<'a>(
     selector: &TaskSelector,
     catalogs: &'a [LoadedCatalog],
@@ -39,19 +38,18 @@ pub fn resolve_task_selection<'a>(
     select_catalog_and_task(selector, catalogs, cwd).map_err(classify_routing_error)
 }
 
-/// Project a routing failure onto the three classes the manifest/managed
-/// boundary branches on; the sentence stays what a person reads.
+/// Project a routing failure onto the classes the resolver branches on.
 pub fn classify_routing_error(error: RoutingError) -> TaskResolveError {
     let detail = error.to_string();
     match error {
         RoutingError::TaskNotFound { .. }
         | RoutingError::TaskNotFoundAny { .. }
         | RoutingError::TaskCatalogPrefixNotFound { .. } => TaskResolveError::not_found(detail),
-        RoutingError::TaskAmbiguous { .. } => TaskResolveError::ambiguous(detail),
+        RoutingError::TaskAmbiguous { .. } => TaskResolveError::Ambiguous(detail),
         RoutingError::Manifest(_)
         | RoutingError::TaskCatalogsMissing { .. }
         | RoutingError::TaskCatalogAliasConflict { .. }
-        | RoutingError::TaskCatalogMemberInvalid { .. } => TaskResolveError::unavailable(detail),
+        | RoutingError::TaskCatalogMemberInvalid { .. } => TaskResolveError::Unavailable(detail),
     }
 }
 

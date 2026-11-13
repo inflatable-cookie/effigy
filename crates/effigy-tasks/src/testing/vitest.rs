@@ -275,6 +275,35 @@ mod tests {
         );
     }
 
+    /// A non-ASCII directory keeps its characters in the rendered command. The
+    /// scanner used to decode one byte per character, so `tést` reached `--dir`
+    /// as `tÃ©st` and the intended directory was missed.
+    #[test]
+    fn detect_vitest_keeps_a_multi_byte_test_dir_intact() {
+        let root = effigy_test_support::Fixture::process_lifetime(&format!(
+            "effigy-vitest-utf8-{}",
+            std::process::id()
+        ))
+        .expect("fixture directory");
+        std::fs::write(
+            root.join("vitest.config.ts"),
+            "export default { test: { dir: 'tést/ü' } }\n",
+        )
+        .expect("write config");
+
+        let (plan, candidate) = detect_vitest(&root);
+        let plan = plan.expect("a config file is intent");
+        assert_eq!(plan.command, "vitest run --dir 'tést/ü'");
+        assert!(
+            plan.evidence
+                .iter()
+                .any(|line| line.contains("test.dir is `tést/ü`")),
+            "{:?}",
+            plan.evidence
+        );
+        assert!(candidate.available);
+    }
+
     /// A config that cannot be tokenised keeps the suite runnable but says the
     /// run is not narrowed. Before the typed scan the failure was silent: the
     /// command silently widened to the repository root with no evidence note.

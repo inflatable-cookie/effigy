@@ -4,7 +4,7 @@ use super::diagnostics::SchemaContext;
 use super::tables::{aliased, require_table, validate_allowed_keys};
 use super::values::{
     validate_optional_boolean_field, validate_optional_non_empty_string_field,
-    validate_optional_string_array_field,
+    validate_optional_non_empty_string_fields, validate_optional_string_array_field,
 };
 
 pub(super) fn validate_release_section(context: &mut SchemaContext<'_, '_>, release: &Value) {
@@ -166,16 +166,7 @@ fn validate_release_identities(context: &mut SchemaContext<'_, '_>, identities: 
                 &format!("{path}.{key}"),
             );
         }
-        validate_optional_non_empty_string_field(
-            context,
-            identity.get("follows"),
-            &format!("{path}.follows"),
-        );
-        validate_optional_non_empty_string_field(
-            context,
-            identity.get("task"),
-            &format!("{path}.task"),
-        );
+        validate_optional_non_empty_string_fields(context, &path, identity, &["follows", "task"]);
     }
 }
 
@@ -200,16 +191,7 @@ fn validate_release_artifacts(context: &mut SchemaContext<'_, '_>, artifacts: &V
             continue;
         };
         validate_allowed_keys(context, &path, artifact, &["task", "path"]);
-        validate_optional_non_empty_string_field(
-            context,
-            artifact.get("task"),
-            &format!("{path}.task"),
-        );
-        validate_optional_non_empty_string_field(
-            context,
-            artifact.get("path"),
-            &format!("{path}.path"),
-        );
+        validate_optional_non_empty_string_fields(context, &path, artifact, &["task", "path"]);
     }
 }
 

@@ -1,8 +1,7 @@
 //! Choosing the catalog that owns a path's inherited section.
 //!
-//! A child catalog inherits a section (env schema, systems, containers) from the
-//! nearest ancestor that declares it, and the declared paths still resolve
-//! against the declaring catalog. This module owns that rule.
+//! A child inherits a section (env schema, systems, containers) from the nearest
+//! ancestor that declares it; the section's paths resolve against that catalog.
 
 use std::path::Path;
 
@@ -14,10 +13,7 @@ pub fn nearest_catalog<'a>(
     catalogs: &'a [LoadedCatalog],
     catalog_root: &Path,
 ) -> Option<&'a LoadedCatalog> {
-    catalogs
-        .iter()
-        .filter(|catalog| catalog_root.starts_with(&catalog.catalog_root))
-        .max_by_key(|catalog| catalog.depth)
+    nearest_declaring_catalog(catalogs, catalog_root, |_| Some(())).map(|(catalog, ())| catalog)
 }
 
 /// The deepest catalog that contains `catalog_root` and declares `section`,
@@ -35,11 +31,8 @@ pub fn nearest_declaring_catalog<'a, T>(
         .max_by_key(|(catalog, _)| catalog.depth)
 }
 
-/// Returns the deepest catalog whose root contains `catalog_root` and whose
-/// manifest declares an `[env_schema]` section, including the catalog at
-/// `catalog_root` itself. Child catalogs without their own `env_schema`
-/// inherit the nearest ancestor's; the schema path still resolves against
-/// the catalog that declared it.
+/// The deepest catalog that contains `catalog_root` and declares `[env_schema]`,
+/// including the catalog at that path itself.
 pub fn env_schema_declaring_catalog<'a>(
     catalogs: &'a [LoadedCatalog],
     catalog_root: &Path,
@@ -158,12 +151,59 @@ run = "cargo test"
         assert_eq!(declaring.alias, "services");
     }
 
+    /// A child that declares its own `[env_schema]` keeps it: the ancestor's
+    /// declaration must not win over the child's own. Both catalogs in the
+    /// fixture declare one, so selecting the ancestor here is the failure this
+    /// test detects.
     #[test]
     fn env_schema_declaring_catalog_prefers_own_schema_over_ancestor() {
-        let catalogs = catalogs();
-        let declaring = env_schema_declaring_catalog(&catalogs, Path::new("/workspace-root/acme"))
-            .expect("own env schema should win");
-        assert_eq!(declaring.alias, "root");
+        let catalogs = vec![
+            loaded_catalog(
+                "root",
+                "/workspace-root/acme",
+                r#"
+[env_schema]
+schema = "env/root.env.schema"
+"#,
+                0,
+            ),
+            loaded_catalog(
+                "cp-api",
+                "/workspace-root/acme/cp-api",
+                r#"
+[env_schema]
+schema = "env/cp-api.env.schema"
+
+[tasks.build]
+run = "cargo test"
+"#,
+                1,
+            ),
+        ];
+
+        let declaring =
+            env_schema_declaring_catalog(&catalogs, Path::new("/workspace-root/acme/cp-api"))
+                .expect("the child declares its own env schema");
+        assert_eq!(
+            declaring.alias, "cp-api",
+            "the child's own declaration wins over its ancestor's"
+        );
+        assert_eq!(
+            declaring
+                .manifest
+                .env_schema
+                .as_ref()
+                .and_then(|schema| schema.schema.as_deref()),
+            Some("env/cp-api.env.schema"),
+            "the schema path resolves against the declaring catalog"
+        );
+
+        // The ancestor is still selected for a path that only it covers.
+        assert_eq!(
+            env_schema_declaring_catalog(&catalogs, Path::new("/workspace-root/acme"))
+                .map(|catalog| catalog.alias.as_str()),
+            Some("root")
+        );
     }
 
     #[test]

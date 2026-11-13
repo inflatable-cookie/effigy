@@ -1,11 +1,9 @@
-//! Reading a JavaScript object literal out of a config file.
+//! Reading a JavaScript config's `test` block.
 //!
-//! Vitest and Vite configs are JavaScript modules, and Effigy needs one fact
+//! Vitest and Vite configs are JavaScript modules and Effigy needs one fact
 //! from them: the `test` block's `dir`. This module owns the scanner that skips
-//! comments, strings and regex literals, finds a balanced object literal and
-//! reads one string field. The answer is typed, so "a `dir` is declared", "a
-//! `test` block declares no usable `dir`" and "the source could not be
-//! tokenised" stay distinct.
+//! comments, strings and regex literals and reads one string field, so "a `dir`
+//! is declared", "no usable `dir`" and "the source is unreadable" stay distinct.
 
 /// Why a config source could not be tokenised.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,17 +24,13 @@ impl std::fmt::Display for JsScanError {
     }
 }
 
-impl std::error::Error for JsScanError {}
-
 /// What a config source says about the suite root.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigScan {
-    /// A `test` block declares a usable `dir`.
     Dir(String),
     /// A `test` block declares no usable `dir`: the field is absent, names the
     /// root (`.` or `./`), or is a template expression.
     NoDir,
-    /// The source has no `test` block at all.
     NoTestBlock,
     /// The source could not be read or tokenised; the detail says which.
     Unreadable(String),
@@ -44,13 +38,13 @@ pub enum ConfigScan {
 
 /// What a config source says about the suite root.
 pub fn scan_config(source: &str) -> ConfigScan {
-    match read_declaration(source) {
+    match declared_dir(source) {
         Ok(scan) => scan,
         Err(error) => ConfigScan::Unreadable(error.to_string()),
     }
 }
 
-fn read_declaration(source: &str) -> Result<ConfigScan, JsScanError> {
+fn declared_dir(source: &str) -> Result<ConfigScan, JsScanError> {
     let stripped = strip_js_comments(source)?;
     let Some(object) = find_test_object(&stripped)? else {
         return Ok(ConfigScan::NoTestBlock);
@@ -140,34 +134,36 @@ fn key_at(source: &str, index: usize, field: &str) -> Result<Option<usize>, JsSc
 /// Read a quoted literal. `Ok(None)` means the value is not a plain literal: it
 /// is not a string, or it is a template expression known only at runtime.
 fn parse_string_literal(source: &str) -> Result<Option<String>, JsScanError> {
-    let Some(quote) = source.as_bytes().first().copied() else {
+    let bytes = source.as_bytes();
+    let Some(quote) = bytes
+        .first()
+        .copied()
+        .filter(|byte| [b'\'', b'"', b'`'].contains(byte))
+    else {
         return Ok(None);
     };
-    if quote != b'\'' && quote != b'"' && quote != b'`' {
-        return Ok(None);
-    }
-    let mut value = String::new();
-    let bytes = source.as_bytes();
-    let mut index = 1;
     let mut escaped = false;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if escaped {
-            value.push(byte as char);
-            escaped = false;
-        } else if byte == b'\\' {
-            escaped = true;
-        } else if byte == quote {
-            if value.contains("${") {
-                return Ok(None);
-            }
-            return Ok(Some(value));
-        } else {
-            value.push(byte as char);
-        }
-        index += 1;
+    let body_end = (1..bytes.len())
+        .find(|index| {
+            let byte = bytes[*index];
+            let closes = !escaped && byte == quote;
+            escaped = !escaped && byte == b'\\';
+            closes
+        })
+        .ok_or(JsScanError::UnterminatedString(0))?;
+    // Decode the body as text: one byte per character would turn `tést` into
+    // `tÃ©st`, which a caller would then pass to `--dir`.
+    let mut value = String::with_capacity(body_end);
+    let mut characters = source[1..body_end].chars();
+    while let Some(character) = characters.next() {
+        value.push(match character {
+            '\\' => characters
+                .next()
+                .ok_or(JsScanError::UnterminatedString(0))?,
+            other => other,
+        });
     }
-    Err(JsScanError::UnterminatedString(0))
+    Ok((!value.contains("${")).then_some(value))
 }
 
 fn extract_balanced_object(source: &str) -> Result<Option<&str>, JsScanError> {
@@ -177,39 +173,22 @@ fn extract_balanced_object(source: &str) -> Result<Option<&str>, JsScanError> {
     }
     let mut depth = 0usize;
     let mut index = 0;
-    let mut in_string: Option<u8> = None;
-    let mut string_start = 0usize;
-    let mut escaped = false;
     while index < bytes.len() {
-        let byte = bytes[index];
-        if let Some(quote) = in_string {
-            if escaped {
-                escaped = false;
-            } else if byte == b'\\' {
-                escaped = true;
-            } else if byte == quote {
-                in_string = None;
+        match bytes[index] {
+            b'\'' | b'"' | b'`' => index = skip_string(bytes, index)?,
+            b'{' => {
+                depth += 1;
+                index += 1;
             }
-        } else {
-            match byte {
-                b'\'' | b'"' | b'`' => {
-                    in_string = Some(byte);
-                    string_start = index;
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(Some(&source[..=index]));
                 }
-                b'{' => depth += 1,
-                b'}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return Ok(Some(&source[..=index]));
-                    }
-                }
-                _ => {}
+                index += 1;
             }
+            _ => index += 1,
         }
-        index += 1;
-    }
-    if in_string.is_some() {
-        return Err(JsScanError::UnterminatedString(string_start));
     }
     Err(JsScanError::UnbalancedObject(0))
 }
@@ -445,7 +424,7 @@ mod tests {
     /// declaration is `NoDir`, never an unreadable answer.
     #[test]
     fn scan_config_reads_and_rejects_declared_dirs() {
-        let cases: [(&str, &str, ConfigScan); 8] = [
+        let cases: [(&str, &str, ConfigScan); 10] = [
             (
                 "define-config",
                 r#"
@@ -508,6 +487,16 @@ export default {
                 "after-division",
                 "const ratio = a / b;\nexport default { test: { dir: 'src' } };\n",
                 ConfigScan::Dir("src".to_owned()),
+            ),
+            (
+                "multi-byte-directory",
+                "export default { test: { dir: 'tést/ü' } }",
+                ConfigScan::Dir("tést/ü".to_owned()),
+            ),
+            (
+                "escaped-quote-in-directory",
+                r#"export default { test: { dir: "t\"est" } }"#,
+                ConfigScan::Dir("t\"est".to_owned()),
             ),
         ];
 

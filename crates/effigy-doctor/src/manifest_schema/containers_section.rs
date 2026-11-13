@@ -320,27 +320,12 @@ fn validate_container_dns(context: &mut SchemaContext<'_, '_>, base_path: &str, 
         table.get("base_domain"),
         &format!("{path}.base_domain"),
     );
-    if let Some(domains) = table.get("domains") {
-        match domains.as_array() {
-            Some(entries) => {
-                for (index, entry) in entries.iter().enumerate() {
-                    let entry_path = format!("{path}.domains[{index}]");
-                    if entry.as_str().is_none() {
-                        context.unsupported_value(
-                            &entry_path,
-                            SchemaContext::value_type(entry),
-                            "expected string",
-                        );
-                    }
-                }
-            }
-            None => context.unsupported_value(
-                &format!("{path}.domains"),
-                SchemaContext::value_type(domains),
-                "expected array of strings",
-            ),
-        }
-    }
+    validate_optional_string_array_field(
+        context,
+        table.get("domains"),
+        &format!("{path}.domains"),
+        "expected array of strings",
+    );
     if let Some(defaults) = table.get("domain_defaults") {
         match defaults.as_table() {
             Some(defaults_table) => {

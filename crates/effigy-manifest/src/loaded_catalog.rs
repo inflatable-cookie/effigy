@@ -33,54 +33,37 @@ pub type TaskResolverFn<'r> = &'r dyn for<'c> Fn(
     &std::path::Path,
 ) -> Result<TaskSelection<'c>, TaskResolveError>;
 
-/// Why a resolver could not produce a `TaskSelection`. Routing owns the detailed
-/// `RoutingError`; this type carries the class across the manifest/managed
-/// boundary. Only [`TaskResolveError::NotFound`] means "no catalog declares this
-/// task", so a builtin fallback must not fire for an unreadable catalog graph or
-/// an ambiguous selection.
+/// Why a resolver could not produce a `TaskSelection`. Only
+/// [`TaskResolveError::NotFound`] means "no catalog declares this task", so a
+/// builtin fallback must not fire for an unreadable graph or an ambiguity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskResolveError {
     /// No catalog declares the task, or the prefix names no catalog.
-    NotFound { detail: String },
-    /// More than one catalog could own the task and the invocation cwd did not
-    /// choose between them.
-    Ambiguous { detail: String },
+    NotFound(String),
+    /// More than one catalog could own the task and the cwd did not choose.
+    Ambiguous(String),
     /// The catalog graph or a manifest could not be read or parsed.
-    Unavailable { detail: String },
+    Unavailable(String),
 }
 
 impl TaskResolveError {
     pub fn not_found(detail: impl Into<String>) -> Self {
-        Self::NotFound {
-            detail: detail.into(),
-        }
+        Self::NotFound(detail.into())
     }
 
-    pub fn ambiguous(detail: impl Into<String>) -> Self {
-        Self::Ambiguous {
-            detail: detail.into(),
-        }
-    }
-
-    pub fn unavailable(detail: impl Into<String>) -> Self {
-        Self::Unavailable {
-            detail: detail.into(),
-        }
-    }
-
-    /// True only when no catalog declares the task. This is the one class a
-    /// caller may treat as "not a catalog task".
+    /// True only when no catalog declares the task: the one class a caller may
+    /// treat as "not a catalog task".
     pub fn is_not_found(&self) -> bool {
-        matches!(self, Self::NotFound { .. })
+        matches!(self, Self::NotFound(_))
     }
 }
 
 impl std::fmt::Display for TaskResolveError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NotFound { detail }
-            | Self::Ambiguous { detail }
-            | Self::Unavailable { detail } => f.write_str(detail),
+            Self::NotFound(detail) | Self::Ambiguous(detail) | Self::Unavailable(detail) => {
+                f.write_str(detail)
+            }
         }
     }
 }
@@ -193,8 +176,8 @@ mod tests {
         assert_eq!(not_found.to_string(), "no catalog declares `build`");
 
         for error in [
-            TaskResolveError::ambiguous("`build` is declared by `a` and `b`"),
-            TaskResolveError::unavailable("the manifest could not be read"),
+            TaskResolveError::Ambiguous("`build` is declared by `a` and `b`".to_owned()),
+            TaskResolveError::Unavailable("the manifest could not be read".to_owned()),
         ] {
             assert!(!error.is_not_found(), "{error:?}");
             assert!(!error.to_string().is_empty());

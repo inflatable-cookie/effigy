@@ -77,22 +77,15 @@ pub struct ManifestSystemMountSpec {
 impl ManifestSystemMountSpec {
     pub fn parse(raw: impl Into<String>) -> Self {
         let raw = raw.into();
-        let mut parts = raw.splitn(3, ':');
-        let mut next = || {
-            parts
-                .next()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_owned)
-        };
-        let source = next();
-        let target = next();
-        let options = next();
+        let mut parts = raw.splitn(3, ':').map(|part| match part.trim() {
+            "" => None,
+            trimmed => Some(trimmed.to_owned()),
+        });
         Self {
+            source: parts.next().flatten(),
+            target: parts.next().flatten(),
+            options: parts.next().flatten(),
             raw,
-            source,
-            target,
-            options,
         }
     }
 
@@ -113,14 +106,6 @@ impl ManifestSystemMountSpec {
     pub fn options_spec(&self) -> Option<&str> {
         self.options.as_deref()
     }
-
-    /// The comma-separated options, decoded.
-    pub fn options(&self) -> Vec<&str> {
-        self.options
-            .as_deref()
-            .map(|options| options.split(',').collect())
-            .unwrap_or_default()
-    }
 }
 
 impl<'de> serde::Deserialize<'de> for ManifestSystemMount {
@@ -138,15 +123,6 @@ impl<'de> serde::Deserialize<'de> for ManifestSystemMount {
             }
 
             fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                Ok(ManifestSystemMount::Spec(ManifestSystemMountSpec::parse(
-                    value,
-                )))
-            }
-
-            fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
             where
                 E: serde::de::Error,
             {
@@ -248,15 +224,6 @@ impl ManifestSystemMount {
         }
     }
 
-    /// The declaration exactly as the manifest wrote it. Only the legacy string
-    /// form has one; a structured table has fields instead.
-    pub fn raw(&self) -> Option<&str> {
-        match self {
-            Self::Spec(spec) => Some(spec.raw()),
-            Self::Table(_) => None,
-        }
-    }
-
     pub fn source(&self) -> Option<&str> {
         match self {
             Self::Spec(spec) => spec.source(),
@@ -271,18 +238,11 @@ impl ManifestSystemMount {
         }
     }
 
-    /// The options field as the manifest wrote it, before the comma split.
+    /// The options field as the manifest wrote it.
     pub fn options_spec(&self) -> Option<&str> {
         match self {
             Self::Spec(spec) => spec.options_spec(),
             Self::Table(_) => None,
-        }
-    }
-
-    pub fn options(&self) -> Vec<&str> {
-        match self {
-            Self::Spec(spec) => spec.options(),
-            Self::Table(table) => table.options.iter().map(String::as_str).collect(),
         }
     }
 
@@ -825,12 +785,12 @@ mod tests {
         assert_eq!(spec.source(), Some("shared"));
         assert_eq!(spec.target(), Some("/workspace-root/shared"));
         assert_eq!(spec.options_spec(), Some("ro,cached"));
-        assert_eq!(spec.options(), vec!["ro", "cached"]);
+        assert_eq!(spec.options_spec(), Some("ro,cached"));
 
         let mount = ManifestSystemMount::Spec(spec);
         assert_eq!(mount.source(), Some("shared"));
         assert_eq!(mount.target(), Some("/workspace-root/shared"));
-        assert_eq!(mount.options(), vec!["ro", "cached"]);
+        assert_eq!(mount.options_spec(), Some("ro,cached"));
         assert!(mount.is_catalog(), "a legacy spec is a catalog member");
     }
 
@@ -887,7 +847,13 @@ compose_file = "compose.yml"
         let mount = workspace.mounts.first().expect("one mount");
         assert_eq!(mount.source(), Some("shared"));
         assert_eq!(mount.target(), Some("/workspace-root/shared"));
-        assert_eq!(mount.options(), vec!["ro"]);
-        assert_eq!(mount.raw(), Some("shared:/workspace-root/shared:ro"));
+        assert_eq!(mount.options_spec(), Some("ro"));
+        assert_eq!(
+            match mount {
+                ManifestSystemMount::Spec(spec) => Some(spec.raw()),
+                ManifestSystemMount::Table(_) => None,
+            },
+            Some("shared:/workspace-root/shared:ro")
+        );
     }
 }

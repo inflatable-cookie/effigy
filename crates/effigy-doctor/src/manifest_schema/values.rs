@@ -2,7 +2,6 @@ use toml::Value;
 
 use super::diagnostics::SchemaContext;
 
-/// A present string field: the value must be a string.
 pub(super) fn validate_optional_string_field(
     context: &mut SchemaContext<'_, '_>,
     value: Option<&Value>,
@@ -16,8 +15,7 @@ pub(super) fn validate_optional_string_field(
     }
 }
 
-/// Every named field that is present must be a string, checked in declaration
-/// order so findings keep the manifest's own order.
+/// Every named field that is present must be a string, in declaration order.
 pub(super) fn validate_optional_string_fields(
     context: &mut SchemaContext<'_, '_>,
     base_path: &str,
@@ -88,6 +86,21 @@ pub(super) fn validate_optional_non_empty_string_field(
     };
     if raw.trim().is_empty() {
         context.unsupported_value(path, "empty string", "expected non-empty string");
+    }
+}
+
+pub(super) fn validate_optional_non_empty_string_fields(
+    context: &mut SchemaContext<'_, '_>,
+    base_path: &str,
+    table: &toml::map::Map<String, Value>,
+    fields: &[&str],
+) {
+    for field in fields {
+        validate_optional_non_empty_string_field(
+            context,
+            table.get(*field),
+            &format!("{base_path}.{field}"),
+        );
     }
 }
 

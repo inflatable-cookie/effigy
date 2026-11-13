@@ -1,10 +1,9 @@
 //! Narrow error boundary for the tasks crate.
 //!
-//! Two failure classes stay distinct: `Message` is a refused selector, plan or
-//! inventory request; `Render` is a renderer or JSON encoder refusal carrying
-//! the typed [`effigy_ui::UiError`]. The runner edge lifts them to
-//! `RunnerError::TaskInvocation` and `RunnerError::Ui` respectively, so the
-//! class survives the crate boundary.
+//! `Message` is a refused selector, plan or inventory request; `Render` is a
+//! renderer or JSON encoder refusal carrying the typed [`effigy_ui::UiError`].
+//! The runner edge lifts them to `RunnerError::TaskInvocation` and
+//! `RunnerError::Ui`, so the class survives the crate boundary.
 
 #[derive(Debug)]
 pub enum EffigyTasksError {
@@ -18,12 +17,6 @@ pub enum EffigyTasksError {
 impl EffigyTasksError {
     pub fn message(message: impl Into<String>) -> Self {
         Self::Message(message.into())
-    }
-
-    /// True when the failure came from the renderer or JSON encoder rather
-    /// than from a refused request.
-    pub fn is_render_failure(&self) -> bool {
-        matches!(self, Self::Render(_))
     }
 }
 
@@ -70,7 +63,6 @@ mod tests {
             ),
             "the UI failure class and its text travel together: {error:?}"
         );
-        assert!(error.is_render_failure());
         assert_eq!(error.to_string(), "encode refused");
         assert!(
             std::error::Error::source(&error).is_some(),
@@ -82,7 +74,6 @@ mod tests {
     #[test]
     fn refused_requests_carry_their_actionable_text() {
         let error = EffigyTasksError::message("qa-group selector is empty");
-        assert!(!error.is_render_failure());
         assert_eq!(error.to_string(), "qa-group selector is empty");
         assert!(std::error::Error::source(&error).is_none());
     }

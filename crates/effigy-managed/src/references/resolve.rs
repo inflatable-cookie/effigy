@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use effigy_core::shell::shell_quote;
 use effigy_manifest::{
     resolve_task_execution_binding, LoadedCatalog, ManifestManagedRun, ManifestTaskRunIn,
-    ResolvedTaskExecutionBinding, TaskResolveError, TaskResolverFn, TaskSelection,
+    ResolvedTaskExecutionBinding, TaskResolverFn, TaskSelection,
 };
 
 use super::parser::{is_builtin_task_selector, ParsedTaskRef};
@@ -91,25 +91,13 @@ fn resolve_reference_target<'a>(
 ) -> Result<ReferenceTarget<'a>, ManagedError> {
     match resolver(&parsed.selector, catalogs, task_scope_cwd) {
         Ok(selection) => Ok(ReferenceTarget::Catalog(selection)),
-        Err(error) if may_fall_back_to_builtin(&error, &parsed.selector) => {
+        // Only "no catalog declares this task" may fall back to the builtin of
+        // the same name; an unreadable graph or an ambiguity must refuse.
+        Err(error) if error.is_not_found() && is_builtin_task_selector(&parsed.selector) => {
             Ok(ReferenceTarget::Builtin)
         }
         Err(error) => Err(ManagedError::task_invocation(error.to_string())),
     }
-}
-
-/// Whether a failed catalog resolution may fall back to the builtin of the
-/// same name.
-///
-/// Only "no catalog declares this task" qualifies. A catalog graph that could
-/// not be read, a manifest that did not parse, or an ambiguous selection must
-/// refuse instead: treating those as "not a catalog task" would run the builtin
-/// while the declared task existed but could not be seen.
-fn may_fall_back_to_builtin(
-    error: &TaskResolveError,
-    selector: &effigy_tasks::TaskSelector,
-) -> bool {
-    error.is_not_found() && is_builtin_task_selector(selector)
 }
 
 fn render_selected_task_invocation<F>(
@@ -270,8 +258,9 @@ mod tests {
 
     use effigy_manifest::{LoadedCatalog, TaskResolveError, TaskResolverFn, TaskSelection};
 
-    use super::{resolve_reference_target, ReferenceTarget};
+    use super::resolve_reference_run;
     use crate::references::parser::parse_task_ref;
+    use crate::references::ReferenceResolution;
 
     fn resolver(
         error: TaskResolveError,
@@ -283,27 +272,72 @@ mod tests {
         move |_, _, _| Err(error.clone())
     }
 
-    /// A reference to a builtin name falls back only when no catalog declares
+    fn resolution<'a>(
+        catalogs: &'a [LoadedCatalog],
+        cwd: &'a Path,
+        resolver: TaskResolverFn<'a>,
+    ) -> ReferenceResolution<'a, 'a> {
+        ReferenceResolution {
+            args_rendered: "",
+            catalogs,
+            task_scope_cwd: cwd,
+            execution_root: cwd,
+            invocation_cwd: cwd,
+            runtime_env_schema_override: None,
+            depth: 0,
+            resolver,
+            host_env_aliases: &[],
+            host_launched: false,
+        }
+    }
+
+    /// Resolve one reference through the real reference boundary. The container
+    /// path keeps the builtin rendering independent of the host install.
+    fn resolve_with(
+        task_ref: &str,
+        catalogs: &[LoadedCatalog],
+        resolver: TaskResolverFn<'_>,
+    ) -> Result<String, String> {
+        let parsed = parse_task_ref(task_ref).expect("a reference");
+        let cwd = Path::new("/workspace/repo");
+        resolve_reference_run(&parsed, resolution(catalogs, cwd, resolver), |_| {
+            unreachable!("a builtin reference has no catalog selection")
+        })
+        .map(|resolved| resolved.run.command)
+        .map_err(|error| error.to_string())
+    }
+
+    /// A reference to a real builtin falls back only when no catalog declares
     /// it. Before the typed failure class this arm matched every resolver
-    /// failure, so an unreadable catalog graph silently ran the builtin.
+    /// failure, so an unreadable or ambiguous catalog silently ran the builtin.
     #[test]
     fn a_builtin_reference_falls_back_only_when_no_catalog_declares_it() {
-        let parsed = parse_task_ref("cache").expect("a builtin reference");
         let catalogs: Vec<LoadedCatalog> = Vec::new();
+        assert!(
+            effigy_core::builtin_tasks::BUILTIN_TASKS
+                .iter()
+                .any(|(name, _)| *name == "doctor"),
+            "the fixture uses a real builtin"
+        );
 
-        let fallback: TaskResolverFn<'_> =
-            &resolver(TaskResolveError::not_found("no catalog declares `cache`"));
-        assert!(matches!(
-            resolve_reference_target(&parsed, &catalogs, Path::new("/repo"), fallback),
-            Ok(ReferenceTarget::Builtin)
-        ));
+        let missing: TaskResolverFn<'_> =
+            &resolver(TaskResolveError::not_found("no catalog declares `doctor`"));
+        let command = resolve_with("doctor", &catalogs, missing).expect("the builtin falls back");
+        assert!(
+            command.ends_with("effigy 'doctor'"),
+            "the builtin invocation names the selector: {command}"
+        );
+        assert!(
+            command.contains("EFFIGY_INTERNAL_SUPPRESS_HEADER=1"),
+            "{command}"
+        );
 
         for error in [
-            TaskResolveError::unavailable("failed to read /repo/effigy.toml"),
-            TaskResolveError::ambiguous("`cache` is declared by `repo` and `services`"),
+            TaskResolveError::Unavailable("failed to read /workspace/repo/effigy.toml".to_owned()),
+            TaskResolveError::Ambiguous("`doctor` is declared by `repo` and `services`".to_owned()),
         ] {
             let failing: TaskResolverFn<'_> = &resolver(error);
-            let outcome = resolve_reference_target(&parsed, &catalogs, Path::new("/repo"), failing);
+            let outcome = resolve_with("doctor", &catalogs, failing);
             assert!(
                 outcome.is_err(),
                 "a catalog graph that could not answer must refuse, not run the builtin"
@@ -311,13 +345,17 @@ mod tests {
         }
     }
 
-    /// A task that is not a builtin name never falls back, whatever the class.
+    /// A reference whose name is not a builtin never falls back, whatever the
+    /// failure class.
     #[test]
     fn a_task_reference_never_falls_back_to_a_builtin() {
-        let parsed = parse_task_ref("build").expect("a task reference");
         let catalogs: Vec<LoadedCatalog> = Vec::new();
         let missing: TaskResolverFn<'_> =
             &resolver(TaskResolveError::not_found("no catalog declares `build`"));
-        assert!(resolve_reference_target(&parsed, &catalogs, Path::new("/repo"), missing).is_err());
+        let outcome = resolve_with("build", &catalogs, missing);
+        assert!(
+            outcome.is_err(),
+            "a missing catalog task is an error, not a builtin: {outcome:?}"
+        );
     }
 }
