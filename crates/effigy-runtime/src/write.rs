@@ -10,6 +10,7 @@ use effigy_containers::{
     EffectiveComposeSource, EffectiveContainerPolicy,
 };
 use effigy_containers::{ContainerAction, ContainerCleanupResult, ContainerRuntimeState};
+use effigy_ui::steps::{ProgressFrame, ProgressSource};
 
 use crate::container_manager::{compose_invocation_plan, lifecycle_operation_report};
 use crate::read::{discover_running_environments, filter_running_environments_for_scope};
@@ -24,7 +25,11 @@ use planning::{
 /// The caller's environment transition around one shutdown: it receives the
 /// backend effect and must run it at most once, under the environment's gate
 /// (contract 053 §3). The runner journals it; tests may call it directly.
-pub type ShutdownEffect<'a> = &'a dyn Fn() -> Result<(), EffigyRuntimeError>;
+///
+/// The effect reports into the transition's progress: the transition owns the
+/// stop's single step, and the runtime's stopping/removing lines arrive as
+/// that step's sub-step text (effigy#974).
+pub type ShutdownEffect<'a> = &'a dyn Fn(&ProgressSource) -> Result<(), EffigyRuntimeError>;
 use report::{
     annotate_left_running_shared_services, annotate_removed_gateway_routes,
     render_container_down_global_report, render_container_report, StoppedContainerEnvironment,
@@ -53,7 +58,7 @@ where
     // A declared host process still needs the ordinary whole-environment stop.
     if policy.host_processes.is_empty() {
         if let Some(reason) = effigy_containers::environment::nothing_to_stop(repo_root, &policy) {
-            transition(repo_root, &policy, &|| Ok(()))?;
+            transition(repo_root, &policy, &|_| Ok(()))?;
             let removed = deregister_gateway_routes(&policy)?;
             let mut report = down_noop_report(&policy, &reason);
             annotate_removed_gateway_routes(&mut report, &removed);
@@ -63,62 +68,23 @@ where
     let runtime_running = runtime_backend_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let prepared = runtime_running && prepare_shutdown(repo_root, &policy)?;
-    // One step per service, created and moved by the runtime's own stopping and
-    // removing lines while it works, so a slow stop names the service holding
-    // it up (effigy#313). A runtime that narrates nothing still gets one honest
-    // step, and a step it never finished is closed from what the inventory
-    // still holds.
-    let compose_steps = std::cell::RefCell::new(effigy_containers::exec::ComposeSteps::new(
-        policy.project_name.clone(),
-    ));
-    // A runtime that narrates nothing this parser recognises still gets one
-    // live step, so an operator is never looking at a silent teardown. It
-    // awaits the teardown command's own exit, not a report the silent runtime
-    // may never write.
-    let whole_stack = prepared.then(|| {
-        effigy_containers::exec::runtime_wait(
-            format!("stopping the `{}` stack", policy.name),
-            format!(
-                "the teardown command for the `{}` stack to exit",
-                policy.name
-            ),
-        )
-    });
-    let stopped = transition(repo_root, &policy, &|| {
+    // The stop is one line: the environment transition owns the step, and the
+    // runtime's own stopping and removing lines arrive as that step's sub-step
+    // text while it works, so a slow stop still names the service holding it
+    // up (effigy#313, effigy#974). A runtime that narrates nothing this parser
+    // recognises leaves the transition's own `stopping the backend` sub-step,
+    // which still names the teardown it awaits with its elapsed wait.
+    let stopped = transition(repo_root, &policy, &|progress| {
         if prepared {
+            let project = policy.project_name.clone();
             run_shutdown_compose_watched(repo_root, &policy, &mut |line| {
-                if let Some(event) = effigy_containers::exec::parse_compose_step_event(line) {
-                    compose_steps.borrow_mut().observe(&event);
+                if let Some(sub_step) = shutdown_sub_step(&project, line) {
+                    progress.update(|_| ProgressFrame::new(sub_step));
                 }
             })?;
         }
         Ok(())
     });
-    if let Some(whole_stack) = whole_stack {
-        finish_whole_stack(
-            &whole_stack,
-            whole_stack_ending(compose_steps.borrow().touched(), &stopped),
-        );
-    }
-
-    // A step the runtime never closed is closed from the post-teardown
-    // inventory: gone means removed; still listed means still present.
-    if prepared {
-        let remaining =
-            effigy_containers::exec::list_compose_containers_for_policy_including_stopped(
-                repo_root, &policy,
-            )
-            .ok()
-            .map(|rows| {
-                rows.into_iter()
-                    .filter(|row| !row.oneoff)
-                    .map(|row| row.container_name)
-                    .collect::<Vec<_>>()
-            });
-        compose_steps
-            .borrow()
-            .finish_unfinished_teardown(remaining.as_deref());
-    }
     stopped?;
     let _manager_report = lifecycle_operation_report(
         repo_root,
@@ -152,7 +118,9 @@ where
     run_container_down_all_with_hook(
         output_json,
         deregister_gateway_routes,
-        |_repo_root, _policy, effect| effect(),
+        |_repo_root, _policy, effect| {
+            effect(&ProgressSource::waiting_for("the test backend to stop"))
+        },
     )
 }
 
@@ -216,7 +184,7 @@ where
         let runtime_running = runtime_backend_is_running(&policy, repo_root)
             .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
         let prepared = runtime_running && prepare_shutdown(repo_root, &policy)?;
-        transition(repo_root, &policy, &|| {
+        transition(repo_root, &policy, &|_| {
             if prepared {
                 run_shutdown_compose(repo_root, &policy)?;
             }
@@ -311,7 +279,7 @@ where
     // Image references come from the render before the reset drops it.
     let image_policy = policy.clone();
     if can_reset {
-        transition(repo_root, &policy, &|| {
+        transition(repo_root, &policy, &|_| {
             if !runtime_running {
                 return Ok(());
             }
@@ -358,142 +326,60 @@ where
     Ok(render_container_report(report, output_json))
 }
 
-/// How the whole-stack step ends when the runtime's own step lines did not
-/// carry the teardown (effigy#313). Pure, so the choice is testable without a
-/// terminal or a runtime.
-#[derive(Debug, PartialEq, Eq)]
-enum WholeStackEnding {
-    Stopped,
-    Failed(String),
-    Cleared,
-}
-
-/// `touched` is how many subjects the runtime's recognised lines moved.
-fn whole_stack_ending(
-    touched: usize,
-    stopped: &Result<(), EffigyRuntimeError>,
-) -> WholeStackEnding {
-    match (touched, stopped) {
-        // The runtime printed nothing this parser recognises. The teardown's
-        // own result is the only evidence, so one step says what happened.
-        (0, Ok(())) => WholeStackEnding::Stopped,
-        (0, Err(error)) => WholeStackEnding::Failed(format!("the stack did not stop: {error}")),
-        // The per-service steps carry the story; the fallback had none.
-        _ => WholeStackEnding::Cleared,
-    }
-}
-
-fn finish_whole_stack(whole_stack: &effigy_containers::exec::TimedStep, ending: WholeStackEnding) {
-    match ending {
-        WholeStackEnding::Stopped => whole_stack.succeed("the runtime reported the stack stopped"),
-        WholeStackEnding::Failed(cause) => whole_stack.fail(cause),
-        WholeStackEnding::Cleared => whole_stack.finish_clear(),
-    }
+/// The runtime's own stopping/removing lines arrive as the transition's
+/// sub-step text (see `run_container_down`): they open no step of their own,
+/// so a stop is one line that moves while the backend works (effigy#974).
+///
+/// Pure over recognised lines, so the mapping is testable without a terminal
+/// or a runtime: each recognised line replaces the transition's sub-step,
+/// and an unrecognised line leaves the transition's own sub-step alone.
+fn shutdown_sub_step(project: &str, line: &str) -> Option<String> {
+    effigy_containers::exec::parse_compose_step_event(line).map(|event| event.label(project))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{finish_whole_stack, whole_stack_ending, WholeStackEnding};
-    use crate::EffigyRuntimeError;
-    use effigy_containers::exec::{runtime_wait, ComposeStepEvent, ComposeSteps};
+    use super::shutdown_sub_step;
+    use effigy_ui::steps::{ProgressFrame, ProgressSource};
 
-    /// The silent fallback waits for the teardown command's exit, and two
-    /// fake-clock reads prove the frame moves with its elapsed wait.
+    /// The runtime's stopping/removing lines move the transition's sub-step;
+    /// they open no step of their own, so a stop stays one line (effigy#974).
     #[test]
-    fn a_silent_runtime_teardown_step_names_the_command_it_awaits_and_its_elapsed_wait() {
-        let step = runtime_wait(
-            "stopping the `web` stack",
-            "the teardown command for the `web` stack to exit",
-        );
-        let early = step.frame_at(std::time::Duration::from_secs(2));
-        assert_eq!(early, "stopping the `web` stack · 2s");
-        let later = step.frame_at(std::time::Duration::from_secs(45));
-        assert_eq!(later, "stopping the `web` stack · 45s");
-        assert_ne!(early, later, "a frame that never changes is not progress");
-    }
-
-    #[test]
-    fn a_stop_the_runtime_never_narrated_ends_the_stack_step_with_a_check() {
-        let (_, lines) = effigy_ui::steps::capture_lines(|| {
-            let ending = whole_stack_ending(0, &Ok(()));
-            assert_eq!(ending, WholeStackEnding::Stopped);
-            finish_whole_stack(
-                &runtime_wait("stopping the `web` stack", "the teardown command to exit"),
-                ending,
-            );
-        });
-        assert_eq!(lines.len(), 1, "{lines:?}");
-        assert!(
-            lines[0].starts_with("✓ the runtime reported the stack stopped"),
-            "{lines:?}"
+    fn recognised_teardown_lines_become_the_transition_sub_step() {
+        let progress = ProgressSource::new(ProgressFrame::new("stopping the backend"));
+        let project = "demo-web-dev";
+        for (line, expected) in [
+            (" Container demo-web-dev-web-1  Stopping", "stopping web"),
+            (" Container demo-web-dev-web-1  Stopped", "stopping web"),
+            (" Container demo-web-dev-web-1  Removing", "removing web"),
+        ] {
+            let label = shutdown_sub_step(project, line).expect("a recognised line");
+            assert_eq!(label, expected, "{line}");
+            progress.update(|_| ProgressFrame::new(label));
+        }
+        assert_eq!(
+            progress.frame_at(std::time::Duration::from_secs(8)),
+            "removing web · 8s"
         );
     }
 
+    /// A line the parser does not recognise changes nothing: the
+    /// transition's own `stopping the backend` sub-step still names the
+    /// teardown it awaits, so an operator never watches a silent stop.
     #[test]
-    fn a_failed_stop_the_runtime_never_narrated_ends_the_stack_step_with_a_cross_and_its_cause() {
-        let stopped = Err(EffigyRuntimeError::task_invocation(
-            "docker compose down exited 1",
-        ));
-        let (_, lines) = effigy_ui::steps::capture_lines(|| {
-            let ending = whole_stack_ending(0, &stopped);
-            assert_eq!(
-                ending,
-                WholeStackEnding::Failed(
-                    "the stack did not stop: docker compose down exited 1".to_owned()
-                )
-            );
-            finish_whole_stack(
-                &runtime_wait("stopping the `web` stack", "the teardown command to exit"),
-                ending,
-            );
-        });
-        assert_eq!(lines.len(), 1, "{lines:?}");
-        assert!(
-            lines[0].starts_with("✗ the stack did not stop: docker compose down exited 1"),
-            "{lines:?}"
+    fn an_unrecognised_teardown_line_leaves_the_transition_sub_step() {
+        assert_eq!(
+            shutdown_sub_step("demo-web-dev", "some unparsed runtime line"),
+            None
         );
-    }
-
-    #[test]
-    fn a_recognised_service_move_clears_the_stack_step_and_inventory_ends_the_service_step() {
-        let (_, lines) = effigy_ui::steps::capture_lines(|| {
-            let mut steps = ComposeSteps::new("demo-web-dev");
-            steps.observe(&ComposeStepEvent::Stopping {
-                subject: "demo-web-dev-web-1".to_owned(),
-            });
-            steps.observe(&ComposeStepEvent::Removing {
-                subject: "demo-web-dev-web-1".to_owned(),
-            });
-            let ending = whole_stack_ending(steps.touched(), &Ok(()));
-            assert_eq!(ending, WholeStackEnding::Cleared);
-            finish_whole_stack(
-                &runtime_wait("stopping the `web` stack", "the teardown command to exit"),
-                ending,
-            );
-            steps.finish_unfinished_teardown(Some(&["demo-web-dev-web-1".to_owned()]));
-        });
-        assert_eq!(lines.len(), 1, "{lines:?}");
-        assert!(
-            lines[0].starts_with("✗ web is still present after the teardown"),
-            "{lines:?}"
+        let progress = ProgressSource::new(ProgressFrame::new("stopping the backend"));
+        assert_eq!(
+            progress.frame_at(std::time::Duration::from_secs(8)),
+            "stopping the backend · 8s"
         );
-
         let (_, lines) = effigy_ui::steps::capture_lines(|| {
-            let mut steps = ComposeSteps::new("demo-web-dev");
-            steps.observe(&ComposeStepEvent::Removing {
-                subject: "demo-web-dev-web-1".to_owned(),
-            });
-            let ending = whole_stack_ending(steps.touched(), &Ok(()));
-            finish_whole_stack(
-                &runtime_wait("stopping the `web` stack", "the teardown command to exit"),
-                ending,
-            );
-            steps.finish_unfinished_teardown(Some(&[]));
+            let _source = progress;
         });
-        assert_eq!(lines.len(), 1, "{lines:?}");
-        assert!(
-            lines[0].starts_with("✓ stopped and removed web"),
-            "{lines:?}"
-        );
+        assert!(lines.is_empty(), "no step of its own: {lines:?}");
     }
 }

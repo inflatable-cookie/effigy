@@ -352,7 +352,7 @@ pub(super) fn take_down(
     fake: &Fake,
     exempt: Option<RunId>,
 ) -> Result<(), EnvError> {
-    down(ctx, env, op, &selection(), PROJECT, exempt, || fake.stop())
+    down(ctx, env, op, &selection(), PROJECT, exempt, |_| fake.stop())
 }
 
 pub(super) fn record(ctx: &EnvContext<'_>, env: &EnvRef) -> EnvRecord {
@@ -607,9 +607,9 @@ fn transitions_refuse_against_live_interrupted_and_unknown_holders() {
                     }),
                 "down" => take_down(&ctx, &stack, Operation::Down, &fake, None),
                 "handover" => take_down(&ctx, &stack, Operation::Handover, &fake, None),
-                "reset" => reset(&ctx, &stack, &selection(), PROJECT, || fake.stop()),
+                "reset" => reset(&ctx, &stack, &selection(), PROJECT, |_| fake.stop()),
                 _ => reap_if_idle(&ctx, &stack, |run| {
-                    run.stop_with(&selection(), PROJECT, None, || fake.stop())
+                    run.stop_with(&selection(), PROJECT, None, |_| fake.stop())
                 })
                 .map(|idle| {
                     let stopped = idle == Idle::Stopped;
@@ -726,7 +726,7 @@ fn idle_stop_is_holder_based() {
     bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[]).unwrap();
     let reap = |fake: &Fake| {
         reap_if_idle(&ctx, &stack, |run| {
-            run.stop_with(&selection(), PROJECT, None, || fake.stop())
+            run.stop_with(&selection(), PROJECT, None, |_| fake.stop())
         })
         .unwrap()
     };
@@ -862,7 +862,7 @@ fn reset_drops_only_its_own_render_references() {
     let fake = Fake::new();
     bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[]).unwrap();
     bring_up(&ctx, &sibling, &fake, &closure("two"), Retention::Held, &[]).unwrap();
-    reset(&ctx, &stack, &selection(), PROJECT, || fake.stop()).unwrap();
+    reset(&ctx, &stack, &selection(), PROJECT, |_| fake.stop()).unwrap();
     let reset_record = record(&ctx, &stack);
     assert_eq!(reset_record.desired, None);
     assert_eq!(reset_record.state, EnvState::Stopped);
@@ -911,7 +911,7 @@ fn a_stalled_transition_excludes_a_concurrent_attach() {
         &selection(),
         PROJECT,
         None,
-        || {
+        |_| {
             inside_tx.send(()).unwrap();
             release_rx.recv().unwrap();
             fake.stop()
@@ -981,7 +981,7 @@ fn a_session_holds_for_a_command_without_a_task_run() {
     assert_eq!(first.close(), CleanupOutcome::Complete);
     let reap = || {
         reap_if_idle(&ctx, &stack, |run| {
-            run.stop_with(&selection(), PROJECT, None, || fake.stop())
+            run.stop_with(&selection(), PROJECT, None, |_| fake.stop())
         })
         .unwrap()
     };
@@ -1100,6 +1100,82 @@ fn bring_ups_after_inactive_states_reconcile_and_settle() {
             "✓ environment `stack` settled".to_owned(),
             "✓ environment `stack` settled".to_owned(),
         ]
+    );
+}
+
+/// A stop is one line: the transition owns the step, and the backend effect's
+/// own reports arrive as that step's sub-step text instead of nested steps
+/// (effigy#974). The three stacked spinners this replaces were the
+/// workspace shutdown line, the runtime's stack line and the transition's
+/// `Checking environment` line.
+#[test]
+fn a_stop_is_one_step_with_moving_sub_steps() {
+    let home = home();
+    let root = root(home.path());
+    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let fake = Fake::new();
+    bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[]).unwrap();
+    let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let (result, lines) = effigy_ui::steps::capture_lines(|| {
+        down(
+            &ctx,
+            &stack,
+            Operation::Down,
+            &selection(),
+            PROJECT,
+            None,
+            |progress| {
+                for sub in ["stopping web", "removing web"] {
+                    progress.update(|_| effigy_ui::steps::ProgressFrame::new(sub));
+                    seen.borrow_mut()
+                        .push(progress.frame_at(std::time::Duration::from_secs(8)));
+                }
+                fake.stop()
+            },
+        )
+    });
+    result.unwrap();
+    assert_eq!(
+        seen.borrow().as_slice(),
+        &["stopping web · 8s", "removing web · 8s"],
+        "the effect's reports move the transition's own line"
+    );
+    assert_eq!(
+        lines,
+        vec!["✓ environment `stack` settled".to_owned()],
+        "one step, not nested steps: {lines:?}"
+    );
+}
+
+/// A failed backend effect keeps its message: the stop returns the
+/// teardown's own failure, so the operator sees which layer failed and why
+/// (effigy#974).
+#[test]
+fn a_failed_stop_keeps_the_backend_cause() {
+    let home = home();
+    let root = root(home.path());
+    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let fake = Fake::new();
+    bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[]).unwrap();
+    let error = down(
+        &ctx,
+        &stack,
+        Operation::Down,
+        &selection(),
+        PROJECT,
+        None,
+        |_| {
+            Err(BackendError::Uncertain(
+                "docker compose down exited 1".to_owned(),
+            ))
+        },
+    )
+    .expect_err("a failed teardown fails the stop");
+    assert!(
+        error.to_string().contains("docker compose down exited 1"),
+        "the backend cause survives the transition: {error}"
     );
 }
 

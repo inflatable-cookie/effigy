@@ -51,6 +51,10 @@ pub const STOP_EFFECT: &str = "environment:stop";
 /// own words.
 const APPLY_PHASE: &str = "reconciling the backend";
 
+/// The phase one backend stop runs in. It keeps no concise label, so the
+/// sub-step text the runtime reports is the transition's line (effigy#974).
+const STOP_BACKEND_PHASE: &str = "stopping the backend";
+
 /// How long a transition waits for `Gate(Env)` held by another one.
 pub const GATE_WAIT: Duration = Duration::from_secs(600);
 /// How often the gate-wait probe reads the held gate's own body. The kernel's
@@ -1695,12 +1699,16 @@ impl<'r> EnvRun<'r> {
 
     /// The one backend stop: journalled under a permit, then published
     /// `stopped` with a fresh holder check in the same transaction.
+    ///
+    /// The effect reports into this transition's progress: the runtime's own
+    /// lines arrive as sub-step updates on the transition's single step, so a
+    /// stop is one line that names the service now stopping (effigy#974).
     pub fn stop_with(
         &mut self,
         selection: &BackendSelection,
         project: &str,
         exempt: Option<RunId>,
-        effect: impl FnOnce() -> Result<(), BackendError>,
+        effect: impl FnOnce(&ProgressSource) -> Result<(), BackendError>,
     ) -> Result<(), EnvError> {
         let payload = json!({
             "engine": selection.engine.as_str(),
@@ -1709,7 +1717,7 @@ impl<'r> EnvRun<'r> {
         });
         self.transition(
             STOP_EFFECT,
-            "stopping the backend",
+            STOP_BACKEND_PHASE,
             payload,
             Settlement::Irreversible,
             exempt,
@@ -1734,7 +1742,7 @@ impl<'r> EnvRun<'r> {
         payload: Value,
         settlement: Settlement,
         exempt: Option<RunId>,
-        effect: impl FnOnce() -> Result<(), BackendError>,
+        effect: impl FnOnce(&ProgressSource) -> Result<(), BackendError>,
     ) -> Result<(), EnvError> {
         let env = self.env.name.clone();
         self.settle_interrupted_holders()?;
@@ -1773,7 +1781,7 @@ impl<'r> EnvRun<'r> {
             // Nothing reached the backend: verified non-occurrence.
             Err(error) => Err(BackendError::NotStarted(error.to_string())),
             Ok(()) => {
-                let outcome = effect();
+                let outcome = effect(&self.progress);
                 match (outcome, fault("EnvBackendAfter")) {
                     // The backend acted; only the journal callback was lost.
                     (Ok(()), Err(error)) => Err(BackendError::Uncertain(error.to_string())),
@@ -2317,16 +2325,27 @@ impl<'r> EnvRun<'r> {
     }
 
     /// The phase this transition is in now.
+    ///
+    /// The stop's backend phase keeps no concise label: the sub-step text is
+    /// the line, so the runtime's stopping/removing reports move it while the
+    /// backend works instead of stacking a second step (effigy#974). Every
+    /// other phase keeps its concise label.
     pub(super) fn phase(&self, phase: impl Into<String>, count: Option<(u64, u64)>) {
         let phase = phase.into();
         let label = match phase.as_str() {
-            "publishing the desired render" | "publishing the sealed render" => "Saving stack",
-            "writing the environment record" => "Saving environment",
-            APPLY_PHASE => "Updating containers",
-            _ => "Checking environment",
+            "publishing the desired render" | "publishing the sealed render" => {
+                Some("Saving stack")
+            }
+            "writing the environment record" => Some("Saving environment"),
+            APPLY_PHASE => Some("Updating containers"),
+            STOP_BACKEND_PHASE => None,
+            _ => Some("Checking environment"),
         };
-        self.progress
-            .update(|_| ProgressFrame::new(phase).count(count).label(label));
+        let mut frame = ProgressFrame::new(phase).count(count);
+        if let Some(label) = label {
+            frame = frame.label(label);
+        }
+        self.progress.update(|_| frame);
     }
 
     /// Publish the last thing this transition observed, for a phase a sibling

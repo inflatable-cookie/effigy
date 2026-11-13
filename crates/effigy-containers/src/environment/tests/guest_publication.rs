@@ -87,7 +87,7 @@ fn guest_publication_preserves_live_holders_but_never_authorizes_a_transition() 
     );
     let mut stop = EnvRun::begin(&ctx, &stack, Operation::Down, Wait::FailFast).unwrap();
     assert!(stop
-        .stop_with(&selection(), PROJECT, None, || panic!(
+        .stop_with(&selection(), PROJECT, None, |_| panic!(
             "live holders forbid stop"
         ))
         .is_err());
@@ -240,7 +240,7 @@ fn guest_publication_serializes_two_prepares_with_down_and_replacement() {
         &selection(),
         PROJECT,
         None,
-        || {
+        |_| {
             events.lock().unwrap().push("down");
             Ok(())
         },

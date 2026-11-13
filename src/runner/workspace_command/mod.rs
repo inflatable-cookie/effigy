@@ -28,7 +28,7 @@ use effigy_manifest::ManifestTask;
 use effigy_runtime::shell::run_container_shell_session as run_runtime_container_shell_session;
 use effigy_ui::steps::{self, ProgressSource, Step};
 use effigy_ui::style_text;
-use effigy_ui::theme::{is_ci_environment, Theme};
+use effigy_ui::theme::Theme;
 use effigy_ui::OutputMode;
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -363,6 +363,12 @@ pub(super) fn run_workspace_handoff_shell(
     .map_err(Into::into)
 }
 
+/// The shell is over: stop the workspace's environment through the ordinary
+/// `container down` transition, which owns the stop's single step. The
+/// workspace layer opens no step of its own, so leaving a workspace is one
+/// line that moves with the runtime's stopping/removing reports (effigy#974).
+/// A failed stop returns the transition's error unchanged: it already names
+/// the layer that failed and why.
 pub(super) fn cleanup_workspace_session(
     ownership: InteractiveSessionOwnership,
     session_succeeded: bool,
@@ -378,8 +384,7 @@ pub(super) fn cleanup_workspace_session(
         return Ok(());
     }
 
-    let progress = WorkspaceShutdownProgressReporter::new(container_label);
-    let result = run_container(ContainerArgs {
+    run_container(ContainerArgs {
         subcommand: ContainerSubcommand::Down {
             name: container_name,
             system: None,
@@ -387,12 +392,8 @@ pub(super) fn cleanup_workspace_session(
         },
         repo_override,
         output_json: false,
-    });
-    match &result {
-        Ok(_) => progress.succeed(),
-        Err(error) => progress.fail(error),
-    }
-    result.map(|_| ())
+    })
+    .map(|_| ())
 }
 
 fn validate_workspace_runtime_match(
@@ -505,51 +506,7 @@ fn workspace_handoff_terminal_reset_sequence() -> &'static str {
     "\x1b[2J\x1b[H\x1b[3J"
 }
 
-struct WorkspaceShutdownProgressReporter {
-    progress: WorkspaceOpProgress,
-    system: String,
-}
-
-impl WorkspaceShutdownProgressReporter {
-    fn new(system: &str) -> Self {
-        let progress = WorkspaceOpProgress::start(false, PROBE_CONTAINER_DOWN, true);
-        if !std::io::stderr().is_terminal() || is_ci_environment() {
-            emit_workspace_info("waiting for workspace system shutdown", false);
-        }
-        progress.update(|_| ProgressFrame::new(format!("stopping workspace system `{system}`")));
-        Self {
-            progress,
-            system: system.to_owned(),
-        }
-    }
-
-    fn succeed(self) {
-        self.progress
-            .succeed(&format!("workspace system {} stopped", self.system));
-    }
-
-    /// Off a terminal there is no spinner to end; the error the command returns
-    /// carries the same cause.
-    fn fail(self, error: &RunnerError) {
-        self.progress
-            .fail(&workspace_shutdown_failure_line(&self.system, error));
-    }
-}
-
-/// The one terminal line for a failed shutdown: the system, then the first
-/// line of what the stop error says failed. The full error and its next action
-/// still print after the spinner.
-fn workspace_shutdown_failure_line(system: &str, error: &RunnerError) -> String {
-    let cause = error
-        .human_error()
-        .what_failed()
-        .lines()
-        .next()
-        .unwrap_or_default()
-        .to_owned();
-    format!("workspace system {system} shutdown failed: {cause}")
-}
-
+#[cfg(test)]
 pub(super) const PROBE_CONTAINER_DOWN: &str = "container down";
 pub(super) const PROBE_CONTAINER_IDENTITY: &str = "container identity probe";
 pub(super) const PROBE_GUEST_PUBLICATION: &str = "workspace guest publication";
@@ -598,6 +555,7 @@ impl WorkspaceOpProgress {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn succeed(self, summary: &str) {
         if let Some(step) = self.step {
             step.succeed(summary);

@@ -1386,16 +1386,10 @@ fn a_produced_local_artifact_is_current_only_for_this_host_version() {
     let _ = std::fs::remove_dir_all(root);
 }
 
-#[test]
-fn a_failed_shutdown_line_names_the_system_and_the_first_cause_line() {
-    let error = RunnerError::task_invocation(
-        "docker compose down exited with code 1\nno such service: app",
-    );
-    assert_eq!(
-        workspace_shutdown_failure_line("app", &error),
-        "workspace system app shutdown failed: docker compose down exited with code 1"
-    );
-}
+// A failed stop returns the transition's error unchanged: it already names
+// the layer that failed and why, so the workspace layer adds no failure
+// line of its own (effigy#974). The environment crate pins that the
+// backend's message survives the transition.
 
 #[test]
 fn local_artifact_receipts_remain_current_for_each_target() {
