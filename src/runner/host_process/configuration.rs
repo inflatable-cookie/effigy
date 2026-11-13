@@ -18,6 +18,9 @@ pub(in crate::runner) fn validate_host_process_preflight(
     for process in &ordered {
         resolve_host_process_cwd(&checkout_root, process)?;
     }
+    // A stale JavaScript install fails only once a child has started, so it is
+    // refused here, before any managed host process or container is started.
+    super::dependency_drift::validate_dependency_install(&checkout_root, policy)?;
     listener_gateway_root(policy)?;
     Ok(())
 }
