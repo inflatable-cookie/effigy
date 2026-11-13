@@ -44,11 +44,12 @@ pub(crate) fn check_intent_target(
             let borrowing: bool = if spec.kind == crate::remote::KIND {
                 conn.query_row(
                     "SELECT EXISTS(SELECT 1 FROM attachments WHERE run_id=?1 AND environment=?2 \
-                     AND env_generation=?3 AND mode='\"Borrow\"' AND state='attached')",
+                     AND env_generation=?3 AND mode=?4 AND state='attached')",
                     params![
                         id.to_string(),
                         spec.target.resource.name().to_string(),
-                        spec.target.generation.get() as i64
+                        spec.target.generation.get() as i64,
+                        AttachMode::Borrow.stored()
                     ],
                     |row| row.get(0),
                 )?
