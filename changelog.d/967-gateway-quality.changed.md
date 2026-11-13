@@ -1,0 +1,1 @@
+Gateway PID and version observations now use the trusted identity record owner, TLS trust checks use command status and a direct macOS keychain query, and proxy keep-alive reuse has a deterministic regression test.

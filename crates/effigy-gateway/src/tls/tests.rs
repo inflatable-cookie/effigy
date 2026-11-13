@@ -1,5 +1,21 @@
 use super::*;
 
+#[test]
+fn ca_check_uses_a_typed_fallback_instead_of_command_diagnostics() {
+    let fallback_called = std::cell::Cell::new(false);
+    assert!(ca_installed_from_check(true, || {
+        fallback_called.set(true);
+        false
+    }));
+    assert!(
+        !fallback_called.get(),
+        "a successful mkcert check is enough"
+    );
+
+    assert!(!ca_installed_from_check(false, || false));
+    assert!(ca_installed_from_check(false, || true));
+}
+
 /// An empty certificate cache yields an empty resolver, whether the directory
 /// is empty or not created yet.
 #[test]

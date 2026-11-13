@@ -39,6 +39,70 @@ async fn measure(sender: &mut Sender, count: usize) -> (Duration, Duration) {
     (samples[samples.len() / 2], total)
 }
 
+/// Keep one downstream connection open and prove the proxy reuses its one
+/// upstream connection across requests. Latency remains a separate, opt-in
+/// benchmark because its threshold depends on host load.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn keep_alive_requests_reuse_one_upstream_connection() {
+    let fixture = tempfile::tempdir().unwrap();
+    let upstream = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream_addr = upstream.local_addr().unwrap();
+    let connections = Arc::new(AtomicUsize::new(0));
+    let count = Arc::clone(&connections);
+    let upstream_task = tokio::spawn(async move {
+        loop {
+            let (stream, _) = upstream.accept().await.unwrap();
+            count.fetch_add(1, Ordering::Relaxed);
+            tokio::spawn(async move {
+                let service = service_fn(|_: Request<Incoming>| async {
+                    Ok::<_, std::convert::Infallible>(Response::new(Full::new(Bytes::from_static(
+                        b"export default 1;",
+                    ))))
+                });
+                let _ = http1::Builder::new()
+                    .serve_connection(TokioIo::new(stream), service)
+                    .await;
+            });
+        }
+    });
+    let route = Route {
+        domain: "performance.test".into(),
+        target: Some(upstream_addr.to_string()),
+        dns_ip: None,
+        tcp_port: None,
+        tcp_target: None,
+        source: RouteSource::Task,
+        project: fixture.path().display().to_string(),
+        managed_listener: None,
+        tls: false,
+        registered: chrono::Utc::now(),
+    };
+    let mut routes = RouteTable::new();
+    routes.upsert(route);
+    let routes = Arc::new(RwLock::new(routes));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy_addr = listener.local_addr().unwrap();
+    let (stop, shutdown) = tokio::sync::watch::channel(false);
+    let proxy = tokio::spawn(run_proxy_server_on(
+        listener,
+        ProxyConfig::default(),
+        routes,
+        Arc::new(GatewayStats::new()),
+        shutdown,
+    ));
+    let (mut sender, driver) = client(proxy_addr).await;
+
+    measure(&mut sender, 4).await;
+    assert_eq!(connections.load(Ordering::Relaxed), 1);
+
+    drop(sender);
+    driver.await.unwrap();
+    stop.send(true).unwrap();
+    proxy.await.unwrap().unwrap();
+    upstream_task.abort();
+    let _ = upstream_task.await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "bounded performance proof; run proof:gateway:proxy:latency"]
 async fn loopback_keep_alive_latency_766() {

@@ -19,9 +19,6 @@ use std::time::{Duration, SystemTime};
 use rustls::server::{ClientHello, ResolvesServerCert};
 use rustls::sign::CertifiedKey;
 
-#[cfg(target_os = "macos")]
-use effigy_core::shell::shell_quote;
-
 use crate::error::GatewayError;
 
 /// How long a certificate whose domain no route names stays cached before the
@@ -109,26 +106,17 @@ impl TlsConfig {
         let check = mkcert_command()
             .arg("-check")
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::piped())
-            .output();
-        if let Ok(output) = check {
-            if output.status.success() {
-                return true;
-            }
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if !stderr.contains("flag provided but not defined: -check") {
-                return false;
-            }
-        }
+            .status();
+        let check_succeeded = check.is_ok_and(|status| status.success());
 
         #[cfg(target_os = "macos")]
         {
-            macos_mkcert_ca_installed()
+            ca_installed_from_check(check_succeeded, macos_mkcert_ca_installed)
         }
 
         #[cfg(not(target_os = "macos"))]
         {
-            mkcert_ca_exists()
+            ca_installed_from_check(check_succeeded, || false)
         }
     }
 
@@ -754,24 +742,25 @@ pub fn resolved_mkcert_program() -> Option<PathBuf> {
 
 #[cfg(target_os = "macos")]
 fn macos_mkcert_ca_installed() -> bool {
-    [
-        "/Library/Keychains/System.keychain",
-        "~/Library/Keychains/login.keychain-db",
-    ]
-    .into_iter()
-    .any(|keychain| {
-        Command::new("sh")
-            .args([
-                "-lc",
-                &format!(
-                    "security find-certificate -a -c mkcert {} >/dev/null 2>&1",
-                    shell_quote(keychain)
-                ),
-            ])
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
-    })
+    let login_keychain = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|home| home.is_absolute())
+        .map(|home| home.join("Library/Keychains/login.keychain-db"));
+    std::iter::once(PathBuf::from("/Library/Keychains/System.keychain"))
+        .chain(login_keychain)
+        .any(|keychain| {
+            Command::new("/usr/bin/security")
+                .args(["find-certificate", "-a", "-c", "mkcert"])
+                .arg(keychain)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success())
+        })
+}
+
+fn ca_installed_from_check(check_succeeded: bool, fallback: impl FnOnce() -> bool) -> bool {
+    check_succeeded || fallback()
 }
 
 fn format_command_output(stdout: &[u8], stderr: &[u8]) -> String {
