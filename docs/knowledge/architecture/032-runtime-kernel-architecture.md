@@ -249,10 +249,12 @@ No engine depends on the kernel yet.
 compiles all kernel targets and runs strict clippy. Run `lint:linux` before
 native Linux qualification: it runs strict Clippy for `aarch64-unknown-linux-gnu`
 on `effigy-process`, whose Linux process-identity implementation can be checked
-without a cross C compiler. The full workspace and native qualification feature
-sets are linted by Ubuntu CI. A broader local cross-target attempt currently
-stops at `libsqlite3-sys`, which needs `aarch64-linux-gnu-gcc`; the kernel and
-other SQLite-dependent Linux code therefore still require Linux CI or the native
+without a cross C compiler. Its tests are omitted locally because their
+`effigy-test-support` dev-dependency pulls in the kernel and SQLite. The full
+workspace and native qualification feature sets, including test targets, are
+linted by Ubuntu CI. A broader local cross-target attempt currently stops at
+`libsqlite3-sys`, which needs `aarch64-linux-gnu-gcc`; the kernel and other
+SQLite-dependent Linux code therefore still require Linux CI or the native
 build. `lint:linux` does not replace a native build or proof. The
 `fault-injection` feature's observation hook exists only under `cfg(test)`.
 
