@@ -28,6 +28,4 @@ pub use obligation::{
     committed_selection, selection_abandoned, selection_recovered, unfinished_selection,
     SelectionLiveness, SelectionObligation, SelectionState,
 };
-pub(crate) use obligation::{
-    pending_obligation, read_obligation, record_obligation,
-};
+pub(crate) use obligation::{pending_obligation, read_obligation, record_obligation};

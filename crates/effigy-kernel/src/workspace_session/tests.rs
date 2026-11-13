@@ -9469,7 +9469,10 @@ fn gated_decision_refuses_changed_unknown_and_expired_observations_without_reser
         &root,
         &environment,
         Wait::FailFast,
-        Instant::now() + Duration::from_millis(100),
+        // The deadline also bounds this decision's own gate acquisition. One
+        // second leaves room for the gate on a loaded host while staying far
+        // shorter than the observation, which waits for `release` below.
+        Instant::now() + Duration::from_secs(1),
         move |_| {
             let _ = blocked.recv();
             Ok(publish_inputs(7, Some(published_target())))

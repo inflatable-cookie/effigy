@@ -680,7 +680,10 @@ pub(crate) fn target_fence(reader: &StoreReader, target: RunId) -> Result<Fence,
 
 /// A journalled control request by id, whatever its state. The row is the
 /// durable record `run::request` wrote, so a retry can recognise its own.
-pub(crate) fn recorded_request(reader: &StoreReader, id: RunId) -> Result<Option<run::Request>, RunError> {
+pub(crate) fn recorded_request(
+    reader: &StoreReader,
+    id: RunId,
+) -> Result<Option<run::Request>, RunError> {
     let action = reader
         .conn()
         .query_row(
@@ -955,4 +958,3 @@ pub(crate) fn refuse_session_overlap(
     }
     Ok(())
 }
-

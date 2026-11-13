@@ -413,7 +413,7 @@ mod tests {
     #[test]
     fn a_malformed_row_refuses_the_whole_snapshot() {
         // A skipped row would drop a member or a descendant from both answers.
-        assert!(parse_process_table("10 1 10 Ss\n").is_err());
+        assert!(parse_process_table("10 one 10 Ss\n").is_err());
         assert!(parse_process_table("10 1 notagroup Ss\n").is_err());
         assert!(parse_process_table("10 1 10\n").is_err());
     }
@@ -431,10 +431,8 @@ mod tests {
         // which read as "the root has no descendants" and narrowed the
         // termination with no error. Now the root stays a target and the
         // failure is stated.
-        let (targets, error) = signal_targets_after_read(
-            i32::MAX - 1,
-            Err(std::io::Error::other("ps unavailable")),
-        );
+        let (targets, error) =
+            signal_targets_after_read(i32::MAX - 1, Err(std::io::Error::other("ps unavailable")));
         assert_eq!(targets.processes, vec![i32::MAX - 1]);
         let error = ProcessTreeError::Unenumerated(error.expect("the read failure is reported"));
         assert!(error.is_unenumerated());

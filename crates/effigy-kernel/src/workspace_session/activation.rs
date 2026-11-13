@@ -542,7 +542,10 @@ pub(crate) fn activation_observe(cx: &EffectContext) -> Result<ObserveContext, R
     })
 }
 
-pub(crate) fn activation_reader(cx: &ObserveContext, root: &StateRoot) -> Result<StoreReader, RunError> {
+pub(crate) fn activation_reader(
+    cx: &ObserveContext,
+    root: &StateRoot,
+) -> Result<StoreReader, RunError> {
     match Store::read(cx, root) {
         Observed::Verified(reader, _) => Ok(reader),
         Observed::Absent(_) => Err(RunError::broken("the kernel store is not readable")),
@@ -555,7 +558,10 @@ pub(crate) fn activation_reader(cx: &ObserveContext, root: &StateRoot) -> Result
 /// A stored owner *name* resolved to the identity it names, through the
 /// resource row's canonical bytes. A name is a digest, so it is never decoded on
 /// its own: a stored owner the journal does not hold is broken, not guessed.
-pub(crate) fn owner_identity(conn: &rusqlite::Connection, name: &str) -> Result<ResourceId, RunError> {
+pub(crate) fn owner_identity(
+    conn: &rusqlite::Connection,
+    name: &str,
+) -> Result<ResourceId, RunError> {
     let canonical: Option<Vec<u8>> = conn
         .query_row(
             "SELECT canonical FROM resources WHERE name=?1",
@@ -1931,4 +1937,3 @@ impl WorkspaceActivationReservation {
         Ok(Self { record })
     }
 }
-

@@ -50,17 +50,27 @@ pub(crate) use transition::{check_intent_target, check_run_fence, resume_facts};
 #[cfg(test)]
 mod tests;
 
+pub(crate) use activation::{
+    activation_evidence, activation_reader, owner_identity, read_reservation,
+    recoverable_reservation, require_reservation,
+};
 pub use activation::{
     ActivationDecision, ActivationRefusal, ActivationReservationId, ActivationReservationRecord,
     ActivationReservationState, ArtifactEvidence, ContainerIdentity, PublishInputs, SessionBinding,
     TargetCandidate, TargetEvidence, WorkspaceActivationReservation, WorkspacePublicationReceipt,
 };
-pub use claims::{ActivationClaim, ActivationPlan, CommittedActivation, EnvironmentClaim, SessionClaim};
+pub(crate) use claims::{
+    activation_plan, check_session_owner, check_staging_attempt, refuse_bound_reservation_recovery,
+    refuse_reserved_generation, verify_reserved_owner_dead,
+};
+pub use claims::{
+    ActivationClaim, ActivationPlan, CommittedActivation, EnvironmentClaim, SessionClaim,
+};
+pub use down::{DownChildren, DownCoordination, DownHolder, DownStart};
 pub use guest_context::{GuestContextInputs, GuestPaths, GuestRoute, GuestSourcePin};
 pub use guest_stage::{
     BoundPlatform, GuestBinaryReceipt, GuestBinaryStage, ImagePlatform, LoaderFamily,
 };
-pub use down::{DownChildren, DownCoordination, DownHolder, DownStart};
 pub use selection::{
     committed_selection, selection_abandoned, selection_recovered, unfinished_selection,
     AdvertisedLocator, CredentialSelection, GuestObject, GuestSelection, SelectionLiveness,
@@ -74,22 +84,12 @@ pub use serving::{
     HostChannelListener, ListenerPhase, ServingKey, ServingLease, ServingProbe, ServingRefusal,
     SessionLaunch, SessionOwner, TargetProbe,
 };
-pub use session::{
-    OwnerLoss, SessionHandle, SessionRef, SessionSupervisor, TerminalKind, phase,
-};
 pub(crate) use session::{
     decode_owner, live_session_row, next_generation, preserve_active_predecessor,
     preserved_environment, refuse_session_overlap, request_stop, run_needs_settlement,
     session_evidence, session_of_run, session_run_gate, session_slot, SessionRow,
 };
-pub(crate) use activation::{
-    activation_evidence, activation_reader, owner_identity, read_reservation,
-    recoverable_reservation, require_reservation,
-};
-pub(crate) use claims::{
-    activation_plan, check_session_owner, check_staging_attempt,
-    refuse_bound_reservation_recovery, refuse_reserved_generation, verify_reserved_owner_dead,
-};
+pub use session::{phase, OwnerLoss, SessionHandle, SessionRef, SessionSupervisor, TerminalKind};
 
 use crate::ctx::{CleanupContext, EffectContext, ObserveContext, StopCause};
 use crate::gate::{Gate, Wait};

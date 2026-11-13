@@ -263,7 +263,11 @@ pub(crate) fn parse_run(text: &str) -> Result<RunId, RunError> {
 /// The obligation id is derived, never stored: it names the same activation the
 /// row does, so a reader and the writer that created it agree without a second
 /// authority. It grants nothing by being known.
-pub(crate) fn derived_id(reservation: &str, run: &str, session_run: &str) -> Result<run::RequestId, RunError> {
+pub(crate) fn derived_id(
+    reservation: &str,
+    run: &str,
+    session_run: &str,
+) -> Result<run::RequestId, RunError> {
     let reservation = ActivationReservationId::parse(reservation).map_err(|error| {
         RunError::broken(format!(
             "a stored workspace selection reservation ({error})"
@@ -279,7 +283,8 @@ pub(crate) fn derived_id(reservation: &str, run: &str, session_run: &str) -> Res
     Ok(run::RequestId::new(bytes))
 }
 
-pub(crate) const OBLIGATION_COLUMNS: &str = "reservation_id, environment_generation, run_id, session_run, \
+pub(crate) const OBLIGATION_COLUMNS: &str =
+    "reservation_id, environment_generation, run_id, session_run, \
  state, receipt, created_at, reason";
 
 pub(crate) fn obligation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ObligationRow> {

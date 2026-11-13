@@ -6,11 +6,11 @@ pub(crate) mod merged;
 mod styled_tap;
 pub use canonical_output::CanonicalOutput;
 pub use merged::{FileIdentity, MergedLog, PlainLog, PlainRead};
-pub(crate) mod platform;
-mod terminal;
 /// The one owner of the secret-bearing output path: sanitize, redact, then
 /// project per stream. It is not custody's to re-implement.
 mod output;
+pub(crate) mod platform;
+mod terminal;
 pub use output::StyledOutput;
 pub(crate) use output::{OutputPipeline, OutputTag, Redactor};
 /// Signal one external process only after the caller's fresh authority check.

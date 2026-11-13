@@ -305,7 +305,9 @@ pub(crate) fn verify_reserved_owner_dead(
 
 /// The guest publication an activation run recorded must be applied and carry
 /// a receipt: `active` may only follow a completed required obligation (§8.11).
-pub(crate) fn published_receipt(environment_run: &Run<'_>) -> Result<WorkspacePublicationReceipt, RunError> {
+pub(crate) fn published_receipt(
+    environment_run: &Run<'_>,
+) -> Result<WorkspacePublicationReceipt, RunError> {
     let effects = environment_run.effects()?;
     let Some(effect) = effects
         .iter()

@@ -77,7 +77,9 @@ pub(super) fn write(
         op.check("frame write")
             .map_err(|error| io::Error::other(format!("{error:?}")))?;
         match writer.write(&frame[offset..]) {
-            Ok(0) => return Err(io::Error::new(io::ErrorKind::WriteZero, "frame pipe closed").into()),
+            Ok(0) => {
+                return Err(io::Error::new(io::ErrorKind::WriteZero, "frame pipe closed").into())
+            }
             Ok(count) => offset += count,
             Err(error) if retryable(&error) => std::thread::sleep(RETRY),
             Err(error) => return Err(error.into()),
@@ -98,7 +100,9 @@ pub(super) fn read_exact(
             .map_err(|error| io::Error::other(format!("{error:?}")))?;
         match reader.read(&mut bytes[offset..]) {
             Ok(0) => {
-                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "frame pipe closed").into())
+                return Err(
+                    io::Error::new(io::ErrorKind::UnexpectedEof, "frame pipe closed").into(),
+                )
             }
             Ok(count) => offset += count,
             Err(error) if retryable(&error) => std::thread::sleep(RETRY),
@@ -109,10 +113,7 @@ pub(super) fn read_exact(
 }
 
 /// Read one frame body, refusing one outside the bound before allocating it.
-pub(super) fn read(
-    reader: &mut impl Read,
-    op: &OperationContext,
-) -> Result<Vec<u8>, FrameError> {
+pub(super) fn read(reader: &mut impl Read, op: &OperationContext) -> Result<Vec<u8>, FrameError> {
     let mut prefix = [0u8; PREFIX];
     read_exact(reader, &mut prefix, op)?;
     read_body(reader, prefix, op)
@@ -259,7 +260,10 @@ mod tests {
         let mut buffer = frame[..frame.len() - 1].to_vec();
         assert!(take(&mut buffer).expect("partial").is_none());
         buffer.push(*frame.last().expect("body"));
-        assert_eq!(take(&mut buffer).expect("whole").as_deref(), Some(&b"abc"[..]));
+        assert_eq!(
+            take(&mut buffer).expect("whole").as_deref(),
+            Some(&b"abc"[..])
+        );
         assert!(take(&mut buffer).expect("empty").is_none());
     }
 

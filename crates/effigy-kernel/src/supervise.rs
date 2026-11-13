@@ -36,14 +36,14 @@ pub(crate) mod anchor;
 #[allow(dead_code)]
 mod birth_hash;
 // Ordinary builds do not consume these qualification-only observations.
+/// One owner for the length-prefixed frames every helper pipe speaks.
+mod frame;
 #[allow(dead_code)]
 #[cfg(not(test))]
 pub(crate) mod image_identity;
 #[cfg(test)]
 pub(crate) mod image_identity;
 pub(crate) mod memory;
-/// One owner for the length-prefixed frames every helper pipe speaks.
-mod frame;
 
 /// Qualification executables call this at process entry. It grants no spawn
 /// authority and is absent from ordinary product builds.

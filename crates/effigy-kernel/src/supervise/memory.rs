@@ -494,9 +494,8 @@ impl MemoryGuard {
                 .ok_or_else(|| RunError::unavailable("custody output closed"))?;
             read_acknowledgement(output, request, cx.operation())?;
             let mut answer = [0];
-            frame::read_exact(output, &mut answer, cx.operation()).map_err(|_| {
-                RunError::unavailable("interpolation cleanup answer unavailable")
-            })?;
+            frame::read_exact(output, &mut answer, cx.operation())
+                .map_err(|_| RunError::unavailable("interpolation cleanup answer unavailable"))?;
             crate::fault_point!(InterpolationFinishReply)?;
             self.pending_finish = None;
             if answer != [1] {
@@ -580,10 +579,7 @@ fn read_acknowledgement(
 
 /// Read one registration frame whose first byte the open wait consumed. Each
 /// frame gets its own bounded budget; the open wait itself has none.
-fn read_frame_after_first(
-    reader: &mut impl Read,
-    first: u8,
-) -> Result<Vec<u8>, RunError> {
+fn read_frame_after_first(reader: &mut impl Read, first: u8) -> Result<Vec<u8>, RunError> {
     let cx = context(CancelToken::default(), Duration::from_secs(30));
     frame::read_after_first(reader, first, &cx).map_err(|error| match error {
         frame::FrameError::TooLarge(_) => RunError::broken("foreground guard frame too large"),

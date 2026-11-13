@@ -323,7 +323,10 @@ impl SelectionReceipt {
         Ok(())
     }
 
-    pub(crate) fn require_reader_target(&self, reader: &dyn SelectorReader) -> Result<(), RunError> {
+    pub(crate) fn require_reader_target(
+        &self,
+        reader: &dyn SelectorReader,
+    ) -> Result<(), RunError> {
         let target = reader.target();
         if target.container_id != self.publication.publication.container_id
             || target.vm_boot_id != self.publication.publication.vm_boot_id
@@ -421,4 +424,3 @@ impl SelectionSwitchReceipt {
         }
     }
 }
-
