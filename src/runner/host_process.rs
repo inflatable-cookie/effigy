@@ -38,6 +38,7 @@ use effigy_kernel::supervise::EngineSession;
 
 mod configuration;
 mod dependencies;
+mod dependency_drift;
 mod kernel_run;
 mod listener;
 mod listener_wait;

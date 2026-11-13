@@ -48,6 +48,14 @@ const BUILD: &str = concat!("effigy-kernel ", env!("CARGO_PKG_VERSION"));
 /// A read waits at most this long for a SQLite lock: a plain read takes no
 /// lock of its own, so a longer wait only hides a stuck store.
 const READ_BUSY_WAIT: Duration = Duration::from_millis(250);
+/// How long one read keeps re-attempting a store another writer holds.
+///
+/// A read's mode comes from the store's side files, and a supervisor writes the
+/// same store beside these reads, so one attempt can meet SQLite's busy
+/// condition on a file whose side files changed underneath the attempt. The
+/// kernel's contract for `Busy` is "try again, never a failure"; the caller's
+/// own remaining budget still cuts this window short (effigy#954).
+const READ_BUSY_WINDOW: Duration = Duration::from_secs(5);
 
 thread_local! { static IN_TXN: Cell<bool> = const { Cell::new(false) }; }
 /// True while this thread is inside `Store::txn`. Gate acquisition and later
@@ -529,7 +537,7 @@ impl Store {
             Ok(None) => return Observed::Absent(AbsenceProof::NoStore),
             Err(error) => return Observed::Unknown(crate::root::unknown(&error)),
         }
-        let opened = open_reading(root, cx.remaining().min(READ_BUSY_WAIT));
+        let opened = read_patiently(cx, |left| open_reading(root, left.min(READ_BUSY_WAIT)));
         match opened {
             Ok(Some(reader)) => Observed::Verified(reader, evidence("kernel store")),
             Ok(None) => Observed::Absent(AbsenceProof::NoStore),
@@ -1408,6 +1416,32 @@ fn check_store_files(root: &StateRoot) -> Result<(), FsError> {
     }
     Ok(())
 }
+/// Retry a busy read inside the caller's own window.
+///
+/// Every attempt re-reads the store's own side files, so the retry also closes
+/// the window between the read-mode decision and the open. Only `Busy` is
+/// retried: every other refusal is the answer, and the last attempt's `Busy`
+/// stays the answer once the window is spent.
+fn read_patiently<T>(
+    cx: &ObserveContext,
+    mut attempt: impl FnMut(Duration) -> Result<Option<T>, StoreError>,
+) -> Result<Option<T>, StoreError> {
+    let window = cx.remaining().min(READ_BUSY_WINDOW);
+    let started = Instant::now();
+    let mut pause = BUSY_RETRY_MIN;
+    loop {
+        let left = window.saturating_sub(started.elapsed());
+        match attempt(left) {
+            Err(StoreError::Busy { .. }) if !left.is_zero() => {}
+            other => return other,
+        }
+        if let Err(interrupt) = cx.check("kernel store read") {
+            return Err(StoreError::Interrupted(interrupt));
+        }
+        std::thread::sleep(pause.min(left));
+        pause = (pause * 2).min(BUSY_RETRY_MAX);
+    }
+}
 fn verify_reader(conn: Connection, busy: Duration) -> Result<Option<StoreReader>, StoreError> {
     conn.busy_timeout(busy)?;
     conn.execute_batch("PRAGMA query_only=1; PRAGMA trusted_schema=OFF;")?;
@@ -2012,3 +2046,84 @@ CREATE INDEX object_refs_resource ON object_refs(resource);
 CREATE INDEX checkouts_live_seen ON checkouts(state, last_seen);
 CREATE INDEX checkouts_tombstoned ON checkouts(state, unreferenced_since);
 ";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ctx::{CancelToken, Deadline, Limits, OperationContext, Placement};
+
+    fn observe_window(budget: Duration) -> ObserveContext {
+        OperationContext::new(
+            Deadline::At(Instant::now() + budget),
+            CancelToken::default(),
+            Limits {
+                capture_tail: 64 * 1024,
+                log_rotate: 1 << 20,
+                log_keep: 3,
+                line_max: 64 * 1024,
+                queue_bytes: 1 << 20,
+                probe_concurrency: 1,
+            },
+            EffectClass::Observe,
+            Placement::Host,
+        )
+        .observe()
+        .expect("observe context")
+    }
+
+    fn busy() -> StoreError {
+        StoreError::Busy {
+            waited: Duration::from_millis(1),
+            holder: Box::new(Observed::Unknown(UnknownReason::Busy {
+                phase: "test".into(),
+            })),
+        }
+    }
+
+    /// A busy store is retried, not reported: a supervisor writes this store
+    /// beside the read, and `Busy` means "try again, never a failure".
+    #[test]
+    fn a_busy_read_is_retried_inside_the_callers_window() {
+        let cx = observe_window(Duration::from_secs(2));
+        let mut attempts = 0;
+        let value = read_patiently(&cx, |_| {
+            attempts += 1;
+            if attempts < 3 {
+                return Err(busy());
+            }
+            Ok(Some(7u8))
+        })
+        .expect("the third attempt succeeds");
+        assert_eq!(value, Some(7));
+        assert_eq!(attempts, 3);
+    }
+
+    /// The caller's own budget cuts the retry short: a store held for the whole
+    /// window is still reported as `Busy`, never waited on forever.
+    #[test]
+    fn a_store_held_for_the_whole_window_is_reported_busy() {
+        let cx = observe_window(Duration::from_millis(120));
+        let started = Instant::now();
+        let error = read_patiently::<u8>(&cx, |_| Err(busy())).expect_err("still busy");
+        assert!(matches!(error, StoreError::Busy { .. }), "{error}");
+        assert!(
+            started.elapsed() < READ_BUSY_WINDOW,
+            "the caller's shorter window bounds the retry: {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// Every other refusal is the answer; nothing is retried behind it.
+    #[test]
+    fn a_non_busy_refusal_is_not_retried() {
+        let cx = observe_window(Duration::from_secs(2));
+        let mut attempts = 0;
+        let error = read_patiently::<u8>(&cx, |_| {
+            attempts += 1;
+            Err(StoreError::Corrupt("torn".into()))
+        })
+        .expect_err("corrupt store");
+        assert!(matches!(error, StoreError::Corrupt(_)), "{error}");
+        assert_eq!(attempts, 1);
+    }
+}

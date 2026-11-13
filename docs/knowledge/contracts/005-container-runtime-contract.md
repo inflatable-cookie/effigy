@@ -475,6 +475,21 @@ the same bounded child-output tail, and the declared budget is not spent on a
 question the child has already answered: a `500` where `200` is required ends
 the start, it does not wait out `timeout_secs`.
 
+A start whose checkout JavaScript install disagrees with its own lock is
+refused before any managed host process runs. When the manifest declares
+`[package_manager].js`, Effigy compares each declared dependency's installed
+copy against the version the checkout's lock resolves, for the package root at
+or above each process's working directory and along that package's own
+resolution path. The refusal names the dependency, the installed and resolved
+versions, and the preparation that fixes it: the manager's frozen install and,
+when `[bootstrap].setup` is declared, `effigy bootstrap`. Only proof refuses:
+a lock format this build cannot read (the binary Bun lock, pnpm's and yarn's
+locks), a package in the machine-local `effigy deps link` ledger, and a
+dependency with no installed copy at all are left alone. An install that never
+ran stays the `doctor --deep` missing-install finding rather than a start
+refusal, because a checkout may keep its JavaScript install beside the
+container that runs it.
+
 A terminal `stopped` lifecycle observation ends an in-flight readiness wait immediately.
 The supervisor's process identity can remain observable as a Linux zombie after
 stop; that does not make the listener still starting or spend its readiness budget.
