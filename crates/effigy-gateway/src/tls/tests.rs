@@ -1,19 +1,34 @@
 use super::*;
 
 #[test]
-fn ca_check_uses_a_typed_fallback_instead_of_command_diagnostics() {
+fn ca_check_falls_back_only_when_the_command_is_unsupported() {
     let fallback_called = std::cell::Cell::new(false);
-    assert!(ca_installed_from_check(true, || {
+    assert!(ca_installed_from_check(MkcertCaCheck::Installed, || {
         fallback_called.set(true);
         false
     }));
+    assert!(!fallback_called.get(), "an installed result is definitive");
+
+    assert!(!ca_installed_from_check(
+        MkcertCaCheck::NotInstalled,
+        || {
+            fallback_called.set(true);
+            true
+        }
+    ));
     assert!(
         !fallback_called.get(),
-        "a successful mkcert check is enough"
+        "a not-installed result must not be overridden"
     );
 
-    assert!(!ca_installed_from_check(false, || false));
-    assert!(ca_installed_from_check(false, || true));
+    assert!(ca_installed_from_check(MkcertCaCheck::Unsupported, || {
+        fallback_called.set(true);
+        true
+    }));
+    assert!(
+        fallback_called.get(),
+        "unsupported checks use the OS fallback"
+    );
 }
 
 /// An empty certificate cache yields an empty resolver, whether the directory

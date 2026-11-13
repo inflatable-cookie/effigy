@@ -103,20 +103,16 @@ impl TlsConfig {
             return false;
         }
 
-        let check = mkcert_command()
-            .arg("-check")
-            .stdout(std::process::Stdio::null())
-            .status();
-        let check_succeeded = check.is_ok_and(|status| status.success());
+        let check = mkcert_ca_check();
 
         #[cfg(target_os = "macos")]
         {
-            ca_installed_from_check(check_succeeded, macos_mkcert_ca_installed)
+            ca_installed_from_check(check, macos_mkcert_ca_installed)
         }
 
         #[cfg(not(target_os = "macos"))]
         {
-            ca_installed_from_check(check_succeeded, || false)
+            ca_installed_from_check(check, || false)
         }
     }
 
@@ -759,8 +755,46 @@ fn macos_mkcert_ca_installed() -> bool {
         })
 }
 
-fn ca_installed_from_check(check_succeeded: bool, fallback: impl FnOnce() -> bool) -> bool {
-    check_succeeded || fallback()
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MkcertCaCheck {
+    Installed,
+    NotInstalled,
+    Unsupported,
+}
+
+fn mkcert_ca_check() -> MkcertCaCheck {
+    let check = mkcert_command()
+        .arg("-check")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    match check {
+        Ok(status) if status.success() => MkcertCaCheck::Installed,
+        Ok(_) if mkcert_supports_ca_check() => MkcertCaCheck::NotInstalled,
+        _ => MkcertCaCheck::Unsupported,
+    }
+}
+
+/// Older mkcert releases do not implement `-check`. Determine support from
+/// the command's help, not by interpreting an error diagnostic from `-check`.
+fn mkcert_supports_ca_check() -> bool {
+    let Ok(output) = mkcert_command().arg("-help").output() else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .any(|line| line.split_whitespace().next() == Some("-check"))
+}
+
+fn ca_installed_from_check(check: MkcertCaCheck, fallback: impl FnOnce() -> bool) -> bool {
+    match check {
+        MkcertCaCheck::Installed => true,
+        MkcertCaCheck::NotInstalled => false,
+        MkcertCaCheck::Unsupported => fallback(),
+    }
 }
 
 fn format_command_output(stdout: &[u8], stderr: &[u8]) -> String {
