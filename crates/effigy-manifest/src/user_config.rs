@@ -21,7 +21,7 @@
 //! inputs = { php_version = "8.5" }
 //!
 //! [scratch]
-//! root = "/Volumes/Builds/scratch"
+//! root = "/Volumes/Scratch"
 //!
 //! [programs.oxide]
 //! fallback = "cargo"
@@ -454,7 +454,7 @@ library_mounts = ["~/Dev/u-libs"]
             &path,
             r#"
 [scratch]
-root = "  /Volumes/Builds/effigy-scratch  "
+root = "  /Volumes/Scratch/effigy  "
 volume_uuid = " 1E2D3C4B-5A69-4788-99AA-BBCCDDEEFF00 "
 require_separate_volume = false
 "#,
@@ -463,7 +463,7 @@ require_separate_volume = false
         let cfg = load_user_config_from(&path).expect("load");
         assert_eq!(
             cfg.scratch.root(),
-            Some(PathBuf::from("/Volumes/Builds/effigy-scratch"))
+            Some(PathBuf::from("/Volumes/Scratch/effigy"))
         );
         assert!(!cfg.is_empty());
     }

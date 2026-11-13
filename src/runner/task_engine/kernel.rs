@@ -559,6 +559,11 @@ pub(in crate::runner) fn valid_next(argv: &[OsString]) -> bool {
 /// The owned HostCli fixture records the actual sentinel environment. This
 /// test-only observation never changes its backend discovery or scratch. It is
 /// a named item so the kernel ratchet classifies it as the test code it is.
+///
+/// The sentinel runs with a cleared environment, so the run's own temp
+/// directory is not readable here. The directory is proven owned by the
+/// fixture's name, its canonical form, its 0700 mode and its own marker;
+/// naming the operator's scratch root would be both unreadable and stale.
 #[cfg(all(test, feature = "signal-qualification-fixture"))]
 fn record_hostcli_sentinel_environment() {
     use std::os::unix::fs::MetadataExt;
@@ -570,7 +575,6 @@ fn record_hostcli_sentinel_environment() {
             let suffix = name.strip_prefix("signal-hostcli-")?;
             if suffix.len() < 6
                 || !suffix.bytes().all(|byte| byte.is_ascii_alphanumeric())
-                || !root.starts_with("/Volumes/Builds/scratch/effigy/")
                 || std::fs::canonicalize(&root).ok()? != root
             {
                 return None;

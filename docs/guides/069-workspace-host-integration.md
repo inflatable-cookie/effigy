@@ -372,14 +372,14 @@ observation.
   left for the sweep like any other killed run's.
 
 Worktree teardown archives future QA run logs under the configured `[scratch].root`,
-outside the disposable run directory. If scratch is unconfigured, it keeps the
-helper's historical `/Volumes/Builds/scratch/effigy` default — a path the
-unmounted Builds volume can no longer serve, so set `[scratch]` (this machine
-uses `/Volumes/Stash/scratch/effigy`). An unreadable or malformed
-configuration, or an unusable configured destination, reports archival failure;
-teardown still attempts its cleanup. An explicit archive base takes precedence,
-followed by the fixture-only `EFFIGY_RUN_LOG_ARCHIVE_BASE` override. Existing
-archives are not moved. Changing this setting is a separate host operation.
+outside the disposable run directory. If scratch is unconfigured, it archives
+under `$HOME/.effigy/run-log-archive` instead — Effigy's own home, still
+outside Queue run cleanup and outside the run's `TMPDIR`. No volume is named by
+the helper. An unreadable or malformed configuration, or an unusable configured
+destination, reports archival failure; teardown still attempts its cleanup. An
+explicit archive base takes precedence, followed by the fixture-only
+`EFFIGY_RUN_LOG_ARCHIVE_BASE` override. Existing archives are not moved.
+Changing the scratch setting is a separate host operation.
 
 ### What follows the scratch directory
 

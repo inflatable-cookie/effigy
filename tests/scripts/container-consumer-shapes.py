@@ -21,11 +21,13 @@ Three modes:
   the fixture checkout has to live where the profile's VM can see it and that
   staging decision is the owner's.
 
-The render proof writes only inside one private directory under
-`/Volumes/Builds/scratch/effigy/`. The live half stages its checkout under the
-approved root, brings up only its own project, and removes what it created. It
-never starts, stops or reconfigures the profile, and never touches a container
-that is not carrying its own checkout label.
+The render proof writes only inside one private directory under the run's
+temp directory, which Effigy points at the operator's configured
+`[scratch].root`. The live half stages its checkout under that configured
+root (or a staging root the owner names with `EFFIGY_CONSUMER_SHAPES_STAGING`),
+brings up only its own project, and removes what it created. It never starts,
+stops or reconfigures the profile, and never touches a container that is not
+carrying its own checkout label.
 """
 import json
 import re
@@ -39,9 +41,9 @@ from pathlib import Path
 import yaml
 
 candidate = Path(sys.argv[1]).resolve()
-scratch_parent = Path("/Volumes/Builds/scratch/effigy")
-scratch_parent.mkdir(parents=True, exist_ok=True)
-root = Path(tempfile.mkdtemp(prefix="consumer-shapes-", dir=scratch_parent))
+# The run's temp directory: Effigy sets it to a run directory under the
+# operator's configured `[scratch].root`. This proof names no volume of its own.
+root = Path(tempfile.mkdtemp(prefix="consumer-shapes-"))
 home = root / "home"
 home.mkdir()
 
@@ -250,13 +252,50 @@ WORKTREE_DIR = "z374-consumer-shapes-wt"
 # The protected shared services this proof must never touch, by the identity
 # their project name carries. Deletion refuses any name that matches them.
 PROTECTED = ("0721de3e", "108ef777")
-# The brief's staging root. The effigy VM mounts only /Users/tom, so the owner
-# names the root actually used; `plan` prints both candidates and `execute`
-# takes the chosen one as its argument. There is no environment marker.
-DEFAULT_STAGING = scratch_parent / "374-live-consumer-shapes"
+# The live half stages under the operator's configured `[scratch].root` (asked
+# of Effigy, never a volume named here). The effigy VM mounts only /Users/tom,
+# so an owner may instead name a staging root the VM already sees in
+# EFFIGY_CONSUMER_SHAPES_STAGING; `plan` prints both candidate hashes and
+# `execute` takes the chosen root as its argument.
+STAGING_ENV = "EFFIGY_CONSUMER_SHAPES_STAGING"
 # The one-off staging root a single owner-approved run may use while the VM
-# cannot see the scratch root. Never used by ordinary QA.
+# cannot see the configured scratch root. Never used by ordinary QA.
 ONE_OFF_STAGING = Path("/Users/tom/.effigy-consumer-shapes-374")
+
+
+def configured_scratch_root():
+    """The operator's `[scratch].root`, asked of Effigy itself.
+
+    Effigy's resolver prints the configured root from `~/.effigy/config.toml`
+    and exits 2 when that file names none, so this script never guesses a
+    volume."""
+    result = subprocess.run(
+        [str(candidate), "__worktree-archive-scratch-root"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 2:
+        raise SystemExit(
+            "no configured scratch root: set [scratch].root in ~/.effigy/config.toml, "
+            "or name the staging root in %s" % STAGING_ENV
+        )
+    if result.returncode:
+        raise SystemExit(
+            "cannot read the configured scratch root (exit %d): %s"
+            % (result.returncode, result.stderr.strip())
+        )
+    return Path(result.stdout.strip())
+
+
+def default_staging():
+    """The staging root ordinary QA uses: under the configured scratch root.
+
+    `EFFIGY_CONSUMER_SHAPES_STAGING` names an exact staging root instead, the
+    same way a one-off `execute` names one."""
+    override = os.environ.get(STAGING_ENV)
+    if override:
+        return Path(override)
+    return configured_scratch_root() / "374-live-consumer-shapes"
 
 
 LISTENER_DOMAIN = "z374-consumer-shapes.test"
@@ -783,8 +822,77 @@ def approval_hash(staging):
     return hashlib.sha256(approval_core(staging).encode()).hexdigest()
 
 
+def plan_guidance(staging, visible, one_off_hash):
+    """The plan's owner guidance, which must match the selected staging root.
+
+    `visible` is the read-only VM-visibility answer for the staging root's
+    parent, so a root this VM already sees (for example a named
+    `EFFIGY_CONSUMER_SHAPES_STAGING`) is never described as unreachable."""
+    lines = [
+        "HOW MILESTONE QA RUNS IT",
+        "  `qa:live:consumer-shapes` runs this script with no mode at milestone QA,",
+        "  so the live half is part of the selector, not a separate manual step.",
+        f"  It stages under {staging} (the configured scratch root, or a root named in",
+        f"  {STAGING_ENV}).",
+    ]
+    if visible:
+        lines += [
+            f"  The profile's VM already sees {staging.parent}, so the preflight admits this root.",
+            "  The live actions still need the owner's GO.",
+        ]
+    else:
+        lines += [
+            f"  The profile's VM cannot see {staging.parent}: the preflight refuses with the exact",
+            "  mount ask, and the selector fails until the approved Colima scratch mount lands.",
+        ]
+    lines += ["  It never falls back to /Users for ordinary QA.", "", "SCHEDULING"]
+    if visible:
+        lines += [
+            f"  The live half stages under {staging}, which this VM sees; only the owner's GO",
+            "  and the protected baseline stand before the live actions.",
+        ]
+    else:
+        lines += [
+            "  Milestone QA on this change will fail `qa:live:consumer-shapes` until the",
+            f"  approved Colima scratch mount lands: the live half stages under {staging}",
+            "  and refuses when the VM cannot see it. That red is the honest signal; the proof",
+            "  never falls back to /Users for ordinary QA. Schedule the mount before milestone QA.",
+        ]
+    lines += [
+        "",
+        "REQUEST to the owner: "
+        + (
+            "a GO for this run's live actions"
+            if visible
+            else "the scratch mount, and a GO for this run's live actions"
+        ),
+    ]
+    if visible:
+        lines += [
+            f"  (a) stage here: the VM already sees {staging.parent}, so only the GO is needed",
+            "      (no profile change), or",
+        ]
+    else:
+        lines += [
+            f"  (a) add {staging.parent} to the effigy profile and rerun the selector",
+            "      (a profile change, needs its own approval and Acow coordination), or",
+        ]
+    lines += [
+        "  (b) approve one private /Users/tom staging root for this run only and run",
+        f"      {Path(__file__).name} execute {ONE_OFF_STAGING} {one_off_hash}",
+        "      (that hash is for that exact root; any change to the fixture or the steps",
+        "      changes it, and `plan` prints the pair again)",
+        "Live actions either way: the fixture's own private gateway up/down, container up",
+        "twice, exec, restart, down, the fixture image build (FROM busybox:latest, already",
+        f"cached), publishing the scoped form of {LISTENER_DOMAIN} into that private root",
+        "only, and deleting only the owned names listed above. The machine gateway is never used:",
+        "item 7 owns that path, and this proof re-verifies its listeners, PIDs and executables afterwards.",
+    ]
+    return lines
+
+
 def print_frozen_plan():
-    staging = DEFAULT_STAGING
+    staging = default_staging()
     repo, worktree, home = live_paths(staging)
     planning = root / "planning"
     live_fixture(planning)
@@ -793,12 +901,14 @@ def print_frozen_plan():
     baseline = protected_baseline()
     resolution = profile_resolution(planning)
     assert resolution["runtime_running"], ("the private-HOME path does not see a running profile", resolution)
+    # Read-only: the guidance below must say what this VM can actually see.
+    visible = vm_sees(staging.parent)
     shared = identity["shared"]
     digest = run(["shasum", "-a", "256", str(candidate)], root, timeout=120).split()[0]
     head = run(["git", "rev-parse", "HEAD"], Path(__file__).resolve().parents[2], timeout=120).strip()
     print("FROZEN PLAN — qa:live:consumer-shapes live half (no container action has run)")
     print("")
-    scratch_hash = approval_hash(DEFAULT_STAGING)
+    scratch_hash = approval_hash(staging)
     one_off_hash = approval_hash(ONE_OFF_STAGING)
     print(f"plan sha256 scratch root:  {scratch_hash}")
     print(f"plan sha256 one-off root:  {one_off_hash}  ({ONE_OFF_STAGING})")
@@ -810,7 +920,8 @@ def print_frozen_plan():
     print("profile resolution (read-only, private HOME + real COLIMA_HOME):")
     print(f"  backend={resolution['backend']} driver={resolution['driver']} "
           f"profile={resolution['profile']} runtime_running={resolution['runtime_running']}")
-    print(f"staging root:      {staging}  (the brief's scratch root; must not exist)")
+    print(f"staging root:      {staging}  ({'named in ' + STAGING_ENV if os.environ.get(STAGING_ENV) else 'under the configured scratch root'}; must not exist)")
+    print(f"staging parent:    {staging.parent}  (profile VM can see it: {'yes' if visible else 'no'})")
     print(f"primary checkout:  {repo}")
     print(f"linked worktree:   {worktree}")
     print(f"fixture HOME:      {home} (the shared render lives here, not in the real ~)")
@@ -852,11 +963,16 @@ def print_frozen_plan():
     print("                   The linked worktree is never prepared before its own `up`; that first")
     print("                   `up` prepares its scope, so its effective hosts and project differ from")
     print("                   the primary's while both stay up at the same time.")
+    vm_step = (
+        f"the VM must see {staging.parent}: it does, through this profile's mount"
+        if visible
+        else f"the VM must see {staging.parent}: it does not (the profile mounts /Users/tom only)"
+    )
     print("preflight, before the first `up`, all fail-closed:")
     for step in [
         "the staging root, its checkouts and its HOME must not exist",
         "the profile must resolve from the private-HOME environment, read-only",
-        "the VM must see the staging path (today it sees /Users/tom only)",
+        vm_step,
         "no container, volume or network may already carry an owned name",
     ]:
         print(f"  - {step}")
@@ -904,32 +1020,8 @@ def print_frozen_plan():
     print("  - assert the baseline containers above are unchanged")
     print("  - assert the machine gateway's listeners, PIDs and executables are unchanged")
     print("")
-    print("HOW MILESTONE QA RUNS IT")
-    print("  `qa:live:consumer-shapes` runs this script with no mode at milestone QA,")
-    print("  so the live half is part of the selector, not a separate manual step.")
-    print(f"  It stages under the brief's scratch root {DEFAULT_STAGING},")
-    print("  which the profile's VM cannot see today: the preflight refuses with the exact")
-    print("  mount ask, and the selector fails until the approved Colima scratch mount lands.")
-    print("  It never falls back to /Users for ordinary QA.")
-    print("")
-    print("SCHEDULING")
-    print("  Milestone QA on this change will fail `qa:live:consumer-shapes` until the")
-    print(f"  approved Colima scratch mount lands: the live half stages under {DEFAULT_STAGING}")
-    print("  and refuses when the VM cannot see it. That red is the honest signal; the proof")
-    print("  never falls back to /Users for ordinary QA. Schedule the mount before milestone QA.")
-    print("")
-    print("REQUEST to the owner: the scratch mount, and a GO for this run's live actions")
-    print("  (a) add /Volumes/Builds/scratch to the effigy profile and rerun the selector")
-    print("      (a profile change, needs its own approval and Acow coordination), or")
-    print("  (b) approve one private /Users/tom staging root for this run only and run")
-    print(f"      {Path(__file__).name} execute {ONE_OFF_STAGING} {one_off_hash}")
-    print("      (that hash is for that exact root; any change to the fixture or the steps")
-    print("      changes it, and `plan` prints the pair again)")
-    print("Live actions either way: the fixture's own private gateway up/down, container up")
-    print(f"twice, exec, restart, down, the fixture image build (FROM busybox:latest, already")
-    print(f"cached), publishing the scoped form of {LISTENER_DOMAIN} into that private root")
-    print("only, and deleting only the owned names listed above. The machine gateway is never used:")
-    print("item 7 owns that path, and this proof re-verifies its listeners, PIDs and executables afterwards.")
+    for line in plan_guidance(staging, visible, one_off_hash):
+        print(line)
 
 
 def owned_by(name, kind, project):
@@ -959,11 +1051,14 @@ def owned_by(name, kind, project):
     }
 
 
-def vm_sees(staging):
-    """Read-only: can the profile's VM reach this staging path?"""
+def vm_sees(path):
+    """Read-only: can the profile's VM reach this path?
+
+    The staging root itself must not exist before the first `up`, so the live
+    half asks about the directory that holds it."""
     listing = run(
         ["colima", "-p", PROFILE, "ssh", "--", "sh", "-lc",
-         "test -d %s && echo visible || echo absent" % staging],
+         "test -d %s && echo visible || echo absent" % path],
         root,
         timeout=180,
     )
@@ -1361,14 +1456,21 @@ def live_run(staging, approval=None):
             "the private-HOME path does not see a running profile; not starting anything",
             resolution,
         )
-        if not vm_sees(staging):
+        if not vm_sees(staging.parent):
             raise SystemExit(
-                "refusing to start the live half: the %s VM cannot see %s. The profile mounts "
-                "/Users/tom only, and the brief's scratch root is not visible to it. Add "
-                "/Volumes/Builds/scratch as a mount of the %s profile (owner approval plus Acow "
-                "coordination), or approve a private /Users/tom staging root for one run and use "
-                "`execute <root> <plan sha256>`. This proof never falls back to /Users by itself."
-                % (PROFILE, staging, PROFILE)
+                "refusing to start the live half: the %s VM cannot see %s, the directory that "
+                "holds %s. The profile mounts /Users/tom only. Add %s as a mount of the %s "
+                "profile (owner approval plus Acow coordination), or name a staging root the VM "
+                "already sees in %s and use `execute <root> <plan sha256>`. This proof never "
+                "falls back to /Users by itself."
+                % (
+                    PROFILE,
+                    staging.parent,
+                    staging,
+                    staging.parent,
+                    PROFILE,
+                    STAGING_ENV,
+                )
             )
         existing = residue(names)
         assert not any(existing.values()), (
@@ -1714,7 +1816,7 @@ try:
         compose_shapes()
     elif mode == "live":
         compose_shapes()
-        live_run(DEFAULT_STAGING)
+        live_run(default_staging())
     else:
         raise SystemExit(f"unknown mode {mode!r}: use live, compose, plan or execute")
 finally:

@@ -298,13 +298,11 @@ the other fixtures cannot:
   identities and distinct effective hosts: the linked checkout's first `up`
   takes its own scope, and both checkouts stay up at the same time.
 
-It runs under the fixture script's hardcoded `/Volumes/Builds/scratch/effigy/`
-root with private scratch checkouts and removes what it created; that volume is
-no longer mounted (host scratch moved to `/Volumes/Stash/scratch/effigy/` in
-2026-11), so the script needs repointing before this proof can run. It never
-starts, stops or reconfigures a runtime, and it does not touch another
-checkout's shared services: the fixture's shared service owns its own project
-name.
+It runs inside a private proof directory under the run's temp directory, which
+Effigy points at the operator's configured `[scratch].root`, with private
+scratch checkouts, and removes what it created. It never starts, stops or
+reconfigures a runtime, and it does not touch another checkout's shared
+services: the fixture's shared service owns its own project name.
 
 The selector runs both halves in one step. The live half brings the same
 fixture up on the Colima profile: a build service whose Dockerfile uses
@@ -336,14 +334,17 @@ A one-off run outside the selector uses
 `execute <staging root> <plan sha256>`; the hash must match that exact root, so
 a stale GO cannot authorise a changed plan. There is no environment marker.
 
-Staging is the environment's decision, not the proof's: the fixture script
-stages under its hardcoded `/Volumes/Builds/scratch/effigy/` root and the
-preflight refuses when the profile's VM cannot see that path, naming the mount
-ask. Until the approved Colima scratch mount lands on a volume the script
-names, `qa:live:consumer-shapes` fails at that preflight —
-deliberately, because a silent `/Users` staging root would put proof checkouts
-in the operator's home for ordinary QA. Schedule the mount before milestone QA
-on this change.
+Staging is the environment's decision, not the proof's: the live half stages
+under the operator's configured `[scratch].root` — Effigy's own resolver prints
+it, and a machine that configures none refuses instead of guessing a volume —
+and the preflight refuses when the profile's VM cannot see that directory,
+naming the mount ask. A root the VM already sees can be named through
+`EFFIGY_CONSUMER_SHAPES_STAGING`, which is also how a one-off `execute <root>
+<plan sha256>` run works. This machine's profile mounts `$HOME` only, so
+`qa:live:consumer-shapes` fails at that preflight until the approved Colima
+scratch mount lands — deliberately, because a silent `/Users` staging root
+would put proof checkouts in the operator's home for ordinary QA. Schedule the
+mount before milestone QA on this change.
 
 ## Related Guides
 

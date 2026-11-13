@@ -22,9 +22,10 @@
 #   worktree-archive-run-logs.sh [checkout-root [archive-base]]
 #
 # `archive-base` defaults to the configured user scratch root, or
-# /Volumes/Builds/scratch/effigy when unconfigured, which is private
-# host scratch OUTSIDE Queue run cleanup so the archive survives checkout
-# removal; the run's TMPDIR must never be the destination. The
+# $HOME/.effigy/run-log-archive when the user config names no scratch root.
+# Both are private host state OUTSIDE Queue run cleanup so the archive survives
+# checkout removal; the run's TMPDIR must never be the destination. No volume
+# is named here: the configured root is the operator's. The
 # EFFIGY_RUN_LOG_ARCHIVE_BASE environment override exists for deterministic
 # fixtures only: it redirects the destination base and never disables
 # archiving. Bounds are fixed: at most 200 files, 1 MiB per file, 16 MiB
@@ -32,7 +33,6 @@
 # log limit or QA budget is changed.
 set -u
 
-DEFAULT_BASE="/Volumes/Builds/scratch/effigy"
 MAX_FILES=200
 MAX_PER_FILE=1048576
 MAX_TOTAL=16777216
@@ -60,11 +60,19 @@ if [ -z "$base" ]; then
   resolve_rc=$?
   case "$resolve_rc" in
     0) ;;
-    2) base=$DEFAULT_BASE ;;
+    2)
+      # No `[scratch] root`: keep archiving, but in Effigy's own home rather
+      # than a volume name this script would have to guess.
+      [ -n "${HOME:-}" ] || fail "no configured archive base and HOME is unset"
+      base="$HOME/.effigy/run-log-archive"
+      mkdir -p "$base" 2>/dev/null
+      [ -d "$base" ] || fail "cannot create archive base: $base"
+      ;;
     *) fail "cannot resolve configured archive base (exit $resolve_rc)" ;;
   esac
-  # A configured root cannot be inside the disposable run temp directory.
-  if [ "$resolve_rc" -eq 0 ] && [ -n "${TMPDIR:-}" ]; then
+  # Neither a configured root nor the home fallback may sit inside the
+  # disposable run temp directory.
+  if [ -n "${TMPDIR:-}" ]; then
     resolved_temp=$(cd "$TMPDIR" && pwd -P) || fail "cannot resolve TMPDIR"
     [ -d "$base" ] || fail "configured archive base does not exist: $base"
     resolved_base=$(cd "$base" && pwd -P) || fail "cannot resolve archive base: $base"
