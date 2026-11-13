@@ -559,7 +559,10 @@ fn run_steps(
             step.fail(&format!("{outcome_label} failed with exit code {code}"));
         }
         for warning in child.close(workload.clone()) {
-            eprintln!("warning: step `{label}`: {warning}");
+            let _ = effigy_core::output_cap::write(
+                effigy_core::output_cap::Stream::Stderr,
+                format!("warning: step `{label}`: {warning}\n").as_bytes(),
+            );
         }
         report.steps.push(serde_json::json!({"index":index, "step":label, "run_id":child_id.to_string(), "outcome":workload, "exit_code":code, "stdout":stdout, "stderr":stderr}));
         report.stdout.push_str(&stdout);

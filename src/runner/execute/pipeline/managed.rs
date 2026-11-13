@@ -993,7 +993,10 @@ fn managed_workload<T>(
 fn close_task_run<T>(run: TaskRun, target: &TaskTarget, result: &Result<T, RunnerError>) {
     let workload = managed_workload(target, result);
     for warning in run.close(workload) {
-        eprintln!("warning: {}: {warning}", target.label);
+        let _ = effigy_core::output_cap::write(
+            effigy_core::output_cap::Stream::Stderr,
+            format!("warning: {}: {warning}\n", target.label).as_bytes(),
+        );
     }
 }
 

@@ -732,7 +732,10 @@ impl TaskRun {
                     },
                 );
                 for warning in run.close(WorkloadOutcome::NotStarted) {
-                    eprintln!("warning: {warning}");
+                    let _ = effigy_core::output_cap::write(
+                        effigy_core::output_cap::Stream::Stderr,
+                        format!("warning: {warning}\n").as_bytes(),
+                    );
                 }
                 Err(error)
             }

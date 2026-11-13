@@ -3,7 +3,7 @@
 //! locally; its session closes only when the workload has ended or the
 //! remote stop reached it. Real-engine qualification is a separate lane.
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, PoisonError};

@@ -10,6 +10,16 @@ use crate::plain_renderer::PlainRenderer;
 use crate::renderer::{UiError, UiResult};
 use crate::theme::OutputMode;
 
+pub use effigy_core::output_cap::{ProcessStderr, Stream as OutputStream};
+
+pub fn write_process_output(stream: OutputStream, bytes: &[u8]) -> std::io::Result<()> {
+    effigy_core::output_cap::write(stream, bytes)
+}
+
+pub fn output_was_truncated() -> bool {
+    effigy_core::output_cap::truncated()
+}
+
 /// Build a plain-text renderer with an explicit color policy.
 pub fn plain_renderer(color_enabled: bool) -> PlainRenderer<Vec<u8>> {
     PlainRenderer::new(Vec::<u8>::new(), color_enabled)

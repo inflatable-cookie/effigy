@@ -177,7 +177,10 @@ pub(in crate::runner) fn run_standard_task(
     };
     // Observability never changes the task's outcome or exit code (K10).
     for warning in run.close(workload) {
-        eprintln!("warning: {}: {warning}", target.label);
+        let _ = effigy_core::output_cap::write(
+            effigy_core::output_cap::Stream::Stderr,
+            format!("warning: {}: {warning}\n", target.label).as_bytes(),
+        );
     }
     result
 }

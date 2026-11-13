@@ -10,7 +10,7 @@
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-use std::io::{IsTerminal, Write};
+use std::io::IsTerminal;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -190,11 +190,8 @@ pub(in crate::runner) fn run_remote_with(
         let moved = !out.is_empty() || !err.is_empty();
         if relay {
             // Observability only: a closed reader never changes the run (K10).
-            let _ = std::io::stdout()
-                .lock()
-                .write_all(&out)
-                .and_then(|()| std::io::stdout().flush());
-            let _ = std::io::stderr().lock().write_all(&err);
+            let _ = effigy_core::output_cap::write(effigy_core::output_cap::Stream::Stdout, &out);
+            let _ = effigy_core::output_cap::write(effigy_core::output_cap::Stream::Stderr, &err);
         } else {
             stdout.push(&out);
             stderr.push(&err);

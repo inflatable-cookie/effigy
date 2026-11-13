@@ -91,7 +91,11 @@ pub(super) fn run_fallback_route<'a>(
                     Err(error) => error.workload_outcome(),
                 };
                 for warning in run.close(workload) {
-                    eprintln!("warning: {}: {warning}", preflight.selector.task_name);
+                    let _ = effigy_core::output_cap::write(
+                        effigy_core::output_cap::Stream::Stderr,
+                        format!("warning: {}: {warning}\n", preflight.selector.task_name)
+                            .as_bytes(),
+                    );
                 }
             }
             match outcome? {

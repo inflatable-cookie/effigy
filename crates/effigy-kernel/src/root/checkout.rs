@@ -75,9 +75,13 @@ impl StateRoot {
             // A foreground run needs its own directory and gates, not a
             // readable journal: an unreadable one warns once and the run
             // proceeds (K1, Q-011).
-            eprintln!(
-                "[warn] {}: the checkout state is unreadable ({reason}); continuing without its recorded state",
+            let warning = format!(
+                "[warn] {}: the checkout state is unreadable ({reason}); continuing without its recorded state\n",
                 location.root.display()
+            );
+            let _ = effigy_core::output_cap::write(
+                effigy_core::output_cap::Stream::Stderr,
+                warning.as_bytes(),
             );
         }
         let mut root = Self::effects(cx, &location.root)?;

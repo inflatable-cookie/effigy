@@ -44,7 +44,7 @@ pub(super) fn render_process_summary(
 }
 
 fn render_failure_output_section(
-    renderer: &mut PlainRenderer<anstream::AutoStream<std::io::Stdout>>,
+    renderer: &mut PlainRenderer<effigy_core::output_cap::ProcessStdout>,
     entries: &[SessionEntry],
     process_logs: &HashMap<String, VecDeque<LogEntry>>,
 ) -> Result<(), MultiProcessTuiError> {
@@ -126,7 +126,7 @@ fn normalized_log_lines(prefix: &str, line: &str) -> Vec<String> {
 }
 
 fn render_diagnostics_section(
-    renderer: &mut PlainRenderer<anstream::AutoStream<std::io::Stdout>>,
+    renderer: &mut PlainRenderer<effigy_core::output_cap::ProcessStdout>,
     diagnostics: &RuntimeDiagnostics,
 ) -> Result<(), MultiProcessTuiError> {
     if !diagnostics.enabled() {

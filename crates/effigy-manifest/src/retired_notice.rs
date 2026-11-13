@@ -103,7 +103,10 @@ pub fn warn(message: impl Into<String>) {
     }
     ledger.pending.push(message.clone());
     if ledger.delivery != RetiredNoticeDelivery::JsonEnvelope && !is_nested_invocation() {
-        eprintln!("{message}");
+        let _ = effigy_core::output_cap::write(
+            effigy_core::output_cap::Stream::Stderr,
+            format!("{message}\n").as_bytes(),
+        );
     }
 }
 
@@ -130,11 +133,17 @@ pub(crate) fn emit(manifest_path: &Path, declaration: &RetiredConfigDeclaration)
             }
             record_notice(manifest_path, &notice);
             ledger.seen.insert(notice.clone());
-            eprintln!("{notice}");
+            let _ = effigy_core::output_cap::write(
+                effigy_core::output_cap::Stream::Stderr,
+                format!("{notice}\n").as_bytes(),
+            );
         }
         RetiredNoticeDelivery::Always => {
             ledger.seen.insert(notice.clone());
-            eprintln!("{notice}");
+            let _ = effigy_core::output_cap::write(
+                effigy_core::output_cap::Stream::Stderr,
+                format!("{notice}\n").as_bytes(),
+            );
         }
     }
 }

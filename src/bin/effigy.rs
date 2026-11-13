@@ -1,4 +1,8 @@
 fn main() {
+    if let Err(error) = effigy_core::output_cap::configure_from_env() {
+        eprintln!("effigy: {error}");
+        std::process::exit(2);
+    }
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
     if raw_args == ["__worktree-archive-scratch-root"] {
         match effigy_manifest::load_user_config() {
@@ -93,7 +97,10 @@ fn main() {
         return;
     }
     if let Err(error) = effigy::run_main(raw_args) {
-        eprintln!("{error}");
+        let _ = effigy_core::output_cap::write(
+            effigy_core::output_cap::Stream::Stderr,
+            format!("{error}\n").as_bytes(),
+        );
         std::process::exit(1);
     }
 }

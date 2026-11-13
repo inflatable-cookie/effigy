@@ -531,7 +531,10 @@ fn notice(message: &str) {
     // resolve the same checkout repeatedly (completion in particular).
     static EMITTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if !EMITTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-        eprintln!("[bundle] {message}");
+        let _ = effigy_core::output_cap::write(
+            effigy_core::output_cap::Stream::Stderr,
+            format!("[bundle] {message}\n").as_bytes(),
+        );
     }
 }
 /// A revision or content digest, short enough for one diagnostic line.

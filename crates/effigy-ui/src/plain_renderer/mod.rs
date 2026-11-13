@@ -1,7 +1,5 @@
-use std::io::{IsTerminal, Write};
-
-use anstream::{AutoStream, ColorChoice};
 use anstyle::Style;
+use std::io::{IsTerminal, Write};
 
 use crate::renderer::{Renderer, UiResult};
 use crate::theme::{resolve_color_enabled, OutputMode, Theme};
@@ -51,29 +49,17 @@ impl<W: Write> PlainRenderer<W> {
     }
 }
 
-impl PlainRenderer<AutoStream<std::io::Stdout>> {
+impl PlainRenderer<effigy_core::output_cap::ProcessStdout> {
     pub fn stdout(mode: OutputMode) -> Self {
-        let choice = match mode {
-            OutputMode::Auto => ColorChoice::Auto,
-            OutputMode::Always => ColorChoice::AlwaysAnsi,
-            OutputMode::Never => ColorChoice::Never,
-        };
-        let stream = AutoStream::new(std::io::stdout(), choice);
         let color_enabled = resolve_color_enabled(mode, std::io::stdout().is_terminal());
-        Self::new(stream, color_enabled)
+        Self::new(effigy_core::output_cap::ProcessStdout, color_enabled)
     }
 }
 
-impl PlainRenderer<AutoStream<std::io::Stderr>> {
+impl PlainRenderer<effigy_core::output_cap::ProcessStderr> {
     pub fn stderr(mode: OutputMode) -> Self {
-        let choice = match mode {
-            OutputMode::Auto => ColorChoice::Auto,
-            OutputMode::Always => ColorChoice::AlwaysAnsi,
-            OutputMode::Never => ColorChoice::Never,
-        };
-        let stream = AutoStream::new(std::io::stderr(), choice);
         let color_enabled = resolve_color_enabled(mode, std::io::stderr().is_terminal());
-        Self::new(stream, color_enabled)
+        Self::new(effigy_core::output_cap::ProcessStderr, color_enabled)
     }
 }
 
