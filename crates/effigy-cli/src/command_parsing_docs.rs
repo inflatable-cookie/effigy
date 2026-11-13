@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
-use crate::value_parsing::{next_required_value, parse_repo_path};
+use crate::value_parsing::next_required_value;
 use crate::{Command, DocsArgs, DocsBlockRequirement, DocsCheckKind, DocsSubcommand, HelpTopic};
 
+use super::common::{CommonArgs, CommonFlag};
 use super::{unknown_argument, CliParseError};
 
 pub(super) fn parse_docs_command<I>(args: I) -> Result<Command, CliParseError>
@@ -65,8 +66,7 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut paths = Vec::new();
     let mut file: Option<PathBuf> = None;
     let mut section: Option<String> = None;
@@ -81,9 +81,12 @@ where
     let mut policy_name: Option<String> = None;
 
     while let Some(arg) = args.next() {
+        match common.take(&arg, &mut args, HelpTopic::Docs)? {
+            CommonFlag::Help(topic) => return Ok(Command::Help(topic)),
+            CommonFlag::Consumed => continue,
+            CommonFlag::Unclaimed => {}
+        }
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--file" => {
                 file = Some(PathBuf::from(next_required_value(
                     &mut args,
@@ -201,7 +204,6 @@ where
                     },
                 )?);
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Docs)),
             other if other.starts_with('-') => return Err(unknown_argument(other)),
             _ => paths.push(PathBuf::from(arg)),
         }
@@ -223,8 +225,8 @@ where
             index: Box::new(index),
             policy_name: Box::new(policy_name),
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -233,15 +235,16 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut log_path: Option<PathBuf> = None;
 
     while let Some(arg) = args.next() {
+        match common.take(&arg, &mut args, HelpTopic::Docs)? {
+            CommonFlag::Help(topic) => return Ok(Command::Help(topic)),
+            CommonFlag::Consumed => continue,
+            CommonFlag::Unclaimed => {}
+        }
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Docs)),
             other if other.starts_with('-') => return Err(unknown_argument(other)),
             _ => {
                 if log_path.is_some() {
@@ -258,7 +261,7 @@ where
 
     Ok(Command::Docs(DocsArgs {
         subcommand: DocsSubcommand::AddLogIndex { log_path },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }

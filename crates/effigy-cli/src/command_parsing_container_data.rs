@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 
-use crate::value_parsing::{next_required_value, parse_repo_path};
+use crate::value_parsing::next_required_value;
 use crate::{
     BootstrapDbSeedInput, Command, ContainerArgs, ContainerDataSubcommand, ContainerDbDumpInput,
     ContainerSubcommand, HelpTopic,
 };
 
+use super::common::{shared_flag_arm, CommonArgs, CommonFlag};
 use super::{unknown_argument, CliParseError};
 
 pub(super) fn parse_container_data<I>(
@@ -39,16 +40,10 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
 
     while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
-        }
+        shared_flag_arm!(arg.as_str(), &mut args, common, HelpTopic::Container);
     }
 
     Ok(Command::Container(ContainerArgs {
@@ -56,8 +51,8 @@ where
             name,
             subcommand: ContainerDataSubcommand::List,
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -75,15 +70,17 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut db_dumps = Vec::new();
     let mut push = false;
 
     while let Some(arg) = args.next() {
+        match common.take(&arg, &mut args, HelpTopic::Container)? {
+            CommonFlag::Help(topic) => return Ok(Command::Help(topic)),
+            CommonFlag::Consumed => continue,
+            CommonFlag::Unclaimed => {}
+        }
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--push" => push = true,
             "--db-dump" => {
                 let value = next_required_value(
@@ -94,7 +91,6 @@ where
                 )?;
                 db_dumps.push(parse_container_db_dump(value)?);
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
             other if other.starts_with('-') => return Err(unknown_argument(other)),
             other => db_dumps.push(parse_container_db_dump(other.to_owned())?),
         }
@@ -105,8 +101,8 @@ where
             name,
             subcommand: ContainerDataSubcommand::Dump { db_dumps, push },
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -152,17 +148,13 @@ where
             "`effigy container data import` requires <VOLUME> and <PATH>".to_owned(),
         )
     })?);
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut yes = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--yes" => yes = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Container),
         }
     }
 
@@ -171,8 +163,8 @@ where
             name,
             subcommand: ContainerDataSubcommand::Import { volume, path, yes },
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -184,17 +176,13 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut yes = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--yes" => yes = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Container),
         }
     }
 
@@ -203,8 +191,8 @@ where
             name,
             subcommand: ContainerDataSubcommand::PullProduction { yes },
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -219,16 +207,13 @@ where
     }
 
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut no_prompt = false;
     let mut yes = false;
     let mut db_seeds = Vec::new();
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--db-seed" => {
                 let value = next_required_value(
                     &mut args,
@@ -240,8 +225,7 @@ where
             }
             "--no-prompt" => no_prompt = true,
             "--yes" => yes = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Container),
         }
     }
 
@@ -254,8 +238,8 @@ where
                 yes,
             },
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -279,16 +263,10 @@ where
             "`effigy container data {action}` requires <VOLUME> and <PATH>"
         ))
     })?);
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
 
     while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
-        }
+        shared_flag_arm!(arg.as_str(), &mut args, common, HelpTopic::Container);
     }
 
     Ok(Command::Container(ContainerArgs {
@@ -296,8 +274,8 @@ where
             name,
             subcommand: build(volume, path),
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 

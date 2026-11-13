@@ -54,9 +54,10 @@ on a reintroduced bare spinner.
   those rows is a follow-up, not a change to this rule.
 - There is no allowlist, ceiling or baseline file. Any such use fails, and so
   does an `#[allow(deprecated)]`-style suppression.
-- The spinner crate is owned the same way. `indicatif` may be named in exactly
-  one production file, the reviewed sink in `crates/effigy-ui/src/steps.rs`,
-  and that file may build exactly one bar with one style and one steady tick.
+- The spinner crate is owned the same way. `indicatif` may be named only in
+  the reviewed sink's own module, `crates/effigy-ui/src/steps/` (the API, the
+  progress source, streaming and terminal hand-over), and only its
+  `steps/mod.rs` may build exactly one bar with one style and one steady tick.
   A fixed-label spinner built through another constructor
   (`ProgressBar::no_length`, `ProgressBar::new`, `ProgressStyle::default_spinner`,
   `enable_steady_tick`) is therefore reported at its own file and line, whether
@@ -295,7 +296,7 @@ exactly the one a Services tab loses - the pre-fix shape was 110 live frames,
 a repeated wait and a nested `EFFIGY` banner inside one pane log (effigy#729).
 `effigy_ui::steps::LEGACY_MANAGED_PANE_ENV` still counts when present.
 
-Evidence: `crates/effigy-ui/src/steps.rs` tests
+Evidence: `crates/effigy-ui/src/steps/tests.rs`
 `the_pane_fact_survives_the_names_a_child_can_carry` and
 `pane_mode_writes_one_plain_start_and_finish` (the mode itself), plus the real
 PTY fixtures `tests/scripts/managed-pane-feedback.py` (a TUI pane and the

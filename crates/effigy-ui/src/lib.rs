@@ -33,3 +33,18 @@ pub fn style_text(enabled: bool, style: anstyle::Style, text: &str) -> String {
     }
     format!("{}{}{}", style.render(), text, style.render_reset())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn style_text_is_the_one_styling_spelling() {
+        let style = anstyle::Style::new().bold();
+        assert_eq!(style_text(false, style, "plain"), "plain");
+        let styled = style_text(true, style, "plain");
+        assert!(styled.contains("plain"));
+        assert!(styled.starts_with(&style.render().to_string()));
+        assert!(styled.ends_with(&style.render_reset().to_string()));
+    }
+}

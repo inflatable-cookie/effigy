@@ -1,8 +1,7 @@
-use std::path::PathBuf;
-
-use crate::value_parsing::{next_required_value, parse_repo_path};
+use crate::value_parsing::next_required_value;
 use crate::{CliParseError, Command, HelpTopic, ReleaseArgs, ReleaseSubcommand};
 
+use super::common::{shared_flag_arm, CommonArgs, CommonFlag};
 use super::unknown_argument;
 
 pub(super) fn parse_release_command<I>(args: I) -> Result<Command, CliParseError>
@@ -58,24 +57,20 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut check_gates = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--check-gates" => check_gates = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Release)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Release),
         }
     }
 
     Ok(Command::Release(ReleaseArgs {
         subcommand: ReleaseSubcommand::Status { check_gates },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -84,22 +79,16 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
 
     while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Release)),
-            other => return Err(unknown_argument(other)),
-        }
+        shared_flag_arm!(arg.as_str(), &mut args, common, HelpTopic::Release);
     }
 
     Ok(Command::Release(ReleaseArgs {
         subcommand: ReleaseSubcommand::Gates,
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -108,14 +97,11 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut to: Option<String> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--to" => {
                 to = Some(next_required_value(
                     &mut args,
@@ -124,15 +110,14 @@ where
                     },
                 )?);
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Release)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Release),
         }
     }
 
     Ok(Command::Release(ReleaseArgs {
         subcommand: ReleaseSubcommand::Run { to },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -143,15 +128,16 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut run: Option<String> = None;
 
     while let Some(arg) = args.next() {
+        match common.take(&arg, &mut args, HelpTopic::Release)? {
+            CommonFlag::Help(topic) => return Ok(Command::Help(topic)),
+            CommonFlag::Consumed => continue,
+            CommonFlag::Unclaimed => {}
+        }
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Release)),
             other if other.starts_with("--") => return Err(unknown_argument(other)),
             other => {
                 if run.replace(other.to_owned()).is_some() {
@@ -171,8 +157,8 @@ where
 
     Ok(Command::Release(ReleaseArgs {
         subcommand: ReleaseSubcommand::ResumeRun { run },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -181,14 +167,15 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut run = None;
     while let Some(arg) = args.next() {
+        match common.take(&arg, &mut args, HelpTopic::Release)? {
+            CommonFlag::Help(topic) => return Ok(Command::Help(topic)),
+            CommonFlag::Consumed => continue,
+            CommonFlag::Unclaimed => {}
+        }
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Release)),
             other if other.starts_with('-') => return Err(unknown_argument(other)),
             other if run.is_none() => run = Some(other.to_owned()),
             _ => {
@@ -202,8 +189,8 @@ where
         .ok_or_else(|| CliParseError::InvalidArguments("`release settle` needs a Run id".into()))?;
     Ok(Command::Release(ReleaseArgs {
         subcommand: ReleaseSubcommand::Settle { run },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -212,15 +199,16 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut run: Option<String> = None;
 
     while let Some(arg) = args.next() {
+        match common.take(&arg, &mut args, HelpTopic::Release)? {
+            CommonFlag::Help(topic) => return Ok(Command::Help(topic)),
+            CommonFlag::Consumed => continue,
+            CommonFlag::Unclaimed => {}
+        }
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Release)),
             other if other.starts_with("--") => return Err(unknown_argument(other)),
             other => {
                 if run.replace(other.to_owned()).is_some() {
@@ -240,8 +228,8 @@ where
 
     Ok(Command::Release(ReleaseArgs {
         subcommand: ReleaseSubcommand::Approve { run },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -252,15 +240,17 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut run: Option<String> = None;
     let mut published: Option<bool> = None;
 
     while let Some(arg) = args.next() {
+        match common.take(&arg, &mut args, HelpTopic::Release)? {
+            CommonFlag::Help(topic) => return Ok(Command::Help(topic)),
+            CommonFlag::Consumed => continue,
+            CommonFlag::Unclaimed => {}
+        }
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--published" => {
                 if published.replace(true).is_some() {
                     return Err(CliParseError::InvalidArguments(
@@ -277,7 +267,6 @@ where
                     ));
                 }
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Release)),
             other if other.starts_with('-') => return Err(unknown_argument(other)),
             other => {
                 if run.replace(other.to_owned()).is_some() {
@@ -304,8 +293,8 @@ where
 
     Ok(Command::Release(ReleaseArgs {
         subcommand: ReleaseSubcommand::Decide { run, published },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -314,15 +303,16 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut run: Option<String> = None;
 
     while let Some(arg) = args.next() {
+        match common.take(&arg, &mut args, HelpTopic::Release)? {
+            CommonFlag::Help(topic) => return Ok(Command::Help(topic)),
+            CommonFlag::Consumed => continue,
+            CommonFlag::Unclaimed => {}
+        }
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Release)),
             other if other.starts_with("--") => return Err(unknown_argument(other)),
             other => {
                 if run.replace(other.to_owned()).is_some() {
@@ -336,8 +326,8 @@ where
 
     Ok(Command::Release(ReleaseArgs {
         subcommand: ReleaseSubcommand::Receipt { run },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -346,14 +336,11 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut version_override: Option<String> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--version" => {
                 version_override = Some(next_required_value(
                     &mut args,
@@ -362,14 +349,13 @@ where
                     },
                 )?);
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Release)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Release),
         }
     }
 
     Ok(Command::Release(ReleaseArgs {
         subcommand: ReleaseSubcommand::Plan { version_override },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }

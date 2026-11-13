@@ -80,7 +80,7 @@ run = ["printf 'child-before\\\\n'; sleep 2; printf 'child-after\\\\n'"]
         assert pane and b"finished" in pane, (bytes(output[-5000:]), pane, logs)
         assert b"EFFIGY" not in pane and b"\x1b" not in pane, pane
         # Pane logs are plain LF files: Pane mode writes `Started:`/`Finished:`
-        # lines with `\n` (crates/effigy-ui/src/steps.rs), never PTY CRLF/ANSI.
+        # lines with `\n` (crates/effigy-ui/src/steps/mod.rs), never PTY CRLF/ANSI.
         # Any CR here is contamination, not a line ending.
         assert b"\r" not in pane, pane
         assert pane.count(b"Started: running nested; waiting for step `1` to exit;") == 1, pane

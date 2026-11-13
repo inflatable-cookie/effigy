@@ -4,7 +4,6 @@
 //! scheduler, run-spec rendering, env resolution, references, profiles,
 //! the runtime session loop, and the plan-shape structs.
 
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use effigy_core::path_error_text::{
@@ -13,7 +12,7 @@ use effigy_core::path_error_text::{
 use effigy_env::schema_support::SchemaSupportError;
 use effigy_manifest::ManifestManagedRunStep;
 use effigy_process::ProcessManagerError;
-use effigy_ui::{OutputMode, PlainRenderer, UiError};
+use effigy_ui::{PlainRenderer, UiError};
 
 pub mod command;
 pub mod invocation;
@@ -293,19 +292,10 @@ pub(crate) fn text_renderer() -> PlainRenderer<Vec<u8>> {
 }
 
 pub(crate) fn text_color_enabled() -> bool {
-    resolve_text_color_enabled(
-        OutputMode::from_env(),
-        std::io::stdout().is_terminal(),
-        std::env::var_os("NO_COLOR").is_some(),
-    )
-}
-
-fn resolve_text_color_enabled(mode: OutputMode, is_tty: bool, no_color: bool) -> bool {
-    match mode {
-        OutputMode::Always => true,
-        OutputMode::Never => false,
-        OutputMode::Auto => is_tty && !no_color,
-    }
+    // `effigy-ui` owns the one colour-enable decision (`NO_COLOR` first, then
+    // `EFFIGY_COLOR`, then the terminal). Managed rendering used to keep a
+    // second copy that let `EFFIGY_COLOR=always` override `NO_COLOR`.
+    effigy_ui::output::text_color_enabled()
 }
 
 pub(crate) fn render_utf8(out: Vec<u8>) -> Result<String, ManagedError> {

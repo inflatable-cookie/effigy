@@ -4,6 +4,7 @@ use crate::{Command, DeployArgs, DeploySubcommand, HelpTopic};
 
 use crate::value_parsing::{next_required_value, parse_repo_path};
 
+use super::common::{shared_flag_arm, CommonArgs, CommonFlag};
 use super::{unknown_argument, CliParseError};
 
 pub(super) fn parse_deploy_command<I>(args: I) -> Result<Command, CliParseError>
@@ -33,13 +34,11 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut env: Option<String> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--env" => {
                 let Some(value) = args.next() else {
                     return Err(CliParseError::MissingFlagValue {
@@ -48,17 +47,15 @@ where
                 };
                 env = Some(value);
             }
-            "--json" => output_json = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Deploy)),
             other if !other.starts_with('-') && env.is_none() => env = Some(other.to_owned()),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Deploy),
         }
     }
 
     Ok(Command::Deploy(DeployArgs {
         subcommand: DeploySubcommand::Model { env },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -77,15 +74,13 @@ where
         return Err(unknown_argument(&provider));
     }
 
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut path: Option<PathBuf> = None;
     let mut plan = false;
     let mut env: Option<String> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--env" => {
                 let Some(value) = args.next() else {
                     return Err(CliParseError::MissingFlagValue {
@@ -103,10 +98,8 @@ where
                 path = Some(PathBuf::from(value));
             }
             "--plan" => plan = true,
-            "--json" => output_json = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Deploy)),
             other if !other.starts_with('-') && env.is_none() => env = Some(other.to_owned()),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Deploy),
         }
     }
 
@@ -123,8 +116,8 @@ where
             path,
             plan,
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -133,17 +126,18 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut write_report = false;
     let mut env: Option<String> = None;
 
     while let Some(arg) = args.next() {
+        match common.take(&arg, &mut args, HelpTopic::Deploy)? {
+            CommonFlag::Help(topic) => return Ok(Command::Help(topic)),
+            CommonFlag::Consumed => continue,
+            CommonFlag::Unclaimed => {}
+        }
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--write-report" => write_report = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Deploy)),
             other if other.starts_with('-') => return Err(unknown_argument(other)),
             _ if env.is_none() => env = Some(arg),
             other => {
@@ -161,8 +155,8 @@ where
             })?,
             write_report,
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -171,17 +165,18 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut yes = false;
     let mut env: Option<String> = None;
 
     while let Some(arg) = args.next() {
+        match common.take(&arg, &mut args, HelpTopic::Deploy)? {
+            CommonFlag::Help(topic) => return Ok(Command::Help(topic)),
+            CommonFlag::Consumed => continue,
+            CommonFlag::Unclaimed => {}
+        }
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--yes" => yes = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Deploy)),
             other if other.starts_with('-') => return Err(unknown_argument(other)),
             _ if env.is_none() => env = Some(arg),
             other => {
@@ -199,8 +194,8 @@ where
             })?,
             yes,
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -221,15 +216,17 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut env: Option<String> = None;
     let mut limit: Option<usize> = None;
 
     while let Some(arg) = args.next() {
+        match common.take(&arg, &mut args, HelpTopic::Deploy)? {
+            CommonFlag::Help(topic) => return Ok(Command::Help(topic)),
+            CommonFlag::Consumed => continue,
+            CommonFlag::Unclaimed => {}
+        }
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--limit" => {
                 let raw = next_required_value(
                     &mut args,
@@ -249,7 +246,6 @@ where
                 }
                 limit = Some(parsed);
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Deploy)),
             other if other.starts_with('-') => return Err(unknown_argument(other)),
             _ if env.is_none() => env = Some(arg),
             other => {
@@ -267,8 +263,8 @@ where
             })?,
             limit,
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -277,16 +273,18 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut yes = false;
     let mut env: Option<String> = None;
     let mut deployment: Option<String> = None;
 
     while let Some(arg) = args.next() {
+        match common.take(&arg, &mut args, HelpTopic::Deploy)? {
+            CommonFlag::Help(topic) => return Ok(Command::Help(topic)),
+            CommonFlag::Consumed => continue,
+            CommonFlag::Unclaimed => {}
+        }
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--yes" => yes = true,
             "--deployment" => {
                 deployment = Some(next_required_value(
@@ -296,7 +294,6 @@ where
                     },
                 )?);
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Deploy)),
             other if other.starts_with('-') => return Err(unknown_argument(other)),
             _ if env.is_none() => env = Some(arg),
             other => {
@@ -317,8 +314,8 @@ where
             })?,
             yes,
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 

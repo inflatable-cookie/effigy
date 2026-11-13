@@ -6,6 +6,7 @@ use crate::{
     ServiceSubcommand, WorkspaceArgs,
 };
 
+use super::common::{shared_flag_arm, CommonArgs, CommonFlag};
 use super::{unknown_argument, CliParseError};
 
 pub(super) fn parse_gateway_command<I>(args: I) -> Result<Command, CliParseError>
@@ -306,22 +307,16 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
 
     while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Service)),
-            other => return Err(unknown_argument(other)),
-        }
+        shared_flag_arm!(arg.as_str(), &mut args, common, HelpTopic::Service);
     }
 
     Ok(Command::Service(ServiceArgs {
         subcommand: ServiceSubcommand::List,
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -336,14 +331,11 @@ where
         });
     };
 
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut dir: Option<PathBuf> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--dir" => {
                 let value = next_required_value(
                     &mut args,
@@ -353,14 +345,13 @@ where
                 )?;
                 dir = Some(PathBuf::from(value));
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Service)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Service),
         }
     }
 
     Ok(Command::Service(ServiceArgs {
         subcommand: ServiceSubcommand::Extract { service, dir },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
