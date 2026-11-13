@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -349,51 +350,27 @@ fn build_fs_module(context: Arc<ScriptContext>) -> rhai::Module {
         "env_file_get",
         move |path: ImmutableString, key: ImmutableString| -> Result<String, Box<EvalAltResult>> {
             let path = resolve_runtime_path(&file_context.cwd, path.as_str());
-            if !path.exists() {
-                return Ok(String::new());
-            }
-            let contents = std::fs::read_to_string(&path)
-                .map_err(|error| rhai_runtime_error(failed_to_read_path(&path, error)))?;
-            Ok(parse_dotenv_entries(&contents)
-                .get(key.as_str())
-                .cloned()
-                .unwrap_or_default())
+            let entries = read_env_entries(&path)?.unwrap_or_default();
+            Ok(entries.get(key.as_str()).cloned().unwrap_or_default())
         },
     );
-    let file_context = context.clone();
-    module.set_native_fn(
-        "env_file_entries",
-        move |path: ImmutableString| -> Result<Map, Box<EvalAltResult>> {
-            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
-            if !path.exists() {
-                return Ok(Map::new());
-            }
-            let contents = std::fs::read_to_string(&path)
-                .map_err(|error| rhai_runtime_error(failed_to_read_path(&path, error)))?;
-            let mut map = Map::new();
-            for (key, value) in parse_dotenv_entries(&contents) {
-                map.insert(key.into(), value.into());
-            }
-            Ok(map)
-        },
-    );
-    let file_context = context.clone();
-    module.set_native_fn(
-        "env_file_map",
-        move |path: ImmutableString| -> Result<Map, Box<EvalAltResult>> {
-            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
-            if !path.exists() {
-                return Ok(Map::new());
-            }
-            let contents = std::fs::read_to_string(&path)
-                .map_err(|error| rhai_runtime_error(failed_to_read_path(&path, error)))?;
-            let mut map = Map::new();
-            for (key, value) in parse_dotenv_entries(&contents) {
-                map.insert(key.into(), value.into());
-            }
-            Ok(map)
-        },
-    );
+    // `env_file_map` is the older spelling of `env_file_entries`; both names
+    // answer from the same projection so they cannot drift.
+    for name in ["env_file_entries", "env_file_map"] {
+        let file_context = context.clone();
+        module.set_native_fn(
+            name,
+            move |path: ImmutableString| -> Result<Map, Box<EvalAltResult>> {
+                let path = resolve_runtime_path(&file_context.cwd, path.as_str());
+                let entries = read_env_entries(&path)?.unwrap_or_default();
+                let mut map = Map::new();
+                for (key, value) in entries {
+                    map.insert(key.into(), value.into());
+                }
+                Ok(map)
+            },
+        );
+    }
     let file_context = context.clone();
     module.set_native_fn(
         "env_file_set",
@@ -420,16 +397,13 @@ fn build_fs_module(context: Arc<ScriptContext>) -> rhai::Module {
         move |path: ImmutableString, key: ImmutableString| -> Result<Map, Box<EvalAltResult>> {
             let path = resolve_runtime_path(&file_context.cwd, path.as_str());
             let mut map = Map::new();
-            if !path.exists() {
+            let Some(entries) = read_env_entries(&path)? else {
                 map.insert("file_exists".into(), Dynamic::from_bool(false));
                 map.insert("key_exists".into(), Dynamic::from_bool(false));
                 map.insert("value".into(), Dynamic::from(""));
                 return Ok(map);
-            }
+            };
             map.insert("file_exists".into(), Dynamic::from_bool(true));
-            let contents = std::fs::read_to_string(&path)
-                .map_err(|error| rhai_runtime_error(failed_to_read_path(&path, error)))?;
-            let entries = parse_dotenv_entries(&contents);
             if let Some(value) = entries.get(key.as_str()) {
                 map.insert("key_exists".into(), Dynamic::from_bool(true));
                 map.insert("value".into(), Dynamic::from(value.clone()));
@@ -574,8 +548,15 @@ fn staged_payload_path(destination: &Path) -> PathBuf {
 }
 
 fn list_recursive_paths(root: &Path, extension: Option<&str>) -> Result<Array, Box<EvalAltResult>> {
-    if !root.exists() {
-        return Ok(Array::new());
+    // A missing or non-directory root is not an empty directory: a script that
+    // mistyped a path must see the refusal instead of an empty list.
+    let metadata = std::fs::metadata(root)
+        .map_err(|error| rhai_runtime_error(failed_to_read_path(root, error)))?;
+    if !metadata.is_dir() {
+        return Err(rhai_runtime_error(format!(
+            "{} is not a directory",
+            root.display()
+        )));
     }
     let normalized_extension = extension.map(|extension| extension.trim_start_matches('.'));
     let mut entries = Vec::new();
@@ -605,6 +586,20 @@ fn hex_sha256(bytes: &[u8]) -> String {
     output
 }
 
+/// The entries a dotenv file declares.
+///
+/// `Ok(None)` means the file does not exist, which callers answer differently
+/// (an empty map, an empty value, or `file_exists: false`). A file that exists
+/// but cannot be read is an error, never an empty answer.
+fn read_env_entries(path: &Path) -> Result<Option<BTreeMap<String, String>>, Box<EvalAltResult>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let contents = std::fs::read_to_string(path)
+        .map_err(|error| rhai_runtime_error(failed_to_read_path(path, error)))?;
+    Ok(Some(parse_dotenv_entries(&contents)))
+}
+
 fn update_env_file_entry(path: &Path, key: &str, value: &str) -> Result<bool, Box<EvalAltResult>> {
     let rendered_entry = format!("{key}={}", render_dotenv_value(value));
     if !path.exists() {
@@ -624,7 +619,7 @@ fn update_env_file_entry(path: &Path, key: &str, value: &str) -> Result<bool, Bo
     let mut rendered_lines = Vec::new();
 
     for raw_line in contents.lines() {
-        if let Some(existing_key) = parse_dotenv_key(raw_line) {
+        if let Some(existing_key) = dotenv_line_key(raw_line) {
             if existing_key == key {
                 found = true;
                 if raw_line != rendered_entry {
@@ -666,7 +661,7 @@ fn remove_env_file_entry(path: &Path, key: &str) -> Result<bool, Box<EvalAltResu
     let mut rendered_lines = Vec::new();
 
     for raw_line in contents.lines() {
-        if parse_dotenv_key(raw_line).is_some_and(|existing_key| existing_key == key) {
+        if dotenv_line_key(raw_line).is_some_and(|existing_key| existing_key == key) {
             changed = true;
             continue;
         }
@@ -686,17 +681,10 @@ fn remove_env_file_entry(path: &Path, key: &str) -> Result<bool, Box<EvalAltResu
     Ok(true)
 }
 
-fn parse_dotenv_key(line: &str) -> Option<&str> {
-    let mut trimmed = line.trim();
-    if trimmed.is_empty() || trimmed.starts_with('#') {
-        return None;
-    }
-    if let Some(exported) = trimmed.strip_prefix("export ") {
-        trimmed = exported.trim_start();
-    }
-    let (key, _) = trimmed.split_once('=')?;
-    let key = key.trim();
-    (!key.is_empty()).then_some(key)
+/// The key one dotenv line declares, decoded by the shared dotenv parser so
+/// this module keeps no second key grammar.
+fn dotenv_line_key(line: &str) -> Option<String> {
+    parse_dotenv_entries(line).into_keys().next()
 }
 
 fn render_dotenv_value(value: &str) -> String {
@@ -714,4 +702,217 @@ fn render_dotenv_value(value: &str) -> String {
         .replace('"', "\\\"")
         .replace('\n', "\\n");
     format!("\"{escaped}\"")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use super::{
+        copy_absent_file, dotenv_line_key, list_recursive_paths, publish_absent_payload,
+        remove_env_file_entry, render_dotenv_value, staged_payload_path, update_env_file_entry,
+    };
+
+    fn fixture(name: &str) -> PathBuf {
+        effigy_test_support::Fixture::process_lifetime(&format!("effigy-rhai-fs-{name}-"))
+            .expect("fixture directory")
+    }
+
+    fn entries(path: &Path) -> Vec<String> {
+        std::fs::read_to_string(path)
+            .expect("env file")
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// The writer quotes only what needs quoting, and the shared dotenv parser
+    /// reads a bare value back unchanged.
+    #[test]
+    fn dotenv_values_are_rendered_for_the_shared_parser() {
+        for (value, expected) in [
+            ("plain", "plain"),
+            ("with space", "\"with space\""),
+            ("", "\"\""),
+            ("a=b", "\"a=b\""),
+        ] {
+            assert_eq!(render_dotenv_value(value), expected, "{value}");
+        }
+    }
+
+    /// One dotenv line's key comes from the shared parser, so `export`, spacing
+    /// and quoted forms decode the same way the file loader decodes them.
+    #[test]
+    fn dotenv_line_keys_decode_through_the_shared_parser() {
+        for (line, expected) in [
+            ("KEY=value", Some("KEY")),
+            ("export KEY = value", Some("KEY")),
+            ("  SPACED=1  ", Some("SPACED")),
+            ("# COMMENT=1", None),
+            ("NO_EQUALS", None),
+            ("", None),
+        ] {
+            assert_eq!(dotenv_line_key(line).as_deref(), expected, "{line}");
+        }
+    }
+
+    /// Setting a key creates the file, appends a missing key, rewrites only the
+    /// matching line, and reports an unchanged value without touching the file.
+    #[test]
+    fn env_file_set_creates_appends_updates_and_reports_unchanged() {
+        let root = fixture("env-set");
+        let path = root.join("nested/app.env");
+
+        assert!(
+            update_env_file_entry(&path, "APP_NAME", "Cumberland Local").expect("create"),
+            "a missing file is created with the entry"
+        );
+        assert_eq!(entries(&path), ["APP_NAME=\"Cumberland Local\""]);
+
+        std::fs::write(&path, "# keep this comment\nHOST=local\n").expect("write env");
+        assert!(
+            update_env_file_entry(&path, "APP_NAME", "Cumberland Local").expect("append"),
+            "a missing key is appended"
+        );
+        assert_eq!(
+            entries(&path),
+            [
+                "# keep this comment",
+                "HOST=local",
+                "APP_NAME=\"Cumberland Local\""
+            ]
+        );
+
+        assert!(
+            update_env_file_entry(&path, "HOST", "remote.test").expect("update"),
+            "an existing key is rewritten"
+        );
+        assert_eq!(entries(&path)[1], "HOST=remote.test");
+
+        assert!(
+            !update_env_file_entry(&path, "HOST", "remote.test").expect("unchanged"),
+            "the same value changes nothing"
+        );
+        assert_eq!(entries(&path)[1], "HOST=remote.test");
+    }
+
+    /// Removing a key drops only that line and keeps the rest of the file; a
+    /// missing key or file reports no change.
+    #[test]
+    fn env_file_remove_drops_one_key_and_reports_no_change_otherwise() {
+        let root = fixture("env-remove");
+        let path = root.join("app.env");
+        std::fs::write(&path, "# comment\nA=1\nexport B=2\n").expect("write env");
+
+        assert!(remove_env_file_entry(&path, "B").expect("remove"));
+        assert_eq!(entries(&path), ["# comment", "A=1"]);
+        assert!(!remove_env_file_entry(&path, "B").expect("already absent"));
+        assert!(!remove_env_file_entry(&root.join("missing.env"), "B").expect("missing file"));
+    }
+
+    /// No-clobber publication makes the payload visible once and refuses an
+    /// occupied destination — including a symlink — without replacing it or
+    /// leaving a staged name behind.
+    #[test]
+    fn publish_absent_payload_refuses_an_occupied_destination() {
+        let root = fixture("publish");
+        let destination = root.join("payload.txt");
+
+        assert!(publish_absent_payload(&destination, b"first").expect("publish"));
+        assert_eq!(std::fs::read(&destination).expect("read"), b"first");
+        assert!(
+            !publish_absent_payload(&destination, b"second").expect("refuse"),
+            "an occupied destination is not replaced"
+        );
+        assert_eq!(std::fs::read(&destination).expect("read"), b"first");
+
+        let link = root.join("link.txt");
+        std::os::unix::fs::symlink(&destination, &link).expect("symlink");
+        assert!(
+            !publish_absent_payload(&link, b"third").expect("refuse symlink"),
+            "a symlink occupies the name"
+        );
+
+        let leftovers: Vec<String> = std::fs::read_dir(&root)
+            .expect("read fixture")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains("effigy-publish"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "no staged payload survives a publication: {leftovers:?}"
+        );
+    }
+
+    /// A published copy owns its bytes: writing to the source afterwards leaves
+    /// the destination untouched, and an occupied destination is refused before
+    /// the source is opened.
+    #[test]
+    fn copy_absent_file_publishes_an_independent_copy() {
+        let root = fixture("copy");
+        let source = root.join("source.txt");
+        let destination = root.join("copy.txt");
+        std::fs::write(&source, "original\n").expect("write source");
+
+        assert!(copy_absent_file(&source, &destination).expect("copy"));
+        std::fs::write(&source, "changed\n").expect("rewrite source");
+        assert_eq!(
+            std::fs::read_to_string(&destination).expect("read copy"),
+            "original\n",
+            "the copy is independent of the source inode"
+        );
+        assert!(
+            !copy_absent_file(&root.join("missing.txt"), &destination).expect("occupied"),
+            "an occupied destination is refused before the source is read"
+        );
+    }
+
+    /// Staged names stay in the destination's own directory and never repeat, so
+    /// two publications in the same nanosecond cannot collide.
+    #[test]
+    fn staged_payload_names_stay_beside_the_destination_and_are_unique() {
+        let destination = Path::new("/repo/dir/payload.txt");
+        let first = staged_payload_path(destination);
+        let second = staged_payload_path(destination);
+        assert_ne!(first, second);
+        assert_eq!(first.parent(), destination.parent());
+        assert!(
+            first
+                .file_name()
+                .expect("name")
+                .to_string_lossy()
+                .starts_with(".payload.txt.effigy-publish-"),
+            "{}",
+            first.display()
+        );
+    }
+
+    /// A missing or non-directory root is a refusal, not an empty listing, and
+    /// the extension filter keeps only files with that extension.
+    #[test]
+    fn list_recursive_paths_refuses_a_missing_root_and_filters_by_extension() {
+        let root = fixture("list-recursive");
+        std::fs::create_dir_all(root.join("nested")).expect("mkdir");
+        std::fs::write(root.join("a.rs"), "fn a() {}\n").expect("write a");
+        std::fs::write(root.join("nested/b.rs"), "fn b() {}\n").expect("write b");
+        std::fs::write(root.join("nested/c.md"), "# c\n").expect("write c");
+
+        let listed = list_recursive_paths(&root, Some(".rs")).expect("list");
+        let listed: Vec<String> = listed.iter().map(ToString::to_string).collect();
+        assert_eq!(listed.len(), 2, "{listed:?}");
+        assert!(
+            listed.iter().all(|path| path.ends_with(".rs")),
+            "{listed:?}"
+        );
+
+        assert!(
+            list_recursive_paths(&root.join("missing"), None).is_err(),
+            "a missing root is a refusal, not an empty directory"
+        );
+        assert!(
+            list_recursive_paths(&root.join("a.rs"), None).is_err(),
+            "a file is not a directory"
+        );
+    }
 }
