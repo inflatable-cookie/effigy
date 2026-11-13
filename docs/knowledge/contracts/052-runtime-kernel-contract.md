@@ -2285,6 +2285,13 @@ fork.
 | 4 | On the acknowledgement, release the barrier. The probe executes. | — | — |
 | 5 | Keep the leader unreaped: a zombie still holds its pid, so the group number stays allocated. Relay bounded output, kill the group at the deadline, verify closure, reap, then tell the guard the probe closed. | At the deadline plus grace, stop any registered probe still open: the backup for a hung or stopped observer. | Guard dies: the observer still owns and stops the probe; the outcome carries a warning. Observer dies: the guard reads EOF and stops every registered open probe. |
 
+`deadline` is the workload's own window, and it starts when the observer
+releases the barrier. The observer's local work before that release — starting
+the guard, the fork, the spawn barrier and the registration handshake — is
+bounded by the caller's observe budget instead, so a probe the host scheduler
+delays cannot spend the workload's window, and releasing it does not extend
+that window either.
+
 The guard is not the probe's parent, so it stops a probe by the recovery
 rule of I-P4, limited to the generation evidence it holds:
 
