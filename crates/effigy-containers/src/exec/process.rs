@@ -2165,7 +2165,6 @@ while True:
  os.write(1,b'x'*8192)
  os.write(2,b'y'*8192)
 "#).expect("private hung inventory");
-        let started = Instant::now();
         // Every fact this proof reads is published by the inventory itself, so
         // the caller's deadline is held at a frozen reading until that
         // publication exists and only then spent: the cancellation, the reap
@@ -2176,7 +2175,7 @@ while True:
         let capture_clock = super::capture_test_clock::control(Instant::now());
         let shared = capture_clock.shared();
         let published = fixture.path().join("inventory-identities.json");
-        let failure = std::thread::scope(|scope| {
+        let (failure, cancelled_for) = std::thread::scope(|scope| {
             let capture = scope.spawn(move || {
                 let _binding = shared.enter();
                 run_command_capture_with_timeout(
@@ -2198,16 +2197,23 @@ while True:
             // Past every deadline the capture could have derived from the
             // frozen reading: the same 500ms bound is spent here, not extended.
             capture_clock.advance(Instant::now() + bound + Duration::from_secs(1));
-            capture.join().expect("bounded inventory thread")
-        })
-        .expect_err("bounded inventory refuses");
+            // The bound below measures this cancellation, not the workload's
+            // start or the publication wait that preceded it.
+            let cancelled = Instant::now();
+            let failure = capture.join().expect("bounded inventory thread");
+            (failure, cancelled.elapsed())
+        });
+        let failure = failure.expect_err("bounded inventory refuses");
         assert!(
             failure
                 .to_string()
                 .contains("terminated and reaped; stdout/stderr EOF verified"),
             "{failure}"
         );
-        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(
+            cancelled_for < Duration::from_secs(5),
+            "the cancelled capture took {cancelled_for:?} to reap and drain"
+        );
         probe(&mut sentinel, &mut reader, "after-inventory");
         let inventory_identity: serde_json::Value = serde_json::from_slice(
             &fs::read(fixture.path().join("inventory-identities.json"))

@@ -31,10 +31,12 @@ impl Drop for ChildGuard {
 }
 /// The fixture's own hang guard, never a bound under test. Every wait below is
 /// driven by the event it observes; this only stops a fixture that never gets
-/// there from hanging the suite. A loaded host can take far longer than a quiet
-/// one to start an owned engine and settle its group, so the guard is
-/// deliberately generous rather than a performance claim.
-const FIXTURE_GUARD: Duration = Duration::from_secs(120);
+/// there from hanging the suite. Each call keeps its original floor on a quiet
+/// host and stretches with the measured load, so a loaded host is not mistaken
+/// for a hung fixture and no asserted bound moves.
+fn guard(floor: Duration) -> Duration {
+    effigy_test_support::load_scaled_guard(floor)
+}
 
 fn home() -> tempfile::TempDir {
     // Keep the fixture inside the run root; kernel socket probes support deep homes.
@@ -48,9 +50,10 @@ fn fixture() -> PathBuf {
 fn context() -> EffectContext {
     // The fixture's ambient operation budget, not a bound any proof asserts.
     // Owned engines and their workloads have to start, settle and be observed
-    // on the host the suite actually runs on, so it is the fixture guard.
+    // on the host the suite actually runs on, so it keeps its original twenty
+    // seconds on a quiet host and stretches with the measured load.
     OperationContext::new(
-        Deadline::At(Instant::now() + FIXTURE_GUARD),
+        Deadline::At(Instant::now() + guard(Duration::from_secs(20))),
         CancelToken::default(),
         Limits {
             capture_tail: 4096,
@@ -166,7 +169,7 @@ fn fresh_status(cx: &ObserveContext, root: &StateRoot, id: RunId) -> Observed<Ru
     }
 }
 fn eventually(mut predicate: impl FnMut() -> bool) {
-    let end = Instant::now() + FIXTURE_GUARD;
+    let end = Instant::now() + guard(Duration::from_secs(12));
     while !predicate() {
         assert!(Instant::now() < end, "fixture deadline");
         std::thread::sleep(Duration::from_millis(10));
@@ -178,7 +181,7 @@ fn custody_prepare_source_requires_its_class_and_settles_with_a_sentinel() {
         let home = home();
         let mutate = context();
         let cx = OperationContext::new(
-            Deadline::At(Instant::now() + FIXTURE_GUARD),
+            Deadline::At(Instant::now() + guard(Duration::from_secs(20))),
             CancelToken::default(),
             mutate.operation().limits().clone(),
             EffectClass::Prepare,
@@ -580,7 +583,7 @@ fn custody_signal_and_owner_kill_matrix_settles_without_survivors() {
             let cx = context();
             let root = StateRoot::effects(&cx, home.path()).unwrap();
             let runid = RunId::new(1, [9; 10]).unwrap();
-            let end = Instant::now() + FIXTURE_GUARD;
+            let end = Instant::now() + guard(Duration::from_secs(12));
             loop {
                 let status = fresh_status(&cx.operation().observe().unwrap(), &root, runid);
                 match &status {
@@ -898,7 +901,7 @@ fn owner_loss_settles_through_the_run_sentinel_and_retires_its_anchor() {
     );
     // Both the group's evidence and the sentinel are gone within a deadline:
     // that is the cleanup this proof owes, with no helper left behind.
-    let deadline = Instant::now() + FIXTURE_GUARD;
+    let deadline = Instant::now() + guard(Duration::from_secs(12));
     while live(&anchor) || live(&sentinel) || live(&receipt.identity) {
         assert!(
             Instant::now() < deadline,
@@ -1882,20 +1885,24 @@ fn owning_finish(home: &Path, fixture: &mut OwningKillFixture) {
         0
     );
     fixture.client.0.wait().unwrap();
-    owning_poll(Instant::now() + FIXTURE_GUARD, "terminal status", || {
-        let status = engine_status(home);
-        let (done, label) = match status {
-            Observed::Verified(RunStatus::Closed { complete: true, .. }, _) => {
-                (true, "closed complete")
-            }
-            Observed::Verified(RunStatus::Closed { .. }, _) => (false, "closed incomplete"),
-            Observed::Verified(RunStatus::Live(_), _) => (false, "live"),
-            Observed::Verified(_, _) => (false, "other status"),
-            Observed::Absent(_) => (false, "absent"),
-            Observed::Unknown(_) => (false, "unknown"),
-        };
-        (done, label.into())
-    });
+    owning_poll(
+        Instant::now() + guard(Duration::from_secs(12)),
+        "terminal status",
+        || {
+            let status = engine_status(home);
+            let (done, label) = match status {
+                Observed::Verified(RunStatus::Closed { complete: true, .. }, _) => {
+                    (true, "closed complete")
+                }
+                Observed::Verified(RunStatus::Closed { .. }, _) => (false, "closed incomplete"),
+                Observed::Verified(RunStatus::Live(_), _) => (false, "live"),
+                Observed::Verified(_, _) => (false, "other status"),
+                Observed::Absent(_) => (false, "absent"),
+                Observed::Unknown(_) => (false, "unknown"),
+            };
+            (done, label.into())
+        },
+    );
     let Observed::Verified(RunStatus::Closed { workload, .. }, _) = engine_status(home) else {
         panic!("closed");
     };
@@ -1910,7 +1917,7 @@ fn owning_finish(home: &Path, fixture: &mut OwningKillFixture) {
         "owner-kill: expected OwnerLost"
     );
     owning_poll(
-        Instant::now() + FIXTURE_GUARD,
+        Instant::now() + guard(Duration::from_secs(12)),
         "witness/no-survivor",
         || {
             let receipt = fixture.receipt.as_ref().unwrap();
@@ -1927,13 +1934,17 @@ fn owning_finish(home: &Path, fixture: &mut OwningKillFixture) {
             )
         },
     );
-    owning_poll(Instant::now() + FIXTURE_GUARD, "output completion", || {
-        let output = engine_output(home);
-        (
-            output.ends_with('\n'),
-            format!("bytes={}, newline={}", output.len(), output.ends_with('\n')),
-        )
-    });
+    owning_poll(
+        Instant::now() + guard(Duration::from_secs(12)),
+        "output completion",
+        || {
+            let output = engine_output(home);
+            (
+                output.ends_with('\n'),
+                format!("bytes={}, newline={}", output.len(), output.ends_with('\n')),
+            )
+        },
+    );
     let output = engine_output(home);
     assert!(
         output.contains("engine output [REDACTED]"),
@@ -1950,7 +1961,7 @@ fn owning_finish(home: &Path, fixture: &mut OwningKillFixture) {
 #[test]
 fn custody_engine_owning_client_kill_stops_and_settles() {
     let home = home();
-    let end = Instant::now() + FIXTURE_GUARD;
+    let end = Instant::now() + guard(Duration::from_secs(12));
     let mut fixture = owning_start(home.path(), false);
     owning_poll(end, "client/witness readiness", || {
         owning_ready(home.path(), &mut fixture)
@@ -1975,7 +1986,7 @@ fn custody_engine_owning_client_witness_barrier_discriminates_old_consumer() {
         .unwrap();
         // SAFETY: a NUL-terminated path inside this fresh fixture; no borrowed pointers escape.
         assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
-        let end = Instant::now() + FIXTURE_GUARD;
+        let end = Instant::now() + guard(Duration::from_secs(12));
         let mut fixture = owning_start(home.path(), true);
         owning_poll(end, "controlled client/producer readiness", || {
             let client = home.path().join("client-ready").exists();
@@ -2370,7 +2381,7 @@ fn custody_workspace_handles_drive_owner_and_secondary_lifetimes() {
             }
         }
         eprintln!("workspace lifetime {cause:?}: accepting secondary socket");
-        let accept_deadline = Instant::now() + FIXTURE_GUARD;
+        let accept_deadline = Instant::now() + guard(Duration::from_secs(10));
         let socket = loop {
             match listener.accept() {
                 Ok((socket, _)) => break socket,
@@ -3336,7 +3347,7 @@ fn custody_machine_journal_routes_supervisor_requests_and_sentinel_recovery_with
                 .unwrap();
         }
         fixture_guard.stage = "completion";
-        let end = Instant::now() + FIXTURE_GUARD;
+        let end = Instant::now() + guard(Duration::from_secs(12));
         loop {
             let observe = cx.operation().observe().unwrap();
             let (done, last) = match effigy_kernel::store::Store::read(&observe, &machine) {
@@ -4143,7 +4154,7 @@ fn custody_keyed_successor_services_escalation_during_predecessor_recovery() {
             Some(std::thread::spawn(move || {
                 let cx = context();
                 let observe = cx.operation().observe().unwrap();
-                let deadline = Instant::now() + FIXTURE_GUARD;
+                let deadline = Instant::now() + guard(Duration::from_secs(12));
                 loop {
                     if let Observed::Verified(Recovered::Admitted { run, fence }, _) =
                         lookup(&observe, &root, key, digest.clone())

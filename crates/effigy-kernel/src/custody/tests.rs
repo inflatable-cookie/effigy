@@ -9,10 +9,14 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 
 fn cx() -> EffectContext {
-    // The fixture's ambient operation budget, not a bound any proof asserts:
-    // real spawns and settlements must fit it on the host the suite runs on.
+    // The fixture's ambient operation budget, not a bound any proof asserts.
+    // It keeps its original twenty seconds on a quiet host and stretches with
+    // the measured load, so real spawns and settlements fit it on the host the
+    // suite actually runs on.
     OperationContext::new(
-        Deadline::At(Instant::now() + FIXTURE_GUARD),
+        Deadline::At(
+            Instant::now() + effigy_test_support::load_scaled_guard(Duration::from_secs(20)),
+        ),
         CancelToken::default(),
         Limits {
             capture_tail: 4096,
@@ -583,11 +587,10 @@ impl Drop for OwnedChild {
 }
 /// The fixture's own hang guard, never a bound under test: the wait is driven
 /// by the event it observes, and this only stops a fixture that never gets
-/// there from hanging the suite. A loaded host can take far longer than a quiet
-/// one to start a workload and settle it.
-const FIXTURE_GUARD: Duration = Duration::from_secs(120);
+/// there from hanging the suite. It keeps its original twelve seconds on a
+/// quiet host and stretches with the measured load.
 fn wait(mut yes: impl FnMut() -> bool) {
-    let deadline = Instant::now() + FIXTURE_GUARD;
+    let deadline = Instant::now() + effigy_test_support::load_scaled_guard(Duration::from_secs(12));
     while !yes() {
         assert!(Instant::now() < deadline, "proof deadline");
         std::thread::sleep(Duration::from_millis(5));

@@ -44,6 +44,12 @@ struct Model {
     /// proof reads the inherited value here rather than from a timed-out
     /// child's output, which host load can truncate.
     launched: Arc<Mutex<Vec<LaunchedEnv>>>,
+    /// When this fixture handed the process over, and when the enforced stop
+    /// reached the session. Their difference is how long the run was allowed
+    /// to live, measured from the launch rather than from the test's own
+    /// start-up and publication waits.
+    launch_moment: Arc<Mutex<Option<Instant>>>,
+    stop_moment: Arc<Mutex<Option<Instant>>>,
 }
 
 impl Model {
@@ -51,7 +57,30 @@ impl Model {
         Self {
             dir,
             launched: Arc::new(Mutex::new(Vec::new())),
+            launch_moment: Arc::new(Mutex::new(None)),
+            stop_moment: Arc::new(Mutex::new(None)),
         }
+    }
+
+    fn record_launch_moment(&self) {
+        *self
+            .launch_moment
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(Instant::now());
+    }
+
+    fn launch_moment(&self) -> Option<Instant> {
+        *self
+            .launch_moment
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn stop_moment(&self) -> Option<Instant> {
+        *self
+            .stop_moment
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     fn launched_env(&self) -> Vec<LaunchedEnv> {
@@ -114,6 +143,7 @@ impl RemoteExecAdapter for Model {
             "stdin reaches the workload"
         );
         self.record_launched(&cmd.env);
+        self.record_launch_moment();
         let mut env = client_env();
         for (key, value) in cmd.env {
             // The exec client and the guest have distinct custody nonces.
@@ -162,6 +192,10 @@ impl RemoteExecAdapter for Model {
     ) -> Observed<SessionState> {
         if signal != Signal::Continue {
             std::fs::write(self.dir.join("stop"), b"").expect("remote stop");
+            *self
+                .stop_moment
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = Some(Instant::now());
         }
         self.state()
     }
@@ -1588,14 +1622,18 @@ fn a_container_workload_never_receives_session_vault_access() {
 /// Real registration, stop and settlement under an explicitly inherited
 /// nested scope, with both parent-shorter and child-shorter budgets.
 ///
-/// The nested budgets are 4s, not 1s: the real client has to start and register
-/// inside the inherited budget, and a 1s window measures host fork latency
-/// rather than the deadline nesting under test. The timeout itself stays real:
-/// the workload outlives the budget and is stopped by it.
+/// The enforced budget is measured where it acts: from the launch the adapter
+/// receives to the stop that reaches the session. That window is the run's
+/// life, so it neither contains the fixture's own store set-up nor the client's
+/// start-up, and it still discriminates the one-second minimum from the
+/// five-second maximum.
 #[test]
 fn nested_remote_deadlines_take_the_minimum_and_settle_the_registered_session() {
-    for (parent, child) in [(4000, 9000), (9000, 4000)] {
+    for (parent, child) in [(1000, 5000), (5000, 1000)] {
         let fixture = fixture();
+        // The run is admitted first, so the scope's clock is minted as late as
+        // production mints it: immediately before the launch.
+        let mut task_run = begin(&fixture.root, "nested:remote:timeout");
         let scoped_at = Instant::now();
         let _parent = super::super::SpawnScope::enter(
             &BTreeMap::from([("SCOPED".into(), "inherited".into())]),
@@ -1606,7 +1644,6 @@ fn nested_remote_deadlines_take_the_minimum_and_settle_the_registered_session() 
         let inherited = super::super::SpawnScope::capture();
         let _boundary = super::super::SpawnScope::inherit(&inherited);
         let _child = super::super::SpawnScope::enter(&BTreeMap::new(), None, true, Some(child));
-        let mut task_run = begin(&fixture.root, "nested:remote:timeout");
         let command = task(
             &fixture.root,
             "printf %s \"$SCOPED\"; while [ ! -f \"$MODEL_STOP\" ]; do sleep 0.02; done; exit 143",
@@ -1625,16 +1662,19 @@ fn nested_remote_deadlines_take_the_minimum_and_settle_the_registered_session() 
             budget + inside_scope + Duration::from_millis(50) >= minimum,
             "{budget:?} after {inside_scope:?} is not the nested minimum {minimum:?}"
         );
-        let started = Instant::now();
         let exit = run(&fixture, &mut task_run, command);
         assert_eq!(exit.code, 124);
         assert!(matches!(exit.workload, WorkloadOutcome::TimedOut { .. }));
-        // A hang guard, not a performance claim: the model's own lifetime is
-        // 20s, so ending well inside it proves the nested budget governed.
+        // The enforced budget is the window from the hand-over to the stop, so
+        // it excludes the client's start-up. A two-second margin keeps a loaded
+        // delivery inside the bound while staying well under the five-second
+        // child budget the inherited minimum must beat.
+        let launched = fixture.model.launch_moment().expect("the launch");
+        let stopped = fixture.model.stop_moment().expect("the enforced stop");
+        let enforced = stopped.saturating_duration_since(launched);
         assert!(
-            started.elapsed() < Duration::from_secs(15),
-            "the nested budget did not bound the run: {:?}",
-            started.elapsed()
+            enforced < minimum + Duration::from_secs(2),
+            "the run lived {enforced:?} from launch to stop, past the nested minimum {minimum:?}"
         );
         // Environment inheritance is asserted where production hands it over,
         // so a deadline that stops the child before it can print cannot hide

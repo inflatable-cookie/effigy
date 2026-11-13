@@ -142,6 +142,40 @@ pub fn short_tempdir(prefix: &str) -> io::Result<tempfile::TempDir> {
         .tempdir_in(fs::canonicalize(parent)?)
 }
 
+/// How far this host is above one runnable task per CPU, from 1 to 10.
+///
+/// The same reading the container runtime contract uses to tell a loaded host
+/// from a slow service: the one-minute load average per CPU, rounded up, with a
+/// quiet host at 1. It is read once per process, and an unreadable load average
+/// counts as quiet.
+pub fn host_load_scale() -> u32 {
+    static SCALE: OnceLock<u32> = OnceLock::new();
+    *SCALE.get_or_init(|| {
+        let mut sampled = [0f64; 3];
+        // SAFETY: `getloadavg` writes at most the three doubles this pointer
+        // addresses and reads nothing else through it.
+        let count = unsafe { libc::getloadavg(sampled.as_mut_ptr(), 3) };
+        if count < 1 {
+            return 1;
+        }
+        let cpus = std::thread::available_parallelism().map_or(1, |cpus| cpus.get()) as f64;
+        let saturated = (sampled[0].max(0.0) / cpus).ceil();
+        saturated.clamp(1.0, 10.0) as u32
+    })
+}
+
+/// A fixture wait guard, scaled by this host's own measured load.
+///
+/// Callers wait on the event they observe; this only decides when a fixture
+/// that never gets there stops the suite. On a host at or below one runnable
+/// task per CPU it is exactly `floor`, so a quiet host keeps the original
+/// bound, and a saturated host stretches it with the same load that stretches
+/// the work being waited on. It is never an assertion about how long the
+/// behaviour under test takes.
+pub fn load_scaled_guard(floor: std::time::Duration) -> std::time::Duration {
+    floor.saturating_mul(host_load_scale())
+}
+
 /// An owned directory. Cleanup restores owner permissions without following links.
 #[derive(Debug)]
 pub struct Fixture {
