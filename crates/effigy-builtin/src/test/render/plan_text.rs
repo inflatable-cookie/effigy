@@ -9,6 +9,7 @@ use effigy_core::widgets::{KeyValue, NoticeLevel};
 use effigy_ui::{render_utf8, text_renderer, Renderer};
 
 use super::plan_projection::project_target_plan;
+use crate::test::render::suite_facts::render_suite_env_files;
 
 fn render_target_runtime_label(runtime: &crate::test::planning::BuiltinTargetRuntime) -> String {
     use crate::test::planning::BuiltinTargetRuntime;
@@ -48,27 +49,33 @@ pub(super) fn render_builtin_test_plan_text(
     }
     renderer.text("")?;
     renderer.section("Target Summary")?;
-    let summary_lines = target_set
+    // One projection per target feeds both the summary and the target block.
+    let projections = target_set
         .targets
         .iter()
         .map(|target| {
-            let projection = project_target_plan(target, requested_suite, passthrough);
-            let available_suites = projection.available_suites.join(", ");
-            let default_suites = projection.default_suites.join(", ");
+            (
+                target,
+                project_target_plan(target, requested_suite, passthrough),
+            )
+        })
+        .collect::<Vec<_>>();
+    let summary_lines = projections
+        .iter()
+        .map(|(target, projection)| {
             format!(
                 "{}: source={} suites={} defaults={} cargo-env-match={}",
                 target.name,
                 target.suite_source,
-                available_suites,
-                default_suites,
+                projection.available_suites.join(", "),
+                projection.default_suites.join(", "),
                 projection.cargo_env_match
             )
         })
         .collect::<Vec<String>>();
     renderer.bullet_list("targets", &summary_lines)?;
     renderer.text("")?;
-    for target in &target_set.targets {
-        let projection = project_target_plan(target, requested_suite, passthrough);
+    for (target, projection) in projections {
         let available_suites = projection.available_suites.join(", ");
         let default_suites = projection.default_suites.join(", ");
         renderer.section(&format!("Target: {}", target.name))?;
@@ -99,10 +106,10 @@ pub(super) fn render_builtin_test_plan_text(
                             suite.suite,
                             suite.is_default,
                             suite.suite_env.as_deref().unwrap_or("<none>"),
-                            render_suite_env_files(&suite.suite_env_files),
+                            render_suite_env_files(&suite.suite_env_files, ", "),
                             suite.setup_steps,
                             suite.teardown_steps,
-                            suite.teardown_policy,
+                            suite.teardown_policy.as_str(),
                         )
                     })
                     .collect::<Vec<String>>(),
@@ -129,14 +136,6 @@ pub(super) fn render_builtin_test_plan_text(
         renderer.text("")?;
     }
     Ok(render_utf8(renderer.into_inner())?)
-}
-
-fn render_suite_env_files(files: &[String]) -> String {
-    if files.is_empty() {
-        "<none>".to_owned()
-    } else {
-        files.join(", ")
-    }
 }
 
 pub(super) fn render_builtin_test_plan_recovery_text(
