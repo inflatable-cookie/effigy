@@ -11,7 +11,7 @@ use crate::EffectiveContainerPolicy;
 
 use crate::{
     resolve_host_cli_program as manager_resolve_host_cli_program, BackendId,
-    ContainerBackendDetection, ContainerBackendRegistry, ContainerManager,
+    ContainerBackendDetection, ContainerManager,
 };
 use effigy_manifest::{
     ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
@@ -37,13 +37,8 @@ pub fn resolve_compose_backend() -> ComposeBackend {
     if let Some(backend) = tests::test_compose_backend_override() {
         return backend;
     }
-    let mut detection = compose_backend_detection();
-    if detection.backend_override.is_none() {
-        detection.backend_override = crate::user_global_backend_preference();
-    }
-    let backend_id = ContainerBackendRegistry::defaults()
-        .detect_backend(&detection)
-        .unwrap_or_else(|_| BackendId::colima_nerdctl());
+    let detection = crate::backend::ambient_detection(compose_backend_detection());
+    let backend_id = crate::backend::detected_backend(&detection);
     ComposeBackend::from_backend_id(&backend_id)
 }
 

@@ -281,9 +281,6 @@ impl EnvironmentBackend for Fake {
     fn selection(&self) -> &BackendSelection {
         &self.selection
     }
-    fn inventory(&mut self, _: &Path, _: &str) -> Observed<Vec<Workload>> {
-        panic!("unbounded observation")
-    }
     fn inventory_until(&mut self, _: &Path, _: &str, deadline: Instant) -> Observed<Vec<Workload>> {
         self.reads += 1;
         self.deadlines.push(deadline);

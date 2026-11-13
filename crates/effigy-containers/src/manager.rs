@@ -374,13 +374,7 @@ impl ContainerBackendRegistry {
         &self,
         detection: &ContainerBackendDetection,
     ) -> Result<BackendId, ContainerManagerError> {
-        let backend_id = if let Some(backend_id) = detection.backend_override.as_ref() {
-            backend_id.clone()
-        } else if detection.docker_cli_available {
-            BackendId::docker_compose()
-        } else {
-            BackendId::colima_nerdctl()
-        };
+        let backend_id = crate::backend::detected_backend(detection);
 
         self.find(&backend_id)
             .map(|backend| backend.id())

@@ -259,3 +259,18 @@ fn first_prepare_records_the_frozen_docker_endpoint_or_configured_context() {
         });
     }
 }
+
+#[test]
+fn unknown_legacy_engine_refuses_data_actions_instead_of_becoming_colima() {
+    let _lock = crate::test_env_lock();
+    let fixture = fixture();
+    legacy(&fixture, "[containers.web]\nbackend = \"future-engine\"\n");
+    let observed = exact(&fixture);
+    let reason = observed.require("web").unwrap_err().to_string();
+    assert!(reason.contains("future-engine"), "{reason}");
+    isolated(&fixture, || {
+        let policy = load_container_policy(&fixture.checkout, None).unwrap();
+        assert!(runtime_endpoint(&fixture.checkout, &policy).is_err());
+        assert!(metadata_to_record(&policy).is_none());
+    });
+}

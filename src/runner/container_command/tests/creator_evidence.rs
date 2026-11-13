@@ -12,9 +12,6 @@ impl EnvironmentBackend for Backend {
     fn selection(&self) -> &BackendSelection {
         &self.selected
     }
-    fn inventory(&mut self, _: &Path, _: &str) -> Observed<Vec<Workload>> {
-        panic!("unbounded inventory")
-    }
     fn inventory_until(&mut self, _: &Path, _: &str, deadline: Instant) -> Observed<Vec<Workload>> {
         assert!(Instant::now() < deadline);
         let rows = if std::mem::take(&mut self.before) {
