@@ -135,11 +135,7 @@ fn key_at(source: &str, index: usize, field: &str) -> Result<Option<usize>, JsSc
 /// is not a string, or it is a template expression known only at runtime.
 fn parse_string_literal(source: &str) -> Result<Option<String>, JsScanError> {
     let bytes = source.as_bytes();
-    let Some(quote) = bytes
-        .first()
-        .copied()
-        .filter(|byte| [b'\'', b'"', b'`'].contains(byte))
-    else {
+    let Some(quote) = bytes.first().copied().filter(|byte| b"'\"`".contains(byte)) else {
         return Ok(None);
     };
     let mut escaped = false;
