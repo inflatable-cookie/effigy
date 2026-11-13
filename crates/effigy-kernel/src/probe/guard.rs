@@ -299,9 +299,10 @@ fn read_frame<T: serde::de::DeserializeOwned>(
 fn clock() -> io::Result<u128> {
     Ok(verified(ident::boot_clock())?.elapsed.as_nanos())
 }
-pub(super) fn deadline(cx: &ObserveContext) -> io::Result<u128> {
+/// An absolute boot-clock deadline `budget` from now: the workload's own window.
+pub(super) fn deadline_within(budget: Duration) -> io::Result<u128> {
     clock()?
-        .checked_add(cx.remaining().as_nanos())
+        .checked_add(budget.as_nanos())
         .ok_or_else(|| io::Error::other("probe deadline overflow"))
 }
 /// Hidden same-binary entry point, invoked after main installs its router.

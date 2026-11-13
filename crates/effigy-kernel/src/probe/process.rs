@@ -11,7 +11,7 @@ use std::ffi::OsString;
 use std::io;
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 // Signal grace bounds workload lifetime. Closure verification also scans native
 // identities, reaps and drains buffered output, so it has its own finite budget.
@@ -59,11 +59,13 @@ impl ObserveContext {
                     "probe inside transaction".into(),
                 ));
             }
-            let operation = self.operation.child(command.deadline);
-            let mut cx = operation
-                .observe()
-                .map_err(|_| UnknownReason::GuardUnavailable)?;
-            cx.probes = self.probes.clone();
+            // The caller's observe budget bounds setup. The runtime lock, a
+            // cold guard's start, the fork, the spawn barrier and the
+            // registration handshake are the observer's own local work; only
+            // `execute` gives the workload its own window (see the deadline it
+            // registers), so a fork the scheduler delays past the workload's
+            // deadline can neither consume nor hide that window.
+            let cx = self.clone();
             let runtime = cx.probes.as_ref().ok_or(UnknownReason::GuardUnavailable)?;
             let mut slot = runtime.lock(&cx)?;
             if slot.as_mut().is_some_and(|c| !c.alive()) {
@@ -131,7 +133,12 @@ fn execute(
         grace_millis: guard::GRACE.as_millis() as u64,
     };
     crate::fault_point!(ProbeRegister).map_err(failure)?;
-    let deadline_nanos = guard::deadline(cx).map_err(failure)?;
+    // The workload's own window starts here: registration is the last observer
+    // step before release, so the observer's loop and the guard share one
+    // deadline, and it begins after the fork and the spawn barrier rather than
+    // at the caller's first statement.
+    let deadline_at = Instant::now() + command.deadline;
+    let deadline_nanos = guard::deadline_within(command.deadline).map_err(failure)?;
     #[cfg(all(test, feature = "fault-injection"))]
     if spec.cwd.join("probe-deadline").is_file() {
         std::fs::write(spec.cwd.join("probe-deadline"), deadline_nanos.to_string())
@@ -157,6 +164,13 @@ fn execute(
         receipt,
         reaped: false,
     };
+    // The release started the workload's clock: the observe loop below ends at
+    // the workload's own deadline, never earlier because of setup latency.
+    let work_cx = cx
+        .operation
+        .child_until(deadline_at)
+        .observe()
+        .map_err(|_| UnknownReason::GuardUnavailable)?;
     let executed = blocked.executed(&cx.operation);
     let (stdout, stderr, _) = blocked.take_streams();
     let mut capture = Capture {
@@ -175,7 +189,7 @@ fn execute(
         })?;
         crate::fault_point!(ProbeAfterGo).map_err(failure)?;
         loop {
-            check(cx, "probe process")?;
+            check(&work_cx, "probe process")?;
             // Scoped fixture control only; absent from ordinary/default calls.
             #[cfg(feature = "fault-injection")]
             crate::fault_injection::point("ProbeWorkChecked").map_err(failure)?;
@@ -189,7 +203,7 @@ fn execute(
                     return Ok(exit);
                 }
             }
-            std::thread::sleep(cx.remaining().min(Duration::from_millis(2)));
+            std::thread::sleep(work_cx.remaining().min(Duration::from_millis(2)));
         }
     })();
     let cleanup = cx
