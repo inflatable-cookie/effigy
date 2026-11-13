@@ -4154,7 +4154,7 @@ fn custody_keyed_successor_services_escalation_during_predecessor_recovery() {
             Some(std::thread::spawn(move || {
                 let cx = context();
                 let observe = cx.operation().observe().unwrap();
-                let deadline = Instant::now() + guard(Duration::from_secs(12));
+                let deadline = Instant::now() + guard(Duration::from_secs(10));
                 loop {
                     if let Observed::Verified(Recovered::Admitted { run, fence }, _) =
                         lookup(&observe, &root, key, digest.clone())

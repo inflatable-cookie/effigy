@@ -2540,10 +2540,11 @@ run = "sh -lc 'printf seeded > .effigy/local/db-seed.marker'"
 }
 
 /// The readiness budget the fake-runtime proofs declare: the fixture's original
-/// two seconds on a quiet host, stretched by one measured host spawn round trip
-/// (half a second per 10ms of measured latency, capped at the shipped default).
-/// Nothing here asserts how long readiness takes; the value only keeps a loaded
-/// host from spending the activation's observation budget on fork latency.
+/// two seconds on a quiet host, stretched by one second for every 20ms of
+/// measured host spawn latency (whole seconds, rounded down, so the floor holds
+/// below 20ms), capped at the shipped default. Nothing here asserts how long
+/// readiness takes; the value only keeps a loaded host from spending the
+/// activation's observation budget on fork latency.
 fn container_health_timeout_secs() -> u64 {
     static SECS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *SECS.get_or_init(|| {
