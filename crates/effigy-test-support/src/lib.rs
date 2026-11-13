@@ -234,6 +234,20 @@ impl Fixture {
         self.directory.as_ref().expect("live fixture").path()
     }
 
+    /// Keep the tree for post-failure inspection instead of removing it.
+    pub fn keep(mut self) -> PathBuf {
+        let path = self
+            .directory
+            .as_ref()
+            .expect("live fixture")
+            .path()
+            .to_path_buf();
+        if let Some(directory) = self.directory.take() {
+            let _ = directory.keep();
+        }
+        path
+    }
+
     fn remove(&mut self) -> io::Result<()> {
         let Some(directory) = self.directory.as_ref() else {
             return Ok(());

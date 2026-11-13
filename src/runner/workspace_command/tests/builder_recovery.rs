@@ -308,15 +308,24 @@ impl Drop for Fixture {
 }
 
 // A confined worker supplies a fresh parent under its assigned scratch via
-// EFFIGY_RECOVERY_FIXTURE_PARENT. Ordinary callers retain the shared HOME route.
-// Each fixture's CLI operations get a separate nested temp directory, so their
-// shared source is not misclassified as that operation's temporary output.
+// EFFIGY_RECOVERY_FIXTURE_PARENT. Every other caller uses the run's temporary
+// root, which a `[scratch]` run places on the configured volume: this fixture
+// home used to fall back to HOME, unmanaged scratch that a lost volume left
+// behind with its children (effigy#962). Each fixture's CLI operations get a
+// separate nested temp directory, so their shared source is not misclassified
+// as that operation's temporary output.
+fn builder_fixture_parent() -> PathBuf {
+    std::env::var_os("EFFIGY_RECOVERY_FIXTURE_PARENT")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+}
+
 fn builder_fixture() -> effigy_test_support::Fixture {
-    let parent = std::env::var_os("EFFIGY_RECOVERY_FIXTURE_PARENT")
-        .or_else(|| std::env::var_os("HOME"))
-        .expect("explicit fixture parent or host HOME");
-    effigy_test_support::Fixture::in_parent("effigy-parent-fixtures-recovery-", Path::new(&parent))
-        .unwrap()
+    effigy_test_support::Fixture::in_parent(
+        "effigy-parent-fixtures-recovery-",
+        &builder_fixture_parent(),
+    )
+    .expect("owned recovery fixture under the run's temporary root")
 }
 
 #[test]
@@ -350,7 +359,15 @@ fn builder_fixture_passes_colima_guard_while_os_temp_still_refuses() {
         let policy = effigy_containers::load_container_policy(dir.path(), Some("web")).unwrap();
         let result = effigy_containers::validate_compose_backend_runtime(dir.path(), &policy);
         if allowed {
-            result.expect("shared fixture must satisfy the real Colima path guard");
+            // The guard refuses the fixed OS temp roots unconditionally, so the
+            // accepted arm needs a fixture root the run's own root is not inside.
+            result.unwrap_or_else(|error| {
+                panic!(
+                    "the recovery fixture at {} must sit outside the OS temp roots Colima cannot \
+                     share; run this selector with TMPDIR on the configured scratch root: {error}",
+                    dir.path().display()
+                )
+            });
         } else {
             assert!(result
                 .expect_err("OS temp control must still be refused")
@@ -374,14 +391,29 @@ fn builder_fixtures_teardown_and_confine_their_storage() {
     };
     assert!(!root.exists());
     assert!(!render.exists(), "fixture teardown removes sealed output");
-    let parent = std::env::var_os("EFFIGY_RECOVERY_FIXTURE_PARENT")
-        .or_else(|| std::env::var_os("HOME"))
-        .unwrap();
+    // The oracles are the assignment itself, not the fixture's own helper: an
+    // unset override means the run's temporary root, and never HOME.
+    let expected = match std::env::var_os("EFFIGY_RECOVERY_FIXTURE_PARENT") {
+        Some(parent) => PathBuf::from(parent),
+        None => std::env::temp_dir(),
+    }
+    .canonicalize()
+    .unwrap();
     let shared = builder_fixture();
     assert_eq!(
         shared.path().parent(),
-        Some(Path::new(&parent).canonicalize().unwrap().as_path())
+        Some(expected.as_path()),
+        "the recovery fixture home is the run's assigned scratch root"
     );
+    if let Some(home) =
+        std::env::var_os("HOME").and_then(|home| PathBuf::from(home).canonicalize().ok())
+    {
+        assert_ne!(
+            shared.path().parent(),
+            Some(home.as_path()),
+            "the recovery fixture home is never the operator's HOME (effigy#962)"
+        );
+    }
     let temp = shared.path().join("operation-temp");
     std::fs::create_dir(&temp).unwrap();
     let _env = EnvGuard::set_many(&[("TMPDIR", Some(temp.display().to_string()))]);
