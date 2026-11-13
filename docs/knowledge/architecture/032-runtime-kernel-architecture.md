@@ -246,8 +246,17 @@ The root manifest selects the façade and kernel as Cargo default members, so
 existing macOS/Linux CI test, doc-test and lint commands include the kernel.
 No engine depends on the kernel yet.
 `test:kernel:<area>` selectors own the narrow proof families; `check:kernel`
-compiles all kernel targets and runs strict clippy. The `fault-injection`
-feature's observation hook exists only under `cfg(test)`.
+compiles all kernel targets and runs strict clippy. Run `lint:linux` before
+native Linux qualification: it runs strict Clippy for `aarch64-unknown-linux-gnu`
+on `effigy-process`, whose Linux process-identity implementation can be checked
+without a cross C compiler. Its tests are omitted locally because their
+`effigy-test-support` dev-dependency pulls in the kernel and SQLite. The full
+workspace and native qualification feature sets, including test targets, are
+linted by Ubuntu CI. A broader local cross-target attempt currently stops at
+`libsqlite3-sys`, which needs `aarch64-linux-gnu-gcc`; the kernel and other
+SQLite-dependent Linux code therefore still require Linux CI or the native
+build. `lint:linux` does not replace a native build or proof. The
+`fault-injection` feature's observation hook exists only under `cfg(test)`.
 
 The ratchet's `syn`/`proc-macro2` parser, `tempfile` fixtures and Rhai
 cancellation conformance are QA-only dev dependencies, never runtime dependencies. It parses source without host cfg

@@ -253,9 +253,11 @@ pub fn process_start_identity_matches(pid: u32, start_identity: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "macos")]
+    use super::{boot_identity, boot_identity_uncached};
     use super::{
-        boot_identity, boot_identity_uncached, compare_boot_identity, process_start_identity,
-        process_start_identity_matches, BootIdentityComparison,
+        compare_boot_identity, process_start_identity, process_start_identity_matches,
+        BootIdentityComparison,
     };
 
     #[test]
