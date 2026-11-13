@@ -338,7 +338,10 @@ const FAILURE_MARKERS: &[(&str, OciFailureClass)] = &[
     ("unauthorized", OciFailureClass::NotAuthenticated),
     ("authentication required", OciFailureClass::NotAuthenticated),
     ("not logged in", OciFailureClass::NotAuthenticated),
-    ("no basic auth credentials", OciFailureClass::NotAuthenticated),
+    (
+        "no basic auth credentials",
+        OciFailureClass::NotAuthenticated,
+    ),
     ("token has expired", OciFailureClass::NotAuthenticated),
     ("denied", OciFailureClass::NotPermitted),
     ("insufficient_scope", OciFailureClass::NotPermitted),
@@ -348,7 +351,10 @@ const FAILURE_MARKERS: &[(&str, OciFailureClass)] = &[
     ("connection refused", OciFailureClass::Unreachable),
     ("timeout", OciFailureClass::Unreachable),
     ("server misbehaving", OciFailureClass::Unreachable),
-    ("temporary failure in name resolution", OciFailureClass::Unreachable),
+    (
+        "temporary failure in name resolution",
+        OciFailureClass::Unreachable,
+    ),
     ("invalid reference", OciFailureClass::InvalidReference),
     ("invalid repository", OciFailureClass::InvalidReference),
     ("invalid tag", OciFailureClass::InvalidReference),

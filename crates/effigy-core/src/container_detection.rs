@@ -133,19 +133,25 @@ fn probe_marker(path: &str) -> Observation {
 
 fn probe_cgroup() -> Observation {
     match std::fs::read_to_string(CGROUP_PATH) {
-        Ok(contents) => Observation::Observed(
-            CGROUP_CONTAINER_MARKERS
-                .iter()
-                .any(|marker| contents.contains(marker)),
-        ),
+        Ok(contents) => Observation::Observed(cgroup_names_container(&contents)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Observation::Observed(false),
         Err(error) => Observation::Unreadable(error.to_string()),
     }
 }
 
+/// Whether `/proc/1/cgroup` text names a container family.
+fn cgroup_names_container(contents: &str) -> bool {
+    CGROUP_CONTAINER_MARKERS
+        .iter()
+        .any(|marker| contents.contains(marker))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{verdict_from_markers, ContainerMarker, ContainerVerdict, Observation};
+    use super::{
+        cgroup_names_container, verdict_from_markers, ContainerMarker, ContainerVerdict,
+        Observation,
+    };
     use std::path::PathBuf;
 
     fn verdict(
@@ -230,6 +236,22 @@ mod tests {
                 error: "input/output error".to_owned()
             }
         );
+    }
+
+    /// The cgroup text itself is the marker: a docker, containerd or kubepods
+    /// path names a container, and a host slice hierarchy does not.
+    #[test]
+    fn cgroup_text_names_a_container_family() {
+        for contents in [
+            "12:pids:/docker/4f1c2d",
+            "1:name=systemd:/system.slice/containerd.service",
+            "0::/kubepods/burstable/pod0b7c",
+        ] {
+            assert!(cgroup_names_container(contents), "{contents}");
+        }
+        for contents in ["0::/", "0::/user.slice/user-501.slice/session-1.scope", ""] {
+            assert!(!cgroup_names_container(contents), "{contents}");
+        }
     }
 
     /// One readable proof is enough: an unreadable sibling does not turn a

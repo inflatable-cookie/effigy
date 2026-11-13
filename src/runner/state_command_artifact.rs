@@ -291,20 +291,24 @@ pub(in crate::runner) fn stage_artifact_report(
     Ok(report)
 }
 
-/// A failed `oras` operation keeps the class it decoded: a refusal is the
-/// request itself, and everything else is an environment that did not answer.
-/// Before this, every OCI failure reached the caller as a refused invocation.
+/// A failed `oras` operation is reported by the class it decoded: a rejected
+/// credential or reference is the request, a missing client or unreachable
+/// registry is an environment that did not answer, and anything else stays the
+/// refusal it was before this classification existed. An unclassified failure is
+/// not evidence that the environment cannot supply the operation: it is also
+/// what a local staging failure looks like, so it must not claim unavailability.
 fn oci_runner_error(error: OciArtifactError) -> RunnerError {
     match error.class() {
         OciFailureClass::ClientMissing => {
             RunnerError::environment_unavailable("OCI client (`oras`)", error.to_string())
         }
-        OciFailureClass::NotAuthenticated
-        | OciFailureClass::NotPermitted
-        | OciFailureClass::InvalidReference => RunnerError::task_invocation(error.to_string()),
-        OciFailureClass::Unreachable | OciFailureClass::Unclassified => {
+        OciFailureClass::Unreachable => {
             RunnerError::environment_unavailable("OCI registry", error.to_string())
         }
+        OciFailureClass::NotAuthenticated
+        | OciFailureClass::NotPermitted
+        | OciFailureClass::InvalidReference
+        | OciFailureClass::Unclassified => RunnerError::task_invocation(error.to_string()),
     }
 }
 
@@ -590,6 +594,24 @@ mod tests {
         assert!(
             !error.to_string().contains("container status"),
             "no command name is invented: {error}"
+        );
+    }
+
+    /// An unclassified failure is not proof the environment is short: a local
+    /// staging fault and an unrecognised registry answer both land here, so it
+    /// keeps the refusal class instead of claiming an unavailable registry.
+    #[test]
+    fn unclassified_oci_failure_stays_a_refusal() {
+        let error = oci_runner_error(OciArtifactError::PullFailed {
+            reference: "ghcr.io/acme/private:latest".to_owned(),
+            message: "pull completed but no files were reported or discovered".to_owned(),
+            class: OciFailureClass::Unclassified,
+        });
+        assert!(matches!(error, RunnerError::TaskInvocation(_)), "{error:?}");
+        assert_eq!(error.category(), effigy_kernel::human::Category::Refused);
+        assert!(
+            !error.to_string().contains("unavailable"),
+            "an unclassified failure must not claim the registry is unavailable: {error}"
         );
     }
 
