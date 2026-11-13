@@ -502,13 +502,13 @@ Worktree archive controls use private synthetic scratch roots and retain the exp
 
 ## Test scheduling
 
-Nextest's default suite caps cold-start fixtures at one concurrent test in the
-`cold-start` group; the durable supervisor matrix has its own `journal-matrix`
-group. These caps bound contention within each class while ordinary tests keep
-using the remaining runner slots. All managed-host gateway listener fixtures
-share that cold-start cap, including terminal readiness failure. Focused exposure checks use the same cold-start
-cap. No test reserves every runner thread; activation deadlines and assertions
-remain unchanged.
+Nextest's default suite runs up to four cold-start fixtures at once in the
+`cold-start` group; their private roots and listeners keep those fixtures
+independent. The durable supervisor matrix retains its own single-writer
+`journal-matrix` group. All managed-host gateway listener fixtures share the
+default suite's cold-start group, including terminal readiness failure. Focused
+exposure checks use the same group with a one-test cap. Neither class reserves
+every runner thread; activation deadlines and assertions remain unchanged.
 
 Hosted nextest runs use four hash partitions on each operating system. Shared-
 process CI replays two ambient-state cohorts per OS through

@@ -1803,6 +1803,9 @@ fn refusal_accounting_overflow_snapshot_is_exact_for_the_failing_stream() {
 
 #[test]
 fn refusal_accounting_secret_partial_output_never_reaches_any_surface() {
+    // Redaction depends on reaching the timeout path, not on the production
+    // one-minute semantic budget used by the positive capture cases.
+    const REDACTION_DEADLINE_MS: u64 = 8_000;
     let (_dir, bin_dir, repo) = fixture("refusal-secrets");
     let policy = policy();
     with_fake_backend(&bin_dir, "docker", || {
@@ -1810,8 +1813,8 @@ fn refusal_accounting_secret_partial_output_never_reaches_any_surface() {
             &repo,
             &policy,
             "hang-secrets",
-            &limits(PUBLIC_SEMANTIC_BUDGET_MS, 64, 64),
-            PUBLIC_SEMANTIC_BUDGET_MS,
+            &limits(REDACTION_DEADLINE_MS, 64, 64),
+            REDACTION_DEADLINE_MS,
         )
         .expect_err("the hanging secret command must hit the deadline");
         let human = error.to_string();

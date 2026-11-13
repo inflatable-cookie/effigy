@@ -1887,7 +1887,9 @@ fn parked_integration_cleanup_survives_session_context_expiry_and_cancel() {
             let cx = context().patience(Duration::from_secs(120));
             let root = StateRoot::effects(&cx, fixture.path()).unwrap();
             let reservation = decided(&cx, &root, &environment());
-            let deadline = Instant::now() + Duration::from_secs(10);
+            // Expiry is the condition under test; allow local setup time
+            // without holding two scenarios open for ten seconds each.
+            let deadline = Instant::now() + Duration::from_secs(2);
             let session_cx = context().child_until(deadline);
             let (mut session, _) = admit_staged(&session_cx, &root, &reservation, run_id(247));
             let run = admit_activation(&cx, &root, &reservation, run_id(248));
