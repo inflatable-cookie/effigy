@@ -18,9 +18,9 @@ ROOT = Path(__file__).resolve().parent.parent
 TABLE_DIR = ROOT / "docs/knowledge/quality/tests"
 RATED_COMMIT = "7a502af038b7fbc4889d6484ea78deb25c7daac5"
 CODE_TABLE_DIR = ROOT / "docs/knowledge/quality/code"
-CODE_RATED_COMMIT = "a9b3213f9"
+CODE_RATED_COMMIT = "e458614d83b20685d9018943d71ae3eb79e88556"
 EXPECTED_ROWS = {"T1": 1305, "T2": 623, "T3": 858, "T4": 1793, "T5": 1857, "T6": 1264}
-CODE_EXPECTED_ROWS = {"C1": 154, "C2": 63, "C3": 97, "C4": 179, "C5": 214}
+CODE_EXPECTED_ROWS = {"C1": 196, "C2": 74, "C3": 105, "C4": 182, "C5": 242}
 _GIT_CACHE: dict[tuple[str, str], str | None] = {}
 
 
