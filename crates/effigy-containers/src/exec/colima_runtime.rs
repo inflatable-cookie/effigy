@@ -20,9 +20,8 @@ use crate::{
         parse_colima_running, prepare_managed_colima_profile, ColimaObservation,
     },
     compose::{resolve_compose_backend_for_repo, resolve_host_cli_program, ComposeBackend},
-    user_global_backend_preference, user_global_colima_profile, BackendId,
-    ContainerBackendDetection, ContainerManager, ContainerManagerError, EffectiveContainerPolicy,
-    DEFAULT_COLIMA_PROFILE,
+    user_global_colima_profile, BackendId, ContainerBackendDetection, ContainerManager,
+    ContainerManagerError, EffectiveContainerPolicy, DEFAULT_COLIMA_PROFILE,
 };
 
 const COLIMA_START_TIMEOUT: Duration = Duration::from_secs(90);
@@ -699,10 +698,8 @@ pub fn selected_backend_label(policy: &EffectiveContainerPolicy, repo_root: &Pat
 }
 
 pub(super) fn detect_container_backend() -> Result<BackendId, ContainerExecError> {
-    let mut detection = ContainerBackendDetection::from_env_and_path();
-    if detection.backend_override.is_none() {
-        detection.backend_override = user_global_backend_preference();
-    }
+    let mut detection =
+        crate::backend::ambient_detection(ContainerBackendDetection::from_env_and_path());
     if detection.backend_override.is_none() && !running_colima_profiles(Path::new("."))?.is_empty()
     {
         detection.backend_override = Some(BackendId::colima_nerdctl());

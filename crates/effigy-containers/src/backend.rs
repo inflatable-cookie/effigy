@@ -84,12 +84,10 @@ pub fn exact_backend(
         crate::compose::environment_backend_override().map(|id| (id, BackendSource::Environment));
     if chosen.is_none() {
         match crate::policy::render::recorded_backend(repo_root, name) {
-            Observed::Verified(Some(record), _) => {
-                match from_engine(&record.engine) {
-                    Ok(id) => chosen = Some((id, BackendSource::Recorded(record.source))),
-                    Err(reason) => unknown = Some(reason),
-                }
-            }
+            Observed::Verified(Some(record), _) => match from_engine(&record.engine) {
+                Ok(id) => chosen = Some((id, BackendSource::Recorded(record.source))),
+                Err(reason) => unknown = Some(reason),
+            },
             Observed::Verified(None, _) | Observed::Absent(_) => {}
             Observed::Unknown(reason) => unknown = Some(format!("{reason}")),
         }
@@ -116,6 +114,27 @@ pub fn exact_backend(
         source,
         unknown,
     }
+}
+
+/// Apply invocation override and user preference before ambient detection.
+pub(crate) fn ambient_detection(
+    mut detection: crate::ContainerBackendDetection,
+) -> crate::ContainerBackendDetection {
+    if detection.backend_override.is_none() {
+        detection.backend_override = crate::user_global_backend_preference();
+    }
+    detection
+}
+
+/// Select the ambient engine without changing an explicitly named ID.
+pub(crate) fn detected_backend(detection: &crate::ContainerBackendDetection) -> BackendId {
+    detection.backend_override.clone().unwrap_or_else(|| {
+        if detection.docker_cli_available {
+            BackendId::docker_compose()
+        } else {
+            BackendId::colima_nerdctl()
+        }
+    })
 }
 
 /// The runtime endpoint for this environment's volume and data actions.

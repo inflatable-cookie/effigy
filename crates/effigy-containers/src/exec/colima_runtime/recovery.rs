@@ -312,4 +312,3 @@ fn force_terminate_colima_profile_processes(
     steps.extend(stopped);
     Ok(())
 }
-

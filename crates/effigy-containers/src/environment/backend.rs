@@ -949,21 +949,16 @@ fn runtime_invocation(
     selection: &BackendSelection,
     tail: &[OsString],
 ) -> (OsString, Vec<OsString>) {
+    use crate::ContainerBackend;
     match selection.kind {
         BackendKind::Colima => {
-            let mut args = vec![
-                OsString::from("nerdctl"),
-                OsString::from("--profile"),
-                OsString::from(&selection.context),
-                OsString::from("--"),
-            ];
-            args.extend(tail.iter().cloned());
-            (OsString::from("colima"), args)
+            crate::ColimaNerdctlBackend.compose_process_invocation(&selection.context, tail)
         }
-        BackendKind::DockerDesktop | BackendKind::DockerEngine => (
-            OsString::from("docker"),
-            DockerTarget::resolve(&selection.context).arguments(tail),
-        ),
+        BackendKind::DockerDesktop | BackendKind::DockerEngine => crate::DockerComposeBackend
+            .compose_process_invocation(
+                &selection.context,
+                &DockerTarget::resolve(&selection.context).arguments(tail),
+            ),
     }
 }
 
