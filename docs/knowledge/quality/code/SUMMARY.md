@@ -5,7 +5,9 @@ C3 105, C4 182, C5 242). They were rated at commit `a9b3213f9` and re-rated at
 `e458614d8` after round 5's splits, so every row's `body_sha` matches the tree
 it was judged on. Columns are `id,files,loc,given,corrected,source,action,reason,body_sha`;
 scores stay frozen between re-rates: a re-rate writes new tables, never edits to
-the old snapshot. Column semantics are in `README.md`.
+the old snapshot. Column semantics are in `README.md`. The `corrected` column of
+the 244 round-5 rows was recalibrated in `effigy#960` from the planner's blind
+check; every distribution below quotes the recalibrated scores.
 
 ## Round 5 re-rate (effigy#958)
 
@@ -46,39 +48,73 @@ are not deletions of behaviour:
 
 ### Corrected distribution after the re-rate
 
-`given` is the raw score; `corrected` applies the calibration offset below. Every
-re-rated row is on the offset (`source: offset`); the 32 rows that were
-blind-calibrated at `a9b3213f9` keep their blind score where their text did not
-change.
+`given` is the raw score; `corrected` applies the calibration offset below. The
+244 re-scored and new rows carry the round-5 recalibration: 12 of them took their
+independent blind score (`source: blind-r5`) and the other 232 a uniform −1
+(`source: offset-r5`), as measured in the next section. The 555 frozen rows keep
+their `a9b3213f9` correction verbatim — 523 on `offset`, 32 on `blind`.
 
-- **Mean:** 7.89 corrected (given 8.96) — unchanged from the `a9b3213f9` mean,
-  because the splits moved score out of the large files into small ones rather
-  than changing how the code reads.
+- **Mean:** 7.95 corrected (given 8.96), up from 7.89 under the first round-5
+  offset, and above the `a9b3213f9` mean because the splits moved score out of
+  the large files into small ones rather than changing how the code reads.
 - **Scores:**
 
-| Score | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
-|---|---|---|---|---|---|---|---|
-| Modules | 1 | 5 | 66 | 169 | 325 | 231 | 2 |
+| Score | 5 | 6 | 7 | 8 | 9 | 10 |
+|---|---|---|---|---|---|---|
+| Modules | 2 | 59 | 158 | 341 | 236 | 3 |
 
-- **5 or below:** 6 modules (1%), about 11k lines — down from 15 modules and 24k lines.
-- **6 or below:** 72 modules (9%), about 70k lines — down from 79 and 83k.
-- **7 or below:** 241 modules (30%), about 192k lines — up from 216 and 174k,
-  because the split children carry the same judgements at a smaller size.
+- **5 or below:** 2 modules (0.3%), about 4.0k lines — down from 6 modules and 11k
+  lines under the first round-5 offset, and from 15 and 24k lines at the snapshot.
+- **6 or below:** 61 modules (8%), about 46k lines — down from 72 and 70k.
+- **7 or below:** 219 modules (27%), about 132k lines — down from 241 and 192k.
 
-Lowest after the re-rate: `exec/implementation` (4); `exec/colima_runtime`,
-`exec_command/transport`, `builtin/test/execution`, `effigy-ui::lib`,
-`effigy-ui::steps` (5).
+Lowest after the re-rate: `exec/implementation` (5) and `effigy-ui::lib` (5).
+Nothing scores 4 or below.
+
+### Blind recalibration of the round-5 offset
+
+The −1.9/−1.3 offsets were measured at `a9b3213f9`. The re-rate's own evidence
+standard — every `reason` must end in a concrete `path:line` citation — made the
+rater materially less lenient than in the first pass, so reusing the old offsets
+over-corrected the 244 re-rated rows. Independent Claude Sonnet raters re-scored
+12 of them blind (never shown the given score or the reason):
+
+| Row | Given | Old corrected | Blind | `corrected` now |
+|---|---|---|---|---|
+| `src/runner/container_command/support.rs` | 9 | 8 | 10 | 10 |
+| `src/runner/exec_command/bounded.rs` | 8 | 7 | 9 | 9 |
+| `gateway::setup` | 9 | 7 | 9 | 9 |
+| `src/runner/container_command/lifecycle.rs` | 9 | 8 | 9 | 9 |
+| `src/runner/container_runtime_prep/predecessor.rs` | 9 | 8 | 9 | 9 |
+| `managed::plan` | 9 | 8 | 8 | 8 |
+| `src/runner/host_process/kernel_run/activation.rs` | 8 | 7 | 8 | 8 |
+| `src/runner/workspace_command/staging.rs` | 10 | 9 | 8 | 8 |
+| `src/runner/script_command/feature_dispatch/surface.rs` | 8 | 7 | 8 | 8 |
+| `src/runner/container_command/profile.rs` | 8 | 6 | 7 | 7 |
+| `runner::mod` | 7 | 6 | 7 | 7 |
+| `src/runner/container_runtime_prep/cargo_inputs.rs` | 9 | 8 | 6 | 6 |
+
+- blind − given: mean −0.42, mean absolute difference 0.75.
+- blind − old corrected: mean +0.75, mean absolute difference 1.25 — the old
+offset overshot, it did not undershoot.
+
+Rule applied to the table: the 12 sampled rows take their blind score with
+`source: blind-r5`; every other row re-rated in `effigy#958` takes
+`corrected = max(0, given − 1)` with `source: offset-r5`, the conservative integer
+form of the −0.42 mean; the 555 frozen rows are untouched. The uniform −1 keeps
+the ranking the rater gave each re-read row instead of re-imposing a size band the
+re-read row already accounts for in its Proportion part.
 
 ### The eight round-5 targets, before and after
 
 | Target | Before (given / corrected / loc) | After |
 |---|---|---|
-| `runner::deploy_command` | 6 / 4 / 4,175 | split: `src/runner/deploy_command` 9 / 8 / 859, children 8–10 given |
+| `runner::deploy_command` | 6 / 4 / 4,175 | split: `src/runner/deploy_command` 9 / 8 / 859, children 8–10 given, 7–9 corrected |
 | `workspace_command/provisioning.rs` | 8 / 4 / 3,512 | 9 / 8 / 31 (nine owners behind it) |
-| `container_command/support.rs` | 6 / 4 / 1,591 | 9 / 8 / 76 (ten owners behind it) |
-| `runner::script_command` | 6 / 4 / 1,509 | split: `src/runner/script_command` 9 / 8 / 372, children 8–9 given |
-| `container_command/lifecycle.rs` | 6 / 5 / 4,120 | 9 / 8 / 52 (eleven owners behind it) |
-| `host_process` | 9 / 5 / 2,222 | 9 / 7 / 4,247 (shared types plus six owners) |
+| `container_command/support.rs` | 6 / 4 / 1,591 | 10 / 10 / 76 (ten owners behind it) |
+| `runner::script_command` | 6 / 4 / 1,509 | split: `src/runner/script_command` 9 / 8 / 372, children 8–9 given, 7–8 corrected |
+| `container_command/lifecycle.rs` | 6 / 5 / 4,120 | 9 / 9 / 52 (eleven owners behind it) |
+| `host_process` | 9 / 5 / 2,222 | 9 / 8 / 4,247 (shared types plus six owners) |
 | `container_runtime_prep/mod.rs` | 7 / 5 / 1,939 | 9 / 8 / 83 (ten owners behind it) |
 | `execute/pipeline/standard.rs` | 8 / 5 / 1,643 | 9 / 8 / 1,157 |
 
@@ -89,12 +125,13 @@ behaviour, and the children keep the behaviour at a size that matches it.
 
 | Module | Given | Corrected | Loc | Why |
 |---|---|---|---|---|
-| `crates/effigy-containers/src/exec/implementation.rs` | 6 | 4 | 3,976 | four jobs in one file; split outstanding |
-| `crates/effigy-containers/src/exec/colima_runtime.rs` | 7 | 5 | 2,042 | ensure + observe + recover + reset in one module |
-| `src/runner/exec_command/transport.rs` | 7 | 5 | 1,756 | shares bounded capture and argv duties with `bounded.rs` and `transport/colima.rs` |
-| `crates/effigy-builtin/src/test/execution.rs` | 7 | 5 | 1,540 | two runners plus per-suite rendering in one module |
+| `crates/effigy-containers/src/exec/implementation.rs` | 6 | 5 | 3,976 | four jobs in one file; split outstanding |
 | `crates/effigy-ui/src/lib.rs` | 6 | 5 | 35 | facade with no mechanism of its own |
-| `crates/effigy-ui/src/steps.rs` | 7 | 5 | 1,910 | five mechanisms plus the live window |
+
+The four modules that sat at 5 under the first round-5 offset move to 6 with the
+−1: `exec/colima_runtime` (2,042 lines), `exec_command/transport` (1,756),
+`builtin/test/execution` (1,540) and `effigy-ui::steps` (1,910). Each is still a
+proportion finding for a later split, not a behaviour finding.
 
 ## Calibration (why the scores are corrected)
 
@@ -114,9 +151,12 @@ Independent Claude Sonnet sub-raters re-scored 60 modules blind at `a9b3213f9`
 
 Deepseek was lenient mainly on Proportion (size and patch layers) and Typed facts.
 Correction: sampled modules take their blind score; all others are offset by −1.9
-(1,500+ lines) or −1.3 (smaller). The round-5 re-rate applies the same offset to
-every re-scored row and leaves the blind rows alone, so the ranking within each
-domain is preserved and the planner's blind check can still adjust the offsets.
+(1,500+ lines) or −1.3 (smaller). Those offsets were measured against that
+snapshot. The round-5 re-rate applies them to no row: its 12 blind re-scores take
+the blind score and its other 232 re-rated rows take a uniform −1, because the
+re-rate's own `path:line` evidence standard produced a −0.42 blind divergence
+rather than a −1.55 one. The `a9b3213f9` offsets stay as they were applied to the
+555 frozen rows, so the ranking within each domain is preserved in both passes.
 
 ## Distribution at `a9b3213f9` (the frozen snapshot)
 
@@ -194,8 +234,8 @@ Deliberate exceptions, all verified by exact file-count and line-total match:
 
 | Option | Target | Work |
 |---|---|---|
-| A, floor 6 (recommended first) | No module below 6, and every concrete defect above fixed | 6 modules (about 11k lines) remain below 6 after round 5, plus the outstanding splits |
-| B, floor 7 | No module below 7 | 72 modules (about 70k lines); a long programme |
+| A, floor 6 (recommended first) | No module below 6, and every concrete defect above fixed | 2 modules (about 4.0k lines) remain below 6 after round 5, plus the outstanding splits |
+| B, floor 7 | No module below 7 | 61 modules (about 46k lines); a long programme |
 | C | Mean 8.5 | Most of the codebase |
 
 Round 5 works bottom-up, with smaller batches than for tests, and needs native
@@ -207,7 +247,7 @@ Before round 5 the tables reported 95 new, 150 changed and 2 gone rows since
 `a9b3213f9` (30.8% stale). After the re-rate at `e458614d8`:
 
 ```text
-code quality: 799 rows, 0 new, 0 changed, 0 gone, 0.0% stale since a9b3213f9
+code quality: 799 rows, 0 new, 0 changed, 0 gone, 0.0% stale since e458614d8
 ```
 
 `effigy qa:quality:code` compares each row's `body_sha` with the working tree, so
