@@ -648,18 +648,22 @@ message naming the allowance (`run_deadline.rs:154-170`, `src/bin/effigy.rs`).
   error, a residue effect, a child run that never reported positive
   completion, or a settled outcome whose cleanup is `Incomplete` -- records
   the run as incomplete and is never presented as success
-  (`crates/effigy-kernel/src/run/foreground.rs`). An unresolved child
-  obligation is added as residue, so it reaches the outcome, the terminal
-  record and the footer decision. The guard is handed off, not held by this
-  process: the owner sets the guard's abandon flag, which releases its pins
-  without closing or waiting for the custodian; the guard process, which
-  already holds the run's receipts and gates, sees EOF and settles residue
-  through its owner-death path (`crates/effigy-kernel/src/supervise/memory.rs`).
-  The outcome's residue names that guard and every unresolved effect
-  truthfully; the owner does not claim to retain Rust handles it cannot keep
-  across process exit. The owner drop does not retry stops after an
-  incomplete settle, and a blocked guard drop cannot consume the remaining
-  budget before the result and evidence are written. The task returns
+  (`crates/effigy-kernel/src/run/foreground.rs`). **The owner keeps custody**:
+  it holds the direct-child handles and runs positive settlement (effect
+  stops, group closure, leader reap, guard close) bounded by the cleanup
+  context, which the run deadline already caps (`ctx.rs`). An unresolved
+  child obligation is added as residue only under the opt-in, so the
+  no-option behaviour is unchanged. If the owner cannot finish by the
+  ceiling, it records `incomplete`/`unknown` with the retained guard and every
+  unresolved effect named, abandons only its own drop wait (pins released, no
+  second wait), and exits by the deadline; it never claims closure. **The
+  guard is bounded by the same ceiling**: the owner's remaining deadline
+  travels in the guard's configuration (`deadline_ms`, because `helper()`
+  clears the environment), and every guard settlement path -- the EOF/serve
+  path and owner death -- caps its cleanup at `min(60s, remaining)` and never
+  mints a fresh window (`supervise/memory.rs`; `settlement_budget`, and
+  `wait_for_closure` stops at the ceiling). A handoff is never reported as
+  complete, because the guard has receipts, not handles. The task returns
   `effigy.run-deadline.v1` with `outcome: "incomplete"`, `residue: true`,
   `settlement_notes` naming the retained resources and the deadline evidence,
   and exits 124 (`src/runner/execute/pipeline/standard.rs`;

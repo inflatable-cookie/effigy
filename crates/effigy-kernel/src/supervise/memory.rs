@@ -84,6 +84,13 @@ pub(super) struct Config {
     /// the ring instead of opening SQLite (effigy#985, effigy#986).
     #[serde(default)]
     pub(super) strict: bool,
+    /// The owner's remaining run deadline at guard start, in milliseconds.
+    /// Every guard settlement path caps its cleanup at
+    /// `min(60s, remaining)`: the guard never mints a fresh window past the
+    /// owner's original ceiling (effigy#992). The helper's environment is
+    /// cleared, so this has to travel in the frame.
+    #[serde(default)]
+    pub(super) deadline_ms: Option<u64>,
 }
 #[derive(Serialize, Deserialize)]
 enum Message {
@@ -129,6 +136,18 @@ pub(crate) struct MemoryStart<'a> {
     pub run: RunId,
     pub fence: Fence,
     pub purpose: MemoryPurpose,
+    /// The owner's remaining absolute deadline at guard start.
+    pub deadline: Option<Duration>,
+}
+impl Config {
+    /// The guard's own settlement budget: the declared allowance, never past
+    /// the owner's remaining ceiling, and never a fresh 60 s beyond it.
+    pub(super) fn settlement_budget(&self, started: Instant) -> Duration {
+        let allowance = Duration::from_secs(60);
+        self.deadline_ms
+            .map(|ms| Duration::from_millis(ms).saturating_sub(started.elapsed()))
+            .map_or(allowance, |left| left.min(allowance))
+    }
 }
 impl MemoryGuard {
     pub(crate) fn start(gate: &mut GateGuard, start: MemoryStart<'_>) -> Result<Self, RunError> {
@@ -149,6 +168,7 @@ impl MemoryGuard {
             run,
             fence,
             purpose,
+            deadline,
         } = start;
         let (mut child, closure, config, descriptors) = (|| -> Result<_, RunError> {
             // Memory custody never pins or copies an image into runtime state, and
@@ -190,6 +210,8 @@ impl MemoryGuard {
                 home: root.owning_directory().path().to_path_buf(),
                 foreground: purpose == MemoryPurpose::Foreground,
                 strict: crate::store::strict_persistence(),
+                deadline_ms: deadline
+                    .map(|left| u64::try_from(left.as_millis()).unwrap_or(u64::MAX)),
             };
             let mut command = helper(executable, SENTINEL)?;
             command.stdout(Stdio::piped());
@@ -694,6 +716,7 @@ pub(crate) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
         })?;
     super::check_protocol(u32::try_from(declared).unwrap_or(u32::MAX))?;
     let config: Config = serde_json::from_value(config)?;
+    let serve_started = Instant::now();
     if !config.memory
         || config.gates == 0
         || config.gates > GATE_MAX
@@ -940,8 +963,9 @@ pub(crate) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
         }
         retained_completed = true;
     }
-    let cleanup = context(CancelToken::default(), Duration::from_secs(60))
-        .cleanup(Duration::from_secs(60))
+    let budget = config.settlement_budget(serve_started);
+    let cleanup = context(CancelToken::default(), budget)
+        .cleanup(budget)
         .map_err(|_| RunError::broken("foreground cleanup overflow"))?;
     let mut residue = false;
     for effect in effects.iter().rev().filter(|_| !retained_completed) {
@@ -960,7 +984,15 @@ pub(crate) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
     // report the run then, so the wait also observes the owner this guard
     // recorded: a verifiably gone owner ends the wait, and the guard takes the
     // settlement over instead of holding the lock forever (effigy#986).
-    let closure = wait_for_closure(watch, &config);
+    let closure = wait_for_closure(
+        watch,
+        &config,
+        config.deadline_ms.map(|ms| {
+            serve_started
+                .checked_add(Duration::from_millis(ms))
+                .unwrap_or(serve_started)
+        }),
+    );
     // The run's own coordinates, read while the gate descriptions are still
     // open: the journal row names the task and checkout the dead owner wrote.
     let coordinates = gates.iter().find_map(|gate| {
@@ -1003,7 +1035,11 @@ pub(super) struct ClosureWait {
 /// in which the owner is the only process that could have reported the run
 /// (effigy#986). A checkout-lease backup keeps waiting: a durable run's outcome
 /// and custody belong to its own journal and sentinel.
-fn wait_for_closure(mut watch: std::fs::File, config: &Config) -> ClosureWait {
+fn wait_for_closure(
+    mut watch: std::fs::File,
+    config: &Config,
+    deadline: Option<Instant>,
+) -> ClosureWait {
     let mut bytes = [0u8; 4096];
     // The pin is polled every 5 ms; the owner's identity costs one process
     // observation, so it is re-read every twentieth poll (100 ms). A foreground
@@ -1030,6 +1066,15 @@ fn wait_for_closure(mut watch: std::fs::File, config: &Config) -> ClosureWait {
             return ClosureWait {
                 closed: false,
                 owner_lost: true,
+            };
+        }
+        // The owner's original ceiling is this guard's own bound too: past it
+        // the guard stops settling and reports what is retained instead of
+        // minting a fresh window.
+        if deadline.is_some_and(|at| Instant::now() >= at) {
+            return ClosureWait {
+                closed: false,
+                owner_lost: config.foreground && owner_is_gone(config),
             };
         }
         ticks = ticks.wrapping_add(1);
@@ -1229,8 +1274,64 @@ mod tests {
             home: PathBuf::from("/nonexistent"),
             foreground: true,
             strict: false,
+            deadline_ms: None,
         };
         assert!(!owner_is_gone(&config));
+    }
+
+    #[test]
+    fn a_guard_settlement_budget_never_passes_the_owners_ceiling() {
+        let config = Config {
+            protocol: HELPER_PROTOCOL,
+            memory: true,
+            owner: ProcessIdentity {
+                boot: crate::ident::boot_identity()
+                    .verified()
+                    .cloned()
+                    .expect("this host's boot identity"),
+                pid: 0,
+                start: ident::ProcessStartIdentity::MacOs {
+                    seconds: 1,
+                    microseconds: 0,
+                },
+            },
+            gates: 1,
+            gate_fds: vec![],
+            run: RunId::new(1, [1; 10]).unwrap(),
+            fence: Fence {
+                resource: crate::id::ResourceId::store(crate::id::Scope::Machine, "gate")
+                    .expect("fixed name"),
+                generation: crate::id::Generation::new(0),
+            },
+            watch: 3,
+            descriptors: None,
+            home: PathBuf::from("/nonexistent"),
+            foreground: true,
+            strict: false,
+            deadline_ms: Some(90_000),
+        };
+        let bounded = config.settlement_budget(Instant::now() - Duration::from_secs(40));
+        assert!(
+            bounded <= Duration::from_secs(50) && bounded > Duration::from_secs(49),
+            "the owner's remaining ceiling binds before the 60 s allowance: {bounded:?}"
+        );
+        let spent = Config {
+            deadline_ms: Some(30_000),
+            ..config
+        };
+        assert_eq!(
+            spent.settlement_budget(Instant::now() - Duration::from_secs(31)),
+            Duration::ZERO,
+            "a spent ceiling mints no fresh window"
+        );
+        let off = Config {
+            deadline_ms: None,
+            ..spent
+        };
+        assert_eq!(
+            off.settlement_budget(Instant::now()),
+            Duration::from_secs(60)
+        );
     }
 
     #[test]

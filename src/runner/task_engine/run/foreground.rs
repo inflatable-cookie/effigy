@@ -326,6 +326,8 @@ pub(super) fn close_memory(
     Vec<String>,
 ) {
     effigy_core::run_deadline::note_phase(effigy_core::run_deadline::Phase::Settlement);
+    let retained_guard = run.guard_identity().cloned();
+    let retained_effects = run.retained_effects();
     let recorded = match workload {
         WorkloadOutcome::Cancelled { .. }
         | WorkloadOutcome::TimedOut { .. }
@@ -369,7 +371,23 @@ pub(super) fn close_memory(
             if effigy_core::run_deadline::ceiling().is_some() {
                 effigy_core::run_deadline::note_settlement_incomplete();
             }
-            warnings.push(format!("foreground settle: {error}"));
+            // The owner kept its handles and attempted positive settlement to
+            // the ceiling; this is what remains, named truthfully. The guard is
+            // only retired once its close succeeded; an error here leaves it to
+            // its own owner-death settlement.
+            let retained = retained_guard
+                .map(|guard| format!("guard pid {}", guard.pid))
+                .into_iter()
+                .chain(retained_effects.iter().cloned())
+                .collect::<Vec<_>>();
+            if retained.is_empty() {
+                warnings.push(format!("foreground settle: {error}"));
+            } else {
+                warnings.push(format!(
+                    "foreground settle: {error}; retained: {}",
+                    retained.join(", ")
+                ));
+            }
             (None, warnings)
         }
     }
@@ -624,17 +642,14 @@ mod tests {
         let _ = effigy_core::run_deadline::take_settlement_incomplete();
         let warnings = run.close(WorkloadOutcome::Succeeded);
         assert!(
-            alive(guard.pid),
-            "an incomplete settle must leave the guard alive as the custodian"
+            !alive(guard.pid),
+            "the owner runs the guard's positive close up to the ceiling"
         );
         assert!(
             effigy_core::run_deadline::take_settlement_incomplete(),
             "an Ok(incomplete) settle must fail closed under the deadline: {warnings:?}"
         );
         let rendered = warnings.join(" ");
-        assert!(rendered.contains("retained"), "{rendered}");
-        assert!(rendered.contains("custodian"), "{rendered}");
-        assert!(rendered.contains("foreground guard"), "{rendered}");
         assert!(
             rendered.contains("invalid group identity"),
             "the unresolved effect is named: {rendered}"
@@ -717,7 +732,67 @@ mod tests {
             alive(guard.pid),
             "the guard must survive the owner's incomplete settle"
         );
+        let rendered = warnings.join(" ");
+        assert!(
+            rendered.contains(&format!("guard pid {}", guard.pid)),
+            "the retained guard is named: {rendered}"
+        );
+        assert!(
+            rendered.contains("kernel:process"),
+            "the retained group is named: {rendered}"
+        );
         stop_group(leader);
+    }
+
+    #[test]
+    fn the_no_option_path_keeps_the_previous_unresolved_child_behaviour() {
+        let _lock = crate::contract_test_support::lock_test();
+        let root = tempfile::tempdir().expect("root");
+        let parent_target = target(root.path(), "parent");
+        let child_target = target(root.path(), "child");
+        let run = |deadline: bool| {
+            let parent = begin(&parent_target);
+            let parent_scope = parent.enter();
+            let child = begin(&child_target);
+            drop(parent_scope);
+            if deadline {
+                let _deadline = InjectedDeadline::at(Instant::now(), 30_000);
+                let _ = effigy_core::run_deadline::take_settlement_incomplete();
+                let (outcome, warnings) =
+                    parent.close_settled(WorkloadOutcome::Succeeded, Duration::from_secs(60));
+                let incomplete = effigy_core::run_deadline::take_settlement_incomplete();
+                drop(child);
+                (outcome, warnings, incomplete)
+            } else {
+                let _ = effigy_core::run_deadline::take_settlement_incomplete();
+                let (outcome, warnings) =
+                    parent.close_settled(WorkloadOutcome::Succeeded, Duration::from_secs(60));
+                let incomplete = effigy_core::run_deadline::take_settlement_incomplete();
+                drop(child);
+                (outcome, warnings, incomplete)
+            }
+        };
+        let (off_outcome, off_warnings, off_incomplete) = run(false);
+        assert!(!off_incomplete, "the no-option path has no marker");
+        assert_eq!(
+            off_outcome.as_ref().map(|outcome| outcome.cleanup()),
+            Some(CleanupOutcome::Complete),
+            "the no-option path keeps the previous unresolved-child behaviour: {off_warnings:?}"
+        );
+        let (on_outcome, on_warnings, on_incomplete) = run(true);
+        assert!(
+            on_incomplete,
+            "the opt-in turns an unresolved child into fail-closed residue: {on_warnings:?}"
+        );
+        assert_eq!(
+            on_outcome.as_ref().map(|outcome| outcome.cleanup()),
+            Some(CleanupOutcome::Incomplete)
+        );
+        let rendered = on_warnings.join(" ");
+        assert!(
+            rendered.contains("in-process child"),
+            "the unresolved child is named: {rendered}"
+        );
     }
 
     #[test]

@@ -2249,6 +2249,10 @@ fn a_run_deadline_cuts_a_hung_admission_before_the_task_runs() {
         "the refusal must be the deadline's, not the hook timeout: {rendered}"
     );
     assert!(
+        envelope["error"]["details"]["deadline"]["phases"]["admission"].is_object(),
+        "the admission refusal carries its phase readback: {rendered}"
+    );
+    assert!(
         !fixture.exists("ran.txt"),
         "the workload started despite the refused admission"
     );
@@ -2458,6 +2462,7 @@ fn a_run_deadline_bounds_a_stalled_terminal_report_and_keeps_the_outcome() {
 #[test]
 fn a_run_deadline_owner_loss_is_settled_by_the_surviving_custodian() {
     let fixture = Fixture::new();
+    let spawned = Instant::now();
     let mut owner = fixture
         .effigy(&["owner-loss"])
         .env("EFFIGY_RUN_DEADLINE_MS", "12000")
@@ -2492,6 +2497,11 @@ fn a_run_deadline_owner_loss_is_settled_by_the_surviving_custodian() {
     );
     assert!(group_gone(leader), "the group {leader} remains");
     fixture.wait_for("the guard to drain", || gates_drained(&fixture.repo));
+    assert!(
+        spawned.elapsed() < Duration::from_secs(13),
+        "the guard outlived the run's original ceiling: {:?}",
+        spawned.elapsed()
+    );
 }
 
 #[test]

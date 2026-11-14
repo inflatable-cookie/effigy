@@ -161,6 +161,7 @@ impl ForegroundRun {
                     generation: Generation::new(0),
                 },
                 purpose: crate::supervise::memory::MemoryPurpose::Foreground,
+                deadline: effigy_core::run_deadline::remaining(),
             },
         )?;
         Ok(Self {
@@ -197,6 +198,16 @@ impl ForegroundRun {
     }
     pub(crate) fn has_guard(&self) -> bool {
         self.guard.is_some()
+    }
+    /// The effects this run has not released, in the kernel's own words, so a
+    /// settle that cannot finish names what stays retained (effigy#992).
+    pub fn retained_effects(&self) -> Vec<String> {
+        self.record
+            .effects()
+            .iter()
+            .filter(|effect| !effect.state.terminal())
+            .map(|effect| format!("`{}` effect {}", effect.spec.kind, effect.sequence))
+            .collect()
     }
     pub(crate) fn anchor_image(&self) -> Result<crate::supervise::anchor::Image, RunError> {
         crate::supervise::anchor::Image::prepare(&self.executable)
@@ -344,10 +355,12 @@ impl ForegroundRun {
         });
         let effects_complete = outcome.cleanup() != CleanupOutcome::Incomplete;
         let mut outcome = outcome;
-        if !descendants_closed {
-            // A child run that never reported positive completion leaves this
-            // tree unsettled. It is residue, not success, and it is carried
-            // into the outcome, the terminal record and the footer decision.
+        if !descendants_closed && effigy_core::run_deadline::ceiling().is_some() {
+            // Under the opt-in a child run that never reported positive
+            // completion leaves this tree unsettled. It is residue, not
+            // success, and it is carried into the outcome, the terminal
+            // record and the footer decision. Without the opt-in the previous
+            // behaviour is unchanged.
             outcome.add_residue(crate::outcome::Residue::unresolved(
                 0,
                 "in-process child",
@@ -359,28 +372,16 @@ impl ForegroundRun {
         }
         let incomplete = outcome.cleanup() == CleanupOutcome::Incomplete;
         if incomplete && effigy_core::run_deadline::ceiling().is_some() {
-            // The guard is the supported handoff: it is not closed, signalled
-            // or waited for here. Its owner-death settlement keeps the gates
-            // and settles residue after our EOF, so closure is never claimed
-            // for work this settle could not prove. The retained resources are
-            // named in the outcome's residue.
+            // The owner keeps its handles and runs positive settlement right
+            // up to the ceiling. Reaching it unsettled records the run as
+            // incomplete; nothing here claims closure.
             self.truncated = true;
-            self.abandon_guard();
             effigy_core::run_deadline::note_settlement_incomplete();
-            outcome.add_residue(crate::outcome::Residue::unresolved(
-                0,
-                "custodian",
-                self.record.incarnation().owner.clone(),
-                Some("foreground guard"),
-                "left to its owner-death settlement: the settle did not close positively \
-                 within the run deadline",
-                self.next.clone(),
-            ));
-            return Ok(outcome);
         }
-        // Close the guard after a successful settle only. An error here keeps
-        // the guard field, and `settle_reporting` abandons it rather than
-        // dropping it silently.
+        // Always attempt the guard's positive close, bounded by the cleanup
+        // context (which the run deadline already caps). An error leaves the
+        // guard field for `settle_reporting` to abandon without a second wait;
+        // a successful close is the only case where the guard is taken.
         if let Some(guard) = self.guard.as_mut() {
             guard.close(cleanup)?;
         }

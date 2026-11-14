@@ -1312,7 +1312,7 @@ fn refusal_with(
          admission fails closed\nnext: {next_action}",
         target.label
     );
-    let details_json = serde_json::json!({
+    let mut details = serde_json::json!({
         "schema": DETAILS_SCHEMA,
         "schema_version": 1,
         "task": target.label,
@@ -1321,8 +1321,13 @@ fn refusal_with(
         "decision": decision,
         "reason": reason,
         "next_action": next_action,
-    })
-    .to_string();
+    });
+    // An admission refusal is run evidence too: when the opt-in is set, its
+    // details carry the origin, clock and the admission phase observed so far.
+    if let Some(deadline) = effigy_core::run_deadline::evidence() {
+        details["deadline"] = deadline;
+    }
+    let details_json = details.to_string();
     RunnerError::AdmissionRefused {
         detail,
         details_json,
