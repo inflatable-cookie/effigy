@@ -592,10 +592,10 @@ default: unset or blank means every budget is exactly what it was before.
   (`run_deadline.rs:75`), and no wait may pass the ceiling.
 - Readback: a foreground run writes one evidence line at admission naming the
   clock, its origin, the ceiling, the allowance, the workload budget and the
-  remaining time (`run_deadline.rs:102`; written at
-  `src/runner/task_engine/run/foreground.rs:118-127`). The task run and plan
+  remaining time (`run_deadline.rs:104`; written at
+  `src/runner/task_engine/run/foreground.rs:132-140`). The task run and plan
   JSON carry the same facts in a `deadline` object
-  (`src/runner/execute/json_payload/payload.rs:48-91`), absent when the
+  (`src/runner/execute/json_payload/payload.rs:40-104`), absent when the
   opt-in is off. Numbers are monotonic milliseconds; nothing is converted to
   a wall clock.
 
@@ -603,15 +603,15 @@ default: unset or blank means every budget is exactly what it was before.
 
 | Phase | Bound | Location |
 | --- | --- | --- |
-| Task-gate wait | `min(--lock-wait, ceiling - allowance)`; `FailFast` unchanged | `src/runner/task_engine/run/foreground.rs:89-101` |
+| Task-gate wait | `min(--lock-wait, ceiling - allowance)`; `FailFast` unchanged | `src/runner/task_engine/run/foreground.rs:89-103` |
 | Admission (including a hung hook or a late grant) | capped at `ceiling - allowance`; expiry refuses before any workload spawn | `src/runner/task_engine/admission.rs:590-603,815-822` |
 | Workload lifetime | `min(timeout_ms, ceiling - allowance)`; an in-process step or nested scope may shorten it, never extend it | `src/runner/task_engine/spawn_env.rs:24-31,60-69,104-115`; `src/runner/task_engine/process.rs:145-152` |
-| Kernel operation waits | an open shell operation is capped at the ceiling; a finite one is shortened to it | `crates/effigy-kernel/src/ctx.rs:208` |
-| Settlement (escalation, guard closure, cleanup, terminal evidence) | one cleanup context and one signal window, both capped at the ceiling | `crates/effigy-kernel/src/ctx.rs:251-275,414-425` |
+| Kernel operation waits | an open shell operation is capped at the ceiling; a finite one is shortened to it | `crates/effigy-kernel/src/ctx.rs:192-200` |
+| Settlement (escalation, guard closure, cleanup, terminal evidence) | one cleanup context and one signal window, both capped at the ceiling | `crates/effigy-kernel/src/ctx.rs:251-276,418-425` |
 
 A deadline that cannot fit the allowance is refused **at start**, before any
 capture, gate or effect: `EFFIGY_RUN_DEADLINE_MS <= 10000` exits 2 with a
-message naming the allowance (`run_deadline.rs:151-170`, `src/bin/effigy.rs`).
+message naming the allowance (`run_deadline.rs:154-170`, `src/bin/effigy.rs`).
 
 ### Failure shapes
 
@@ -622,10 +622,10 @@ message naming the allowance (`run_deadline.rs:151-170`, `src/bin/effigy.rs`).
   unchanged.
 - **Settlement overrun.** A settlement the ceiling cuts short records
   `truncated`, keeps the surviving custodian and every unresolved handle, and
-  claims no closure (`crates/effigy-kernel/src/run/foreground.rs:31,260-277`);
+  claims no closure (`crates/effigy-kernel/src/run/foreground.rs:31,260-277,279-345`);
   the foreground guard is not closed, signalled or discarded by the owner's
   drop (`:352-360`), and its own fallback wait is capped at the remaining time
-  (`crates/effigy-kernel/src/supervise/memory.rs:545-565`). The workload's
+  (`crates/effigy-kernel/src/supervise/memory.rs:548-566`). The workload's
   result is then not success: the run returns `effigy.run-deadline.v1` with
   `outcome: "unknown"`, `residue: true` and the deadline evidence, and exits
   124 (`src/runner/execute/pipeline/standard.rs:178-215`;
@@ -638,7 +638,7 @@ owned group, leader reaped after group closure, residue reported. Only the
 
 A child starts its own monotonic clock, so it receives only the parent's
 remaining **workload** budget in `EFFIGY_RUN_DEADLINE_MS`
-(`src/runner/task_engine/process.rs:520-532`). It can never inherit the
+(`src/runner/task_engine/process.rs:520-533`). It can never inherit the
 parent's configured span (that would restart the clock and extend the
 ceiling). The value is applied after every inherited value and task override,
 so nothing can prolong it. Each nesting level therefore reserves its own
