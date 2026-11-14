@@ -272,6 +272,25 @@ impl RemoteCustody {
         cx.require(Capability::AdapterEffect)
             .map_err(|_| RemoteError::Unknown(UnknownReason::HostAuthorityRequired))?;
         check(cx.operation(), "remote launch").map_err(RemoteError::Unknown)?;
+        // The workload deadline ends the workload, never the launch that
+        // identifies it: only an identified session can be stopped, so a launch
+        // that gave up at the deadline could leave the workload running
+        // unowned. Identity, intent and client spawn therefore run inside that
+        // deadline plus the launch's own stop grace, and registration adds the
+        // acknowledgement budget as its own cap; a session that registers there
+        // is recorded and then stopped by the caller under the deadline that has
+        // already expired. The workload gets no extra run time: the wrapper
+        // registers before it execs the workload. A cancellation still refuses
+        // at once through the same token.
+        let window = cx
+            .operation()
+            .remaining()
+            .map_or(spec.ack_timeout, |left| left.saturating_add(spec.grace));
+        let launch = cx
+            .operation()
+            .patience(window)
+            .effects()
+            .map_err(|_| RemoteError::Unknown(inconsistent("remote launch needs effects")))?;
         if spec.command.argv.is_empty()
             || !run.has_sentinel()
             || spec.env.resource.kind() != crate::id::ResourceKind::Env
@@ -298,7 +317,7 @@ impl RemoteCustody {
             return Err(RemoteError::Unknown(inconsistent("secret in remote argv")));
         }
         crate::fault_point!(RemoteBeforeIdentity).map_err(RunError::from)?;
-        let identity_cx = cx.operation().child(spec.call_timeout);
+        let identity_cx = launch.operation().child(spec.call_timeout);
         check(&identity_cx, "remote identity").map_err(RemoteError::Unknown)?;
         let recovery = adapter
             .capture_recovery_binding(&spec.target, &identity_cx)
@@ -316,7 +335,7 @@ impl RemoteCustody {
                 )))
             }
         };
-        check(cx.operation(), "remote identity").map_err(RemoteError::Unknown)?;
+        check(launch.operation(), "remote identity").map_err(RemoteError::Unknown)?;
         progress().map_err(RemoteError::Unknown)?;
         let nonce =
             session_nonce(run.id(), run.fence(), run.effects()?.len()).map_err(RunError::from)?;
@@ -350,7 +369,7 @@ impl RemoteCustody {
             ),
         );
         crate::fault_point!(AdapterBefore).map_err(RunError::from)?;
-        let launch_cx = cx.child(spec.call_timeout);
+        let launch_cx = launch.child(spec.call_timeout);
         check(launch_cx.operation(), "remote adapter launch").map_err(RemoteError::Unknown)?;
         let mut client_spec = adapter
             .launch(&id, command, &launch_cx)
@@ -369,16 +388,17 @@ impl RemoteCustody {
             terminal == RemoteTerminal::Tty,
         )));
         progress().map_err(RemoteError::Unknown)?;
-        let mut client = Custody::spawn_remote(run, client_spec, cx, stream.clone())
+        let mut client = Custody::spawn_remote(run, client_spec, &launch, stream.clone())
             .map_err(RemoteError::Spawn)?;
         let result = (|| {
             crate::fault_point!(RemoteBeforeAck).map_err(RunError::from)?;
-            let ack = cx.operation().child(spec.ack_timeout);
+            // Registration shares the launch window and adds its own budget:
+            // whichever of the launch window and the acknowledgement budget
+            // ends first.
+            let ack = launch.operation().child(spec.ack_timeout);
             let registration = loop {
-                check(&ack, "remote acknowledgement").map_err(RemoteError::Unknown)?;
-                progress().map_err(RemoteError::Unknown)?;
-                client.poll();
-                check(&ack, "remote acknowledgement").map_err(RemoteError::Unknown)?;
+                // A registration that already arrived is never discarded for a
+                // deadline: it is the session the run has to stop.
                 if let Some(result) = stream
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -386,6 +406,10 @@ impl RemoteCustody {
                 {
                     break result.map_err(RemoteError::Unknown)?;
                 }
+                check(&ack, "remote acknowledgement").map_err(RemoteError::Unknown)?;
+                progress().map_err(RemoteError::Unknown)?;
+                client.poll();
+                check(&ack, "remote acknowledgement").map_err(RemoteError::Unknown)?;
                 std::thread::sleep(Duration::from_millis(2));
             };
             progress().map_err(RemoteError::Unknown)?;

@@ -2090,8 +2090,18 @@ registration line on stderr, then execs the workload:
 | 1 | `identity()` must be `Verified`; `Unknown` refuses the launch | none | — |
 | 2 | `intend(RemoteProcess { container id, nonce })` | `Intended` | settle runs `find_by_nonce` |
 | 3 | spawn the local exec client under `OwnedProcess` | client recorded | settle stops the client, then `find_by_nonce` |
-| 4 | read the registration line within the ack deadline; strip it from output | `Applied` with registration | settle signals the session |
+| 4 | read the registration line within the launch window (steps 2-4 are never cut short by the workload deadline alone); strip it from output | `Applied` with registration | settle signals the session |
 | 5 | the workload counts as running only now | — | — |
+
+The workload deadline ends the workload, never the launch that identifies
+it: identity, intent and client spawn run inside that deadline plus the
+launch's own stop grace, and registration adds the ack budget as its own cap
+(whichever ends first). A session that registers there is recorded `Applied`
+and is then stopped under the deadline that has already expired, so a
+timed-out run never leaves its session unowned. A registration that already
+arrived is never discarded for a deadline. A launch that registers nothing in
+that window is refused: the client stops and settlement recovers the intent by
+nonce, or reports residue.
 
 Stop: `signal_session(TERM)`, CONT, grace, `KILL`, then `observe_session`.
 `signal_session` signals the whole session only while the leader is alive
