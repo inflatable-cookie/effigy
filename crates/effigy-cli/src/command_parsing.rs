@@ -1392,6 +1392,7 @@ where
     let mut stdout_offset = 0;
     let mut stderr_offset = 0;
     let mut wait_ms = None;
+    let mut check = false;
     let action = action.as_deref();
     if matches!(action, Some("--help" | "-h")) {
         return Ok(Command::Help(HelpTopic::Runs));
@@ -1441,6 +1442,7 @@ where
                 )?;
                 wait_ms = Some(number(flag, value)?);
             }
+            (Some("prepare"), "--check") => check = true,
             (Some(_), _) if !flag.starts_with('-') && run.is_none() => run = Some(arg),
             _ => return Err(unknown_argument(flag)),
         }
@@ -1471,9 +1473,18 @@ where
             run: required(run)?,
             wait_ms,
         },
+        Some("prepare") => {
+            if run.is_some() {
+                return Err(CliParseError::InvalidArguments(
+                    "`effigy run prepare` takes no run: it prepares this checkout's journal"
+                        .to_owned(),
+                ));
+            }
+            RunsAction::Prepare { check }
+        }
         Some(other) => {
             return Err(CliParseError::InvalidArguments(format!(
-                "`effigy run` supports `status`, `logs` or `stop`, not `{other}`"
+                "`effigy run` supports `status`, `logs`, `stop` or `prepare`, not `{other}`"
             )))
         }
     };

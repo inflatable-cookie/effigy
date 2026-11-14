@@ -2453,3 +2453,184 @@ fn run_terminal_write_appends_at_most_its_stated_frames() {
     );
     reader.execute_batch("COMMIT").unwrap();
 }
+
+/// A read-only count of a test store, through SQLite rather than a writer's own
+/// handle.
+fn read_count(root: &StateRoot, sql: &str) -> i64 {
+    let conn = rusqlite::Connection::open_with_flags(
+        root.path().join("kernel.db"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    conn.query_row(sql, [], |row| row.get(0)).unwrap()
+}
+
+/// Strict persistence writes the terminal row and nothing else (effigy#981): no
+/// prune frames, no checkpoint, and a log whose growth stays inside the physical
+/// maximum this module states for the route.
+#[test]
+fn run_terminal_strict_write_appends_at_most_its_stated_frames_and_defers_the_prune() {
+    let fixture = effigy_test_support::Fixture::new("effigy-terminal-strict-").unwrap();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let closed_at_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as i64)
+        .unwrap_or_default();
+    // A row the seven-day retention has already expired, written straight into
+    // its transaction: a non-strict write would prune it, and a strict write must
+    // leave it to a non-strict writer.
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .txn(&cx, |txn| {
+            txn.conn().execute(
+                "INSERT INTO foreground_terminals \
+                 (run_id, checkout, boot, task, outcome, exit_code, signal, cleanup, \
+                  workload_groups, closed_at) \
+                 VALUES ('expired-strict', 'checkout', 'boot', 'dev', 'succeeded', 0, NULL, \
+                         'complete', 0, 0)",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    drop(store);
+    let record = TerminalRecord {
+        run_id: id(41).to_string(),
+        checkout: checkout().text(),
+        boot: "20a888e4-10fc-4798-a139-fe8e08758c34".into(),
+        task: "dev".into(),
+        outcome: "succeeded".into(),
+        exit_code: Some(0),
+        signal: None,
+        cleanup: "complete".into(),
+        workload_groups: 0,
+        closed_at_ms,
+    };
+    // Enough rows that the insert walks real table and index pages rather than
+    // a one-page tree, so the measured frames are not a fresh-store minimum.
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .txn(&cx, |txn| {
+            for n in 0..600 {
+                txn.conn().execute(
+                    "INSERT INTO foreground_terminals \
+                     (run_id, checkout, boot, task, outcome, exit_code, signal, cleanup, \
+                      workload_groups, closed_at) \
+                     VALUES (?1, 'checkout', 'boot', 'dev', 'succeeded', 0, NULL, \
+                             'complete', 0, ?2)",
+                    rusqlite::params![format!("filler-{n}"), closed_at_ms],
+                )?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    drop(store);
+    // A read transaction pins the log's end, so no reset can hide the frames.
+    let path = root.path().join("kernel.db");
+    let reader = rusqlite::Connection::open(&path).unwrap();
+    reader.busy_timeout(Duration::from_secs(30)).unwrap();
+    reader
+        .execute_batch("BEGIN; SELECT count(*) FROM meta;")
+        .unwrap();
+    let wal = root.path().join("kernel.db-wal");
+    let before = std::fs::metadata(&wal).map(|meta| meta.len()).unwrap_or(0);
+    let mut store = Store::open_strict(&cx, &root).unwrap();
+    store
+        .txn(&cx, |txn| super::terminal::write_row(txn, &record))
+        .unwrap();
+    drop(store);
+    let after = std::fs::metadata(&wal).map(|meta| meta.len()).unwrap_or(0);
+    let appended = after.saturating_sub(before);
+    assert!(
+        appended <= TERMINAL_STRICT_WAL_MAX_BYTES,
+        "one strict terminal write appended {appended} bytes of log, over the \
+         {TERMINAL_STRICT_WAL_MAX_BYTES}-byte maximum"
+    );
+    // The frames are the insert's, so they fit the insert's page bound.
+    let frames = appended.saturating_sub(crate::store::WAL_HEADER_BYTES)
+        / (crate::store::PAGE_SIZE + crate::store::WAL_FRAME_HEADER_BYTES);
+    assert!(
+        frames > 0,
+        "the measured write appended no frame, so it measured nothing"
+    );
+    assert!(
+        frames <= u64::from(TERMINAL_STRICT_WRITE_MAX_PAGES),
+        "one strict terminal write appended {frames} frames, over \
+         {TERMINAL_STRICT_WRITE_MAX_PAGES}"
+    );
+    assert_eq!(
+        read_count(
+            &root,
+            "SELECT count(*) FROM foreground_terminals WHERE run_id='expired-strict'"
+        ),
+        1,
+        "a strict write pruned rows it was meant to leave"
+    );
+    assert_eq!(
+        read_count(
+            &root,
+            &format!(
+                "SELECT count(*) FROM foreground_terminals WHERE run_id='{}'",
+                id(41)
+            )
+        ),
+        1,
+        "the strict write did not record the run"
+    );
+    reader.execute_batch("COMMIT").unwrap();
+}
+
+/// The strict write refuses to report success when its own transaction exceeds
+/// the frame budget, and says how many frames it appended (effigy#981). The
+/// budget is passed explicitly here so a small one can trip on a real write.
+#[test]
+fn run_terminal_strict_budget_refusal_names_the_observed_frames() {
+    use std::ffi::OsStr;
+    std::env::set_var(crate::store::STRICT_PERSISTENCE_ENV, OsStr::new("1"));
+    let fixture = effigy_test_support::Fixture::new("effigy-terminal-budget-").unwrap();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    // The route's precondition: a store that is already prepared.
+    drop(Store::open_preparing(&cx, &root).unwrap());
+    let record = TerminalRecord {
+        run_id: id(42).to_string(),
+        checkout: checkout().text(),
+        boot: "20a888e4-10fc-4798-a139-fe8e08758c34".into(),
+        task: "dev".into(),
+        outcome: "succeeded".into(),
+        exit_code: Some(0),
+        signal: None,
+        cleanup: "complete".into(),
+        workload_groups: 0,
+        closed_at_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_millis() as i64)
+            .unwrap_or_default(),
+    };
+    // No transaction can append zero frames, so a zero budget always trips.
+    let error = super::terminal::record_within_budget(&cx, &root, &record, 0)
+        .expect_err("a strict write over its budget must not report success");
+    let sentence = error.to_string();
+    assert!(
+        sentence.contains("0-frame budget") && sentence.contains("frames to this run's"),
+        "the refusal names the budget and the observed frames: {sentence}"
+    );
+    // The row is recorded — the refusal is about the claim, not the evidence —
+    // and the same write inside the real budget reports success.
+    assert_eq!(
+        read_count(
+            &root,
+            &format!(
+                "SELECT count(*) FROM foreground_terminals WHERE run_id='{}'",
+                id(42)
+            )
+        ),
+        1,
+        "the refused claim lost the row it wrote"
+    );
+    let mut second = record.clone();
+    second.run_id = id(43).to_string();
+    super::terminal::record(&cx, &root, &second).expect("inside the real budget");
+    std::env::remove_var(crate::store::STRICT_PERSISTENCE_ENV);
+}

@@ -14,13 +14,15 @@ const RUNS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "`effigy --run-id <key> <task>` names a run with your own key. A repeat with the same key attaches to that run and exits with its result; it never starts a second run.",
         "A run reads by its run id or its key. A run started with `--run-id` logs each stream's output (redacted) unless both were terminals; other runs keep no log.",
         "`run logs --follow` ends when the run settles. Resume a lost follow with the byte offsets you already received; expired bytes are reported, never skipped.",
-        "`run stop` asks the run's owner to stop through the kernel journal; the owner stops the task's whole process group and settles the run."
+        "`run stop` asks the run's owner to stop through the kernel journal; the owner stops the task's whole process group and settles the run.",
+        "`run prepare` prepares this checkout's run journal for a strict-persistence run (`EFFIGY_STRICT_PERSISTENCE=1`), which writes only its own terminal row and refuses an unprepared store before admission; `run prepare --check` verifies that without writing."
     ],
     usage: text_lines![
         "effigy runs [--limit <N>] [--all] [--json]",
         "effigy run status <run> [--json]",
         "effigy run logs <run> [--follow] [--stdout-offset <N>] [--stderr-offset <N>] [--json]",
         "effigy run stop <run> [--wait-ms <MS>] [--json]",
+        "effigy run prepare [--check] [--json]",
         "effigy --run-id <key> <task> [task args]",
     ],
     leading_common_options: &[],
@@ -45,4 +47,5 @@ const RUNS_OPTIONS: &[(&str, &str)] = option_rows![
     "--stdout-offset <N>" => "Resume stdout at this byte offset",
     "--stderr-offset <N>" => "Resume stderr at this byte offset",
     "--wait-ms <MS>" => "How long `run stop` waits for the run to settle (default 30000)",
+    "--check" => "`run prepare` only verifies the journal needs no write; it writes nothing",
 ];

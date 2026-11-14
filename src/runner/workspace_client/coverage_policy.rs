@@ -72,6 +72,7 @@ pub(crate) fn unsupported(cmd: &Command) -> Option<&'static str> {
         Command::Runs(args) => match args.action {
             RunsAction::List { .. } | RunsAction::Status { .. } | RunsAction::Stop { .. } => None,
             RunsAction::Logs { .. } => Some(RUN_LOGS),
+            RunsAction::Prepare { .. } => Some(OTHER),
         },
         Command::Gateway(_) => Some(GATEWAY),
         Command::Release(_) => Some(RELEASE),

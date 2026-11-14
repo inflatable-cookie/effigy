@@ -1958,3 +1958,110 @@ fn focused_test_filters_are_one_lock_per_normalized_invocation() {
         "{runs}"
     );
 }
+
+/// Strict persistence refuses a run whose journal it would have to prepare,
+/// before the admission hook is called, and `effigy run prepare` readies that
+/// same route outside it (effigy#981).
+#[test]
+fn strict_persistence_refuses_before_admission_and_prepare_readies_the_route() {
+    let fixture = Fixture::new();
+    let hook = v2_hook(&fixture, "strict.sh", "", "");
+    // One admitted run creates this checkout's journal and its terminal row.
+    let first = fixture.with_v2_hook(&hook, &["heavy"]);
+    assert!(first.status.success(), "{}", text(&first));
+    let journal = fixture.repo.join(".effigy/state/kernel.db");
+    assert!(journal.exists(), "the admitted run wrote no journal");
+
+    // An older Effigy's journal: the additive table this build creates is gone,
+    // so the next strict run would have to migrate the store inside its route.
+    rusqlite::Connection::open(&journal)
+        .expect("journal")
+        .execute_batch("DROP INDEX foreground_terminals_closed; DROP TABLE foreground_terminals;")
+        .expect("downgrade");
+    let journal_files = || {
+        ["kernel.db", "kernel.db-wal", "kernel.db-shm"]
+            .into_iter()
+            .map(|name| fs::read(fixture.repo.join(".effigy/state").join(name)).ok())
+            .collect::<Vec<Option<Vec<u8>>>>()
+    };
+    let before = journal_files();
+    let admitted = fixture.events().len();
+    fs::remove_file(fixture.repo.join("ran.txt")).expect("clear the workload marker");
+
+    // The strict run refuses: no hook, no workload, no journal write.
+    let refused = fixture
+        .effigy(&["heavy"])
+        .env("EFFIGY_ADMISSION_HOOK", &hook)
+        .env("EFFIGY_ADMISSION_PROTOCOL", "2")
+        .env("EFFIGY_STRICT_PERSISTENCE", "1")
+        .output_owned()
+        .expect("refusal");
+    assert!(!refused.status.success(), "{}", text(&refused));
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        stderr.contains("not prepared for a strict-persistence run")
+            && stderr.contains("EFFIGY_STRICT_PERSISTENCE"),
+        "the refusal names strict persistence and its switch: {stderr}"
+    );
+    assert!(
+        stderr.contains("effigy run prepare"),
+        "the refusal names the step that prepares the journal: {stderr}"
+    );
+    assert!(
+        !fixture.exists("ran.txt"),
+        "the workload ran under a refusal: {}",
+        text(&refused)
+    );
+    assert_eq!(
+        fixture.events().len(),
+        admitted,
+        "the admission hook ran under a refusal"
+    );
+    assert!(
+        journal_files() == before,
+        "the refusal wrote to the checkout journal"
+    );
+
+    // The check step reports the same refusal and writes nothing.
+    let checked = fixture.run(&["--json", "run", "prepare", "--check"]);
+    assert!(!checked.status.success(), "{}", text(&checked));
+    assert!(
+        journal_files() == before,
+        "`run prepare --check` wrote to the checkout journal"
+    );
+
+    // Preparing it is the supported step outside the route.
+    let prepared = fixture.run(&["run", "prepare"]);
+    assert!(prepared.status.success(), "{}", text(&prepared));
+    assert!(
+        String::from_utf8_lossy(&prepared.stdout).contains("prepared"),
+        "{}",
+        text(&prepared)
+    );
+    let checked = fixture.run(&["--json", "run", "prepare", "--check"]);
+    assert!(checked.status.success(), "{}", text(&checked));
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&checked.stdout).expect("prepare envelope");
+    assert_eq!(envelope["result"]["schema"], "effigy.run.prepare.v1");
+    assert_eq!(envelope["result"]["prepared"], false);
+    assert_eq!(envelope["result"]["ready"], true);
+
+    // The same strict run now works, and records its terminal row in the store
+    // the prepare step left prepared.
+    let strict = fixture
+        .effigy(&["heavy"])
+        .env("EFFIGY_ADMISSION_HOOK", &hook)
+        .env("EFFIGY_ADMISSION_PROTOCOL", "2")
+        .env("EFFIGY_STRICT_PERSISTENCE", "1")
+        .output_owned()
+        .expect("strict run");
+    assert!(strict.status.success(), "{}", text(&strict));
+    assert!(fixture.exists("ran.txt"), "the admitted workload ran");
+    let rows: i64 = rusqlite::Connection::open(&journal)
+        .expect("journal")
+        .query_row("SELECT count(*) FROM foreground_terminals", [], |row| {
+            row.get(0)
+        })
+        .expect("rows");
+    assert_eq!(rows, 1, "the strict run recorded no terminal row");
+}

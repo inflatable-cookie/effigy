@@ -1779,14 +1779,10 @@ fn store_open_states_and_enforces_the_side_file_bounds() {
     let state = root.path().to_path_buf();
     let wal = state.join(format!("{DB_NAME}-wal"));
     let mut store = Store::open(&cx, &root).unwrap();
-    assert_eq!(
-        store.sidecar_bounds().unwrap(),
-        SidecarBounds {
-            journal_size_limit: WAL_LIMIT_BYTES,
-            wal_autocheckpoint: WAL_AUTOCHECKPOINT_PAGES,
-            page_size: PAGE_SIZE,
-        }
-    );
+    let bounds = store.sidecar_bounds().unwrap();
+    assert_eq!(bounds.journal_size_limit, WAL_LIMIT_BYTES);
+    assert_eq!(bounds.wal_autocheckpoint, WAL_AUTOCHECKPOINT_PAGES);
+    assert_eq!(bounds.page_size, PAGE_SIZE);
     store
         .txn(&cx, |txn| {
             txn.resource(&task("bounded"), "task").map(|_| ())
@@ -1811,5 +1807,651 @@ fn store_open_states_and_enforces_the_side_file_bounds() {
             .verified()
             .is_some(),
         "the checkpoint lost the committed write"
+    );
+}
+/// One store file's bytes, or its absence: a rewrite that keeps the size is
+/// still visible to a comparison (effigy#981).
+fn store_file(root: &StateRoot, suffix: &str) -> Option<Vec<u8>> {
+    std::fs::read(root.path().join(format!("{DB_NAME}{suffix}"))).ok()
+}
+
+fn file_len(root: &StateRoot, suffix: &str) -> u64 {
+    std::fs::metadata(root.path().join(format!("{DB_NAME}{suffix}")))
+        .map(|meta| meta.len())
+        .unwrap_or(0)
+}
+
+/// A read-only count through SQLite, so a proof can see committed state without
+/// holding a writable handle of its own.
+fn store_count(root: &StateRoot, sql: &str, params: &[&dyn rusqlite::ToSql]) -> i64 {
+    let conn = rusqlite::Connection::open_with_flags(
+        root.path().join(DB_NAME),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .expect("read-only store");
+    conn.query_row(sql, params, |row| row.get(0))
+        .expect("query")
+}
+
+/// A strict run writes nothing to a store it would have to create, and its
+/// refusal names the step that prepares it (effigy#981).
+#[test]
+fn store_strict_open_refuses_a_store_it_would_have_to_create() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    assert!(!root.path().join(DB_NAME).exists());
+    let error = Store::open_strict(&cx, &root).expect_err("strict mode creates nothing");
+    assert!(matches!(error, StoreError::NotPrepared { .. }), "{error:?}");
+    assert!(
+        error.to_string().contains(PREPARE_COMMAND),
+        "the refusal names the step that prepares it: {error}"
+    );
+    assert!(
+        !root.path().join(DB_NAME).exists(),
+        "strict mode created the store it refused"
+    );
+    // The pre-admission check makes the same refusal, and writes nothing.
+    let error =
+        verify_prepared(&root, Duration::from_secs(5)).expect_err("nothing is prepared yet");
+    assert!(matches!(error, StoreError::NotPrepared { .. }), "{error:?}");
+    assert!(!root.path().join(DB_NAME).exists());
+    // The one command that exists to prepare it does so, and then a strict open
+    // and the pre-admission check both succeed.
+    drop(Store::open_preparing(&cx, &root).expect("prepare"));
+    drop(Store::open_strict(&cx, &root).expect("a prepared store opens strictly"));
+    assert_eq!(
+        verify_prepared(&root, Duration::from_secs(5))
+            .expect("prepared")
+            .schema_version,
+        SCHEMA_VERSION
+    );
+}
+
+/// Strict mode migrates nothing: a store an older build wrote is refused before
+/// it opens for writing, and neither the database nor its log changes
+/// (effigy#981).
+#[test]
+fn store_strict_open_refuses_an_unmigrated_store_and_writes_nothing() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    drop(Store::open(&cx, &root).expect("current store"));
+    // An older build's store is this file without the additive schema: the
+    // table and its index are what `Store::open` would create on the way in.
+    rusqlite::Connection::open(root.path().join(DB_NAME))
+        .expect("open")
+        .execute_batch("DROP INDEX foreground_terminals_closed; DROP TABLE foreground_terminals;")
+        .expect("downgrade");
+    let database = store_file(&root, "");
+    let log_bytes = file_len(&root, "-wal");
+
+    // The pre-admission check writes nothing at all: it opens a checkpointed
+    // store immutably, so not even the wal-index appears.
+    let error = verify_prepared(&root, Duration::from_secs(5))
+        .expect_err("the pre-admission check refuses it");
+    assert!(matches!(error, StoreError::NotPrepared { .. }), "{error:?}");
+    assert!(
+        error.to_string().contains("foreground_terminals"),
+        "the refusal names what is missing: {error}"
+    );
+    assert!(
+        store_file(&root, "") == database,
+        "the pre-admission check changed the database"
+    );
+    assert_eq!(
+        file_len(&root, "-wal"),
+        log_bytes,
+        "the pre-admission check changed the log"
+    );
+    assert_eq!(file_len(&root, "-shm"), 0, "it created a wal-index too");
+
+    // A strict writable open refuses too, and touches no page: only SQLite's own
+    // wal-index can appear, and it is bounded by one page.
+    let error = Store::open_strict(&cx, &root).expect_err("strict mode migrates nothing");
+    assert!(matches!(error, StoreError::NotPrepared { .. }), "{error:?}");
+    assert!(
+        store_file(&root, "") == database,
+        "a refused strict open changed the database"
+    );
+    assert_eq!(
+        file_len(&root, "-wal"),
+        log_bytes,
+        "a refused strict open appended to the log"
+    );
+    assert!(
+        file_len(&root, "-shm") <= WAL_INDEX_PAGE_BYTES,
+        "the refused open grew the wal-index past one page: {} bytes",
+        file_len(&root, "-shm")
+    );
+
+    // A non-strict open still performs the migration this build needs, and
+    // leaves the store prepared.
+    drop(Store::open(&cx, &root).expect("non-strict open migrates"));
+    verify_prepared(&root, Duration::from_secs(5)).expect("the plain open left it prepared");
+}
+
+/// A strict write never checkpoints: the main database is byte-identical after
+/// the last connection closes, both with a reader pinning the log and without
+/// one (effigy#981).
+#[test]
+fn store_strict_write_leaves_the_main_database_byte_identical() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    drop(Store::open(&cx, &root).expect("current store"));
+    let path = root.path().join(DB_NAME);
+    let before = std::fs::read(&path).expect("database bytes");
+
+    // No reader: this write is the log's last connection, which is exactly the
+    // close SQLite would otherwise checkpoint.
+    let mut store = Store::open_strict(&cx, &root).expect("strict store");
+    assert_eq!(
+        store.sidecar_bounds().expect("bounds").wal_autocheckpoint,
+        0,
+        "a strict connection disables SQLite's own checkpoint"
+    );
+    store
+        .txn(&cx, |txn| txn.resource(&task("strict"), "task").map(|_| ()))
+        .expect("write");
+    drop(store);
+    assert!(
+        std::fs::read(&path).expect("database bytes") == before,
+        "the last close carried the log back into the database"
+    );
+    assert!(
+        file_len(&root, "-wal") > 0,
+        "the strict write's frames are still in the log, unreset, for a non-strict writer"
+    );
+    assert_eq!(
+        store_count(&root, "SELECT count(*) FROM resources", &[]),
+        1,
+        "the strict write's own record is committed"
+    );
+
+    // A reader pinning an older snapshot: the same statement, and the same
+    // unchanged database.
+    let reader = rusqlite::Connection::open(&path).expect("pinned reader");
+    reader
+        .execute_batch("BEGIN; SELECT count(*) FROM meta;")
+        .expect("pin");
+    let before = std::fs::read(&path).expect("database bytes");
+    let mut store = Store::open_strict(&cx, &root).expect("strict store");
+    store
+        .txn(&cx, |txn| txn.resource(&task("pinned"), "task").map(|_| ()))
+        .expect("write");
+    drop(store);
+    assert!(
+        std::fs::read(&path).expect("database bytes") == before,
+        "a pinned log was still written back"
+    );
+    reader.execute_batch("COMMIT").expect("release");
+}
+
+/// The invocation's physical contribution stays at or under the stated maximum
+/// in every starting state, including writes that never commit (effigy#981).
+#[test]
+fn store_strict_wal_and_index_stay_within_their_stated_maximum() {
+    // A wal-index page is one two-byte hash slot per entry of its 8192-entry
+    // table plus one four-byte page number per frame, and its first page loses
+    // 34 slots to its 136-byte header. The route's own contribution is one page.
+    assert_eq!(WAL_INDEX_PAGE_BYTES, 8192 * 2 + WAL_INDEX_PAGE_FRAMES * 4);
+    assert_eq!(
+        WAL_INDEX_PAGE_FRAMES - WAL_INDEX_FIRST_PAGE_FRAMES,
+        136 / 4,
+        "the first wal-index page's header costs its own frame slots"
+    );
+    // The maximum is arithmetic over the format and the source: three trees,
+    // five levels each, nine balance pages plus 271 pointer-map entry pages per
+    // level, plus page 1, the freelist trunk and the freelist header; and one
+    // 32-byte log header plus one 24-byte frame header before each page.
+    let trees = effigy_kernel::run::TERMINAL_STRICT_INSERT_TREES;
+    let levels = effigy_kernel::run::TERMINAL_STRICT_TREE_LEVELS_MAX;
+    let balance = effigy_kernel::run::TERMINAL_STRICT_BALANCE_PAGES_MAX;
+    let ptrmap = effigy_kernel::run::TERMINAL_STRICT_PTRMAP_PAGES_MAX;
+    let pages = effigy_kernel::run::TERMINAL_STRICT_WRITE_MAX_PAGES;
+    assert_eq!((trees, levels, balance, ptrmap), (3, 5, 9, 321));
+    assert_eq!(
+        pages,
+        trees * levels * balance
+            + effigy_kernel::run::TERMINAL_STRICT_DEEPER_PAGES_MAX
+            + ptrmap
+            + 3
+    );
+    assert_eq!(
+        effigy_kernel::run::TERMINAL_STRICT_WAL_MAX_BYTES,
+        WAL_HEADER_BYTES + u64::from(pages) * (PAGE_SIZE + WAL_FRAME_HEADER_BYTES)
+    );
+    assert_eq!(
+        effigy_kernel::run::TERMINAL_STRICT_SHM_MAX_BYTES,
+        WAL_INDEX_PAGE_BYTES,
+        "the frames fit inside the first wal-index page"
+    );
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    drop(Store::open(&cx, &root).expect("current store"));
+    // A reader holds the log's end, so nothing resets it under the counters.
+    let reader = rusqlite::Connection::open(root.path().join(DB_NAME)).expect("reader");
+    reader
+        .execute_batch("BEGIN; SELECT count(*) FROM meta;")
+        .expect("pin");
+
+    let mut appended = 0_u64;
+    for (name, mode) in [
+        ("committed", "commit"),
+        ("failed", "error-after-write"),
+        ("abandoned", "error-before-write"),
+    ] {
+        let log = file_len(&root, "-wal");
+        let index = file_len(&root, "-shm");
+        let before = store_count(&root, "SELECT count(*) FROM resources", &[]);
+        let mut store = Store::open_strict(&cx, &root).expect("strict store");
+        let outcome = store.txn(&cx, |txn| {
+            match mode {
+                // A write that fails after its statements dirtied pages, and a
+                // caller that gives up on one, both roll back and leave the
+                // frames their statements appended: the same bound covers every
+                // shape this route can produce.
+                "error-after-write" => {
+                    txn.resource(&task(name), "task")?;
+                    Err(StoreError::Broken("a statement failed".into()))
+                }
+                "error-before-write" => {
+                    Err(StoreError::Broken("the caller changed its mind".into()))
+                }
+                _ => txn.resource(&task(name), "task").map(|_| ()),
+            }
+        });
+        if mode == "commit" {
+            outcome.expect("commit");
+        } else {
+            outcome.expect_err("the write did not commit");
+        }
+        drop(store);
+        let grew = file_len(&root, "-wal").saturating_sub(log);
+        let index_grew = file_len(&root, "-shm").saturating_sub(index);
+        appended = appended.max(grew);
+        assert!(
+            grew <= effigy_kernel::run::TERMINAL_STRICT_WAL_MAX_BYTES,
+            "the {name} write appended {grew} bytes of log, over the {} maximum",
+            effigy_kernel::run::TERMINAL_STRICT_WAL_MAX_BYTES
+        );
+        assert!(
+            index_grew <= WAL_INDEX_PAGE_BYTES,
+            "the {name} write grew the wal-index by {index_grew} bytes, over one page"
+        );
+        let after = store_count(&root, "SELECT count(*) FROM resources", &[]);
+        if mode == "commit" {
+            assert_eq!(after, before + 1, "the committed write recorded no row");
+        } else {
+            assert_eq!(
+                after, before,
+                "the {name} write committed a row it should have rolled back"
+            );
+        }
+    }
+    assert!(appended > 0, "no write appended a frame");
+    reader.execute_batch("COMMIT").expect("release");
+}
+
+/// The switch reads exactly `1`, so an unset, empty or misspelled value keeps
+/// the byte-identical non-strict behaviour (effigy#981).
+#[test]
+fn store_strict_persistence_switch_is_opt_in_and_exact() {
+    use std::ffi::OsStr;
+    assert!(strict_persistence_value(Some(OsStr::new("1"))));
+    for value in ["", "0", "true", "yes", "2", " 1"] {
+        assert!(
+            !strict_persistence_value(Some(OsStr::new(value))),
+            "`{value}` enabled strict persistence"
+        );
+    }
+    assert!(!strict_persistence_value(None));
+}
+
+/// With the switch off, the store still creates, migrates, prunes and resets its
+/// log: strict persistence changes nothing for every other run (effigy#981).
+#[test]
+fn store_nonstrict_open_keeps_creating_migrating_pruning_and_resetting() {
+    assert!(!strict_persistence(), "the test environment is not strict");
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    let mut store = Store::open(&cx, &root).expect("create");
+    assert_eq!(
+        store.sidecar_bounds().expect("bounds").wal_autocheckpoint,
+        WAL_AUTOCHECKPOINT_PAGES,
+        "a non-strict connection keeps SQLite's own checkpoint"
+    );
+    store
+        .txn(&cx, |txn| txn.resource(&task("plain"), "task").map(|_| ()))
+        .expect("write");
+    drop(store);
+    assert_eq!(file_len(&root, "-wal"), 0, "the close reset the log");
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as i64)
+        .unwrap_or_default();
+    // An expired row through the typed writer, so the later non-strict write has
+    // something its bounded prune must remove.
+    effigy_kernel::run::record_terminal(
+        &cx,
+        &root,
+        &effigy_kernel::run::TerminalRecord {
+            run_id: "expired-strict".into(),
+            checkout: checkout().text(),
+            boot: "20a888e4-10fc-4798-a139-fe8e08758c34".into(),
+            task: "task".into(),
+            outcome: "succeeded".into(),
+            exit_code: Some(0),
+            signal: None,
+            cleanup: "complete".into(),
+            workload_groups: 0,
+            closed_at_ms: now - effigy_kernel::run::TERMINAL_RECORD_KEEP_MS - 1000,
+        },
+    )
+    .expect("expired row");
+    effigy_kernel::run::record_terminal(
+        &cx,
+        &root,
+        &effigy_kernel::run::TerminalRecord {
+            run_id: "live".into(),
+            checkout: checkout().text(),
+            boot: "20a888e4-10fc-4798-a139-fe8e08758c34".into(),
+            task: "task".into(),
+            outcome: "succeeded".into(),
+            exit_code: Some(0),
+            signal: None,
+            cleanup: "complete".into(),
+            workload_groups: 0,
+            closed_at_ms: now,
+        },
+    )
+    .expect("terminal row");
+    assert_eq!(
+        store_count(
+            &root,
+            "SELECT count(*) FROM foreground_terminals WHERE run_id='expired-strict'",
+            &[]
+        ),
+        0,
+        "a non-strict write no longer prunes expired rows"
+    );
+
+    // And a downgraded store is migrated by a plain open.
+    rusqlite::Connection::open(root.path().join(DB_NAME))
+        .expect("open")
+        .execute_batch("DROP INDEX foreground_terminals_closed; DROP TABLE foreground_terminals;")
+        .expect("downgrade");
+    drop(Store::open(&cx, &root).expect("migrate"));
+    assert_eq!(
+        store_count(
+            &root,
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='foreground_terminals'",
+            &[]
+        ),
+        1,
+        "a non-strict open no longer migrates an older store"
+    );
+}
+
+/// Strict mode refuses a store whose log needs recovery rather than rebuilding
+/// it inside the run (effigy#981).
+#[test]
+fn store_strict_refuses_a_log_that_needs_recovery() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    // A store written without a checkpoint: its log holds frames. SQLite leaves
+    // the wal-index beside them, so a crashed or externally cleaned checkout is
+    // modelled by removing it: the next open would rebuild it.
+    drop(Store::open(&cx, &root).expect("current store"));
+    let path = root.path().join(DB_NAME);
+    {
+        let writer = rusqlite::Connection::open(&path).expect("writer");
+        writer.busy_timeout(Duration::from_secs(30)).unwrap();
+        writer
+            .execute_batch(
+                "PRAGMA wal_autocheckpoint=0; PRAGMA journal_size_limit=-1; \
+                 INSERT INTO meta(key, value) VALUES ('strict', 'x');",
+            )
+            .expect("write");
+        let _ = writer.set_db_config(
+            rusqlite::config::DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE,
+            true,
+        );
+    }
+    assert!(
+        file_len(&root, "-wal") > WAL_HEADER_BYTES,
+        "the log holds frames"
+    );
+    // A crashed or externally cleaned checkout can leave the log without the
+    // index beside it, which the next open would rebuild before reading.
+    std::fs::remove_file(root.path().join(format!("{DB_NAME}-shm"))).expect("drop the index");
+    // The recovery state itself is what a refusal must leave untouched.
+    let database = store_file(&root, "");
+    let log = store_file(&root, "-wal");
+    let index = store_file(&root, "-shm");
+
+    let error = Store::open_strict(&cx, &root).expect_err("recovery is refused");
+    assert!(matches!(error, StoreError::NotPrepared { .. }), "{error:?}");
+    assert!(
+        error.to_string().contains("wal-index"),
+        "the refusal names the missing index: {error}"
+    );
+    assert!(
+        store_file(&root, "") == database && store_file(&root, "-wal") == log,
+        "a refused strict open rewrote the recovery state it refused"
+    );
+    assert!(
+        store_file(&root, "-shm") == index,
+        "a refused strict open created or changed the wal-index"
+    );
+    let error = verify_prepared(&root, Duration::from_secs(5))
+        .expect_err("the pre-admission check refuses it too");
+    assert!(matches!(error, StoreError::NotPrepared { .. }), "{error:?}");
+    assert!(
+        store_file(&root, "") == database
+            && store_file(&root, "-wal") == log
+            && store_file(&root, "-shm") == index,
+        "the pre-admission refusal wrote to the store it refused"
+    );
+
+    // The remedy settles the log, and the same store then opens strictly.
+    drop(Store::open_preparing(&cx, &root).expect("prepare"));
+    assert_eq!(file_len(&root, "-wal"), 0, "prepare reset the log");
+    drop(Store::open_strict(&cx, &root).expect("a settled store opens strictly"));
+}
+
+/// Strict mode refuses a torn log, which a crashed writer leaves mid-frame
+/// (effigy#981).
+#[test]
+fn store_strict_refuses_a_torn_log() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    drop(Store::open(&cx, &root).expect("current store"));
+    let path = root.path().join(DB_NAME);
+    {
+        let writer = rusqlite::Connection::open(&path).expect("writer");
+        writer
+            .execute_batch(
+                "PRAGMA wal_autocheckpoint=0; PRAGMA journal_size_limit=-1; \
+                 INSERT INTO meta(key, value) VALUES ('torn', 'x');",
+            )
+            .expect("write");
+        let _ = writer.set_db_config(
+            rusqlite::config::DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE,
+            true,
+        );
+    }
+    let index = root.path().join(format!("{DB_NAME}-shm"));
+    std::fs::File::create(&index).expect("an index beside the log");
+    let wal = root.path().join(format!("{DB_NAME}-wal"));
+    let size = file_len(&root, "-wal");
+    assert!(size > WAL_HEADER_BYTES);
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&wal)
+        .expect("wal");
+    file.set_len(size - 1).expect("torn last frame");
+    drop(file);
+
+    let error = Store::open_strict(&cx, &root).expect_err("a torn log is refused");
+    assert!(matches!(error, StoreError::NotPrepared { .. }), "{error:?}");
+    assert!(
+        error.to_string().contains("not a whole number of"),
+        "the refusal names the torn frame: {error}"
+    );
+}
+
+/// A strict handle does no maintenance and a strict pass deletes nothing, so
+/// no durable-path maintenance can checkpoint or prune inside the run
+/// (effigy#981).
+#[test]
+fn store_strict_maintenance_and_retention_write_nothing() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    drop(Store::open(&cx, &root).expect("current store"));
+    let database = store_file(&root, "");
+    let log = file_len(&root, "-wal");
+
+    let mut store = Store::open_strict(&cx, &root).expect("strict store");
+    let error = store.maintain(&cx, 16).expect_err("maintenance is refused");
+    assert!(
+        error
+            .to_string()
+            .contains("strict persistence forbids store maintenance"),
+        "{error}"
+    );
+    let report = effigy_kernel::retention::retain(
+        &cx,
+        &root,
+        &mut store,
+        effigy_kernel::retention::RetentionBudget { max_removals: 16 },
+    )
+    .expect("a strict retention pass is a no-op");
+    assert!(report.skipped, "a strict pass must skip its deletions");
+    drop(store);
+    assert!(
+        store_file(&root, "") == database,
+        "strict maintenance changed the database"
+    );
+    assert_eq!(
+        file_len(&root, "-wal"),
+        log,
+        "strict maintenance wrote the log"
+    );
+
+    // The explicit repair moves the store, which strict persistence refuses.
+    std::env::set_var(effigy_kernel::store::STRICT_PERSISTENCE_ENV, "1");
+    let error = Store::repair(&cx, &root).expect_err("the repair is refused");
+    assert!(
+        error.to_string().contains("forbids the explicit repair"),
+        "{error}"
+    );
+    std::env::remove_var(effigy_kernel::store::STRICT_PERSISTENCE_ENV);
+    assert!(
+        root.path().join(DB_NAME).exists(),
+        "a refused repair moved the store"
+    );
+}
+
+/// A strict handle observes its log without checkpointing it (effigy#981).
+#[test]
+fn store_strict_wal_frames_observes_without_a_checkpoint() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    drop(Store::open(&cx, &root).expect("current store"));
+    let database = store_file(&root, "");
+    let mut store = Store::open_strict(&cx, &root).expect("strict store");
+    store
+        .txn(&cx, |txn| txn.resource(&task("frames"), "task").map(|_| ()))
+        .expect("write");
+    let log = file_len(&root, "-wal");
+    assert!(log > WAL_HEADER_BYTES, "the write left frames in the log");
+    // The observation itself must not move a frame into the database: a
+    // passive checkpoint on a strict handle would.
+    let frames = store.wal_frames().expect("frames");
+    assert!(frames > 0, "the log holds frames");
+    drop(store);
+    assert!(
+        store_file(&root, "") == database,
+        "observing the log checkpointed it into the database"
+    );
+    assert_eq!(
+        file_len(&root, "-wal"),
+        log,
+        "observing the log changed its length"
+    );
+}
+
+/// A strict run refuses a store whose index keys are longer than the frame
+/// maximum is derived for, rather than writing under a bound that does not hold
+/// for that store (effigy#981).
+#[test]
+fn store_strict_refuses_a_terminal_key_over_the_index_bound() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    drop(Store::open(&cx, &root).expect("current store"));
+    // A row an older build wrote, with a key this build's index bound does not
+    // describe. Written straight into the journal, as such a row would be.
+    rusqlite::Connection::open(root.path().join(DB_NAME))
+        .expect("open")
+        .execute_batch(&format!(
+            "INSERT INTO foreground_terminals \
+             (run_id, checkout, boot, task, outcome, exit_code, signal, cleanup, \
+              workload_groups, closed_at) \
+             VALUES ('{}', 'checkout', 'boot', 'task', 'succeeded', 0, NULL, 'complete', 0, 0)",
+            "k".repeat(effigy_kernel::run::TERMINAL_RUN_ID_MAX + 1)
+        ))
+        .expect("long key");
+
+    let error = verify_prepared(&root, Duration::from_secs(5))
+        .expect_err("the pre-admission check refuses it");
+    assert!(
+        matches!(error, StoreError::NotAccountable { .. }),
+        "{error:?}"
+    );
+    assert!(
+        error.to_string().contains("run id") && error.to_string().contains("does not clear"),
+        "the refusal names the oversized key and the remedy that can clear it: {error}"
+    );
+    let error = Store::open_strict(&cx, &root).expect_err("a strict open refuses it too");
+    assert!(
+        matches!(error, StoreError::NotAccountable { .. }),
+        "{error:?}"
+    );
+    // The advertised remedy must be honest: `effigy run prepare` opens the
+    // store without strict persistence, so it succeeds and clears nothing — the
+    // refusal stands, and the message says so.
+    drop(Store::open_preparing(&cx, &root).expect("prepare opens the store"));
+    let error = verify_prepared(&root, Duration::from_secs(5))
+        .expect_err("prepare does not clear an unaccountable record");
+    assert!(
+        matches!(error, StoreError::NotAccountable { .. }),
+        "{error:?}"
+    );
+}
+
+/// A strict connection holds the page cache the frame maximum is derived for,
+/// so the terminal write cannot spill and append a page twice (effigy#981).
+#[test]
+fn store_strict_holds_the_page_cache_its_maximum_needs() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    let store = Store::open_preparing(&cx, &root).expect("prepare");
+    drop(store);
+    let store = Store::open_strict(&cx, &root).expect("strict store");
+    let cache = store.sidecar_bounds().expect("bounds").page_cache_kib;
+    assert_eq!(
+        cache, -STRICT_CACHE_KIB,
+        "a strict connection keeps the cache its one-frame-per-page premise needs"
     );
 }

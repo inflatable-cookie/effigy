@@ -74,6 +74,8 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 const ACK_TIMEOUT: Duration = Duration::from_secs(10);
 const GRACE: Duration = Duration::from_secs(3);
 const POLL: Duration = Duration::from_millis(20);
+/// How long a pre-admission strict-persistence check waits for the store.
+const STRICT_PREPARE_WAIT: Duration = Duration::from_secs(30);
 /// The decision line is short; a hook that writes more is malformed.
 const DECISION_MAX: usize = 4096;
 /// Ack lines are short too, and a hook that floods stdout is malformed.
@@ -115,6 +117,42 @@ impl Plan {
     pub(super) fn needs_custody(&self) -> bool {
         matches!(self, Self::Hook { .. })
     }
+
+    /// Whether this plan ends in a v2 terminal journal row, which is the one
+    /// durable write a plain foreground admission makes (effigy#981).
+    fn writes_terminal_record(&self) -> Result<bool, RunnerError> {
+        match self {
+            Self::Hook { .. } => {
+                Ok(protocol().map_err(RunnerError::task_invocation)? == Protocol::V2)
+            }
+            _ => Ok(false),
+        }
+    }
+}
+
+/// Strict persistence: a run that will write a terminal journal row refuses
+/// **before admission** when the checkout journal is not already prepared
+/// (effigy#981).
+///
+/// Nothing this run would have to prepare — a missing store, a schema
+/// migration or backfill, a journal-mode conversion, a recovery — is a write
+/// this invocation may own, so it is refused here rather than performed inside
+/// the route. `effigy run prepare` prepares the store outside the strict run.
+pub(super) fn require_strict_store(
+    plan: &Plan,
+    root: &effigy_kernel::root::StateRoot,
+) -> Result<(), RunnerError> {
+    if !effigy_kernel::store::strict_persistence() || !plan.writes_terminal_record()? {
+        return Ok(());
+    }
+    effigy_kernel::store::verify_prepared(root, STRICT_PREPARE_WAIT)
+        .map(|_| ())
+        .map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "this run has not started: {error} ({})",
+                effigy_kernel::store::STRICT_PERSISTENCE_ENV
+            ))
+        })
 }
 
 /// Decides admission before the run begins; a malformed timeout refuses.
