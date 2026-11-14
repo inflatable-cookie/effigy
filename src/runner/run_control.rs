@@ -236,10 +236,19 @@ fn status(checkout: &Path, selector: &str, json: bool) -> Result<String, RunnerE
         }
     }
     if record.view.state == "interrupted" {
-        lines.push(format!(
-            "next     effigy {}  (or `effigy run stop {}` to settle it now)",
-            record.task, record.view.run_id
-        ));
+        if record.foreground() {
+            // A foreground run has no replay: its surviving sentinel settles it
+            // and records what it can prove (effigy#986).
+            lines.push(format!(
+                "next     effigy run stop {}  (settle through the run's sentinel; its owner is gone)",
+                record.view.run_id
+            ));
+        } else {
+            lines.push(format!(
+                "next     effigy {}  (or `effigy run stop {}` to settle it now)",
+                record.task, record.view.run_id
+            ));
+        }
     }
     Ok(lines.join("\n"))
 }
@@ -328,36 +337,101 @@ fn stop(
 }
 
 fn stop_foreground(record: &RunRecord, wait: Duration, json: bool) -> Result<String, RunnerError> {
-    if !signal_owner(record) {
+    // The only foreground signal target is a freshly verified live owner.
+    if record.view.state == "running" {
+        if !signal_owner(record) {
+            return Err(unknown(
+                &record.id.to_string(),
+                "foreground owner is no longer verified; no signal was sent",
+            ));
+        }
+        let started = Instant::now();
+        while !record.foreground_released() {
+            if started.elapsed() >= wait {
+                return Err(unknown(
+                    &record.id.to_string(),
+                    "the verified foreground owner was signalled but custody has not released its \
+                     gate",
+                ));
+            }
+            std::thread::sleep(RUN_POLL);
+        }
+        if json {
+            let mut run = run_json(record);
+            run["state"] = "not-recorded".into();
+            run["pid"] = serde_json::Value::Null;
+            return Ok(serde_json::json!({
+                "schema": RUN_SCHEMA, "schema_version": 1,
+                "run": run, "stop": "signalled-owner", "custody": "released",
+                "outcome": "not-recorded",
+            })
+            .to_string());
+        }
+        return Ok(format!(
+            "run {}: owner signalled, custody released; outcome not recorded (foreground)",
+            record.id
+        ));
+    }
+    if record.view.state != "interrupted" {
+        // Nothing was verified about the owner, so nothing may be signalled and
+        // no settlement can be claimed.
         return Err(unknown(
             &record.id.to_string(),
             "foreground owner is no longer verified; no signal was sent",
         ));
     }
+    // The recorded owner is verifiably gone: there is no owner to signal. The
+    // run's own memory sentinel settles it, and this command waits for that
+    // settlement and reports the record it wrote — never a signal, never an
+    // inferred success (effigy#986).
     let started = Instant::now();
     while !record.foreground_released() {
         if started.elapsed() >= wait {
             return Err(unknown(
                 &record.id.to_string(),
-                "the verified foreground owner was signalled but custody has not released its gate",
+                "the run's owner is gone and its sentinel has not released custody; no signal was \
+                 sent",
             ));
         }
         std::thread::sleep(RUN_POLL);
     }
+    let settled = loop {
+        match record.refresh() {
+            Lookup::Found(now) if now.is_terminal_record() => break Some(*now),
+            _ => {}
+        }
+        if started.elapsed() >= wait {
+            break None;
+        }
+        std::thread::sleep(RUN_POLL);
+    };
+    let Some(settled) = settled else {
+        if json {
+            return Ok(serde_json::json!({
+                "schema": RUN_SCHEMA, "schema_version": 1,
+                "run": run_json(record), "stop": "settled-by-sentinel",
+                "custody": "released", "settlement": "not-recorded",
+            })
+            .to_string());
+        }
+        return Ok(format!(
+            "run {}: custody released by its sentinel; no outcome was recorded",
+            record.id
+        ));
+    };
     if json {
-        let mut run = run_json(record);
-        run["state"] = "not-recorded".into();
-        run["pid"] = serde_json::Value::Null;
         return Ok(serde_json::json!({
             "schema": RUN_SCHEMA, "schema_version": 1,
-            "run": run, "stop": "signalled-owner", "custody": "released",
-            "outcome": "not-recorded",
+            "run": run_json(&settled), "stop": "settled-by-sentinel",
+            "custody": "released", "settlement": "recorded",
         })
         .to_string());
     }
     Ok(format!(
-        "run {}: owner signalled, custody released; outcome not recorded (foreground)",
-        record.id
+        "run {} settled by its sentinel: {} (cleanup {})",
+        settled.view.run_id,
+        settled.view.state,
+        settled.view.cleanup.unwrap_or("unknown")
     ))
 }
 

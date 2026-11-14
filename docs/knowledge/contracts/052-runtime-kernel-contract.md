@@ -274,6 +274,14 @@ descriptor type and access before adopting it, and group anchors receive no
 pin. A durable run with no memory guard keeps its checkout custody backup in
 the same way.
 
+A guard also observes the owner it recorded, by boot and start identity rather
+than by PID (effigy#986). When that owner is verifiably gone — no process holds
+the pid, or another process has taken it — nobody is left to settle or report
+the run, so the wait ends and the guard takes the settlement over rather than
+holding the lock forever. It settles its registered effects, records the run's
+honest outcome (below), and only then closes its gate descriptions. An
+observation it cannot verify is never proof of death, so custody stays held.
+
 Bound checkout admission takes the checkout's one gate spelling: the digest of
 its canonical path. A run's persisted-token scope and that spelling are the same
 lock, so a token-free foreground invocation and a token-carrying durable run of
@@ -362,8 +370,16 @@ reclaim, recover or settle from it. `run status <id>` reports it with
 retained log and `run stop` refuses. The only closure Effigy asserts from it is
 a terminal result with `cleanup: "complete"` (R5/I-R7). A run whose custodians
 all died before settle writes nothing and stays `not-recorded`; there is no
-replay. Every other foreground run keeps Q-010 unchanged, including no journal
-write at all. The provider-side release rule this evidence supports is
+replay.
+
+One writer is not the admission hook. A foreground run whose *owner* died while
+its memory guard survived is settled by that guard, which writes one such row
+itself (effigy#986). The row says only what the guard can still prove:
+`interrupted` with `cleanup: "complete"` when the run's custody closed, and
+`unknown` with `cleanup: "incomplete"` when a pin or registered effect did not.
+It never says `succeeded`, and it carries no identity either, so the owner's
+death grants no signal, reclaim or replay. Every other foreground run keeps
+Q-010 unchanged, including no journal write at all. The provider-side release rule this evidence supports is
 contract 049's, and it is not an Effigy authority.
 
 **Views and fencing.** Foreground runs have random `RunId`s and an in-memory
@@ -376,8 +392,14 @@ the current checkout's journal and verified live gate diagnostics; after the
 foreground run exits it says `not recorded (foreground or expired)`, never
 `succeeded` or `interrupted` from stale bytes. Discovered survivors are residue
 observations, not reconstructed journal entries. `run logs` has no foreground
-history; `run stop` may signal only a freshly verified live owner via
-`Gate::signal_holder`, otherwise refuses with the residue diagnostic. Repeated
+history. A held gate whose recorded owner is verifiably gone is not a live
+owner: `run status` reports it as `interrupted` and names `effigy run stop
+<run>`, which signals nothing, waits for that run's own guard to settle it and
+reports the row the guard wrote. `run stop` may signal only a freshly verified
+live owner via `Gate::signal_holder`; an owner whose identity cannot be
+verified is still refused with the residue diagnostic and nothing is signalled.
+A new invocation that meets such a held gate names the gone owner and its
+settlement instead of reporting a dead PID as running. Repeated
 id or task spelling never attaches to a vanished foreground run. Use
 `--run-id` when durable status, logs, idempotency or recovery is required.
 

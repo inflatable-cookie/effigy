@@ -1226,3 +1226,205 @@ fn an_unknown_follow_maps_to_the_existing_unknown_envelope() {
     assert_eq!(envelope["state"], "unknown");
     assert_eq!(envelope["reason"], "the store was busy");
 }
+
+/// A foreground run whose recorded owner is verifiably gone is the state a
+/// killed foreground command leaves behind: its sentinel still holds the gate
+/// while it settles the run (effigy#986). `run status` must name that
+/// settlement, `run stop` must signal nothing and report the record the
+/// sentinel wrote, and the next invocation must not be told that a dead pid is
+/// "already running".
+#[test]
+fn a_foreground_run_whose_owner_is_gone_offers_its_supported_settlement() {
+    let directory = tempfile::tempdir().expect("checkout");
+    let target = target(directory.path(), "owner-gone");
+    let request = || TaskRunRequest {
+        target: &target,
+        lock_wait_ms: 0,
+        custody: false,
+        scratch: false,
+        managed_run_token: None,
+        args: &[],
+        key: None,
+        admission: None,
+        workspace_admission: None,
+        cwd: None,
+    };
+    let memory = TaskRun::begin_foreground(request()).expect("foreground admitted");
+    let id = memory.id();
+    // Rewrite exactly the holder diagnostics the kernel wrote, so the recorded
+    // owner is a process that provably does not exist. The gate itself is still
+    // the run's own: this is a sentinel that outlived its owner, not a free
+    // lock, and nothing may be signalled from the bytes.
+    rewrite_holder_as_gone(directory.path(), id);
+
+    let record = found(directory.path(), id).expect("the held run is readable");
+    assert_eq!(record.view.state, "interrupted");
+    assert_eq!(record.view.pid, None);
+    let text = status(directory.path(), &id.to_string(), false).expect("status");
+    assert!(
+        text.contains(&format!("next     effigy run stop {id}")),
+        "{text}"
+    );
+    assert!(text.contains("state    interrupted"), "{text}");
+    let json = status(directory.path(), &id.to_string(), true).expect("json status");
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed["run"]["state"], "interrupted");
+    assert_eq!(parsed["run"]["pid"], serde_json::Value::Null);
+
+    // The settlement the sentinel records: custody never closed, so it is
+    // `unknown` with `cleanup: incomplete` — never a success.
+    write_settled_record(directory.path(), id, "unknown", "incomplete");
+
+    let root = directory.path().to_path_buf();
+    let selector = id.to_string();
+    let stopping =
+        std::thread::spawn(move || stop(&root, &selector, Duration::from_secs(20), false));
+    // The sentinel releases the gate only after the owner is gone; this test's
+    // foreground run is that owner-side custodian.
+    std::thread::sleep(Duration::from_millis(200));
+    let warnings = memory.close(effigy_kernel::outcome::WorkloadOutcome::Interrupted);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let text = stopping.join().expect("stop thread").expect("stop settles");
+    assert!(
+        text.contains("settled by its sentinel: unknown (cleanup incomplete)"),
+        "{text}"
+    );
+}
+
+/// A new invocation against that same held gate names the gone owner and its
+/// supported settlement instead of reporting a dead pid as running.
+#[test]
+fn a_held_foreground_run_with_a_gone_owner_is_not_reported_as_running() {
+    let directory = tempfile::tempdir().expect("checkout");
+    let target = target(directory.path(), "owner-gone-admission");
+    let memory = TaskRun::begin_foreground(TaskRunRequest {
+        target: &target,
+        lock_wait_ms: 0,
+        custody: false,
+        scratch: false,
+        managed_run_token: None,
+        args: &[],
+        key: None,
+        admission: None,
+        workspace_admission: None,
+        cwd: None,
+    })
+    .expect("foreground admitted");
+    let id = memory.id();
+    rewrite_holder_as_gone(directory.path(), id);
+    let error = TaskRun::begin(TaskRunRequest {
+        target: &target,
+        lock_wait_ms: 0,
+        custody: true,
+        scratch: false,
+        managed_run_token: None,
+        args: &[],
+        key: None,
+        admission: None,
+        workspace_admission: None,
+        cwd: None,
+    })
+    .expect_err("a held gate refuses the second invocation");
+    let crate::runner::error::RunnerError::TaskLockConflict(details) = &error else {
+        panic!("expected a lock conflict, got {error:?}");
+    };
+    let remediation = &details.remediation;
+    assert!(
+        remediation.contains("foreground run whose owner is gone"),
+        "{remediation}"
+    );
+    assert!(!remediation.contains("is already running"), "{remediation}");
+    assert!(
+        remediation.contains(&format!("settle it with `effigy run stop {id}`")),
+        "{remediation}"
+    );
+    assert!(
+        remediation.contains(&format!("`effigy run status {id}`")),
+        "{remediation}"
+    );
+    let warnings = memory.close(effigy_kernel::outcome::WorkloadOutcome::Interrupted);
+    assert!(warnings.is_empty(), "{warnings:?}");
+}
+
+/// Replace the one held gate body this fixture's run wrote with the same body
+/// naming a process that cannot exist. The writer's own shape is preserved.
+fn rewrite_holder_as_gone(checkout: &Path, run: RunId) {
+    let path = held_gate_path(checkout, run);
+    let body = std::fs::read_to_string(&path).expect("gate body");
+    let mut value: serde_json::Value = serde_json::from_str(&body).expect("gate body json");
+    assert_eq!(value["run"], run.to_string());
+    // Beyond every platform's pid range: the identity observation is a proven
+    // absence, never a numeric guess.
+    value["pid"] = serde_json::json!(i32::MAX as u32 - 1);
+    std::fs::write(&path, serde_json::to_vec(&value).unwrap()).expect("rewritten gate body");
+}
+
+/// The exact `.gate` inode whose body records `run`, found inside this
+/// fixture's own state directory.
+fn held_gate_path(checkout: &Path, run: RunId) -> PathBuf {
+    let gates = checkout.join(".effigy/state/gates");
+    let mut found = Vec::new();
+    for scope in std::fs::read_dir(&gates).expect("gate scopes") {
+        let scope = scope.expect("gate scope entry").path();
+        if !scope.is_dir() {
+            continue;
+        }
+        for gate in std::fs::read_dir(&scope).expect("gate entries") {
+            let gate = gate.expect("gate entry").path();
+            if gate.extension().and_then(|ext| ext.to_str()) != Some("gate") {
+                continue;
+            }
+            let body = std::fs::read_to_string(&gate).unwrap_or_default();
+            if serde_json::from_str::<serde_json::Value>(&body)
+                .ok()
+                .is_some_and(|value| value["run"] == run.to_string())
+            {
+                found.push(gate);
+            }
+        }
+    }
+    assert_eq!(found.len(), 1, "exactly one gate names this run: {found:?}");
+    found.remove(0)
+}
+
+/// What a settling foreground sentinel records for a run it settled.
+fn write_settled_record(checkout: &Path, run: RunId, outcome: &str, cleanup: &str) {
+    let cx = effect_context(OpenReason::Shell);
+    let root = checkout_effects_root(checkout).expect("checkout journal");
+    let checkout_id = checkout_identity(checkout, run);
+    effigy_kernel::run::record_terminal(
+        &cx,
+        root,
+        &effigy_kernel::run::TerminalRecord {
+            run_id: run.to_string(),
+            checkout: checkout_id,
+            boot: effigy_kernel::ident::boot_identity()
+                .verified()
+                .cloned()
+                .expect("boot identity")
+                .as_str()
+                .to_owned(),
+            task: "owner-gone".into(),
+            outcome: outcome.to_owned(),
+            exit_code: None,
+            signal: None,
+            cleanup: cleanup.to_owned(),
+            workload_groups: 1,
+            closed_at_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |elapsed| elapsed.as_millis() as i64),
+        },
+    )
+    .expect("the settling record is written");
+}
+
+/// The checkout the run's own gate body names: the identity its owner used.
+fn checkout_identity(checkout: &Path, run: RunId) -> String {
+    let body = std::fs::read_to_string(held_gate_path(checkout, run)).expect("gate body");
+    let value: serde_json::Value = serde_json::from_str(&body).expect("gate body json");
+    serde_json::from_value::<effigy_kernel::id::CheckoutId>(
+        value["foreground"]["owner"]["scope"]["Checkout"].clone(),
+    )
+    .expect("the gate body names the owning checkout")
+    .text()
+}

@@ -157,49 +157,81 @@ pub(in crate::runner) fn task_status(target: &TaskTarget, limit: usize) -> TaskS
         view.warnings
             .push("conflicting foreground gate bindings".into());
     } else if let Some((run, row)) = live.into_iter().next() {
-        let verified = matches!(
-            row.holder.state,
+        let owner = match &row.holder.state {
             Observed::Verified(
                 effigy_kernel::ident::ProcessState::Active
-                    | effigy_kernel::ident::ProcessState::Stopped,
-                _
-            )
-        );
-        view.state = if verified {
-            TaskState::Running
-        } else {
-            TaskState::Unknown
+                | effigy_kernel::ident::ProcessState::Stopped,
+                _,
+            ) => OwnerEvidence::Live,
+            Observed::Absent(_) => OwnerEvidence::Gone,
+            _ => OwnerEvidence::Unverified,
         };
-        if !verified {
-            view.warnings.push("foreground gate remains held but its invoking owner is unavailable; cleanup or residue cannot be reconstructed".into());
+        view.state = match owner {
+            OwnerEvidence::Live => TaskState::Running,
+            OwnerEvidence::Gone => TaskState::Interrupted,
+            OwnerEvidence::Unverified => TaskState::Unknown,
+        };
+        match owner {
+            OwnerEvidence::Live => {}
+            OwnerEvidence::Gone => {
+                view.warnings.push(
+                    "the run's owner is verifiably gone; its sentinel still holds the gate while it \
+                     settles the run, and `effigy run stop <run>` waits for that settlement"
+                        .into(),
+                );
+                view.next = Some(format!("effigy run stop {run}"));
+            }
+            OwnerEvidence::Unverified => view.warnings.push(
+                "foreground gate remains held but its invoking owner is unavailable; cleanup or \
+                 residue cannot be reconstructed"
+                    .into(),
+            ),
         }
         view.current = Some(project_foreground(&row, run));
-        view.next = None;
+        if owner != OwnerEvidence::Gone {
+            view.next = None;
+        }
     }
     view
 }
 
+/// What a foreground holder's own diagnostics establish about its owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OwnerEvidence {
+    Live,
+    /// No process holds the recorded identity, so nobody can settle the run
+    /// from its owner side any more.
+    Gone,
+    /// The identity could not be verified either way.
+    Unverified,
+}
+
 pub(super) fn project_foreground(row: &ForegroundHolder, run: String) -> RunView {
-    let live = matches!(
-        row.holder.state,
+    // Only a verified live owner can make progress. A verifiably gone owner is
+    // `interrupted`, not `unknown`: the run cannot advance, and its surviving
+    // memory sentinel holds the gate only while it settles the run
+    // (effigy#986). An owner this reader cannot verify stays `unknown`.
+    let (state, pid) = match &row.holder.state {
         Observed::Verified(
             effigy_kernel::ident::ProcessState::Active
-                | effigy_kernel::ident::ProcessState::Stopped,
-            _
-        )
-    );
+            | effigy_kernel::ident::ProcessState::Stopped,
+            _,
+        ) => ("running", Some(row.holder.pid)),
+        Observed::Absent(_) => ("interrupted", None),
+        _ => ("unknown", None),
+    };
     RunView {
         evidence_source: "live-foreground",
         run_id: run,
         step: None,
         steps: Vec::new(),
-        state: if live { "running" } else { "unknown" }.into(),
+        state: state.into(),
         phase: None,
         profile: None,
         exit_code: None,
         signal: None,
         cleanup: None,
-        pid: live.then_some(row.holder.pid),
+        pid,
         started_at_epoch_ms: None,
         finished_at_epoch_ms: None,
         duration_ms: None,

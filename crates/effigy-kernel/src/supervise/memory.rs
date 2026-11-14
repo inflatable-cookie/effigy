@@ -64,6 +64,15 @@ pub(super) struct Config {
     pub(super) watch: RawFd,
     #[serde(default)]
     pub(super) descriptors: Option<RawFd>,
+    /// The checkout this guard settles into when its owner is verifiably gone:
+    /// the journal it records the run's honest outcome in (effigy#986).
+    pub(super) home: PathBuf,
+    /// Whether this guard serves a foreground run. Only a foreground guard
+    /// settles a run whose owner died: a durable run's outcome belongs to its
+    /// journal and its own sentinel, so its checkout-lease backup keeps holding
+    /// the lease until closure, exactly as before.
+    #[serde(default)]
+    pub(super) foreground: bool,
 }
 #[derive(Serialize, Deserialize)]
 enum Message {
@@ -98,31 +107,38 @@ pub(crate) enum MemoryPurpose {
     Foreground,
     CheckoutLease,
 }
+/// Everything one memory-guard start needs, so a start is one call with one
+/// owner for each input. `root` is the state root the guard reopens when it
+/// must settle a run whose owner died; only its checkout is used.
+pub(crate) struct MemoryStart<'a> {
+    pub executable: &'a Executable,
+    pub ancestors: &'a [OwnedFd],
+    pub cx: &'a EffectContext,
+    pub root: &'a StateRoot,
+    pub run: RunId,
+    pub fence: Fence,
+    pub purpose: MemoryPurpose,
+}
 impl MemoryGuard {
-    pub(crate) fn start(
-        executable: &Executable,
-        gate: &mut GateGuard,
-        ancestors: &[OwnedFd],
-        cx: &EffectContext,
-        run: RunId,
-        fence: Fence,
-        purpose: MemoryPurpose,
-    ) -> Result<Self, RunError> {
-        Self::start_recoverable(executable, gate, ancestors, cx, run, fence, purpose)
-            .map_err(|(error, _guard)| error)
+    pub(crate) fn start(gate: &mut GateGuard, start: MemoryStart<'_>) -> Result<Self, RunError> {
+        Self::start_recoverable(gate, start).map_err(|(error, _guard)| error)
     }
 
     /// Preserve an already-started helper on startup failure. A returned
     /// partial guard is not qualified to register any process.
     pub(crate) fn start_recoverable(
-        executable: &Executable,
         gate: &mut GateGuard,
-        ancestors: &[OwnedFd],
-        cx: &EffectContext,
-        run: RunId,
-        fence: Fence,
-        purpose: MemoryPurpose,
+        start: MemoryStart<'_>,
     ) -> Result<Self, (RunError, Option<Box<PartialMemoryGuard>>)> {
+        let MemoryStart {
+            executable,
+            ancestors,
+            cx,
+            root,
+            run,
+            fence,
+            purpose,
+        } = start;
         let (mut child, closure, config, descriptors) = (|| -> Result<_, RunError> {
             // Memory custody never pins or copies an image into runtime state, and
             // never refuses over one: a rebuilt or missing binary beside a
@@ -158,6 +174,10 @@ impl MemoryGuard {
                 fence,
                 watch: watch.as_raw_fd(),
                 descriptors: Some(receiver.as_raw_fd()),
+                // The checkout this guard must reopen to record a run whose
+                // owner dies while the guard still holds its gates.
+                home: root.owning_directory().path().to_path_buf(),
+                foreground: purpose == MemoryPurpose::Foreground,
             };
             let mut command = helper(executable, SENTINEL)?;
             command.stdout(Stdio::piped());
@@ -602,7 +622,33 @@ fn memory_frame(
     })
 }
 
-pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<(), RunError> {
+/// The startup frame a foreground guard accepts, built from the same fields
+/// production writes. Tests drive [`serve`] in-process with it instead of
+/// spawning a helper; a field this drops fails the frame as a shape error.
+#[cfg(all(test, feature = "fault-injection"))]
+pub(crate) fn test_frame(
+    owner: &ProcessIdentity,
+    run: RunId,
+    fence: Fence,
+    home: &Path,
+    gate_fds: &[RawFd],
+    watch: RawFd,
+) -> serde_json::Value {
+    serde_json::json!({
+        "protocol": HELPER_PROTOCOL,
+        "memory": true,
+        "owner": owner,
+        "gates": gate_fds.len(),
+        "gate_fds": gate_fds,
+        "run": run,
+        "fence": fence,
+        "watch": watch,
+        "home": home,
+        "foreground": true,
+    })
+}
+
+pub(crate) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<(), RunError> {
     // The version before the shape: an update that changed this frame still
     // reads as a version mismatch, not as a broken store value (F8).
     let declared = config
@@ -656,7 +702,7 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
         None => None,
         _ => return Err(RunError::refused("invalid descriptor custody socket")),
     };
-    let mut watch = inherited_pipe(config.watch, libc::O_RDONLY)?;
+    let watch = inherited_pipe(config.watch, libc::O_RDONLY)?;
     let mut gates: Vec<OwnedFd> = Vec::new();
     for &raw in &config.gate_fds {
         // fstat validates each inherited fd before it is adopted. These fds
@@ -873,30 +919,138 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
     // An absent/stopped owner is never permission to release an ancestor early.
     // Like the owner EOF above, this is a liveness wait, not a fresh effect or
     // numeric replay. Unknown closure keeps these checkout gates held.
-    let mut bytes = [0u8; 4096];
-    loop {
-        match watch.read(&mut bytes) {
-            Ok(0) => break,
-            Ok(_) => {}
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
-                ) =>
-            {
-                std::thread::sleep(Duration::from_millis(5))
-            }
-            Err(_) => std::thread::sleep(Duration::from_millis(5)),
-        }
-    }
+    //
+    // An owner can die while this wait is in progress (a killed terminal, a
+    // timeout that ends the foreground command). Nobody is left to settle or
+    // report the run then, so the wait also observes the owner this guard
+    // recorded: a verifiably gone owner ends the wait, and the guard takes the
+    // settlement over instead of holding the lock forever (effigy#986).
+    let closure = wait_for_closure(watch, &config);
+    // The run's own coordinates, read while the gate descriptions are still
+    // open: the journal row names the task and checkout the dead owner wrote.
+    let coordinates = gates.iter().find_map(|gate| {
+        let file = std::fs::File::from(crate::gate::duplicate_custody(gate).ok()?);
+        crate::gate::foreground_diag(&file)
+    });
     drop(gates); // positive delegated closure; no numeric replay
-    if residue {
+    if closure.owner_lost {
+        // A run whose owner died was never reported by it. Record only what is
+        // true: custody closed (`interrupted`) or it did not (`unknown`, with
+        // residue). Never success, and never a process identity — the row
+        // grants no signal, reclaim or replay.
+        record_owner_loss(
+            &config,
+            coordinates.as_ref(),
+            effects.len(),
+            closure.closed && !residue,
+        );
+    }
+    if residue || !closure.closed {
         return Err(RunError::broken("foreground guard left residue"));
     }
     if let Some(error) = protocol_error {
         return Err(error);
     }
     Ok(())
+}
+
+/// How the guard's closure wait ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct ClosureWait {
+    /// Every writing endpoint of the cleanup pin closed.
+    pub(super) closed: bool,
+    /// The owner this guard recorded is verifiably gone.
+    pub(super) owner_lost: bool,
+}
+
+/// Wait for the cleanup pin, and — for a foreground run — stop waiting when the
+/// recorded owner is verifiably gone. A pin nobody releases is exactly the case
+/// in which the owner is the only process that could have reported the run
+/// (effigy#986). A checkout-lease backup keeps waiting: a durable run's outcome
+/// and custody belong to its own journal and sentinel.
+fn wait_for_closure(mut watch: std::fs::File, config: &Config) -> ClosureWait {
+    let mut bytes = [0u8; 4096];
+    // The pin is polled every 5 ms; the owner's identity costs one process
+    // observation, so it is re-read every twentieth poll (100 ms). A foreground
+    // guard therefore settles within 100 ms of its owner's death and asks the
+    // kernel ten times a second while it waits.
+    let mut ticks = 0u64;
+    loop {
+        match watch.read(&mut bytes) {
+            Ok(0) => {
+                return ClosureWait {
+                    closed: true,
+                    owner_lost: config.foreground && owner_is_gone(config),
+                }
+            }
+            Ok(_) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                ) => {}
+            Err(_) => {}
+        }
+        if config.foreground && ticks.is_multiple_of(20) && owner_is_gone(config) {
+            return ClosureWait {
+                closed: false,
+                owner_lost: true,
+            };
+        }
+        ticks = ticks.wrapping_add(1);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Whether the owner this guard recorded is verifiably gone: no process holds
+/// that pid, or another process has taken it. An observation this process
+/// cannot verify is never proof, so it never releases custody.
+pub(super) fn owner_is_gone(config: &Config) -> bool {
+    match ident::process_identity(config.owner.pid) {
+        Observed::Absent(_) => true,
+        Observed::Verified(identity, _) => {
+            identity.start.text() != config.owner.start.text()
+                || identity.boot.as_str() != config.owner.boot.as_str()
+        }
+        Observed::Unknown(_) => false,
+    }
+}
+
+/// One honest journal row for a run whose owner died before it settled: what
+/// the guard can still prove, never a reported result. A write that cannot be
+/// made leaves the run unrecorded rather than changing the settlement.
+fn record_owner_loss(
+    config: &Config,
+    coordinates: Option<&crate::gate::ForegroundDiag>,
+    groups: usize,
+    closed: bool,
+) {
+    let Some(coordinates) = coordinates else {
+        return;
+    };
+    let crate::id::Scope::Checkout(checkout) = coordinates.owner.scope() else {
+        return;
+    };
+    let op = context(CancelToken::default(), Duration::from_secs(30));
+    let Ok(cx) = op.effects() else {
+        return;
+    };
+    let Ok(root) = helper_root(&cx, &config.home, false, None) else {
+        return;
+    };
+    let record = crate::run::TerminalRecord {
+        run_id: config.run.to_string(),
+        checkout: checkout.text(),
+        boot: config.owner.boot.as_str().to_owned(),
+        task: coordinates.task.task().to_owned(),
+        outcome: if closed { "interrupted" } else { "unknown" }.to_owned(),
+        exit_code: None,
+        signal: None,
+        cleanup: if closed { "complete" } else { "incomplete" }.to_owned(),
+        workload_groups: u64::try_from(groups).unwrap_or(u64::MAX),
+        closed_at_ms: crate::store::wall_ms(),
+    };
+    let _ = crate::run::record_terminal(&cx, &root, &record);
 }
 
 fn finish_interpolations(
@@ -989,6 +1143,42 @@ fn inherited_pipe(fd: RawFd, access: i32) -> io::Result<std::fs::File> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An owner this process cannot verify is never proof of death: a guard
+    /// that released custody on an unverified observation could abandon a live
+    /// run's lock (effigy#986).
+    #[test]
+    fn an_unverifiable_owner_is_never_treated_as_gone() {
+        let config = Config {
+            protocol: HELPER_PROTOCOL,
+            memory: true,
+            owner: ProcessIdentity {
+                boot: crate::ident::boot_identity()
+                    .verified()
+                    .cloned()
+                    .expect("this host's boot identity"),
+                // Outside the process range: the observation is `Unknown`.
+                pid: 0,
+                start: ident::ProcessStartIdentity::MacOs {
+                    seconds: 1,
+                    microseconds: 0,
+                },
+            },
+            gates: 1,
+            gate_fds: vec![],
+            run: RunId::new(1, [1; 10]).unwrap(),
+            fence: Fence {
+                resource: crate::id::ResourceId::store(crate::id::Scope::Machine, "gate")
+                    .expect("fixed name"),
+                generation: crate::id::Generation::new(0),
+            },
+            watch: 3,
+            descriptors: None,
+            home: PathBuf::from("/nonexistent"),
+            foreground: true,
+        };
+        assert!(!owner_is_gone(&config));
+    }
 
     #[test]
     fn malformed_closure_descriptor_never_adopts_a_closed_or_regular_handle() {

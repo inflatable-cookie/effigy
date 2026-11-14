@@ -889,6 +889,16 @@ fn current_body(run: Option<String>) -> Body {
     }
 }
 
+/// The foreground coordinates one inherited gate description records, read
+/// without any identity proof: the settling helper learns the task and
+/// checkout its dead owner named. Evidence only, never authority — nothing
+/// here can be signalled or admitted.
+pub(crate) fn foreground_diag(file: &File) -> Option<ForegroundDiag> {
+    let bytes = fs::read_bounded(file, DIAG_MAX).ok()??;
+    let body = serde_json::from_slice::<Body>(&bytes).ok()?;
+    (body.v == 1).then_some(body.foreground).flatten()
+}
+
 /// Reads the diagnostic body. Torn, missing or mismatched: `Unknown`.
 fn holder(file: &File) -> Observed<HolderDiag> {
     let bytes = match fs::read_bounded(file, DIAG_MAX) {
@@ -912,6 +922,11 @@ fn holder(file: &File) -> Observed<HolderDiag> {
         {
             ident::process_state(body.pid)
         }
+        // Verifiably gone: no process holds the recorded pid. That is a
+        // different fact from an unverifiable one, and it is what lets a
+        // reader report a dead holder instead of flattening it to `unknown`
+        // (effigy#986). Nothing is signalled from this observation.
+        Observed::Absent(proof) => Observed::Absent(proof),
         Observed::Unknown(reason) => Observed::Unknown(reason),
         _ => Observed::Unknown(UnknownReason::Inconsistent(
             "gate body names a different process".into(),

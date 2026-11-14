@@ -48,6 +48,7 @@ owner response, detailed workload phase and outcome remain unavailable.
 | Evidence | `state` and projection |
 | --- | --- |
 | Verified live foreground custodian, even with no token or database | `running`; `current` is a live diagnostic with provenance, verified pid and run id; phase, start time, profile and child steps are unavailable unless independently verified |
+| Held foreground gate whose recorded owner is verifiably gone (no process holds its boot/start identity) | `interrupted`; `current` is the live diagnostic without a pid, the warning names the surviving sentinel that still holds the gate while it settles, and `next` is `effigy run stop <run>` (052 §3.1, effigy#986) |
 | Open durable run with matching held gate | `running` or `stopping`, from the admitted checkout run and fresh custody evidence |
 | Non-closed durable run, gate free | `interrupted`; `current` is the unresolved durable run, with `next` naming its settle command (`effigy <task>`) |
 | Closed durable run with unacknowledged incomplete cleanup | `failed-cleanup`; expose the recorded residue and recovery command, never a successful current outcome |
@@ -69,8 +70,10 @@ whose foreground execution ended, so Q-010 stops emitting `never-run` from
 absence alone. `run status <durable-id>` still reports that exact run's outcome.
 This is a deliberate read-model change, not loss of durable history.
 
-An exited foreground run leaves no durable Interrupted or cleanup record.
-Free-gate diagnostic bytes never populate `current`, `latest` or `history`.
+An exited foreground run leaves no durable Interrupted or cleanup record of
+its own: the one row a run whose owner died has is its guard's settlement, and
+it is read by exact run id, never as `current` or `latest`. Free-gate
+diagnostic bytes never populate `current`, `latest` or `history`.
 Any observed survivors are warnings with 052 §3.1's detection limits; absence
 of readable tags is not proof of complete cleanup. v0.14 task status files
 remain retired and are never read (017; 052 §10.1).
@@ -100,7 +103,7 @@ bound or reading unverified held-gate diagnostics produces explicit uncertainty.
 | `latest` | newest closed durable run, with `evidence_source = "checkout-journal"`, phase/outcome, exit code, signal, cleanup and recorded timing; null if absent/unavailable |
 | `history` | at most 20 durable runs newest first, with the same recorded shape; foreground diagnostics never enter history |
 | run `steps` | verified direct child records recursively with `step` labels; omitted for foreground diagnostics without a verified owner response; omission does not prove no children |
-| `next` | exact recovery command for an unresolved durable run; no invented replay command for lost foreground state |
+| `next` | exact recovery command for an unresolved durable run or for a foreground run whose owner is gone (`effigy run stop <run>`); no invented replay command for lost foreground state |
 | `warnings` | unreadable-state evidence, unavailable history or bounded foreground residue observations |
 | `routing` | repo root, catalog alias, catalog root and manifest, selection mode and evidence |
 

@@ -211,10 +211,12 @@ process. Its own workload groups are its own admission's concern.
 
 ### The terminal record
 
-Only v2 hook-admitted heavy foreground runs write it: **one row** to the
-owning checkout journal at settle, in the additive schema-1
-`foreground_terminals` table (Q-010 storage; additive, so an older reader
-selects the columns it knows and needs no version bump). The row holds the run
+A v2 hook-admitted heavy foreground run writes it: **one row** to the owning
+checkout journal at settle, in the additive schema-1 `foreground_terminals`
+table (Q-010 storage; additive, so an older reader selects the columns it knows
+and needs no version bump). A foreground run of any admission whose *owner*
+died is settled by its own surviving memory guard, which writes the same one
+row for it (effigy#986; contract 052 §3.1). The row holds the run
 ID, the `CheckoutId`, the boot identity, the task, the outcome, the exit code
 or signal, `cleanup`, the acknowledged `workload_groups` count and the closed
 time. It is retained for seven days.
@@ -237,7 +239,17 @@ foreground runs: if every custodian dies before settle, nothing is recorded and
 runtime state gets its journal binding at settle, which is the same additive
 write the row needs; no run identity is minted for a foreground run.
 
-Runs without v2 keep Q-010 exactly, including no journal write at all.
+**The owner-death writer.** A guest-free foreground run keeps a memory guard
+that outlives a killed owner. When the owner is verifiably gone — its recorded
+boot and start identity name no live process, or another process now holds that
+PID — the guard settles the run and writes exactly one row itself: `interrupted`
+with `cleanup: "complete"` when the run's custody closed, `unknown` with
+`cleanup: "incomplete"` when a cleanup pin or a registered effect did not. It
+never writes `succeeded`, and the row still carries no identity. An owner this
+guard cannot verify is never treated as gone, so an unverifiable observation
+keeps the gates held and writes nothing. Runs that settle while their owner is
+alive keep Q-010 exactly as before, including no journal write at all for a run
+without v2.
 
 ### Per-invocation persistence (effigy#977)
 
@@ -265,6 +277,11 @@ agree, 2 when they differ. It is fixed before any file is written.
 | `kernel.db-shm` | none | at most 1 | SQLite's wal-index, sized by the log the shared store reaches |
 | `kernel.db-journal` | none | none in the steady state | a single transaction's rollback journal, removed at commit |
 | run journal, capture log, run history, per-run scratch | none | none | no file |
+
+The row counts a run that reports its own result. A run whose owner died is
+settled by its surviving guard, which writes the same bounded row instead
+(effigy#986); nothing else in this table changes, and a run that settles while
+its owner lives still writes none of these lines for a v1 route.
 
 Gates. `Gate::acquire` writes one diagnostic body per held gate; both writers
 of that body (`gate.rs::write_body`, and `gate/foreground.rs::set_foreground`
@@ -572,9 +589,11 @@ following is the Q-010 control boundary (contract 052 §3.1).
 - **`effigy run status <run>`.** Resolves the current checkout first, then
   discovers candidates if needed; ambiguous keys refuse and name the roots.
   Durable state/exit/cleanup comes from that checkout's journal and gate.
-  Live foreground state requires verified holder identity; after exit the
-  answer is `not recorded (foreground or expired)`. It never infers success
-  from a free gate. JSON remains `effigy.run.v1` with evidence provenance.
+  Live foreground state requires verified holder identity; a held gate whose
+  recorded owner is verifiably gone reads `interrupted` and names
+  `effigy run stop <run>` as its settlement. After exit the answer is
+  `not recorded (foreground or expired)`. It never infers success from a free
+  gate. JSON remains `effigy.run.v1` with evidence provenance.
 - **`effigy run logs <run> [--follow] [--stdout-offset N] [--stderr-offset N]`.**
   Durable runs only: redacted output per stream at absolute byte offsets.
   `--follow` drains to the final outcome and exits with the run's result.
@@ -583,7 +602,10 @@ following is the Q-010 control boundary (contract 052 §3.1).
 - **`effigy run stop <run> [--wait-ms MS]`.** Durable runs keep the journal's
   generation-fenced Stop, verified holder signal and interrupted-settle path.
   Foreground runs permit only a freshly verified live-owner stop; stale gate
-  bytes or discovered residue grant no signalling authority. Stop cannot
+  bytes or discovered residue grant no signalling authority. A foreground run
+  whose owner is verifiably gone signals nothing: the command waits for that
+  run's own guard to settle and reports the row it wrote (else that no outcome
+  was recorded). An owner that cannot be verified is refused. Stop cannot
   resurrect a vanished foreground record or signal its old group by number.
 
 `--run-id` still captures output unless both stdout and stderr are terminals;
