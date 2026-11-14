@@ -254,8 +254,10 @@ pub fn read(root: &StateRoot, run: RunId) -> Observed<Option<TerminalRecord>> {
         Observed::Verified(records, evidence) => {
             match records.into_iter().find(|record| record.run_id == wanted) {
                 Some(record) => Observed::Verified(Some(record), evidence),
-                None => Observed::Absent(AbsenceProof::NoFile {
-                    name: RING_FILE.into(),
+                // The file exists and is valid; it just holds no record for
+                // this run, which is a row-shaped absence, not a missing file.
+                None => Observed::Absent(AbsenceProof::NoRow {
+                    table: RING_FILE.into(),
                 }),
             }
         }
