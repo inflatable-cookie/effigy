@@ -31,15 +31,33 @@ pub const SCHEMA_VERSION: i64 = 1;
 pub const DB_NAME: &str = "kernel.db";
 /// Size bound for `kernel.db`; retention keeps it far below this.
 pub const MAX_DB_BYTES: u64 = 1 << 30;
-const PAGE_SIZE: u64 = 4096;
+/// The page size this kernel writes: SQLite's own default, and the unit every
+/// sidecar bound below is stated in. A store created by another build keeps
+/// its own page size, so a bound derived from this constant is a maximum for
+/// the stores Effigy creates, and scales with `PRAGMA page_size` otherwise.
+pub const PAGE_SIZE: u64 = 4096;
 /// The least one write waits for the store writer gate. Admission uses it
 /// even when the caller's remaining operation budget is shorter (§5.5).
 pub const STORE_BUSY_WAIT: Duration = Duration::from_secs(30);
 /// Settle and outcome writes keep trying long after any workload deadline:
 /// a busy store must never cost a run its recorded outcome (K4).
 pub const SETTLE_BUSY_WAIT: Duration = Duration::from_secs(120);
-/// A checkpoint truncates the write-ahead log to at most this size.
-const WAL_LIMIT_BYTES: u64 = 16 << 20;
+/// The most the write-ahead log may be when a checkpoint resets it (effigy#977).
+///
+/// `PRAGMA journal_size_limit` truncates the log to this at the end of every
+/// completed checkpoint, so the log a writer leaves behind is bounded here and
+/// not by how much it appended. An invocation's own contribution is the frames
+/// it appends, bounded per write; see `run::TERMINAL_ROW_MAX_BYTES` and the
+/// contract's per-invocation persistence table.
+pub const WAL_LIMIT_BYTES: u64 = 16 << 20;
+/// Pages one connection appends before SQLite attempts a checkpoint
+/// (effigy#977): a quarter of [`WAL_LIMIT_BYTES`], so a writer that appends
+/// steadily is checkpointed long before the log reaches its limit.
+pub const WAL_AUTOCHECKPOINT_PAGES: u32 = (WAL_LIMIT_BYTES / PAGE_SIZE / 4) as u32;
+/// Wait one store close allows for its own truncating checkpoint. A log a
+/// concurrent reader still needs is left at its bounded size rather than stall
+/// the run that is closing (§5.5).
+const CLOSE_CHECKPOINT_WAIT: Duration = Duration::from_millis(250);
 const BUSY_RETRY_MIN: Duration = Duration::from_millis(10);
 const BUSY_RETRY_MAX: Duration = Duration::from_millis(250);
 /// The writer gate every store transaction holds: the store resource itself.
@@ -466,10 +484,46 @@ impl Store {
         self.conn.execute_batch(&format!(
             "PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF; \
              PRAGMA cell_size_check=ON; PRAGMA max_page_count={}; \
-             PRAGMA journal_size_limit={WAL_LIMIT_BYTES}; PRAGMA wal_autocheckpoint=1000;",
+             PRAGMA journal_size_limit={WAL_LIMIT_BYTES}; \
+             PRAGMA wal_autocheckpoint={WAL_AUTOCHECKPOINT_PAGES};",
             MAX_DB_BYTES / PAGE_SIZE
         ))?;
+        self.check_sidecar_bounds()?;
         self.schema(&patient, BusyWait::Context)?;
+        Ok(())
+    }
+    /// Reads back the settings that bound this store's side files (effigy#977).
+    /// Both are per connection, so this is the same connection that writes.
+    pub fn sidecar_bounds(&self) -> Result<SidecarBounds, StoreError> {
+        let limit: i64 = self
+            .conn
+            .query_row("PRAGMA journal_size_limit", [], |row| row.get(0))?;
+        let pages: i64 = self
+            .conn
+            .query_row("PRAGMA wal_autocheckpoint", [], |row| row.get(0))?;
+        let page_size: i64 = self
+            .conn
+            .query_row("PRAGMA page_size", [], |row| row.get(0))?;
+        Ok(SidecarBounds {
+            journal_size_limit: limit.max(0) as u64,
+            wal_autocheckpoint: pages.max(0) as u32,
+            page_size: page_size.max(0) as u64,
+        })
+    }
+    /// Refuses an open whose settings did not apply, so no write happens under
+    /// a bound this connection never set.
+    fn check_sidecar_bounds(&self) -> Result<(), StoreError> {
+        let bounds = self.sidecar_bounds()?;
+        if bounds.journal_size_limit != WAL_LIMIT_BYTES
+            || bounds.wal_autocheckpoint != WAL_AUTOCHECKPOINT_PAGES
+        {
+            return Err(StoreError::Broken(format!(
+                "the store's side-file bounds did not apply: journal_size_limit is {} \
+                 (expected {WAL_LIMIT_BYTES}) and wal_autocheckpoint is {} (expected \
+                 {WAL_AUTOCHECKPOINT_PAGES})",
+                bounds.journal_size_limit, bounds.wal_autocheckpoint
+            )));
+        }
         Ok(())
     }
     /// `journal_mode=WAL` is persistent in the file. A store last written in
@@ -917,6 +971,41 @@ impl Store {
             Ok(())
         })
     }
+}
+
+/// Truncates the write-ahead log when a store handle closes (effigy#977).
+///
+/// A close is where one writer's log can be carried back into the store and
+/// the file released, so a completed invocation leaves no growing sidecar.
+/// `TRUNCATE` waits for readers and is refused rather than forced: a log a
+/// concurrent reader still needs is left at the size [`WAL_LIMIT_BYTES`]
+/// bounds, and the close never stalls the run that is finishing.
+impl Drop for Store {
+    fn drop(&mut self) {
+        let _ = self.conn.busy_timeout(CLOSE_CHECKPOINT_WAIT);
+        let _ = self
+            .conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            });
+    }
+}
+
+/// The side-file bounds one writable store connection holds (effigy#977), read
+/// back from SQLite rather than assumed from what the open asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SidecarBounds {
+    /// `PRAGMA journal_size_limit`: the most the log may be after a completed
+    /// checkpoint resets it.
+    pub journal_size_limit: u64,
+    /// `PRAGMA wal_autocheckpoint`: pages appended before a checkpoint attempt.
+    pub wal_autocheckpoint: u32,
+    /// `PRAGMA page_size`: the unit both bounds above are measured in.
+    pub page_size: u64,
 }
 
 /// What one bounded maintenance pass did (§7.4).

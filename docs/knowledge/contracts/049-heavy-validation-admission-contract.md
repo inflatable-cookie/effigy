@@ -1,7 +1,7 @@
 # 049 - Heavy Task Admission and Run Control Contract
 
 Owner: Platform
-Last Updated: 2026-10-25
+Last Updated: 2026-11-13
 
 Q-010 follows the storage and custody model approved by planner and Tom
 (2026-10-22: "Approve") in [052 §3.1](052-runtime-kernel-contract.md#31-q-010-run-classes-and-the-durability-boundary).
@@ -239,6 +239,79 @@ write the row needs; no run identity is minted for a foreground run.
 
 Runs without v2 keep Q-010 exactly, including no journal write at all.
 
+### Per-invocation persistence (effigy#977)
+
+A consumer that accounts for storage must be able to name what one invocation
+persists, so this route's Effigy-owned persistence is a fixed set of files with
+enforced maxima rather than a measurement. The route is a plain foreground host
+task with one heavy admission, text output, no declared shared lock and no
+`--run-id`. Concurrent other runs, files that already existed, anything the
+child writes and anything the admission hook itself writes are outside it.
+
+`s` below is the number of checkout-scope spellings the run's task identity
+resolves to: 1 when the checkout's recorded token and its filesystem identity
+agree, 2 when they differ. It is fixed before any file is written.
+
+| Path (under `<checkout>/.effigy/state/`) | v1 | v2 | Maximum |
+| --- | --- | --- | --- |
+| `gates/<scope>.scope` | `s` | `s` | 0 bytes: created empty and never written |
+| `gates/<scope>/<gate>.gate` | `s` | `s + 1` | 4096 bytes each |
+| `gates/<scope>/` directory | `s` | `s` | 0700, one entry per held gate |
+| `kernel.db` `foreground_terminals` row | none | 1 | 960 bytes of field bytes |
+| `kernel.db-wal` | none | at most 1 | 16 MiB after a completed checkpoint, else this writer's own frames |
+| `kernel.db-shm` | none | at most 1 | 64 KiB at a full-size log |
+| `kernel.db-journal` | none | none in the steady state | a single transaction's rollback journal, removed at commit |
+| run journal, capture log, run history, per-run scratch | none | none | no file |
+
+Gates. `Gate::acquire` writes one diagnostic body per held gate; both writers
+of that body (`gate.rs::write_body`, and `gate/foreground.rs::set_foreground`
+through it) bound it at `gate::DIAG_MAX` = 4096 bytes. The body is diagnostics
+only and never authority. When even the identity part would not fit — which the
+fixed-width fields cannot produce — nothing is written and the previous body
+reads as a different holder, never as this one. The count is enforced too:
+`run/foreground.rs::begin_under` refuses more than `gate::FOREGROUND_GATES_MAX`
+= 4 aliased gates, which is the task's gate and one declared shared lock with
+each one's checkout-alias spelling. The v2 store writer gate (`Store(kernel)`)
+adds one gate file inside a scope one of those spellings already names, so it
+adds no further scope. `FLOCK` is the exclusion; the files themselves are never
+unlinked by this route, and a failed diagnostic rewrite leaves the previous
+bytes.
+
+Terminal row. `run/terminal.rs::record` bounds every variable-length field at
+the one place that writes the row: `run_id` 64, `checkout` 128, `boot` 128,
+`task` 512, `outcome` and `cleanup` 32 bytes. A field over its maximum is cut on
+a character boundary and ends with `[truncated]`, so the row itself records the
+loss and nothing presents a cut value as complete. The maxima are far above what
+the writers produce (a `RunId` renders in 26 characters), and the stated row
+maximum is `run::TERMINAL_ROW_MAX_BYTES` = 960 bytes. A record inside the bounds
+is stored unchanged. Exactly one row is written per settled v2 run, and only
+after a settled outcome: a run that did not settle writes nothing, and a failed
+write is a warning that changes no task result.
+
+Store side files. The open applies `journal_size_limit` = 16 MiB
+(`store::WAL_LIMIT_BYTES`) and `wal_autocheckpoint` = 1024 pages
+(`store::WAL_AUTOCHECKPOINT_PAGES`), then reads both back and refuses the open
+if either did not apply (`store::Store::check_sidecar_bounds`). A closing store
+attempts `PRAGMA wal_checkpoint(TRUNCATE)` inside a 250 ms window: when no
+concurrent reader holds a snapshot, the log is carried into the store and
+released, so a finished invocation leaves no growing log; when a reader does,
+the log stays at the 16 MiB bound above. The shared-memory index is SQLite's
+fixed wal-index, 32 KiB plus four bytes per page slot of the largest log seen:
+at the 16 MiB bound that is 48 KiB. Effigy never writes a rollback journal in
+WAL mode. One terminal write therefore appends at most `WRITE_MAX_PAGES` = 128
+pages (512 KiB): a store is capped at 1 GiB = 262144 pages, so a b-tree over it
+is at most four levels and one insert touches at most eight pages including a
+split, for the table and its `closed_at` index; the bounded prune of at most
+`run::TERMINAL_PRUNE_MAX` = 32 expired rows adds one leaf and one index leaf
+each with room for interior pages. A checkout with no journal yet creates the
+fixed schema (schema 1 plus the additive tables) in one transaction on its
+first v2 write.
+
+Not persisted. This route writes no run incarnation, request, event, capture
+log, run-history row or object, and opens no per-run scratch. It mints no
+checkout token: it reads the recorded one, or the same filesystem identity the
+journal binding uses.
+
 ### Release policy (Tom, decision d3bad004 v2)
 
 Tom on 2026-10-24: "Yes: accept the escaped-process risk, and Queue releases
@@ -381,6 +454,10 @@ Queue's migration to the hook is described in
 | Terminal run without logs; expired bytes; unreadable journal | `test:run-control`; `test:run-control:cli` |
 | An unverifiable workload observation or unread stream ends unknown within its own budget, never settled or drained success; a recovering observation resumes at the exact offset with no gap or duplicate (hook `RunEffects`; hidden stdout segments) | `test:run-control` |
 | Log segments, offsets, expiry, truncation, read fault | `test:kernel:run` |
+| One foreground admission writes a fixed, bounded gate set, and a gate body stays inside its bound whatever the holder's `argv0` is | `test:kernel:gate` (`gate_foreground_admission_writes_a_fixed_bounded_set`); `test:kernel:gate` (unit: `a_gate_body_is_bounded_whatever_the_holder_looks_like`) |
+| A terminal row is bounded field by field with the truncation marker, and the stored row is inside the stated maximum | `test:kernel:run` (`run_terminal_record_fields_are_bounded_and_marked`) |
+| One terminal write prunes a bounded slice of expired rows and leaves no log behind it | `test:kernel:run` (`run_terminal_write_prunes_a_bounded_slice_of_expired_rows`) |
+| The store open applies and verifies its side-file bounds, and a closing writer truncates the log | `test:kernel:store` (`store_open_states_and_enforces_the_side_file_bounds`) |
 
 Q-010 implementation adds the classification, zero-write and multi-checkout
 discovery proofs in contract 052 §12.6 to these same run-control selectors. These are future acceptance requirements, not Phase 1

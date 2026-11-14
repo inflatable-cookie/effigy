@@ -1748,3 +1748,46 @@ fn store_private_file_mutex_keeps_the_stable_inode_without_a_database() {
         Err(GateError::Untrusted { .. })
     ));
 }
+
+/// The store's own side files are bounded by settings the open states and
+/// verifies, and a closing writer truncates the log it wrote (effigy#977): one
+/// committed write leaves no growing sidecar behind it.
+#[test]
+fn store_open_states_and_enforces_the_side_file_bounds() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    let state = root.path().to_path_buf();
+    let wal = state.join(format!("{DB_NAME}-wal"));
+    let mut store = Store::open(&cx, &root).unwrap();
+    assert_eq!(
+        store.sidecar_bounds().unwrap(),
+        SidecarBounds {
+            journal_size_limit: WAL_LIMIT_BYTES,
+            wal_autocheckpoint: WAL_AUTOCHECKPOINT_PAGES,
+            page_size: PAGE_SIZE,
+        }
+    );
+    store
+        .txn(&cx, |txn| {
+            txn.resource(&task("bounded"), "task").map(|_| ())
+        })
+        .unwrap();
+    let written = std::fs::metadata(&wal).map(|meta| meta.len()).unwrap_or(0);
+    assert!(
+        written <= WAL_LIMIT_BYTES,
+        "one write grew the log to {written} bytes, over its {WAL_LIMIT_BYTES} limit"
+    );
+    drop(store);
+    let left = std::fs::metadata(&wal).map(|meta| meta.len()).unwrap_or(0);
+    assert_eq!(left, 0, "a closed writer left {left} bytes of log");
+    assert!(
+        reader(home.path())
+            .verified()
+            .unwrap()
+            .resource(&task("bounded"))
+            .verified()
+            .is_some(),
+        "the checkpoint lost the committed write"
+    );
+}

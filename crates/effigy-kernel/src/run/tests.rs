@@ -2091,3 +2091,167 @@ fn the_stored_attachment_mode_is_the_enum_encoding() {
         exclusive
     );
 }
+
+/// Every variable-length field of the terminal row is cut at write time and a
+/// cut field ends with the marker, so one invocation's row has a fixed maximum
+/// size however long a label or identity it was handed (effigy#977). The
+/// marker keeps the loss visible in the row itself; nothing presents a cut
+/// value as complete.
+#[test]
+fn run_terminal_record_fields_are_bounded_and_marked() {
+    let fixture = effigy_test_support::Fixture::new("effigy-terminal-bounds-").unwrap();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let observe = cx.child(Duration::from_secs(10));
+    let observe = observe.operation().observe().unwrap();
+    let cut = |value: &str, max: usize| {
+        assert_eq!(value.len(), max, "{value:?} is not at its bound");
+        assert!(
+            value.ends_with(TERMINAL_TRUNCATION_MARKER),
+            "{value:?} carries no truncation marker"
+        );
+    };
+    let oversized = TerminalRecord {
+        run_id: "r".repeat(TERMINAL_RUN_ID_MAX * 2),
+        checkout: "c".repeat(TERMINAL_CHECKOUT_MAX * 2),
+        boot: "b".repeat(TERMINAL_BOOT_MAX * 2),
+        task: "t".repeat(TERMINAL_TASK_MAX * 2),
+        outcome: "o".repeat(TERMINAL_WORD_MAX * 2),
+        exit_code: None,
+        signal: Some(libc::SIGTERM),
+        cleanup: "u".repeat(TERMINAL_WORD_MAX * 2),
+        workload_groups: 2,
+        closed_at_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_millis() as i64)
+            .unwrap_or_default(),
+    };
+    record_terminal(&cx, &root, &oversized).unwrap();
+    let reader = match Store::read(&observe, &root) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("journal: {other:?}"),
+    };
+    let row = match terminal_records(&reader, 10) {
+        Observed::Verified(mut rows, _) => rows.pop().expect("one row"),
+        other => panic!("records: {other:?}"),
+    };
+    cut(&row.run_id, TERMINAL_RUN_ID_MAX);
+    cut(&row.checkout, TERMINAL_CHECKOUT_MAX);
+    cut(&row.boot, TERMINAL_BOOT_MAX);
+    cut(&row.task, TERMINAL_TASK_MAX);
+    cut(&row.outcome, TERMINAL_WORD_MAX);
+    cut(&row.cleanup, TERMINAL_WORD_MAX);
+    // The fixed-size fields are untouched, and the bytes this row stores —
+    // every text field plus its two INTEGER columns — are inside the stated
+    // maximum, which is what the contract's table quotes.
+    assert_eq!(row.signal, Some(libc::SIGTERM));
+    assert_eq!(row.workload_groups, 2);
+    let stored = row.run_id.len()
+        + row.checkout.len()
+        + row.boot.len()
+        + row.task.len()
+        + row.outcome.len()
+        + row.cleanup.len()
+        + 2 * std::mem::size_of::<i64>();
+    assert!(
+        stored <= TERMINAL_ROW_MAX_BYTES,
+        "a bounded row stores {stored} bytes, over the {TERMINAL_ROW_MAX_BYTES}-byte maximum"
+    );
+    // A record inside the bounds is stored unchanged: the row the round-trip
+    // test reads back is the record it wrote.
+    let in_bounds = TerminalRecord {
+        run_id: id(11).to_string(),
+        checkout: checkout().text(),
+        boot: "20a888e4-10fc-4798-a139-fe8e08758c34".into(),
+        task: "dev".into(),
+        outcome: "succeeded".into(),
+        exit_code: Some(0),
+        signal: None,
+        cleanup: "complete".into(),
+        workload_groups: 0,
+        closed_at_ms: row.closed_at_ms,
+    };
+    assert_eq!(in_bounds.bounded(), in_bounds);
+}
+
+/// One terminal write prunes a bounded slice of expired rows (effigy#977), so
+/// the pages this write dirties are fixed rather than a function of how many
+/// records expired during the retention window. Later writes drain the rest,
+/// and the retention sweep still removes every expired row.
+#[test]
+fn run_terminal_write_prunes_a_bounded_slice_of_expired_rows() {
+    let fixture = effigy_test_support::Fixture::new("effigy-terminal-prune-").unwrap();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let insert_expired = |count: usize| {
+        let mut store = Store::open(&cx, &root).unwrap();
+        store
+            .txn(&cx, |txn| {
+                for n in 0..count {
+                    txn.conn().execute(
+                        "INSERT INTO foreground_terminals \
+                         (run_id, checkout, boot, task, outcome, exit_code, signal, cleanup, \
+                          workload_groups, closed_at) \
+                         VALUES (?1, 'checkout', 'boot', 'task', 'succeeded', 0, NULL, \
+                                 'complete', 0, 0)",
+                        rusqlite::params![format!("expired-{n}")],
+                    )?;
+                }
+                Ok(())
+            })
+            .unwrap();
+    };
+    let expired_left = || {
+        let observe = cx.child(Duration::from_secs(10));
+        let observe = observe.operation().observe().unwrap();
+        let reader = match Store::read(&observe, &root) {
+            Observed::Verified(reader, _) => reader,
+            other => panic!("journal: {other:?}"),
+        };
+        reader
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM foreground_terminals WHERE run_id LIKE 'expired-%'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+    };
+    let total = usize::try_from(TERMINAL_PRUNE_MAX).unwrap() + 8;
+    insert_expired(total);
+    assert_eq!(expired_left(), total as i64);
+    let recent = TerminalRecord {
+        run_id: id(12).to_string(),
+        checkout: checkout().text(),
+        boot: "20a888e4-10fc-4798-a139-fe8e08758c34".into(),
+        task: "dev".into(),
+        outcome: "succeeded".into(),
+        exit_code: Some(0),
+        signal: None,
+        cleanup: "complete".into(),
+        workload_groups: 0,
+        closed_at_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_millis() as i64)
+            .unwrap_or_default(),
+    };
+    record_terminal(&cx, &root, &recent).unwrap();
+    // A completed write leaves no log behind it: the store it opened truncated
+    // the log at close, so the side file is empty rather than merely bounded.
+    let wal = root.path().join("kernel.db-wal");
+    assert_eq!(
+        std::fs::metadata(&wal).map(|meta| meta.len()).unwrap_or(0),
+        0,
+        "a terminal write left a write-ahead log behind"
+    );
+    assert_eq!(
+        expired_left(),
+        (total - usize::try_from(TERMINAL_PRUNE_MAX).unwrap()) as i64,
+        "one write pruned more than its bounded slice"
+    );
+    // A second write finishes the slice; nothing stays behind for good.
+    let mut second = recent.clone();
+    second.run_id = id(13).to_string();
+    record_terminal(&cx, &root, &second).unwrap();
+    assert_eq!(expired_left(), 0);
+}

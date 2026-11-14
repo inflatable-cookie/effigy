@@ -32,7 +32,12 @@ pub use socket::{connect_control_socket, control_socket_path};
 mod terminal;
 pub use terminal::{
     read as terminal_record, recent as terminal_records, record as record_terminal, TerminalRecord,
+    BOOT_MAX as TERMINAL_BOOT_MAX, CHECKOUT_MAX as TERMINAL_CHECKOUT_MAX,
     EVIDENCE as TERMINAL_RECORD_EVIDENCE, KEEP_MS as TERMINAL_RECORD_KEEP_MS,
+    PRUNE_MAX as TERMINAL_PRUNE_MAX, ROW_MAX_BYTES as TERMINAL_ROW_MAX_BYTES,
+    RUN_ID_MAX as TERMINAL_RUN_ID_MAX, TASK_MAX as TERMINAL_TASK_MAX,
+    TRUNCATION_MARKER as TERMINAL_TRUNCATION_MARKER, WORD_MAX as TERMINAL_WORD_MAX,
+    WRITE_MAX_BYTES as TERMINAL_WRITE_MAX_BYTES, WRITE_MAX_PAGES as TERMINAL_WRITE_MAX_PAGES,
 };
 
 pub(crate) use attachments::{
