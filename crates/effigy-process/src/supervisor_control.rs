@@ -27,7 +27,9 @@ impl ProcessSupervisor {
         self.cancel_startup();
         let children = self.all_child_handles();
         for child in children {
-            signal::send_kill(&mut crate::locks::lock_tolerant(&child));
+            // The child handles are reaped by their owners; this is a best-effort
+            // tree signal, so a tree verdict is not claimed here.
+            let _tree = signal::send_kill(&mut crate::locks::lock_tolerant(&child));
         }
     }
 

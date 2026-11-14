@@ -3438,7 +3438,7 @@ fn redaction_stops_capture_when_no_reader_safe_replacement_exists() {
         .map(|byte| vec![byte])
         .chain(std::iter::once(vec![b'\t']))
         .collect::<Vec<_>>();
-    assert!(final_replacement(&secrets).is_none());
+    assert!(super::output::final_replacement(&secrets).is_none());
     let capture = FakeCapture::new(home(), &cx, secrets.clone());
     capture.feed(Stream::Stdout, b"[REDACTED] A R\n");
     capture.close();
@@ -4910,4 +4910,52 @@ fn reserved_fd_mapping_preserves_sources_above_ordered_destinations() {
             );
         }
     }
+}
+
+#[test]
+fn process_intent_identity_is_typed_not_derived_debug_text() {
+    // The intent digest is a stored identity. It must name the lifetime
+    // variant and its exact value itself, so a derived `Debug` rendering is
+    // never part of it.
+    let mut spec = ProcessSpec {
+        argv: vec!["/bin/true".into()],
+        cwd: std::path::PathBuf::from("/tmp"),
+        env: BTreeMap::new(),
+        grace: Duration::from_millis(1500),
+        lifetime: Lifetime::Open(OpenReason::DevServer),
+        terminal: Terminal::None,
+        label: "intent identity".into(),
+    };
+    let identity = process_intent_identity(&spec);
+    assert_eq!(
+        identity["lifetime"],
+        serde_json::json!({"open": "dev_server"})
+    );
+    assert_eq!(
+        identity["grace"],
+        serde_json::json!({"secs": 1, "nanos": 500_000_000})
+    );
+
+    // Each lifetime variant is its own identity, and a finite lifetime keeps
+    // its exact duration.
+    spec.lifetime = Lifetime::Finite(Duration::from_millis(250));
+    let finite = process_intent_identity(&spec);
+    assert_ne!(finite, identity);
+    assert_eq!(
+        finite["lifetime"],
+        serde_json::json!({"finite": {"secs": 0, "nanos": 250_000_000}})
+    );
+    let target = Fence {
+        resource: inv().spec().owner.clone(),
+        generation: Generation::new(1),
+    };
+    assert_eq!(
+        process_intent(&spec, target, false)
+            .map(|intent| intent.payload["digest"].clone())
+            .expect("intent"),
+        serde_json::to_value(crate::id::Digest::of(
+            &serde_json::to_vec(&finite).expect("identity encoding")
+        ))
+        .expect("digest value")
+    );
 }

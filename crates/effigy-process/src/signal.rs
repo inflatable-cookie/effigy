@@ -1,3 +1,18 @@
+//! Best-effort supervision signals for one owned child and the processes it
+//! started.
+//!
+//! This module owns supervision signalling: the supervisor holds the direct
+//! child, proves its exit with `try_wait`, and reaches alongside it the
+//! processes it forked. Identity-evidenced custody signals are a different
+//! obligation and live in `effigy_kernel::custody::platform`, which opens a
+//! pidfd, checks the recorded generation and reports `Observed` verdicts.
+//! Nothing here decides closure or claims authority over a process this
+//! supervisor did not start.
+//!
+//! One process-table snapshot answers both questions the tree walk asks: which
+//! live processes belong to a group, and which processes descend from a root.
+//! Reading it twice could see two different trees.
+
 use std::process::Child;
 
 #[cfg(unix)]
@@ -6,29 +21,68 @@ use nix::sys::signal::{kill, Signal};
 use nix::unistd::{getpgid, Pid};
 
 #[cfg(unix)]
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 #[cfg(unix)]
 use std::process::Command as ProcessCommand;
 
-pub(super) fn send_terminate(child: &mut Child) {
-    #[cfg(unix)]
-    {
-        let _ = signal_process_tree(child, Signal::SIGTERM);
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = child.kill();
+/// Why a supervision signal could not be shown to reach every owned descendant.
+///
+/// A tree termination reports this instead of returning as if the whole tree
+/// had been signalled: a listed descendant that left the root's group is only
+/// reachable through the process table.
+#[derive(Debug)]
+pub enum ProcessTreeError {
+    /// The process table could not be read. The root's own process group was
+    /// still signalled, but a descendant that changed group was not reached.
+    Unenumerated(std::io::Error),
+    /// A resolved target refused the signal. Earlier targets may already have
+    /// received it.
+    Refused(std::io::Error),
+}
+
+impl ProcessTreeError {
+    /// Whether the failure is a missing process table rather than a refused
+    /// signal, so the caller can re-observe the tree instead of re-signalling.
+    pub fn is_unenumerated(&self) -> bool {
+        matches!(self, Self::Unenumerated(_))
     }
 }
 
-pub(super) fn send_kill(child: &mut Child) {
+impl std::fmt::Display for ProcessTreeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unenumerated(error) => write!(
+                f,
+                "process table unavailable ({error}), so a descendant outside the root's group was not signalled"
+            ),
+            Self::Refused(error) => write!(f, "a process in the tree refused the signal ({error})"),
+        }
+    }
+}
+
+impl std::error::Error for ProcessTreeError {}
+
+pub(super) fn send_terminate(child: &mut Child) -> Result<(), ProcessTreeError> {
     #[cfg(unix)]
     {
-        let _ = signal_process_tree(child, Signal::SIGKILL);
+        signal_process_tree(child.id() as i32, Signal::SIGTERM)
     }
     #[cfg(not(unix))]
     {
         let _ = child.kill();
+        Ok(())
+    }
+}
+
+pub(super) fn send_kill(child: &mut Child) -> Result<(), ProcessTreeError> {
+    #[cfg(unix)]
+    {
+        signal_process_tree(child.id() as i32, Signal::SIGKILL)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
+        Ok(())
     }
 }
 
@@ -67,57 +121,16 @@ pub fn process_is_running(pid: u32) -> bool {
 pub fn process_group_member_ids(process_group_id: u32) -> Result<Vec<u32>, std::io::Error> {
     #[cfg(unix)]
     {
-        if process_group_id == 0 || process_group_id > i32::MAX as u32 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "process group ID is outside the supported range",
-            ));
+        if !in_group_range(process_group_id) {
+            return Err(invalid_group(process_group_id));
         }
-        let output = ProcessCommand::new("ps")
-            .args(["-Ao", "pid=,pgid=,stat="])
-            .output()?;
-        if !output.status.success() {
-            return Err(std::io::Error::other(
-                "process group listing command failed",
-            ));
-        }
-        let mut members = Vec::new();
-        for line in String::from_utf8_lossy(&output.stdout).lines() {
-            let mut parts = line.split_whitespace();
-            let Some(pid) = parts.next().and_then(|value| value.parse::<i32>().ok()) else {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "process group listing contains a malformed PID",
-                ));
-            };
-            let Some(pgid) = parts.next().and_then(|value| value.parse::<u32>().ok()) else {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "process group listing contains a malformed group ID",
-                ));
-            };
-            let Some(state) = parts.next() else {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "process group listing contains a malformed process state",
-                ));
-            };
-            // `ps` state starts with `Z` only for a zombie, which is already
-            // exited and cannot hold anything the group reserves.
-            if pid > 0 && pgid == process_group_id && !state.starts_with('Z') {
-                members.push(pid as u32);
-            }
-        }
-        members.sort_unstable();
-        Ok(members)
+        let table = read_process_table()?;
+        Ok(group_member_ids(&table, process_group_id))
     }
     #[cfg(not(unix))]
     {
         let _ = process_group_id;
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "process group inspection is unsupported on this platform",
-        ))
+        Err(unsupported_group_inspection())
     }
 }
 
@@ -133,53 +146,150 @@ pub fn surviving_group_member_ids(process_group_id: u32) -> Result<Vec<u32>, std
     Ok(members)
 }
 
-pub fn terminate_process_tree(pid: u32, force: bool) {
+/// Terminate `pid` and the processes it started. A failed process-table read
+/// still signals the root's own group, and is reported rather than read as an
+/// empty tree.
+pub fn terminate_process_tree(pid: u32, force: bool) -> Result<(), ProcessTreeError> {
     #[cfg(unix)]
     {
         if pid == 0 {
-            return;
+            return Ok(());
         }
         let signal = if force {
             Signal::SIGKILL
         } else {
             Signal::SIGTERM
         };
-        let targets = signal_targets_for_child(pid as i32);
-        for pgid in targets.groups {
-            let _ = kill(Pid::from_raw(-pgid), signal);
-        }
-        for process in targets.processes {
-            let _ = kill(Pid::from_raw(process), signal);
-        }
+        signal_process_tree(pid as i32, signal)
     }
     #[cfg(not(unix))]
     {
         let _ = (pid, force);
+        Ok(())
     }
 }
 
+/// One row of the process table: the four facts a tree walk reads.
 #[cfg(unix)]
-fn signal_process_tree(child: &mut Child, signal: Signal) -> Result<(), nix::Error> {
-    let pid = child.id() as i32;
-    if pid <= 0 {
-        return Ok(());
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ProcessRow {
+    pid: i32,
+    parent: i32,
+    group: u32,
+    /// A zombie has exited: it can hold nothing and cannot fork.
+    zombie: bool,
+}
+
+#[cfg(unix)]
+fn in_group_range(group: u32) -> bool {
+    group > 0 && group <= i32::MAX as u32
+}
+
+#[cfg(not(unix))]
+fn unsupported_group_inspection() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "process group inspection is unsupported on this platform",
+    )
+}
+
+#[cfg(unix)]
+fn invalid_group(group: u32) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        format!("process group ID {group} is outside the supported range"),
+    )
+}
+
+/// Read one snapshot of the live process table.
+#[cfg(unix)]
+fn read_process_table() -> Result<Vec<ProcessRow>, std::io::Error> {
+    let output = ProcessCommand::new("ps")
+        .args(["-Ao", "pid=,ppid=,pgid=,stat="])
+        .output()?;
+    if !output.status.success() {
+        return Err(std::io::Error::other(
+            "process table listing command failed",
+        ));
     }
+    parse_process_table(&String::from_utf8_lossy(&output.stdout))
+}
 
-    let targets = signal_targets_for_child(pid);
-    let mut last_error = None;
+/// Parse `ps -Ao pid=,ppid=,pgid=,stat=` output.
+///
+/// A row the walk cannot read makes the whole snapshot unusable: skipping it
+/// would silently drop a member or a descendant from every answer derived from
+/// this snapshot.
+#[cfg(unix)]
+fn parse_process_table(rendered: &str) -> Result<Vec<ProcessRow>, std::io::Error> {
+    let mut rows = Vec::new();
+    for line in rendered.lines() {
+        let mut parts = line.split_whitespace();
+        let pid = parts
+            .next()
+            .and_then(|value| value.parse::<i32>().ok())
+            .ok_or_else(malformed_table)?;
+        let parent = parts
+            .next()
+            .and_then(|value| value.parse::<i32>().ok())
+            .ok_or_else(malformed_table)?;
+        let group = parts
+            .next()
+            .and_then(|value| value.parse::<u32>().ok())
+            .ok_or_else(malformed_table)?;
+        let state = parts.next().ok_or_else(malformed_table)?;
+        rows.push(ProcessRow {
+            pid,
+            parent,
+            group,
+            // `ps` state starts with `Z` only for a zombie.
+            zombie: state.starts_with('Z'),
+        });
+    }
+    Ok(rows)
+}
 
-    for pgid in targets.groups {
-        if let Err(error) = kill(Pid::from_raw(-pgid), signal) {
-            last_error = Some(error);
+#[cfg(unix)]
+fn malformed_table() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        "process table listing contains a malformed row",
+    )
+}
+
+/// The live, non-leader-filtered members of `group` in one snapshot.
+#[cfg(unix)]
+fn group_member_ids(table: &[ProcessRow], group: u32) -> Vec<u32> {
+    let mut members: Vec<u32> = table
+        .iter()
+        .filter(|row| row.pid > 0 && row.group == group && !row.zombie)
+        .map(|row| row.pid as u32)
+        .collect();
+    members.sort_unstable();
+    members
+}
+
+/// Every live descendant of `root` in one snapshot, depth-first.
+#[cfg(unix)]
+fn descendant_ids(table: &[ProcessRow], root: i32) -> Vec<i32> {
+    let mut children_by_parent: HashMap<i32, Vec<i32>> = HashMap::new();
+    for row in table {
+        if row.pid > 0 {
+            children_by_parent
+                .entry(row.parent)
+                .or_default()
+                .push(row.pid);
         }
     }
-    for pid in targets.processes {
-        if let Err(error) = kill(Pid::from_raw(pid), signal) {
-            last_error = Some(error);
+    let mut descendants = Vec::new();
+    let mut stack = children_by_parent.remove(&root).unwrap_or_default();
+    while let Some(pid) = stack.pop() {
+        descendants.push(pid);
+        if let Some(children) = children_by_parent.remove(&pid) {
+            stack.extend(children);
         }
     }
-
-    last_error.map_or(Ok(()), Err)
+    descendants
 }
 
 #[cfg(unix)]
@@ -188,24 +298,43 @@ struct SignalTargets {
     processes: Vec<i32>,
 }
 
+/// Turn one snapshot read into targets and, when the read failed, the fact that
+/// the tree could not be fully enumerated. The root and its own group survive a
+/// failed read; a descendant outside that group does not, and the caller says so.
 #[cfg(unix)]
-fn signal_targets_for_child(root_pid: i32) -> SignalTargets {
-    let descendants = process_descendants(root_pid);
-    let mut groups = HashSet::new();
-    let mut processes = HashSet::new();
+fn signal_targets_after_read(
+    root_pid: i32,
+    table: Result<Vec<ProcessRow>, std::io::Error>,
+) -> (SignalTargets, Option<std::io::Error>) {
+    match table {
+        Ok(table) => (signal_targets(root_pid, &table), None),
+        Err(error) => (signal_targets(root_pid, &[]), Some(error)),
+    }
+}
 
-    let mut ordered_pids = descendants;
+#[cfg(unix)]
+fn signal_targets(root_pid: i32, table: &[ProcessRow]) -> SignalTargets {
+    let mut groups = std::collections::HashSet::new();
+    let mut processes = std::collections::HashSet::new();
+
+    let mut ordered_pids = descendant_ids(table, root_pid);
     ordered_pids.push(root_pid);
     ordered_pids.sort_unstable();
     ordered_pids.dedup();
 
     for pid in &ordered_pids {
         processes.insert(*pid);
-        if let Ok(group) = getpgid(Some(Pid::from_raw(*pid))) {
-            let raw = group.as_raw();
-            if raw > 0 {
-                groups.insert(raw);
+        if let Some(row) = table.iter().find(|row| row.pid == *pid) {
+            if row.group > 0 {
+                groups.insert(row.group as i32);
             }
+        }
+    }
+    // The root's group is an OS fact, not a table row: ask even when the table
+    // is empty or unreadable so the fallback signal still reaches the group.
+    if let Ok(group) = getpgid(Some(Pid::from_raw(root_pid))) {
+        if group.as_raw() > 0 {
+            groups.insert(group.as_raw());
         }
     }
 
@@ -217,39 +346,133 @@ fn signal_targets_for_child(root_pid: i32) -> SignalTargets {
     SignalTargets { groups, processes }
 }
 
+/// A kill failure that is a refusal, or `None` when the target has gone.
+///
+/// `ESRCH` says the process or group this walk resolved no longer exists. A
+/// termination that finds its target already gone has done what it was asked:
+/// reporting that as a refusal would tell a caller an achieved `SIGKILL` was
+/// rejected, and would turn every race with a self-exiting workload into a
+/// failure. Every other failure is a target that refused the signal.
 #[cfg(unix)]
-fn process_descendants(root_pid: i32) -> Vec<i32> {
-    let output = ProcessCommand::new("ps")
-        .args(["-Ao", "pid=,ppid="])
-        .output();
-    let Ok(output) = output else {
-        return Vec::new();
-    };
-    if !output.status.success() {
-        return Vec::new();
-    }
+fn refusal(error: nix::errno::Errno) -> Option<std::io::Error> {
+    let error = std::io::Error::from(error);
+    (error.raw_os_error() != Some(nix::libc::ESRCH)).then_some(error)
+}
 
-    let rendered = String::from_utf8_lossy(&output.stdout);
-    let mut children_by_parent: HashMap<i32, Vec<i32>> = HashMap::new();
-    for line in rendered.lines() {
-        let mut parts = line.split_whitespace();
-        let Some(pid) = parts.next().and_then(|value| value.parse::<i32>().ok()) else {
-            continue;
-        };
-        let Some(ppid) = parts.next().and_then(|value| value.parse::<i32>().ok()) else {
-            continue;
-        };
-        children_by_parent.entry(ppid).or_default().push(pid);
+#[cfg(unix)]
+fn signal_process_tree(root_pid: i32, signal: Signal) -> Result<(), ProcessTreeError> {
+    if root_pid <= 0 {
+        return Ok(());
     }
+    let (targets, unenumerated) = signal_targets_after_read(root_pid, read_process_table());
+    let mut refused = None;
+    for group in targets.groups {
+        if let Err(error) = kill(Pid::from_raw(-group), signal) {
+            if let Some(error) = refusal(error) {
+                refused = Some(error);
+            }
+        }
+    }
+    for process in targets.processes {
+        if let Err(error) = kill(Pid::from_raw(process), signal) {
+            if let Some(error) = refusal(error) {
+                refused = Some(error);
+            }
+        }
+    }
+    match (unenumerated, refused) {
+        (Some(error), _) => Err(ProcessTreeError::Unenumerated(error)),
+        (None, Some(error)) => Err(ProcessTreeError::Refused(error)),
+        (None, None) => Ok(()),
+    }
+}
 
-    let mut descendants = Vec::new();
-    let mut stack = children_by_parent.remove(&root_pid).unwrap_or_default();
-    while let Some(pid) = stack.pop() {
-        descendants.push(pid);
-        if let Some(children) = children_by_parent.remove(&pid) {
-            stack.extend(children);
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    fn row(pid: i32, parent: i32, group: u32, zombie: bool) -> ProcessRow {
+        ProcessRow {
+            pid,
+            parent,
+            group,
+            zombie,
         }
     }
 
-    descendants
+    #[test]
+    fn one_snapshot_answers_group_members_and_excludes_zombies() {
+        let table = [
+            row(10, 1, 10, false),
+            row(11, 10, 10, false),
+            row(12, 10, 10, true),
+            row(13, 1, 13, false),
+        ];
+        assert_eq!(group_member_ids(&table, 10), vec![10, 11]);
+        assert_eq!(group_member_ids(&table, 13), vec![13]);
+        assert!(group_member_ids(&table, 99).is_empty());
+    }
+
+    #[test]
+    fn one_snapshot_answers_the_descendant_walk() {
+        let table = [
+            row(10, 1, 10, false),
+            row(11, 10, 10, false),
+            row(12, 11, 10, false),
+            row(13, 1, 13, false),
+        ];
+        let mut descendants = descendant_ids(&table, 10);
+        descendants.sort_unstable();
+        assert_eq!(descendants, vec![11, 12]);
+        assert!(descendant_ids(&table, 13).is_empty());
+    }
+
+    #[test]
+    fn a_malformed_row_refuses_the_whole_snapshot() {
+        // A skipped row would drop a member or a descendant from both answers.
+        assert!(parse_process_table("10 one 10 Ss\n").is_err());
+        assert!(parse_process_table("10 1 notagroup Ss\n").is_err());
+        assert!(parse_process_table("10 1 10\n").is_err());
+    }
+
+    #[test]
+    fn a_zombie_row_parses_as_not_live() {
+        let table = parse_process_table("10 1 10 Z+\n11 10 10 S\n").unwrap();
+        assert!(table[0].zombie);
+        assert!(!table[1].zombie);
+    }
+
+    #[test]
+    fn a_target_that_is_already_gone_is_not_a_refusal() {
+        // A kill that finds its target gone has done its job: ESRCH is
+        // absence, not refusal.
+        assert!(refusal(nix::errno::Errno::ESRCH).is_none());
+        let refused = refusal(nix::errno::Errno::EPERM).expect("a refused signal");
+        assert_eq!(refused.raw_os_error(), Some(nix::libc::EPERM));
+    }
+
+    #[test]
+    fn terminating_an_absent_target_succeeds_instead_of_reporting_a_refusal() {
+        // Above the platform's maximum pid, so no live process can be
+        // signalled: the walk resolves the root, the kill answers ESRCH, and
+        // there is nothing left to terminate. Before this fix every
+        // post-group-kill ESRCH became `Refused`, so this reported a delivered
+        // SIGKILL as rejected.
+        let absent = (i32::MAX - 1) as u32;
+        assert!(terminate_process_tree(absent, true).is_ok());
+    }
+
+    #[test]
+    fn an_unreadable_process_table_is_reported_instead_of_an_empty_tree() {
+        // Before this seam a failed read produced an empty descendant set,
+        // which read as "the root has no descendants" and narrowed the
+        // termination with no error. Now the root stays a target and the
+        // failure is stated.
+        let (targets, error) =
+            signal_targets_after_read(i32::MAX - 1, Err(std::io::Error::other("ps unavailable")));
+        assert_eq!(targets.processes, vec![i32::MAX - 1]);
+        let error = ProcessTreeError::Unenumerated(error.expect("the read failure is reported"));
+        assert!(error.is_unenumerated());
+        assert!(error.to_string().contains("not signalled"));
+    }
 }
