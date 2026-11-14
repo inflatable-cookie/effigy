@@ -294,3 +294,123 @@ fn route_handshake_probe_proves_the_registered_certificate_is_served() {
     );
     server.join().unwrap();
 }
+
+/// One scripted live-routes view: each answer is the next body in `answers`,
+/// repeating the last one once the script runs out.
+fn stub_routes_view(
+    answers: Vec<String>,
+) -> (
+    std::net::SocketAddr,
+    std::sync::Arc<std::sync::atomic::AtomicUsize>,
+) {
+    use std::io::{Read, Write};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("stub view binds");
+    let address = listener.local_addr().expect("stub view address");
+    let polls = std::sync::Arc::new(AtomicUsize::new(0));
+    let served = std::sync::Arc::clone(&polls);
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
+            let mut request = vec![0u8; 4096];
+            let Ok(_read) = stream.read(&mut request) else {
+                continue;
+            };
+            let seen = served.fetch_add(1, Ordering::SeqCst);
+            let body = answers
+                .get(seen)
+                .or_else(|| answers.last())
+                .cloned()
+                .unwrap_or_default();
+            let _ = stream.write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            );
+        }
+    });
+    (address, polls)
+}
+
+fn loaded_view(domain: &str) -> String {
+    format!("{{\"count\":1,\"routes\":[{{\"domain\":\"{domain}\",\"tls\":true,\"tls_available\":true}}]}}")
+}
+
+fn unloaded_view(domain: &str) -> String {
+    format!("{{\"count\":1,\"routes\":[{{\"domain\":\"{domain}\",\"tls\":true,\"tls_available\":false}}]}}")
+}
+
+/// The acknowledgement the reload owner exposes: the view serves the route
+/// with its certificate loaded only after the reload, and the wait confirms
+/// exactly then.
+#[test]
+fn tls_reload_ack_confirms_once_the_view_loads_the_certificate() {
+    use std::sync::atomic::Ordering;
+
+    let (view, polls) = stub_routes_view(vec![
+        "{\"count\":0,\"routes\":[]}".to_owned(),
+        unloaded_view("switch.clientname.test"),
+        loaded_view("switch.clientname.test"),
+    ]);
+    let readiness = await_tls_route_loaded(
+        view,
+        "switch.clientname.test",
+        Instant::now() + Duration::from_secs(5),
+    );
+    assert_eq!(readiness, TlsRouteReadiness::Loaded);
+    assert!(
+        polls.load(Ordering::SeqCst) >= 3,
+        "the wait polls until the reload flips the view"
+    );
+}
+
+/// A route the view never loads stays pending: bounded, and never a serving
+/// verdict.
+#[test]
+fn tls_reload_ack_stays_pending_when_the_route_never_loads() {
+    let (view, _) = stub_routes_view(vec!["{\"count\":0,\"routes\":[]}".to_owned()]);
+    let started = Instant::now();
+    let readiness = await_tls_route_loaded(
+        view,
+        "missing.clientname.test",
+        Instant::now() + Duration::from_millis(200),
+    );
+    assert_eq!(readiness, TlsRouteReadiness::Pending);
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "the wait is bounded by its deadline"
+    );
+}
+
+/// A view without per-route certificate state is an older gateway, not a
+/// pending reload: callers keep the single handshake instead of waiting out
+/// every budget.
+#[test]
+fn tls_reload_ack_is_unknown_without_per_route_certificate_state() {
+    use std::sync::atomic::Ordering;
+
+    let (view, polls) = stub_routes_view(vec![
+        "{\"count\":1,\"routes\":[{\"domain\":\"legacy.clientname.test\",\"tls\":true}]}"
+            .to_owned(),
+    ]);
+    let started = Instant::now();
+    let readiness = await_tls_route_loaded(
+        view,
+        "legacy.clientname.test",
+        Instant::now() + Duration::from_secs(5),
+    );
+    assert_eq!(readiness, TlsRouteReadiness::Unknown);
+    assert_eq!(
+        polls.load(Ordering::SeqCst),
+        1,
+        "an older view answers at once; there is nothing to wait for"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "the legacy answer never waits out the budget"
+    );
+}

@@ -11,10 +11,11 @@
 //! - SNI-based certificate resolver for multi-domain HTTPS
 
 use std::collections::{BTreeSet, HashMap};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use rustls::server::{ClientHello, ResolvesServerCert};
 use rustls::sign::CertifiedKey;
@@ -958,6 +959,121 @@ pub fn probe_route_handshake(
         )));
     }
     Ok(())
+}
+
+/// How long the post-registration wait pauses between reload-acknowledgement
+/// polls. Every poll checks this route's own view entry, so the pause only
+/// spaces acknowledgement checks; no handshake is repeated here.
+const TLS_RELOAD_ACK_POLL_INTERVAL: Duration = Duration::from_millis(25);
+
+/// Cap on one acknowledgement poll's connect and read. The loopback view
+/// answers at once; the cap only bounds a wedged listener.
+const TLS_RELOAD_ACK_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// What the running gateway's live routes view says about one TLS route.
+///
+/// The view is rendered from the daemon's applied table and its loaded SNI
+/// map, so `Loaded` is the single reload owner's acknowledgement, not a
+/// guess made from the committed store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TlsRouteReadiness {
+    /// The live view serves the route with its certificate loaded.
+    Loaded,
+    /// The view serves no per-route certificate state, so a gateway that
+    /// predates it cannot confirm the reload. Callers keep the previous
+    /// single-handshake behavior rather than reporting unverified forever.
+    Unknown,
+    /// The view never confirmed the route within the budget.
+    Pending,
+}
+
+/// Wait until the running gateway's live `/_effigy/routes` view serves
+/// `domain` with its certificate loaded, or `deadline` passes.
+///
+/// Each poll checks this route's entry only; nothing handshakes here. Any
+/// unreadable, non-200 or unparsable answer is simply not yet: only a view
+/// entry with its certificate loaded confirms, and only an entry without
+/// per-route certificate state reports `Unknown`.
+pub fn await_tls_route_loaded(
+    proxy_addr: SocketAddr,
+    domain: &str,
+    deadline: Instant,
+) -> TlsRouteReadiness {
+    loop {
+        match read_tls_route_readiness(proxy_addr, domain, deadline) {
+            TlsRouteReadiness::Pending => {}
+            confirmed => return confirmed,
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return TlsRouteReadiness::Pending;
+        }
+        std::thread::sleep(std::cmp::min(
+            TLS_RELOAD_ACK_POLL_INTERVAL,
+            deadline.saturating_duration_since(now),
+        ));
+    }
+}
+
+/// One acknowledgement poll against the live routes view.
+fn read_tls_route_readiness(
+    proxy_addr: SocketAddr,
+    domain: &str,
+    deadline: Instant,
+) -> TlsRouteReadiness {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    let attempt = std::cmp::min(remaining, TLS_RELOAD_ACK_ATTEMPT_TIMEOUT);
+    let mut stream = match std::net::TcpStream::connect_timeout(&proxy_addr, attempt) {
+        Ok(stream) => stream,
+        Err(_) => return TlsRouteReadiness::Pending,
+    };
+    if stream.set_read_timeout(Some(attempt)).is_err() {
+        return TlsRouteReadiness::Pending;
+    }
+    if std::io::Write::write_all(
+        &mut stream,
+        b"GET /_effigy/routes HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+    )
+    .is_err()
+    {
+        return TlsRouteReadiness::Pending;
+    }
+    let mut raw = Vec::new();
+    if std::io::Read::read_to_end(&mut stream, &mut raw).is_err() {
+        return TlsRouteReadiness::Pending;
+    }
+    let text = String::from_utf8_lossy(&raw);
+    let Some((head, body)) = text.split_once("\r\n\r\n") else {
+        return TlsRouteReadiness::Pending;
+    };
+    if !head
+        .lines()
+        .next()
+        .is_some_and(|status| status.contains(" 200 "))
+    {
+        return TlsRouteReadiness::Pending;
+    }
+    let view: serde_json::Value = match serde_json::from_str(body) {
+        Ok(view) => view,
+        Err(_) => return TlsRouteReadiness::Pending,
+    };
+    let Some(routes) = view.get("routes").and_then(|routes| routes.as_array()) else {
+        return TlsRouteReadiness::Pending;
+    };
+    let Some(entry) = routes.iter().find(|route| {
+        route
+            .get("domain")
+            .and_then(|name| name.as_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case(domain))
+    }) else {
+        return TlsRouteReadiness::Pending;
+    };
+    match entry.get("tls_available") {
+        Some(serde_json::Value::Bool(true)) => TlsRouteReadiness::Loaded,
+        Some(serde_json::Value::Bool(false)) => TlsRouteReadiness::Pending,
+        // No per-route certificate state: a gateway that predates it.
+        _ => TlsRouteReadiness::Unknown,
+    }
 }
 
 /// Accepts the presented leaf only so [`probe_route_handshake`] can compare it
