@@ -275,12 +275,13 @@ impl RemoteCustody {
         // The workload deadline ends the workload, never the launch that
         // identifies it: only an identified session can be stopped, so a launch
         // that gave up at the deadline could leave the workload running
-        // unowned. Identity, intent, spawn and registration therefore run inside
-        // that deadline plus the launch's own stop grace, and a session that
-        // registers there is recorded and then stopped by the caller under the
-        // deadline that has already expired. The workload gets no extra run
-        // time: the wrapper registers before it execs the workload. A
-        // cancellation still refuses at once through the same token.
+        // unowned. Identity, intent and client spawn therefore run inside that
+        // deadline plus the launch's own stop grace, and registration adds the
+        // acknowledgement budget as its own cap; a session that registers there
+        // is recorded and then stopped by the caller under the deadline that has
+        // already expired. The workload gets no extra run time: the wrapper
+        // registers before it execs the workload. A cancellation still refuses
+        // at once through the same token.
         let window = cx
             .operation()
             .remaining()
@@ -391,8 +392,9 @@ impl RemoteCustody {
             .map_err(RemoteError::Spawn)?;
         let result = (|| {
             crate::fault_point!(RemoteBeforeAck).map_err(RunError::from)?;
-            // Registration shares the launch window: the deadline plus the
-            // launch's stop grace, never more than the acknowledgement budget.
+            // Registration shares the launch window and adds its own budget:
+            // whichever of the launch window and the acknowledgement budget
+            // ends first.
             let ack = launch.operation().child(spec.ack_timeout);
             let registration = loop {
                 // A registration that already arrived is never discarded for a

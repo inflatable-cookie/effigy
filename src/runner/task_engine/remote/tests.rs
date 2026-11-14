@@ -647,28 +647,38 @@ fn remote_admission_registration_obeys_original_deadline() {
 /// session is still registering must not discard the session. The registration
 /// window keeps that deadline plus the launch's stop grace, so a session that
 /// registers inside it is recorded and then stopped under the deadline that has
-/// already expired. The barrier, not host load, puts the deadline first.
+/// already expired.
+///
+/// The run mints its deadline from this scope's absolute instant, so the test
+/// knows the exact moment it expires. The barrier releases the registration line
+/// only once that instant has passed: no host-timing guess decides the order, and
+/// the registration cannot reach the kernel first. The launch's own grace is
+/// stretched for this fixture, so a loaded host cannot spend the launch window
+/// before the session exists; the deadline the run reports is the real one.
 #[test]
 fn a_deadline_that_expires_before_registration_still_stops_the_session() {
     let fixture = fixture();
     let mut task_run = begin(&fixture.root, "remote:pre-registration");
     let dir = fixture.model.dir.clone();
-    let deadline = Duration::from_millis(300);
-    let start = Instant::now();
+    let _scope = super::super::SpawnScope::enter(&BTreeMap::new(), None, true, Some(200));
+    let deadline_at = Instant::now()
+        + super::super::spawn_env::remaining().expect("the scope's absolute deadline");
+    TEST_LAUNCH_GRACE.with(|grace| grace.set(Some(Duration::from_secs(30))));
     let barrier = std::thread::spawn(move || {
         let until = Instant::now() + Duration::from_secs(10);
         while !dir.join("waiting").exists() {
             if Instant::now() >= until {
                 // The launch gave up before its session could register. The
                 // assertions below report what that cost the session.
-                return;
+                break;
             }
             std::thread::sleep(Duration::from_millis(2));
         }
-        while start.elapsed() < deadline {
-            std::thread::sleep(Duration::from_millis(2));
+        while Instant::now() < deadline_at {
+            std::thread::sleep(Duration::from_millis(1));
         }
         std::fs::write(dir.join("release"), b"").expect("release the registration");
+        Instant::now()
     });
     let mut adapter = PendingAck(fixture.model.clone());
     let env = fixture.env.clone();
@@ -678,16 +688,22 @@ fn a_deadline_that_expires_before_registration_still_stops_the_session() {
             &fixture.root,
             "while [ ! -f \"$MODEL_STOP\" ]; do sleep 0.02; done; exit 143",
             true,
-            Some(300),
+            None,
         ),
         &mut adapter,
         ContainerTarget(CONTAINER.into()),
         &mut || current(&fixture.root, &env),
     )
     .expect("a deadline before registration is still an outcome");
-    barrier.join().expect("registration barrier");
+    TEST_LAUNCH_GRACE.with(|grace| grace.set(None));
+    let released_at = barrier.join().expect("registration barrier");
     assert!(matches!(exit.workload, WorkloadOutcome::TimedOut { .. }));
     assert_eq!(exit.code, 124);
+    assert!(
+        released_at >= deadline_at,
+        "the registration was released {:?} before the run's deadline",
+        deadline_at.saturating_duration_since(released_at)
+    );
     assert!(
         fixture.model.dir.join("stop").exists(),
         "the deadline never reached the remote session"

@@ -150,7 +150,7 @@ pub(in crate::runner) fn run_remote_with(
                 },
                 ack_timeout: ACK_TIMEOUT,
                 call_timeout: CALL_TIMEOUT,
-                grace: GRACE,
+                grace: launch_grace(),
             },
             &cx,
             adapter,
@@ -314,6 +314,23 @@ pub(in crate::runner) fn run_remote_with(
         stdout: stdout.bytes,
         stderr: stderr.bytes,
     })
+}
+
+// A test that must hold a registration line across the workload deadline needs
+// a launch window host scheduling cannot spend first; production always uses
+// GRACE. The kernel keeps the deadline the run reports.
+#[cfg(test)]
+thread_local! {
+    static TEST_LAUNCH_GRACE: std::cell::Cell<Option<Duration>> =
+        const { std::cell::Cell::new(None) };
+}
+
+fn launch_grace() -> Duration {
+    #[cfg(test)]
+    if let Some(grace) = TEST_LAUNCH_GRACE.with(std::cell::Cell::get) {
+        return grace;
+    }
+    GRACE
 }
 
 // The phase proof supplies a logical deadline and instant only after the real
