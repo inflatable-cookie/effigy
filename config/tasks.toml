@@ -381,15 +381,15 @@
 # §12.1 fault driver and oracles, and the §12.3 supervisor model matrix.
 # Measured 2026-11-12 on macOS: the split fault suite took 806 s in nextest
 # at load 107 (17/17); a later run at load 78–96 took 835 s (16/17).
-# Round 4 measurement (2026-11-13): the QA aggregate compiles the custody
-# fixture once and reuses it. Faults/matrix/custody/handoff passed 18/18,
-# 1/1, 153/153 and 1/1 in 1026.992/132.629/67.819/6.292 s at the selector
-# level. Probe had one overlap-sensitive failure (21/22, 27.301 s); its
-# immediate focused rerun passed (43.233 s). Remote/helpers/gateway-budget
-# passed 25/25, 21/21 and 4/4; machine-facts passed 3/3 in 0.999 s within its
-# unchanged 180 s bound; secrets-vault passed 27/27 in 91.882 s. Other active
-# Effigy test/fault selectors overlapped, so these are observed timings, not
-# an isolated benchmark.
+# Round 4 aggregate under contention (2026-11-13): run
+# `9d2c45ee-6bf7-4d50-913e-18f3305573c6` passed 15/18 faults cases at load
+# 50–115 while other fault selectors were live; part 0 and multi-child timed
+# out and part 2 failed. Mark this unproven under contention, not a pass. A
+# later high-load diagnostic run (`daeef291-cb9e-4ad6-b936-d55b5b243ccc`)
+# passed its fault and later selections, but is not acceptance proof. The
+# planner defers quiet aggregate proof to milestone QA after merge. This task
+# changes only build wiring: the shared fixture binary is reused, while
+# fault-scenario behavior, features, filters and timeout profiles stay fixed.
 # Q-013 ruling 3: the fault-injection-gated kernel and secrets proofs run at
 # milestone QA instead of staying hand-run only. The QA aggregate shares one
 # custody-fixture build, then runs each original nextest selection in order;
@@ -496,7 +496,7 @@
 "check:kernel:compile:default" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy-kernel --all-targets", timeout_ms = 600000 }] }
 "check:kernel:clippy" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-kernel --all-targets --features fault-injection -- -D warnings", timeout_ms = 600000 }] }
 "check:kernel:clippy:default" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-kernel --all-targets -- -D warnings", timeout_ms = 600000 }] }
-"lint:linux" = { visibility = "internal", group = "Maintenance", description = "Strictly lint effigy-process for aarch64 Linux before native qualification; crates requiring a cross C toolchain remain covered by Linux CI.", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-process --lib --target aarch64-unknown-linux-gnu -- -D warnings", timeout_ms = 1800000 }] }
+"lint:linux" = { visibility = "internal", group = "Maintenance", description = "Strict Clippy for aarch64 Linux across the workspace with zig as the cross C compiler (narrowed effigy-process scope when zig is missing) before native qualification.", run = [{ run = "sh scripts/lint-linux.sh", timeout_ms = 1800000 }] }
 "test:kernel:default:merged" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --lib -E 'test(custody::merged::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "fmt:kernel" = { visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh fmt -p effigy-kernel" }
 "qa:kernel-ratchet" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh run -p effigy-kernel --example kernel-ratchet", timeout_ms = 600000 }] }
@@ -1727,7 +1727,7 @@
 ] }
 # The Q-017 gate: no fixed-label spinner can reach a command plane, and the
 # whole workspace is linted, not a chosen package list (effigy#467).
-"lint:feedback" = { visibility = "internal", group = "Maintenance", description = "Check Rust formatting, fixed-label spinner entry points, Linux-target code, and every workspace target with strict Clippy.", run = [{ task = "fmt:check" }, { task = "lint:feedback:inventory" }, { task = "lint:linux" }, { run = "sh scripts/oxide-selector.sh clippy --workspace --all-targets -- -D warnings", timeout_ms = 1800000 }] }
+"lint:feedback" = { visibility = "internal", group = "Maintenance", description = "Check Rust formatting, fixed-label spinner entry points, and every workspace target with strict Clippy.", run = [{ task = "fmt:check" }, { task = "lint:feedback:inventory" }, { run = "sh scripts/oxide-selector.sh clippy --workspace --all-targets -- -D warnings", timeout_ms = 1800000 }] }
 "lint:feedback:clippy" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy --workspace --all-targets -- -D warnings", timeout_ms = 900000 }] }
 "check:feedback:compile" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-ui -p effigy-containers --all-targets", timeout_ms = 900000 }] }
 "test:feedback:inventory" = { visibility = "internal", group = "Maintenance", run = [{ run = "python3 scripts/test_feedback_inventory.py", timeout_ms = 900000 }] }
