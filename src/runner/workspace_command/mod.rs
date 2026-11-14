@@ -39,7 +39,7 @@ use crate::runner::container_command::{
     run_container, runtime_error_from_runner,
 };
 use crate::runner::container_runtime_prep::container_policy_uses_gateway_surface;
-use crate::runner::execute::api::{
+use crate::runner::execute::binding::{
     ensure_inline_workspace_supported, resolve_execution_binding_resolution, ExecutionBindingKind,
     InlineWorkspaceCapabilitySurface,
 };

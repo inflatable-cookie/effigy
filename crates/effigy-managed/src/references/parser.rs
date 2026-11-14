@@ -3,6 +3,7 @@ use effigy_tasks::{parse_task_reference_invocation, render_task_selector, TaskSe
 
 use crate::{ManagedError, BUILTIN_TASKS};
 
+#[derive(Debug)]
 pub struct ParsedTaskRef {
     pub selector: TaskSelector,
     pub selector_rendered: String,

@@ -36,7 +36,8 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::transport::resolve_host_program;
+use super::transport::argv::{format_args, resolve_host_program};
+use crate::runner::error::RunnerError;
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -1027,7 +1028,7 @@ mod tests {
             retained_bytes,
         } = failure
         else {
-            panic!("expected overflow, got {failure:?}");
+            panic!("expected an overflow failure");
         };
         if let Some(expected) = expected_stream {
             assert_eq!(stream, expected);
@@ -1057,7 +1058,7 @@ mod tests {
         );
         match outcome.expect("reader reports an outcome") {
             StreamOutcome::Complete(bytes) => assert_eq!(bytes.len(), 32),
-            other => panic!("expected complete, got {other:?}"),
+            _ => panic!("expected a complete stream"),
         }
         assert!(!overflow.load(Ordering::SeqCst));
 
@@ -1087,7 +1088,7 @@ mod tests {
                     "the retained prefix is exactly the budget"
                 );
             }
-            other => panic!("expected overflow, got {other:?}"),
+            _ => panic!("expected an overflow outcome"),
         }
         assert_eq!(progress.retained.load(Ordering::SeqCst), 32);
         assert_eq!(progress.read.load(Ordering::SeqCst), 33);
@@ -1351,7 +1352,7 @@ mod tests {
         .expect_err("EOF alone must not count as process completion");
         assert!(
             matches!(error.failure, BoundedCaptureFailure::Deadline),
-            "{error:?}"
+            "EOF alone reported a non-deadline failure"
         );
 
         let (_dir, program, args) = test_command("exec 1>&- 2>&-; /bin/sleep 0.05; exit 7");
@@ -1461,5 +1462,437 @@ mod tests {
             args: args.to_vec(),
             label: "private bounded fixture".to_owned(),
         }
+    }
+}
+
+pub(super) fn run_command_capture_allow_failure_with_stdin(
+    repo_root: &Path,
+    program: &OsStr,
+    args: &[OsString],
+    stdin_file: Option<&Path>,
+) -> Result<Output, RunnerError> {
+    run_command_capture_until(repo_root, program, args, stdin_file, None)
+}
+
+pub(in crate::runner) fn run_command_capture_until(
+    repo_root: &Path,
+    program: &OsStr,
+    args: &[OsString],
+    stdin_file: Option<&Path>,
+    deadline: Option<Instant>,
+) -> Result<Output, RunnerError> {
+    capture_command_until(repo_root, program, args, stdin_file, deadline).map_err(|error| {
+        match error {
+            CommandCaptureError::Deadline { command } => {
+                RunnerError::task_invocation(format!("{command} timed out"))
+            }
+            CommandCaptureError::Runner(error) => error,
+        }
+    })
+}
+
+pub(in crate::runner) enum CommandCaptureError {
+    Deadline { command: String },
+    Runner(RunnerError),
+}
+
+impl From<RunnerError> for CommandCaptureError {
+    fn from(error: RunnerError) -> Self {
+        Self::Runner(error)
+    }
+}
+
+/// The clock reading `capture_command_until` compares against the caller's
+/// absolute deadline. Production reads the wall clock and the
+/// `#[cfg(not(test))]` build compiles to exactly that. Under test, a proof
+/// may control the reading (`controlled_capture_clock`) so a bounded fixture
+/// proof can hold the original deadline until an owned workload's start is
+/// authenticated, then advance past the same deadline: spawning, waiting,
+/// draining and owned-group termination stay real in both builds.
+#[cfg(not(test))]
+fn capture_expiry_clock() -> Instant {
+    Instant::now()
+}
+
+#[cfg(test)]
+fn capture_expiry_clock() -> Instant {
+    super::controlled_capture_clock::controlled_capture_now().unwrap_or_else(Instant::now)
+}
+
+pub(in crate::runner) fn capture_command_until(
+    repo_root: &Path,
+    program: &OsStr,
+    args: &[OsString],
+    stdin_file: Option<&Path>,
+    deadline: Option<Instant>,
+) -> Result<Output, CommandCaptureError> {
+    // Test-only deterministic seam. Production runs contain no scripted
+    // runtime, so this compiles to a no-op branch and keeps the real capture,
+    // argv and deadline semantics below unchanged.
+    #[cfg(test)]
+    if let Some(scripted) =
+        crate::runner::scripted_doctor::intercept_capture(program, args, deadline)
+    {
+        return scripted.map_err(CommandCaptureError::Runner);
+    }
+    let resolved_program = resolve_host_program(program);
+    let command_label = format!(
+        "{} {}",
+        resolved_program.to_string_lossy(),
+        format_args(args)
+    );
+    if deadline.is_some_and(|deadline| capture_expiry_clock() >= deadline) {
+        return Err(CommandCaptureError::Deadline {
+            command: command_label,
+        });
+    }
+    let mut command = ProcessCommand::new(&resolved_program);
+    command.current_dir(repo_root).args(args);
+    if let Some(stdin_file) = stdin_file {
+        let file =
+            std::fs::File::open(stdin_file).map_err(|error| RunnerError::TaskCommandLaunch {
+                command: command_label.clone(),
+                error,
+            })?;
+        command.stdin(Stdio::from(file));
+    } else {
+        command.stdin(Stdio::null());
+    }
+    let Some(deadline) = deadline else {
+        return command.output().map_err(|error| {
+            CommandCaptureError::Runner(RunnerError::TaskCommandLaunch {
+                command: command_label,
+                error,
+            })
+        });
+    };
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(unix)]
+    // SAFETY: `pre_exec` runs this closure in the forked child before `exec`,
+    // where only async-signal-safe work is allowed. `setpgid` is
+    // async-signal-safe and runs before any image is loaded, placing the child
+    // in a new process group whose id is the child's own pid; the error path
+    // uses the allocation-free `io::Error::from` conversion. On deadline the
+    // caller calls `effigy_process::terminate_process_tree(child.id())`, which
+    // signals the negative of that same process-group id, so the TERM/KILL
+    // contract covers the started child and its descendants.
+    unsafe {
+        command.pre_exec(|| {
+            nix::unistd::setpgid(nix::unistd::Pid::from_raw(0), nix::unistd::Pid::from_raw(0))
+                .map_err(std::io::Error::from)
+        });
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|error| RunnerError::TaskCommandLaunch {
+            command: command_label.clone(),
+            error,
+        })?;
+    let Some(mut stdout) = child.stdout.take() else {
+        terminate_owned_group(&mut child);
+        return Err(
+            RunnerError::task_invocation(format!("{command_label} stdout unavailable")).into(),
+        );
+    };
+    let Some(mut stderr) = child.stderr.take() else {
+        terminate_owned_group(&mut child);
+        return Err(
+            RunnerError::task_invocation(format!("{command_label} stderr unavailable")).into(),
+        );
+    };
+    let stdout_reader = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let stderr_reader = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stderr.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    loop {
+        if capture_expiry_clock() >= deadline {
+            terminate_owned_group(&mut child);
+            // An escaped, unowned writer must not defeat the caller deadline.
+            // Drop unfinished handles; never join a reader without observing EOF.
+            return Err(CommandCaptureError::Deadline {
+                command: command_label,
+            });
+        }
+        if stdout_reader.is_finished() && stderr_reader.is_finished() {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let stdout = stdout_reader.join().ok().and_then(Result::ok);
+                    let stderr = stderr_reader.join().ok().and_then(Result::ok);
+                    let (Some(stdout), Some(stderr)) = (stdout, stderr) else {
+                        return Err(RunnerError::task_invocation(format!(
+                            "{command_label} output unavailable"
+                        ))
+                        .into());
+                    };
+                    return Ok(Output {
+                        status,
+                        stdout,
+                        stderr,
+                    });
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    terminate_owned_group(&mut child);
+                    return Err(RunnerError::TaskCommandLaunch {
+                        command: command_label,
+                        error,
+                    }
+                    .into());
+                }
+            }
+        }
+        // Retain the leader until both readers finish. A reaped leader cannot
+        // anchor cancellation of an inherited writer's original process group.
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[cfg(test)]
+mod capture_deadline_tests {
+    use super::*;
+    #[cfg(unix)]
+    use crate::runner::exec_command::controlled_capture_clock;
+    #[cfg(unix)]
+    use std::fs;
+    #[cfg(unix)]
+    use std::sync::mpsc;
+
+    /// The workload shape the deep doctor's bounded health execution runs:
+    /// the shell records its background writer's PID, parks on it, and the
+    /// writer would leak the marker after a real 2s if the tree outlived the
+    /// deadline. Returns (record path, marker path, script).
+    #[cfg(unix)]
+    fn health_workload_fixture(
+        root: &std::path::Path,
+    ) -> (std::path::PathBuf, std::path::PathBuf, String) {
+        let record = root.join("health-child-pid");
+        let marker = root.join("leaked-health-child");
+        let script = format!(
+            "(/bin/sleep 2; printf leaked > '{}') & printf %s $! > '{}'; wait",
+            marker.display(),
+            record.display()
+        );
+        (record, marker, script)
+    }
+
+    /// Read the recorded workload PID with a real wall bound. The record is
+    /// the workload's own start authentication: without it, no stop or
+    /// closure claim would be available.
+    #[cfg(unix)]
+    fn wait_for_recorded_workload_pid(record: &std::path::Path, bound: Duration) -> u32 {
+        let started = Instant::now();
+        loop {
+            if let Ok(raw) = fs::read_to_string(record) {
+                let pid = raw.trim().parse::<u32>().unwrap_or(0);
+                if pid > 0 {
+                    return pid;
+                }
+            }
+            assert!(
+                started.elapsed() < bound,
+                "the owned workload never recorded its start: {} stayed absent",
+                record.display()
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// Wait the recorded generation out with a real wall bound. An
+    /// identity-matched survivor is force-stopped by its recorded PID; an
+    /// absent identity is never treated as proven closure.
+    #[cfg(unix)]
+    fn wait_recorded_workload_generation_gone(pid: u32, identity: Option<&str>, bound: Duration) {
+        let started = Instant::now();
+        while let Some(identity) = identity {
+            if !effigy_process::process_start_identity_matches(pid, identity) {
+                return;
+            }
+            if started.elapsed() >= bound {
+                if let Ok(raw) = i32::try_from(pid) {
+                    let _ = nix::sys::signal::kill(
+                        nix::unistd::Pid::from_raw(raw),
+                        nix::sys::signal::Signal::SIGKILL,
+                    );
+                }
+                panic!(
+                    "recorded workload generation {pid} survived {} ms",
+                    bound.as_millis()
+                );
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// The deterministic post-start tree-stop proof the cold-CLI proof cannot
+    /// make: the health workload really starts (authenticated by its own PID
+    /// record while the deadline clock is held), then the SAME original
+    /// 1000ms deadline is allowed to expire and the real deadline loop must
+    /// terminate the owned group. Spawning, waiting, draining and
+    /// owned-group termination are real; only the expiry reading is
+    /// controlled.
+    #[cfg(unix)]
+    #[test]
+    fn controlled_deadline_stops_authenticated_health_workload_tree() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().to_path_buf();
+        let (record, marker, script) = health_workload_fixture(&root);
+
+        let frozen_start = Instant::now();
+        let _controlled = controlled_capture_clock::control_capture_clock(frozen_start);
+        let deadline = frozen_start + Duration::from_millis(1000);
+
+        let (sender, receiver) = mpsc::channel();
+        {
+            let root = root.clone();
+            let clock = _controlled.shared();
+            thread::spawn(move || {
+                let _clock = clock.enter();
+                let result = run_command_capture_until(
+                    &root,
+                    OsStr::new("/bin/sh"),
+                    &[OsString::from("-c"), OsString::from(script)],
+                    None,
+                    Some(deadline),
+                );
+                let _ = sender.send(result);
+            });
+        }
+
+        // Authenticate the workload's start by its own record while the
+        // deadline reading is held. At this point the workload is milliseconds
+        // old, so its start generation must be samplable.
+        let pid = wait_for_recorded_workload_pid(&record, Duration::from_secs(30));
+        let identity = effigy_process::process_start_identity(pid);
+        assert!(
+            identity.is_some(),
+            "the owned workload's start generation must be samplable while the deadline is held: pid {pid}"
+        );
+
+        // Start authenticated: advance past the SAME original deadline and let
+        // the real deadline loop terminate the owned group.
+        controlled_capture_clock::advance_controlled_capture_clock(
+            deadline + Duration::from_millis(1),
+        );
+        let error = receiver
+            .recv_timeout(Duration::from_secs(30))
+            .expect("bounded capture settles after the controlled expiry")
+            .expect_err("parked health workload must hit the deadline");
+        assert_command_deadline_refusal(error, "/bin/sh");
+
+        // Real wall bound for cleanup: the recorded writer generation must be
+        // gone after the deadline's owned-group termination.
+        wait_recorded_workload_generation_gone(pid, identity.as_deref(), Duration::from_secs(30));
+
+        // Strongest leak oracle: wait out the writer's full real 2s window,
+        // then require the marker to be absent. Covers the parked shell and
+        // every descendant the owned group kill was responsible for.
+        let writer_window_end = frozen_start + Duration::from_millis(2200);
+        if Instant::now() < writer_window_end {
+            thread::sleep(writer_window_end - Instant::now());
+        }
+        assert!(
+            !marker.exists(),
+            "timed-out health workload wrote its leak marker"
+        );
+    }
+
+    /// Negative early-expiry control: the SAME original deadline, expired
+    /// before the spawn attempt, must refuse the health workload without ever
+    /// starting it. A never-started child produces no tree claim — only the
+    /// honest refusal.
+    #[cfg(unix)]
+    #[test]
+    fn controlled_expired_deadline_refuses_health_workload_before_spawn() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (record, marker, script) = health_workload_fixture(temp.path());
+
+        let frozen_start = Instant::now();
+        let _controlled = controlled_capture_clock::control_capture_clock(frozen_start);
+        let deadline = frozen_start + Duration::from_millis(1000);
+        controlled_capture_clock::advance_controlled_capture_clock(
+            deadline + Duration::from_millis(1),
+        );
+
+        let error = capture_command_until_refusal(temp.path(), &script, deadline);
+        assert_command_deadline_refusal(error, "/bin/sh");
+        assert!(
+            !record.exists() && !marker.exists(),
+            "an expired deadline must never spawn the health workload"
+        );
+    }
+
+    /// Run the early-expiry refusal through the same wrapper the doctor
+    /// ports use, so the observed message is the production refusal text.
+    #[cfg(unix)]
+    fn capture_command_until_refusal(
+        root: &std::path::Path,
+        script: &str,
+        deadline: Instant,
+    ) -> RunnerError {
+        run_command_capture_until(
+            root,
+            OsStr::new("/bin/sh"),
+            &[OsString::from("-c"), OsString::from(script)],
+            None,
+            Some(deadline),
+        )
+        .expect_err("expired deadline must refuse before spawn")
+    }
+
+    #[cfg(unix)]
+    fn assert_command_deadline_refusal(error: RunnerError, command: &str) {
+        let RunnerError::TaskInvocation(message) = error else {
+            panic!("expected typed command deadline refusal");
+        };
+        assert!(message.starts_with(command), "{message}");
+        assert!(message.ends_with("timed out"), "{message}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_command_capture_until_kills_hung_child() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let started = Instant::now();
+        let error = run_command_capture_until(
+            temp.path(),
+            OsStr::new("/bin/sleep"),
+            &[OsString::from("30")],
+            None,
+            Some(Instant::now() + Duration::from_millis(250)),
+        )
+        .expect_err("hung child must time out");
+        assert_command_deadline_refusal(error, "/bin/sleep");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "deadline must kill the child instead of waiting out sleep 30"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legacy_deadline_bounds_inherited_writer_final_drain() {
+        let temp = tempfile::tempdir().expect("owned legacy drain fixture");
+        let marker = temp.path().join("writer-survived");
+        let script = format!(
+            "(/bin/sleep 2; printf survived > '{}') & exit 0",
+            marker.display()
+        );
+        let started = Instant::now();
+        let error = run_command_capture_until(
+            temp.path(),
+            OsStr::new("/bin/sh"),
+            &[OsString::from("-c"), OsString::from(script)],
+            None,
+            Some(Instant::now() + Duration::from_millis(300)),
+        )
+        .expect_err("deadline covers final drain after leader exit");
+        assert_command_deadline_refusal(error, "/bin/sh");
+        assert!(started.elapsed() < Duration::from_secs(2));
+        thread::sleep(Duration::from_secs(2));
+        assert!(!marker.exists(), "legacy writer survived cancellation");
     }
 }

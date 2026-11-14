@@ -5,9 +5,8 @@ use super::super::super::container_command::is_primary_service_running;
 use super::super::super::exec_command::{
     run_routed_task_remote, RoutedTaskExecRequest, RoutedTaskExecSurface,
 };
-use super::super::api::{
-    effective_task_binding_inputs, execution_scope_root, resolve_execution_binding_resolution,
-    ContainerExecutionBinding, ExecutionBindingResolution,
+use super::super::binding::{
+    resolve_execution_binding_resolution, ContainerExecutionBinding, ExecutionBindingResolution,
 };
 use super::super::context::ExecutionTaskContext;
 use super::super::host_alias::{secret_env_slice, HostAliasResolver};
@@ -16,6 +15,7 @@ use super::super::routing::{
     route_standard_task_execution, routed_container_target, routed_not_running_container,
     RoutedTaskExecution,
 };
+use super::super::runtime_inputs::{effective_task_binding_inputs, execution_scope_root};
 use super::{super::process_run, command};
 use crate::runner::container_runtime_prep::{
     activate_container_runtime_for_task, build_runtime_activation_plan, ActivationRequest,

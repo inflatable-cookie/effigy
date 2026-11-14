@@ -557,7 +557,12 @@ impl Owner {
             self.watch = watch;
             if host_source.activation_started() {
                 self.host_waits = None;
-                self.wait_publisher.publish_hosts(&host_source.read_all());
+                // Publish the host graph this activation actually observed.
+                // An unobserved graph stays unpublished instead of arriving
+                // as a complete, empty one.
+                if let Some(hosts) = host_source.read_all() {
+                    self.wait_publisher.publish_hosts(&hosts);
+                }
                 if let Some(phase) = host_source.read_phase() {
                     self.wait_publisher.publish_phase(&phase);
                 }
