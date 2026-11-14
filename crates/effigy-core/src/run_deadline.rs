@@ -20,6 +20,7 @@
 //! clock (an offset on the real `Instant`, never a wall-clock conversion).
 //! Production always reads the real monotonic clock.
 
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
@@ -184,10 +185,18 @@ static INJECTED: OnceLock<Mutex<Option<RunDeadline>>> = OnceLock::new();
 /// A settlement that did not finish positively under the run deadline. Process
 /// wide because the footer decision is process wide.
 static SETTLEMENT_INCOMPLETE: AtomicBool = AtomicBool::new(false);
-static PHASES: OnceLock<Mutex<Vec<PhaseReadback>>> = OnceLock::new();
-/// How many runs on this thread currently own phase observations. Only the
-/// outermost run clears them, so a nested run never erases its parent's.
-static RUN_DEPTH: AtomicU64 = AtomicU64::new(0);
+#[derive(Debug, Default)]
+struct RunFrame {
+    phases: std::collections::BTreeMap<&'static str, PhaseReadback>,
+}
+thread_local! {
+    /// One frame per active run on this thread. A nested run pushes its own, so
+    /// its Admission/Workload/Settlement observations never overwrite the
+    /// parent's; concurrent threads never share frames.
+    static FRAMES: RefCell<Vec<std::sync::Arc<Mutex<RunFrame>>>> = const { RefCell::new(Vec::new()) };
+    /// The last completed run's frame, retained for the post-settlement line.
+    static LAST: RefCell<Option<std::sync::Arc<Mutex<RunFrame>>>> = const { RefCell::new(None) };
+}
 
 #[derive(Debug, Clone, Copy)]
 struct PhaseReadback {
@@ -209,11 +218,20 @@ pub fn now() -> Instant {
         .unwrap_or_else(Instant::now)
 }
 
-/// Records one phase's observed remaining budget in the run's evidence. The
-/// latest observation of a phase wins, so the readback names where each phase
-/// actually ended rather than only where it began.
+fn current_frame() -> Option<std::sync::Arc<Mutex<RunFrame>>> {
+    FRAMES
+        .with(|frames| frames.borrow().last().cloned())
+        .or_else(|| LAST.with(|last| last.borrow().clone()))
+}
+
+/// Records one phase's observed remaining budget in the current run's own
+/// frame. The latest observation of a phase wins, so the readback names where
+/// each phase actually ended rather than only where it began.
 pub fn note_phase(phase: Phase) {
     let Some(deadline) = current() else {
+        return;
+    };
+    let Some(frame) = current_frame() else {
         return;
     };
     let observation = PhaseReadback {
@@ -227,50 +245,61 @@ pub fn note_phase(phase: Phase) {
             Phase::Settlement | Phase::Terminal => SETTLEMENT_ALLOWANCE.as_millis() as u64,
         },
     };
-    let mut phases = phases().lock().unwrap_or_else(PoisonError::into_inner);
-    if let Some(existing) = phases.iter_mut().find(|existing| existing.phase == phase) {
-        *existing = observation;
-    } else {
-        phases.push(observation);
-    }
-}
-
-/// Clears the phase readback. Used by the outermost run and by tests.
-pub fn clear_phases() {
-    phases()
+    frame
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
-        .clear();
+        .phases
+        .insert(phase.name(), observation);
 }
 
-/// Begins one run's phase readback. The outermost run clears the previous
-/// observations; a nested run keeps its parent's and adds its own.
+/// Clears every run frame. Used by tests.
+pub fn clear_phases() {
+    FRAMES.with(|frames| frames.borrow_mut().clear());
+    LAST.with(|last| *last.borrow_mut() = None);
+}
+
+/// Begins one run's phase frame. A nested run gets its own frame; the parent's
+/// observations survive untouched until the nested scope drops.
 pub fn begin_run() -> PhaseScope {
-    if RUN_DEPTH.fetch_add(1, Ordering::SeqCst) == 0 {
-        clear_phases();
-    }
-    PhaseScope
+    let frame = std::sync::Arc::new(Mutex::new(RunFrame::default()));
+    FRAMES.with(|frames| frames.borrow_mut().push(frame.clone()));
+    LAST.with(|last| *last.borrow_mut() = None);
+    PhaseScope { frame }
 }
 
-/// The run's phase-scope guard. Dropping it ends only this run's ownership;
-/// the observations stay readable for the final post-settlement evidence.
+/// The run's phase-scope guard. Dropping it removes only this run's frame; the
+/// parent's frame (or, for the outermost run, the retained completed frame)
+/// stays readable for the post-settlement evidence.
 #[derive(Debug)]
-pub struct PhaseScope;
+pub struct PhaseScope {
+    frame: std::sync::Arc<Mutex<RunFrame>>,
+}
 impl Drop for PhaseScope {
     fn drop(&mut self) {
-        RUN_DEPTH.fetch_sub(1, Ordering::SeqCst);
+        FRAMES.with(|frames| {
+            let mut frames = frames.borrow_mut();
+            if let Some(index) = frames
+                .iter()
+                .position(|frame| std::sync::Arc::ptr_eq(frame, &self.frame))
+            {
+                frames.remove(index);
+                if frames.is_empty() {
+                    LAST.with(|last| *last.borrow_mut() = Some(self.frame.clone()));
+                }
+            }
+        });
     }
 }
 
-fn phases() -> &'static Mutex<Vec<PhaseReadback>> {
-    PHASES.get_or_init(|| Mutex::new(Vec::new()))
-}
-
-/// The phase observations as evidence, for the post-settlement readback.
+/// The phase observations as evidence, for the post-settlement readback. After
+/// the run's scope has ended this reads the retained completed frame.
 pub fn phases_evidence() -> serde_json::Value {
-    let phases = phases().lock().unwrap_or_else(PoisonError::into_inner);
+    let Some(frame) = current_frame() else {
+        return serde_json::json!({});
+    };
+    let frame = frame.lock().unwrap_or_else(PoisonError::into_inner);
     let mut object = serde_json::Map::new();
-    for readback in phases.iter() {
+    for readback in frame.phases.values() {
         object.insert(
             readback.phase.name().to_owned(),
             serde_json::json!({
@@ -478,26 +507,42 @@ mod tests {
     }
 
     #[test]
-    fn a_nested_run_keeps_its_parents_phase_observations() {
+    fn a_nested_run_keeps_its_parents_same_named_phase_observations() {
         injected(30_000);
         let outer = begin_run();
         note_phase(Phase::Admission);
+        let parent_admission = phases_evidence()["admission"].clone();
         advance_clock_for_tests(Duration::from_secs(1));
         let inner = begin_run();
+        // The nested run reports the same phase name; it must land in its own
+        // frame, not overwrite the parent's.
+        note_phase(Phase::Admission);
         note_phase(Phase::Workload);
+        let child_admission = phases_evidence()["admission"].clone();
+        assert_ne!(
+            child_admission["since_origin_ms"], parent_admission["since_origin_ms"],
+            "the nested observation is its own"
+        );
         drop(inner);
-        let phases = phases_evidence();
-        assert!(phases["admission"].is_object(), "{phases}");
-        assert!(phases["workload"].is_object(), "{phases}");
+        assert_eq!(
+            phases_evidence()["admission"],
+            parent_admission,
+            "the parent's admission observation survives the nested run"
+        );
+        note_phase(Phase::Workload);
         note_phase(Phase::Settlement);
         drop(outer);
-        assert!(phases_evidence()["settlement"].is_object());
+        let completed = phases_evidence();
+        assert!(completed["admission"].is_object(), "{completed}");
+        assert!(completed["workload"].is_object(), "{completed}");
+        assert!(completed["settlement"].is_object(), "{completed}");
         clear();
     }
 
     #[test]
     fn the_evidence_records_the_observable_origin_and_each_phase() {
         let deadline = injected(30_000);
+        let _scope = begin_run();
         advance_clock_for_tests(Duration::from_secs(2));
         note_phase(Phase::Admission);
         advance_clock_for_tests(Duration::from_secs(3));

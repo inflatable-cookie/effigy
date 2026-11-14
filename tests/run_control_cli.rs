@@ -2406,6 +2406,42 @@ fn a_run_deadline_bounds_a_stalled_v2_acknowledgement_during_admission() {
 }
 
 #[test]
+fn a_run_deadline_refuses_a_late_v2_acknowledgement() {
+    let fixture = Fixture::new();
+    let hook = v2_hook(
+        &fixture,
+        "late-ack.sh",
+        "if [ \"$seq\" = \"2\" ]; then sleep 2; fi",
+        "",
+    );
+    let started = Instant::now();
+    let output = fixture
+        .effigy(&["--json", "heavy"])
+        .env("EFFIGY_ADMISSION_HOOK", hook)
+        .env("EFFIGY_ADMISSION_PROTOCOL", "2")
+        .env("EFFIGY_RUN_DEADLINE_MS", "11000")
+        .output_owned()
+        .expect("effigy runs");
+    let elapsed = started.elapsed();
+    let rendered = text(&output);
+    assert!(!output.status.success(), "{rendered}");
+    assert!(
+        elapsed < Duration::from_millis(11_000),
+        "a late acknowledgement outlived the deadline: {elapsed:?}"
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|_| panic!("{rendered}"));
+    assert_eq!(
+        envelope["error"]["details"]["decision"], "deadline",
+        "a late acknowledgement is refused at the boundary: {rendered}"
+    );
+    assert!(
+        !fixture.exists("ran.txt"),
+        "the workload started despite the late acknowledgement"
+    );
+}
+
+#[test]
 fn a_run_deadline_bounds_a_stalled_terminal_report_and_keeps_the_outcome() {
     let fixture = Fixture::new();
     let hook = v2_hook(
@@ -2443,6 +2479,21 @@ fn a_run_deadline_bounds_a_stalled_terminal_report_and_keeps_the_outcome() {
     assert!(
         elapsed < Duration::from_millis(13_500),
         "a stalled terminal report crossed the deadline: {elapsed:?}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let settled = stderr
+        .lines()
+        .find(|line| line.contains("run deadline settled"))
+        .unwrap_or_else(|| panic!("the completed run's readback is missing: {stderr}"));
+    let since: u64 = settled
+        .split("ms since origin")
+        .next()
+        .and_then(|prefix| prefix.rsplit([' ', ',']).next())
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or_else(|| panic!("no since-origin value: {settled}"));
+    assert!(
+        since <= 13_250,
+        "the completed run's own readback crossed the original ceiling: {since}ms"
     );
     assert_eq!(output.status.code(), Some(124), "{rendered}");
     let leader: i32 = fixture
@@ -2496,6 +2547,13 @@ fn a_run_deadline_owner_loss_is_settled_by_the_surviving_custodian() {
         "the surviving custodian did not settle child {child}"
     );
     assert!(group_gone(leader), "the group {leader} remains");
+    assert!(
+        matches!(
+            effigy_kernel::ident::process_identity(leader as u32),
+            Observed::Absent(_)
+        ),
+        "the surviving custodian did not reap the direct leader {leader}"
+    );
     fixture.wait_for("the guard to drain", || gates_drained(&fixture.repo));
     assert!(
         spawned.elapsed() < Duration::from_secs(13),
@@ -2511,11 +2569,26 @@ fn the_opt_in_changes_no_workload_output() {
         .effigy(&["deadline-env"])
         .output_owned()
         .expect("effigy runs");
+    let off_again = fixture
+        .effigy(&["deadline-env"])
+        .output_owned()
+        .expect("effigy runs");
     let on = fixture
         .effigy(&["deadline-env"])
         .env("EFFIGY_RUN_DEADLINE_MS", "20000")
         .output_owned()
         .expect("effigy runs");
+    // Complete no-option output: two unset runs are byte-identical, and the
+    // opt-in changes no workload stdout, stderr payload or exit code.
+    assert_eq!(off.status.code(), off_again.status.code());
+    assert_eq!(
+        off.stdout, off_again.stdout,
+        "no-option stdout is byte-stable"
+    );
+    assert_eq!(
+        off.stderr, off_again.stderr,
+        "no-option stderr is byte-stable"
+    );
     assert_eq!(off.status.code(), on.status.code());
     assert_eq!(
         off.stdout, on.stdout,
@@ -2530,5 +2603,9 @@ fn the_opt_in_changes_no_workload_output() {
     assert!(
         on_err.contains("run deadline"),
         "the opted-in path names its deadline: {on_err}"
+    );
+    assert!(
+        on_err.len() > off_err.len(),
+        "the only difference is the deadline evidence"
     );
 }

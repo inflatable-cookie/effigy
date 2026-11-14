@@ -325,7 +325,6 @@ pub(super) fn close_memory(
     Option<effigy_kernel::outcome::Outcome<effigy_kernel::run::Settled>>,
     Vec<String>,
 ) {
-    effigy_core::run_deadline::note_phase(effigy_core::run_deadline::Phase::Settlement);
     let retained_guard = run.guard_identity().cloned();
     let retained_effects = run.retained_effects();
     let recorded = match workload {
@@ -345,6 +344,7 @@ pub(super) fn close_memory(
             let positive = recorded_ok
                 && outcome.cleanup() == effigy_kernel::outcome::CleanupOutcome::Complete;
             effigy_core::output_cap::foreground_settled(positive);
+            effigy_core::run_deadline::note_phase(effigy_core::run_deadline::Phase::Settlement);
             if !positive {
                 // Under the opt-in an incomplete settlement is never success;
                 // the marker makes the caller fail closed. The retained
@@ -368,6 +368,7 @@ pub(super) fn close_memory(
         }
         Err(error) => {
             effigy_core::output_cap::foreground_settled(false);
+            effigy_core::run_deadline::note_phase(effigy_core::run_deadline::Phase::Settlement);
             if effigy_core::run_deadline::ceiling().is_some() {
                 effigy_core::run_deadline::note_settlement_incomplete();
             }

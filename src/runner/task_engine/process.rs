@@ -303,6 +303,7 @@ fn run_plain_inner(
         (_, Some(code)) => code,
         (_, None) => 1,
     };
+    effigy_core::run_deadline::note_phase(effigy_core::run_deadline::Phase::Workload);
     Ok(PlainExit {
         workload,
         code,

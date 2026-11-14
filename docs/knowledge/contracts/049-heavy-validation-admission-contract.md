@@ -608,10 +608,16 @@ default: unset or blank means every budget is exactly what it was before.
   phases, including settlement and terminal) is written as one post-settlement
   stderr line by `src/runner/execute/pipeline/standard.rs`, and the
   `effigy.run-deadline.v1` error carries the same complete `deadline` object.
-  Phase observations are run-scoped: an outermost run clears them, a nested
-  run keeps its parent's and adds its own (`run_deadline::begin_run`,
-  `PhaseScope`). Numbers are monotonic milliseconds; nothing is converted to a
-  wall clock.
+  Phase observations are genuinely run-scoped: `run_deadline::begin_run`
+  pushes a per-run frame, so a nested run's Admission, Workload or Settlement
+  observation never overwrites its parent's same-named one, and concurrent
+  threads never share a frame. Observations are taken at phase end (workload
+  completion, settlement completion, terminal evidence), not only at start.
+  The completed run's frame is retained for the post-settlement line and the
+  `effigy.run-deadline.v1` details; an admission refusal's details carry the
+  admission phase from the frame that is still active while the refusal is
+  built. Numbers are monotonic milliseconds; nothing is converted to a wall
+  clock.
 - Owned tests drive phase progression through the same seam: production reads
   `Instant::now()`; a test advances a monotonic offset, never a wall clock
   (`run_deadline.rs:20-28,247-262`).
