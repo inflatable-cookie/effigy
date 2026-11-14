@@ -949,10 +949,9 @@ pub enum RunsAction {
     },
     /// `effigy run stop <run> [--wait-ms N]`: the kernel stop path.
     Stop { run: String, wait_ms: Option<u64> },
-    /// `effigy run prepare [--check]`: prepares this checkout's run journal
-    /// and fixed strict terminal ring, or verifies that it needs no write
-    /// (effigy#981, effigy#985).
-    Prepare { check: bool },
+    /// `effigy run prepare [--task SELECTOR] [--check]`: prepares this
+    /// checkout's journal, strict terminal ring, and one task's strict gates.
+    Prepare { check: bool, task: Option<String> },
 }
 
 /// Bounded QA-group surfaces under `effigy tasks` (contract 051).

@@ -119,6 +119,14 @@ pub(in crate::runner::execute) struct ResolvedSteps {
     steps: Vec<ResolvedStep>,
 }
 
+impl ResolvedSteps {
+    pub(in crate::runner::execute) fn has_task_invocations(&self) -> bool {
+        self.steps
+            .iter()
+            .any(|step| matches!(&step.action, StepAction::Task(_)))
+    }
+}
+
 struct ResolvedStep {
     action: StepAction,
     // Environment directives, label and timeout remain declarative inputs;

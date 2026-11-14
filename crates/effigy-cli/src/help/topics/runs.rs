@@ -15,14 +15,14 @@ const RUNS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "A run reads by its run id or its key. A run started with `--run-id` logs each stream's output (redacted) unless both were terminals; other runs keep no log.",
         "`run logs --follow` ends when the run settles. Resume a lost follow with the byte offsets you already received; expired bytes are reported, never skipped.",
         "`run stop` asks the run's owner to stop through the kernel journal; the owner stops the task's whole process group and settles the run.",
-        "`run prepare` prepares this checkout's run journal and creates the fixed terminal ring for a strict-persistence run (`EFFIGY_STRICT_PERSISTENCE=1`), which writes one ring slot and no SQLite byte and refuses an unprepared ring before admission; `run prepare --check` verifies that without writing."
+        "`run prepare --task <selector>` prepares this checkout's journal, fixed terminal ring, and one foreground task's strict gate files; prepare each selector in a declared task tree separately. A strict run creates no gate directory entries. `run prepare --check --task <selector>` verifies the ring and gate files; its read-only store check may create the state directory or SQLite shared-memory sidecar."
     ],
     usage: text_lines![
         "effigy runs [--limit <N>] [--all] [--json]",
         "effigy run status <run> [--json]",
         "effigy run logs <run> [--follow] [--stdout-offset <N>] [--stderr-offset <N>] [--json]",
         "effigy run stop <run> [--wait-ms <MS>] [--json]",
-        "effigy run prepare [--check] [--json]",
+        "effigy run prepare [--task <selector>] [--check] [--json]",
         "effigy --run-id <key> <task> [task args]",
     ],
     leading_common_options: &[],
@@ -47,5 +47,6 @@ const RUNS_OPTIONS: &[(&str, &str)] = option_rows![
     "--stdout-offset <N>" => "Resume stdout at this byte offset",
     "--stderr-offset <N>" => "Resume stderr at this byte offset",
     "--wait-ms <MS>" => "How long `run stop` waits for the run to settle (default 30000)",
-    "--check" => "`run prepare` only verifies the journal needs no write; it writes nothing",
+    "--check" => "`run prepare` verifies the requested journal, ring and task gates; it does not migrate the journal or write the ring or task gates",
+    "--task <selector>" => "Prepare or verify the foreground gate files for this declared task selector",
 ];

@@ -43,8 +43,12 @@ impl TaskRun {
             .map(Ok)
             .unwrap_or_else(|| StateRoot::filesystem_checkout(&kernel::observe(), &location))
             .map_err(|error| start_error(&error.to_string()))?;
-        let root = StateRoot::foreground_effects(&cx, &location)
-            .map_err(|error| start_error(&error.to_string()))?;
+        let root = if effigy_kernel::store::strict_persistence() {
+            StateRoot::foreground_effects_prepared(&cx, &location)
+        } else {
+            StateRoot::foreground_effects(&cx, &location)
+        }
+        .map_err(|error| start_error(&error.to_string()))?;
         // Strict persistence (effigy#985): a v2 admission settles one slot in
         // the fixed terminal ring, so the ring must exist and have room before
         // the hook runs. Refusing here writes no gate and no byte of any file.
@@ -82,6 +86,12 @@ impl TaskRun {
                 invocation = ResolvedInvocation::new(spec)
                     .map_err(|error| start_error(&error.to_string()))?;
             }
+        }
+        if effigy_kernel::store::strict_persistence() {
+            let mut gate_ids = invocation.spec().gates.clone();
+            gate_ids.push(owner.clone());
+            effigy_kernel::run::verify_prepared_foreground_gates(&root, &owner, &gate_ids)
+                .map_err(|error| start_error(&error.to_string()))?;
         }
         kernel::install_router()?;
         let custody_scope = kernel::CustodyWait::enter();

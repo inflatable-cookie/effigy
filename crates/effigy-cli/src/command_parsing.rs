@@ -1393,6 +1393,7 @@ where
     let mut stderr_offset = 0;
     let mut wait_ms = None;
     let mut check = false;
+    let mut prepare_task = None;
     let action = action.as_deref();
     if matches!(action, Some("--help" | "-h")) {
         return Ok(Command::Help(HelpTopic::Runs));
@@ -1443,6 +1444,14 @@ where
                 wait_ms = Some(number(flag, value)?);
             }
             (Some("prepare"), "--check") => check = true,
+            (Some("prepare"), "--task") => {
+                prepare_task = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: flag.to_owned(),
+                    },
+                )?);
+            }
             (Some(_), _) if !flag.starts_with('-') && run.is_none() => run = Some(arg),
             _ => return Err(unknown_argument(flag)),
         }
@@ -1476,11 +1485,14 @@ where
         Some("prepare") => {
             if run.is_some() {
                 return Err(CliParseError::InvalidArguments(
-                    "`effigy run prepare` takes no run: it prepares this checkout's journal"
+                    "`effigy run prepare` takes no run id; pass `--task SELECTOR` to prepare task gates"
                         .to_owned(),
                 ));
             }
-            RunsAction::Prepare { check }
+            RunsAction::Prepare {
+                check,
+                task: prepare_task,
+            }
         }
         Some(other) => {
             return Err(CliParseError::InvalidArguments(format!(

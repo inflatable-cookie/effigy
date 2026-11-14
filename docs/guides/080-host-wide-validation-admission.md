@@ -173,27 +173,45 @@ result from the journal; only an unreadable journal reports `unknown`.
 ## Account for every byte a run writes (strict persistence)
 
 A consumer that has to price a route's storage can ask for a run that writes
-almost nothing, at a fixed size. With `EFFIGY_STRICT_PERSISTENCE=1`, a
-v2-admitted plain foreground task does not open the checkout journal at all: its
-settled outcome goes into **one slot of a fixed-size, preallocated ring file**,
-and that is its whole durable contribution. `kernel.db`, `kernel.db-wal` and
-`kernel.db-shm` stay byte-identical across the route. Before this, a strict run
-still wrote a SQLite row whose log frames had no small physical maximum; the
-ring replaces that write (effigy#985).
+almost nothing, at a fixed logical size. With `EFFIGY_STRICT_PERSISTENCE=1`, a
+v2-admitted plain foreground task does not open the checkout journal at all:
+its settled outcome goes into **one slot of a fixed-size, preallocated ring
+file**, and no SQLite row is written. `kernel.db`, `kernel.db-wal` and
+`kernel.db-shm` stay byte-identical across the route. Effigy also rewrites the
+existing task gate bodies. Before this, a strict run still wrote a SQLite row
+whose log frames had no small physical maximum; the ring replaces that write
+(effigy#985).
+
+`run prepare --task <selector>` prepares one task identity per command. If a
+declared task tree invokes other task selectors, prepare each selector
+separately; each invocation writes its own terminal slot.
 
 The ring is `<checkout>/.effigy/state/foreground-terminals.ring`: a 64-byte
 header and 16 slots of 1,024 bytes, 16,448 bytes in total. It is created and
-fully preallocated by `effigy run prepare`, **outside** the strict run. The route
-only overwrites one slot in place — 1,024 bytes, no growth and no allocation —
-so the file must already exist and have a free slot. If it does not, or is the
+fully preallocated by `effigy run prepare --task <heavy-task>`, **outside** the
+strict run, along with that task's gate files. The route rewrites one slot in
+place — 1,024 logical bytes, with no file-length growth — so the file must
+already exist and have a free slot. APFS can allocate copy-on-write blocks if a
+snapshot or clone shares those blocks. If the ring does not exist, has the
 wrong size, holds a corrupt slot, or is full, the run refuses **before the
-admission hook is called**, writes nothing, and names the step that fixes it:
+admission hook is called**, writes no ring slot, and names the step that fixes
+it:
 
 ```sh
-effigy run prepare --check   # verify the journal and the ring: writes nothing
-effigy run prepare           # prepare both outside the strict run, and ingest old slots
+effigy run prepare --check --task <heavy-task> # verify journal, ring and gates
+effigy run prepare --task <heavy-task>         # prepare them and ingest old slots
 EFFIGY_STRICT_PERSISTENCE=1 effigy <heavy-task>
 ```
+
+The strict route checks its task gates before admission and opens them without
+creating files or directories. It rewrites up to 4,096 bytes in each existing
+gate body and one 1,024-byte ring slot. On APFS with a 4 KiB allocation unit,
+data-block copy-on-write is at most 8 KiB for the ring slot plus 4 KiB per gate
+file (up to 24 KiB for four gates). APFS metadata copy-on-write is internal and
+is not bounded by Effigy; consumers must reserve or measure that separately.
+The actual state-volume block size is reported by `run prepare` as
+`allocation_unit_bytes`. Contract 049 documents the allocation model and
+prepare's full write and wait scope.
 
 A slot is written body first, flushed, then a one-byte commit marker, flushed
 again, so a crash never leaves a half record that reads as valid: an unmarked
