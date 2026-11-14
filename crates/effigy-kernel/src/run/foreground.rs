@@ -146,16 +146,19 @@ impl ForegroundRun {
             ancestor_owners.is_empty(),
         );
         let guard = MemoryGuard::start(
-            &plan.executable,
             &mut gate,
-            &ancestor_gates,
-            cx,
-            opts.id,
-            Fence {
-                resource: inv.spec().owner.clone(),
-                generation: Generation::new(0),
+            crate::supervise::memory::MemoryStart {
+                executable: &plan.executable,
+                ancestors: &ancestor_gates,
+                cx,
+                root,
+                run: opts.id,
+                fence: Fence {
+                    resource: inv.spec().owner.clone(),
+                    generation: Generation::new(0),
+                },
+                purpose: crate::supervise::memory::MemoryPurpose::Foreground,
             },
-            crate::supervise::memory::MemoryPurpose::Foreground,
         )?;
         Ok(Self {
             record: ForegroundRecord::new(opts.id, inv.spec().owner.clone()),

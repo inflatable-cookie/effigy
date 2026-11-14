@@ -1468,7 +1468,25 @@ fn conflict(
         .as_ref()
         .map(|run| format!("effigy run stop {run}"));
     let attached_to_terminal = diag.as_ref().is_some_and(|diag| diag.foreground.is_some());
+    // A foreground holder whose recorded owner is verifiably gone is not a
+    // running invocation: its surviving sentinel holds the lock only while it
+    // settles the run (effigy#986). Reporting that as "already running pid N"
+    // would name a dead process as the holder.
+    let owner_gone = diag
+        .as_ref()
+        .is_some_and(|diag| diag.foreground.is_some() && matches!(diag.state, Observed::Absent(_)));
     let holder_text = match &diag {
+        Some(diag) if owner_gone => {
+            let mut parts = vec![format!(
+                "pid {} was the foreground owner and is verified gone",
+                diag.pid
+            )];
+            if let Some(run) = &diag.run {
+                parts.push(format!("run {run}"));
+            }
+            parts.push("the run's sentinel still holds the lock while it settles the run".into());
+            parts.join(", ")
+        }
         Some(diag) => {
             let mut parts = vec![format!("pid {} on this host", diag.pid)];
             if let Some(run) = &diag.run {
@@ -1489,12 +1507,17 @@ fn conflict(
         }
         None => "a live process on this host; its diagnostics are unreadable".to_owned(),
     };
-    let what =
-        if target.shared_lock.is_some() && owner.kind() == effigy_kernel::id::ResourceKind::Store {
-            format!("lock `{scope}` is held")
-        } else {
-            format!("`{}` is already running", target.label)
-        };
+    let what = if owner_gone {
+        format!(
+            "`{}` is held by a foreground run whose owner is gone",
+            target.label
+        )
+    } else if target.shared_lock.is_some() && owner.kind() == effigy_kernel::id::ResourceKind::Store
+    {
+        format!("lock `{scope}` is held")
+    } else {
+        format!("`{}` is already running", target.label)
+    };
     let wait_flag = (!builtin).then(|| format!("effigy --lock-wait-ms 600000 {}", target.label));
     // `tasks` is a shadowable built-in (contract 043): when this repository
     // declares a task of that name, `effigy tasks status …` runs the
@@ -1509,6 +1532,10 @@ fn conflict(
             .to_owned(),
     };
     let stop_text = match (stop_command.as_deref(), attached_to_terminal) {
+        (Some(stop), true) if owner_gone => format!(
+            "settle it with `{stop}`, which waits for that run's sentinel to finish and reports \
+             what it recorded"
+        ),
         (Some(stop), true) => {
             format!("stop that run with `{stop}` (or press Ctrl-C in its terminal)")
         }

@@ -51,13 +51,16 @@ impl Run<'_> {
         // flock owner; explicit unlock on caller drop would release both copies.
         let owner_gates = self.guard.share_custody()?;
         match MemoryGuard::start_recoverable(
-            &sentinel.executable,
             &mut custody.lease.guard,
-            &owner_gates,
-            &self.cx,
-            self.id,
-            self.owner.clone(),
-            MemoryPurpose::CheckoutLease,
+            crate::supervise::memory::MemoryStart {
+                executable: &sentinel.executable,
+                ancestors: &owner_gates,
+                cx: &self.cx,
+                root: self.root,
+                run: self.id,
+                fence: self.owner.clone(),
+                purpose: MemoryPurpose::CheckoutLease,
+            },
         ) {
             Ok(backup) => {
                 custody.backup = Some(backup);

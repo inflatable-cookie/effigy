@@ -43,6 +43,7 @@ pub use terminal::{
 };
 mod terminal_ring;
 pub(crate) use terminal_ring::ingest as terminal_ring_ingest;
+pub(crate) use terminal_ring::write as terminal_ring_write;
 pub use terminal_ring::{
     prepare as terminal_ring_prepare, read as terminal_strict_record,
     records as terminal_strict_records, status as terminal_ring_status,

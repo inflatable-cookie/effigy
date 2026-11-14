@@ -2835,3 +2835,255 @@ fn prelaunch_pending_obligation_is_atomic_and_legacy_unreadable() {
         .unwrap_or_else(|(error, _)| panic!("exact never-forked owner can clean: {error}"));
     assert!(!directory.join("compose-fixture.env").exists());
 }
+
+/// A foreground guard whose owner dies while the run's cleanup pin is still
+/// held must settle the run itself: an honest journal row, never success, and
+/// the gate released so the next invocation is admitted (effigy#986).
+///
+/// The owner here is a separate verifiable process this test kills, exactly
+/// what an agent's SIGKILL or a closed terminal does to a foreground command.
+/// The guard runs the production `memory::serve` settle path in-process; the
+/// gate descriptions and the pin are the real ones.
+#[test]
+fn run_a_foreground_guard_settles_a_run_whose_owner_died_with_its_pin_held() {
+    check_foreground_owner_loss(true, OwnerEnd::Reaped, false);
+}
+
+/// The same takeover with every pin writer closed first: custody provably
+/// closed, so the honest outcome is `interrupted` with `cleanup: complete` —
+/// still never a reported success.
+#[test]
+fn run_a_foreground_guard_settles_closed_custody_as_interrupted() {
+    check_foreground_owner_loss(false, OwnerEnd::Reaped, false);
+}
+
+/// An owner that has exited but whose parent has not reaped it is a zombie: it
+/// can never settle or report the run again, so waiting for it would hold the
+/// gate forever (effigy#986).
+#[test]
+fn run_a_foreground_guard_settles_a_zombie_owner() {
+    check_foreground_owner_loss(true, OwnerEnd::Zombie, false);
+}
+
+/// A strict-persistence run's owner-death record goes to the preallocated ring,
+/// so the guard opens no SQLite connection for it (effigy#985, effigy#986).
+#[test]
+fn run_a_foreground_guard_settles_a_strict_run_into_its_ring() {
+    check_foreground_owner_loss(false, OwnerEnd::Reaped, true);
+}
+
+/// How the stand-in owner ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OwnerEnd {
+    /// Killed and reaped: the pid is verifiably absent.
+    Reaped,
+    /// Killed and deliberately left unreaped: a zombie that can never run.
+    Zombie,
+}
+
+fn check_foreground_owner_loss(pin_held: bool, owner_end: OwnerEnd, strict: bool) {
+    use std::os::fd::AsRawFd;
+
+    let home = effigy_test_support::short_tempdir("og-").unwrap();
+    let cx = super::super::tests::context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let checkout = crate::id::CheckoutId::new(crate::id::CheckoutKind::LinkedWorktree, [3; 16]);
+    let task = crate::id::TaskId::new(
+        checkout,
+        "",
+        crate::id::Surface::Published,
+        "validate:owner-loss",
+        None,
+    )
+    .unwrap();
+    let owner = task.resource();
+    let run = super::super::tests::id(9);
+    let mut gate =
+        crate::gate::Gate::acquire(&cx, &root, std::slice::from_ref(&owner), Wait::FailFast)
+            .unwrap();
+    gate.set_foreground(&run, &owner, &task, true);
+    let gate_fds = gate.share_custody().unwrap();
+    // The shared descriptions keep the gate held; this owner-side copy must not
+    // unlock it later (share_custody already disabled that).
+    drop(gate);
+    assert!(
+        matches!(
+            crate::gate::Gate::probe(&cx.operation().observe().unwrap(), &root, &owner),
+            Observed::Verified(crate::gate::GateState::Held(_), _)
+        ),
+        "the shared gate descriptions hold the checkout lock"
+    );
+
+    let (watch, pin) = crate::closure::ClosurePin::new().unwrap();
+    let mut residue = spawn_pin_holder(&pin);
+    let mut owner_child = OwnedChild(
+        std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .unwrap(),
+    );
+    let identity = crate::ident::process_identity(owner_child.0.id())
+        .verified()
+        .cloned()
+        .expect("the stand-in owner's identity");
+    let frame = crate::supervise::memory::test_frame(
+        &identity,
+        run,
+        Fence {
+            resource: owner.clone(),
+            generation: crate::id::Generation::new(0),
+        },
+        home.path(),
+        &gate_fds.iter().map(AsRawFd::as_raw_fd).collect::<Vec<_>>(),
+        watch.as_raw_fd(),
+        strict,
+    );
+    if strict {
+        crate::run::terminal_ring_prepare(&root).expect("preallocated strict ring");
+    }
+    let (mut input, owner_pipe) = std::io::pipe().unwrap();
+    // `serve` adopts these inherited descriptors exactly as the helper does, so
+    // their ownership moves into it: leaking the duplicates here keeps one
+    // owner for each descriptor.
+    let raw_watch = watch.as_raw_fd();
+    std::mem::forget(watch);
+    std::mem::forget(gate_fds);
+    drop(pin); // the pin holder below is the only remaining writer
+    let guard = std::thread::spawn(move || {
+        // `raw_watch` names the same descriptor the frame carries.
+        let _ = raw_watch;
+        crate::supervise::memory::serve(frame, &mut input)
+    });
+    // The owner's own guard close sends EOF first; the settle path validates the
+    // recorded owner before it reads a frame, so a started thread means the
+    // validation passed.
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(
+        !guard.is_finished(),
+        "the guard refuses a frame whose recorded owner is already gone"
+    );
+    // The owner dies while its guard still holds the run's custody: an agent's
+    // SIGKILL, a closed terminal. The guard has already validated it, so the
+    // loss is what the settle path has to notice.
+    let owner_pid = owner_child.0.id();
+    owner_child.0.kill().unwrap();
+    if owner_end == OwnerEnd::Reaped {
+        owner_child.0.wait().unwrap();
+    }
+    if !pin_held {
+        // Every pin writer closed before the guard reaches its wait.
+        stop_owned(&mut residue);
+    }
+    // The owner's own guard close sends its registration EOF.
+    drop(owner_pipe);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !guard.is_finished() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        guard.is_finished(),
+        "the guard must settle a run whose owner died (owner pid {owner_pid})"
+    );
+    let settled = guard.join().unwrap();
+    if pin_held {
+        assert!(
+            settled.is_err(),
+            "unclosed descendant custody is residue, never a clean close"
+        );
+    }
+    // A zombie owner is reaped when `owner_child` leaves this scope, after the
+    // guard has observed it.
+
+    // The gate is released, so the next invocation is admitted.
+    assert!(
+        matches!(
+            crate::gate::Gate::probe(&cx.operation().observe().unwrap(), &root, &owner),
+            Observed::Verified(crate::gate::GateState::Free, _)
+        ),
+        "the settled run releases its checkout gate"
+    );
+    let next = crate::gate::Gate::acquire(&cx, &root, std::slice::from_ref(&owner), Wait::FailFast)
+        .expect("a settled run admits the next invocation");
+    drop(next);
+
+    // Its own record is the honest outcome: never success, no identity. A
+    // strict run's record waits in the ring, and no store is created for it.
+    let record = if strict {
+        assert!(
+            !home.path().join(".effigy/state/kernel.db").exists(),
+            "a strict owner-death record opens no SQLite connection"
+        );
+        match crate::run::terminal_strict_record(&root, run) {
+            Observed::Verified(Some(record), _) => record,
+            other => panic!("the settling guard records the strict run: {other:?}"),
+        }
+    } else {
+        let reader = match Store::read(&cx.operation().observe().unwrap(), &root) {
+            Observed::Verified(reader, _) => reader,
+            other => panic!("the settled run's journal is readable: {other:?}"),
+        };
+        match super::super::terminal_record(&reader, run) {
+            Observed::Verified(Some(record), _) => record,
+            other => panic!("the settling guard records the run: {other:?}"),
+        }
+    };
+    assert_eq!(record.run_id, run.to_string());
+    assert_eq!(record.task, "validate:owner-loss");
+    assert_eq!(record.checkout, checkout.text());
+    assert_eq!(record.boot, identity.boot.as_str());
+    assert!(record.exit_code.is_none() && record.signal.is_none());
+    if pin_held {
+        assert_eq!(record.outcome, "unknown");
+        assert_eq!(record.cleanup, "incomplete");
+    } else {
+        assert_eq!(record.outcome, "interrupted");
+        assert_eq!(record.cleanup, "complete");
+    }
+    stop_owned(&mut residue);
+}
+
+/// A descendant that holds one writing endpoint of the run's cleanup pin: the
+/// custody that keeps a guard from seeing EOF, exactly as the incident's
+/// surviving child did.
+fn spawn_pin_holder(pin: &crate::closure::ClosurePin) -> std::process::Child {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::process::CommandExt;
+    let custody = pin.custody_fd().unwrap();
+    let raw = custody.as_raw_fd();
+    let mut command = std::process::Command::new("/bin/sleep");
+    command.arg("60");
+    // SAFETY: dup2 onto the reserved closure slot is async-signal-safe and
+    // touches only this child's descriptors after fork.
+    unsafe {
+        command.pre_exec(move || {
+            if libc::dup2(raw, crate::closure::CLOSURE_FD) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::fcntl(crate::closure::CLOSURE_FD, libc::F_SETFD, 0) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let child = command.spawn().expect("pin-holding descendant");
+    drop(custody);
+    child
+}
+
+/// A child this test started. Its drop kills and reaps exactly that process, so
+/// no path leaves a zombie behind (the owner child is deliberately one while the
+/// guard observes it).
+struct OwnedChild(std::process::Child);
+
+impl Drop for OwnedChild {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// Stop and reap exactly the fixture process this test started.
+fn stop_owned(child: &mut std::process::Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}

@@ -177,6 +177,22 @@ fn eventually(mut predicate: impl FnMut() -> bool) {
         std::thread::sleep(Duration::from_millis(10));
     }
 }
+/// The terminal row a settling guard writes for a run whose owner died, read
+/// once it is visible: the guard releases its gate before it writes.
+fn eventually_record(observe: &ObserveContext, state: &StateRoot) -> TerminalRecord {
+    let end = Instant::now() + guard(Duration::from_secs(12));
+    loop {
+        if let Observed::Verified(reader, _) = effigy_kernel::store::Store::read(observe, state) {
+            if let Observed::Verified(Some(record), _) =
+                effigy_kernel::run::terminal_record(&reader, RunId::new(1, [1; 10]).unwrap())
+            {
+                return record;
+            }
+        }
+        assert!(Instant::now() < end, "the settling guard records its run");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
 #[test]
 fn custody_prepare_source_requires_its_class_and_settles_with_a_sentinel() {
     for expected in [Some(0), Some(7), None] {
@@ -2876,7 +2892,13 @@ fn foreground_owner_kill(tree: bool) {
         .unwrap()
         .path()
         .to_path_buf();
-    assert!(!root.join("kernel.db").exists());
+    // Q-010 still holds while every custodian is paused: a stopped guard can
+    // neither settle nor record anything. The tree case below has ancestor
+    // guards that do observe the killed owner, and their settlement records the
+    // run (effigy#986).
+    if !tree {
+        assert!(!root.join("kernel.db").exists());
+    }
     let state = match StateRoot::observe(&observe, home.path()) {
         Observed::Verified(root, _) => root,
         other => panic!("{other:?}"),
@@ -2900,6 +2922,20 @@ fn foreground_owner_kill(tree: bool) {
         effigy_kernel::ident::process_identity(process.identity.pid).verified()
             != Some(&process.identity)
     });
+    // A guard that outlived its verifiably dead owner settled the run and
+    // recorded what it could prove: an outcome that is never a success and no
+    // identity that could be signalled or replayed. The guard releases its gate
+    // before it writes this evidence, so a reader observes the release first
+    // and the row just after it (effigy#986).
+    let record = eventually_record(&observe, &state);
+    assert!(
+        matches!(record.outcome.as_str(), "interrupted" | "unknown"),
+        "{}",
+        record.outcome
+    );
+    assert!(matches!(record.cleanup.as_str(), "complete" | "incomplete"));
+    assert!(record.exit_code.is_none() && record.signal.is_none());
+    assert_eq!(record.task, "fixture");
     let output = Command::new("/bin/ps")
         .args(["-axo", "pgid="])
         .output()
