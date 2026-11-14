@@ -8,6 +8,7 @@ on. Columns are `id,files,loc,given,corrected,source,action,reason,body_sha`;
 scores stay frozen between re-rates: a re-rate writes new tables, never edits to
 the old snapshot. Column semantics are in `README.md`. The `corrected` column of
 the 244 round-5 rows was recalibrated in `effigy#960` from the planner's blind
+check, and 10 sampled floor-7 rows in `effigy#983` from the same kind of blind
 check; the floor-7 section records the current distribution and every
 distribution in the round-5 section is the state at `e458614d8`.
 
@@ -311,6 +312,56 @@ runs afterwards.
 Before this pass the tables held 799 rows with a mean of 7.95 corrected (given
 8.96): `given` {6 × 2, 7 × 54, 8 × 155, 9 × 347, 10 × 241} and `corrected`
 {5 × 2, 6 × 59, 7 × 158, 8 × 341, 9 × 236, 10 × 3}.
+
+### Blind check of the floor-7 re-rate (effigy#983)
+
+Independent raters re-scored 12 of the 175 floor-7 rows blind — never shown the
+`given`, the `corrected` or the `reason` — from the committed source alone. The
+sampled rows were the 12 largest-churn and largest re-rated modules plus the two
+lowest corrected rows. Evidence: `f7-blind-sample.csv` and `f7-blind-results.csv`
+in `/Volumes/Stash/scratch/effigy/code-rating-2026-11/`.
+
+| Row | Given | Corrected before | Blind | `corrected` now |
+|---|---|---|---|---|
+| `crates/effigy-builtin/src/config/output` | 9 | 8 | 7 | 7 |
+| `gateway::tls` | 8 | 7 | 9 | 9 |
+| `crates/effigy-manifest/src/lib.rs` | 8 | 7 | 9 | 9 |
+| `crates/effigy-containers/src/exec/implementation/workspace_builder.rs` | 9 | 8 | 7 | 7 |
+| `crates/effigy-containers/src/workspace.rs` | 9 | 8 | 7 | 7 |
+| `runner::environment` | 8 | 7 | 6 | 7 (re-rated after fix) |
+| `src/runner/container_runtime_prep/checkout_mount.rs` | 9 | 8 | 9 | 9 |
+| `crates/effigy-builtin/src/test/render/results` | 8 | 7 | 7 | 7 |
+| `crates/effigy-ui/src/plain_renderer` | 8 | 7 | 9 | 9 |
+| `src/runner/container_command/lifecycle/shell.rs` | 9 | 8 | 5 | 8 (re-rated after fix) |
+| `crates/effigy-tasks/src/qa_groups/render.rs` | 8 | 7 | 9 | 9 |
+| `crates/effigy-kernel/src/workspace_session` | 10 | 9 | 9 | 9 |
+
+- blind − old corrected: mean **+0.17**, mean absolute difference 1.33. The −1
+  offset holds: the blind re-score is as likely to be above the rater as below,
+  and the spread is ordinary design-judgement noise rather than a systematic
+  leniency left in the floor-7 rows.
+- Rule applied: the 10 rows whose blind score is at or above 7 take it as their
+  `corrected` with `source: blind-f7`; the other rows are untouched.
+- The two rows below 7 blind were the only behaviour findings, and both named the
+  same class of defect: a duplicated shell path with a hand-written `[ok]`
+  literal and no direct test (`lifecycle/shell.rs`), and `Observed::Unknown`
+  built from a flattened display string with an `expect` on fixed evidence and
+  one busy-message test (`runner::environment`). Both defects are fixed
+  (`effigy_runtime::shell::container_shell_completion` is the one completion
+  owner; a failed inventory read carries the container crate's typed class and
+  the evidence constructions return the typed reason), with direct
+  handoff/runtime/refusal tests and failing-before controls. Their rows keep the
+  floor-7 score with `source: offset-f7` and a reason naming what the fix closed.
+
+### Distribution after the blind check
+
+- **Rows:** 815. **Mean:** 8.11 corrected (given 9.10).
+- **Corrected scores:** 7 × 166, 8 × 399, 9 × 248, 10 × 2; nothing at 6 or below.
+- **7 or below:** 166 modules, all at exactly 7: four sampled rows moved up to
+  9 and three moved down to 7.
+- **Sources:** `blind` 24, `blind-r5` 8, `blind-f7` 10, `offset` 436,
+  `offset-r5` 172, `offset-f7` 165. Every one of the 815 rows still carries a
+  `body_sha` for the tree it was judged on, and drift reads zero.
 
 ### The 61 floor-7 targets, before and after
 
