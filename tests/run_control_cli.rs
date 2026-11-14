@@ -38,6 +38,10 @@ run = [{ task = "inner" }, { task = "heavy" }]
 [tasks.light]
 run = "touch light.txt"
 
+[tasks.durable]
+durable = true
+run = "touch durable.txt"
+
 [tasks.report]
 admission = "heavy"
 run = "echo $$ > leader.pid; touch ran.txt"
@@ -1992,6 +1996,34 @@ fn strict_persistence_refuses_before_admission_and_prepare_readies_the_route() {
     let state = fixture.repo.join(".effigy/state");
     let journal = state.join("kernel.db");
     assert!(journal.exists(), "the admitted run wrote no journal");
+    let gates = state.join("gates");
+    let nonstrict_task_gate = fs::read_dir(&gates)
+        .expect("gate scopes")
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().is_dir())
+        .find_map(|scope| {
+            fs::read_dir(scope.path())
+                .ok()?
+                .filter_map(Result::ok)
+                .find(|entry| {
+                    let name = entry.file_name();
+                    if !name.to_string_lossy().ends_with(".gate") || name == "kernel.gate" {
+                        return false;
+                    }
+                    fs::read(entry.path())
+                        .ok()
+                        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+                        .is_some_and(|body| body["argv0"].as_str().is_some())
+                })
+                .map(|entry| entry.path())
+        })
+        .expect("non-strict task gate");
+    let nonstrict_gate_bytes = fs::read(nonstrict_task_gate).expect("non-strict gate body");
+    assert_eq!(
+        nonstrict_gate_bytes.last(),
+        Some(&b'}'),
+        "non-strict gate bodies keep their original unpadded format"
+    );
     let ring = state.join("foreground-terminals.ring");
     assert!(!ring.exists(), "a ring exists before any strict prepare");
 
@@ -2042,7 +2074,7 @@ fn strict_persistence_refuses_before_admission_and_prepare_readies_the_route() {
     assert!(!ring.exists(), "the refusal created the ring");
 
     // The check step reports the same refusal and writes nothing.
-    let checked = fixture.run(&["--json", "run", "prepare", "--check"]);
+    let checked = fixture.run(&["--json", "run", "prepare", "--task", "heavy", "--check"]);
     assert!(!checked.status.success(), "{}", text(&checked));
     assert!(
         sqlite() == sqlite_before,
@@ -2052,14 +2084,14 @@ fn strict_persistence_refuses_before_admission_and_prepare_readies_the_route() {
 
     // Preparing is the supported step outside the route: it migrates the
     // journal and creates and fully preallocates the ring.
-    let prepared = fixture.run(&["run", "prepare"]);
+    let prepared = fixture.run(&["run", "prepare", "--task", "heavy"]);
     assert!(prepared.status.success(), "{}", text(&prepared));
     assert_eq!(
         fs::metadata(&ring).expect("ring").len(),
         effigy_kernel::run::TERMINAL_RING_BYTES,
         "prepare did not fully preallocate the ring"
     );
-    let checked = fixture.run(&["--json", "run", "prepare", "--check"]);
+    let checked = fixture.run(&["--json", "run", "prepare", "--task", "heavy", "--check"]);
     assert!(checked.status.success(), "{}", text(&checked));
     let envelope: serde_json::Value =
         serde_json::from_slice(&checked.stdout).expect("prepare envelope");
@@ -2170,4 +2202,252 @@ fn strict_persistence_refuses_before_admission_and_prepare_readies_the_route() {
         .filter(|slot| slot[slot.len() - 1] != 0)
         .count();
     assert_eq!(commits, 0, "ingestion did not free the slot it copied");
+}
+
+/// Strict admission only rewrites pre-existing task gate entries. Preparation
+/// is idempotent, and missing paths refuse before the task can start.
+#[test]
+fn strict_prepared_gates_create_no_route_entries_and_refuse_missing_paths() {
+    let fixture = Fixture::new();
+    let hook = v2_hook(&fixture, "strict-gates.sh", "", "");
+    let unsupported = fixture.run(&["run", "prepare", "--task", "durable"]);
+    assert!(!unsupported.status.success(), "{}", text(&unsupported));
+    assert!(text(&unsupported).contains("foreground task trees only"));
+    let nested = fixture.run(&["run", "prepare", "--task", "steps"]);
+    assert!(!nested.status.success(), "{}", text(&nested));
+    assert!(text(&nested).contains("prepare each declared task selector"));
+    let prepared = fixture.run(&["--json", "run", "prepare", "--task", "heavy"]);
+    assert!(prepared.status.success(), "{}", text(&prepared));
+    let prepared_json = json_of(&String::from_utf8_lossy(&prepared.stdout));
+    assert_eq!(prepared_json["result"]["task_gates"]["task"], "heavy");
+    assert!(prepared_json["result"]["allocation_unit_bytes"]
+        .as_u64()
+        .is_some_and(|unit| unit > 0));
+    let state = fixture.repo.join(".effigy/state");
+    let gates = state.join("gates");
+    let ring = state.join("foreground-terminals.ring");
+    let first_gate_entries = entries(&gates);
+    let (scope_dir, first_gate) = fs::read_dir(&gates)
+        .expect("gate scopes")
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().is_dir())
+        .find_map(|scope| {
+            let scope_dir = scope.path();
+            let first_gate = fs::read_dir(&scope_dir)
+                .ok()?
+                .filter_map(Result::ok)
+                .find(|entry| {
+                    let name = entry.file_name();
+                    if !name.to_string_lossy().ends_with(".gate") || name == "kernel.gate" {
+                        return false;
+                    }
+                    fs::read(entry.path())
+                        .ok()
+                        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+                        .is_some_and(|body| body["argv0"].is_null())
+                })?
+                .path();
+            Some((scope_dir, first_gate))
+        })
+        .expect("prepared task gate");
+    let first_gate_bytes = fs::read(&first_gate).expect("gate bytes");
+    let first_gate_mtime = fs::metadata(&first_gate)
+        .expect("gate file")
+        .modified()
+        .expect("mtime");
+
+    let prepared_again = fixture.run(&["run", "prepare", "--task", "heavy"]);
+    assert!(prepared_again.status.success(), "{}", text(&prepared_again));
+    assert_eq!(
+        entries(&gates),
+        first_gate_entries,
+        "prepare changed gate entries"
+    );
+    assert_eq!(
+        fs::read(&first_gate).unwrap(),
+        first_gate_bytes,
+        "prepare rewrote a prepared gate"
+    );
+    assert_eq!(
+        fs::metadata(&first_gate).unwrap().modified().unwrap(),
+        first_gate_mtime
+    );
+    let state_entries = entries(&state);
+    let gate_entries = entries(&gates);
+    let state_mtime = fs::metadata(&state)
+        .expect("state dir")
+        .modified()
+        .expect("mtime");
+    let gates_mtime = fs::metadata(&gates)
+        .expect("gates dir")
+        .modified()
+        .expect("mtime");
+    let scope_mtime = fs::metadata(&scope_dir)
+        .expect("scope dir")
+        .modified()
+        .expect("mtime");
+    let strict = || {
+        fixture
+            .effigy(&["heavy"])
+            .env("EFFIGY_STRICT_PERSISTENCE", "1")
+            .env("EFFIGY_ADMISSION_HOOK", &hook)
+            .env("EFFIGY_ADMISSION_PROTOCOL", "2")
+            .output_owned()
+            .expect("strict task")
+    };
+    let strict_output = strict();
+    assert!(strict_output.status.success(), "{}", text(&strict_output));
+    assert!(fixture.exists("ran.txt"), "the admitted task ran");
+    assert_ne!(
+        fs::read(&first_gate).expect("strict gate bytes"),
+        first_gate_bytes,
+        "strict admission rewrote the existing gate body"
+    );
+    assert_eq!(
+        fs::metadata(&first_gate).unwrap().len(),
+        4096,
+        "strict admission kept the gate at its prepared size"
+    );
+    assert_eq!(entries(&state), state_entries);
+    assert_eq!(entries(&gates), gate_entries);
+    assert_eq!(
+        fs::metadata(&state).unwrap().modified().unwrap(),
+        state_mtime
+    );
+    assert_eq!(
+        fs::metadata(&gates).unwrap().modified().unwrap(),
+        gates_mtime
+    );
+    assert_eq!(
+        fs::metadata(&scope_dir).unwrap().modified().unwrap(),
+        scope_mtime
+    );
+    let gate_file = first_gate.clone();
+    for name in ["ran.txt", "during.txt", "marker.txt"] {
+        fs::remove_file(fixture.repo.join(name)).expect("remove successful workload output");
+    }
+
+    // A missing gate must be noticed before any admission or task effect.
+    fs::remove_file(&gate_file).expect("remove prepared gate");
+    let state_entries_before_refusal = entries(&state);
+    let gate_entries = entries(&gates);
+    let scope_entries = entries(&scope_dir);
+    let gates_files_before_refusal = files(&gates);
+    let scope_files_before_refusal = files(&scope_dir);
+    let store_files = || {
+        [
+            "kernel.db",
+            "kernel.db-wal",
+            "kernel.db-shm",
+            "kernel.db-journal",
+        ]
+        .map(|name| fs::read(state.join(name)).ok())
+    };
+    let store_bytes_before_refusal = store_files();
+    let ring_before_refusal = fs::read(&ring).expect("ring before missing gate");
+    let hook_log_before_refusal = fixture.read("hook.log");
+    let hook_request_before_refusal = fixture.read("hook.log.request");
+    let missing_gate = strict();
+    assert!(!missing_gate.status.success(), "{}", text(&missing_gate));
+    assert!(text(&missing_gate).contains("run prepare --task SELECTOR"));
+    assert!(!fixture.exists("ran.txt"));
+    assert_eq!(fixture.read("hook.log"), hook_log_before_refusal);
+    assert_eq!(
+        fixture.read("hook.log.request"),
+        hook_request_before_refusal
+    );
+    assert_eq!(
+        fs::read(&ring).expect("ring after missing gate"),
+        ring_before_refusal
+    );
+    assert_eq!(store_files(), store_bytes_before_refusal);
+    assert_eq!(files(&gates), gates_files_before_refusal);
+    assert_eq!(files(&scope_dir), scope_files_before_refusal);
+    assert_eq!(entries(&state), state_entries_before_refusal);
+    assert_eq!(entries(&gates), gate_entries);
+    assert_eq!(entries(&scope_dir), scope_entries);
+
+    // Restore the gate, then show a missing empty scope marker also refuses.
+    let prepared = fixture.run(&["run", "prepare", "--task", "heavy"]);
+    assert!(prepared.status.success(), "{}", text(&prepared));
+    for name in ["ran.txt", "during.txt", "marker.txt"] {
+        let _ = fs::remove_file(fixture.repo.join(name));
+    }
+    let scope_name = scope_dir.file_name().expect("scope directory name");
+    let marker = gates.join(format!("{}.scope", scope_name.to_string_lossy()));
+    fs::remove_file(&marker).expect("remove scope marker");
+    let state_entries_before_scope_refusal = entries(&state);
+    let gate_entries_before_scope_refusal = entries(&gates);
+    let scope_entries_before_scope_refusal = entries(&scope_dir);
+    let gates_files_before_scope_refusal = files(&gates);
+    let scope_files_before_scope_refusal = files(&scope_dir);
+    let store_bytes_before_scope_refusal = store_files();
+    let ring_before_scope_refusal = fs::read(&ring).expect("ring before missing scope");
+    let hook_log_before_scope_refusal = fixture.read("hook.log");
+    let hook_request_before_scope_refusal = fixture.read("hook.log.request");
+    let missing_scope = strict();
+    assert!(!missing_scope.status.success(), "{}", text(&missing_scope));
+    assert!(!fixture.exists("ran.txt"));
+    assert_eq!(fixture.read("hook.log"), hook_log_before_scope_refusal);
+    assert_eq!(
+        fixture.read("hook.log.request"),
+        hook_request_before_scope_refusal
+    );
+    assert_eq!(
+        fs::read(&ring).expect("ring after missing scope"),
+        ring_before_scope_refusal
+    );
+    assert_eq!(store_files(), store_bytes_before_scope_refusal);
+    assert_eq!(files(&gates), gates_files_before_scope_refusal);
+    assert_eq!(files(&scope_dir), scope_files_before_scope_refusal);
+    assert_eq!(entries(&state), state_entries_before_scope_refusal);
+    assert_eq!(entries(&gates), gate_entries_before_scope_refusal);
+    assert_eq!(entries(&scope_dir), scope_entries_before_scope_refusal);
+    assert!(
+        !marker.exists(),
+        "strict admission recreated the scope marker"
+    );
+
+    // A missing state root also refuses without recreating `.effigy/state`.
+    fs::remove_dir_all(&state).expect("remove prepared state root");
+    let effigy_dir = fixture.repo.join(".effigy");
+    let effigy_entries_before_refusal = entries(&effigy_dir);
+    let hook_log_before_state_refusal = fixture.read("hook.log");
+    let missing_state = strict();
+    assert!(!missing_state.status.success(), "{}", text(&missing_state));
+    assert!(text(&missing_state).contains("run `effigy run prepare --task SELECTOR`"));
+    assert!(!fixture.exists("ran.txt"));
+    assert_eq!(fixture.read("hook.log"), hook_log_before_state_refusal);
+    assert_eq!(entries(&effigy_dir), effigy_entries_before_refusal);
+    assert!(!state.exists(), "strict admission recreated the state root");
+}
+
+fn entries(path: &std::path::Path) -> Vec<String> {
+    let mut entries: Vec<_> = fs::read_dir(path)
+        .expect("directory entries")
+        .map(|entry| {
+            entry
+                .expect("directory entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    entries.sort();
+    entries
+}
+
+fn files(path: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+    let mut files: Vec<_> = fs::read_dir(path)
+        .expect("directory files")
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+        .map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let bytes = fs::read(entry.path()).expect("file bytes");
+            (name, bytes)
+        })
+        .collect();
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    files
 }

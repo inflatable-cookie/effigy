@@ -155,6 +155,10 @@ impl StateRoot {
     pub fn state_directory(&self) -> &DirFd {
         &self.dir
     }
+    /// The allocation unit returned by `statfs` for this state directory.
+    pub fn allocation_unit_bytes(&self) -> std::io::Result<u64> {
+        self.dir.allocation_unit_bytes()
+    }
     pub fn path(&self) -> &Path {
         self.dir.path()
     }

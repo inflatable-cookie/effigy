@@ -471,24 +471,101 @@ This invocation's complete physical contribution in strict mode:
 
 | Path (under `<checkout>/.effigy/state/`) | Count | Physical bytes | Failure / finalization | Enforced by |
 | --- | --- | --- | --- | --- |
-| `foreground-terminals.ring` | 0 created; 1 opened read-write | 0 growth, 0 allocation: **exactly one slot's 1,024 bytes rewritten** (body 1,023 then marker 1); header and the other 15 slots unchanged; length stays 16,448 | missing, wrong size, wrong header, full or corrupt refuses before admission; a settle-time failure writes at most that slot's body and falls back to nothing | `run::terminal_ring::write` (`terminal_ring.rs:280`), `verify_size` (`:457`), `verify_header` (`:471`), `decode` (`:595`), `admission.rs::require_strict_terminal_ring` (`:140`) |
+| `foreground-terminals.ring` | 0 created; 1 opened read-write | 0 file-length growth; exactly one slot's 1,024 logical bytes rewritten on success (body 1,023 then marker 1); header and the other 15 slots unchanged; APFS physical COW is bounded below | missing, wrong size, wrong header, full or corrupt refuses before admission; a settle-time failure writes at most that slot's body and falls back to nothing | `run::terminal_ring::write` (`terminal_ring.rs:280`), `verify_size` (`:457`), `verify_header` (`:471`), `decode` (`:595`), `admission.rs::require_strict_terminal_ring` (`:140`) |
 | ring file metadata | — | the file's inode `mtime`/`ctime` update; no directory entry is created or removed, so the state directory's `mtime` is unchanged | — | the only writes are the two `pwrite`s into the existing file: body `terminal_ring.rs:329`, commit marker `:335` |
 | `kernel.db` | 0 | **0 bytes** | no connection is opened | `run/terminal.rs::record` strict branch (`:132-134`); measured by `strict_persistence_refuses_before_admission_and_prepare_readies_the_route` |
 | `kernel.db-wal` | 0 | **0 bytes** | — | same |
 | `kernel.db-shm` | 0 | **0 bytes** | — | same |
 | `kernel.db-journal` | 0 | none | — | same |
-| `gates/<scope>.scope` | `s` (created empty when absent) | 0 bytes each | a gate failure refuses the run | `gate.rs::Gate::acquire` (`gate.rs:388-488`; the scope marker is created at `:457-458`), unchanged by strict mode |
-| `gates/<scope>/<gate>.gate` | `s` files (**no store writer gate**: the route opens no store) | at most 4,096 bytes each, rewritten in place | a failed diagnostic rewrite leaves the old body | `gate::DIAG_MAX` (`gate.rs:28`) written by `write_body` (`gate.rs:865`) and `gate/foreground.rs::set_foreground` (`:49`) |
+| `gates/<scope>.scope` | 0 created; existing empty marker opened | 0 bytes | missing or non-empty marker refuses before admission with `effigy run prepare --task SELECTOR` | `Gate::verify_prepared_foreground` / `Gate::acquire_prepared` (`gate.rs:500-650`) |
+| `gates/<scope>/<gate>.gate` | 0 created; existing 4,096-byte gate opened | up to 4,096 bytes rewritten in place per held gate | missing or wrong-size gate refuses before admission with `effigy run prepare --task SELECTOR`; the best-effort diagnostic write may leave a partial body, which is not gate authority | `Gate::verify_prepared_foreground`, `write_body` (`gate.rs:500-650, 1044-1055`) |
 | run journal, capture log, run history, per-run scratch | 0 | none | — | as above |
 
-`s` is the number of checkout-scope spellings the run's task identity resolves
-to (1 or 2), fixed before any file is written. Unlike the non-strict v2 route
-(`s + 1`, where the terminal row opens the store and takes its writer gate), the
-strict route carries only the task's own gate files, `s`: it opens no store, so
-no store writer gate exists. The gate files are the route's only possible
-creations, and only when absent: the **terminal record adds zero files, grows
-nothing and rewrites exactly one 1 KiB slot**. A route on an already-used
-checkout rewrites existing gate bodies and nothing else.
+`run prepare --task SELECTOR` resolves the same declared task identity and
+shared lock as execution, expands the persistent and filesystem-derived
+checkout spellings, and creates every required gate path before the route. It
+accepts one task identity per command; when a declared task tree invokes other
+task selectors, prepare each selector separately. Each task invocation writes
+its own ring slot. There can be at most four resource gate files for one task
+invocation (the task gate and one declared shared lock, each in up to two
+checkout spellings) and two scope markers and directories. The strict route
+verifies all of them before admission and opens them without `O_CREAT`; a
+missing path refuses before the hook runs. The terminal record adds zero
+files, grows nothing and rewrites one 1 KiB slot.
+
+### Strict-mode APFS physical-allocation model
+
+The logical-byte limits above do not imply a physical-allocation limit. On
+APFS the allocation unit is 4 KiB. `effigy run prepare` reads the state
+directory's actual `statfs.f_bsize` and reports it as `allocation_unit_bytes`;
+use that recorded value for the checkout's volume rather than assuming another
+filesystem has the same unit.
+
+For allocation unit `u`, a ring slot rewrite touches at most
+`ceil((1024 + u - 1) / u)` data blocks because its 1 KiB slot offset may be
+unaligned to a block boundary. At `u = 4096`, the maximum is two blocks (8 KiB
+of data blocks). Each gate body is rewritten as a fixed 4,096-byte buffer from
+offset zero, so at `u = 4096` it touches one block (4 KiB) per gate file. More
+generally its bound is `ceil(4096 / u)` blocks. Scope markers and directories
+are not rewritten by the strict route.
+
+Rewriting these existing blocks allocates no new data blocks when the files
+have exclusive blocks. If a clone or snapshot shares a rewritten block, APFS
+copy-on-write may allocate one replacement data block for each rewritten
+block: up to 8 KiB for the ring slot and 4 KiB per gate body at a 4 KiB unit
+(up to 24 KiB across the maximum four gate files). These figures count data
+blocks only. **Unsupported premise:** filesystem metadata copy-on-write
+(inode, extent and B-tree node updates, including mtime and ctime) is internal
+to APFS and Effigy does not bound it. A consumer that needs a finite physical
+envelope must reserve a separately chosen metadata allowance or measure the
+volume-level metadata delta under its own snapshot/clone conditions; Effigy
+does not claim that metadata allocation is zero.
+
+### `run prepare` scope
+
+`effigy run prepare --task SELECTOR` resolves a declared foreground task and
+its gate identities before preparing state. Opening the effects root can
+create `.effigy/state` when absent (`crates/effigy-kernel/src/root.rs:61-80`).
+The non-check path opens the checkout store with strict mode disabled
+(`store.rs:493-501`). Store configuration takes the checkout `kernel` writer
+gate, which can create or rewrite its own `.scope` marker, scope directory and
+`kernel.gate` diagnostic (`store.rs:589-598, 920-957`; `gate.rs:410-467,
+1044-1055`). It may create or migrate `kernel.db`, its SQLite sidecars, apply
+retention and ingest pending ring records; those store writes are outside a
+strict invocation's envelope. The ring contributes a 16,448-byte file when
+absent (written through a temporary name, synced, renamed, then followed by a
+state-directory sync; `terminal_ring.rs:164-198`). For the selected task,
+prepare creates any needed gate and scope directories, creates empty `.scope`
+markers, and writes/pads each task gate body to 4,096 bytes. It syncs scope
+markers, changed gate files, each scope directory, the gates directory and the
+state directory (`gate.rs:410-467`). An already correct ring and 4,096-byte
+task gate body are preserved, making successful preparation repeatable.
+
+`--check` opens the effects root and verifies the store, ring and requested
+gate paths. It does not migrate the journal, ingest ring records, or write the
+ring or task gates. The effects-root open may create `.effigy/state`; if the
+WAL is live, SQLite's read-only connection may create or extend
+`kernel.db-shm` while reading it (`store.rs:1884-1905, 2027-2056`). It can
+therefore make a directory entry or shared-memory sidecar even though it does
+not write a database page, WAL frame, ring slot or task gate.
+
+The write path's 30-second budget is the minimum wait for the checkout store
+writer gate (`store.rs:39-41, 493-501, 589-598, 920-957`); after acquiring that
+gate, SQLite's busy timeout uses the time remaining in the same window. It
+waits on another Effigy store writer and SQLite lock contention. `--check` has
+its own 30-second SQLite read-busy timeout (`src/runner/run_control.rs:35-36,
+105-107`). These are waits inside the command, not a wall-clock deadline for
+schema work, ring/gate writes, fsyncs, or terminal-ring ingestion. Those parts
+have no separate deadline.
+
+A store-open, ring, gate or sync failure returns an error, but completed writes
+remain: there is no rollback of the state root, database migration, ring, gate
+directories or gate files. If ring creation fails before publication, its
+temporary file may remain; a later prepare uses a new temporary name. Existing
+invalid rings are refused rather than reset. Gate preparation can also leave
+some files ready and others untouched; a later prepare fills in the missing
+paths. A full ring is ingested by the non-check store open before the ring is
+checked; `--check` reports a full ring and never ingests or clears it.
 
 What strict mode still closes on a store it opens. These checks are not the
 foreground route's — it opens no store — but a strict process may open one for

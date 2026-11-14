@@ -391,6 +391,138 @@ impl Gate {
         ids: &[ResourceId],
         wait: Wait,
     ) -> Result<GateGuard, GateError> {
+        Self::acquire_with_creation(cx, root, ids, wait, true)
+    }
+
+    /// Acquire foreground gates that were prepared outside a strict run.
+    /// Missing paths refuse instead of creating directory entries.
+    pub fn acquire_prepared(
+        cx: &EffectContext,
+        root: &StateRoot,
+        ids: &[ResourceId],
+        wait: Wait,
+    ) -> Result<GateGuard, GateError> {
+        Self::acquire_with_creation(cx, root, ids, wait, false)
+    }
+
+    /// Create the exact gate paths a foreground task will need. Existing gate
+    /// bodies are preserved and padded to the maximum body size.
+    pub fn prepare_foreground(root: &StateRoot, ids: &[ResourceId]) -> Result<(), GateError> {
+        validate_foreground_ids(root, ids)?;
+        let gates = root.family(Family::Gates)?.expect("created gate directory");
+        let mut scope_names: Vec<String> = ids.iter().map(|id| scope_name(id.scope())).collect();
+        scope_names.sort();
+        scope_names.dedup();
+        for name in scope_names {
+            let scope =
+                open_gate(&gates, &format!("{name}.scope"), true)?.expect("created scope marker");
+            if scope
+                .metadata()
+                .map_err(|error| GateError::Io(IoError::new("stat scope", root.path(), &error)))?
+                .len()
+                != 0
+            {
+                scope.set_len(0).map_err(|error| {
+                    GateError::Io(IoError::new("prepare scope", root.path(), &error))
+                })?;
+            }
+            scope
+                .sync_all()
+                .map_err(|error| GateError::Io(IoError::new("flush scope", root.path(), &error)))?;
+            let dir = gates
+                .child(&name, Trust::Private, true)?
+                .expect("created scope");
+            for id in ids.iter().filter(|id| scope_name(id.scope()) == name) {
+                let file = open_gate(&dir, &format!("{}.gate", id.name()), true)?
+                    .expect("created gate file");
+                let size = file
+                    .metadata()
+                    .map_err(|error| GateError::Io(IoError::new("stat gate", root.path(), &error)))?
+                    .len();
+                if size != DIAG_MAX {
+                    let existing = fs::read_bounded(&file, DIAG_MAX)
+                        .map_err(|error| {
+                            GateError::Io(IoError::new("read gate", root.path(), &error))
+                        })?
+                        .unwrap_or_default();
+                    let mut body = if existing.is_empty() {
+                        prepared_body()
+                    } else {
+                        existing
+                    };
+                    body.resize(DIAG_MAX as usize, b' ');
+                    use std::os::unix::fs::FileExt;
+                    file.write_all_at(&body, 0).map_err(|error| {
+                        GateError::Io(IoError::new("prepare gate", root.path(), &error))
+                    })?;
+                    file.set_len(DIAG_MAX).map_err(|error| {
+                        GateError::Io(IoError::new("size gate", root.path(), &error))
+                    })?;
+                    file.sync_all().map_err(|error| {
+                        GateError::Io(IoError::new("flush gate", root.path(), &error))
+                    })?;
+                }
+            }
+            dir.sync()?;
+            gates.sync()?;
+        }
+        root.dir().sync()?;
+        Ok(())
+    }
+
+    /// Verify every path and fixed gate length without creating or rewriting
+    /// anything. This check belongs before strict admission.
+    pub fn verify_prepared_foreground(
+        root: &StateRoot,
+        ids: &[ResourceId],
+    ) -> Result<(), GateError> {
+        validate_foreground_ids(root, ids)?;
+        let gates = root
+            .read_family(Family::Gates)?
+            .ok_or_else(|| missing_prepared_path(root.path().join(Family::Gates.dir_name())))?;
+        let mut scope_names: Vec<String> = ids.iter().map(|id| scope_name(id.scope())).collect();
+        scope_names.sort();
+        scope_names.dedup();
+        for name in scope_names {
+            let scope_path = gates.path().join(format!("{name}.scope"));
+            let scope = open_gate(&gates, &format!("{name}.scope"), false)?
+                .ok_or_else(|| missing_prepared_path(scope_path.clone()))?;
+            if scope
+                .metadata()
+                .map_err(|error| GateError::Io(IoError::new("stat scope", &scope_path, &error)))?
+                .len()
+                != 0
+            {
+                return Err(missing_prepared_path(scope_path));
+            }
+            let dir_path = gates.path().join(&name);
+            let dir = gates
+                .child(&name, Trust::Private, false)?
+                .ok_or_else(|| missing_prepared_path(dir_path.clone()))?;
+            for id in ids.iter().filter(|id| scope_name(id.scope()) == name) {
+                let path = dir.path().join(format!("{}.gate", id.name()));
+                let file = open_gate(&dir, &format!("{}.gate", id.name()), false)?
+                    .ok_or_else(|| missing_prepared_path(path.clone()))?;
+                if file
+                    .metadata()
+                    .map_err(|error| GateError::Io(IoError::new("stat gate", &path, &error)))?
+                    .len()
+                    != DIAG_MAX
+                {
+                    return Err(missing_prepared_path(path));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn acquire_with_creation(
+        cx: &EffectContext,
+        root: &StateRoot,
+        ids: &[ResourceId],
+        wait: Wait,
+        create: bool,
+    ) -> Result<GateGuard, GateError> {
         if crate::store::in_transaction() {
             return Err(GateError::InTransaction);
         }
@@ -453,9 +585,16 @@ impl Gate {
             } else {
                 root
             };
-            let gates = domain.family(Family::Gates)?.expect("created directory");
-            let file =
-                open_gate(&gates, &format!("{name}.scope"), true)?.expect("created gate file");
+            let gates = if create {
+                domain.family(Family::Gates)?.expect("created directory")
+            } else {
+                domain.read_family(Family::Gates)?.ok_or_else(|| {
+                    missing_prepared_path(domain.path().join(Family::Gates.dir_name()))
+                })?
+            };
+            let scope_path = gates.path().join(format!("{name}.scope"));
+            let file = open_gate(&gates, &format!("{name}.scope"), create)?
+                .ok_or_else(|| missing_prepared_path(scope_path))?;
             let first = ids
                 .iter()
                 .find(|id| &scope_name(id.scope()) == name)
@@ -463,7 +602,10 @@ impl Gate {
             let file = lock(cx, file, libc::LOCK_SH, deadline, started, wait, first)?;
             guard.scopes.push((name.clone(), file));
             // Recreated after a removal; removal cannot run while we hold SH.
-            let dir = gates.child(name, Trust::Private, true)?.expect("created");
+            let dir_path = gates.path().join(name);
+            let dir = gates
+                .child(name, Trust::Private, create)?
+                .ok_or_else(|| missing_prepared_path(dir_path))?;
             scope_dirs.push((name.clone(), dir));
         }
         for id in &ids {
@@ -472,8 +614,13 @@ impl Gate {
                 .iter()
                 .find(|(name, _)| *name == scope)
                 .expect("opened scope");
-            let file =
-                open_gate(dir, &format!("{}.gate", id.name()), true)?.expect("created gate file");
+            let path = dir.path().join(format!("{}.gate", id.name()));
+            let file = if create {
+                open_gate(dir, &format!("{}.gate", id.name()), true)?
+            } else {
+                open_gate_existing_writable(dir, &format!("{}.gate", id.name()))?
+            }
+            .ok_or_else(|| missing_prepared_path(path))?;
             let file = lock(cx, file, libc::LOCK_EX, deadline, started, wait, id)?;
             guard.gates.push((id.clone(), file));
         }
@@ -793,6 +940,54 @@ fn open_gate(dir: &fs::DirFd, name: &str, create: bool) -> Result<Option<File>, 
         .map(|(file, _)| file))
 }
 
+/// Open an existing gate body for in-place diagnostic updates without
+/// permitting its creation.
+fn open_gate_existing_writable(dir: &fs::DirFd, name: &str) -> Result<Option<File>, FsError> {
+    let name = FileName::new(name)?;
+    Ok(dir
+        .open_file(&name, libc::O_RDWR, None, Trust::Private)?
+        .map(|(file, _)| file))
+}
+
+fn validate_foreground_ids(root: &StateRoot, ids: &[ResourceId]) -> Result<(), GateError> {
+    if ids.is_empty()
+        || ids.iter().any(|id| {
+            !matches!(id.scope(), Scope::Checkout(_))
+                || !matches!(id.kind(), ResourceKind::Task | ResourceKind::Store)
+        })
+    {
+        return Err(GateError::Untrusted {
+            path: root.path().to_path_buf(),
+            reason: "strict foreground preparation requires checkout task and store gates".into(),
+        });
+    }
+    Ok(())
+}
+
+fn missing_prepared_path(path: PathBuf) -> GateError {
+    GateError::Untrusted {
+        path,
+        reason:
+            "strict gate is not prepared; run `effigy run prepare --task SELECTOR` before admission"
+                .into(),
+    }
+}
+
+fn prepared_body() -> Vec<u8> {
+    let body = Body {
+        foreground: None,
+        v: 1,
+        run: None,
+        pid: u32::MAX,
+        start: None,
+        boot: None,
+        argv0: None,
+    };
+    let mut bytes = serde_json::to_vec(&body).expect("fixed diagnostic body serializes");
+    bytes.resize(DIAG_MAX as usize, b' ');
+    bytes
+}
+
 fn lock(
     cx: &EffectContext,
     file: File,
@@ -864,7 +1059,14 @@ fn bounded_body(value: &Body) -> Option<Vec<u8>> {
 /// [`DIAG_MAX`] bytes (effigy#977).
 fn write_body(file: &File, value: &Body) {
     if let Some(bytes) = bounded_body(value) {
-        let _ = fs::rewrite(file, &bytes);
+        if crate::store::strict_persistence() {
+            let mut bytes = bytes;
+            bytes.resize(DIAG_MAX as usize, b' ');
+            use std::os::unix::fs::FileExt;
+            let _ = file.write_all_at(&bytes, 0);
+        } else {
+            let _ = fs::rewrite(file, &bytes);
+        }
     }
 }
 fn current_body(run: Option<String>) -> Body {

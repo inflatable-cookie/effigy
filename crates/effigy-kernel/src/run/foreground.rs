@@ -134,7 +134,11 @@ impl ForegroundRun {
                  with each one's checkout-alias spelling",
             ));
         }
-        let mut gate = Gate::acquire(cx, root, &ids, opts.wait)?;
+        let mut gate = if crate::store::strict_persistence() {
+            Gate::acquire_prepared(cx, root, &ids, opts.wait)?
+        } else {
+            Gate::acquire(cx, root, &ids, opts.wait)?
+        };
         // Declared shared exclusion gates remain held too; adapter gates
         // cannot reach this local-only path. The held flock is the exclusion: a
         // predecessor it does not name cannot still be live, so a journal row

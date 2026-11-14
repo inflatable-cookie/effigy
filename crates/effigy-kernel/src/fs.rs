@@ -465,6 +465,17 @@ impl DirFd {
     pub fn open(path: &Path) -> Result<Self, FsError> {
         Self::walk(path, Trust::Ancestor)
     }
+    /// The filesystem block size reported by `statfs` for this open directory.
+    pub fn allocation_unit_bytes(&self) -> io::Result<u64> {
+        let mut stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
+        // SAFETY: the descriptor is live and the output storage is writable.
+        if unsafe { libc::fstatfs(self.raw(), stat.as_mut_ptr()) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: fstatfs succeeded and initialized the structure.
+        let stat = unsafe { stat.assume_init() };
+        Ok(stat.f_bsize as u64)
+    }
     pub(crate) fn walk(path: &Path, last: Trust) -> Result<Self, FsError> {
         Self::walk_with_setup(path, last, None)
     }
