@@ -200,6 +200,14 @@ pub enum StoreError {
     NotPrepared {
         reason: String,
     },
+    /// The store holds a record this build cannot account for, and no
+    /// preparation step clears it (effigy#981): its terminal table carries a
+    /// `run_id` longer than the index key the strict frame maximum is derived
+    /// for, so a strict run refuses rather than write under a bound that does
+    /// not hold for that store.
+    NotAccountable {
+        reason: String,
+    },
 }
 impl StoreError {
     pub fn category(&self) -> Category {
@@ -217,6 +225,7 @@ impl StoreError {
             | Self::TooLarge { .. }
             | Self::NotCorrupt
             | Self::NotPrepared { .. }
+            | Self::NotAccountable { .. }
             | Self::StaleGeneration { .. }
             | Self::UnknownResource => Category::Refused,
             Self::Untrusted { .. }
@@ -355,6 +364,12 @@ impl std::fmt::Display for StoreError {
                 "the state store is not prepared for a strict-persistence run \
                  (`{STRICT_PERSISTENCE_ENV}=1`): {reason}; `{PREPARE_COMMAND}` prepares it outside \
                  such a run, and then the run works"
+            ),
+            Self::NotAccountable { reason } => format!(
+                "the state store cannot be accounted for by a strict-persistence run \
+                 (`{STRICT_PERSISTENCE_ENV}=1`): {reason}; `{PREPARE_COMMAND}` does not clear that \
+                 record — remove it, or reset the checkout journal outside a strict run, and then \
+                 the run works"
             ),
             Self::Corrupt(_)
             | Self::UnknownSchema { .. }
@@ -1840,7 +1855,7 @@ fn refuse_oversized_keys(conn: &Connection) -> Result<(), StoreError> {
         .flatten();
     match longest {
         Some(length) if length > crate::run::TERMINAL_RUN_ID_MAX as i64 => {
-            Err(StoreError::NotPrepared {
+            Err(StoreError::NotAccountable {
                 reason: format!(
                     "its terminal table holds a {length}-byte run id, over the {}-byte index key \
                      the strict frame maximum is derived for",

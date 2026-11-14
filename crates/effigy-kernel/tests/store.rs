@@ -2010,16 +2010,22 @@ fn store_strict_wal_and_index_stay_within_their_stated_maximum() {
     let balance = effigy_kernel::run::TERMINAL_STRICT_BALANCE_PAGES_MAX;
     let ptrmap = effigy_kernel::run::TERMINAL_STRICT_PTRMAP_PAGES_MAX;
     let pages = effigy_kernel::run::TERMINAL_STRICT_WRITE_MAX_PAGES;
-    assert_eq!((trees, levels, balance, ptrmap), (3, 5, 9, 271));
-    assert_eq!(pages, trees * levels * (balance + ptrmap) + 3);
+    assert_eq!((trees, levels, balance, ptrmap), (3, 5, 9, 321));
+    assert_eq!(
+        pages,
+        trees * levels * balance
+            + effigy_kernel::run::TERMINAL_STRICT_DEEPER_PAGES_MAX
+            + ptrmap
+            + 3
+    );
     assert_eq!(
         effigy_kernel::run::TERMINAL_STRICT_WAL_MAX_BYTES,
         WAL_HEADER_BYTES + u64::from(pages) * (PAGE_SIZE + WAL_FRAME_HEADER_BYTES)
     );
     assert_eq!(
         effigy_kernel::run::TERMINAL_STRICT_SHM_MAX_BYTES,
-        2 * WAL_INDEX_PAGE_BYTES,
-        "the frames cross at most two wal-index pages"
+        WAL_INDEX_PAGE_BYTES,
+        "the frames fit inside the first wal-index page"
     );
     let home = home();
     let cx = effects(EffectClass::Mutate);
@@ -2408,13 +2414,29 @@ fn store_strict_refuses_a_terminal_key_over_the_index_bound() {
 
     let error = verify_prepared(&root, Duration::from_secs(5))
         .expect_err("the pre-admission check refuses it");
-    assert!(matches!(error, StoreError::NotPrepared { .. }), "{error:?}");
     assert!(
-        error.to_string().contains("run id"),
-        "the refusal names the oversized key: {error}"
+        matches!(error, StoreError::NotAccountable { .. }),
+        "{error:?}"
+    );
+    assert!(
+        error.to_string().contains("run id") && error.to_string().contains("does not clear"),
+        "the refusal names the oversized key and the remedy that can clear it: {error}"
     );
     let error = Store::open_strict(&cx, &root).expect_err("a strict open refuses it too");
-    assert!(matches!(error, StoreError::NotPrepared { .. }), "{error:?}");
+    assert!(
+        matches!(error, StoreError::NotAccountable { .. }),
+        "{error:?}"
+    );
+    // The advertised remedy must be honest: `effigy run prepare` opens the
+    // store without strict persistence, so it succeeds and clears nothing — the
+    // refusal stands, and the message says so.
+    drop(Store::open_preparing(&cx, &root).expect("prepare opens the store"));
+    let error = verify_prepared(&root, Duration::from_secs(5))
+        .expect_err("prepare does not clear an unaccountable record");
+    assert!(
+        matches!(error, StoreError::NotAccountable { .. }),
+        "{error:?}"
+    );
 }
 
 /// A strict connection holds the page cache the frame maximum is derived for,

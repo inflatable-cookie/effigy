@@ -69,34 +69,45 @@ pub const STRICT_INSERT_TREES: u32 = 3;
 /// The levels one of those b-trees can have: a leaf plus the interior levels a
 /// store of `store::MAX_DB_BYTES` can hold.
 ///
-/// With [`RUN_ID_MAX`]-bounded index keys the widest interior cell is
-/// `4 + 64 + 9 + 2` = 79 bytes (child pointer, key, rowid varint, cell pointer),
-/// so one interior page holds at least `4096 / 79` = 51 children. Reaching
-/// `MAX_DB_BYTES / PAGE_SIZE` = 262,144 pages through that fan-out takes
-/// `ceil(log51(262144))` = 4 interior levels, so the deepest tree is 5 levels.
+/// The widest index interior cell is a 4-byte child pointer, a 4-byte table page
+/// number, a 1-byte key-size varint, a [`RUN_ID_MAX`] = 64-byte key, a 9-byte
+/// rowid varint and a 2-byte cell pointer — about 84 bytes — so one interior
+/// page holds at least `4096 / 84` = 48 children. Reaching `MAX_DB_BYTES /
+/// PAGE_SIZE` = 262,144 pages through a fan-out of 48 takes
+/// `ceil(log48(262144))` = 4 interior levels, so the deepest tree is 5 levels;
+/// even a fan-out of 23 suffices (`23^4` = 279,841 > 262,144).
 pub const STRICT_TREE_LEVELS_MAX: u32 = 5;
 /// The pages one level of `balance_nonroot` can write: up to three siblings
 /// (`apOld[NB]`), up to five pages they become (`apNew[NB+2]`), and their parent
 /// (`NB` = 3 in `sqlite3.c`).
 pub const STRICT_BALANCE_PAGES_MAX: u32 = 3 + 5 + 1;
-/// The pointer-map entry pages one interior balance can write: one per cell it
-/// moves into a new page, and an interior page holds at most 4096 / 15 = 271
-/// cells (the table's interior cells are a child pointer, a rowid varint and a
-/// cell pointer). Leaf balances skip those per-cell updates (`leafCorrection` in
-/// `sqlite3.c`), and their own new-page entries are covered by the balance term.
-pub const STRICT_PTRMAP_PAGES_MAX: u32 = 271;
+/// The pages `balance_deeper` writes when the root itself overflows: the root
+/// (rewritten as an interior page) and the single child that receives its
+/// contents.
+pub const STRICT_DEEPER_PAGES_MAX: u32 = 2;
+/// The pointer-map entry pages one insert can write, bounded by the store's own
+/// pointer-map size rather than by a cell count (effigy#981).
+///
+/// `balance_nonroot` writes one pointer-map entry for every cell it moves into a
+/// new page, across all sibling pages (`sqlite3.c`), and `balance_deeper`
+/// re-parents every root child. Counting those cells cannot produce a per-level
+/// figure, but they cannot exceed the pointer-map pages the store has: a
+/// pointer-map page holds `PAGE_SIZE / 5` = 819 entries (`PTRMAP_ENTRY_SIZE` = 5,
+/// one type byte and a 4-byte parent), and the store holds at most
+/// `MAX_DB_BYTES / PAGE_SIZE` = 262,144 pages, so
+/// `ceil(262144 / 819)` = 321 is the most distinct entry pages any write can
+/// touch.
+pub const STRICT_PTRMAP_PAGES_MAX: u32 = 321;
 /// Frames one **strict** terminal write can append: a stated maximum, derived
 /// from the source, that the route's configuration cannot exceed (effigy#981).
 ///
 /// The insert is the route's only statement, and each of its three trees can
-/// balance once per level:
-///
-/// - `balance_nonroot` writes at most [`STRICT_BALANCE_PAGES_MAX`] = 9 tree pages
-///   per level, and — on an interior level — one pointer-map entry page per cell
-///   it moves, at most [`STRICT_PTRMAP_PAGES_MAX`] = 271. Per tree:
-///   `STRICT_TREE_LEVELS_MAX` = 5 levels x (9 + 271) = 1400 pages.
-/// - Three trees are 4200 pages, plus page 1 (change counter and in-header
-///   database size), the freelist trunk and the freelist header: 3 more.
+/// balance once per level: `STRICT_INSERT_TREES` = 3 trees x
+/// `STRICT_TREE_LEVELS_MAX` = 5 levels x `STRICT_BALANCE_PAGES_MAX` = 9 pages =
+/// 135, plus `STRICT_DEEPER_PAGES_MAX` = 2 for a root split, plus
+/// `STRICT_PTRMAP_PAGES_MAX` = 321 pointer-map entry pages, plus page 1 (change
+/// counter and in-header database size), the freelist trunk and the freelist
+/// header = 3. That is 461 frames.
 ///
 /// Two premises make that arithmetic sound, and this module enforces both rather
 /// than assuming them:
@@ -114,10 +125,11 @@ pub const STRICT_PTRMAP_PAGES_MAX: u32 = 271;
 /// measures the real contribution (3 frames against a 600-row store), and
 /// [`record`] still measures every strict run and refuses to report success
 /// above this maximum.
-pub const STRICT_WRITE_MAX_PAGES: u32 = STRICT_INSERT_TREES
-    * STRICT_TREE_LEVELS_MAX
-    * (STRICT_BALANCE_PAGES_MAX + STRICT_PTRMAP_PAGES_MAX)
-    + 3;
+pub const STRICT_WRITE_MAX_PAGES: u32 =
+    STRICT_INSERT_TREES * STRICT_TREE_LEVELS_MAX * STRICT_BALANCE_PAGES_MAX
+        + STRICT_DEEPER_PAGES_MAX
+        + STRICT_PTRMAP_PAGES_MAX
+        + 3;
 /// The bytes [`STRICT_WRITE_MAX_PAGES`] occupies: SQLite writes a 32-byte log
 /// header (`store::WAL_HEADER_BYTES`), then one 24-byte frame header before each
 /// page (`store::WAL_FRAME_HEADER_BYTES`, `WAL_FRAME_HDRSIZE` in `wal.c`;
@@ -125,10 +137,9 @@ pub const STRICT_WRITE_MAX_PAGES: u32 = STRICT_INSERT_TREES
 pub const STRICT_WAL_MAX_BYTES: u64 = crate::store::WAL_HEADER_BYTES
     + STRICT_WRITE_MAX_PAGES as u64
         * (crate::store::PAGE_SIZE + crate::store::WAL_FRAME_HEADER_BYTES);
-/// The wal-index growth those frames can cause: page 0 indexes 4062 frames and
-/// each later page 4096, so [`STRICT_WRITE_MAX_PAGES`] frames cross at most two
-/// 32 KiB pages.
-pub const STRICT_SHM_MAX_BYTES: u64 = 2 * crate::store::WAL_INDEX_PAGE_BYTES;
+/// The wal-index growth those frames can cause: page 0 indexes 4062 frames, so
+/// [`STRICT_WRITE_MAX_PAGES`] frames fit inside one 32 KiB page.
+pub const STRICT_SHM_MAX_BYTES: u64 = crate::store::WAL_INDEX_PAGE_BYTES;
 /// The pages one INSERT of a bounded row dirties in the common case
 /// (effigy#977): one leaf in each of the three trees, page 1 and the freelist.
 /// The tests measure this budget rather than deriving a worst case; the row

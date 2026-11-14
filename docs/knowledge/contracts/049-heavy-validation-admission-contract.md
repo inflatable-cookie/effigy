@@ -396,7 +396,7 @@ also closes those paths:
 | `store::Store::repair` refuses under the switch (`store.rs:1075-1087`) | moving `kernel.db` and its side files aside |
 | `run::terminal::write_row` returns after the insert (`crates/effigy-kernel/src/run/terminal.rs:229`) | the bounded prune's delete and its frames |
 | `store::configure` sets `PRAGMA cache_size` to `store::STRICT_CACHE_KIB` and reads it back (`store.rs:612`, `:655-668`) | a page-cache spill re-appending a page, which would break the one-frame-per-page arithmetic |
-| `store::refuse_oversized_keys` (`store.rs:1807`) | writing under a b-tree depth the key-length premise does not cover |
+| `store::refuse_oversized_keys` (`store.rs:1807`) returns `NotAccountable`, whose message says `effigy run prepare` does not clear it | writing under a b-tree depth the key-length premise does not cover |
 | `run::terminal::record` measures its own appended frames and reports a run that exceeded the maximum (`terminal.rs:164-195`) | a run passing as if it had stayed inside the maximum when its transaction appended more |
 | `store::Store::wal_frames` reads the log's length on a strict handle instead of attempting a passive checkpoint (`store.rs:684-698`) | an observation checkpointing a strict store |
 
@@ -411,8 +411,8 @@ This invocation's complete physical contribution in strict mode:
 | `gates/<scope>.scope` | `s` files, 0 bytes each | `gate.rs::Gate::acquire` creates the empty marker (`crates/effigy-kernel/src/gate.rs:422-475`) |
 | `gates/<scope>/<gate>.gate` | `s + 1` files, 4096 bytes each | `gate::DIAG_MAX` (`gate.rs:20-22`) written by `write_body` (`gate.rs:472-475`) and `gate/foreground.rs::set_foreground` (`gate/foreground.rs:48-68`); at most `gate::FOREGROUND_GATES_MAX` = 4 gates (`run/foreground.rs:119-131`) |
 | `kernel.db` | **0 bytes**: no checkpoint, no migration, no prune | the strict checks above |
-| `kernel.db-wal` | **maximum 4203 frames = 17,316,392 bytes**, derived from the source and enforced by the premises below; every run also measures its own frames | `run::TERMINAL_STRICT_WAL_MAX_BYTES` (`crates/effigy-kernel/src/run/terminal.rs:117-129`) |
-| `kernel.db-shm` | **64 KiB**: two 32 KiB wal-index pages, the most the frame maximum can cross | `run::TERMINAL_STRICT_SHM_MAX_BYTES` (`run/terminal.rs:131`); `wal.c` `WALINDEX_PGSZ` and `walFramePage` |
+| `kernel.db-wal` | **maximum 461 frames = 1,899,352 bytes**, derived from the source and enforced by the premises below; every run also measures its own frames | `run::TERMINAL_STRICT_WAL_MAX_BYTES` (`crates/effigy-kernel/src/run/terminal.rs:117-146`) |
+| `kernel.db-shm` | **32 KiB**: the frame maximum fits inside the first wal-index page | `run::TERMINAL_STRICT_SHM_MAX_BYTES` (`run/terminal.rs:151`); `wal.c` `WALINDEX_PGSZ` and `walFramePage` |
 | `kernel.db-journal` | none: a store that has one is refused | `store::refuse_recovery` |
 | `foreground_terminals` row | 1, at most 960 stored bytes | `run::TerminalRecord::checked` |
 | run journal, capture log, run history, per-run scratch | none | as above |
@@ -431,15 +431,25 @@ it can dirty:
 - `balance_nonroot` (`sqlite3.c`, `apOld[NB]` and `apNew[NB+2]` with `NB` = 3)
   writes at most three sibling pages, the five pages they become, and their
   parent — `run::TERMINAL_STRICT_BALANCE_PAGES_MAX` = 9 tree pages per level —
-  and on an interior level one pointer-map entry page per cell it moves, at most
-  `run::TERMINAL_STRICT_PTRMAP_PAGES_MAX` = 271 (a 4096-byte interior page holds
-  4096/15 = 271 cells of a child pointer, a rowid varint and a cell pointer).
-  Leaf balances skip the per-cell updates (`leafCorrection`).
+  and a root split adds `run::TERMINAL_STRICT_DEEPER_PAGES_MAX` = 2
+  (`balance_deeper`: the root rewritten as an interior page and its new child).
+- Its pointer-map writes are bounded by the store's pointer-map size, not by a
+  per-level cell count: `balance_nonroot` writes one entry for every cell it
+  moves into a new page, across all siblings, and `balance_deeper` re-parents
+  every root child, but those entries can only land in the pointer-map pages the
+  store has. A pointer-map page holds `PAGE_SIZE/5` = 819 entries
+  (`PTRMAP_ENTRY_SIZE` = 5), and the store holds at most 262,144 pages, so
+  `run::TERMINAL_STRICT_PTRMAP_PAGES_MAX` = 321 is a hard ceiling for any write.
 - The insert maintains `run::TERMINAL_STRICT_INSERT_TREES` = 3 trees (the table,
   the `run_id` unique index and the `closed_at` index) at
-  `run::TERMINAL_STRICT_TREE_LEVELS_MAX` = 5 levels each: 3 × 5 × (9 + 271) =
-  4200 pages, plus page 1, the freelist trunk and the freelist header = 4203
-  pages = **17,316,392 bytes**.
+  `run::TERMINAL_STRICT_TREE_LEVELS_MAX` = 5 levels each — a 4096-byte interior
+  page holds at least `4096/84` = 48 children for an 84-byte widest index cell
+  (4-byte child pointer, 4-byte page number, 1-byte key-size varint, 64-byte key,
+  9-byte rowid varint, 2-byte cell pointer), and `23^4` = 279,841 > 262,144, so
+  even a fan-out of 23 keeps the depth at five.
+
+That is 3 × 5 × 9 + 2 + 321 + 3 = **461 frames**, or
+`32 + 461 × (4096 + 24)` = **1,899,352 bytes**.
 
 Two premises make that arithmetic hold for the store the run writes, and the code
 enforces both instead of assuming them:
@@ -447,15 +457,17 @@ enforces both instead of assuming them:
 - **No page is appended twice.** SQLite re-appends a page when the page cache
   spills and the page is dirtied again (`pagerStress`, `sqlite3.c:63622-63662`).
   A strict connection therefore sets `PRAGMA cache_size` to
-  `store::STRICT_CACHE_KIB` = 24 MiB — more than the 4203-page maximum — and
+  `store::STRICT_CACHE_KIB` = 24 MiB — far more than the 461-page maximum — and
   reads it back (`store::check_sidecar_bounds`), refusing the open if it did not
   apply. `store_strict_holds_the_page_cache_its_maximum_needs` proves it.
 - **Index keys stay inside `run::TERMINAL_RUN_ID_MAX` = 64 bytes**, which is what
-  gives the 51-child fan-out and therefore the 5-level depth above. A strict run
+  gives the 48-child fan-out and therefore the 5-level depth above. A strict run
   refuses a store that already holds a longer `run_id`
-  (`store::refuse_oversized_keys`), with `NotPrepared` naming
-  `effigy run prepare`; `store_strict_refuses_a_terminal_key_over_the_index_bound`
-  proves it.
+  (`store::refuse_oversized_keys`), with `StoreError::NotAccountable`; that
+  refusal says plainly that `effigy run prepare` does not clear it — the record
+  must be removed or the journal reset outside a strict run — and
+  `store_strict_refuses_a_terminal_key_over_the_index_bound` proves both the
+  refusal and that `prepare` leaves it standing.
 
 `run::terminal::record` still measures its own appended frames and refuses to
 report success above the maximum, so a run never passes claiming a contribution
@@ -465,11 +477,10 @@ it did not make; the measured contribution in every tested state is **3 frames**
 
 SHM: `kernel.db-shm` holds SQLite's wal-index, allocated in `WALINDEX_PGSZ` = 32
 KiB pages (`store::WAL_INDEX_PAGE_BYTES`, `store.rs:85`; `wal.c` asserts that
-size, and each page indexes 4062 frames on the first page and 4096 on each later
-one). The 4203-frame maximum crosses at most two such pages, so the growth this
-invocation causes is at most `run::TERMINAL_STRICT_SHM_MAX_BYTES` = **64 KiB** —
-derived from the same maximum, not from a measurement, and
-`run::TERMINAL_STRICT_SHM_MAX_BYTES` is asserted against the frame count in
+size, and page 0 indexes 4062 frames). The 461-frame maximum fits inside page 0,
+so the growth this invocation causes is at most
+`run::TERMINAL_STRICT_SHM_MAX_BYTES` = **32 KiB**, derived from the same maximum
+and asserted against the frame count in
 `store_strict_wal_and_index_stay_within_their_stated_maximum`. Strict mode
 refuses the one state that would make the size depend on other writers' frames —
 a non-empty log with no wal-index beside it (`store::refuse_recovery`) — so the
