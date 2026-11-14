@@ -60,7 +60,8 @@ impl Run<'_> {
                 run: self.id,
                 fence: self.owner.clone(),
                 purpose: MemoryPurpose::CheckoutLease,
-                deadline: effigy_core::run_deadline::remaining(),
+                deadline_nanos: effigy_core::run_deadline::current()
+                    .map(|deadline| deadline.ceiling_nanos()),
             },
         ) {
             Ok(backup) => {

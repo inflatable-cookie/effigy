@@ -2252,6 +2252,14 @@ fn a_run_deadline_cuts_a_hung_admission_before_the_task_runs() {
         envelope["error"]["details"]["deadline"]["phases"]["admission"].is_object(),
         "the admission refusal carries its phase readback: {rendered}"
     );
+    let admission_since = envelope["error"]["details"]["deadline"]["phases"]["admission"]
+        ["since_origin_ms"]
+        .as_u64()
+        .unwrap_or_default();
+    assert!(
+        admission_since >= 900,
+        "the refusal captures the elapsed admission wait, not only its start: {admission_since}ms"
+    );
     assert!(
         !fixture.exists("ran.txt"),
         "the workload started despite the refused admission"
@@ -2463,6 +2471,12 @@ fn a_run_deadline_bounds_a_stalled_terminal_report_and_keeps_the_outcome() {
     // The stalled terminal report may legitimately leave the hook as residue
     // when it consumes the remaining allowance: stop it by its recorded pid
     // before this fixture is removed.
+    let guard_pid: i32 = String::from_utf8_lossy(&output.stderr)
+        .split("guard pid ")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_default();
     let hook_pid: i32 = fixture.read("hook.pid").trim().parse().unwrap_or_default();
     if hook_pid > 1 && alive(hook_pid as u32) {
         // SAFETY: signal 0/kill only the hook group this test started.
@@ -2492,7 +2506,7 @@ fn a_run_deadline_bounds_a_stalled_terminal_report_and_keeps_the_outcome() {
         .and_then(|value| value.trim().parse().ok())
         .unwrap_or_else(|| panic!("no since-origin value: {settled}"));
     assert!(
-        since <= 13_250,
+        since <= 13_100,
         "the completed run's own readback crossed the original ceiling: {since}ms"
     );
     assert_eq!(output.status.code(), Some(124), "{rendered}");
@@ -2501,6 +2515,18 @@ fn a_run_deadline_bounds_a_stalled_terminal_report_and_keeps_the_outcome() {
         .trim()
         .parse()
         .expect("leader pid");
+    // A guard that could not prove closure parks as the verified exclusion
+    // holder; stop it by its recorded pid after the assertions.
+    if guard_pid > 1 && alive(guard_pid as u32) {
+        // SAFETY: only the guard this run recorded.
+        unsafe {
+            libc::kill(guard_pid, libc::SIGKILL);
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while alive(guard_pid as u32) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
     assert!(!alive(leader as u32), "the workload survived: {leader}");
     assert!(group_gone(leader), "the workload group {} remains", leader);
     // The residual hook and the guard must finish before this fixture is

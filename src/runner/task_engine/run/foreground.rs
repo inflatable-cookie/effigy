@@ -136,9 +136,19 @@ impl TaskRun {
         // Off by default, so an invocation without the opt-in writes nothing.
         effigy_core::run_deadline::note_phase(effigy_core::run_deadline::Phase::Admission);
         if let Some(deadline) = effigy_core::run_deadline::current() {
+            // Name the guard too: a guard that cannot prove closure parks as
+            // the verified exclusion holder, and an owner-side caller needs
+            // its recorded pid to stop it after the assertions.
+            let mut line = deadline.describe();
+            if let Some(guard) = run.guard_identity() {
+                if line.ends_with('\n') {
+                    line.pop();
+                }
+                line.push_str(&format!(", guard pid {}\n", guard.pid));
+            }
             let _ = effigy_core::output_cap::write(
                 effigy_core::output_cap::Stream::Stderr,
-                deadline.describe().as_bytes(),
+                line.as_bytes(),
             );
         }
         let admitted = run.admit(request.admission, plan, request.cwd);
@@ -458,8 +468,8 @@ mod tests {
         }
     }
 
-    fn begin(target: &TaskTarget) -> TaskRun {
-        TaskRun::begin_foreground(TaskRunRequest {
+    fn request(target: &TaskTarget) -> TaskRunRequest<'_> {
+        TaskRunRequest {
             target,
             lock_wait_ms: 0,
             custody: false,
@@ -470,8 +480,11 @@ mod tests {
             admission: None,
             workspace_admission: None,
             cwd: None,
-        })
-        .expect("foreground admitted")
+        }
+    }
+
+    fn begin(target: &TaskTarget) -> TaskRun {
+        TaskRun::begin_foreground(request(target)).expect("foreground admitted")
     }
 
     #[test]
@@ -630,22 +643,9 @@ mod tests {
         }
         drop(memory);
 
-        let guard = run
-            .memory
-            .as_ref()
-            .expect("foreground record")
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .guard_identity()
-            .cloned()
-            .expect("guard identity");
         let _deadline = InjectedDeadline::at(Instant::now(), 12_000);
         let _ = effigy_core::run_deadline::take_settlement_incomplete();
         let warnings = run.close(WorkloadOutcome::Succeeded);
-        assert!(
-            !alive(guard.pid),
-            "the owner runs the guard's positive close up to the ceiling"
-        );
         assert!(
             effigy_core::run_deadline::take_settlement_incomplete(),
             "an Ok(incomplete) settle must fail closed under the deadline: {warnings:?}"
@@ -794,6 +794,39 @@ mod tests {
             rendered.contains("in-process child"),
             "the unresolved child is named: {rendered}"
         );
+    }
+
+    #[test]
+    fn a_nested_runs_completed_frame_is_its_own() {
+        let _lock = crate::contract_test_support::lock_test();
+        let root = tempfile::tempdir().expect("root");
+        let parent_target = target(root.path(), "parent");
+        let child_target = target(root.path(), "child");
+        let _deadline = InjectedDeadline::at(Instant::now(), 30_000);
+        let parent = begin(&parent_target);
+        let parent_handle = parent.deadline_handle().expect("parent frame");
+        let child = {
+            let _parent_scope = parent.enter();
+            begin(&child_target)
+        };
+        let child_handle = child.deadline_handle().expect("child frame");
+        let (_, _) = child.close_settled(WorkloadOutcome::Succeeded, Duration::from_secs(60));
+        child_handle.note(effigy_core::run_deadline::Phase::Terminal);
+        let child_evidence = child_handle.evidence();
+        assert!(
+            child_evidence["settlement"].is_object(),
+            "the child's own settlement is in its frame: {child_evidence}"
+        );
+        assert!(
+            child_evidence["terminal"].is_object(),
+            "the child's terminal evidence is in its frame: {child_evidence}"
+        );
+        let parent_evidence = parent_handle.evidence();
+        assert!(
+            !parent_evidence["terminal"].is_object(),
+            "the child's terminal evidence never lands in the parent: {parent_evidence}"
+        );
+        let (_, _) = parent.close_settled(WorkloadOutcome::Succeeded, Duration::from_secs(60));
     }
 
     #[test]

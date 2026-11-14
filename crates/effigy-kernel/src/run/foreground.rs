@@ -161,7 +161,8 @@ impl ForegroundRun {
                     generation: Generation::new(0),
                 },
                 purpose: crate::supervise::memory::MemoryPurpose::Foreground,
-                deadline: effigy_core::run_deadline::remaining(),
+                deadline_nanos: effigy_core::run_deadline::current()
+                    .map(|deadline| deadline.ceiling_nanos()),
             },
         )?;
         Ok(Self {

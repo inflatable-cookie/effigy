@@ -60,6 +60,9 @@ pub struct RunDeadline {
     origin: Instant,
     ceiling: Instant,
     configured_ms: u64,
+    /// The same ceiling on the system-wide monotonic clock: a value a helper
+    /// process can compare without restarting the owner's remaining duration.
+    ceiling_nanos: u64,
 }
 
 impl RunDeadline {
@@ -67,10 +70,12 @@ impl RunDeadline {
     /// can inject a clock instead of sleeping.
     pub fn from_origin(origin: Instant, ms: u64) -> Option<Self> {
         let ceiling = origin.checked_add(Duration::from_millis(ms))?;
+        let ceiling_nanos = system_monotonic_nanos().checked_add(ms.checked_mul(1_000_000)?)?;
         Some(Self {
             origin,
             ceiling,
             configured_ms: ms,
+            ceiling_nanos,
         })
     }
 
@@ -87,6 +92,14 @@ impl RunDeadline {
     /// The ceiling as configured, in milliseconds.
     pub fn configured_ms(&self) -> u64 {
         self.configured_ms
+    }
+
+    /// The ceiling on the system-wide monotonic clock, in nanoseconds. A
+    /// helper process compares this value directly; it never adds a fresh
+    /// duration after its own startup, so spawn/scheduling time cannot extend
+    /// the owner's original deadline.
+    pub fn ceiling_nanos(&self) -> u64 {
+        self.ceiling_nanos
     }
 
     /// How long the whole invocation has left.
@@ -206,6 +219,21 @@ struct PhaseReadback {
     budget_ms: u64,
 }
 
+/// The system-wide monotonic clock, in nanoseconds. `Instant` is opaque and
+/// per-process; a helper gets this comparable value instead of a fresh
+/// duration. `CLOCK_MONOTONIC` never restarts while the host runs.
+pub fn system_monotonic_nanos() -> u64 {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `ts` is a valid timespec and CLOCK_MONOTONIC always exists.
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+    (ts.tv_sec as u64)
+        .saturating_mul(1_000_000_000)
+        .saturating_add(ts.tv_nsec as u64)
+}
+
 /// The monotonic clock every deadline consumer uses. Production is
 /// `Instant::now`; an owned test can advance it without sleeping.
 pub fn now() -> Instant {
@@ -234,22 +262,41 @@ pub fn note_phase(phase: Phase) {
     let Some(frame) = current_frame() else {
         return;
     };
-    let observation = PhaseReadback {
-        phase,
-        since_origin_ms: deadline.since_origin().as_millis() as u64,
-        remaining_ms: deadline.phase_remaining(phase).as_millis() as u64,
-        budget_ms: match phase {
-            Phase::Admission | Phase::Workload => deadline
-                .configured_ms
-                .saturating_sub(SETTLEMENT_ALLOWANCE.as_millis() as u64),
-            Phase::Settlement | Phase::Terminal => SETTLEMENT_ALLOWANCE.as_millis() as u64,
-        },
-    };
-    frame
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .phases
-        .insert(phase.name(), observation);
+    PhaseHandle(frame).note_at(deadline, phase);
+}
+
+/// A handle to one run's completed frame. `standard.rs` keeps it across
+/// `run.close` so the child's terminal observation and readback land in the
+/// child's own frame, never its parent's.
+#[derive(Debug, Clone)]
+pub struct PhaseHandle(std::sync::Arc<Mutex<RunFrame>>);
+impl PhaseHandle {
+    pub fn note(&self, phase: Phase) {
+        if let Some(deadline) = current() {
+            self.note_at(deadline, phase);
+        }
+    }
+    fn note_at(&self, deadline: RunDeadline, phase: Phase) {
+        let observation = PhaseReadback {
+            phase,
+            since_origin_ms: deadline.since_origin().as_millis() as u64,
+            remaining_ms: deadline.phase_remaining(phase).as_millis() as u64,
+            budget_ms: match phase {
+                Phase::Admission | Phase::Workload => deadline
+                    .configured_ms
+                    .saturating_sub(SETTLEMENT_ALLOWANCE.as_millis() as u64),
+                Phase::Settlement | Phase::Terminal => SETTLEMENT_ALLOWANCE.as_millis() as u64,
+            },
+        };
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .phases
+            .insert(phase.name(), observation);
+    }
+    pub fn evidence(&self) -> serde_json::Value {
+        frame_evidence(&self.0)
+    }
 }
 
 /// Clears every run frame. Used by tests.
@@ -274,6 +321,12 @@ pub fn begin_run() -> PhaseScope {
 pub struct PhaseScope {
     frame: std::sync::Arc<Mutex<RunFrame>>,
 }
+impl PhaseScope {
+    /// A stable handle to this run's frame, valid after the scope drops.
+    pub fn handle(&self) -> PhaseHandle {
+        PhaseHandle(self.frame.clone())
+    }
+}
 impl Drop for PhaseScope {
     fn drop(&mut self) {
         FRAMES.with(|frames| {
@@ -297,6 +350,10 @@ pub fn phases_evidence() -> serde_json::Value {
     let Some(frame) = current_frame() else {
         return serde_json::json!({});
     };
+    frame_evidence(&frame)
+}
+
+fn frame_evidence(frame: &std::sync::Arc<Mutex<RunFrame>>) -> serde_json::Value {
     let frame = frame.lock().unwrap_or_else(PoisonError::into_inner);
     let mut object = serde_json::Map::new();
     for readback in frame.phases.values() {

@@ -1307,6 +1307,10 @@ fn refusal_with(
     reason: String,
     next_action: String,
 ) -> RunnerError {
+    // The refusal is run evidence: record the admission phase as it ends,
+    // before the details are serialized, so the caller sees the elapsed wait
+    // rather than only its start.
+    effigy_core::run_deadline::note_phase(effigy_core::run_deadline::Phase::Admission);
     let detail = format!(
         "heavy task `{}` was not admitted (run {run_id}): {reason}. The task did not run; \
          admission fails closed\nnext: {next_action}",
@@ -1337,6 +1341,84 @@ fn refusal_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A real exchange: the hook has already written its acknowledgement, the
+    /// owner reads it after the boundary, and the exchange refuses it rather
+    /// than advancing the sequence. This drives `exchange`, not a predicate.
+    #[test]
+    fn a_buffered_acknowledgement_after_the_boundary_is_refused() {
+        use effigy_kernel::custody::{Lifetime, ProcessSpec, Terminal};
+        use std::time::Instant;
+
+        let _lock = crate::contract_test_support::lock_test();
+        let root = tempfile::tempdir().expect("root");
+        let target = TaskTarget {
+            root: root.path().to_path_buf(),
+            catalog: String::new(),
+            task: "hook".into(),
+            surface: effigy_core::task_selection::TaskSurface::Published,
+            profile: None,
+            shared_lock: None,
+            argument_scope: None,
+            label: "hook".into(),
+        };
+        let mut run =
+            super::super::run::TaskRun::begin_foreground(super::super::run::TaskRunRequest {
+                target: &target,
+                lock_wait_ms: 0,
+                custody: false,
+                scratch: false,
+                managed_run_token: None,
+                args: &[],
+                key: None,
+                admission: None,
+                workspace_admission: None,
+                cwd: None,
+            })
+            .expect("foreground run");
+        let spec = ProcessSpec {
+            argv: vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "printf 'ack 1\n'; sleep 5".into(),
+            ],
+            cwd: root.path().to_path_buf(),
+            env: super::super::process::spawn_environment(root.path()).expect("environment"),
+            grace: std::time::Duration::from_secs(1),
+            lifetime: Lifetime::Open(effigy_kernel::ctx::OpenReason::Shell),
+            terminal: Terminal::Pipe,
+            label: "hook".into(),
+        };
+        let hook = run.spawn(spec, true).expect("hook spawned");
+        let core = AdmissionCore {
+            hook: Mutex::new(hook),
+            delivery: Mutex::new(Delivery {
+                protocol: Protocol::V2,
+                run_id: "run".into(),
+                seq: 0,
+                groups: 0,
+                stdout: Vec::new(),
+                ack_timeout: std::time::Duration::from_secs(1),
+                stopped: None,
+            }),
+        };
+        let event = serde_json::json!({
+            "schema": EVENT_SCHEMA,
+            "event": "custodians",
+        });
+        let result = deliver(
+            &core,
+            event,
+            Some(Instant::now() - std::time::Duration::from_secs(1)),
+        );
+        assert_eq!(
+            result,
+            Err(DeliveryError::Deadline),
+            "an acknowledgement read after the boundary is refused"
+        );
+        drop(core);
+        let _ = run.close(WorkloadOutcome::NotStarted);
+    }
 
     #[test]
     fn the_late_grant_branch_refuses_at_and_after_the_boundary() {

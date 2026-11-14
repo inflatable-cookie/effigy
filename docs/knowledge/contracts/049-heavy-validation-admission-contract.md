@@ -611,13 +611,14 @@ default: unset or blank means every budget is exactly what it was before.
   Phase observations are genuinely run-scoped: `run_deadline::begin_run`
   pushes a per-run frame, so a nested run's Admission, Workload or Settlement
   observation never overwrites its parent's same-named one, and concurrent
-  threads never share a frame. Observations are taken at phase end (workload
-  completion, settlement completion, terminal evidence), not only at start.
-  The completed run's frame is retained for the post-settlement line and the
-  `effigy.run-deadline.v1` details; an admission refusal's details carry the
-  admission phase from the frame that is still active while the refusal is
-  built. Numbers are monotonic milliseconds; nothing is converted to a wall
-  clock.
+  threads never share a frame. `standard.rs` keeps the run's `PhaseHandle`
+  across `close`, so a nested run's terminal observation and post-settlement
+  line come from its own completed frame, never its parent's. Observations are
+  taken at phase end (admission refusal, workload completion, settlement
+  completion, terminal evidence), not only at start. An admission refusal's
+  details are serialized after its admission phase is recorded, so they carry
+  the elapsed wait. Numbers are monotonic milliseconds; nothing is converted
+  to a wall clock.
 - Owned tests drive phase progression through the same seam: production reads
   `Instant::now()`; a test advances a monotonic offset, never a wall clock
   (`run_deadline.rs:20-28,247-262`).
@@ -663,13 +664,22 @@ message naming the allowance (`run_deadline.rs:154-170`, `src/bin/effigy.rs`).
   ceiling, it records `incomplete`/`unknown` with the retained guard and every
   unresolved effect named, abandons only its own drop wait (pins released, no
   second wait), and exits by the deadline; it never claims closure. **The
-  guard is bounded by the same ceiling**: the owner's remaining deadline
-  travels in the guard's configuration (`deadline_ms`, because `helper()`
-  clears the environment), and every guard settlement path -- the EOF/serve
-  path and owner death -- caps its cleanup at `min(60s, remaining)` and never
-  mints a fresh window (`supervise/memory.rs`; `settlement_budget`, and
-  `wait_for_closure` stops at the ceiling). A handoff is never reported as
-  complete, because the guard has receipts, not handles. The task returns
+  guard is bounded by the same ceiling**: the owner's original ceiling travels
+  in the guard's configuration as its **absolute system-monotonic nanosecond
+  value** (`Config::deadline_nanos`, because `helper()` clears the
+  environment). The helper compares that absolute value and never adds a fresh
+  remaining duration after its own startup, so spawn, scheduling and
+  config-decode time cannot extend the deadline. Every guard settlement path
+  -- the retained/prelaunch interpolation retry, effect settlement, the
+  closure poll and the final terminal record -- is bounded by
+  `min(60s, remaining)`, and the closure poll sleeps no longer than the
+  remaining time (`supervise/memory.rs`; `settlement_budget`, `deadline_left`,
+  `wait_for_closure`). A guard that reaches the ceiling with an unproved
+  closure or residue records `unknown`/`incomplete` (never complete), performs
+  no further settlement and exits; the exclusion is released with that process
+  and the next invocation reconciles the recorded residue. That is the
+  planner's bounded handoff: the guard has receipts, not the owner's
+  direct-child handles, and a handoff is never reported as complete. The task returns
   `effigy.run-deadline.v1` with `outcome: "incomplete"`, `residue: true`,
   `settlement_notes` naming the retained resources and the deadline evidence,
   and exits 124 (`src/runner/execute/pipeline/standard.rs`;

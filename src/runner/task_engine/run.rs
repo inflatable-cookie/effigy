@@ -913,6 +913,29 @@ impl TaskRun {
         })
     }
 
+    /// The run's own deadline-phase frame, kept across `close` so the
+    /// post-settlement readback lands in this run's frame even when a nested
+    /// run has already returned to its parent.
+    pub(in crate::runner) fn deadline_handle(
+        &self,
+    ) -> Option<effigy_core::run_deadline::PhaseHandle> {
+        self._phase_scope.as_ref().map(|scope| scope.handle())
+    }
+
+    /// The foreground guard's exact identity, when this run has one. The
+    /// evidence line names it so a caller can stop a guard that parks as the
+    /// verified exclusion holder after the assertions.
+    pub(in crate::runner) fn guard_identity(
+        &self,
+    ) -> Option<effigy_kernel::ident::ProcessIdentity> {
+        self.memory
+            .as_ref()?
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .guard_identity()
+            .cloned()
+    }
+
     pub(in crate::runner) fn id(&self) -> RunId {
         if let Some(memory) = &self.memory {
             return memory
