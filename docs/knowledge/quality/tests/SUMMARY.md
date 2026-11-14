@@ -55,7 +55,7 @@ The `effigy qa` invocation completed the main suite, kernel faults and matrix, t
 | `journal-matrix` | 14,690 ms | 1 | 1 |
 | `kernel-fault-drivers` | 912,392 ms | 13 | 2 |
 
-### Current main-suite slowest 50 tests (2026-11-14)
+### Historical main-suite slowest 50 baseline (f1b905bb, 2026-11-13)
 
 | Duration | Selector / test |
 |---:|---|
@@ -148,10 +148,15 @@ isolated host benchmark.
 
 ### Current main-suite duration collection and closeout validation (2026-11-14)
 
-The current duration tables and slowest-50 list above come from complete JUnit
-report `main.xml`, source run `dada7636-027d-47d5-bd03-9f44b00b5c65`, collected
-at `2026-11-14T01:11:41.861Z`: 6,278 cases, 6,275 passed, 3 failed and 31
+The T1–T5 `duration_ms` values below were refreshed from complete JUnit report
+`main.xml`, source run `dada7636-027d-47d5-bd03-9f44b00b5c65`, collected at
+`2026-11-14T01:11:41.861Z`: 6,278 cases, 6,275 passed, 3 failed and 31
 skipped. Nextest wall was 363.851 s; summed case duration was 5,361,707 ms.
+The slowest-50 table above is the historical list from the prior report
+`main.xml`, source run `f1b905bb-4fb0-4895-b054-0d31028cf26a`, collected on
+2026-11-13. It is not sorted from run `dada7636`; the quality selector refreshes
+CSV duration rows but does not rewrite this Markdown table. Read the current
+per-test durations from T1–T5 and the table above as historical baseline data.
 `effigy qa:quality:tests -- --durations target/nextest/default/main.xml --top 50`
 updated 4,819 quality rows; 1,459 cases had no unique table identity. The
 main `cold-start` group accumulated 267,364 ms across 16 tests; the default
