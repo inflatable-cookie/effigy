@@ -842,3 +842,54 @@ fn gate_acquire_inside_a_store_transaction_is_refused() {
         .unwrap();
     assert_eq!(refused, Err(GateError::InTransaction));
 }
+
+/// One foreground admission writes a fixed set of gate files, and every file
+/// it writes is bounded (effigy#977): the task's own gate plus its
+/// checkout-alias spelling, one `.scope` marker per scope spelling, and no
+/// body larger than `DIAG_MAX`. A consumer may therefore count this route's
+/// gate footprint instead of measuring it.
+#[test]
+fn gate_foreground_admission_writes_a_fixed_bounded_set() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    // The route's own root: a foreground tree takes local gates and its
+    // checkout-alias spelling, so this is the count a real admission writes.
+    let root = StateRoot::foreground_effects(
+        &cx,
+        &effigy_kernel::location::CheckoutLocation {
+            root: home.path().into(),
+        },
+    )
+    .unwrap();
+    let _run = foreground_run(&cx, &root, "bounded", 1, None);
+    let gates = home.path().join(".effigy/state/gates");
+    let mut markers = 0;
+    let mut scopes = 0;
+    let mut bodies = 0;
+    for entry in std::fs::read_dir(&gates).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.ends_with(".scope") {
+            markers += 1;
+            assert_eq!(
+                entry.metadata().unwrap().len(),
+                0,
+                "a scope marker is created empty and never written: {name}"
+            );
+            continue;
+        }
+        scopes += 1;
+        for gate in std::fs::read_dir(entry.path()).unwrap() {
+            let gate = gate.unwrap();
+            bodies += 1;
+            let size = gate.metadata().unwrap().len();
+            assert!(
+                size <= DIAG_MAX,
+                "{} is {size} bytes, over the {DIAG_MAX}-byte body bound",
+                gate.path().display()
+            );
+        }
+    }
+    // The owner's own scope and its filesystem-alias spelling, one gate each.
+    assert_eq!((markers, scopes, bodies), (2, 2, 2));
+}

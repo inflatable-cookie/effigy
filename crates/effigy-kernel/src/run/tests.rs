@@ -2091,3 +2091,365 @@ fn the_stored_attachment_mode_is_the_enum_encoding() {
         exclusive
     );
 }
+
+/// The row's identities are validated, never cut (effigy#977): a `run_id` over
+/// its maximum is refused so two runs can never coalesce on one primary key,
+/// and an oversized `checkout`, `boot` or closed-set word is refused for the
+/// same reason. A refused record writes nothing.
+#[test]
+fn run_terminal_record_identity_is_refused_not_cut() {
+    let fixture = effigy_test_support::Fixture::new("effigy-terminal-identity-").unwrap();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let observe = cx.child(Duration::from_secs(10));
+    let observe = observe.operation().observe().unwrap();
+    let base = TerminalRecord {
+        run_id: id(21).to_string(),
+        checkout: checkout().text(),
+        boot: "20a888e4-10fc-4798-a139-fe8e08758c34".into(),
+        task: "dev".into(),
+        outcome: "succeeded".into(),
+        exit_code: Some(0),
+        signal: None,
+        cleanup: "complete".into(),
+        workload_groups: 0,
+        closed_at_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_millis() as i64)
+            .unwrap_or_default(),
+    };
+    let refuse = |record: TerminalRecord, field: &str, max: usize| {
+        let error = record_terminal(&cx, &root, &record)
+            .expect_err("an oversized identity must be refused");
+        let message = error.to_string();
+        assert!(
+            message.contains(field) && message.contains(&max.to_string()),
+            "the refusal does not name {field} at {max} bytes: {message}"
+        );
+    };
+    // One byte over each identity's maximum is refused, never cut.
+    refuse(
+        TerminalRecord {
+            run_id: "r".repeat(TERMINAL_RUN_ID_MAX + 1),
+            ..base.clone()
+        },
+        "run_id",
+        TERMINAL_RUN_ID_MAX,
+    );
+    refuse(
+        TerminalRecord {
+            checkout: "c".repeat(TERMINAL_CHECKOUT_MAX + 1),
+            ..base.clone()
+        },
+        "checkout",
+        TERMINAL_CHECKOUT_MAX,
+    );
+    refuse(
+        TerminalRecord {
+            boot: "b".repeat(TERMINAL_BOOT_MAX + 1),
+            ..base.clone()
+        },
+        "boot",
+        TERMINAL_BOOT_MAX,
+    );
+    refuse(
+        TerminalRecord {
+            outcome: "o".repeat(TERMINAL_WORD_MAX + 1),
+            ..base.clone()
+        },
+        "outcome",
+        TERMINAL_WORD_MAX,
+    );
+    refuse(
+        TerminalRecord {
+            cleanup: "u".repeat(TERMINAL_WORD_MAX + 1),
+            ..base.clone()
+        },
+        "cleanup",
+        TERMINAL_WORD_MAX,
+    );
+    // Nothing was written by a refused record: a record is refused before the
+    // store is opened, so the journal is absent rather than holding a row.
+    match Store::read(&observe, &root) {
+        Observed::Absent(_) => {}
+        Observed::Verified(reader, _) => {
+            let rows: i64 = reader
+                .conn()
+                .query_row("SELECT count(*) FROM foreground_terminals", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(rows, 0, "a refused identity still wrote a row");
+        }
+        Observed::Unknown(reason) => panic!("journal: {reason:?}"),
+    }
+
+    // An identity exactly at its maximum is stored byte for byte, read back by
+    // that key, and a repeated settle leaves the first row in place.
+    let at_max = TerminalRecord {
+        run_id: "r".repeat(TERMINAL_RUN_ID_MAX),
+        checkout: "c".repeat(TERMINAL_CHECKOUT_MAX),
+        boot: "b".repeat(TERMINAL_BOOT_MAX),
+        ..base.clone()
+    };
+    record_terminal(&cx, &root, &at_max).unwrap();
+    let mut repeated = at_max.clone();
+    repeated.outcome = "failed".into();
+    record_terminal(&cx, &root, &repeated).unwrap();
+    let reader = match Store::read(&observe, &root) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("journal: {other:?}"),
+    };
+    let rows = match terminal_records(&reader, 10) {
+        Observed::Verified(rows, _) => rows,
+        other => panic!("records: {other:?}"),
+    };
+    assert_eq!(rows.len(), 1, "the repeated settle wrote a second row");
+    let row = &rows[0];
+    assert_eq!(row.run_id, at_max.run_id, "the key was not stored as given");
+    assert_eq!(row.checkout, at_max.checkout);
+    assert_eq!(row.boot, at_max.boot);
+    assert_eq!(row.outcome, "succeeded", "the first record was rewritten");
+    assert!(row.encoded_bytes() <= TERMINAL_ROW_MAX_BYTES);
+}
+
+/// The task label is descriptive, so it is cut with the marker, and the row
+/// this writer stores is inside its stated maximum (effigy#977): an invocation
+/// cannot make the row unbounded through the label, and a cut label says so in
+/// the row rather than looking complete.
+#[test]
+fn run_terminal_record_label_is_cut_and_the_row_is_bounded() {
+    let fixture = effigy_test_support::Fixture::new("effigy-terminal-label-").unwrap();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let observe = cx.child(Duration::from_secs(10));
+    let observe = observe.operation().observe().unwrap();
+    let record = TerminalRecord {
+        run_id: id(22).to_string(),
+        checkout: checkout().text(),
+        boot: "20a888e4-10fc-4798-a139-fe8e08758c34".into(),
+        task: "t".repeat(TERMINAL_TASK_MAX * 2),
+        outcome: "timed-out".into(),
+        exit_code: None,
+        signal: Some(libc::SIGTERM),
+        cleanup: "incomplete".into(),
+        workload_groups: 2,
+        closed_at_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_millis() as i64)
+            .unwrap_or_default(),
+    };
+    record_terminal(&cx, &root, &record).unwrap();
+    let reader = match Store::read(&observe, &root) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("journal: {other:?}"),
+    };
+    let row = match terminal_records(&reader, 10) {
+        Observed::Verified(mut rows, _) => rows.pop().expect("one row"),
+        other => panic!("records: {other:?}"),
+    };
+    assert_eq!(row.task.len(), TERMINAL_TASK_MAX, "{:?}", row.task);
+    assert!(
+        row.task.ends_with(TERMINAL_TRUNCATION_MARKER),
+        "the cut label carries no truncation marker: {:?}",
+        row.task
+    );
+    // Everything else is the record as written, and the whole row is inside the
+    // stated maximum — including one that fills every field.
+    assert_eq!(row.run_id, record.run_id);
+    assert_eq!(row.outcome, record.outcome);
+    assert_eq!(row.signal, Some(libc::SIGTERM));
+    assert_eq!(row.workload_groups, 2);
+    assert!(
+        row.encoded_bytes() <= TERMINAL_ROW_MAX_BYTES,
+        "a bounded row stores {} bytes, over the {TERMINAL_ROW_MAX_BYTES}-byte maximum",
+        row.encoded_bytes()
+    );
+    let maximum = TerminalRecord {
+        run_id: "r".repeat(TERMINAL_RUN_ID_MAX),
+        checkout: "c".repeat(TERMINAL_CHECKOUT_MAX),
+        boot: "b".repeat(TERMINAL_BOOT_MAX),
+        task: "t".repeat(TERMINAL_TASK_MAX),
+        outcome: "o".repeat(TERMINAL_WORD_MAX),
+        exit_code: Some(1),
+        signal: None,
+        cleanup: "u".repeat(TERMINAL_WORD_MAX),
+        workload_groups: u64::MAX,
+        closed_at_ms: i64::MAX,
+    };
+    assert_eq!(maximum.encoded_bytes(), TERMINAL_ROW_MAX_BYTES);
+    assert_eq!(maximum.checked().unwrap(), maximum);
+    // The row never chains to overflow pages, so one insert cannot touch a
+    // second page for this value.
+    assert!(
+        TERMINAL_ROW_MAX_BYTES <= crate::store::PAGE_SIZE as usize,
+        "a maximum row must fit one page"
+    );
+}
+
+/// One terminal write prunes a bounded slice of expired rows (effigy#977), so
+/// the pages this write dirties are fixed rather than a function of how many
+/// records expired during the retention window. Later writes drain the rest,
+/// and the retention sweep still removes every expired row.
+#[test]
+fn run_terminal_write_prunes_a_bounded_slice_of_expired_rows() {
+    let fixture = effigy_test_support::Fixture::new("effigy-terminal-prune-").unwrap();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let insert_expired = |count: usize| {
+        let mut store = Store::open(&cx, &root).unwrap();
+        store
+            .txn(&cx, |txn| {
+                for n in 0..count {
+                    txn.conn().execute(
+                        "INSERT INTO foreground_terminals \
+                         (run_id, checkout, boot, task, outcome, exit_code, signal, cleanup, \
+                          workload_groups, closed_at) \
+                         VALUES (?1, 'checkout', 'boot', 'task', 'succeeded', 0, NULL, \
+                                 'complete', 0, 0)",
+                        rusqlite::params![format!("expired-{n}")],
+                    )?;
+                }
+                Ok(())
+            })
+            .unwrap();
+    };
+    let expired_left = || {
+        let observe = cx.child(Duration::from_secs(10));
+        let observe = observe.operation().observe().unwrap();
+        let reader = match Store::read(&observe, &root) {
+            Observed::Verified(reader, _) => reader,
+            other => panic!("journal: {other:?}"),
+        };
+        reader
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM foreground_terminals WHERE run_id LIKE 'expired-%'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+    };
+    let total = usize::try_from(TERMINAL_PRUNE_MAX).unwrap() + 8;
+    insert_expired(total);
+    assert_eq!(expired_left(), total as i64);
+    let recent = TerminalRecord {
+        run_id: id(12).to_string(),
+        checkout: checkout().text(),
+        boot: "20a888e4-10fc-4798-a139-fe8e08758c34".into(),
+        task: "dev".into(),
+        outcome: "succeeded".into(),
+        exit_code: Some(0),
+        signal: None,
+        cleanup: "complete".into(),
+        workload_groups: 0,
+        closed_at_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_millis() as i64)
+            .unwrap_or_default(),
+    };
+    record_terminal(&cx, &root, &recent).unwrap();
+    // A completed write leaves no log behind it: the store it opened truncated
+    // the log at close, so the side file is empty rather than merely bounded.
+    let wal = root.path().join("kernel.db-wal");
+    assert_eq!(
+        std::fs::metadata(&wal).map(|meta| meta.len()).unwrap_or(0),
+        0,
+        "a terminal write left a write-ahead log behind"
+    );
+    assert_eq!(
+        expired_left(),
+        (total - usize::try_from(TERMINAL_PRUNE_MAX).unwrap()) as i64,
+        "one write pruned more than its bounded slice"
+    );
+    // A second write finishes the slice; nothing stays behind for good.
+    let mut second = recent.clone();
+    second.run_id = id(13).to_string();
+    record_terminal(&cx, &root, &second).unwrap();
+    assert_eq!(expired_left(), 0);
+}
+
+/// One terminal write appends at most the frames this module states, measured
+/// against the statements it actually issues (effigy#977). This is the
+/// invocation's own write-ahead-log contribution. It is measured with a reader
+/// pinning an older snapshot, which is exactly the case where the log cannot be
+/// checkpointed away: the log file's peak on a shared store is not this
+/// invocation's to bound, but the frames this write appends are.
+#[test]
+fn run_terminal_write_appends_at_most_its_stated_frames() {
+    let fixture = effigy_test_support::Fixture::new("effigy-terminal-frames-").unwrap();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let record = TerminalRecord {
+        run_id: id(31).to_string(),
+        checkout: checkout().text(),
+        boot: "20a888e4-10fc-4798-a139-fe8e08758c34".into(),
+        task: "dev".into(),
+        outcome: "succeeded".into(),
+        exit_code: Some(0),
+        signal: None,
+        cleanup: "complete".into(),
+        workload_groups: 0,
+        closed_at_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_millis() as i64)
+            .unwrap_or_default(),
+    };
+    // A store with a full prune batch waiting: the widest write this module
+    // performs is one insert plus `PRUNE_MAX` deletes.
+    let expired = usize::try_from(TERMINAL_PRUNE_MAX).unwrap() + 8;
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .txn(&cx, |txn| {
+            for n in 0..expired {
+                txn.conn().execute(
+                    "INSERT INTO foreground_terminals \
+                     (run_id, checkout, boot, task, outcome, exit_code, signal, cleanup, \
+                      workload_groups, closed_at) \
+                     VALUES (?1, 'checkout', 'boot', 'task', 'succeeded', 0, NULL, \
+                             'complete', 0, 0)",
+                    rusqlite::params![format!("expired-{n}")],
+                )?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    drop(store);
+    let mut store = Store::open(&cx, &root).unwrap();
+    // A read transaction pins the log's current end, so no checkpoint can reset
+    // it while this write is measured: frames only accumulate.
+    let path = root.path().join("kernel.db");
+    let reader = rusqlite::Connection::open(&path).unwrap();
+    reader.busy_timeout(Duration::from_secs(30)).unwrap();
+    reader
+        .execute_batch("BEGIN; SELECT count(*) FROM foreground_terminals;")
+        .unwrap();
+    let before = store.wal_frames().unwrap();
+    store
+        .txn(&cx, |txn| super::terminal::write_row(txn, &record))
+        .unwrap();
+    let after = store.wal_frames().unwrap();
+    let appended = after.saturating_sub(before);
+    assert!(
+        appended <= TERMINAL_WRITE_MAX_PAGES,
+        "one terminal write appended {appended} frames, over the \
+         {TERMINAL_WRITE_MAX_PAGES}-frame ({TERMINAL_WRITE_MAX_BYTES}-byte) contribution"
+    );
+    // The prune really ran, so the measurement covers the widest write. The
+    // count comes from the writer's own connection: the reader's snapshot
+    // deliberately predates this write.
+    let left: i64 = store
+        .conn()
+        .query_row(
+            "SELECT count(*) FROM foreground_terminals WHERE run_id LIKE 'expired-%'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        usize::try_from(left).unwrap(),
+        expired - usize::try_from(TERMINAL_PRUNE_MAX).unwrap(),
+        "the measured write did not prune its full slice"
+    );
+    reader.execute_batch("COMMIT").unwrap();
+}

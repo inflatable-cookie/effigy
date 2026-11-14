@@ -61,11 +61,9 @@ impl GateGuard {
                 task: task.clone(),
                 gate: id.clone(),
             });
-            if let Ok(bytes) = serde_json::to_vec(&value) {
-                if bytes.len() as u64 <= DIAG_MAX {
-                    let _ = fs::rewrite(&file.file, &bytes);
-                }
-            }
+            // Bounded exactly like the acquisition body: a foreground body
+            // never makes a gate file larger than `DIAG_MAX` (effigy#977).
+            write_body(&file.file, &value);
         }
     }
 }

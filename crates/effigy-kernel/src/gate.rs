@@ -19,7 +19,17 @@ use std::time::{Duration, Instant};
 
 /// `FailFast` still polls briefly, absorbing a concurrent probe's shared lock.
 pub const FAIL_FAST: Duration = Duration::from_millis(100);
-const DIAG_MAX: u64 = 4096;
+/// The largest diagnostic body one gate file holds, in bytes (effigy#977).
+///
+/// Both writes this kernel makes to a `.gate` file go through [`write_body`],
+/// so the file's size is a fixed maximum whatever the holder's `argv0`, task
+/// or identifiers look like. A `.scope` marker is created empty and never
+/// written; a gate body is diagnostics only (I-G2) and never authority.
+pub const DIAG_MAX: u64 = 4096;
+/// The most gate files one foreground admission writes (effigy#977): the
+/// task's own gate, one declared shared lock, and each one's checkout-alias
+/// spelling. `foreground::begin` refuses a larger set rather than grow it.
+pub const FOREGROUND_GATES_MAX: usize = 4;
 const POLL_MIN: Duration = Duration::from_millis(2);
 const POLL_MAX: Duration = Duration::from_millis(25);
 
@@ -49,7 +59,7 @@ pub struct HolderDiag {
     pub argv0: Option<String>,
     pub state: Observed<ProcessState>,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Body {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -312,9 +322,9 @@ impl GateGuard {
     /// Records the owning run in every diagnostic body. Failure loses only
     /// diagnostics.
     pub fn set_run(&self, run: &RunId) {
-        let body = body(Some(run.to_string()));
+        let body = current_body(Some(run.to_string()));
         for (_, file) in &self.gates {
-            let _ = fs::rewrite(&file.file, &body);
+            write_body(&file.file, &body);
         }
     }
 }
@@ -469,9 +479,9 @@ impl Gate {
         }
         crate::fault_point!(GateAcquire)
             .map_err(|e| GateError::Io(IoError::new("gate acquire", root.path(), &e)))?;
-        let body = body(None);
+        let body = current_body(None);
         for (_, file) in &guard.gates {
-            let _ = fs::rewrite(&file.file, &body);
+            write_body(&file.file, &body);
         }
         Ok(guard)
     }
@@ -833,8 +843,29 @@ fn lock(
     }
 }
 
-fn body(run: Option<String>) -> Vec<u8> {
-    serde_json::to_vec(&current_body(run)).expect("serializable body")
+/// The bytes one gate body may hold: `value` itself when it fits [`DIAG_MAX`],
+/// otherwise the identity alone. The descriptive parts (`foreground`,
+/// `argv0`) yield first, because they are what a caller can make arbitrarily
+/// long while the identity a holder is matched on is fixed-size. `None` means
+/// no body of this holder fits, and the previous body is left in place, where
+/// it reads as a different holder and never as this one.
+fn bounded_body(value: &Body) -> Option<Vec<u8>> {
+    let mut value = value.clone();
+    let mut bytes = serde_json::to_vec(&value).ok()?;
+    if bytes.len() as u64 > DIAG_MAX {
+        value.foreground = None;
+        value.argv0 = None;
+        bytes = serde_json::to_vec(&value).ok()?;
+    }
+    (bytes.len() as u64 <= DIAG_MAX).then_some(bytes)
+}
+
+/// Replaces a gate's diagnostic body, always with a body of at most
+/// [`DIAG_MAX`] bytes (effigy#977).
+fn write_body(file: &File, value: &Body) {
+    if let Some(bytes) = bounded_body(value) {
+        let _ = fs::rewrite(file, &bytes);
+    }
 }
 fn current_body(run: Option<String>) -> Body {
     let pid = std::process::id();
@@ -898,4 +929,40 @@ fn holder(file: &File) -> Observed<HolderDiag> {
         },
         Evidence::new("kernel gate diagnostic body".into(), None).expect("fixed source"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A body stays inside the bound whatever the holder's `argv0` looks like
+    /// (effigy#977): the descriptive parts yield, the identity stays, and the
+    /// result is still a body a reader parses.
+    #[test]
+    fn a_gate_body_is_bounded_whatever_the_holder_looks_like() {
+        let huge = Body {
+            foreground: None,
+            v: 1,
+            run: None,
+            pid: 4321,
+            start: Some("start".into()),
+            boot: Some("boot".into()),
+            argv0: Some("ア".repeat(DIAG_MAX as usize)),
+        };
+        let bytes = bounded_body(&huge).expect("the identity body always fits");
+        assert!(bytes.len() as u64 <= DIAG_MAX, "{} bytes", bytes.len());
+        let parsed: Body = serde_json::from_slice(&bytes).unwrap();
+        assert!(parsed.argv0.is_none(), "the oversized description was kept");
+        assert_eq!(parsed.pid, 4321);
+        assert_eq!(parsed.start.as_deref(), Some("start"));
+
+        // A body that fits is written as it is.
+        let small = Body {
+            argv0: Some("effigy".into()),
+            ..huge
+        };
+        let bytes = bounded_body(&small).expect("fits");
+        let parsed: Body = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(parsed.argv0.as_deref(), Some("effigy"));
+    }
 }
