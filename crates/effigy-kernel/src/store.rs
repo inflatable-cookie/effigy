@@ -549,6 +549,13 @@ impl Store {
     pub fn set_run(&mut self, run: RunId) {
         self.run = Some(run);
     }
+    /// Whether this handle opened under strict persistence (effigy#981).
+    ///
+    /// Maintenance and retention callers read it rather than the environment,
+    /// so they act on the same decision the handle was opened with.
+    pub fn strict(&self) -> bool {
+        self.strict
+    }
     /// Write-ahead logging, the durable settings and the schema, under the
     /// store's own writer gate. A current store is only read here: opening it
     /// never takes the write lock (a hot path with many concurrent runs).
@@ -943,6 +950,14 @@ impl Store {
         cx: &EffectContext,
         pages: u32,
     ) -> Result<MaintainReport, StoreError> {
+        // Strict persistence never checkpoints, vacuums or migrates, so a
+        // maintenance pass has nothing it may do on this handle (effigy#981).
+        if self.strict {
+            return Err(StoreError::Refused(
+                "strict persistence forbids store maintenance: its checkpoint and vacuum are                  writes this run does not own; run it without the switch, or use `effigy run                  prepare` first"
+                    .into(),
+            ));
+        }
         let started = Instant::now();
         let mut report = MaintainReport::default();
         let window = BusyWait::AtLeast(STORE_BUSY_WAIT).window(cx);
@@ -1035,6 +1050,15 @@ impl Store {
     pub fn repair(cx: &EffectContext, root: &StateRoot) -> Result<FileName, StoreError> {
         if cx.operation().class() != EffectClass::Mutate {
             return Err(StoreError::ClassRefused(cx.operation().class()));
+        }
+        // Moving a store and its side files aside is a write to this
+        // invocation's checkout, which strict persistence does not own
+        // (effigy#981).
+        if strict_persistence() {
+            return Err(StoreError::Refused(format!(
+                "strict persistence (`{STRICT_PERSISTENCE_ENV}=1`) forbids the explicit repair, \
+                 which moves `{DB_NAME}` and its side files; unset it to repair the store"
+            )));
         }
         let gate = root.store_gate(cx, WRITER_GATE)?;
         let _guard = Gate::acquire(cx, root, &[gate], Wait::FailFast)?;
@@ -1740,16 +1764,61 @@ fn schema_gaps(conn: &Connection) -> Result<Vec<String>, StoreError> {
     Ok(gaps)
 }
 
-/// Strict persistence refuses a store that needs recovery: a rollback journal on
-/// disk is the one file whose first open rewrites the database (effigy#981).
+/// Strict persistence refuses a store that needs recovery (effigy#981).
+///
+/// Three on-disk states make the first open for writing do work this invocation
+/// does not own:
+///
+/// - a rollback journal, which SQLite would roll back into the database (an
+///   actual write to `kernel.db`);
+/// - a write-ahead log whose size is not a whole number of frames, which is a
+///   crashed writer's torn log and has to be recovered before it can be read;
+/// - a log that holds frames while its wal-index (`kernel.db-shm`) is missing,
+///   which SQLite rebuilds by reading the whole log before the first read.
+///
+/// A store in one of these states is refused instead, so strict mode opens only
+/// a store whose log and index are already consistent. `effigy run prepare`
+/// opens the store without strict persistence and settles it.
 fn refuse_recovery(root: &StateRoot) -> Result<(), StoreError> {
-    let name = FileName::new(&format!("{}-journal", root.database_name()))?;
-    if root.dir().entry(&name)?.is_some() {
+    let journal = FileName::new(&format!("{}-journal", root.database_name()))?;
+    if root.dir().entry(&journal)?.is_some() {
         return Err(StoreError::NotPrepared {
             reason: format!(
                 "it has a rollback journal ({}) on disk, so opening it for writing would roll \
                  that journal back into the database",
-                root.dir().join(name.as_str()).display()
+                root.dir().join(journal.as_str()).display()
+            ),
+        });
+    }
+    let wal = FileName::new(&format!("{}-wal", root.database_name()))?;
+    let Some(stat) = root.dir().entry(&wal)? else {
+        return Ok(());
+    };
+    let size = stat.st_size.max(0) as u64;
+    if size == 0 {
+        return Ok(());
+    }
+    let page_size = header_facts(root).map_or(PAGE_SIZE, |(_, page)| page);
+    let frame = page_size.saturating_add(WAL_FRAME_HEADER_BYTES).max(1);
+    if size < WAL_HEADER_BYTES || !size.saturating_sub(WAL_HEADER_BYTES).is_multiple_of(frame) {
+        return Err(StoreError::NotPrepared {
+            reason: format!(
+                "its write-ahead log is {size} bytes, which is not a whole number of \
+                 {page_size}-byte frames, so a crashed writer left it needing recovery"
+            ),
+        });
+    }
+    if size == WAL_HEADER_BYTES {
+        return Ok(());
+    }
+    let index = FileName::new(&format!("{}-shm", root.database_name()))?;
+    if root.dir().entry(&index)?.is_none() {
+        return Err(StoreError::NotPrepared {
+            reason: format!(
+                "its write-ahead log holds {} frames but its wal-index ({}) is missing, so \
+                 opening it would rebuild that index before this run wrote anything",
+                (size - WAL_HEADER_BYTES) / frame,
+                root.dir().join(index.as_str()).display()
             ),
         });
     }

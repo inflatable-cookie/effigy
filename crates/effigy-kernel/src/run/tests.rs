@@ -2507,6 +2507,25 @@ fn run_terminal_strict_write_appends_at_most_its_stated_frames_and_defers_the_pr
         workload_groups: 0,
         closed_at_ms,
     };
+    // Enough rows that the insert walks real table and index pages rather than
+    // a one-page tree, so the measured frames are not a fresh-store minimum.
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .txn(&cx, |txn| {
+            for n in 0..600 {
+                txn.conn().execute(
+                    "INSERT INTO foreground_terminals \
+                     (run_id, checkout, boot, task, outcome, exit_code, signal, cleanup, \
+                      workload_groups, closed_at) \
+                     VALUES (?1, 'checkout', 'boot', 'dev', 'succeeded', 0, NULL, \
+                             'complete', 0, ?2)",
+                    rusqlite::params![format!("filler-{n}"), closed_at_ms],
+                )?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    drop(store);
     // A read transaction pins the log's end, so no reset can hide the frames.
     let path = root.path().join("kernel.db");
     let reader = rusqlite::Connection::open(&path).unwrap();
@@ -2536,6 +2555,10 @@ fn run_terminal_strict_write_appends_at_most_its_stated_frames_and_defers_the_pr
     // The frames are the insert's, so they fit the insert's page bound.
     let frames = appended.saturating_sub(crate::store::WAL_HEADER_BYTES)
         / (crate::store::PAGE_SIZE + crate::store::WAL_FRAME_HEADER_BYTES);
+    assert!(
+        frames > 0,
+        "the measured write appended no frame, so it measured nothing"
+    );
     assert!(
         frames <= u64::from(TERMINAL_STRICT_WRITE_MAX_PAGES),
         "one strict terminal write appended {frames} frames, over \

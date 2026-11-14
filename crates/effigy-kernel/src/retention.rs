@@ -106,6 +106,13 @@ pub fn sweep(cx: &EffectContext, root: &StateRoot) {
     if cx.operation().class() != EffectClass::Mutate {
         return;
     }
+    // Strict persistence writes nothing beyond the invocation's own record
+    // (effigy#981): a retention pass would delete expired rows, checkpoint the
+    // log and vacuum the store, so it does not run at all. Retention resumes on
+    // the next run without the switch.
+    if crate::store::strict_persistence() {
+        return;
+    }
     let budget = cx.child(std::time::Duration::from_secs(5));
     let Ok(mut store) = Store::open_within(&budget, root, BusyWait::Context) else {
         return;
@@ -154,6 +161,13 @@ pub fn retain(
 ) -> Result<RetentionReport, StoreError> {
     if cx.operation().class() != EffectClass::Mutate {
         return Err(StoreError::ClassRefused(cx.operation().class()));
+    }
+    // A strict run deletes nothing from the store (effigy#981).
+    if store.strict() {
+        return Ok(RetentionReport {
+            skipped: true,
+            ..RetentionReport::default()
+        });
     }
     let mut report = RetentionReport::default();
     // Claim the pass before doing its work, so a concurrent sweep skips it.

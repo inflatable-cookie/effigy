@@ -72,6 +72,12 @@ pub(super) fn compact_machine_closed(
     use crate::ident::{self, ProcessIdentity, ProcessState};
     use crate::observe::Observed;
 
+    // Compaction deletes closed rows, which strict persistence does not own
+    // (effigy#981): a strict run leaves them for the next run without the
+    // switch, exactly as it leaves its retention prune.
+    if store.strict() {
+        return Ok(());
+    }
     if owner.kind() == crate::id::ResourceKind::Gateway {
         return Ok(());
     }

@@ -176,10 +176,12 @@ A consumer that has to price a route's storage can ask for a run that prepares
 nothing. With `EFFIGY_STRICT_PERSISTENCE=1`, a v2-admitted plain foreground task
 writes only its own terminal row and that row's log and index frames: it never
 creates the journal, never migrates or backfills it, never prunes expired rows,
-and never checkpoints — not at the commit and not when its last connection
-closes. If the checkout journal is not already prepared, the run refuses
-**before the admission hook is called**, writes no journal byte and names the
-step that prepares it:
+never checkpoints — not at the commit and not when its last connection closes —
+and it performs no maintenance (no checkpoint, vacuum, retention sweep, machine
+compaction or repair) anywhere in the process. If the checkout journal is not
+already prepared, or needs recovery (a rollback journal, a torn log, or a log
+whose wal-index is missing), the run refuses **before the admission hook is
+called**, writes no journal byte and names the step that prepares it:
 
 ```sh
 effigy run prepare --check   # verify only: writes nothing, fails if a write would be needed

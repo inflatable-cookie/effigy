@@ -63,34 +63,63 @@ pub const ROW_OVERHEAD_BYTES: usize = 64;
 /// [`TerminalRecord::checked`].
 pub const ROW_MAX_BYTES: usize =
     RUN_ID_MAX + CHECKOUT_MAX + BOOT_MAX + TASK_MAX + 2 * WORD_MAX + ROW_OVERHEAD_BYTES;
-/// The pages one INSERT of a bounded row can dirty (effigy#977).
+/// The b-trees one row insert maintains: the table itself, the `run_id`
+/// primary-key index (`TEXT PRIMARY KEY` on a rowid table is its own unique
+/// index) and the `closed_at` index (effigy#981).
+pub const INSERT_TREES: u32 = 3;
+/// The levels one of those b-trees can have above its leaves.
 ///
 /// A store cannot exceed `store::MAX_DB_BYTES` = 1 GiB = 262144 pages of 4096
-/// bytes (`PRAGMA max_page_count`, set and read back on every open), so a
-/// b-tree over it is at most four levels deep: a leaf plus three interior
-/// levels. A split touches at most two pages per level, so one insert touches
-/// at most eight pages in the table and eight in the `closed_at` index. The row
-/// itself never chains to overflow pages: [`ROW_MAX_BYTES`] is smaller than one
-/// page, which this module asserts at compile time.
-pub const INSERT_MAX_PAGES: u32 = 16;
-/// The pages the bounded prune can dirty: one leaf in the table and one in the
-/// `closed_at` index per pruned row, plus a split path for each tree.
-pub const PRUNE_MAX_PAGES: u32 = 2 * PRUNE_MAX + 2 * 8;
+/// bytes (`PRAGMA max_page_count`, set and read back on every open). The
+/// widest interior cell is a `run_id` key of [`RUN_ID_MAX`] = 64 bytes plus a
+/// 4-byte child pointer and cell overhead, so one interior page holds at least
+/// 4096 / 80 = 51 children. Reaching 262144 pages through a fan-out of at least
+/// 51 takes ceil(log51(262144)) = 4 interior levels, so the deepest tree a store
+/// of this size can hold is one leaf plus four interior levels.
+pub const TREE_LEVELS_MAX: u32 = 5;
+/// The pages one level of a split can dirty: the page being split and the new
+/// sibling it is split into.
+pub const SPLIT_MAX_PAGES: u32 = 2;
+/// Pages the same insert can dirty outside those b-trees.
+///
+/// Page 1 carries the change counter and the in-header database size; a page
+/// taken from the freelist rewrites the freelist trunk and its header; and
+/// because the store is in incremental auto-vacuum, every page the insert
+/// allocates rewrites its own pointer-map entry and may rewrite the entry of
+/// its parent tree page — two pointer-map pages per allocation at most, and at
+/// most one allocation per level above a leaf per tree.
+pub const INSERT_SIDECAR_MAX_PAGES: u32 = 1 + 2 + 2 * INSERT_TREES * (TREE_LEVELS_MAX - 1);
+/// The pages one INSERT of a bounded row can dirty (effigy#977, re-derived
+/// with the trees and sidecars above for effigy#981).
+///
+/// The row itself never chains to overflow pages: [`ROW_MAX_BYTES`] is smaller
+/// than one page, which this module asserts at compile time.
+pub const INSERT_MAX_PAGES: u32 =
+    INSERT_TREES * TREE_LEVELS_MAX * SPLIT_MAX_PAGES + INSERT_SIDECAR_MAX_PAGES;
+/// The pages the bounded prune can dirty: one leaf in each of the three trees
+/// per pruned row, the balance path of each tree, and the freelist and
+/// pointer-map pages the released pages rewrite.
+pub const PRUNE_MAX_PAGES: u32 = PRUNE_MAX * INSERT_TREES
+    + INSERT_TREES * TREE_LEVELS_MAX * SPLIT_MAX_PAGES
+    + 2
+    + 2 * PRUNE_MAX * INSERT_TREES;
 /// The frames one terminal write appends to the write-ahead log — the frames of
 /// its own transaction, not the log file's size (effigy#977).
 ///
 /// Its two inputs are enforced: the insert is refused unless the row fits
 /// [`ROW_MAX_BYTES`] and one page ([`TerminalRecord::checked`]), and the prune
-/// is one SQL statement with `LIMIT PRUNE_MAX`. The b-tree term follows from the
-/// store's enforced page cap above. `run_terminal_write_appends_at_most_its_stated_frames`
-/// measures this constant against the statements this module issues.
+/// is one SQL statement with `LIMIT PRUNE_MAX`. The page counts follow from the
+/// store's enforced page cap and the three trees the statements maintain.
+/// `run_terminal_write_appends_at_most_its_stated_frames` measures this
+/// constant against the statements this module issues.
 pub const WRITE_MAX_PAGES: u32 = INSERT_MAX_PAGES + PRUNE_MAX_PAGES;
 /// [`WRITE_MAX_PAGES`] in bytes at the page size Effigy writes.
 pub const WRITE_MAX_BYTES: u64 = WRITE_MAX_PAGES as u64 * crate::store::PAGE_SIZE;
 /// The frames one **strict** terminal write appends (effigy#981).
 ///
 /// Strict persistence defers the bounded prune to a later non-strict write or
-/// the retention sweep, so the only statement it issues is the row insert.
+/// the retention sweep, so the only statement it issues is the row insert, and
+/// [`INSERT_MAX_PAGES`] is the whole of its page work.
 pub const STRICT_WRITE_MAX_PAGES: u32 = INSERT_MAX_PAGES;
 /// This invocation's whole physical contribution to `kernel.db-wal` under
 /// strict persistence (effigy#981).
