@@ -15,7 +15,7 @@ const RUNS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "A run reads by its run id or its key. A run started with `--run-id` logs each stream's output (redacted) unless both were terminals; other runs keep no log.",
         "`run logs --follow` ends when the run settles. Resume a lost follow with the byte offsets you already received; expired bytes are reported, never skipped.",
         "`run stop` asks the run's owner to stop through the kernel journal; the owner stops the task's whole process group and settles the run.",
-        "`run prepare` prepares this checkout's run journal for a strict-persistence run (`EFFIGY_STRICT_PERSISTENCE=1`), which writes only its own terminal row and refuses an unprepared store before admission; `run prepare --check` verifies that without writing."
+        "`run prepare` prepares this checkout's run journal and creates the fixed terminal ring for a strict-persistence run (`EFFIGY_STRICT_PERSISTENCE=1`), which writes one ring slot and no SQLite byte and refuses an unprepared ring before admission; `run prepare --check` verifies that without writing."
     ],
     usage: text_lines![
         "effigy runs [--limit <N>] [--all] [--json]",

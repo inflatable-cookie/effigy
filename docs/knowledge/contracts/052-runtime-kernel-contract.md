@@ -363,8 +363,13 @@ retained log and `run stop` refuses. The only closure Effigy asserts from it is
 a terminal result with `cleanup: "complete"` (R5/I-R7). A run whose custodians
 all died before settle writes nothing and stays `not-recorded`; there is no
 replay. Every other foreground run keeps Q-010 unchanged, including no journal
-write at all. The provider-side release rule this evidence supports is
-contract 049's, and it is not an Effigy authority.
+write at all. Under strict persistence (effigy#985) the same record is first
+written to one slot of a fixed-size, preallocated ring under the state root, and
+the route opens no SQLite connection at all; the next non-strict store open
+ingests the slot into the same `foreground_terminals` table, and `run status`
+and `runs` read the slot until then (contract 049). The provider-side release
+rule this evidence supports is contract 049's, and it is not an Effigy
+authority.
 
 **Views and fencing.** Foreground runs have random `RunId`s and an in-memory
 incarnation fence containing that id; persistent resource generations are not

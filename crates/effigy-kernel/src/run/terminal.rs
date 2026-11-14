@@ -63,83 +63,6 @@ pub const ROW_OVERHEAD_BYTES: usize = 64;
 /// [`TerminalRecord::checked`].
 pub const ROW_MAX_BYTES: usize =
     RUN_ID_MAX + CHECKOUT_MAX + BOOT_MAX + TASK_MAX + 2 * WORD_MAX + ROW_OVERHEAD_BYTES;
-/// The trees one row insert maintains: the table, the `run_id` `TEXT PRIMARY
-/// KEY` unique index and the `closed_at` index (effigy#981).
-pub const STRICT_INSERT_TREES: u32 = 3;
-/// The levels one of those b-trees can have: a leaf plus the interior levels a
-/// store of `store::MAX_DB_BYTES` can hold.
-///
-/// The widest index interior cell is a 4-byte child pointer, a 4-byte table page
-/// number, a 1-byte key-size varint, a [`RUN_ID_MAX`] = 64-byte key, a 9-byte
-/// rowid varint and a 2-byte cell pointer — about 84 bytes — so one interior
-/// page holds at least `4096 / 84` = 48 children. Reaching `MAX_DB_BYTES /
-/// PAGE_SIZE` = 262,144 pages through a fan-out of 48 takes
-/// `ceil(log48(262144))` = 4 interior levels, so the deepest tree is 5 levels;
-/// even a fan-out of 23 suffices (`23^4` = 279,841 > 262,144).
-pub const STRICT_TREE_LEVELS_MAX: u32 = 5;
-/// The pages one level of `balance_nonroot` can write: up to three siblings
-/// (`apOld[NB]`), up to five pages they become (`apNew[NB+2]`), and their parent
-/// (`NB` = 3 in `sqlite3.c`).
-pub const STRICT_BALANCE_PAGES_MAX: u32 = 3 + 5 + 1;
-/// The pages `balance_deeper` writes when the root itself overflows: the root
-/// (rewritten as an interior page) and the single child that receives its
-/// contents.
-pub const STRICT_DEEPER_PAGES_MAX: u32 = 2;
-/// The pointer-map entry pages one insert can write, bounded by the store's own
-/// pointer-map size rather than by a cell count (effigy#981).
-///
-/// `balance_nonroot` writes one pointer-map entry for every cell it moves into a
-/// new page, across all sibling pages (`sqlite3.c`), and `balance_deeper`
-/// re-parents every root child. Counting those cells cannot produce a per-level
-/// figure, but they cannot exceed the pointer-map pages the store has: a
-/// pointer-map page holds `PAGE_SIZE / 5` = 819 entries (`PTRMAP_ENTRY_SIZE` = 5,
-/// one type byte and a 4-byte parent), and the store holds at most
-/// `MAX_DB_BYTES / PAGE_SIZE` = 262,144 pages, so
-/// `ceil(262144 / 819)` = 321 is the most distinct entry pages any write can
-/// touch.
-pub const STRICT_PTRMAP_PAGES_MAX: u32 = 321;
-/// Frames one **strict** terminal write can append: a stated maximum, derived
-/// from the source, that the route's configuration cannot exceed (effigy#981).
-///
-/// The insert is the route's only statement, and each of its three trees can
-/// balance once per level: `STRICT_INSERT_TREES` = 3 trees x
-/// `STRICT_TREE_LEVELS_MAX` = 5 levels x `STRICT_BALANCE_PAGES_MAX` = 9 pages =
-/// 135, plus `STRICT_DEEPER_PAGES_MAX` = 2 for a root split, plus
-/// `STRICT_PTRMAP_PAGES_MAX` = 321 pointer-map entry pages, plus page 1 (change
-/// counter and in-header database size), the freelist trunk and the freelist
-/// header = 3. That is 461 frames.
-///
-/// Two premises make that arithmetic sound, and this module enforces both rather
-/// than assuming them:
-///
-/// - **No page is appended twice.** SQLite re-appends a page when the page cache
-///   spills and the page is dirtied again (`pagerStress`, `sqlite3.c:63622-63662`),
-///   so a strict connection sets `PRAGMA cache_size` to
-///   [`crate::store::STRICT_CACHE_KIB`] — larger than this frame maximum — and
-///   reads it back.
-/// - **Index keys stay inside [`RUN_ID_MAX`].** The depth and fan-out above need
-///   it, so a strict run refuses a store whose `foreground_terminals` holds a
-///   longer `run_id` (`store::Store::verify_schema`, `store::verify_prepared`).
-///
-/// `run_terminal_strict_write_appends_at_most_its_stated_frames_and_defers_the_prune`
-/// measures the real contribution (3 frames against a 600-row store), and
-/// [`record`] still measures every strict run and refuses to report success
-/// above this maximum.
-pub const STRICT_WRITE_MAX_PAGES: u32 =
-    STRICT_INSERT_TREES * STRICT_TREE_LEVELS_MAX * STRICT_BALANCE_PAGES_MAX
-        + STRICT_DEEPER_PAGES_MAX
-        + STRICT_PTRMAP_PAGES_MAX
-        + 3;
-/// The bytes [`STRICT_WRITE_MAX_PAGES`] occupies: SQLite writes a 32-byte log
-/// header (`store::WAL_HEADER_BYTES`), then one 24-byte frame header before each
-/// page (`store::WAL_FRAME_HEADER_BYTES`, `WAL_FRAME_HDRSIZE` in `wal.c`;
-/// <https://sqlite.org/fileformat2.html#walformat>).
-pub const STRICT_WAL_MAX_BYTES: u64 = crate::store::WAL_HEADER_BYTES
-    + STRICT_WRITE_MAX_PAGES as u64
-        * (crate::store::PAGE_SIZE + crate::store::WAL_FRAME_HEADER_BYTES);
-/// The wal-index growth those frames can cause: page 0 indexes 4062 frames, so
-/// [`STRICT_WRITE_MAX_PAGES`] frames fit inside one 32 KiB page.
-pub const STRICT_SHM_MAX_BYTES: u64 = crate::store::WAL_INDEX_PAGE_BYTES;
 /// The pages one INSERT of a bounded row dirties in the common case
 /// (effigy#977): one leaf in each of the three trees, page 1 and the freelist.
 /// The tests measure this budget rather than deriving a worst case; the row
@@ -150,23 +73,24 @@ pub const INSERT_MAX_PAGES: u32 = 16;
 /// each of the three trees, plus the balance path and the freed pages'
 /// bookkeeping. Measured by the tests, never claimed as a worst case.
 pub const PRUNE_MAX_PAGES: u32 = 2 * PRUNE_MAX + 2 * 8;
-/// The frames one terminal write appends to the write-ahead log — the frames of
-/// its own transaction, not the log file's size (effigy#977).
+/// The frames one **non-strict** terminal write appends to the write-ahead log
+/// — the frames of its own transaction, not the log file's size (effigy#977).
 ///
 /// Its two inputs are enforced: the insert is refused unless the row fits
 /// [`ROW_MAX_BYTES`] and one page ([`TerminalRecord::checked`]), and the prune
 /// is one SQL statement with `LIMIT PRUNE_MAX`. The page counts are the budget
 /// the tests measure against the statements this module issues; they are not a
-/// modelled worst case (see [`STRICT_WRITE_MAX_PAGES`] for why).
+/// modelled worst case.
+///
+/// Strict persistence does not write this row at all, so it has no SQLite
+/// contribution to state: the route writes one slot of
+/// [`super::terminal_ring`] instead (effigy#985).
 pub const WRITE_MAX_PAGES: u32 = INSERT_MAX_PAGES + PRUNE_MAX_PAGES;
 /// [`WRITE_MAX_PAGES`] in bytes at the page size Effigy writes.
 pub const WRITE_MAX_BYTES: u64 = WRITE_MAX_PAGES as u64 * crate::store::PAGE_SIZE;
 /// A row this module writes fits in one page, so it never takes an overflow
 /// chain. Enforced by the build, not only by a test.
 const _: () = assert!(ROW_MAX_BYTES <= crate::store::PAGE_SIZE as usize);
-/// The strict write's page budget covers the insert it issues. Enforced by the
-/// build.
-const _: () = assert!(STRICT_WRITE_MAX_PAGES >= INSERT_MAX_PAGES);
 
 /// One v2 hook-admitted foreground run's settled result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -195,60 +119,52 @@ pub struct TerminalRecord {
 /// that writes it (effigy#977): a caller cannot make the row unbounded, and no
 /// two runs can coalesce on a cut key.
 ///
-/// Under strict persistence it also **verifies** the write's own log
-/// contribution (effigy#981): [`STRICT_WRITE_MAX_PAGES`] is a budget, and a run
-/// whose transaction appended more than that is reported instead of passing as
-/// if it had stayed inside it. Nothing checkpoints here, so the frames measured
-/// at the end are exactly the ones this write appended.
+/// Under strict persistence the record goes to the fixed-size terminal ring
+/// instead ([`super::terminal_ring`], effigy#985): the route opens no SQLite
+/// connection at all, so this invocation's SQLite contribution is zero. A ring
+/// that cannot take the record is refused here; strict mode never falls back to
+/// the store.
 pub fn record(
     cx: &EffectContext,
     root: &StateRoot,
     record: &TerminalRecord,
 ) -> Result<(), StoreError> {
-    record_within_budget(cx, root, record, STRICT_WRITE_MAX_PAGES)
-}
-
-/// One terminal write against an explicit frame budget, so the refusal below
-/// can be proved with a budget small enough to trip. Production always passes
-/// [`STRICT_WRITE_MAX_PAGES`].
-pub(crate) fn record_within_budget(
-    cx: &EffectContext,
-    root: &StateRoot,
-    record: &TerminalRecord,
-    budget: u32,
-) -> Result<(), StoreError> {
+    if crate::store::strict_persistence() {
+        return super::terminal_ring::write(root, record);
+    }
     let record = record.checked()?;
     let mut store = Store::open(cx, root)?;
-    let strict = store.strict();
-    let log_before = if strict {
-        Some(store.wal_bytes()?)
-    } else {
-        None
-    };
-    store.txn(cx, |txn| write_row(txn, &record))?;
-    if let Some(before) = log_before {
-        let appended = store.wal_bytes()?.saturating_sub(before);
-        let page = store.sidecar_bounds()?.page_size;
-        let frames = appended.saturating_sub(crate::store::WAL_HEADER_BYTES)
-            / page
-                .saturating_add(crate::store::WAL_FRAME_HEADER_BYTES)
-                .max(1);
-        if frames > u64::from(budget) {
-            return Err(StoreError::Refused(format!(
-                "strict persistence appended {frames} write-ahead-log frames to this run's \
-                 {budget}-frame budget; the row is recorded, and this run must not be counted as \
-                 staying inside that budget"
-            )));
-        }
-    }
+    store.txn(cx, |txn| write_row(txn, &record))
+}
+
+/// The two statements one non-strict terminal write issues, in its own
+/// transaction: the bounded row insert, then one indexed delete of at most
+/// `PRUNE_MAX` expired rows. Split out so the page and frame arithmetic can be
+/// measured against exactly the statements this module writes.
+pub(crate) fn write_row(
+    txn: &mut crate::store::Txn<'_>,
+    record: &TerminalRecord,
+) -> Result<(), StoreError> {
+    insert_row(txn, record)?;
+    // Bounded retention: the record is evidence for a recent run. One indexed
+    // delete of at most `PRUNE_MAX` expired rows per write keeps this write's
+    // rows fixed; the retention sweep still removes every expired row. Strict
+    // persistence does not reach this writer, so its route issues no delete at
+    // all (effigy#985).
+    txn.conn().execute(
+        "DELETE FROM foreground_terminals WHERE run_id IN (\
+             SELECT run_id FROM foreground_terminals WHERE closed_at < ?1 \
+             ORDER BY closed_at LIMIT ?2)",
+        params![wall_ms() - KEEP_MS, PRUNE_MAX as i64],
+    )?;
     Ok(())
 }
 
-/// The two statements one terminal write issues, in its own transaction: the
-/// bounded row insert, then one indexed delete of at most `PRUNE_MAX` expired
-/// rows. Split out so the page and frame arithmetic can be measured against
-/// exactly the statements this module writes.
-pub(crate) fn write_row(
+/// The one row insert, shared by the non-strict writer and by ingestion of a
+/// strict-mode ring slot (`super::terminal_ring::ingest`). Idempotent by
+/// `run_id`: a repeated settle, or a re-ingested slot, keeps the row it already
+/// has.
+pub(crate) fn insert_row(
     txn: &mut crate::store::Txn<'_>,
     record: &TerminalRecord,
 ) -> Result<(), StoreError> {
@@ -270,23 +186,6 @@ pub(crate) fn write_row(
             record.workload_groups as i64,
             record.closed_at_ms,
         ],
-    )?;
-    // Strict persistence defers this prune (effigy#981): the row this write
-    // inserts is then the invocation's whole database contribution, and one
-    // fewer statement is one fewer log frame. A later non-strict write and the
-    // retention sweep still remove every expired row, so the seven-day
-    // retention is unchanged.
-    if txn.strict() {
-        return Ok(());
-    }
-    // Bounded retention: the record is evidence for a recent run. One indexed
-    // delete of at most `PRUNE_MAX` expired rows per write keeps this write's
-    // rows fixed; the retention sweep still removes every expired row.
-    txn.conn().execute(
-        "DELETE FROM foreground_terminals WHERE run_id IN (\
-             SELECT run_id FROM foreground_terminals WHERE closed_at < ?1 \
-             ORDER BY closed_at LIMIT ?2)",
-        params![wall_ms() - KEEP_MS, PRUNE_MAX as i64],
     )?;
     Ok(())
 }
