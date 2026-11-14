@@ -9483,7 +9483,7 @@ fn detached_gateway_cleanup_covers_failure_exit_and_timeout_before_up_response()
         let mut command = Command::new("python3");
         command.arg(&guard);
         if mode == "timeout" {
-            command.args(["--timeout", "40"]);
+            command.args(["--timeout", "20"]);
         }
         let output = command
             .arg("--")

@@ -1162,7 +1162,9 @@ fn parked_abort_uses_fresh_cleanup_after_context_expiry_and_cancel() {
             let fixture = home();
             let state = root(fixture.path());
             let base = EnvContext::new(&state, CancelToken::default()).unwrap();
-            let deadline = Instant::now() + Duration::from_secs(10);
+            // The test needs the context to expire, not a ten-second delay.
+            // Leave time for setup before observing the same refusal path.
+            let deadline = Instant::now() + Duration::from_secs(2);
             let ctx = base.bounded_until(deadline).unwrap();
             let fresh_ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
             let stack = env("stack");

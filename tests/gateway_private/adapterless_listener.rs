@@ -1552,14 +1552,11 @@ fn managed_host_listener_retries_a_failed_republication_while_the_port_answers()
         listener_declaration(domain, "127.0.0.1:0", 30)
     );
     let checkout = adapterless_environment(setup.fixture.path(), profile, &manifest);
-    fs::write(
-        checkout.join("server.py"),
-        format!(
-            "{}\nimport threading, time\nstate = {{\"server\": http.server.HTTPServer((host, int(port)), Handler)}}\ndef serve():\n    state[\"server\"].serve_forever()\ndef outage():\n    time.sleep(3)\n    server = state[\"server\"]\n    server.shutdown()\n    server.server_close()\n    time.sleep(40)\n    state[\"server\"] = http.server.HTTPServer((host, int(port)), Handler)\n    threading.Thread(target=serve, daemon=True).start()\nthreading.Thread(target=outage, daemon=True).start()\nserve()\nwhile True:\n    time.sleep(1)\n",
-            plain_server("republished after a store failure")
-        ),
-    )
-    .expect("fixture server script");
+    let outage_control = TcpListener::bind("127.0.0.1:0").expect("outage control listener");
+    let server_script =
+        republication_server(outage_control.local_addr().expect("outage control address"))
+            .replace("answered again", "republished after a store failure");
+    fs::write(checkout.join("server.py"), server_script).expect("fixture server script");
     let cleanup = setup.cleanup(&effects, &checkout, profile);
     let state_path = listener_state_path(&checkout, profile, LISTENER_NAME);
     let log_path = listener_log_path(&checkout, profile, LISTENER_NAME);
@@ -1578,6 +1575,20 @@ fn managed_host_listener_retries_a_failed_republication_while_the_port_answers()
         .as_str()
         .expect("published address")
         .to_owned();
+    let (mut outage_control, _) = outage_control.accept().expect("server control connection");
+    let mut outage_admission = [0];
+    outage_control
+        .read_exact(&mut outage_admission)
+        .expect("server outage admission boundary");
+    assert_eq!(&outage_admission, b"i");
+    outage_control
+        .write_all(b"x")
+        .expect("release the owned outage fixture");
+    let mut outage_started = [0];
+    outage_control
+        .read_exact(&mut outage_started)
+        .expect("server stopped answering");
+    assert_eq!(&outage_started, b"x");
 
     // The port goes silent long enough for three consecutive probe misses to
     // withdraw the route, while the root still validates. A refused store read
@@ -1599,7 +1610,12 @@ fn managed_host_listener_retries_a_failed_republication_while_the_port_answers()
     fs::set_permissions(&setup.private_gateway, fs::Permissions::from_mode(0o755))
         .expect("widen the private root for the failed publication");
 
-    // The port answers again and the publication fails once.
+    // Let the fixture answer again after the failed route was withdrawn.
+    // This reaches the publication failure immediately instead of waiting for
+    // a fixed outage timer.
+    outage_control
+        .write_all(b"r")
+        .expect("resume the owned listener fixture");
     wait_for_file_contains(
         &log_path,
         "but its route could not be republished",

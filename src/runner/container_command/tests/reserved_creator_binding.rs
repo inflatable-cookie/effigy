@@ -273,7 +273,10 @@ esac
                 deadline: PublicationDeadline::new(
                     Instant::now()
                         + Duration::from_secs(if matches!(case, Case::Expired) {
-                            20
+                            // The test waits for this deadline after its
+                            // local setup; two seconds preserves that expiry
+                            // boundary without a fixed twenty-second tail.
+                            2
                         } else {
                             120
                         }),

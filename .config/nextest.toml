@@ -1,5 +1,5 @@
 [test-groups.cold-start]
-max-threads = 1
+max-threads = 4
 
 [test-groups.journal-matrix]
 max-threads = 1
@@ -23,7 +23,8 @@ path = "main.xml"
 filter = 'package(effigy) & (test(scoped_host_database_alias_tests::) | test(/::the_production_predecessor_adapter_accepts_a_matching_live_predecessor_and_publishes$/))'
 success-output = "immediate"
 
-# Cold-start fixtures share one slot; ordinary tests continue alongside them.
+# Private cold-start fixtures have separate roots and listeners, so four may
+# progress together while ordinary tests use the remaining runner capacity.
 # Journal matrices have a separate single-writer class. No deadline changes.
 [[profile.default.overrides]]
 filter = 'test(container_up_exposure_tests::)'
