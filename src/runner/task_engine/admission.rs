@@ -723,6 +723,16 @@ pub(super) fn admit(
         if let Some(line) = decision_line(&stdout, matches!(exited, Observed::Verified(..))) {
             return match parse_decision(&line) {
                 Decision::Admit => {
+                    // A grant that arrives after the absolute deadline is a
+                    // late grant: the workload must not start, even though the
+                    // hook finally answered (effigy#992).
+                    if run_deadline.is_some_and(|at| Instant::now() >= at) {
+                        step.fail(&format!(
+                            "heavy admission for `{}` arrived after the run deadline",
+                            target.label
+                        ));
+                        return Err(deadline_refusal(target, &run_id));
+                    }
                     if matches!(exited, Observed::Verified(..)) {
                         step.fail(&format!(
                             "heavy admission for `{}` was withdrawn: the hook exited",
@@ -743,6 +753,16 @@ pub(super) fn admit(
                         finish_admission(hook, run, target, &run_id, protocol, &stdout[consumed..]);
                     match handled {
                         Ok(mut admission) => {
+                            // The protocol reports (custodians, acks) are part
+                            // of admission: if they consumed the budget, the
+                            // workload still never starts.
+                            if run_deadline.is_some_and(|at| Instant::now() >= at) {
+                                step.fail(&format!(
+                                    "heavy admission for `{}` completed after the run deadline",
+                                    target.label
+                                ));
+                                return Err(deadline_refusal(target, &run_id));
+                            }
                             push_marker(run_id.clone());
                             admission.marker = run_id;
                             admission.waited = started.elapsed();

@@ -617,9 +617,11 @@ message naming the allowance (`run_deadline.rs:154-170`, `src/bin/effigy.rs`).
 
 - **Admission expiry.** The refusal is typed: `effigy.admission.v1` with
   `decision: "deadline"` (not `"timeout"`, which stays the hook's own
-  timeout) at `src/runner/task_engine/admission.rs:1160-1175`. The workload
-  never spawns. Admission protocol v1/v2 and the terminal accounting are
-  unchanged.
+  timeout) at `src/runner/task_engine/admission.rs:1176-1191`. The workload
+  never spawns. A grant, or a completed v2 report, that arrives after the
+  ceiling is a **late grant** and refuses the same way before the workload
+  spawns (`admission.rs:724-735,758-776`). Admission protocol v1/v2 and the
+  terminal accounting are unchanged.
 - **Settlement overrun.** A settlement the ceiling cuts short records
   `truncated`, keeps the surviving custodian and every unresolved handle, and
   claims no closure (`crates/effigy-kernel/src/run/foreground.rs:31,260-277,279-345`);

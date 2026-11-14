@@ -2248,6 +2248,40 @@ fn a_run_deadline_cuts_a_hung_admission_before_the_task_runs() {
 }
 
 #[test]
+fn a_late_admission_grant_after_the_deadline_never_starts_the_task() {
+    let fixture = Fixture::new();
+    let hook = fixture.hook(
+        "late-hook.sh",
+        "#!/bin/sh\nsleep 2\necho admit\nwhile :; do sleep 0.1; done\n",
+    );
+    let started = Instant::now();
+    let output = fixture
+        .effigy(&["--json", "heavy"])
+        .env("EFFIGY_ADMISSION_HOOK", hook)
+        .env("EFFIGY_ADMISSION_HOOK_TIMEOUT_MS", "60000")
+        .env("EFFIGY_RUN_DEADLINE_MS", "11000")
+        .output_owned()
+        .expect("effigy runs");
+    let elapsed = started.elapsed();
+    let rendered = text(&output);
+    assert!(!output.status.success(), "{rendered}");
+    assert!(
+        elapsed < Duration::from_millis(11_000),
+        "admission outlived the run deadline: {elapsed:?}"
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|_| panic!("{rendered}"));
+    assert_eq!(
+        envelope["error"]["details"]["decision"], "deadline",
+        "a late grant is the deadline's refusal: {rendered}"
+    );
+    assert!(
+        !fixture.exists("ran.txt"),
+        "a late grant started the workload"
+    );
+}
+
+#[test]
 fn a_run_deadline_stops_a_sleeping_workload_inside_the_ceiling() {
     let fixture = Fixture::new();
     let started = Instant::now();
