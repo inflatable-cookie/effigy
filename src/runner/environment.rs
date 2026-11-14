@@ -15,6 +15,7 @@ use effigy_containers::environment::{
     self as engine, Applied, BackendError, BackendSelection, CreationOutcome, EnvContext, EnvError,
     EnvRecord, EnvRef, HoldError, Idle, Operation, Retention, Session, Up,
 };
+use effigy_containers::exec::ContainerExecError;
 use effigy_containers::EffectiveContainerPolicy;
 use effigy_kernel::ctx::CancelToken;
 use effigy_kernel::gate::Wait;
@@ -143,10 +144,13 @@ pub(in crate::runner) fn record_until(
             "the environment's checkout identity cannot be established: {error}"
         )));
     }
-    let Ok(env) = EnvRef::for_policy(policy) else {
-        return Observed::Unknown(UnknownReason::Inconsistent(
-            "the environment has no resolvable checkout identity".into(),
-        ));
+    let env = match EnvRef::for_policy(policy) {
+        Ok(env) => env,
+        Err(error) => {
+            return Observed::Unknown(UnknownReason::Inconsistent(format!(
+                "the environment's checkout identity cannot be resolved: {error}"
+            )))
+        }
     };
     let remaining = until.saturating_duration_since(Instant::now());
     if remaining.is_zero() {
@@ -222,11 +226,13 @@ impl PreparedEnvironmentObservation {
             Observed::Absent(_) => None,
             Observed::Unknown(reason) => return Observed::Unknown(reason),
         };
-        Observed::Verified(
-            engine::effective_backend(&policy.repo_root, policy, recorded.as_ref()),
-            effigy_kernel::observe::Evidence::new("environment backend selection".into(), None)
-                .expect("fixed evidence"),
-        )
+        match effigy_kernel::observe::Evidence::new("environment backend selection".into(), None) {
+            Ok(evidence) => Observed::Verified(
+                engine::effective_backend(&policy.repo_root, policy, recorded.as_ref()),
+                evidence,
+            ),
+            Err(reason) => Observed::Unknown(reason),
+        }
     }
 }
 
@@ -263,34 +269,57 @@ pub(in crate::runner) fn running(
         })
         .collect::<Vec<_>>();
     if rows.is_empty() {
-        return Ok(Observed::Verified(false, evidence()));
+        return Ok(verified(false));
     }
     let live = rows
         .into_iter()
         .filter(|row| row.status.is_running())
         .collect::<Vec<_>>();
     if live.is_empty() {
-        return Ok(Observed::Verified(false, evidence()));
+        return Ok(verified(false));
     }
     // One labelled `ps` answers both questions: the rows are this project's
     // containers, and a row that runs is part of the stack.
     Ok(
         match effigy_containers::exec::compose_stack_is_running(policy, &live) {
-            Ok(running) => Observed::Verified(running, evidence()),
+            Ok(running) => verified(running),
             Err(error) => unknown(error),
         },
     )
 }
 
-fn unknown(error: impl std::fmt::Display) -> Observed<bool> {
-    Observed::Unknown(effigy_kernel::observe::UnknownReason::Inconsistent(
-        error.to_string(),
-    ))
+/// A failed inventory read stays `Unknown`, never a `false` absence.
+///
+/// The container crate decides what its own failure means; the runner keeps
+/// that typed class instead of flattening every refusal into one display
+/// string. An engine that answered it is not running is carried as the typed
+/// answer it decoded, so a caller can point at the daemon to start rather than
+/// at the runner's wording.
+fn unknown(error: ContainerExecError) -> Observed<bool> {
+    Observed::Unknown(unknown_reason(error))
 }
 
-fn evidence() -> effigy_kernel::observe::Evidence {
-    effigy_kernel::observe::Evidence::new("environment inventory".into(), None)
-        .expect("fixed evidence")
+fn unknown_reason(error: ContainerExecError) -> UnknownReason {
+    match &error {
+        ContainerExecError::Failure { .. } => match error.engine_absence() {
+            Some(absence) => UnknownReason::ToolUnavailable(format!(
+                "the container runtime is not running: {absence}"
+            )),
+            None => UnknownReason::Inconsistent(error.to_string()),
+        },
+        ContainerExecError::Launch { .. } => UnknownReason::ToolUnavailable(error.to_string()),
+        ContainerExecError::Refusal { .. } => UnknownReason::Unparsable(error.to_string()),
+    }
+}
+
+/// A verified inventory answer, or the typed reason its evidence could not be
+/// built. The source is a constant, so the failure is a defect signal rather
+/// than an expected path; it is never an absence.
+fn verified(running: bool) -> Observed<bool> {
+    match effigy_kernel::observe::Evidence::new("environment inventory".into(), None) {
+        Ok(evidence) => Observed::Verified(running, evidence),
+        Err(reason) => Observed::Unknown(reason),
+    }
 }
 
 /// A bring-up whose backend apply finished, before the command's
@@ -735,6 +764,11 @@ pub(in crate::runner) fn emit_held_notice(container_name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contract_test_support::{lock_test, EnvGuard};
+    use effigy_containers::environment::Retention;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::{Path, PathBuf};
 
     fn busy() -> RunnerError {
         error(EnvError::Busy(
@@ -760,5 +794,216 @@ mod tests {
         let other = error(EnvError::Invalid("no record".to_owned()));
         assert_eq!(other.to_string(), "no record");
         assert!(other.json_error_details().is_none());
+    }
+
+    /// A checkout with one `web` environment and a private `bin` of runtime
+    /// doubles. Nothing here touches a live runtime, image or container.
+    struct EnvironmentFixture {
+        _fixture: effigy_test_support::Fixture,
+        repo_root: PathBuf,
+        bin: PathBuf,
+        home: PathBuf,
+    }
+
+    impl EnvironmentFixture {
+        fn new(name: &str, docker: &str) -> Self {
+            let fixture =
+                effigy_test_support::Fixture::workspace(&format!("effigy-environment-{name}-"))
+                    .expect("private fixture root");
+            let repo_root = fixture.path().join("repo");
+            fs::create_dir_all(repo_root.join(".git")).expect("mkdir checkout metadata");
+            // One ephemeral checkout scope, so the environment journal has an
+            // identity to key on without a shared state root.
+            fs::write(
+                repo_root.join(".git/config"),
+                "[effigy]\nruntimeScope = ephemeral\n",
+            )
+            .expect("write checkout scope marker");
+            fs::write(
+                repo_root.join("effigy.toml"),
+                "[containers]\ndefault = \"web\"\n\n[containers.web]\ncompose_file = \"docker-compose.yml\"\nproject_name = \"effigy-environment-fixture\"\nprimary_service = \"app\"\nworking_dir = \"/workspace\"\n",
+            )
+            .expect("write manifest");
+            fs::write(
+                repo_root.join("docker-compose.yml"),
+                "services:\n  app:\n    image: example.invalid/fixture\n",
+            )
+            .expect("write compose file");
+            let bin = fixture.path().join("bin");
+            fs::create_dir_all(&bin).expect("mkdir bin");
+            // Shadow both runtimes: `command_exists("colima")` probes the
+            // well-known install directories, so an absent double would let a
+            // developer's real VMs answer.
+            Self::write_executable(&bin, "colima", "#!/bin/sh\nexit 0\n");
+            Self::write_executable(&bin, "docker", docker);
+            let home = fixture.path().join("home");
+            fs::create_dir_all(&home).expect("mkdir isolated home");
+            Self {
+                _fixture: fixture,
+                repo_root,
+                bin,
+                home,
+            }
+        }
+
+        fn write_executable(bin: &Path, name: &str, body: &str) {
+            let path = bin.join(name);
+            fs::write(&path, body).expect("write runtime double");
+            let mut permissions = fs::metadata(&path)
+                .expect("stat runtime double")
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&path, permissions).expect("chmod runtime double");
+        }
+
+        fn env(&self) -> EnvGuard {
+            EnvGuard::set_many(&[
+                (
+                    "PATH",
+                    Some(format!("{}:/usr/bin:/bin", self.bin.display())),
+                ),
+                ("HOME", Some(self.home.display().to_string())),
+                (
+                    "EFFIGY_TEST_CONTAINERS_HOME",
+                    Some(self.home.join(".effigy").display().to_string()),
+                ),
+                ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
+            ])
+        }
+
+        fn policy(&self) -> EffectiveContainerPolicy {
+            effigy_containers::load_container_policy(&self.repo_root, None)
+                .expect("fixture container policy")
+        }
+    }
+
+    /// An engine that answered it is not running reaches the caller as the
+    /// typed tool absence it decoded, naming the daemon to start.
+    #[test]
+    fn an_engine_that_is_not_running_is_a_typed_tool_absence() {
+        let fixture = EnvironmentFixture::new(
+            "engine-absent",
+            "#!/bin/sh\nprintf 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock\n' >&2\nexit 1\n",
+        );
+        let _lock = lock_test();
+        let _env = fixture.env();
+
+        let observed = running(&fixture.repo_root, &fixture.policy())
+            .expect("a failed inventory read keeps the command alive");
+        match observed {
+            Observed::Unknown(UnknownReason::ToolUnavailable(detail)) => assert!(
+                detail.contains("the Docker daemon"),
+                "the typed answer names what to start: {detail}"
+            ),
+            other => panic!("an unreachable engine must not be a false absence: {other:?}"),
+        }
+    }
+
+    /// The typed class of every inventory failure survives: a completed
+    /// command that failed, a refused observation, and a launch failure are
+    /// three different `Unknown` reasons, never one display string.
+    ///
+    /// The end-to-end engine-absence case is above; a missing runtime binary
+    /// cannot be staged here because host CLI resolution also probes the
+    /// platform's install directories.
+    #[test]
+    fn inventory_failures_keep_their_typed_class() {
+        use std::io::ErrorKind;
+
+        let launch = ContainerExecError::Launch {
+            command: "docker ps".to_owned(),
+            error: std::io::Error::new(ErrorKind::NotFound, "no such binary"),
+        };
+        assert!(
+            matches!(unknown_reason(launch), UnknownReason::ToolUnavailable(_)),
+            "a launch failure is tool availability"
+        );
+
+        let refused = ContainerExecError::Refusal {
+            command: "docker ps".to_owned(),
+            reason: "incomplete or inconsistent project inventory".to_owned(),
+        };
+        assert!(
+            matches!(unknown_reason(refused), UnknownReason::Unparsable(_)),
+            "a refused observation is unparsable evidence"
+        );
+
+        let failed = ContainerExecError::Failure {
+            command: "docker ps".to_owned(),
+            code: Some(1),
+            stdout: String::new(),
+            stderr: "port is already allocated".to_owned(),
+        };
+        assert!(
+            matches!(unknown_reason(failed), UnknownReason::Inconsistent(_)),
+            "a plain failed command is an inconsistent observation"
+        );
+    }
+
+    /// A checkout with no environment journal is `Absent` with its proof, not
+    /// `Unknown`: the read never promotes a default and never writes.
+    #[test]
+    fn an_absent_journal_is_absence_not_unknown() {
+        let fixture = EnvironmentFixture::new("absent", "#!/bin/sh\nexit 0\n");
+        let _lock = lock_test();
+        let _env = fixture.env();
+        let policy = fixture.policy();
+
+        let observed = record_until(&policy, Instant::now() + Duration::from_secs(5));
+        assert!(
+            matches!(observed, Observed::Absent(_)),
+            "a missing environment journal is an absence with proof: {observed:?}"
+        );
+        assert!(
+            record(&policy).is_none(),
+            "the convenience read agrees: no record yet"
+        );
+    }
+
+    /// A hold taken before a bring-up settles without publishing an
+    /// environment: nothing was started, so nothing claims one.
+    #[test]
+    fn a_hold_that_never_saw_a_bring_up_publishes_no_environment() {
+        let fixture = EnvironmentFixture::new("hold", "#!/bin/sh\nexit 0\n");
+        let _lock = lock_test();
+        let _env = fixture.env();
+        let policy = fixture.policy();
+
+        let mut held = Held::begin(&fixture.repo_root, &policy, "environment-test")
+            .expect("a host session begins")
+            .expect("a host session is returned");
+        assert!(held.id().is_some(), "the session has its own run id");
+        assert!(
+            !held
+                .attach_active()
+                .expect("an inactive environment is not an error"),
+            "nothing is active to attach to"
+        );
+        assert!(!held.holds(), "an unattached session holds nothing");
+        drop(held);
+
+        assert!(
+            record(&policy).is_none(),
+            "a released hold leaves no environment record behind"
+        );
+    }
+
+    /// The lease switch is one env read: only an explicit `1`/`true`/`yes`
+    /// makes a task-started stack persistent.
+    #[test]
+    fn task_retention_follows_the_keep_running_switch() {
+        let _lock = lock_test();
+        for (value, expected) in [
+            (None, Retention::Held),
+            (Some("1"), Retention::Persistent),
+            (Some("true"), Retention::Persistent),
+            (Some(" yes "), Retention::Persistent),
+            (Some("0"), Retention::Held),
+            (Some("no"), Retention::Held),
+            (Some(""), Retention::Held),
+        ] {
+            let _env = EnvGuard::set_many(&[(KEEP_RUNNING_ENV, value.map(str::to_owned))]);
+            assert_eq!(task_retention(), expected, "value: {value:?}");
+        }
     }
 }

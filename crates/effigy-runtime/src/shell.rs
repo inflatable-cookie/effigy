@@ -22,6 +22,23 @@ pub use exec_args::{build_container_shell_args, ResolvedWorkspaceExecIdentity};
 
 const DEFAULT_CONTAINER_SHELL: &str = "sh";
 
+/// The one completion line for a finished container shell.
+///
+/// Every route that finishes a shell - an interactive session, a command-mode
+/// run, and the handoff-local route inside the workspace container - renders
+/// its step through here, so the result reads the same and takes the same
+/// colour decision wherever the shell ran.
+pub fn container_shell_completion(container: &str, service: &str) -> String {
+    format!(
+        "{} finished container shell for `{container}` service `{service}`",
+        style_text(
+            resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal()),
+            Theme::default().success,
+            "[ok]"
+        )
+    )
+}
+
 pub fn run_container_shell_session<FValidate, FProbeShell, FRunExec>(
     repo_root: &Path,
     name: Option<&str>,
@@ -65,15 +82,7 @@ where
             "docker compose exec exited with status {status}"
         )));
     }
-    Ok(format!(
-        "{} finished container shell for `{}` service `{service}`",
-        style_text(
-            resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal()),
-            Theme::default().success,
-            "[ok]"
-        ),
-        policy.name
-    ))
+    Ok(container_shell_completion(&policy.name, &service))
 }
 
 pub fn run_container_shell<FValidate, FProbeShell, FRunExec>(
@@ -157,15 +166,7 @@ where
         "docker compose exec",
     )?;
     run_exec(policy, &plan, false)?;
-    Ok(format!(
-        "{} finished container shell for `{}` service `{service}`",
-        style_text(
-            resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal()),
-            Theme::default().success,
-            "[ok]"
-        ),
-        policy.name,
-    ))
+    Ok(container_shell_completion(&policy.name, &service))
 }
 
 fn resolve_container_shell_session<FValidate>(
@@ -272,15 +273,7 @@ where
             output.status
         )));
     }
-    Ok(format!(
-        "{} finished container shell for `{}` service `{service}`",
-        style_text(
-            resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal()),
-            Theme::default().success,
-            "[ok]"
-        ),
-        policy.name,
-    ))
+    Ok(container_shell_completion(&policy.name, &service))
 }
 
 struct CommandModeShell<'a> {
@@ -437,7 +430,8 @@ fn emit_warning_lines(warnings: &[String]) {
 #[cfg(test)]
 mod tests {
     use super::{
-        command_mode_failure_looks_like_missing_workspace_user, run_command_mode_container_shell,
+        command_mode_failure_looks_like_missing_workspace_user, container_shell_completion,
+        run_command_mode_container_shell, run_container_shell_with_resolved_session,
         should_fail_container_shell_exit,
     };
     use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
@@ -455,6 +449,89 @@ mod tests {
         assert!(!should_fail_container_shell_exit(false, true));
         assert!(should_fail_container_shell_exit(true, false));
         assert!(!should_fail_container_shell_exit(true, true));
+    }
+
+    /// A command-mode run reports the one shared completion line, whatever
+    /// route executed it. Nothing else may hand-write that step.
+    #[test]
+    fn a_command_mode_shell_finishes_with_the_shared_completion_line() {
+        let calls = Arc::new(Mutex::new(Vec::<Vec<String>>::new()));
+        let recorded = Arc::clone(&calls);
+        let policy = test_policy();
+        let line = run_container_shell_with_resolved_session(
+            Path::new("/tmp/repo"),
+            &policy,
+            "app",
+            Some(Path::new("/workspace")),
+            Some("printf shell-ok"),
+            |_root, _policy, _service| unreachable!("command mode resolves no probed shell"),
+            move |_policy, plan, capture| {
+                assert!(capture, "command mode captures its output");
+                recorded.lock().expect("calls lock").push(
+                    plan.args
+                        .iter()
+                        .map(|value| value.to_string_lossy().into_owned())
+                        .collect(),
+                );
+                Ok(command_output(0, "shell-ok\n", ""))
+            },
+        )
+        .expect("the command-mode shell succeeds");
+
+        assert_eq!(line, container_shell_completion("web", "app"));
+        assert!(line.starts_with("[ok] finished container shell for `web` service `app`"));
+        let calls = calls.lock().expect("calls lock");
+        assert_eq!(calls.len(), 1, "one exec: {calls:?}");
+        let tail = &calls[0][calls[0].len().saturating_sub(4)..];
+        assert_eq!(
+            &tail[..3],
+            ["app", "sh", "-lc"],
+            "the command runs through the resolved shell: {calls:?}"
+        );
+        assert!(
+            tail[3].ends_with("printf shell-ok"),
+            "the command is the one asked for: {calls:?}"
+        );
+    }
+
+    /// An interactive session finishes through the same renderer, after its
+    /// workspace-user probe.
+    #[test]
+    fn an_interactive_shell_finishes_with_the_shared_completion_line() {
+        let policy = test_policy();
+        let captures = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&captures);
+        let line = run_container_shell_with_resolved_session(
+            Path::new("/tmp/repo"),
+            &policy,
+            "app",
+            Some(Path::new("/workspace")),
+            None,
+            |_root, _policy, _service| Ok("bash".to_owned()),
+            move |_policy, _plan, capture| {
+                recorded.lock().expect("calls lock").push(capture);
+                Ok(command_output(0, "", ""))
+            },
+        )
+        .expect("the interactive shell succeeds");
+
+        assert_eq!(line, container_shell_completion("web", "app"));
+        assert_eq!(
+            *captures.lock().expect("calls lock"),
+            vec![true, false],
+            "only the workspace-user probe captures; the session streams"
+        );
+    }
+
+    /// The completion line is one styled step, not a bare literal: colour
+    /// goes through the shared styling decision. `NO_COLOR` is absent under
+    /// the test harness, so the plain form is what a piped run sees.
+    #[test]
+    fn the_completion_line_is_the_plain_step_when_colour_is_off() {
+        assert_eq!(
+            container_shell_completion("web", "app"),
+            "[ok] finished container shell for `web` service `app`"
+        );
     }
 
     #[test]
