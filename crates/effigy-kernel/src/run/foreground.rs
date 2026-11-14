@@ -267,12 +267,24 @@ impl ForegroundRun {
         let result = self.settle_inner(cleanup, report);
         if effigy_core::run_deadline::ceiling().is_some() && result.is_err() {
             // A settle that failed for any reason under the deadline leaves
-            // the run unsettled: keep the guard and every unresolved handle
-            // rather than discarding the last custodian and implying closure.
+            // the run unsettled: the guard is left as the surviving custodian
+            // and is not closed or waited for. Its owner-death settlement
+            // keeps the gates and settles residue after our EOF.
             self.truncated = true;
+            self.abandon_guard();
             effigy_core::run_deadline::note_settlement_incomplete();
         }
         result
+    }
+
+    /// Leave the memory guard to the owner-death settlement it already owns.
+    /// The kernel never kills or closes it here: it releases its own pins,
+    /// returns at once, and the guard process settles residue with the gates
+    /// it holds.
+    fn abandon_guard(&mut self) {
+        if let Some(guard) = self.guard.as_mut() {
+            guard.abandon();
+        }
     }
 
     fn settle_inner(
@@ -330,31 +342,50 @@ impl ForegroundRun {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .is_some()
         });
+        let effects_complete = outcome.cleanup() != CleanupOutcome::Incomplete;
+        let mut outcome = outcome;
+        if !descendants_closed {
+            // A child run that never reported positive completion leaves this
+            // tree unsettled. It is residue, not success, and it is carried
+            // into the outcome, the terminal record and the footer decision.
+            outcome.add_residue(crate::outcome::Residue::unresolved(
+                0,
+                "in-process child",
+                self.record.incarnation().owner.clone(),
+                Some("foreground child obligation"),
+                "a child run did not report positive completion",
+                self.next.clone(),
+            ));
+        }
         let incomplete = outcome.cleanup() == CleanupOutcome::Incomplete;
         if incomplete && effigy_core::run_deadline::ceiling().is_some() {
-            // Keep the surviving custodian and every unresolved handle. The
-            // guard is not closed or signalled here: it retains the gates and
-            // settles residue after its owner's EOF, so closure is never
-            // claimed for work this settle could not prove. The retained
-            // resources are named in the outcome's residue.
+            // The guard is the supported handoff: it is not closed, signalled
+            // or waited for here. Its owner-death settlement keeps the gates
+            // and settles residue after our EOF, so closure is never claimed
+            // for work this settle could not prove. The retained resources are
+            // named in the outcome's residue.
             self.truncated = true;
+            self.abandon_guard();
             effigy_core::run_deadline::note_settlement_incomplete();
-            let mut outcome = outcome;
             outcome.add_residue(crate::outcome::Residue::unresolved(
                 0,
                 "custodian",
                 self.record.incarnation().owner.clone(),
                 Some("foreground guard"),
-                "retained as the surviving custodian: settlement did not close positively \
+                "left to its owner-death settlement: the settle did not close positively \
                  within the run deadline",
                 self.next.clone(),
             ));
             return Ok(outcome);
         }
-        if let Some(mut guard) = self.guard.take() {
+        // Close the guard after a successful settle only. An error here keeps
+        // the guard field, and `settle_reporting` abandons it rather than
+        // dropping it silently.
+        if let Some(guard) = self.guard.as_mut() {
             guard.close(cleanup)?;
         }
-        if !incomplete && descendants_closed {
+        self.guard.take();
+        if effects_complete && descendants_closed {
             self._gate.release_closed_custody();
             if let Some(completion) = &self.completion {
                 *completion

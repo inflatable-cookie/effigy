@@ -24,6 +24,7 @@ impl TaskRun {
         request: TaskRunRequest<'_>,
         task_gate: bool,
     ) -> Result<Self, RunnerError> {
+        let phase_scope = effigy_core::run_deadline::begin_run();
         let parent = PARENTS.with(|parents| parents.borrow().last().cloned());
         if parent.as_ref().is_some_and(|parent| parent.run.is_some()) {
             return Self::begin_with(request, task_gate, LifecyclePlacement::Inline);
@@ -128,11 +129,11 @@ impl TaskRun {
             scratch: None,
             programs: None,
             keyed: false,
+            _phase_scope: Some(phase_scope),
         };
         effigy_core::output_cap::foreground_started();
         // The deadline's own evidence: its clock, origin and phase budgets.
         // Off by default, so an invocation without the opt-in writes nothing.
-        effigy_core::run_deadline::clear_phases();
         effigy_core::run_deadline::note_phase(effigy_core::run_deadline::Phase::Admission);
         if let Some(deadline) = effigy_core::run_deadline::current() {
             let _ = effigy_core::output_cap::write(
@@ -310,6 +311,7 @@ impl TaskRun {
             scratch: None,
             programs: None,
             keyed: false,
+            _phase_scope: None,
         })
     }
 }
@@ -376,7 +378,10 @@ pub(super) fn close_memory(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runner::task_engine::{run_plain, PlainCommand, TaskRunRequest};
+    use crate::runner::task_engine::{
+        process_environment, run_plain, PlainCommand, TaskRunRequest,
+    };
+    use effigy_kernel::custody::{Lifetime, ProcessSpec, Terminal};
     use effigy_kernel::observe::Observed;
     use std::path::Path;
     use std::time::{Duration, Instant};
@@ -413,6 +418,25 @@ mod tests {
             0,
         );
         TaskTarget::for_catalog(root, name, &catalog)
+    }
+
+    fn alive(pid: u32) -> bool {
+        matches!(
+            effigy_kernel::ident::process_identity(pid),
+            Observed::Verified(..)
+        )
+    }
+
+    fn stop_group(pid: i32) {
+        // SAFETY: kill the group this test started, by its recorded pid.
+        unsafe {
+            libc::kill(-pid, libc::SIGKILL);
+            libc::kill(pid, libc::SIGKILL);
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while alive(pid as u32) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(25));
+        }
     }
 
     fn begin(target: &TaskTarget) -> TaskRun {
@@ -587,9 +611,22 @@ mod tests {
         }
         drop(memory);
 
+        let guard = run
+            .memory
+            .as_ref()
+            .expect("foreground record")
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .guard_identity()
+            .cloned()
+            .expect("guard identity");
         let _deadline = InjectedDeadline::at(Instant::now(), 12_000);
         let _ = effigy_core::run_deadline::take_settlement_incomplete();
         let warnings = run.close(WorkloadOutcome::Succeeded);
+        assert!(
+            alive(guard.pid),
+            "an incomplete settle must leave the guard alive as the custodian"
+        );
         assert!(
             effigy_core::run_deadline::take_settlement_incomplete(),
             "an Ok(incomplete) settle must fail closed under the deadline: {warnings:?}"
@@ -606,6 +643,81 @@ mod tests {
             !effigy_core::output_cap::foreground_complete(),
             "an incomplete settlement suppresses the completeness footer"
         );
+    }
+
+    #[test]
+    fn a_ceiling_already_spent_refuses_the_run_before_any_effect() {
+        let _lock = crate::contract_test_support::lock_test();
+        let root = tempfile::tempdir().expect("root");
+        let target = target(root.path(), "spent");
+        let _deadline = InjectedDeadline::at(Instant::now(), 12_000);
+        InjectedDeadline::advance(Duration::from_secs(13));
+        let error = TaskRun::begin_foreground(TaskRunRequest {
+            target: &target,
+            lock_wait_ms: 0,
+            custody: false,
+            scratch: false,
+            managed_run_token: None,
+            args: &[],
+            key: None,
+            admission: None,
+            workspace_admission: None,
+            cwd: None,
+        })
+        .expect_err("a spent ceiling starts nothing");
+        assert!(
+            error.to_string().contains("deadline") || error.to_string().contains("timed out"),
+            "{error}"
+        );
+        assert!(!root.path().join("must-not-exist").exists());
+    }
+
+    #[test]
+    fn an_expired_settlement_leaves_the_live_group_and_guard_to_the_custodian() {
+        let _lock = crate::contract_test_support::lock_test();
+        let root = tempfile::tempdir().expect("root");
+        let target = target(root.path(), "live");
+        let mut run = begin(&target);
+        let guard = run
+            .memory
+            .as_ref()
+            .expect("foreground record")
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .guard_identity()
+            .cloned()
+            .expect("guard identity");
+        let _deadline = InjectedDeadline::at(Instant::now(), 12_000);
+        let spec = ProcessSpec {
+            argv: vec!["/bin/sh".into(), "-c".into(), "sleep 60".into()],
+            cwd: root.path().to_path_buf(),
+            env: process_environment(root.path(), Vec::new()).expect("environment"),
+            grace: Duration::from_secs(3),
+            lifetime: Lifetime::Open(effigy_kernel::ctx::OpenReason::Shell),
+            terminal: Terminal::None,
+            label: "live".into(),
+        };
+        let process = run.spawn(spec, false).expect("workload spawned");
+        let leader = process.identity().identity.pid as i32;
+        drop(process);
+        // The clock, not the workload, crosses the ceiling: settlement has no
+        // budget and must leave the live group and the guard intact.
+        InjectedDeadline::advance(Duration::from_secs(13));
+        let _ = effigy_core::run_deadline::take_settlement_incomplete();
+        let warnings = run.close(WorkloadOutcome::Succeeded);
+        assert!(
+            effigy_core::run_deadline::take_settlement_incomplete(),
+            "an expired settle must be recorded: {warnings:?}"
+        );
+        assert!(
+            alive(leader as u32),
+            "the owner must not kill a group it left to the custodian"
+        );
+        assert!(
+            alive(guard.pid),
+            "the guard must survive the owner's incomplete settle"
+        );
+        stop_group(leader);
     }
 
     #[test]

@@ -188,6 +188,21 @@ pub(in crate::runner) fn run_standard_task(
         );
     }
     effigy_core::run_deadline::note_phase(effigy_core::run_deadline::Phase::Terminal);
+    // The task JSON is rendered before settlement, so the completed run's
+    // full phase readback is written here, after final accounting, on the
+    // same monotonic axis as the origin.
+    if let Some(deadline) = effigy_core::run_deadline::current() {
+        let line = format!(
+            "effigy: run deadline settled: clock monotonic, origin process start, {}ms since \
+             origin; phases {}\n",
+            deadline.since_origin().as_millis(),
+            effigy_core::run_deadline::phases_evidence(),
+        );
+        let _ = effigy_core::output_cap::write(
+            effigy_core::output_cap::Stream::Stderr,
+            line.as_bytes(),
+        );
+    }
     if settlement_incomplete && result.is_ok() {
         return Err(run_deadline_incomplete(&target, &warnings));
     }

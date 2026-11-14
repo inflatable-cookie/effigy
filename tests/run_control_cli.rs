@@ -2318,6 +2318,12 @@ fn a_run_deadline_stops_a_sleeping_workload_inside_the_ceiling() {
         stderr.contains("run deadline 12000ms"),
         "the run's deadline evidence is written: {stderr}"
     );
+    assert!(
+        stderr.contains("run deadline settled")
+            && stderr.contains("\"settlement\"")
+            && stderr.contains("\"terminal\""),
+        "the completed run's phase readback is written after settlement: {stderr}"
+    );
 
     let leader: i32 = fixture
         .read("leader.pid")
@@ -2431,8 +2437,8 @@ fn a_run_deadline_bounds_a_stalled_terminal_report_and_keeps_the_outcome() {
         std::thread::sleep(Duration::from_millis(150));
     }
     assert!(
-        elapsed < Duration::from_millis(14_000),
-        "a stalled terminal report outlived the deadline: {elapsed:?}"
+        elapsed < Duration::from_millis(13_500),
+        "a stalled terminal report crossed the deadline: {elapsed:?}"
     );
     assert_eq!(output.status.code(), Some(124), "{rendered}");
     let leader: i32 = fixture
@@ -2442,6 +2448,11 @@ fn a_run_deadline_bounds_a_stalled_terminal_report_and_keeps_the_outcome() {
         .expect("leader pid");
     assert!(!alive(leader as u32), "the workload survived: {leader}");
     assert!(group_gone(leader), "the workload group {} remains", leader);
+    // The residual hook and the guard must finish before this fixture is
+    // removed; otherwise its teardown races their last writes.
+    fixture.wait_for("the owned custody to drain", || {
+        gates_drained(&fixture.repo)
+    });
 }
 
 #[test]
@@ -2480,4 +2491,34 @@ fn a_run_deadline_owner_loss_is_settled_by_the_surviving_custodian() {
         "the surviving custodian did not settle child {child}"
     );
     assert!(group_gone(leader), "the group {leader} remains");
+    fixture.wait_for("the guard to drain", || gates_drained(&fixture.repo));
+}
+
+#[test]
+fn the_opt_in_changes_no_workload_output() {
+    let fixture = Fixture::new();
+    let off = fixture
+        .effigy(&["deadline-env"])
+        .output_owned()
+        .expect("effigy runs");
+    let on = fixture
+        .effigy(&["deadline-env"])
+        .env("EFFIGY_RUN_DEADLINE_MS", "20000")
+        .output_owned()
+        .expect("effigy runs");
+    assert_eq!(off.status.code(), on.status.code());
+    assert_eq!(
+        off.stdout, on.stdout,
+        "the opt-in changes no workload stdout"
+    );
+    let off_err = String::from_utf8_lossy(&off.stderr);
+    let on_err = String::from_utf8_lossy(&on.stderr);
+    assert!(
+        !off_err.contains("run deadline"),
+        "the no-option path writes no deadline evidence: {off_err}"
+    );
+    assert!(
+        on_err.contains("run deadline"),
+        "the opted-in path names its deadline: {on_err}"
+    );
 }

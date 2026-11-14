@@ -145,7 +145,7 @@ impl RunDeadline {
                 "settlement": SETTLEMENT_ALLOWANCE.as_millis() as u64,
                 "terminal": SETTLEMENT_ALLOWANCE.as_millis() as u64,
             },
-            "phases": phase_evidence(),
+            "phases": phases_evidence(),
         })
     }
 
@@ -185,6 +185,9 @@ static INJECTED: OnceLock<Mutex<Option<RunDeadline>>> = OnceLock::new();
 /// wide because the footer decision is process wide.
 static SETTLEMENT_INCOMPLETE: AtomicBool = AtomicBool::new(false);
 static PHASES: OnceLock<Mutex<Vec<PhaseReadback>>> = OnceLock::new();
+/// How many runs on this thread currently own phase observations. Only the
+/// outermost run clears them, so a nested run never erases its parent's.
+static RUN_DEPTH: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy)]
 struct PhaseReadback {
@@ -232,7 +235,7 @@ pub fn note_phase(phase: Phase) {
     }
 }
 
-/// Clears the phase readback at the start of a run.
+/// Clears the phase readback. Used by the outermost run and by tests.
 pub fn clear_phases() {
     phases()
         .lock()
@@ -240,11 +243,31 @@ pub fn clear_phases() {
         .clear();
 }
 
+/// Begins one run's phase readback. The outermost run clears the previous
+/// observations; a nested run keeps its parent's and adds its own.
+pub fn begin_run() -> PhaseScope {
+    if RUN_DEPTH.fetch_add(1, Ordering::SeqCst) == 0 {
+        clear_phases();
+    }
+    PhaseScope
+}
+
+/// The run's phase-scope guard. Dropping it ends only this run's ownership;
+/// the observations stay readable for the final post-settlement evidence.
+#[derive(Debug)]
+pub struct PhaseScope;
+impl Drop for PhaseScope {
+    fn drop(&mut self) {
+        RUN_DEPTH.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 fn phases() -> &'static Mutex<Vec<PhaseReadback>> {
     PHASES.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-fn phase_evidence() -> serde_json::Value {
+/// The phase observations as evidence, for the post-settlement readback.
+pub fn phases_evidence() -> serde_json::Value {
     let phases = phases().lock().unwrap_or_else(PoisonError::into_inner);
     let mut object = serde_json::Map::new();
     for readback in phases.iter() {
@@ -451,6 +474,24 @@ mod tests {
         advance_clock_for_tests(Duration::from_secs(10));
         assert_eq!(deadline.phase_remaining(Phase::Settlement), Duration::ZERO);
         assert!(deadline.since_origin() > Duration::from_secs(30));
+        clear();
+    }
+
+    #[test]
+    fn a_nested_run_keeps_its_parents_phase_observations() {
+        injected(30_000);
+        let outer = begin_run();
+        note_phase(Phase::Admission);
+        advance_clock_for_tests(Duration::from_secs(1));
+        let inner = begin_run();
+        note_phase(Phase::Workload);
+        drop(inner);
+        let phases = phases_evidence();
+        assert!(phases["admission"].is_object(), "{phases}");
+        assert!(phases["workload"].is_object(), "{phases}");
+        note_phase(Phase::Settlement);
+        drop(outer);
+        assert!(phases_evidence()["settlement"].is_object());
         clear();
     }
 

@@ -602,8 +602,16 @@ default: unset or blank means every budget is exactly what it was before.
   configured phase budgets (`phase_budgets_ms`) and a `phases` object with,
   for each of admission, workload, settlement and terminal, the
   `since_origin_ms` (the observable origin) and the `remaining_ms` observed
-  when that phase ended (`run_deadline.rs:120-235`). Numbers are monotonic
-  milliseconds; nothing is converted to a wall clock.
+  when that phase ended (`run_deadline.rs:120-280`). Because the task JSON is
+  rendered before settlement, its `deadline` object carries the phases
+  observed up to that point; the completed run's full readback (all four
+  phases, including settlement and terminal) is written as one post-settlement
+  stderr line by `src/runner/execute/pipeline/standard.rs`, and the
+  `effigy.run-deadline.v1` error carries the same complete `deadline` object.
+  Phase observations are run-scoped: an outermost run clears them, a nested
+  run keeps its parent's and adds its own (`run_deadline::begin_run`,
+  `PhaseScope`). Numbers are monotonic milliseconds; nothing is converted to a
+  wall clock.
 - Owned tests drive phase progression through the same seam: production reads
   `Instant::now()`; a test advances a monotonic offset, never a wall clock
   (`run_deadline.rs:20-28,247-262`).
@@ -631,30 +639,40 @@ message naming the allowance (`run_deadline.rs:154-170`, `src/bin/effigy.rs`).
   relevant boundary is a **late grant** and refuses the same way before the
   workload spawns. A stalled v2 `custodians`/`workload` acknowledgement is the
   same typed refusal: the exchange's write and poll are bounded by
-  `ceiling - allowance` (`admission.rs:486-598`). Admission protocol v1/v2 and
-  the terminal accounting are unchanged.
+  `ceiling - allowance`, an acknowledgement read after the boundary is not
+  accepted, and the poll sleep never starts with less time remaining than its
+  interval (`admission.rs:486-606`). Admission protocol v1/v2 and the terminal
+  accounting are unchanged.
 - **Settlement not positively complete.** Under the opt-in, *any* settlement
   that is not positively complete -- a cleanup-context timeout, a settle
-  error, a residue effect, or a settled outcome whose cleanup is
-  `Incomplete` -- records the run as incomplete and is never presented as
-  success (`crates/effigy-kernel/src/run/foreground.rs:258-345`). The
-  surviving custodian is kept: an incomplete settle does not close, signal or
-  discard the guard, so the guard retains the gates and settles residue after
-  its owner's EOF; the outcome's residue names the retained guard and every
-  unresolved effect (`crates/effigy-kernel/src/run/foreground.rs:320-345`).
-  The owner drop does not retry stops after that
-  (`crates/effigy-kernel/src/run/foreground.rs:390-400`), and the guard's own
-  fallback wait is capped at the remaining time
-  (`crates/effigy-kernel/src/supervise/memory.rs:548-566`). The task returns
+  error, a residue effect, a child run that never reported positive
+  completion, or a settled outcome whose cleanup is `Incomplete` -- records
+  the run as incomplete and is never presented as success
+  (`crates/effigy-kernel/src/run/foreground.rs`). An unresolved child
+  obligation is added as residue, so it reaches the outcome, the terminal
+  record and the footer decision. The guard is handed off, not held by this
+  process: the owner sets the guard's abandon flag, which releases its pins
+  without closing or waiting for the custodian; the guard process, which
+  already holds the run's receipts and gates, sees EOF and settles residue
+  through its owner-death path (`crates/effigy-kernel/src/supervise/memory.rs`).
+  The outcome's residue names that guard and every unresolved effect
+  truthfully; the owner does not claim to retain Rust handles it cannot keep
+  across process exit. The owner drop does not retry stops after an
+  incomplete settle, and a blocked guard drop cannot consume the remaining
+  budget before the result and evidence are written. The task returns
   `effigy.run-deadline.v1` with `outcome: "incomplete"`, `residue: true`,
   `settlement_notes` naming the retained resources and the deadline evidence,
-  and exits 124 (`src/runner/execute/pipeline/standard.rs:178-233`;
+  and exits 124 (`src/runner/execute/pipeline/standard.rs`;
   `src/runner/error.rs`). An already-failed result keeps its own failure; the
   marker never upgrades a failure to success.
-- **Terminal report.** A v2 `terminal` exchange is bounded at the ceiling;
-  expiry is a warning (the workload result is already decided) and the
-  settled outcome remains the record of truth, so no terminal row is written
-  without a settled outcome (`admission.rs:700-760`).
+- **Terminal evidence.** A v2 `terminal` exchange is bounded at the ceiling.
+  Under the opt-in, a report that is not delivered, or a terminal record that
+  cannot be written, is lost final evidence: it marks the settle incomplete,
+  downgrades the settled outcome before the terminal record is written, and
+  suppresses the footer (`src/runner/task_engine/run.rs`,
+  `src/runner/task_engine/admission.rs`). The workload result is never
+  upgraded to success by a lost report, and no terminal row is written
+  without a settled outcome.
 - **Custody shape is unchanged.** Escalation is still TERM, grace, KILL of the
 owned group, leader reaped after group closure, residue reported. Only the
   time budgets come from the absolute deadline.

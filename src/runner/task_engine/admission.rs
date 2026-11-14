@@ -550,6 +550,11 @@ fn exchange(
     })?;
     loop {
         if let Some(line) = delivery.next_ack_line() {
+            // An acknowledgement read after the boundary is late: accepting it
+            // would advance the sequence past the invocation's ceiling.
+            if grant_is_late(effigy_core::run_deadline::now(), deadline) {
+                return Err(DeliveryError::Deadline);
+            }
             return acknowledge(delivery, &line, seq, &name);
         }
         let exited = hook.poll();
@@ -564,6 +569,9 @@ fn exchange(
         // A hook may acknowledge and then exit: the acknowledgement is the
         // answer, so it is read before the exit is treated as a failure.
         if let Some(line) = delivery.next_ack_line() {
+            if grant_is_late(effigy_core::run_deadline::now(), deadline) {
+                return Err(DeliveryError::Deadline);
+            }
             return acknowledge(delivery, &line, seq, &name);
         }
         if matches!(exited, Observed::Verified(..)) {
@@ -585,7 +593,10 @@ fn exchange(
                 delivery.ack_timeout.as_millis()
             )));
         }
-        std::thread::sleep(POLL);
+        // Never sleep past the effective boundary: a poll interval that starts
+        // with less time remaining would return after the ceiling.
+        let left = accept_until.saturating_duration_since(effigy_core::run_deadline::now());
+        std::thread::sleep(POLL.min(left));
     }
 }
 
@@ -619,6 +630,18 @@ fn acknowledgement(line: &str, seq: u64, name: &str) -> Result<(), DeliveryError
 /// is late: the workload must not start, and the refusal is the deadline's.
 fn grant_is_late(now: Instant, deadline: Option<Instant>) -> bool {
     deadline.is_some_and(|at| now >= at)
+}
+
+/// The refusal the late-grant decision branch takes. Exposed to this module's
+/// tests so the branch itself is driven with explicit instants rather than a
+/// polling race.
+fn late_grant_error(
+    target: &TaskTarget,
+    run_id: &str,
+    now: Instant,
+    deadline: Option<Instant>,
+) -> Option<RunnerError> {
+    grant_is_late(now, deadline).then(|| deadline_refusal(target, run_id))
 }
 
 fn parse_ack(line: &str) -> Option<u64> {
@@ -780,12 +803,17 @@ pub(super) fn admit(
                     // A grant that arrives after the absolute deadline is a
                     // late grant: the workload must not start, even though the
                     // hook finally answered (effigy#992).
-                    if grant_is_late(effigy_core::run_deadline::now(), run_deadline) {
+                    if let Some(error) = late_grant_error(
+                        target,
+                        &run_id,
+                        effigy_core::run_deadline::now(),
+                        run_deadline,
+                    ) {
                         step.fail(&format!(
                             "heavy admission for `{}` arrived after the run deadline",
                             target.label
                         ));
-                        return Err(deadline_refusal(target, &run_id));
+                        return Err(error);
                     }
                     if matches!(exited, Observed::Verified(..)) {
                         step.fail(&format!(
@@ -1011,19 +1039,28 @@ pub(super) fn report_terminal(
         "cleanup": cleanup_name(cleanup),
         "workload_groups": admission.workload_groups(),
     });
-    match deliver(
-        &admission.core,
-        event,
-        effigy_core::run_deadline::ceiling(),
-    ) {
+    match deliver(&admission.core, event, effigy_core::run_deadline::ceiling()) {
         Ok(()) => Vec::new(),
-        Err(DeliveryError::Deadline) => vec![
-            "the terminal admission report was cut short by the run deadline; the settled              outcome is the record of truth"
-                .to_owned(),
-        ],
-        Err(DeliveryError::Failed(reason)) => vec![format!(
-            "the terminal admission report was not delivered: {reason}"
-        )],
+        Err(DeliveryError::Deadline) => {
+            if effigy_core::run_deadline::ceiling().is_some() {
+                effigy_core::run_deadline::note_settlement_incomplete();
+                effigy_core::output_cap::foreground_incomplete();
+            }
+            vec![
+                "the terminal admission report was cut short by the run deadline; the settled \
+                 outcome is the record of truth"
+                    .to_owned(),
+            ]
+        }
+        Err(DeliveryError::Failed(reason)) => {
+            if effigy_core::run_deadline::ceiling().is_some() {
+                effigy_core::run_deadline::note_settlement_incomplete();
+                effigy_core::output_cap::foreground_incomplete();
+            }
+            vec![format!(
+                "the terminal admission report was not delivered: {reason}"
+            )]
+        }
     }
 }
 
@@ -1048,7 +1085,13 @@ pub(super) fn record_terminal(
         groups,
     ) {
         Ok(()) => Vec::new(),
-        Err(warning) => vec![warning],
+        Err(warning) => {
+            if effigy_core::run_deadline::ceiling().is_some() {
+                effigy_core::run_deadline::note_settlement_incomplete();
+                effigy_core::output_cap::foreground_incomplete();
+            }
+            vec![warning]
+        }
     }
 }
 
@@ -1289,6 +1332,43 @@ fn refusal_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_late_grant_branch_refuses_at_and_after_the_boundary() {
+        let target = TaskTarget {
+            root: std::path::PathBuf::from("/deadline-test"),
+            catalog: String::new(),
+            task: "heavy".into(),
+            surface: effigy_core::task_selection::TaskSurface::Published,
+            profile: None,
+            shared_lock: None,
+            argument_scope: None,
+            label: "heavy".into(),
+        };
+        let at = Instant::now();
+        assert!(
+            late_grant_error(&target, "run", at - Duration::from_millis(1), Some(at)).is_none(),
+            "a grant before the boundary is accepted"
+        );
+        let error = late_grant_error(&target, "run", at, Some(at)).expect("late");
+        let RunnerError::AdmissionRefused { details_json, .. } = &error else {
+            panic!("expected the typed admission refusal");
+        };
+        assert!(
+            details_json.contains("\"decision\":\"deadline\""),
+            "{details_json}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("expired while admission was waiting"),
+            "{error}"
+        );
+        assert!(
+            late_grant_error(&target, "run", at, None).is_none(),
+            "without the opt-in no grant is late"
+        );
+    }
 
     #[test]
     fn an_admission_wait_frame_names_its_probe_the_hook_progress_and_elapsed() {

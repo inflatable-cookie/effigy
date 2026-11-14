@@ -34,6 +34,11 @@ pub(crate) struct MemoryGuard {
     /// How long one frame waits for its own acknowledgement, within the
     /// caller's remaining context budget.
     ack_budget: Duration,
+    /// The owner is leaving this guard to settle residue after its own EOF
+    /// instead of closing it. Drop then releases the pins and returns
+    /// immediately: no wait may consume the remaining run deadline before the
+    /// result and terminal evidence are written (effigy#992).
+    abandoned: bool,
 }
 
 /// Owns a helper whose startup did not complete. Deliberately exposes no
@@ -238,6 +243,7 @@ impl MemoryGuard {
             closure: Some(closure),
             requests: Requests::default(),
             ack_budget: ACK_BUDGET,
+            abandoned: false,
         };
         let started = (|| -> Result<(), RunError> {
             if purpose == MemoryPurpose::CheckoutLease {
@@ -306,6 +312,7 @@ impl MemoryGuard {
             closure: None,
             requests: Requests::default(),
             ack_budget,
+            abandoned: false,
         }
     }
 
@@ -494,6 +501,12 @@ impl MemoryGuard {
             .ok_or_else(|| io::Error::other("foreground guard output missing"))?;
         read_acknowledgement(output, request, cx.operation())
     }
+    /// Leave this guard to the owner-death settlement it already owns. The
+    /// pins are released, so the guard sees EOF, keeps its gates and settles
+    /// residue; the owner does not wait (effigy#992).
+    pub(crate) fn abandon(&mut self) {
+        self.abandoned = true;
+    }
     pub(crate) fn close(&mut self, cx: &CleanupContext) -> Result<(), RunError> {
         if self.has_unconfirmed_files() {
             return Err(RunError::unavailable(
@@ -549,6 +562,14 @@ impl MemoryGuard {
 }
 impl Drop for MemoryGuard {
     fn drop(&mut self) {
+        if self.abandoned {
+            // Hand the guard's custody to its own owner-death settlement and
+            // return at once: this process must not spend the remaining
+            // deadline waiting for a custodian it deliberately left alive.
+            self.closure.take();
+            self.input.take();
+            return;
+        }
         self.closure.take();
         self.input.take();
         // EOF starts bounded guard cleanup. Do not kill a custodian or unlock

@@ -217,6 +217,9 @@ pub(in crate::runner) struct TaskRun {
     /// Named by a caller's `--run-id` key: its output is logged for
     /// `effigy run logs`.
     keyed: bool,
+    /// Keeps this run's deadline-phase observations scoped: a nested run
+    /// never clears its parent's.
+    _phase_scope: Option<effigy_core::run_deadline::PhaseScope>,
 }
 
 #[derive(Clone)]
@@ -455,6 +458,7 @@ impl TaskRun {
         task_gate: bool,
         placement: LifecyclePlacement,
     ) -> Result<Self, RunnerError> {
+        let phase_scope = effigy_core::run_deadline::begin_run();
         let admission = super::admission::plan(request.admission)?;
         let parent = PARENTS.with(|parents| parents.borrow().last().cloned());
         let root = kernel::effects_root(&request.target.root)?;
@@ -592,6 +596,7 @@ impl TaskRun {
                 scratch: None,
                 programs: None,
                 keyed: false,
+                _phase_scope: Some(phase_scope),
             };
             run.admit(request.admission, admission, request.cwd)?;
             // An engine-internal run (a lock section, a QA group) has no
@@ -682,6 +687,7 @@ impl TaskRun {
             scratch: None,
             programs: None,
             keyed: request.key.is_some(),
+            _phase_scope: Some(phase_scope),
         };
         run.admit(request.admission, admission, request.cwd)?;
         // The run's own scratch directory is opened before the first workload
@@ -729,6 +735,7 @@ impl TaskRun {
                         scratch: None,
                         programs: None,
                         keyed: false,
+                        _phase_scope: None,
                     },
                 );
                 for warning in run.close(WorkloadOutcome::NotStarted) {
@@ -902,6 +909,7 @@ impl TaskRun {
             // A step runs inside its parent's shim scope on this thread.
             programs: None,
             keyed: false,
+            _phase_scope: None,
         })
     }
 
@@ -1012,6 +1020,18 @@ impl TaskRun {
                         },
                     );
                     settled = outcome;
+                    let report_failed = !report_warnings.is_empty();
+                    if report_failed && effigy_core::run_deadline::ceiling().is_some() {
+                        // Lost final evidence is not a positive settle under
+                        // the opt-in: the task fails closed and the footer is
+                        // suppressed.
+                        effigy_core::run_deadline::note_settlement_incomplete();
+                        effigy_core::output_cap::foreground_incomplete();
+                        if let Some(settled) = &mut settled {
+                            settled
+                                .mark_incomplete("the terminal admission report was not delivered");
+                        }
+                    }
                     warnings.extend(report_warnings);
                     warnings.extend(close_warnings);
                 }
@@ -1035,22 +1055,36 @@ impl TaskRun {
         if let Some(admission) = terminal {
             // No settle reported through it (a run with nothing to settle):
             // report and record after the fact, best effort.
-            warnings.extend(super::admission::finish(
-                admission,
-                &target,
-                &run_id,
-                &workload,
-                settled.as_ref(),
-            ));
+            let terminal_warnings =
+                super::admission::finish(admission, &target, &run_id, &workload, settled.as_ref());
+            if !terminal_warnings.is_empty() && effigy_core::run_deadline::ceiling().is_some() {
+                effigy_core::run_deadline::note_settlement_incomplete();
+                effigy_core::output_cap::foreground_incomplete();
+                if let Some(settled) = &mut settled {
+                    settled.mark_incomplete("the terminal admission evidence was lost");
+                }
+            }
+            warnings.extend(terminal_warnings);
         } else if terminal_reported {
-            if let Some(settled) = &settled {
-                warnings.extend(super::admission::record_terminal(
+            let record_warnings = match &settled {
+                Some(settled_run) => super::admission::record_terminal(
                     &target,
                     &run_id,
-                    settled,
+                    settled_run,
                     terminal_groups,
-                ));
+                ),
+                None => Vec::new(),
+            };
+            if !record_warnings.is_empty() && effigy_core::run_deadline::ceiling().is_some() {
+                // The run's final terminal record could not be written: the
+                // evidence is lost, so the settle is not positive.
+                effigy_core::run_deadline::note_settlement_incomplete();
+                effigy_core::output_cap::foreground_incomplete();
+                if let Some(settled) = &mut settled {
+                    settled.mark_incomplete("the terminal record could not be written");
+                }
             }
+            warnings.extend(record_warnings);
         }
         warnings
     }
