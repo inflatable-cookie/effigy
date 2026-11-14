@@ -2005,19 +2005,15 @@ fn store_strict_wal_and_index_stay_within_their_stated_maximum() {
         136 / 4,
         "the first wal-index page's header costs its own frame slots"
     );
-    // The budget is arithmetic over the format, and the ceiling is the store's
-    // own page cap: one 32-byte log header plus one 24-byte frame header before
-    // each page. The page count itself is a budget the tests measure (the run
-    // verifies it), not a modelled balance worst case.
+    // The budget is arithmetic over the format: one 32-byte log header plus one
+    // 24-byte frame header before each page. The page count itself is an
+    // operating budget the tests measure and the run verifies, not a modelled
+    // balance worst case (the source does not yield one; see
+    // `run::TERMINAL_STRICT_WRITE_MAX_PAGES`).
     let pages = effigy_kernel::run::TERMINAL_STRICT_WRITE_MAX_PAGES;
     assert_eq!(
         effigy_kernel::run::TERMINAL_STRICT_WAL_MAX_BYTES,
         WAL_HEADER_BYTES + u64::from(pages) * (PAGE_SIZE + WAL_FRAME_HEADER_BYTES)
-    );
-    assert_eq!(
-        effigy_kernel::run::TERMINAL_STRICT_WAL_CEILING_BYTES,
-        WAL_HEADER_BYTES + MAX_PAGES * (PAGE_SIZE + WAL_FRAME_HEADER_BYTES),
-        "the premise-free ceiling is one frame per page the store can hold"
     );
     let home = home();
     let cx = effects(EffectClass::Mutate);
@@ -2222,6 +2218,10 @@ fn store_strict_refuses_a_log_that_needs_recovery() {
     // A crashed or externally cleaned checkout can leave the log without the
     // index beside it, which the next open would rebuild before reading.
     std::fs::remove_file(root.path().join(format!("{DB_NAME}-shm"))).expect("drop the index");
+    // The recovery state itself is what a refusal must leave untouched.
+    let database = store_file(&root, "");
+    let log = store_file(&root, "-wal");
+    let index = store_file(&root, "-shm");
 
     let error = Store::open_strict(&cx, &root).expect_err("recovery is refused");
     assert!(matches!(error, StoreError::NotPrepared { .. }), "{error:?}");
@@ -2229,9 +2229,23 @@ fn store_strict_refuses_a_log_that_needs_recovery() {
         error.to_string().contains("wal-index"),
         "the refusal names the missing index: {error}"
     );
+    assert!(
+        store_file(&root, "") == database && store_file(&root, "-wal") == log,
+        "a refused strict open rewrote the recovery state it refused"
+    );
+    assert!(
+        store_file(&root, "-shm") == index,
+        "a refused strict open created or changed the wal-index"
+    );
     let error = verify_prepared(&root, Duration::from_secs(5))
         .expect_err("the pre-admission check refuses it too");
     assert!(matches!(error, StoreError::NotPrepared { .. }), "{error:?}");
+    assert!(
+        store_file(&root, "") == database
+            && store_file(&root, "-wal") == log
+            && store_file(&root, "-shm") == index,
+        "the pre-admission refusal wrote to the store it refused"
+    );
 
     // The remedy settles the log, and the same store then opens strictly.
     drop(Store::open_preparing(&cx, &root).expect("prepare"));

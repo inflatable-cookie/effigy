@@ -406,45 +406,45 @@ This invocation's complete physical contribution in strict mode:
 
 | File (under `<checkout>/.effigy/state/`) | This invocation's maximum | Enforced or derived by |
 | --- | --- | --- |
-| `gates/<scope>.scope` | `s` files, 0 bytes each | as above |
-| `gates/<scope>/<gate>.gate` | `s + 1` files, 4096 bytes each | as above |
+| `gates/<scope>.scope` | `s` files, 0 bytes each | `gate.rs::Gate::acquire` creates the empty marker (`crates/effigy-kernel/src/gate.rs:422-475`) |
+| `gates/<scope>/<gate>.gate` | `s + 1` files, 4096 bytes each | `gate::DIAG_MAX` (`gate.rs:20-22`) written by `write_body` (`gate.rs:472-475`) and `gate/foreground.rs::set_foreground` (`gate/foreground.rs:48-68`); at most `gate::FOREGROUND_GATES_MAX` = 4 gates (`run/foreground.rs:119-131`) |
 | `kernel.db` | **0 bytes**: no checkpoint, no migration, no prune | the strict checks above |
-| `kernel.db-wal` | **budget 21 frames = 86,552 bytes**; premise-free ceiling 262,144 frames = 1,080,033,312 bytes | `run::TERMINAL_STRICT_WAL_MAX_BYTES` / `run::TERMINAL_STRICT_WAL_CEILING_BYTES` (`terminal.rs:95-107`) |
+| `kernel.db-wal` | **budget 32 frames = 131,872 bytes**, verified per run; no a-priori bound is claimed | `run::TERMINAL_STRICT_WAL_MAX_BYTES` (`crates/effigy-kernel/src/run/terminal.rs:85-101`) |
 | `kernel.db-shm` | one 32 KiB wal-index page | `store::WAL_INDEX_PAGE_BYTES` (`store.rs:87`) |
 | `kernel.db-journal` | none: a store that has one is refused | `store::refuse_recovery` |
 | `foreground_terminals` row | 1, at most 960 stored bytes | `run::TerminalRecord::checked` |
 | run journal, capture log, run history, per-run scratch | none | as above |
 
-WAL: a budget plus a ceiling, both stated. SQLite writes a 32-byte log header
-(`store::WAL_HEADER_BYTES`, `store.rs:81`) and one 24-byte frame header before
-each page (`store::WAL_FRAME_HEADER_BYTES`, `:83`, `WAL_FRAME_HDRSIZE` in
-`wal.c`; <https://sqlite.org/fileformat2.html#walformat>).
+WAL: an operating budget, verified per run, and no claimed bound. SQLite
+writes a 32-byte log header (`store::WAL_HEADER_BYTES`,
+`crates/effigy-kernel/src/store.rs:81`) and one 24-byte frame header before each
+page (`store::WAL_FRAME_HEADER_BYTES`, `:83`, `WAL_FRAME_HDRSIZE` in `wal.c`;
+<https://sqlite.org/fileformat2.html#walformat>), so the bytes are
+`32 + frames × (page size + 24)`.
 
-- **Ceiling, with no premise.** A transaction writes each modified page to the
-  log at most once, and `store::MAX_PAGES` (`store.rs:36`, from
-  `store::MAX_DB_BYTES` and the page size) caps how many pages a store holds, so
-  one transaction appends at most 262,144 frames — `32 + 262144 × (4096 + 24)` =
-  1,080,033,312 bytes. This is complete and independent of the store's contents.
-- **Budget, verified per run.** `run::TERMINAL_STRICT_WRITE_MAX_PAGES`
-  (`terminal.rs:95`) is 21 frames: one leaf in each of the three trees the insert
-  maintains (the table, the `run_id` unique index, the `closed_at` index) plus up
-  to one split level in each (the page, its new sibling, its parent and the
-  pointer-map entry pages for the pages whose parent changed — 6 per tree) plus
-  page 1 and the freelist trunk and header. `run::terminal::record`
-  (`terminal.rs:164-195`) measures the frames its own transaction appended and
-  returns a typed refusal naming the observed count if a run exceeds the budget,
-  so no run reports success while its contribution is outside the number this
-  contract states. The measured contribution in every tested state is **3
-  frames** (12,392 bytes), asserted by
-  `run_terminal_strict_write_appends_at_most_its_stated_frames_and_defers_the_prune`.
-- **Why not a modelled worst case.** `balance_nonroot` (`sqlite3.c`, cited by
-  symbol: `apOld[NB]` and `apNew[NB+2]` with `NB` = 3) balances up to three
-  sibling pages into up to five new ones, rewrites their parent, and writes a
-  pointer-map entry for every cell it moves into a new page; those entries can
-  land in many distinct pointer-map pages. A closed-form maximum therefore runs
-  into the hundreds of pages and is dominated by pointer-map bookkeeping that a
-  terminal write does not in practice cause. This contract states the ceiling
-  and the measured, verified budget instead of asserting such a derivation.
+- **Budget.** `run::TERMINAL_STRICT_WRITE_MAX_PAGES` (`run/terminal.rs:85`) is
+  32 frames — 131,872 bytes — about ten times the 3 frames the write appends in
+  every tested state. `run::terminal::record` (`terminal.rs:164-200`) measures
+  the frames its own transaction appended and returns a typed refusal naming the
+  observed count when a run exceeds the budget, so no run passes as if it stayed
+  inside a number it did not meet. `run_terminal_strict_budget_refusal_names_the_observed_frames`
+  proves the refusal with a zero budget, and
+  `run_terminal_strict_write_appends_at_most_its_stated_frames_and_defers_the_prune`
+  measures the real contribution (3 frames) against a 600-row store.
+- **Why there is no a-priori maximum, stated rather than papered over.** Two
+  facts in the bundled source defeat every closed form this contract used to
+  claim. `balance_nonroot` (`sqlite3.c`, `apOld[NB]`/`apNew[NB+2]` with `NB` = 3)
+  balances up to three sibling pages into up to five new ones, rewrites their
+  parent, and writes a pointer-map entry for every cell it moves into a new page,
+  whose entries can land in many distinct pointer-map pages — so one level is nine
+  tree pages plus a number of scattered pointer-map pages, and a cascade repeats
+  that per level. And SQLite can append the same page more than once in one
+  transaction: on a cache spill `pagerStress` (`sqlite3.c:63622-63662`) writes a
+  dirty page and later re-dirties it, so even "one frame per modified page" is
+  not an upper bound. A number built from those facts would be enormous and still
+  not a bound, so the contract states a measured, per-run-verified budget and a
+  consumer-facing measurement rather than an unprovable maximum. The earlier
+  per-level and one-frame-per-page figures are withdrawn.
 
 SHM. `kernel.db-shm` holds SQLite's wal-index, allocated in `WALINDEX_PGSZ` = 32
 KiB pages (`store::WAL_INDEX_PAGE_BYTES`, `store.rs:87`; `wal.c` asserts that
@@ -472,7 +472,8 @@ Measured, not only derived. `test:kernel:store`
 `store_strict_persistence_switch_is_opt_in_and_exact`,
 `store_nonstrict_open_keeps_creating_migrating_pruning_and_resetting`) and
 `test:kernel:run`
-(`run_terminal_strict_write_appends_at_most_its_stated_frames_and_defers_the_prune`)
+(`run_terminal_strict_write_appends_at_most_its_stated_frames_and_defers_the_prune`,
+`run_terminal_strict_budget_refusal_names_the_observed_frames`)
 measure each bound across a fresh store (refused), an at-schema store, a
 needs-migration store (refused), a committed write, a write that fails after its
 statements ran, and a write abandoned before any statement ran — with a reader
@@ -486,8 +487,10 @@ hook and no workload and writes no journal byte, `effigy run prepare --check`
 makes the same refusal without writing, `effigy run prepare` readies it, and the
 same strict run then records exactly one row.
 
-Not claimed in strict mode: the size of the shared wal-index before this
-invocation, the peak of the shared log, and anything the child or the hook writes.
+Not claimed in strict mode: an a-priori maximum for this invocation's log
+contribution (measured and budget-verified instead, for the reason above), the
+size of the shared wal-index before this invocation, the peak of the shared log,
+and anything the child or the hook writes.
 
 Not persisted. This route writes no run incarnation, request, event, capture
 log, run-history row or object, and opens no per-run scratch. It mints no

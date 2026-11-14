@@ -31,9 +31,6 @@ pub const SCHEMA_VERSION: i64 = 1;
 pub const DB_NAME: &str = "kernel.db";
 /// Size bound for `kernel.db`; retention keeps it far below this.
 pub const MAX_DB_BYTES: u64 = 1 << 30;
-/// The pages a store can hold, from [`MAX_DB_BYTES`] and the page size this
-/// build writes: the premise-free cap on the pages one transaction can modify.
-pub const MAX_PAGES: u64 = MAX_DB_BYTES / PAGE_SIZE;
 /// The page size this kernel writes: SQLite's own default, and the unit every
 /// sidecar bound below is stated in. A store created by another build keeps
 /// its own page size, so a bound derived from this constant is a maximum for

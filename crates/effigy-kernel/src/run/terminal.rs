@@ -63,36 +63,33 @@ pub const ROW_OVERHEAD_BYTES: usize = 64;
 /// [`TerminalRecord::checked`].
 pub const ROW_MAX_BYTES: usize =
     RUN_ID_MAX + CHECKOUT_MAX + BOOT_MAX + TASK_MAX + 2 * WORD_MAX + ROW_OVERHEAD_BYTES;
-/// The frames one **strict** terminal write appends, as a budget the run
-/// verifies rather than a theorem (effigy#981).
+/// The frames one **strict** terminal write is expected to append, as an
+/// operating budget the run verifies rather than a bound (effigy#981).
 ///
-/// A closed-form worst case for one SQLite statement is not available from the
-/// bundled source, and the earlier attempt at one was wrong in three places, so
-/// this module no longer claims it:
+/// The bundled SQLite source does not yield a closed form for one statement's
+/// write-ahead log contribution, and this module no longer pretends otherwise:
 ///
 /// - `balance_nonroot` (`sqlite3.c`, `apOld[NB]` and `apNew[NB+2]` with
-///   `NB` = 3) balances up to three sibling pages into up to five new ones and
-///   rewrites their parent, so one level dirties up to nine pages, not two.
-/// - The same balance writes a pointer-map entry for every cell it moves into a
-///   new page (and for that page), and those entries can live in many distinct
-///   pointer-map pages, so the pointer-map term is a number of scattered pages,
-///   not one or two.
-/// - The tree depth therefore cannot be argued down to a small constant from
-///   the store's page cap alone.
+///   `NB` = 3) balances up to three sibling pages into up to five new ones,
+///   rewrites their parent, and writes a pointer-map entry for every cell it
+///   moves into a new page — entries that can live in many distinct pointer-map
+///   pages. One level is therefore nine tree pages plus a number of scattered
+///   pointer-map pages, and a cascade repeats that per level.
+/// - SQLite can write the same page to the log more than once in one
+///   transaction: when the page cache spills, `pagerStress`
+///   (`sqlite3.c:63622-63662`) writes the dirty page and later re-dirties it, so
+///   even "one frame per modified page" is not an upper bound.
 ///
-/// What this module does instead is state a **budget** ([`STRICT_WRITE_MAX_PAGES`])
-/// and make every strict run check it: `record` measures the frames its own
-/// transaction appended and refuses to report success if they exceed the
-/// budget. A store this build wrote touches one leaf in each of the three trees
-/// (the table, the `run_id` unique index and the `closed_at` index) plus, at
-/// worst, one split level in each, page 1 and the freelist: 3 x 6 + 3 = 21
-/// frames. The measured contribution in every tested state is 3 frames
-/// (`run_terminal_strict_write_appends_at_most_its_stated_frames_and_defers_the_prune`).
-/// The premise-free ceiling is the store's own page count — SQLite writes each
-/// modified page to the log at most once per transaction, and
-/// `store::MAX_DB_BYTES` caps the store at [`crate::store::MAX_PAGES`] pages —
-/// which is [`STRICT_WAL_CEILING_BYTES`].
-pub const STRICT_WRITE_MAX_PAGES: u32 = 21;
+/// A number derived from those facts would be both enormous and still not a
+/// bound. What this route does instead is state an operating budget of 32 frames
+/// — about ten times the 3 frames it appends in every tested state
+/// (`run_terminal_strict_write_appends_at_most_its_stated_frames_and_defers_the_prune`),
+/// with room for a split in each of the three trees the insert maintains — and
+/// have every strict run **measure its own appended frames and refuse to report
+/// success above it** ([`record`]). A run that trips the budget names the
+/// observed count, so no run claims a contribution it did not make and the
+/// contract's number is never presented as a proof it does not have.
+pub const STRICT_WRITE_MAX_PAGES: u32 = 32;
 /// The bytes [`STRICT_WRITE_MAX_PAGES`] occupies: SQLite writes a 32-byte log
 /// header (`store::WAL_HEADER_BYTES`), then one 24-byte frame header before each
 /// page (`store::WAL_FRAME_HEADER_BYTES`, `WAL_FRAME_HDRSIZE` in `wal.c`;
@@ -100,10 +97,6 @@ pub const STRICT_WRITE_MAX_PAGES: u32 = 21;
 pub const STRICT_WAL_MAX_BYTES: u64 = crate::store::WAL_HEADER_BYTES
     + STRICT_WRITE_MAX_PAGES as u64
         * (crate::store::PAGE_SIZE + crate::store::WAL_FRAME_HEADER_BYTES);
-/// The premise-free ceiling for one transaction's log: one frame per page the
-/// store holds, at the store's own page cap.
-pub const STRICT_WAL_CEILING_BYTES: u64 = crate::store::WAL_HEADER_BYTES
-    + crate::store::MAX_PAGES * (crate::store::PAGE_SIZE + crate::store::WAL_FRAME_HEADER_BYTES);
 /// The pages one INSERT of a bounded row dirties in the common case
 /// (effigy#977): one leaf in each of the three trees, page 1 and the freelist.
 /// The tests measure this budget rather than deriving a worst case; the row
@@ -128,15 +121,9 @@ pub const WRITE_MAX_BYTES: u64 = WRITE_MAX_PAGES as u64 * crate::store::PAGE_SIZ
 /// A row this module writes fits in one page, so it never takes an overflow
 /// chain. Enforced by the build, not only by a test.
 const _: () = assert!(ROW_MAX_BYTES <= crate::store::PAGE_SIZE as usize);
-/// The budgets are ordered: the strict write's page budget covers the insert it
-/// issues and sits under the premise-free ceiling. Enforced by the build.
+/// The strict write's page budget covers the insert it issues. Enforced by the
+/// build.
 const _: () = assert!(STRICT_WRITE_MAX_PAGES >= INSERT_MAX_PAGES);
-const _: () = assert!(
-    (STRICT_WRITE_MAX_PAGES as u64)
-        * (crate::store::PAGE_SIZE + crate::store::WAL_FRAME_HEADER_BYTES)
-        < crate::store::MAX_PAGES
-            * (crate::store::PAGE_SIZE + crate::store::WAL_FRAME_HEADER_BYTES)
-);
 
 /// One v2 hook-admitted foreground run's settled result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -175,6 +162,18 @@ pub fn record(
     root: &StateRoot,
     record: &TerminalRecord,
 ) -> Result<(), StoreError> {
+    record_within_budget(cx, root, record, STRICT_WRITE_MAX_PAGES)
+}
+
+/// One terminal write against an explicit frame budget, so the refusal below
+/// can be proved with a budget small enough to trip. Production always passes
+/// [`STRICT_WRITE_MAX_PAGES`].
+pub(crate) fn record_within_budget(
+    cx: &EffectContext,
+    root: &StateRoot,
+    record: &TerminalRecord,
+    budget: u32,
+) -> Result<(), StoreError> {
     let record = record.checked()?;
     let mut store = Store::open(cx, root)?;
     let strict = store.strict();
@@ -191,12 +190,11 @@ pub fn record(
             / page
                 .saturating_add(crate::store::WAL_FRAME_HEADER_BYTES)
                 .max(1);
-        if frames > u64::from(STRICT_WRITE_MAX_PAGES) {
+        if frames > u64::from(budget) {
             return Err(StoreError::Refused(format!(
                 "strict persistence appended {frames} write-ahead-log frames to this run's \
-                 {STRICT_WRITE_MAX_PAGES}-frame budget ({} bytes); the row is recorded, and this \
-                 run must not be counted as staying inside that budget",
-                STRICT_WAL_MAX_BYTES
+                 {budget}-frame budget; the row is recorded, and this run must not be counted as \
+                 staying inside that budget"
             )));
         }
     }

@@ -2580,3 +2580,57 @@ fn run_terminal_strict_write_appends_at_most_its_stated_frames_and_defers_the_pr
     );
     reader.execute_batch("COMMIT").unwrap();
 }
+
+/// The strict write refuses to report success when its own transaction exceeds
+/// the frame budget, and says how many frames it appended (effigy#981). The
+/// budget is passed explicitly here so a small one can trip on a real write.
+#[test]
+fn run_terminal_strict_budget_refusal_names_the_observed_frames() {
+    use std::ffi::OsStr;
+    std::env::set_var(crate::store::STRICT_PERSISTENCE_ENV, OsStr::new("1"));
+    let fixture = effigy_test_support::Fixture::new("effigy-terminal-budget-").unwrap();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    // The route's precondition: a store that is already prepared.
+    drop(Store::open_preparing(&cx, &root).unwrap());
+    let record = TerminalRecord {
+        run_id: id(42).to_string(),
+        checkout: checkout().text(),
+        boot: "20a888e4-10fc-4798-a139-fe8e08758c34".into(),
+        task: "dev".into(),
+        outcome: "succeeded".into(),
+        exit_code: Some(0),
+        signal: None,
+        cleanup: "complete".into(),
+        workload_groups: 0,
+        closed_at_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_millis() as i64)
+            .unwrap_or_default(),
+    };
+    // No transaction can append zero frames, so a zero budget always trips.
+    let error = super::terminal::record_within_budget(&cx, &root, &record, 0)
+        .expect_err("a strict write over its budget must not report success");
+    let sentence = error.to_string();
+    assert!(
+        sentence.contains("0-frame budget") && sentence.contains("frames to this run's"),
+        "the refusal names the budget and the observed frames: {sentence}"
+    );
+    // The row is recorded — the refusal is about the claim, not the evidence —
+    // and the same write inside the real budget reports success.
+    assert_eq!(
+        read_count(
+            &root,
+            &format!(
+                "SELECT count(*) FROM foreground_terminals WHERE run_id='{}'",
+                id(42)
+            )
+        ),
+        1,
+        "the refused claim lost the row it wrote"
+    );
+    let mut second = record.clone();
+    second.run_id = id(43).to_string();
+    super::terminal::record(&cx, &root, &second).expect("inside the real budget");
+    std::env::remove_var(crate::store::STRICT_PERSISTENCE_ENV);
+}
