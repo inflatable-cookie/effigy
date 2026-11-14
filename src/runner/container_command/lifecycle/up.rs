@@ -306,7 +306,16 @@ fn run_container_up_inner(
         let health = wait_for_container_ready(
             &plan.policy,
             Some(&plan.stop_flag),
-            observation.get(),
+            observation
+                .get()
+                .map(readiness::ObservationBudget::Until)
+                .unwrap_or_else(|| {
+                    if unbounded_test_observation_budget() {
+                        readiness::ObservationBudget::Unbounded
+                    } else {
+                        readiness::ObservationBudget::HealthTimeout
+                    }
+                }),
             Some(&mut observe_phase),
         )?;
         host_waits.environment_ready(std::time::Instant::now());
@@ -322,9 +331,7 @@ fn run_container_up_inner(
                 complete_container_up_runtime_integrations(
                     repo_root,
                     &plan,
-                    observation
-                        .get()
-                        .unwrap_or_else(|| readiness::observation_deadline(&plan.policy)),
+                    observation.get(),
                     progress,
                     &publisher,
                 )
@@ -429,8 +436,12 @@ fn run_container_up_compose(
             // inventory read, then the update — so a stalled read never shows
             // the finished Compose call or claims an update was sent
             // (effigy#460, Q-017).
-            let deadline = readiness::observation_deadline(&plan.policy);
-            observation.set(Some(deadline));
+            let deadline = if unbounded_test_observation_budget() {
+                None
+            } else {
+                Some(readiness::observation_deadline(&plan.policy))
+            };
+            observation.set(deadline);
             let subject = format!("the `{}` stack", plan.policy.name);
             let mut restart_stage = |stage: steps::RestartPolicyStage| {
                 steps::restart_policy_stage(&progress, &subject, stage, None);
@@ -440,7 +451,7 @@ fn run_container_up_compose(
                 &plan.policy,
                 &plan.policy.project_name,
                 &plan.policy.compose_files,
-                Some(deadline),
+                deadline,
                 &mut restart_stage,
             );
             if let Some(live) = live.as_ref() {
@@ -512,7 +523,7 @@ fn render_container_up_interrupted(
 pub(super) fn complete_container_up_runtime_integrations(
     repo_root: &Path,
     plan: &ContainerUpPlan,
-    deadline: std::time::Instant,
+    deadline: Option<std::time::Instant>,
     progress: &ProgressSource,
     publisher: &crate::runner::managed_wait::WaitPublisher,
 ) -> Result<ContainerUpRuntimeIntegrations, RunnerError> {
@@ -540,4 +551,11 @@ pub(super) fn complete_container_up_runtime_integrations(
     }
     state.report.warnings = plan.warnings.clone();
     Ok(state.report)
+}
+
+/// Success-cohort fixtures do not assert elapsed time. Let their fake runtime
+/// complete under scheduler load while each individual runtime read keeps its
+/// own bounded command budget. Bounded-refusal proofs use their own budgets.
+fn unbounded_test_observation_budget() -> bool {
+    std::env::var_os("EFFIGY_TEST_CONTAINER_UP_UNBOUNDED_OBSERVATIONS").is_some()
 }

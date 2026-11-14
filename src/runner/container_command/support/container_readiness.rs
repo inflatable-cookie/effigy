@@ -26,14 +26,14 @@ use crate::runner::container_command::RunnerError;
 pub(in crate::runner::container_command) fn wait_for_container_ready(
     policy: &EffectiveContainerPolicy,
     stop_requested: Option<&std::sync::atomic::AtomicBool>,
-    deadline: Option<std::time::Instant>,
+    budget: crate::runner::container_command::readiness::ObservationBudget,
     waits: crate::runner::container_command::readiness::PhaseObserver<'_>,
 ) -> Result<Option<&'static str>, RunnerError> {
     let readiness = crate::runner::container_command::readiness::await_services_ready(
         &policy.repo_root,
         policy,
         stop_requested,
-        deadline,
+        budget,
         waits,
     )?;
     match readiness.end {
@@ -56,7 +56,15 @@ pub(in crate::runner::container_command) fn wait_for_container_ready(
         .iter()
         .find(|service| service.service == policy.primary_service)
         .map(|service| service.container.clone())
-        .or_else(|| primary_service_container_observed(policy, deadline));
+        .or_else(|| {
+            let deadline = match budget {
+                crate::runner::container_command::readiness::ObservationBudget::Until(deadline) => {
+                    Some(deadline)
+                }
+                _ => None,
+            };
+            primary_service_container_observed(policy, deadline)
+        });
     let subject = match &container {
         Some(container) => format!("container `{container}`"),
         None => format!(
