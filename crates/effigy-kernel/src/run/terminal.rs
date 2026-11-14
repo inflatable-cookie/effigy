@@ -128,6 +128,15 @@ pub const WRITE_MAX_BYTES: u64 = WRITE_MAX_PAGES as u64 * crate::store::PAGE_SIZ
 /// A row this module writes fits in one page, so it never takes an overflow
 /// chain. Enforced by the build, not only by a test.
 const _: () = assert!(ROW_MAX_BYTES <= crate::store::PAGE_SIZE as usize);
+/// The budgets are ordered: the strict write's page budget covers the insert it
+/// issues and sits under the premise-free ceiling. Enforced by the build.
+const _: () = assert!(STRICT_WRITE_MAX_PAGES >= INSERT_MAX_PAGES);
+const _: () = assert!(
+    (STRICT_WRITE_MAX_PAGES as u64)
+        * (crate::store::PAGE_SIZE + crate::store::WAL_FRAME_HEADER_BYTES)
+        < crate::store::MAX_PAGES
+            * (crate::store::PAGE_SIZE + crate::store::WAL_FRAME_HEADER_BYTES)
+);
 
 /// One v2 hook-admitted foreground run's settled result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

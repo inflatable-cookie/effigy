@@ -2019,10 +2019,6 @@ fn store_strict_wal_and_index_stay_within_their_stated_maximum() {
         WAL_HEADER_BYTES + MAX_PAGES * (PAGE_SIZE + WAL_FRAME_HEADER_BYTES),
         "the premise-free ceiling is one frame per page the store can hold"
     );
-    assert!(
-        effigy_kernel::run::TERMINAL_STRICT_WAL_MAX_BYTES
-            < effigy_kernel::run::TERMINAL_STRICT_WAL_CEILING_BYTES
-    );
     let home = home();
     let cx = effects(EffectClass::Mutate);
     let root = root(home.path());
