@@ -242,7 +242,7 @@ fn lookup_at(
         Observed::Absent(_) => {
             return match foreground {
                 Some(row) => Lookup::Found(Box::new(row)),
-                None => strict_terminal(root, id).unwrap_or_else(|reason| Lookup::Unknown(reason)),
+                None => strict_terminal(root, id).unwrap_or_else(Lookup::Unknown),
             }
         }
         Observed::Unknown(reason) => {

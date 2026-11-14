@@ -439,7 +439,7 @@ impl Image {
 
 enum Decoded {
     Free,
-    Committed(Committed),
+    Committed(Box<Committed>),
 }
 
 struct Committed {
@@ -652,11 +652,11 @@ fn decode(root: &StateRoot, slot: &[u8]) -> Result<Decoded, StoreError> {
         workload_groups,
         closed_at_ms,
     };
-    Ok(Decoded::Committed(Committed {
+    Ok(Decoded::Committed(Box::new(Committed {
         seq,
         checksum,
         record,
-    }))
+    })))
 }
 
 fn optional_i32(slot: &[u8], flag: usize, offset: usize) -> Option<i32> {
