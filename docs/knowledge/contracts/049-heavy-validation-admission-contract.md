@@ -250,13 +250,16 @@ write the row needs; no run identity is minted for a foreground run.
 
 **The owner-death writer.** A guest-free foreground run keeps a memory guard
 that outlives a killed owner. When the owner is verifiably gone — its recorded
-boot and start identity name no live process, or another process now holds that
-PID — the guard settles the run and writes exactly one row itself: `interrupted`
-with `cleanup: "complete"` when the run's custody closed, `unknown` with
-`cleanup: "incomplete"` when a cleanup pin or a registered effect did not. It
-never writes `succeeded`, and the record still carries no identity. An owner
-this guard cannot verify is never treated as gone, so an unverifiable
-observation keeps the gates held and writes nothing. The guard carries the
+boot and start identity name no live process, another process now holds that
+PID, or the recorded process has exited and is an unreaped zombie — the guard
+settles the run and writes exactly one row itself: `interrupted` with
+`cleanup: "complete"` when the run's custody closed, `unknown` with
+`cleanup: "incomplete"` when a cleanup pin or a registered effect did not. The
+row is written after the guard releases its gates, so a reader never sees a
+held foreground gate and a terminal record for one run (052 §3.1). It never
+writes `succeeded`, and the record still carries no identity. An owner this
+guard cannot verify is never treated as gone, so an unverifiable observation
+keeps the gates held and writes nothing. The guard carries the
 persistence class of the run it observed, so a strict run's owner-death record
 is one ring slot and opens no SQLite connection, exactly like the run's own
 settle would have. Runs that settle while their owner is alive keep Q-010

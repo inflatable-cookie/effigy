@@ -269,18 +269,27 @@ descendant guard holds a pin through its own settlement, and ancestor guards
 keep their gates until all pins close and EOF is observed. Pin bytes carry no
 protocol or heartbeat and confer no gate, journal-write or signalling
 authority; a pipe cannot be shut down to forge EOF while another guard still
-holds a pin. Unknown closure keeps the ancestor gated. The guard checks
-descriptor type and access before adopting it, and group anchors receive no
-pin. A durable run with no memory guard keeps its checkout custody backup in
+holds a pin. Unknown closure keeps the ancestor gated until every pin closes;
+the only other end to that wait is a verified owner loss (below). The guard
+checks descriptor type and access before adopting it, and group anchors receive
+no pin. A durable run with no memory guard keeps its checkout custody backup in
 the same way.
 
 A guard also observes the owner it recorded, by boot and start identity rather
-than by PID (effigy#986). When that owner is verifiably gone — no process holds
-the pid, or another process has taken it — nobody is left to settle or report
-the run, so the wait ends and the guard takes the settlement over rather than
-holding the lock forever. It settles its registered effects, records the run's
-honest outcome (below), and only then closes its gate descriptions. An
-observation it cannot verify is never proof of death, so custody stays held.
+than by PID (effigy#986). That owner is verifiably gone when no process holds
+the pid, when another process has taken it, or when the recorded process has
+exited and its parent has not yet reaped it — a zombie can never settle or
+report the run again. Nobody is left to settle or report such a run, so the
+wait ends and the guard takes the settlement over rather than holding the lock
+forever. It settles its registered effects and then releases its gate
+descriptions, and only after that release does it record the run's honest
+outcome (below). The order is deliberate: a reader that found both a held
+foreground gate and a terminal record for one run would report conflicting
+evidence instead of the run, so the record follows the release, and a reader
+that needs the settled result (`effigy run stop <run>`) observes the release
+first and then waits for the record within its own bounded wait. An observation
+the guard cannot verify is never proof of death, so custody stays held and
+nothing is recorded.
 
 Bound checkout admission takes the checkout's one gate spelling: the digest of
 its canonical path. A run's persisted-token scope and that spelling are the same

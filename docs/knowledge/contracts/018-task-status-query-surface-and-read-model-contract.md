@@ -48,7 +48,7 @@ owner response, detailed workload phase and outcome remain unavailable.
 | Evidence | `state` and projection |
 | --- | --- |
 | Verified live foreground custodian, even with no token or database | `running`; `current` is a live diagnostic with provenance, verified pid and run id; phase, start time, profile and child steps are unavailable unless independently verified |
-| Held foreground gate whose recorded owner is verifiably gone (no process holds its boot/start identity) | `interrupted`; `current` is the live diagnostic without a pid, the warning names the surviving sentinel that still holds the gate while it settles, and `next` is `effigy run stop <run>` (052 §3.1, effigy#986) |
+| Held foreground gate whose recorded owner is verifiably gone (no process holds its boot/start identity, another process has taken it, or the recorded process is an unreaped zombie) | `interrupted`; `current` is the live diagnostic without a pid, the warning names the surviving sentinel that still holds the gate while it settles, and `next` is `effigy run stop <run>` (052 §3.1, effigy#986) |
 | Open durable run with matching held gate | `running` or `stopping`, from the admitted checkout run and fresh custody evidence |
 | Non-closed durable run, gate free | `interrupted`; `current` is the unresolved durable run, with `next` naming its settle command (`effigy <task>`) |
 | Closed durable run with unacknowledged incomplete cleanup | `failed-cleanup`; expose the recorded residue and recovery command, never a successful current outcome |
