@@ -261,7 +261,7 @@ agree, 2 when they differ. It is fixed before any file is written.
 | `gates/<scope>/` directory | `s` | `s` | 0700, one entry per held gate |
 | `kernel.db` `foreground_terminals` row | none | 1 | 960 stored bytes |
 | `kernel.db` pages, when the store is created | none | fixed schema only | `store::SCHEMA_MAX_PAGES` = 64 pages, once per store lifetime |
-| `kernel.db-wal` | none | at most 1 | 377 frames = 1.47 MiB appended by this write |
+| `kernel.db-wal` | none | at most 1 | 96 frames = 384 KiB appended by this write |
 | `kernel.db-shm` | none | at most 1 | SQLite's wal-index, sized by the log the shared store reaches |
 | `kernel.db-journal` | none | none in the steady state | a single transaction's rollback journal, removed at commit |
 | run journal, capture log, run history, per-run scratch | none | none | no file |
@@ -313,38 +313,22 @@ contract does not claim a peak for them.
 What this invocation contributes is the frames of its own single transaction. A
 terminal write issues one bounded-row INSERT and one indexed DELETE limited to
 `run::TERMINAL_PRUNE_MAX` = 32 expired rows
-(`run/terminal.rs::write_row`). The page counts are derived, not measured:
-
-- The store cannot exceed 1 GiB = 262144 pages of 4096 bytes: `PRAGMA
-  max_page_count` is set from `store::MAX_DB_BYTES` on every open, and SQLite
-  refuses growth past it with `SQLITE_FULL`.
-- One row insert maintains **three** b-trees: the table itself, the `run_id`
-  `TEXT PRIMARY KEY` unique index, and the `closed_at` index
-  (`run::TERMINAL_INSERT_TREES` = 3).
-- The widest interior cell is a `run_id` key of `run::TERMINAL_RUN_ID_MAX` = 64
-  bytes plus a 4-byte child pointer and cell overhead, so an interior page holds
-  at least 4096/80 = 51 children. Reaching 262144 pages through that fan-out
-  takes ceil(log51(262144)) = 4 interior levels, so the deepest tree is one leaf
-  plus four interior levels (`run::TERMINAL_TREE_LEVELS_MAX` = 5), and one level
-  of a split dirties at most two pages.
-- Outside the trees, the same insert dirties page 1 (change counter and
-  in-header database size), the freelist trunk and header when it takes a page
-  from the freelist, and — because the store is in incremental auto-vacuum — the
-  pointer-map pages for every page it allocates: at most one entry page for the
-  page itself and one for its parent tree page, and at most one allocation per
-  level above a leaf per tree (`run::TERMINAL_INSERT_SIDECAR_MAX_PAGES` = 27).
-
-That is `run::TERMINAL_INSERT_MAX_PAGES` = 3 × 5 × 2 + 27 = **57** pages for the
-insert and `run::TERMINAL_PRUNE_MAX_PAGES` = 32 × 3 leaves + 3 × 5 × 2 balance +
-2 freelist + 2 × 32 × 3 pointer-map = **320** pages for the widest prune — 377
-frames (`run::TERMINAL_WRITE_MAX_PAGES`) or 1.47 MiB at the 4096-byte page size.
-Three of those terms are enforced by this code: the row cap above (which is why a
-row never chains to overflow pages), the delete's `LIMIT`, and the store's page
-cap. `test:kernel:run`
+(`run/terminal.rs::write_row`). The page counts are **budgets the tests
+measure**, not modelled worst cases: `run::TERMINAL_INSERT_MAX_PAGES` = 16 for
+the insert and `run::TERMINAL_PRUNE_MAX_PAGES` = 80 for the widest prune — 96
+frames (`run::TERMINAL_WRITE_MAX_PAGES`) or 384 KiB at the 4096-byte page size.
+Two of their inputs are enforced by this code: the insert is refused unless the
+row fits `run::TERMINAL_ROW_MAX_BYTES` and one page (so it never chains to
+overflow pages), and the delete is one statement with `LIMIT`. `test:kernel:run`
 (`run_terminal_write_appends_at_most_its_stated_frames`) measures the frames the
 real `write_row` statements append while a reader pins the log, which is the
 case where no checkpoint can hide them; `store_fresh_schema_is_bounded` holds a
-created store to `store::SCHEMA_MAX_PAGES`.
+created store to `store::SCHEMA_MAX_PAGES`. A modelled worst case for one
+SQLite statement is *not* claimed here: `balance_nonroot` balances up to three
+sibling pages into up to five new ones and rewrites their parent, and it writes
+a pointer-map entry for every cell it moves, so a closed form would be far above
+what this write does. The strict section below states the ceiling and the
+verified budget that replace such a claim for the route that needs one.
 
 A closing store still attempts `PRAGMA wal_checkpoint(TRUNCATE)` inside a 250 ms
 window: when no reader blocks it, the log is carried into the store and
@@ -396,21 +380,23 @@ Nothing in the route migrates, converts, prunes or checkpoints — and nothing a
 durable-path maintenance call reaches can do them either, because strict mode
 also closes those paths:
 
-| Enforcing check | What it makes impossible |
+| Enforcing check (file:line) | What it makes impossible |
 | --- | --- |
-| `store.rs::open_mode` opens without `O_CREAT` under strict mode; a missing file is `NotPrepared` | creating `kernel.db` |
-| `store.rs::refuse_recovery` | opening a store whose rollback journal would be rolled back, whose log is torn, or whose log holds frames with no wal-index to read them |
-| `store.rs::configure` (strict branch) calls `require_wal` instead of `set_journal_mode` | converting the journal mode, which writes the database header |
-| `store.rs::configure` skips `PRAGMA auto_vacuum=INCREMENTAL` in strict mode | writing an auto-vacuum choice |
-| `store.rs::verify_schema` (`schema_gaps`) | every additive `ALTER TABLE`, table creation, index creation and backfill `Store::schema` would run |
-| `store.rs::configure` sets `PRAGMA wal_autocheckpoint=0` and reads it back (`check_sidecar_bounds`) | SQLite's own checkpoint at COMMIT |
-| `store.rs::configure` sets and confirms `SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE` | SQLite's checkpoint when the last connection closes |
-| `store.rs::Drop for Store` returns early in strict mode | Effigy's own `PRAGMA wal_checkpoint(TRUNCATE)` |
-| `store.rs::Store::maintain` refuses a strict handle | the durable path's bounded checkpoint, one-time `VACUUM` and incremental vacuum |
-| `retention.rs::sweep` returns before opening a store, and `retention.rs::retain` returns `skipped` for a strict handle | the retention pass's deletes (terminal rows, runs, objects, gates) and its maintenance |
-| `run/settle.rs::compact_machine_closed` returns early for a strict handle | the machine store's compaction deletes |
-| `store.rs::Store::repair` refuses under the switch | moving `kernel.db` and its side files aside |
-| `run/terminal.rs::write_row` returns after the insert when `Txn::strict` | the bounded prune's delete statement and its frames |
+| `store::open_mode` opens without `O_CREAT` under strict mode (`crates/effigy-kernel/src/store.rs:492`) | creating `kernel.db` |
+| `store::refuse_recovery` (`store.rs:1807`) | opening a store whose rollback journal would be rolled back, whose log is torn, or whose log holds frames with no wal-index |
+| `store::configure` strict branch calls `require_wal` (`store.rs:757`) instead of `set_journal_mode` | converting the journal mode, which writes the database header |
+| `store::configure` skips `PRAGMA auto_vacuum=INCREMENTAL` in strict mode (`store.rs:586`) | writing an auto-vacuum choice |
+| `store::verify_schema` with `schema_gaps` (`store.rs:776`, `:1759`) | every additive `ALTER TABLE`, table creation, index creation and backfill `Store::schema` would run |
+| `store::configure` sets `PRAGMA wal_autocheckpoint=0` (`store.rs:596`) and reads it back (`check_sidecar_bounds`, `:655`) | SQLite's own checkpoint at COMMIT |
+| `store::configure` sets and confirms `SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE` (`store.rs:608-626`) | SQLite's checkpoint when the last connection closes |
+| `store::Drop for Store` returns early in strict mode (`store.rs:1222`) | Effigy's own `PRAGMA wal_checkpoint(TRUNCATE)` |
+| `store::Store::maintain` refuses a strict handle (`store.rs:973-988`) | the durable path's checkpoint, `VACUUM` and incremental vacuum |
+| `retention::sweep` returns before opening a store (`crates/effigy-kernel/src/retention.rs:105-118`); `retention::retain` returns `skipped` (`:156-172`) | the retention pass's deletes and its maintenance |
+| `run::settle::compact_machine_closed` returns early (`crates/effigy-kernel/src/run/settle.rs:67-80`) | the machine store's compaction deletes |
+| `store::Store::repair` refuses under the switch (`store.rs:1075-1087`) | moving `kernel.db` and its side files aside |
+| `run::terminal::write_row` returns after the insert (`crates/effigy-kernel/src/run/terminal.rs:229`) | the bounded prune's delete and its frames |
+| `run::terminal::record` measures its own appended frames and reports a run that exceeded the budget (`terminal.rs:164-195`) | a run passing as if it had stayed inside the budget when its transaction appended more |
+| `store::Store::wal_frames` reads the log's length on a strict handle instead of attempting a passive checkpoint (`store.rs:684-698`) | an observation checkpointing a strict store |
 
 The one bookkeeping write strict mode skips rather than refuses is `meta`'s
 `last_written_by`: a later non-strict open updates it, and its absence does not
@@ -423,44 +409,56 @@ This invocation's complete physical contribution in strict mode:
 | `gates/<scope>.scope` | `s` files, 0 bytes each | as above |
 | `gates/<scope>/<gate>.gate` | `s + 1` files, 4096 bytes each | as above |
 | `kernel.db` | **0 bytes**: no checkpoint, no migration, no prune | the strict checks above |
-| `kernel.db-wal` | `32 + 57 × (page size + 24)` = 234,872 bytes at 4096-byte pages | `run::TERMINAL_STRICT_WAL_MAX_BYTES` from `run::TERMINAL_STRICT_WRITE_MAX_PAGES` = `INSERT_MAX_PAGES` |
-| `kernel.db-shm` | one 32 KiB wal-index page | `store::WAL_INDEX_PAGE_BYTES` |
+| `kernel.db-wal` | **budget 21 frames = 86,552 bytes**; premise-free ceiling 262,144 frames = 1,080,033,312 bytes | `run::TERMINAL_STRICT_WAL_MAX_BYTES` / `run::TERMINAL_STRICT_WAL_CEILING_BYTES` (`terminal.rs:95-107`) |
+| `kernel.db-shm` | one 32 KiB wal-index page | `store::WAL_INDEX_PAGE_BYTES` (`store.rs:87`) |
 | `kernel.db-journal` | none: a store that has one is refused | `store::refuse_recovery` |
 | `foreground_terminals` row | 1, at most 960 stored bytes | `run::TerminalRecord::checked` |
 | run journal, capture log, run history, per-run scratch | none | as above |
 
-WAL arithmetic. SQLite writes a 32-byte log header
-(`store::WAL_HEADER_BYTES`; <https://sqlite.org/fileformat2.html#walformat>) and
-precedes every page with a 24-byte frame header
-(`store::WAL_FRAME_HEADER_BYTES`, `WAL_FRAME_HDRSIZE` in SQLite's `wal.c`), so one
-strict terminal write appends at most `32 + 57 × (4096 + 24)` = 234,872 bytes.
+WAL: a budget plus a ceiling, both stated. SQLite writes a 32-byte log header
+(`store::WAL_HEADER_BYTES`, `store.rs:81`) and one 24-byte frame header before
+each page (`store::WAL_FRAME_HEADER_BYTES`, `:83`, `WAL_FRAME_HDRSIZE` in
+`wal.c`; <https://sqlite.org/fileformat2.html#walformat>).
 
-The 57 pages are the insert's whole page work, derived above and repeated here
-because the strict route has no second statement: three b-trees (the table, the
-`run_id` unique index and the `closed_at` index) at up to five levels with two
-pages per split level — 30 — plus page 1, the freelist trunk and header, and two
-pointer-map pages per page the insert allocates (at most 4 above a leaf per
-tree):
-`run::TERMINAL_INSERT_MAX_PAGES` = 3 × 5 × 2 + (1 + 2 + 2 × 3 × 4) = 57
-(`run::TERMINAL_INSERT_TREES`, `run::TERMINAL_TREE_LEVELS_MAX`). It is enforced
-where the code can enforce it: the insert is refused unless the row fits
-`run::TERMINAL_ROW_MAX_BYTES` and one page, the statement is a single bounded
-INSERT, and the store's page cap bounds the tree depth. `effigy run prepare` also
-settles the page size: a store that writes pages at another size is refused, so
-the number above is not a bound for a page size this build never creates.
+- **Ceiling, with no premise.** A transaction writes each modified page to the
+  log at most once, and `store::MAX_PAGES` (`store.rs:36`, from
+  `store::MAX_DB_BYTES` and the page size) caps how many pages a store holds, so
+  one transaction appends at most 262,144 frames — `32 + 262144 × (4096 + 24)` =
+  1,080,033,312 bytes. This is complete and independent of the store's contents.
+- **Budget, verified per run.** `run::TERMINAL_STRICT_WRITE_MAX_PAGES`
+  (`terminal.rs:95`) is 21 frames: one leaf in each of the three trees the insert
+  maintains (the table, the `run_id` unique index, the `closed_at` index) plus up
+  to one split level in each (the page, its new sibling, its parent and the
+  pointer-map entry pages for the pages whose parent changed — 6 per tree) plus
+  page 1 and the freelist trunk and header. `run::terminal::record`
+  (`terminal.rs:164-195`) measures the frames its own transaction appended and
+  returns a typed refusal naming the observed count if a run exceeds the budget,
+  so no run reports success while its contribution is outside the number this
+  contract states. The measured contribution in every tested state is **3
+  frames** (12,392 bytes), asserted by
+  `run_terminal_strict_write_appends_at_most_its_stated_frames_and_defers_the_prune`.
+- **Why not a modelled worst case.** `balance_nonroot` (`sqlite3.c`, cited by
+  symbol: `apOld[NB]` and `apNew[NB+2]` with `NB` = 3) balances up to three
+  sibling pages into up to five new ones, rewrites their parent, and writes a
+  pointer-map entry for every cell it moves into a new page; those entries can
+  land in many distinct pointer-map pages. A closed-form maximum therefore runs
+  into the hundreds of pages and is dominated by pointer-map bookkeeping that a
+  terminal write does not in practice cause. This contract states the ceiling
+  and the measured, verified budget instead of asserting such a derivation.
 
-SHM arithmetic. `kernel.db-shm` holds SQLite's wal-index, allocated in
-`WALINDEX_PGSZ` = 32 KiB pages (`store::WAL_INDEX_PAGE_BYTES`; SQLite's `wal.c`
-asserts that size, and each page indexes `HASHTABLE_NPAGE_ONE` =
-`store::WAL_INDEX_FIRST_PAGE_FRAMES` = 4062 frames on the first page and
-`store::WAL_INDEX_PAGE_FRAMES` = 4096 on each later one). This route appends at
-most 57 frames, far inside one page's 4062, and never checkpoints, so it can cross
-at most one page boundary: **one 32 KiB block**, which is also the whole file when
-this invocation creates it beside an empty log. Strict mode refuses the one state
-that would have made the size depend on other writers' frames — a non-empty log
-with no wal-index beside it (`store::refuse_recovery`) — so the only pre-existing
-size this rests on is a wal-index that already exists and is already sized for the
-frames other writers left; this invocation's growth on top of it is one block.
+SHM. `kernel.db-shm` holds SQLite's wal-index, allocated in `WALINDEX_PGSZ` = 32
+KiB pages (`store::WAL_INDEX_PAGE_BYTES`, `store.rs:87`; `wal.c` asserts that
+size, and each page indexes 4062 frames on the first page and 4096 on each later
+one). This route appends at most 21 frames and never checkpoints, so it can
+cross at most one page boundary: **one 32 KiB block**, which is also the whole
+file when this invocation creates it beside an empty log. Strict mode refuses
+the one state that would make the size depend on other writers' frames — a
+non-empty log with no wal-index beside it (`store::refuse_recovery`) — so the
+only pre-existing size this rests on is a wal-index that already exists and is
+already sized for the frames other writers left; this invocation's growth on top
+of it is one block. `store::Store::wal_frames` observes the log's length on a
+strict handle rather than attempting a passive checkpoint
+(`store.rs:684-698`), so even the observation writes nothing.
 
 Measured, not only derived. `test:kernel:store`
 (`store_strict_open_refuses_a_store_it_would_have_to_create`,
@@ -470,6 +468,7 @@ Measured, not only derived. `test:kernel:store`
 `store_strict_refuses_a_log_that_needs_recovery`,
 `store_strict_refuses_a_torn_log`,
 `store_strict_maintenance_and_retention_write_nothing`,
+`store_strict_wal_frames_observes_without_a_checkpoint`,
 `store_strict_persistence_switch_is_opt_in_and_exact`,
 `store_nonstrict_open_keeps_creating_migrating_pruning_and_resetting`) and
 `test:kernel:run`
@@ -477,9 +476,10 @@ Measured, not only derived. `test:kernel:store`
 measure each bound across a fresh store (refused), an at-schema store, a
 needs-migration store (refused), a committed write, a write that fails after its
 statements ran, and a write abandoned before any statement ran — with a reader
-pinning the log and through the last-connection close. The main database is
-compared byte for byte, and a refusal is compared byte for byte over
-`kernel.db` and its log. `test:task-engine:admission`
+pinning the log and through the last-connection close, and against a store with
+600 rows so the insert walks real pages. The main database is compared byte for
+byte, and a refusal is compared byte for byte over `kernel.db` and its log.
+`test:task-engine:admission`
 (`strict_persistence_refuses_before_admission_and_prepare_readies_the_route`)
 exercises the whole route through the real binary: a refused strict run runs no
 hook and no workload and writes no journal byte, `effigy run prepare --check`

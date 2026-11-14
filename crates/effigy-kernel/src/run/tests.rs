@@ -2547,10 +2547,9 @@ fn run_terminal_strict_write_appends_at_most_its_stated_frames_and_defers_the_pr
         "one strict terminal write appended {appended} bytes of log, over the \
          {TERMINAL_STRICT_WAL_MAX_BYTES}-byte maximum"
     );
-    assert_eq!(
-        TERMINAL_STRICT_WRITE_MAX_PAGES,
-        terminal::INSERT_MAX_PAGES,
-        "a strict write issues the row insert alone"
+    assert!(
+        TERMINAL_STRICT_WRITE_MAX_PAGES >= terminal::INSERT_MAX_PAGES,
+        "the strict budget covers the insert and the splits it may need"
     );
     // The frames are the insert's, so they fit the insert's page bound.
     let frames = appended.saturating_sub(crate::store::WAL_HEADER_BYTES)

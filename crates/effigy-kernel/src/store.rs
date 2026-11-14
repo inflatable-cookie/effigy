@@ -31,6 +31,9 @@ pub const SCHEMA_VERSION: i64 = 1;
 pub const DB_NAME: &str = "kernel.db";
 /// Size bound for `kernel.db`; retention keeps it far below this.
 pub const MAX_DB_BYTES: u64 = 1 << 30;
+/// The pages a store can hold, from [`MAX_DB_BYTES`] and the page size this
+/// build writes: the premise-free cap on the pages one transaction can modify.
+pub const MAX_PAGES: u64 = MAX_DB_BYTES / PAGE_SIZE;
 /// The page size this kernel writes: SQLite's own default, and the unit every
 /// sidecar bound below is stated in. A store created by another build keeps
 /// its own page size, so a bound derived from this constant is a maximum for
@@ -665,20 +668,42 @@ impl Store {
         }
         Ok(())
     }
-    /// The number of frames in this store's write-ahead log, from a passive
-    /// checkpoint attempt (effigy#977). Passive never waits for another
-    /// connection and never blocks a reader, so this is a plain observation of
-    /// the log a writer shares. The count only grows by frames a writer appends
-    /// and only falls when a checkpoint resets the log, which a pinned reader
-    /// prevents; `run_terminal_write_appends_at_most_its_stated_frames` measures
-    /// one route write this way.
+    /// The number of frames in this store's write-ahead log (effigy#977).
+    ///
+    /// A passive checkpoint attempt reports the count on a non-strict handle:
+    /// passive never waits for another connection and never blocks a reader, so
+    /// it is a plain observation of the log a writer shares. It does write back
+    /// the pages a checkpoint can carry, so a **strict** handle never asks for
+    /// one: it reads the log's own length instead, which is exact there because
+    /// strict persistence never checkpoints (effigy#981).
+    ///
+    /// The count only grows by frames a writer appends and only falls when a
+    /// checkpoint resets the log, which a pinned reader prevents;
+    /// `run_terminal_write_appends_at_most_its_stated_frames` measures one route
+    /// write this way.
     pub fn wal_frames(&self) -> Result<u32, StoreError> {
+        if self.strict {
+            let bytes = self.wal_bytes()?;
+            let page = self.sidecar_bounds()?.page_size;
+            let frame = page.saturating_add(WAL_FRAME_HEADER_BYTES).max(1);
+            let frames = bytes.saturating_sub(WAL_HEADER_BYTES) / frame;
+            return Ok(frames.min(u64::from(u32::MAX)) as u32);
+        }
         let (_busy, log, _checkpointed): (i64, i64, i64) =
             self.conn
                 .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
                     Ok((row.get(0)?, row.get(1)?, row.get(2)?))
                 })?;
         Ok(log.clamp(0, i64::from(u32::MAX)) as u32)
+    }
+    /// The size of this store's write-ahead log on disk, without touching it.
+    pub fn wal_bytes(&self) -> Result<u64, StoreError> {
+        let name = FileName::new(&format!("{}-wal", self.root.database_name()))?;
+        Ok(self
+            .root
+            .dir()
+            .entry(&name)?
+            .map_or(0, |stat| stat.st_size.max(0) as u64))
     }
     /// The store's page count and size, from the open connection.
     pub fn page_count(&self) -> Result<u64, StoreError> {

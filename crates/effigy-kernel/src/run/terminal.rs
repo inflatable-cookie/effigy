@@ -63,76 +63,68 @@ pub const ROW_OVERHEAD_BYTES: usize = 64;
 /// [`TerminalRecord::checked`].
 pub const ROW_MAX_BYTES: usize =
     RUN_ID_MAX + CHECKOUT_MAX + BOOT_MAX + TASK_MAX + 2 * WORD_MAX + ROW_OVERHEAD_BYTES;
-/// The b-trees one row insert maintains: the table itself, the `run_id`
-/// primary-key index (`TEXT PRIMARY KEY` on a rowid table is its own unique
-/// index) and the `closed_at` index (effigy#981).
-pub const INSERT_TREES: u32 = 3;
-/// The levels one of those b-trees can have above its leaves.
+/// The frames one **strict** terminal write appends, as a budget the run
+/// verifies rather than a theorem (effigy#981).
 ///
-/// A store cannot exceed `store::MAX_DB_BYTES` = 1 GiB = 262144 pages of 4096
-/// bytes (`PRAGMA max_page_count`, set and read back on every open). The
-/// widest interior cell is a `run_id` key of [`RUN_ID_MAX`] = 64 bytes plus a
-/// 4-byte child pointer and cell overhead, so one interior page holds at least
-/// 4096 / 80 = 51 children. Reaching 262144 pages through a fan-out of at least
-/// 51 takes ceil(log51(262144)) = 4 interior levels, so the deepest tree a store
-/// of this size can hold is one leaf plus four interior levels.
-pub const TREE_LEVELS_MAX: u32 = 5;
-/// The pages one level of a split can dirty: the page being split and the new
-/// sibling it is split into.
-pub const SPLIT_MAX_PAGES: u32 = 2;
-/// Pages the same insert can dirty outside those b-trees.
+/// A closed-form worst case for one SQLite statement is not available from the
+/// bundled source, and the earlier attempt at one was wrong in three places, so
+/// this module no longer claims it:
 ///
-/// Page 1 carries the change counter and the in-header database size; a page
-/// taken from the freelist rewrites the freelist trunk and its header; and
-/// because the store is in incremental auto-vacuum, every page the insert
-/// allocates rewrites its own pointer-map entry and may rewrite the entry of
-/// its parent tree page — two pointer-map pages per allocation at most, and at
-/// most one allocation per level above a leaf per tree.
-pub const INSERT_SIDECAR_MAX_PAGES: u32 = 1 + 2 + 2 * INSERT_TREES * (TREE_LEVELS_MAX - 1);
-/// The pages one INSERT of a bounded row can dirty (effigy#977, re-derived
-/// with the trees and sidecars above for effigy#981).
+/// - `balance_nonroot` (`sqlite3.c`, `apOld[NB]` and `apNew[NB+2]` with
+///   `NB` = 3) balances up to three sibling pages into up to five new ones and
+///   rewrites their parent, so one level dirties up to nine pages, not two.
+/// - The same balance writes a pointer-map entry for every cell it moves into a
+///   new page (and for that page), and those entries can live in many distinct
+///   pointer-map pages, so the pointer-map term is a number of scattered pages,
+///   not one or two.
+/// - The tree depth therefore cannot be argued down to a small constant from
+///   the store's page cap alone.
 ///
-/// The row itself never chains to overflow pages: [`ROW_MAX_BYTES`] is smaller
-/// than one page, which this module asserts at compile time.
-pub const INSERT_MAX_PAGES: u32 =
-    INSERT_TREES * TREE_LEVELS_MAX * SPLIT_MAX_PAGES + INSERT_SIDECAR_MAX_PAGES;
-/// The pages the bounded prune can dirty: one leaf in each of the three trees
-/// per pruned row, the balance path of each tree, and the freelist and
-/// pointer-map pages the released pages rewrite.
-pub const PRUNE_MAX_PAGES: u32 = PRUNE_MAX * INSERT_TREES
-    + INSERT_TREES * TREE_LEVELS_MAX * SPLIT_MAX_PAGES
-    + 2
-    + 2 * PRUNE_MAX * INSERT_TREES;
+/// What this module does instead is state a **budget** ([`STRICT_WRITE_MAX_PAGES`])
+/// and make every strict run check it: `record` measures the frames its own
+/// transaction appended and refuses to report success if they exceed the
+/// budget. A store this build wrote touches one leaf in each of the three trees
+/// (the table, the `run_id` unique index and the `closed_at` index) plus, at
+/// worst, one split level in each, page 1 and the freelist: 3 x 6 + 3 = 21
+/// frames. The measured contribution in every tested state is 3 frames
+/// (`run_terminal_strict_write_appends_at_most_its_stated_frames_and_defers_the_prune`).
+/// The premise-free ceiling is the store's own page count — SQLite writes each
+/// modified page to the log at most once per transaction, and
+/// `store::MAX_DB_BYTES` caps the store at [`crate::store::MAX_PAGES`] pages —
+/// which is [`STRICT_WAL_CEILING_BYTES`].
+pub const STRICT_WRITE_MAX_PAGES: u32 = 21;
+/// The bytes [`STRICT_WRITE_MAX_PAGES`] occupies: SQLite writes a 32-byte log
+/// header (`store::WAL_HEADER_BYTES`), then one 24-byte frame header before each
+/// page (`store::WAL_FRAME_HEADER_BYTES`, `WAL_FRAME_HDRSIZE` in `wal.c`;
+/// <https://sqlite.org/fileformat2.html#walformat>).
+pub const STRICT_WAL_MAX_BYTES: u64 = crate::store::WAL_HEADER_BYTES
+    + STRICT_WRITE_MAX_PAGES as u64
+        * (crate::store::PAGE_SIZE + crate::store::WAL_FRAME_HEADER_BYTES);
+/// The premise-free ceiling for one transaction's log: one frame per page the
+/// store holds, at the store's own page cap.
+pub const STRICT_WAL_CEILING_BYTES: u64 = crate::store::WAL_HEADER_BYTES
+    + crate::store::MAX_PAGES * (crate::store::PAGE_SIZE + crate::store::WAL_FRAME_HEADER_BYTES);
+/// The pages one INSERT of a bounded row dirties in the common case
+/// (effigy#977): one leaf in each of the three trees, page 1 and the freelist.
+/// The tests measure this budget rather than deriving a worst case; the row
+/// itself never chains to overflow pages, because [`ROW_MAX_BYTES`] is smaller
+/// than one page (asserted at compile time).
+pub const INSERT_MAX_PAGES: u32 = 16;
+/// The pages the bounded prune dirties (effigy#977): one leaf per pruned row in
+/// each of the three trees, plus the balance path and the freed pages'
+/// bookkeeping. Measured by the tests, never claimed as a worst case.
+pub const PRUNE_MAX_PAGES: u32 = 2 * PRUNE_MAX + 2 * 8;
 /// The frames one terminal write appends to the write-ahead log — the frames of
 /// its own transaction, not the log file's size (effigy#977).
 ///
 /// Its two inputs are enforced: the insert is refused unless the row fits
 /// [`ROW_MAX_BYTES`] and one page ([`TerminalRecord::checked`]), and the prune
-/// is one SQL statement with `LIMIT PRUNE_MAX`. The page counts follow from the
-/// store's enforced page cap and the three trees the statements maintain.
-/// `run_terminal_write_appends_at_most_its_stated_frames` measures this
-/// constant against the statements this module issues.
+/// is one SQL statement with `LIMIT PRUNE_MAX`. The page counts are the budget
+/// the tests measure against the statements this module issues; they are not a
+/// modelled worst case (see [`STRICT_WRITE_MAX_PAGES`] for why).
 pub const WRITE_MAX_PAGES: u32 = INSERT_MAX_PAGES + PRUNE_MAX_PAGES;
 /// [`WRITE_MAX_PAGES`] in bytes at the page size Effigy writes.
 pub const WRITE_MAX_BYTES: u64 = WRITE_MAX_PAGES as u64 * crate::store::PAGE_SIZE;
-/// The frames one **strict** terminal write appends (effigy#981).
-///
-/// Strict persistence defers the bounded prune to a later non-strict write or
-/// the retention sweep, so the only statement it issues is the row insert, and
-/// [`INSERT_MAX_PAGES`] is the whole of its page work.
-pub const STRICT_WRITE_MAX_PAGES: u32 = INSERT_MAX_PAGES;
-/// This invocation's whole physical contribution to `kernel.db-wal` under
-/// strict persistence (effigy#981).
-///
-/// SQLite writes a 32-byte log header, then one 24-byte frame header before
-/// each page (`WAL_FRAME_HDRSIZE`, <https://sqlite.org/fileformat2.html#walformat>),
-/// so [`STRICT_WRITE_MAX_PAGES`] frames occupy
-/// `frames * (page size + 24)`, plus the header when this invocation is the one
-/// that creates the log. Strict persistence never checkpoints, so every frame
-/// this write appends is still in the file when the run ends.
-pub const STRICT_WAL_MAX_BYTES: u64 = crate::store::WAL_HEADER_BYTES
-    + STRICT_WRITE_MAX_PAGES as u64
-        * (crate::store::PAGE_SIZE + crate::store::WAL_FRAME_HEADER_BYTES);
 /// A row this module writes fits in one page, so it never takes an overflow
 /// chain. Enforced by the build, not only by a test.
 const _: () = assert!(ROW_MAX_BYTES <= crate::store::PAGE_SIZE as usize);
@@ -163,6 +155,12 @@ pub struct TerminalRecord {
 /// The row is bounded and its identities are validated here, at the one place
 /// that writes it (effigy#977): a caller cannot make the row unbounded, and no
 /// two runs can coalesce on a cut key.
+///
+/// Under strict persistence it also **verifies** the write's own log
+/// contribution (effigy#981): [`STRICT_WRITE_MAX_PAGES`] is a budget, and a run
+/// whose transaction appended more than that is reported instead of passing as
+/// if it had stayed inside it. Nothing checkpoints here, so the frames measured
+/// at the end are exactly the ones this write appended.
 pub fn record(
     cx: &EffectContext,
     root: &StateRoot,
@@ -170,7 +168,30 @@ pub fn record(
 ) -> Result<(), StoreError> {
     let record = record.checked()?;
     let mut store = Store::open(cx, root)?;
-    store.txn(cx, |txn| write_row(txn, &record))
+    let strict = store.strict();
+    let log_before = if strict {
+        Some(store.wal_bytes()?)
+    } else {
+        None
+    };
+    store.txn(cx, |txn| write_row(txn, &record))?;
+    if let Some(before) = log_before {
+        let appended = store.wal_bytes()?.saturating_sub(before);
+        let page = store.sidecar_bounds()?.page_size;
+        let frames = appended.saturating_sub(crate::store::WAL_HEADER_BYTES)
+            / page
+                .saturating_add(crate::store::WAL_FRAME_HEADER_BYTES)
+                .max(1);
+        if frames > u64::from(STRICT_WRITE_MAX_PAGES) {
+            return Err(StoreError::Refused(format!(
+                "strict persistence appended {frames} write-ahead-log frames to this run's \
+                 {STRICT_WRITE_MAX_PAGES}-frame budget ({} bytes); the row is recorded, and this \
+                 run must not be counted as staying inside that budget",
+                STRICT_WAL_MAX_BYTES
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// The two statements one terminal write issues, in its own transaction: the

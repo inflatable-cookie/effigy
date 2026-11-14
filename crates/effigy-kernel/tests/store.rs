@@ -2005,23 +2005,23 @@ fn store_strict_wal_and_index_stay_within_their_stated_maximum() {
         136 / 4,
         "the first wal-index page's header costs its own frame slots"
     );
-    // The maximum is the format's own arithmetic, not a measured delta: one
-    // 32-byte log header plus one 24-byte frame header before each page, and a
-    // page count that names the three trees one insert maintains and the pages
-    // outside them.
-    let trees = effigy_kernel::run::TERMINAL_INSERT_TREES;
-    let levels = effigy_kernel::run::TERMINAL_TREE_LEVELS_MAX;
+    // The budget is arithmetic over the format, and the ceiling is the store's
+    // own page cap: one 32-byte log header plus one 24-byte frame header before
+    // each page. The page count itself is a budget the tests measure (the run
+    // verifies it), not a modelled balance worst case.
     let pages = effigy_kernel::run::TERMINAL_STRICT_WRITE_MAX_PAGES;
-    assert_eq!(trees, 3, "the table and its two indexes");
-    assert_eq!(levels, 5, "one leaf plus four interior levels");
-    assert_eq!(
-        pages,
-        trees * levels * 2 + (1 + 2 + 2 * trees * (levels - 1)),
-        "the insert's page budget is its trees plus page 1, the freelist and the pointer map"
-    );
     assert_eq!(
         effigy_kernel::run::TERMINAL_STRICT_WAL_MAX_BYTES,
         WAL_HEADER_BYTES + u64::from(pages) * (PAGE_SIZE + WAL_FRAME_HEADER_BYTES)
+    );
+    assert_eq!(
+        effigy_kernel::run::TERMINAL_STRICT_WAL_CEILING_BYTES,
+        WAL_HEADER_BYTES + MAX_PAGES * (PAGE_SIZE + WAL_FRAME_HEADER_BYTES),
+        "the premise-free ceiling is one frame per page the store can hold"
+    );
+    assert!(
+        effigy_kernel::run::TERMINAL_STRICT_WAL_MAX_BYTES
+            < effigy_kernel::run::TERMINAL_STRICT_WAL_CEILING_BYTES
     );
     let home = home();
     let cx = effects(EffectClass::Mutate);
@@ -2078,11 +2078,14 @@ fn store_strict_wal_and_index_stay_within_their_stated_maximum() {
             "the {name} write grew the wal-index by {index_grew} bytes, over one page"
         );
         let after = store_count(&root, "SELECT count(*) FROM resources", &[]);
-        assert_eq!(
-            after,
-            if mode == "commit" { before + 1 } else { before },
-            "a {name} write committed what it should not have"
-        );
+        if mode == "commit" {
+            assert_eq!(after, before + 1, "the committed write recorded no row");
+        } else {
+            assert_eq!(
+                after, before,
+                "the {name} write committed a row it should have rolled back"
+            );
+        }
     }
     assert!(appended > 0, "no write appended a frame");
     reader.execute_batch("COMMIT").expect("release");
@@ -2197,9 +2200,9 @@ fn store_strict_refuses_a_log_that_needs_recovery() {
     let home = home();
     let cx = effects(EffectClass::Mutate);
     let root = root(home.path());
-    // A store written without a checkpoint: the log holds frames and, because
-    // the last connection closed, SQLite removed the wal-index beside it, which
-    // the next open would rebuild.
+    // A store written without a checkpoint: its log holds frames. SQLite leaves
+    // the wal-index beside them, so a crashed or externally cleaned checkout is
+    // modelled by removing it: the next open would rebuild it.
     drop(Store::open(&cx, &root).expect("current store"));
     let path = root.path().join(DB_NAME);
     {
@@ -2332,5 +2335,35 @@ fn store_strict_maintenance_and_retention_write_nothing() {
     assert!(
         root.path().join(DB_NAME).exists(),
         "a refused repair moved the store"
+    );
+}
+
+/// A strict handle observes its log without checkpointing it (effigy#981).
+#[test]
+fn store_strict_wal_frames_observes_without_a_checkpoint() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    drop(Store::open(&cx, &root).expect("current store"));
+    let database = store_file(&root, "");
+    let mut store = Store::open_strict(&cx, &root).expect("strict store");
+    store
+        .txn(&cx, |txn| txn.resource(&task("frames"), "task").map(|_| ()))
+        .expect("write");
+    let log = file_len(&root, "-wal");
+    assert!(log > WAL_HEADER_BYTES, "the write left frames in the log");
+    // The observation itself must not move a frame into the database: a
+    // passive checkpoint on a strict handle would.
+    let frames = store.wal_frames().expect("frames");
+    assert!(frames > 0, "the log holds frames");
+    drop(store);
+    assert!(
+        store_file(&root, "") == database,
+        "observing the log checkpointed it into the database"
+    );
+    assert_eq!(
+        file_len(&root, "-wal"),
+        log,
+        "observing the log changed its length"
     );
 }
