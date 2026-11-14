@@ -552,10 +552,15 @@ impl Drop for MemoryGuard {
         self.closure.take();
         self.input.take();
         // EOF starts bounded guard cleanup. Do not kill a custodian or unlock
-        // its gates just because the caller's cleanup budget has expired.
-        let deadline = self
-            .close_deadline
-            .unwrap_or_else(|| Instant::now() + Duration::from_secs(60));
+        // its gates just because the caller's cleanup budget has expired. The
+        // invocation's absolute run deadline caps this fallback too, so no
+        // shutdown tail extends past the ceiling (effigy#992).
+        let fallback = Duration::from_secs(60);
+        let deadline = self.close_deadline.unwrap_or_else(|| {
+            let budget =
+                effigy_core::run_deadline::remaining().map_or(fallback, |left| left.min(fallback));
+            Instant::now() + budget
+        });
         while matches!(self.child.try_wait(), Ok(None)) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(2));
         }

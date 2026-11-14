@@ -520,6 +520,17 @@ pub(in crate::runner) fn environment(
         };
         env.insert(OsString::from(key), value);
     }
+    // The absolute run deadline never travels verbatim: a child starts its own
+    // monotonic clock, so it receives only the parent's remaining workload
+    // budget. Inheriting the parent's configured span would restart the clock
+    // and extend the ceiling (effigy#992). This is applied last, so neither an
+    // inherited value nor a task's own environment can extend it.
+    if let Some(ms) = effigy_core::run_deadline::child_env_ms() {
+        env.insert(
+            OsString::from(effigy_core::run_deadline::RUN_DEADLINE_ENV),
+            EnvValue::Plain(OsString::from(ms.to_string())),
+        );
+    }
     // A declared override cannot hand session access back to a workload
     // either: the route is Effigy's own descriptor, not a name.
     env.retain(|key, _| !crate::runner::secret_session::is_session_access_key(key));

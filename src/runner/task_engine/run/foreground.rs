@@ -86,12 +86,20 @@ impl TaskRun {
         kernel::install_router()?;
         let custody_scope = kernel::CustodyWait::enter();
         let started = Instant::now();
+        // The absolute run deadline also bounds the one setup wait a caller
+        // can ask for: the task gate. An explicit `--lock-wait` may shorten it,
+        // never extend it.
+        let lock_wait_until = started + Duration::from_millis(request.lock_wait_ms);
+        let lock_wait_until = match effigy_core::run_deadline::workload_ceiling() {
+            Some(at) => lock_wait_until.min(at),
+            None => lock_wait_until,
+        };
         let opts = BeginOpts {
             id: new_run_id()?,
             wait: if parent.is_some() || request.lock_wait_ms == 0 {
                 Wait::FailFast
             } else {
-                Wait::Until(started + Duration::from_millis(request.lock_wait_ms))
+                Wait::Until(lock_wait_until)
             },
             acknowledge: Vec::new(),
             next: kernel::next_invocation(&request.target.label)?,
@@ -122,6 +130,14 @@ impl TaskRun {
             keyed: false,
         };
         effigy_core::output_cap::foreground_started();
+        // The deadline's own evidence: its clock, origin and phase budgets.
+        // Off by default, so an invocation without the opt-in writes nothing.
+        if let Some(deadline) = effigy_core::run_deadline::current() {
+            let _ = effigy_core::output_cap::write(
+                effigy_core::output_cap::Stream::Stderr,
+                deadline.describe().as_bytes(),
+            );
+        }
         run.admit(request.admission, plan, request.cwd)?;
         Ok(run)
     }
@@ -332,5 +348,156 @@ pub(super) fn close_memory(
             warnings.push(format!("foreground settle: {error}"));
             (None, warnings)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runner::task_engine::{run_plain, PlainCommand, TaskRunRequest};
+    use std::path::Path;
+    use std::time::{Duration, Instant};
+
+    /// Installs the thread's deterministic deadline and clears it even when a
+    /// test fails.
+    struct InjectedDeadline;
+    impl InjectedDeadline {
+        fn at(origin: Instant, ms: u64) -> Self {
+            let deadline = effigy_core::run_deadline::RunDeadline::from_origin(origin, ms)
+                .expect("injected deadline");
+            effigy_core::run_deadline::inject_for_tests(Some(deadline));
+            Self
+        }
+    }
+    impl Drop for InjectedDeadline {
+        fn drop(&mut self) {
+            effigy_core::run_deadline::clear_injected_for_tests();
+        }
+    }
+
+    fn target(root: &Path, name: &str) -> TaskTarget {
+        let catalog = effigy_manifest::LoadedCatalog::for_test(
+            "root",
+            root.to_path_buf(),
+            toml::from_str("").expect("empty manifest"),
+            0,
+        );
+        TaskTarget::for_catalog(root, name, &catalog)
+    }
+
+    fn begin(target: &TaskTarget) -> TaskRun {
+        TaskRun::begin_foreground(TaskRunRequest {
+            target,
+            lock_wait_ms: 0,
+            custody: false,
+            scratch: false,
+            managed_run_token: None,
+            args: &[],
+            key: None,
+            admission: None,
+            workspace_admission: None,
+            cwd: None,
+        })
+        .expect("foreground admitted")
+    }
+
+    #[test]
+    fn the_run_deadline_times_out_the_workload_and_settles_inside_the_ceiling() {
+        let _lock = crate::contract_test_support::lock_test();
+        let root = tempfile::tempdir().expect("root");
+        let target = target(root.path(), "sleepy");
+        let mut run = begin(&target);
+        let origin = Instant::now();
+        let _deadline = InjectedDeadline::at(origin, 12_000);
+        assert!(
+            effigy_core::run_deadline::current().is_some(),
+            "injection visible"
+        );
+        let budget = effigy_core::run_deadline::workload_remaining().expect("configured");
+        assert!(
+            budget > Duration::from_millis(500) && budget <= Duration::from_secs(2),
+            "workload budget is the ceiling less the allowance: {budget:?}"
+        );
+        assert!(crate::runner::task_engine::remaining_lifetime().is_some());
+        let started = Instant::now();
+        let exit = run_plain(
+            &mut run,
+            PlainCommand {
+                command: "sleep 60",
+                cwd: root.path(),
+                env: Vec::new(),
+                capture: true,
+                timeout_ms: None,
+            },
+        )
+        .expect("the workload ran");
+        let elapsed = started.elapsed();
+        assert_eq!(
+            exit.workload,
+            WorkloadOutcome::TimedOut {
+                phase: "sleepy".into()
+            }
+        );
+        assert_eq!(exit.code, 124);
+        assert!(
+            elapsed < Duration::from_millis(12_000),
+            "the workload outlived the deadline: {elapsed:?}"
+        );
+        let _ = effigy_core::run_deadline::take_settlement_truncated();
+        let warnings = run.close(exit.workload);
+        assert!(
+            !effigy_core::run_deadline::take_settlement_truncated(),
+            "settlement fit inside the reserved allowance: {warnings:?}"
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(Instant::now() < origin + Duration::from_millis(12_000));
+    }
+
+    #[test]
+    fn a_settlement_cut_by_the_deadline_is_not_success() {
+        let _lock = crate::contract_test_support::lock_test();
+        let root = tempfile::tempdir().expect("root");
+        let target = target(root.path(), "cut");
+        let run = begin(&target);
+        // A ceiling that has already elapsed: settlement has no allowance.
+        let _deadline = InjectedDeadline::at(Instant::now() - Duration::from_secs(20), 10_000);
+        let _ = effigy_core::run_deadline::take_settlement_truncated();
+        let warnings = run.close(WorkloadOutcome::Succeeded);
+        assert!(
+            effigy_core::run_deadline::take_settlement_truncated(),
+            "an expired settlement must be recorded: {warnings:?}"
+        );
+        assert!(
+            !warnings.is_empty(),
+            "an incomplete settlement reports its residue"
+        );
+    }
+
+    #[test]
+    fn a_spawned_workload_is_not_started_when_the_deadline_is_spent() {
+        let _lock = crate::contract_test_support::lock_test();
+        let root = tempfile::tempdir().expect("root");
+        let target = target(root.path(), "spent");
+        let mut run = begin(&target);
+        let _deadline = InjectedDeadline::at(Instant::now() - Duration::from_secs(20), 10_000);
+        assert_eq!(
+            crate::runner::task_engine::remaining_lifetime(),
+            Some(Duration::ZERO)
+        );
+        let exit = run_plain(
+            &mut run,
+            PlainCommand {
+                command: "touch must-not-exist",
+                cwd: root.path(),
+                env: Vec::new(),
+                capture: true,
+                timeout_ms: None,
+            },
+        )
+        .expect("no workload ran");
+        assert_eq!(exit.code, 124);
+        assert!(!root.path().join("must-not-exist").exists());
+        let _ = effigy_core::run_deadline::take_settlement_truncated();
+        let _ = run.close(exit.workload);
     }
 }

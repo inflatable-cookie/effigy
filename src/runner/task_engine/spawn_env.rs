@@ -19,13 +19,15 @@ pub(in crate::runner) struct SpawnScope;
 impl SpawnScope {
     /// Carry exact environment provenance and the absolute parent deadline
     /// across an embedded execution boundary. Never restart a timeout here.
+    /// At the root the absolute run deadline's workload boundary is the
+    /// ceiling, so an in-process nested run cannot outlive it either.
     pub(in crate::runner) fn capture() -> LaunchInputs {
         SCOPES
             .with(|scopes| scopes.borrow().last().cloned())
             .unwrap_or_else(|| LaunchInputs {
                 env: Vec::new(),
                 capture: false,
-                deadline: None,
+                deadline: effigy_core::run_deadline::workload_ceiling(),
             })
     }
 
@@ -63,6 +65,7 @@ impl SpawnScope {
             .deadline
             .into_iter()
             .chain(timeout_ms.map(|ms| Instant::now() + Duration::from_millis(ms)))
+            .chain(effigy_core::run_deadline::workload_ceiling())
             .min();
         SCOPES.with(|scopes| scopes.borrow_mut().push(inputs));
         Self
@@ -99,18 +102,60 @@ pub(in crate::runner) fn spawn_plain_env() -> BTreeMap<String, String> {
 }
 
 pub(in crate::runner) fn remaining() -> Option<Duration> {
-    SCOPES.with(|scopes| {
-        scopes
-            .borrow()
-            .last()
-            .and_then(|inputs| inputs.deadline)
-            .map(|at| at.saturating_duration_since(Instant::now()))
-    })
+    // A scoped deadline (a sequence step or a nested run) and the invocation's
+    // workload ceiling both bound the wait; the earlier one wins, and with no
+    // scope the ceiling is the bound. Neither present keeps it open.
+    let at = SpawnScope::capture()
+        .deadline
+        .into_iter()
+        .chain(effigy_core::run_deadline::workload_ceiling())
+        .min()?;
+    Some(at.saturating_duration_since(Instant::now()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_run_deadline_caps_a_longer_step_and_a_nested_scope() {
+        let origin = Instant::now();
+        let deadline =
+            effigy_core::run_deadline::RunDeadline::from_origin(origin, 30_000).expect("deadline");
+        effigy_core::run_deadline::inject_for_tests(Some(deadline));
+        let root = SpawnScope::enter(&BTreeMap::new(), None, false, None);
+        assert_eq!(
+            SpawnScope::capture().deadline,
+            Some(deadline.workload_ceiling())
+        );
+        let step = SpawnScope::enter(&BTreeMap::new(), None, false, Some(600_000));
+        assert_eq!(
+            SpawnScope::capture().deadline,
+            Some(deadline.workload_ceiling()),
+            "a longer step timeout may not extend the run ceiling"
+        );
+        drop(step);
+        drop(root);
+        effigy_core::run_deadline::clear_injected_for_tests();
+        assert_eq!(
+            SpawnScope::capture().deadline,
+            None,
+            "without the opt-in the scope stays open"
+        );
+    }
+
+    #[test]
+    fn a_nested_effigy_child_receives_the_remaining_workload_budget() {
+        let origin = Instant::now();
+        let deadline =
+            effigy_core::run_deadline::RunDeadline::from_origin(origin, 30_000).expect("deadline");
+        effigy_core::run_deadline::inject_for_tests(Some(deadline));
+        let child_ms = effigy_core::run_deadline::child_env_ms().expect("configured");
+        assert!(child_ms <= 20_000, "{child_ms}");
+        assert!(child_ms >= 19_900, "{child_ms}");
+        effigy_core::run_deadline::clear_injected_for_tests();
+        assert_eq!(effigy_core::run_deadline::child_env_ms(), None);
+    }
 
     #[test]
     fn inherited_launch_keeps_absolute_deadline_and_environment_precedence() {

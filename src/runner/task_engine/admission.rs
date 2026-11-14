@@ -588,6 +588,19 @@ pub(super) fn admit(
     let run_id = run.id().to_string();
     let cwd = cwd.to_path_buf();
     let refused = |decision: &str, reason: String| refusal(target, &run_id, decision, reason);
+    // One absolute deadline covers admission too. If it is already spent, the
+    // task never starts and the refusal is the deadline's, not the hook's.
+    let run_deadline = effigy_core::run_deadline::workload_ceiling();
+    if run_deadline.is_some_and(|at| Instant::now() >= at) {
+        effigy_ui::steps::finish_line(
+            false,
+            &format!(
+                "heavy task `{}` was not admitted: the run deadline expired",
+                target.label
+            ),
+        );
+        return Err(deadline_refusal(target, &run_id));
+    }
     let protocol = match protocol() {
         Ok(protocol) => protocol,
         Err(reason) => {
@@ -799,7 +812,15 @@ pub(super) fn admit(
                 "the hook wrote more than a decision line".to_owned(),
             ));
         }
-        if started.elapsed() >= timeout {
+        let deadline_expired = run_deadline.is_some_and(|at| Instant::now() >= at);
+        if deadline_expired || started.elapsed() >= timeout {
+            if deadline_expired {
+                step.fail(&format!(
+                    "heavy admission for `{}` was cut short by the run deadline",
+                    target.label
+                ));
+                return Err(deadline_refusal(target, &run_id));
+            }
             step.fail(&format!(
                 "heavy admission for `{}` timed out after {}",
                 target.label,
@@ -1132,6 +1153,21 @@ fn refusal(target: &TaskTarget, run_id: &str, decision: &str, reason: String) ->
         "check the admission hook `{HOOK_ENV}`, or unset it to run without host-wide admission"
     );
     refusal_with(target, run_id, decision, reason, next_action)
+}
+
+/// A refusal the invocation's own absolute deadline caused: typed as
+/// `decision: "deadline"` so a caller can tell it from a hook timeout.
+fn deadline_refusal(target: &TaskTarget, run_id: &str) -> RunnerError {
+    refusal_with(
+        target,
+        run_id,
+        "deadline",
+        "the run deadline (`EFFIGY_RUN_DEADLINE_MS`) expired while admission was waiting; \
+         the task did not run"
+            .to_owned(),
+        "raise `EFFIGY_RUN_DEADLINE_MS`, or unset it to run without an invocation deadline"
+            .to_owned(),
+    )
 }
 
 /// A refusal with a next action of its own: some refusals are about the

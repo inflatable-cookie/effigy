@@ -184,6 +184,18 @@ pub struct OperationContext {
     class: EffectClass,
     placement: Placement,
 }
+
+/// The invocation's absolute run deadline is a process-wide ceiling for an
+/// open shell workload (effigy#992). A declared long-lived reason (a dev
+/// server, followed logs) keeps its open lifetime; a shell operation may not
+/// outlive the deadline, and neither may a shorter finite one.
+fn capped(deadline: Deadline) -> Deadline {
+    match (deadline, effigy_core::run_deadline::ceiling()) {
+        (Deadline::At(existing), Some(cap)) => Deadline::At(existing.min(cap)),
+        (Deadline::Open(OpenReason::Shell), Some(cap)) => Deadline::At(cap),
+        (deadline, _) => deadline,
+    }
+}
 impl OperationContext {
     pub fn new(
         deadline: Deadline,
@@ -193,7 +205,7 @@ impl OperationContext {
         placement: Placement,
     ) -> Self {
         Self {
-            deadline,
+            deadline: capped(deadline),
             started: Instant::now(),
             cancel,
             limits,
@@ -238,7 +250,10 @@ impl OperationContext {
     /// shrink to a workload deadline (§5.5, K4).
     pub(crate) fn patience(&self, window: Duration) -> Self {
         let now = Instant::now();
-        let deadline = now.checked_add(window).unwrap_or(now);
+        let mut deadline = now.checked_add(window).unwrap_or(now);
+        if let Some(cap) = effigy_core::run_deadline::ceiling() {
+            deadline = deadline.min(cap);
+        }
         Self {
             deadline: Deadline::At(deadline),
             started: now,
@@ -246,12 +261,16 @@ impl OperationContext {
         }
     }
     /// Cleanup has a fresh token and a finite budget independent of the parent.
-    /// A caller's second signal cancels this token explicitly to escalate.
+    /// A caller's second signal cancels this token explicitly to escalate. The
+    /// invocation's absolute run deadline still caps it: settlement may never
+    /// run past the ceiling (effigy#992).
     pub fn cleanup(&self, budget: Duration) -> Result<CleanupContext, BudgetOverflow> {
-        let deadline = Instant::now().checked_add(budget).ok_or(BudgetOverflow)?;
+        let now = Instant::now();
+        let deadline = now.checked_add(budget).ok_or(BudgetOverflow)?;
+        let deadline = deadline.min(effigy_core::run_deadline::ceiling().unwrap_or(deadline));
         let mut operation = self.clone();
         operation.deadline = Deadline::At(deadline);
-        operation.started = Instant::now();
+        operation.started = now;
         operation.cancel = CancelToken::default();
         Ok(CleanupContext(operation))
     }
@@ -395,7 +414,12 @@ impl CleanupContext {
     /// The same cancellation, limits and capability with a window that starts
     /// now. A cleanup step takes its own window: a context minted when a
     /// long-lived owner started says nothing about how long the step may take.
+    /// The invocation's absolute run deadline still caps it (effigy#992).
     pub(crate) fn window(&self, window: Duration) -> Self {
+        let window = match effigy_core::run_deadline::remaining() {
+            Some(remaining) => window.min(remaining),
+            None => window,
+        };
         Self(self.0.patience(window))
     }
 }
@@ -480,5 +504,85 @@ mod stop_cause_tests {
             serde_json::to_value(StopCause::OwnerLost).expect("a serializable cause"),
             serde_json::json!("OwnerLost")
         );
+    }
+}
+
+#[cfg(test)]
+mod deadline_tests {
+    use super::*;
+
+    fn limits() -> Limits {
+        Limits {
+            capture_tail: 1,
+            log_rotate: 1,
+            log_keep: 1,
+            line_max: 1,
+            queue_bytes: 1,
+            probe_concurrency: 1,
+        }
+    }
+
+    #[test]
+    fn the_run_deadline_caps_an_open_shell_cleanup_and_its_window() {
+        let deadline = effigy_core::run_deadline::RunDeadline::from_origin(Instant::now(), 10_000)
+            .expect("deadline");
+        effigy_core::run_deadline::inject_for_tests(Some(deadline));
+        let cx = OperationContext::new(
+            Deadline::Open(OpenReason::Shell),
+            CancelToken::default(),
+            limits(),
+            EffectClass::Mutate,
+            Placement::Host,
+        );
+        assert!(
+            matches!(
+                cx.deadline(),
+                Deadline::At(at) if at <= deadline.ceiling()
+            ),
+            "an open shell operation is bounded by the run ceiling"
+        );
+        let cleanup = cx.cleanup(Duration::from_secs(60)).expect("cleanup");
+        assert!(
+            cleanup.operation().remaining().unwrap() <= Duration::from_millis(10_000),
+            "a 60s cleanup may not outlive the ceiling"
+        );
+        let window = cleanup.window(Duration::from_secs(33));
+        assert!(
+            window.operation().remaining().unwrap() <= Duration::from_millis(10_000),
+            "a signal window may not outlive the ceiling"
+        );
+        // A declared long-lived reason keeps its own lifetime.
+        let follow = OperationContext::new(
+            Deadline::Open(OpenReason::FollowLogs),
+            CancelToken::default(),
+            limits(),
+            EffectClass::Mutate,
+            Placement::Host,
+        );
+        assert!(matches!(follow.deadline(), Deadline::Open(_)));
+        effigy_core::run_deadline::clear_injected_for_tests();
+    }
+
+    #[test]
+    fn a_spent_deadline_makes_settlement_report_timed_out() {
+        let deadline = effigy_core::run_deadline::RunDeadline::from_origin(
+            Instant::now() - Duration::from_secs(20),
+            10_000,
+        )
+        .expect("deadline");
+        effigy_core::run_deadline::inject_for_tests(Some(deadline));
+        let cx = OperationContext::new(
+            Deadline::Open(OpenReason::Shell),
+            CancelToken::default(),
+            limits(),
+            EffectClass::Mutate,
+            Placement::Host,
+        );
+        let cleanup = cx.cleanup(Duration::from_secs(60)).expect("cleanup");
+        assert!(matches!(
+            cleanup.operation().check("settlement"),
+            Err(Interrupt::TimedOut { .. })
+        ));
+        effigy_core::run_deadline::clear_injected_for_tests();
     }
 }
