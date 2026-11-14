@@ -2,6 +2,11 @@ use toml::Value;
 
 use super::diagnostics::SchemaContext;
 use super::tables::{require_table, validate_allowed_keys};
+use super::values::{
+    validate_optional_boolean_field, validate_optional_integer_field,
+    validate_optional_string_array_field, validate_optional_string_field,
+    validate_optional_string_fields,
+};
 
 pub(super) fn validate_containers_section(context: &mut SchemaContext<'_, '_>, containers: &Value) {
     let Some(containers_table) = require_table(context, "containers", containers, "expected table")
@@ -49,18 +54,21 @@ pub(super) fn validate_containers_section(context: &mut SchemaContext<'_, '_>, c
                 "ui",
             ],
         );
-        validate_string_field(context, &path, table.get("driver"), "driver");
-        validate_string_field(context, &path, table.get("startup"), "startup");
-        validate_string_field(context, &path, table.get("profile"), "profile");
-        validate_string_field(context, &path, table.get("compose_file"), "compose_file");
-        validate_string_field(context, &path, table.get("project_name"), "project_name");
-        validate_string_field(
+        validate_optional_string_fields(
             context,
             &path,
-            table.get("primary_service"),
-            "primary_service",
+            table,
+            &[
+                "driver",
+                "startup",
+                "profile",
+                "compose_file",
+                "project_name",
+                "primary_service",
+                "data_from",
+                "working_dir",
+            ],
         );
-        validate_string_field(context, &path, table.get("data_from"), "data_from");
 
         if let Some(lifecycle) = table.get("lifecycle") {
             validate_container_lifecycle(context, &path, lifecycle);
@@ -77,7 +85,6 @@ pub(super) fn validate_containers_section(context: &mut SchemaContext<'_, '_>, c
         if let Some(services) = table.get("services") {
             validate_container_services(context, &path, services);
         }
-        validate_string_field(context, &path, table.get("working_dir"), "working_dir");
         if let Some(aliases) = table.get("aliases") {
             validate_container_aliases(context, &path, aliases);
         }
@@ -131,45 +138,35 @@ fn validate_container_host_processes(
                 "shutdown_grace_secs",
             ],
         );
-        validate_string_field(context, &entry_path, table.get("name"), "name");
-        validate_string_field(context, &entry_path, table.get("run"), "run");
-        validate_string_field(context, &entry_path, table.get("cwd"), "cwd");
+        validate_optional_string_fields(context, &entry_path, table, &["name", "run", "cwd"]);
         if let Some(env) = table.get("env") {
             validate_host_process_env(context, &format!("{entry_path}.env"), env);
         }
-        validate_string_array(
+        validate_optional_string_array_field(
             context,
-            &format!("{entry_path}.depends_on"),
             table.get("depends_on"),
+            &format!("{entry_path}.depends_on"),
+            "expected array",
         );
         if let Some(listener) = table.get("listener") {
             validate_host_process_listener(context, &format!("{entry_path}.listener"), listener);
         }
-        validate_string_field(context, &entry_path, table.get("restart"), "restart");
-        validate_string_field(
+        validate_optional_string_fields(
             context,
             &entry_path,
-            table.get("shutdown_signal"),
-            "shutdown_signal",
+            table,
+            &["restart", "shutdown_signal"],
         );
-        if let Some(delay) = table.get("restart_delay_ms") {
-            if delay.as_integer().is_none() {
-                context.unsupported_value(
-                    &format!("{entry_path}.restart_delay_ms"),
-                    SchemaContext::value_type(delay),
-                    "expected integer",
-                );
-            }
-        }
-        if let Some(grace) = table.get("shutdown_grace_secs") {
-            if grace.as_integer().is_none() {
-                context.unsupported_value(
-                    &format!("{entry_path}.shutdown_grace_secs"),
-                    SchemaContext::value_type(grace),
-                    "expected integer",
-                );
-            }
-        }
+        validate_optional_integer_field(
+            context,
+            table.get("restart_delay_ms"),
+            &format!("{entry_path}.restart_delay_ms"),
+        );
+        validate_optional_integer_field(
+            context,
+            table.get("shutdown_grace_secs"),
+            &format!("{entry_path}.shutdown_grace_secs"),
+        );
     }
 }
 
@@ -201,7 +198,7 @@ fn validate_host_process_listener(context: &mut SchemaContext<'_, '_>, path: &st
         return;
     };
     validate_allowed_keys(context, path, listener, &["bind", "readiness", "route"]);
-    validate_string_field(context, path, listener.get("bind"), "bind");
+    validate_optional_string_field(context, listener.get("bind"), &format!("{path}.bind"));
     if let Some(readiness) = listener.get("readiness") {
         let readiness_path = format!("{path}.readiness");
         if let Some(table) = require_table(context, &readiness_path, readiness, "expected table") {
@@ -211,13 +208,20 @@ fn validate_host_process_listener(context: &mut SchemaContext<'_, '_>, path: &st
                 table,
                 &["path", "status", "timeout_secs"],
             );
-            validate_string_field(context, &readiness_path, table.get("path"), "path");
-            validate_integer_field(context, &readiness_path, table.get("status"), "status");
-            validate_integer_field(
+            validate_optional_string_field(
                 context,
-                &readiness_path,
+                table.get("path"),
+                &format!("{readiness_path}.path"),
+            );
+            validate_optional_integer_field(
+                context,
+                table.get("status"),
+                &format!("{readiness_path}.status"),
+            );
+            validate_optional_integer_field(
+                context,
                 table.get("timeout_secs"),
-                "timeout_secs",
+                &format!("{readiness_path}.timeout_secs"),
             );
         }
     }
@@ -225,35 +229,17 @@ fn validate_host_process_listener(context: &mut SchemaContext<'_, '_>, path: &st
         let route_path = format!("{path}.route");
         if let Some(table) = require_table(context, &route_path, route, "expected table") {
             validate_allowed_keys(context, &route_path, table, &["domain", "tls"]);
-            validate_string_field(context, &route_path, table.get("domain"), "domain");
-            if let Some(tls) = table.get("tls") {
-                if tls.as_bool().is_none() {
-                    context.unsupported_value(
-                        &format!("{route_path}.tls"),
-                        SchemaContext::value_type(tls),
-                        "expected boolean",
-                    );
-                }
-            }
+            validate_optional_string_field(
+                context,
+                table.get("domain"),
+                &format!("{route_path}.domain"),
+            );
+            validate_optional_boolean_field(
+                context,
+                table.get("tls"),
+                &format!("{route_path}.tls"),
+            );
         }
-    }
-}
-
-fn validate_integer_field(
-    context: &mut SchemaContext<'_, '_>,
-    base_path: &str,
-    value: Option<&Value>,
-    field: &str,
-) {
-    let Some(value) = value else {
-        return;
-    };
-    if value.as_integer().is_none() {
-        context.unsupported_value(
-            &format!("{base_path}.{field}"),
-            SchemaContext::value_type(value),
-            "expected integer",
-        );
     }
 }
 
@@ -279,8 +265,12 @@ fn validate_container_aliases(context: &mut SchemaContext<'_, '_>, base_path: &s
             continue;
         };
         validate_allowed_keys(context, &alias_path, alias_fields, &["service", "command"]);
-        validate_string_field(context, &alias_path, alias_fields.get("service"), "service");
-        validate_string_field(context, &alias_path, alias_fields.get("command"), "command");
+        validate_optional_string_fields(
+            context,
+            &alias_path,
+            alias_fields,
+            &["service", "command"],
+        );
     }
 }
 
@@ -300,24 +290,17 @@ fn validate_container_services(
         else {
             continue;
         };
-        if let Some(catalog) = table.get("catalog") {
-            validate_string_field(context, &service_path, Some(catalog), "catalog");
-        }
-        if let Some(variant) = table.get("variant") {
-            validate_string_field(context, &service_path, Some(variant), "variant");
-        }
-        if let Some(config) = table.get("config") {
-            validate_string_field(context, &service_path, Some(config), "config");
-        }
-        if let Some(shared) = table.get("shared") {
-            if shared.as_bool().is_none() {
-                context.unsupported_value(
-                    &format!("{service_path}.shared"),
-                    SchemaContext::value_type(shared),
-                    "expected boolean",
-                );
-            }
-        }
+        validate_optional_string_fields(
+            context,
+            &service_path,
+            table,
+            &["catalog", "variant", "config"],
+        );
+        validate_optional_boolean_field(
+            context,
+            table.get("shared"),
+            &format!("{service_path}.shared"),
+        );
     }
 }
 
@@ -332,28 +315,17 @@ fn validate_container_dns(context: &mut SchemaContext<'_, '_>, base_path: &str, 
         table,
         &["base_domain", "routes", "domains", "domain_defaults"],
     );
-    validate_string_field(context, &path, table.get("base_domain"), "base_domain");
-    if let Some(domains) = table.get("domains") {
-        match domains.as_array() {
-            Some(entries) => {
-                for (index, entry) in entries.iter().enumerate() {
-                    let entry_path = format!("{path}.domains[{index}]");
-                    if entry.as_str().is_none() {
-                        context.unsupported_value(
-                            &entry_path,
-                            SchemaContext::value_type(entry),
-                            "expected string",
-                        );
-                    }
-                }
-            }
-            None => context.unsupported_value(
-                &format!("{path}.domains"),
-                SchemaContext::value_type(domains),
-                "expected array of strings",
-            ),
-        }
-    }
+    validate_optional_string_field(
+        context,
+        table.get("base_domain"),
+        &format!("{path}.base_domain"),
+    );
+    validate_optional_string_array_field(
+        context,
+        table.get("domains"),
+        &format!("{path}.domains"),
+        "expected array of strings",
+    );
     if let Some(defaults) = table.get("domain_defaults") {
         match defaults.as_table() {
             Some(defaults_table) => {
@@ -364,35 +336,21 @@ fn validate_container_dns(context: &mut SchemaContext<'_, '_>, base_path: &str, 
                     defaults_table,
                     &["tls", "port", "service", "target_host"],
                 );
-                if let Some(tls) = defaults_table.get("tls") {
-                    if tls.as_bool().is_none() {
-                        context.unsupported_value(
-                            &format!("{defaults_path}.tls"),
-                            SchemaContext::value_type(tls),
-                            "expected boolean",
-                        );
-                    }
-                }
-                if let Some(port) = defaults_table.get("port") {
-                    if port.as_integer().is_none() {
-                        context.unsupported_value(
-                            &format!("{defaults_path}.port"),
-                            SchemaContext::value_type(port),
-                            "expected integer",
-                        );
-                    }
-                }
-                validate_string_field(
+                validate_optional_boolean_field(
                     context,
-                    &defaults_path,
-                    defaults_table.get("service"),
-                    "service",
+                    defaults_table.get("tls"),
+                    &format!("{defaults_path}.tls"),
                 );
-                validate_string_field(
+                validate_optional_integer_field(
+                    context,
+                    defaults_table.get("port"),
+                    &format!("{defaults_path}.port"),
+                );
+                validate_optional_string_fields(
                     context,
                     &defaults_path,
-                    defaults_table.get("target_host"),
-                    "target_host",
+                    defaults_table,
+                    &["service", "target_host"],
                 );
             }
             None => context.unsupported_value(
@@ -427,32 +385,22 @@ fn validate_container_dns(context: &mut SchemaContext<'_, '_>, base_path: &str, 
                 route_table,
                 &["domain", "tls", "port", "service", "target_host"],
             );
-            validate_string_field(context, &route_path, route_table.get("domain"), "domain");
-            validate_string_field(context, &route_path, route_table.get("service"), "service");
-            validate_string_field(
+            validate_optional_string_fields(
                 context,
                 &route_path,
-                route_table.get("target_host"),
-                "target_host",
+                route_table,
+                &["domain", "service", "target_host"],
             );
-            if let Some(tls) = route_table.get("tls") {
-                if tls.as_bool().is_none() {
-                    context.unsupported_value(
-                        &format!("{route_path}.tls"),
-                        SchemaContext::value_type(tls),
-                        "expected boolean",
-                    );
-                }
-            }
-            if let Some(port) = route_table.get("port") {
-                if port.as_integer().is_none() {
-                    context.unsupported_value(
-                        &format!("{route_path}.port"),
-                        SchemaContext::value_type(port),
-                        "expected integer",
-                    );
-                }
-            }
+            validate_optional_boolean_field(
+                context,
+                route_table.get("tls"),
+                &format!("{route_path}.tls"),
+            );
+            validate_optional_integer_field(
+                context,
+                route_table.get("port"),
+                &format!("{route_path}.port"),
+            );
         }
     }
 }
@@ -472,17 +420,12 @@ fn validate_container_lifecycle(
         table,
         &["on_task_exit", "shutdown", "detach_timeout_secs"],
     );
-    validate_string_field(context, &path, table.get("on_task_exit"), "on_task_exit");
-    validate_string_field(context, &path, table.get("shutdown"), "shutdown");
-    if let Some(timeout) = table.get("detach_timeout_secs") {
-        if timeout.as_integer().is_none() {
-            context.unsupported_value(
-                &format!("{path}.detach_timeout_secs"),
-                SchemaContext::value_type(timeout),
-                "expected integer",
-            );
-        }
-    }
+    validate_optional_string_fields(context, &path, table, &["on_task_exit", "shutdown"]);
+    validate_optional_integer_field(
+        context,
+        table.get("detach_timeout_secs"),
+        &format!("{path}.detach_timeout_secs"),
+    );
 }
 
 fn validate_container_health(context: &mut SchemaContext<'_, '_>, base_path: &str, value: &Value) {
@@ -491,16 +434,12 @@ fn validate_container_health(context: &mut SchemaContext<'_, '_>, base_path: &st
         return;
     };
     validate_allowed_keys(context, &path, table, &["check", "timeout_secs"]);
-    validate_string_field(context, &path, table.get("check"), "check");
-    if let Some(timeout) = table.get("timeout_secs") {
-        if timeout.as_integer().is_none() {
-            context.unsupported_value(
-                &format!("{path}.timeout_secs"),
-                SchemaContext::value_type(timeout),
-                "expected integer",
-            );
-        }
-    }
+    validate_optional_string_field(context, table.get("check"), &format!("{path}.check"));
+    validate_optional_integer_field(
+        context,
+        table.get("timeout_secs"),
+        &format!("{path}.timeout_secs"),
+    );
 }
 
 fn validate_container_host(context: &mut SchemaContext<'_, '_>, base_path: &str, value: &Value) {
@@ -509,7 +448,12 @@ fn validate_container_host(context: &mut SchemaContext<'_, '_>, base_path: &str,
         return;
     };
     validate_allowed_keys(context, &path, table, &["ports", "mounts"]);
-    validate_string_array(context, &format!("{path}.ports"), table.get("ports"));
+    validate_optional_string_array_field(
+        context,
+        table.get("ports"),
+        &format!("{path}.ports"),
+        "expected array",
+    );
     validate_container_host_mounts(context, &path, table.get("mounts"));
 }
 
@@ -549,20 +493,18 @@ fn validate_container_host_mounts(
             table,
             &["host", "container", "external", "options"],
         );
-        validate_string_field(context, &entry_path, table.get("host"), "host");
-        validate_string_field(context, &entry_path, table.get("container"), "container");
-        if let Some(external) = table.get("external") {
-            if external.as_bool().is_none() {
-                context.unsupported_value(
-                    &format!("{entry_path}.external"),
-                    SchemaContext::value_type(external),
-                    "expected boolean",
-                );
-            }
-        }
-        if let Some(options) = table.get("options") {
-            validate_string_array(context, &format!("{entry_path}.options"), Some(options));
-        }
+        validate_optional_string_fields(context, &entry_path, table, &["host", "container"]);
+        validate_optional_boolean_field(
+            context,
+            table.get("external"),
+            &format!("{entry_path}.external"),
+        );
+        validate_optional_string_array_field(
+            context,
+            table.get("options"),
+            &format!("{entry_path}.options"),
+            "expected array",
+        );
     }
 }
 
@@ -572,42 +514,10 @@ fn validate_container_ui(context: &mut SchemaContext<'_, '_>, base_path: &str, v
         return;
     };
     validate_allowed_keys(context, &path, table, &["tabs"]);
-    validate_string_array(context, &format!("{path}.tabs"), table.get("tabs"));
-}
-
-fn validate_string_field(
-    context: &mut SchemaContext<'_, '_>,
-    path: &str,
-    value: Option<&Value>,
-    key: &str,
-) {
-    let Some(value) = value else {
-        return;
-    };
-    if !value.is_str() {
-        context.unsupported_value(
-            &format!("{path}.{key}"),
-            SchemaContext::value_type(value),
-            "expected string",
-        );
-    }
-}
-
-fn validate_string_array(context: &mut SchemaContext<'_, '_>, path: &str, value: Option<&Value>) {
-    let Some(value) = value else {
-        return;
-    };
-    let Some(entries) = value.as_array() else {
-        context.unsupported_value(path, SchemaContext::value_type(value), "expected array");
-        return;
-    };
-    for (index, entry) in entries.iter().enumerate() {
-        if !entry.is_str() {
-            context.unsupported_value(
-                &format!("{path}[{index}]"),
-                SchemaContext::value_type(entry),
-                "expected string",
-            );
-        }
-    }
+    validate_optional_string_array_field(
+        context,
+        table.get("tabs"),
+        &format!("{path}.tabs"),
+        "expected array",
+    );
 }

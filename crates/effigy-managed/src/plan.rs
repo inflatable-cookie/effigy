@@ -353,15 +353,20 @@ mod tests {
         selector: &TaskSelector,
         catalogs: &'c [LoadedCatalog],
         _cwd: &Path,
-    ) -> Result<effigy_manifest::TaskSelection<'c>, String> {
-        let catalog = catalogs
-            .first()
-            .ok_or_else(|| "the fixture has one catalog".to_owned())?;
+    ) -> Result<effigy_manifest::TaskSelection<'c>, effigy_manifest::TaskResolveError> {
+        let catalog = catalogs.first().ok_or_else(|| {
+            effigy_manifest::TaskResolveError::not_found("the fixture has one catalog")
+        })?;
         let task = catalog
             .manifest
             .tasks
             .get(&selector.task_name)
-            .ok_or_else(|| format!("the fixture declares no task `{}`", selector.task_name))?;
+            .ok_or_else(|| {
+                effigy_manifest::TaskResolveError::not_found(format!(
+                    "the fixture declares no task `{}`",
+                    selector.task_name
+                ))
+            })?;
         Ok(effigy_manifest::TaskSelection {
             catalog,
             task,
@@ -377,11 +382,11 @@ mod tests {
         selector: &TaskSelector,
         _catalogs: &'c [LoadedCatalog],
         _cwd: &Path,
-    ) -> Result<effigy_manifest::TaskSelection<'c>, String> {
-        Err(format!(
+    ) -> Result<effigy_manifest::TaskSelection<'c>, effigy_manifest::TaskResolveError> {
+        Err(effigy_manifest::TaskResolveError::not_found(format!(
             "test fixture declares no reference to `{}`",
             selector.task_name
-        ))
+        )))
     }
 
     fn plan_for(

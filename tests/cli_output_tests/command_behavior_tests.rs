@@ -887,6 +887,7 @@ fn cli_contracts_contract_body_refusal_keeps_its_bytes() {
     "type": "RunnerError"
   },
   "ok": false,
+  "output_truncated": false,
   "result": null,
   "schema": "effigy.command.v1",
   "schema_version": 1,

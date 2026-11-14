@@ -29,8 +29,8 @@ pub use container::{
     ManifestContainersConfig, ManifestDataConfig, ManifestDataTargetConfig,
     ManifestInlineWorkspaceContainerConfig, ManifestManagedHostListener,
     ManifestManagedHostListenerReadiness, ManifestManagedHostListenerRoute, ManifestSystemConfig,
-    ManifestSystemMount, ManifestSystemMountTable, ManifestSystemsConfig, ManifestWorkspaceConfig,
-    ManifestWorkspaceContainerRef,
+    ManifestSystemMount, ManifestSystemMountSpec, ManifestSystemMountTable, ManifestSystemsConfig,
+    ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
 };
 pub use contracts::ManifestContractsConfig;
 pub use docs_policy::load_committed_docs_policy_sources;
