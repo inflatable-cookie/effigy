@@ -395,7 +395,9 @@ also closes those paths:
 | `run::settle::compact_machine_closed` returns early (`crates/effigy-kernel/src/run/settle.rs:67-80`) | the machine store's compaction deletes |
 | `store::Store::repair` refuses under the switch (`store.rs:1075-1087`) | moving `kernel.db` and its side files aside |
 | `run::terminal::write_row` returns after the insert (`crates/effigy-kernel/src/run/terminal.rs:229`) | the bounded prune's delete and its frames |
-| `run::terminal::record` measures its own appended frames and reports a run that exceeded the budget (`terminal.rs:164-195`) | a run passing as if it had stayed inside the budget when its transaction appended more |
+| `store::configure` sets `PRAGMA cache_size` to `store::STRICT_CACHE_KIB` and reads it back (`store.rs:612`, `:655-668`) | a page-cache spill re-appending a page, which would break the one-frame-per-page arithmetic |
+| `store::refuse_oversized_keys` (`store.rs:1807`) | writing under a b-tree depth the key-length premise does not cover |
+| `run::terminal::record` measures its own appended frames and reports a run that exceeded the maximum (`terminal.rs:164-195`) | a run passing as if it had stayed inside the maximum when its transaction appended more |
 | `store::Store::wal_frames` reads the log's length on a strict handle instead of attempting a passive checkpoint (`store.rs:684-698`) | an observation checkpointing a strict store |
 
 The one bookkeeping write strict mode skips rather than refuses is `meta`'s
@@ -404,77 +406,77 @@ change what this invocation writes.
 
 This invocation's complete physical contribution in strict mode:
 
-| File (under `<checkout>/.effigy/state/`) | This invocation's contribution, and whether it is a maximum or a verified budget | Enforced or derived by |
+| File (under `<checkout>/.effigy/state/`) | This invocation's maximum | Enforced or derived by |
 | --- | --- | --- |
 | `gates/<scope>.scope` | `s` files, 0 bytes each | `gate.rs::Gate::acquire` creates the empty marker (`crates/effigy-kernel/src/gate.rs:422-475`) |
 | `gates/<scope>/<gate>.gate` | `s + 1` files, 4096 bytes each | `gate::DIAG_MAX` (`gate.rs:20-22`) written by `write_body` (`gate.rs:472-475`) and `gate/foreground.rs::set_foreground` (`gate/foreground.rs:48-68`); at most `gate::FOREGROUND_GATES_MAX` = 4 gates (`run/foreground.rs:119-131`) |
 | `kernel.db` | **0 bytes**: no checkpoint, no migration, no prune | the strict checks above |
-| `kernel.db-wal` | **budget 32 frames = 131,872 bytes**, verified per run; no a-priori bound is claimed | `run::TERMINAL_STRICT_WAL_MAX_BYTES` (`crates/effigy-kernel/src/run/terminal.rs:85-101`) |
-| `kernel.db-shm` | **one 32 KiB page while the run stays inside the 32-frame budget**; otherwise `1 + ⌈(frames − 4062) / 4096⌉` pages from the frames the budget refusal reports | `store::WAL_INDEX_PAGE_BYTES` (`store.rs:87`); `wal.c` `WALINDEX_PGSZ` and `walFramePage` |
+| `kernel.db-wal` | **maximum 4203 frames = 17,316,392 bytes**, derived from the source and enforced by the premises below; every run also measures its own frames | `run::TERMINAL_STRICT_WAL_MAX_BYTES` (`crates/effigy-kernel/src/run/terminal.rs:117-129`) |
+| `kernel.db-shm` | **64 KiB**: two 32 KiB wal-index pages, the most the frame maximum can cross | `run::TERMINAL_STRICT_SHM_MAX_BYTES` (`run/terminal.rs:131`); `wal.c` `WALINDEX_PGSZ` and `walFramePage` |
 | `kernel.db-journal` | none: a store that has one is refused | `store::refuse_recovery` |
 | `foreground_terminals` row | 1, at most 960 stored bytes | `run::TerminalRecord::checked` |
 | run journal, capture log, run history, per-run scratch | none | as above |
 
-WAL: an operating budget, verified per run, and no claimed bound. SQLite
-writes a 32-byte log header (`store::WAL_HEADER_BYTES`,
-`crates/effigy-kernel/src/store.rs:81`) and one 24-byte frame header before each
-page (`store::WAL_FRAME_HEADER_BYTES`, `:83`, `WAL_FRAME_HDRSIZE` in `wal.c`;
+WAL: a stated maximum, and the premises it needs are enforced. SQLite writes a
+32-byte log header (`store::WAL_HEADER_BYTES`,
+`crates/effigy-kernel/src/store.rs:79`) and one 24-byte frame header before each
+page (`store::WAL_FRAME_HEADER_BYTES`, `:81`, `WAL_FRAME_HDRSIZE` in `wal.c`;
 <https://sqlite.org/fileformat2.html#walformat>), so the bytes are
 `32 + frames × (page size + 24)`.
 
-- **Budget.** `run::TERMINAL_STRICT_WRITE_MAX_PAGES` (`run/terminal.rs:85`) is
-  32 frames — 131,872 bytes — about ten times the 3 frames the write appends in
-  every tested state. `run::terminal::record` (`terminal.rs:164-200`) measures
-  the frames its own transaction appended and returns a typed refusal naming the
-  observed count when a run exceeds the budget, so no run passes as if it stayed
-  inside a number it did not meet. `run_terminal_strict_budget_refusal_names_the_observed_frames`
-  proves the refusal with a zero budget, and
-  `run_terminal_strict_write_appends_at_most_its_stated_frames_and_defers_the_prune`
-  measures the real contribution (3 frames) against a 600-row store.
-- **Why there is no a-priori maximum, stated rather than papered over.** Two
-  facts in the bundled source defeat every closed form this contract used to
-  claim. `balance_nonroot` (`sqlite3.c`, `apOld[NB]`/`apNew[NB+2]` with `NB` = 3)
-  balances up to three sibling pages into up to five new ones, rewrites their
-  parent, and writes a pointer-map entry for every cell it moves into a new page,
-  whose entries can land in many distinct pointer-map pages — so one level is nine
-  tree pages plus a number of scattered pointer-map pages, and a cascade repeats
-  that per level. And SQLite can append the same page more than once in one
-  transaction: on a cache spill `pagerStress` (`sqlite3.c:63622-63662`) writes a
-  dirty page and later re-dirties it, so even "one frame per modified page" is
-  not an upper bound. This contract therefore does **not derive** a closed form
-  from them: it states a measured, per-run-verified budget and a
-  consumer-facing measurement rather than a maximum it cannot support. The
-  earlier per-level and one-frame-per-page figures are withdrawn.
+The insert is this route's only statement, and
+`run::TERMINAL_STRICT_WRITE_MAX_PAGES` (`run/terminal.rs:117`) bounds the pages
+it can dirty:
 
-SHM. `kernel.db-shm` holds SQLite's wal-index, allocated in `WALINDEX_PGSZ` = 32
-KiB pages (`store::WAL_INDEX_PAGE_BYTES`, `store.rs:87`; `wal.c` asserts that
+- `balance_nonroot` (`sqlite3.c`, `apOld[NB]` and `apNew[NB+2]` with `NB` = 3)
+  writes at most three sibling pages, the five pages they become, and their
+  parent — `run::TERMINAL_STRICT_BALANCE_PAGES_MAX` = 9 tree pages per level —
+  and on an interior level one pointer-map entry page per cell it moves, at most
+  `run::TERMINAL_STRICT_PTRMAP_PAGES_MAX` = 271 (a 4096-byte interior page holds
+  4096/15 = 271 cells of a child pointer, a rowid varint and a cell pointer).
+  Leaf balances skip the per-cell updates (`leafCorrection`).
+- The insert maintains `run::TERMINAL_STRICT_INSERT_TREES` = 3 trees (the table,
+  the `run_id` unique index and the `closed_at` index) at
+  `run::TERMINAL_STRICT_TREE_LEVELS_MAX` = 5 levels each: 3 × 5 × (9 + 271) =
+  4200 pages, plus page 1, the freelist trunk and the freelist header = 4203
+  pages = **17,316,392 bytes**.
+
+Two premises make that arithmetic hold for the store the run writes, and the code
+enforces both instead of assuming them:
+
+- **No page is appended twice.** SQLite re-appends a page when the page cache
+  spills and the page is dirtied again (`pagerStress`, `sqlite3.c:63622-63662`).
+  A strict connection therefore sets `PRAGMA cache_size` to
+  `store::STRICT_CACHE_KIB` = 24 MiB — more than the 4203-page maximum — and
+  reads it back (`store::check_sidecar_bounds`), refusing the open if it did not
+  apply. `store_strict_holds_the_page_cache_its_maximum_needs` proves it.
+- **Index keys stay inside `run::TERMINAL_RUN_ID_MAX` = 64 bytes**, which is what
+  gives the 51-child fan-out and therefore the 5-level depth above. A strict run
+  refuses a store that already holds a longer `run_id`
+  (`store::refuse_oversized_keys`), with `NotPrepared` naming
+  `effigy run prepare`; `store_strict_refuses_a_terminal_key_over_the_index_bound`
+  proves it.
+
+`run::terminal::record` still measures its own appended frames and refuses to
+report success above the maximum, so a run never passes claiming a contribution
+it did not make; the measured contribution in every tested state is **3 frames**
+(12,392 bytes), asserted by
+`run_terminal_strict_write_appends_at_most_its_stated_frames_and_defers_the_prune`.
+
+SHM: `kernel.db-shm` holds SQLite's wal-index, allocated in `WALINDEX_PGSZ` = 32
+KiB pages (`store::WAL_INDEX_PAGE_BYTES`, `store.rs:85`; `wal.c` asserts that
 size, and each page indexes 4062 frames on the first page and 4096 on each later
-one). This invocation never checkpoints, so the index only grows by the pages it
-needs for the log's frames, and its growth is a function of the frames actually
-appended — which is a measured budget here, not a bound. Two statements follow,
-and both are conditional on the run staying inside the budget:
-
-- **Inside the 32-frame budget** (`run::TERMINAL_STRICT_WRITE_MAX_PAGES`): the
-  frames fit well inside one page's 4062, so the growth is **at most one 32 KiB
-  block** — which is also the whole file when this invocation creates it beside
-  an empty log.
-- **For a run that trips the budget**, the `record` refusal names the frames
-  observed, and the index growth follows from them: the first 4062 frames fit in
-  page 0, then each further 4096 frames take one more page — `1 + ⌈(frames −
-  4062) / 4096⌉` pages, which is one page for any `frames ≤ 4062` (the count
-  never reaches zero). That is the format's own arithmetic
-  (`HASHTABLE_NPAGE_ONE` = 4062 in the bundled `sqlite3.c`, and
-  `walFramePage(N)` = `(N + 33) / 4096`), so the index size is accounted for
-  whatever the frame count turns out to be; the contract claims no single-block
-  maximum independent of the frames.
-
-Strict mode refuses the one state that would make the size depend on other
-writers' frames — a non-empty log with no wal-index beside it
-(`store::refuse_recovery`) — so the only pre-existing size either statement
-rests on is a wal-index that already exists and is already sized for the frames
-other writers left. `store::Store::wal_frames` observes the log's length on a
-strict handle rather than attempting a passive checkpoint
-(`store.rs:684-698`), so even the observation writes nothing.
+one). The 4203-frame maximum crosses at most two such pages, so the growth this
+invocation causes is at most `run::TERMINAL_STRICT_SHM_MAX_BYTES` = **64 KiB** —
+derived from the same maximum, not from a measurement, and
+`run::TERMINAL_STRICT_SHM_MAX_BYTES` is asserted against the frame count in
+`store_strict_wal_and_index_stay_within_their_stated_maximum`. Strict mode
+refuses the one state that would make the size depend on other writers' frames —
+a non-empty log with no wal-index beside it (`store::refuse_recovery`) — so the
+only pre-existing size this rests on is a wal-index that already exists and is
+already sized for the frames other writers left. `store::Store::wal_frames`
+observes the log's length on a strict handle rather than attempting a passive
+checkpoint (`store.rs:684-698`), so even the observation writes nothing.
 
 Measured, not only derived. `test:kernel:store`
 (`store_strict_open_refuses_a_store_it_would_have_to_create`,
@@ -503,10 +505,9 @@ hook and no workload and writes no journal byte, `effigy run prepare --check`
 makes the same refusal without writing, `effigy run prepare` readies it, and the
 same strict run then records exactly one row.
 
-Not claimed in strict mode: an a-priori maximum for this invocation's log
-contribution (measured and budget-verified instead, for the reason above), the
-size of the shared wal-index before this invocation, the peak of the shared log,
-and anything the child or the hook writes.
+Not claimed in strict mode: anything outside the maximums above — other writers'
+frames in the shared log, the wal-index's size before this invocation, the peak
+of the shared log, and anything the child or the hook writes.
 
 Not persisted. This route writes no run incarnation, request, event, capture
 log, run-history row or object, and opens no per-run scratch. It mints no

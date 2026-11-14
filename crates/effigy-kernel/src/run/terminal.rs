@@ -63,33 +63,61 @@ pub const ROW_OVERHEAD_BYTES: usize = 64;
 /// [`TerminalRecord::checked`].
 pub const ROW_MAX_BYTES: usize =
     RUN_ID_MAX + CHECKOUT_MAX + BOOT_MAX + TASK_MAX + 2 * WORD_MAX + ROW_OVERHEAD_BYTES;
-/// The frames one **strict** terminal write is expected to append, as an
-/// operating budget the run verifies rather than a bound (effigy#981).
+/// The trees one row insert maintains: the table, the `run_id` `TEXT PRIMARY
+/// KEY` unique index and the `closed_at` index (effigy#981).
+pub const STRICT_INSERT_TREES: u32 = 3;
+/// The levels one of those b-trees can have: a leaf plus the interior levels a
+/// store of `store::MAX_DB_BYTES` can hold.
 ///
-/// The bundled SQLite source does not yield a closed form for one statement's
-/// write-ahead log contribution, and this module no longer pretends otherwise:
+/// With [`RUN_ID_MAX`]-bounded index keys the widest interior cell is
+/// `4 + 64 + 9 + 2` = 79 bytes (child pointer, key, rowid varint, cell pointer),
+/// so one interior page holds at least `4096 / 79` = 51 children. Reaching
+/// `MAX_DB_BYTES / PAGE_SIZE` = 262,144 pages through that fan-out takes
+/// `ceil(log51(262144))` = 4 interior levels, so the deepest tree is 5 levels.
+pub const STRICT_TREE_LEVELS_MAX: u32 = 5;
+/// The pages one level of `balance_nonroot` can write: up to three siblings
+/// (`apOld[NB]`), up to five pages they become (`apNew[NB+2]`), and their parent
+/// (`NB` = 3 in `sqlite3.c`).
+pub const STRICT_BALANCE_PAGES_MAX: u32 = 3 + 5 + 1;
+/// The pointer-map entry pages one interior balance can write: one per cell it
+/// moves into a new page, and an interior page holds at most 4096 / 15 = 271
+/// cells (the table's interior cells are a child pointer, a rowid varint and a
+/// cell pointer). Leaf balances skip those per-cell updates (`leafCorrection` in
+/// `sqlite3.c`), and their own new-page entries are covered by the balance term.
+pub const STRICT_PTRMAP_PAGES_MAX: u32 = 271;
+/// Frames one **strict** terminal write can append: a stated maximum, derived
+/// from the source, that the route's configuration cannot exceed (effigy#981).
 ///
-/// - `balance_nonroot` (`sqlite3.c`, `apOld[NB]` and `apNew[NB+2]` with
-///   `NB` = 3) balances up to three sibling pages into up to five new ones,
-///   rewrites their parent, and writes a pointer-map entry for every cell it
-///   moves into a new page — entries that can live in many distinct pointer-map
-///   pages. One level is therefore nine tree pages plus a number of scattered
-///   pointer-map pages, and a cascade repeats that per level.
-/// - SQLite can write the same page to the log more than once in one
-///   transaction: when the page cache spills, `pagerStress`
-///   (`sqlite3.c:63622-63662`) writes the dirty page and later re-dirties it, so
-///   even "one frame per modified page" is not an upper bound.
+/// The insert is the route's only statement, and each of its three trees can
+/// balance once per level:
 ///
-/// This module therefore does not derive a closed form from those facts. What it
-/// does instead is state an operating budget of 32 frames
-/// — about ten times the 3 frames it appends in every tested state
-/// (`run_terminal_strict_write_appends_at_most_its_stated_frames_and_defers_the_prune`),
-/// with room for a split in each of the three trees the insert maintains — and
-/// have every strict run **measure its own appended frames and refuse to report
-/// success above it** ([`record`]). A run that trips the budget names the
-/// observed count, so no run claims a contribution it did not make and the
-/// contract's number is never presented as a proof it does not have.
-pub const STRICT_WRITE_MAX_PAGES: u32 = 32;
+/// - `balance_nonroot` writes at most [`STRICT_BALANCE_PAGES_MAX`] = 9 tree pages
+///   per level, and — on an interior level — one pointer-map entry page per cell
+///   it moves, at most [`STRICT_PTRMAP_PAGES_MAX`] = 271. Per tree:
+///   `STRICT_TREE_LEVELS_MAX` = 5 levels x (9 + 271) = 1400 pages.
+/// - Three trees are 4200 pages, plus page 1 (change counter and in-header
+///   database size), the freelist trunk and the freelist header: 3 more.
+///
+/// Two premises make that arithmetic sound, and this module enforces both rather
+/// than assuming them:
+///
+/// - **No page is appended twice.** SQLite re-appends a page when the page cache
+///   spills and the page is dirtied again (`pagerStress`, `sqlite3.c:63622-63662`),
+///   so a strict connection sets `PRAGMA cache_size` to
+///   [`crate::store::STRICT_CACHE_KIB`] — larger than this frame maximum — and
+///   reads it back.
+/// - **Index keys stay inside [`RUN_ID_MAX`].** The depth and fan-out above need
+///   it, so a strict run refuses a store whose `foreground_terminals` holds a
+///   longer `run_id` (`store::Store::verify_schema`, `store::verify_prepared`).
+///
+/// `run_terminal_strict_write_appends_at_most_its_stated_frames_and_defers_the_prune`
+/// measures the real contribution (3 frames against a 600-row store), and
+/// [`record`] still measures every strict run and refuses to report success
+/// above this maximum.
+pub const STRICT_WRITE_MAX_PAGES: u32 = STRICT_INSERT_TREES
+    * STRICT_TREE_LEVELS_MAX
+    * (STRICT_BALANCE_PAGES_MAX + STRICT_PTRMAP_PAGES_MAX)
+    + 3;
 /// The bytes [`STRICT_WRITE_MAX_PAGES`] occupies: SQLite writes a 32-byte log
 /// header (`store::WAL_HEADER_BYTES`), then one 24-byte frame header before each
 /// page (`store::WAL_FRAME_HEADER_BYTES`, `WAL_FRAME_HDRSIZE` in `wal.c`;
@@ -97,6 +125,10 @@ pub const STRICT_WRITE_MAX_PAGES: u32 = 32;
 pub const STRICT_WAL_MAX_BYTES: u64 = crate::store::WAL_HEADER_BYTES
     + STRICT_WRITE_MAX_PAGES as u64
         * (crate::store::PAGE_SIZE + crate::store::WAL_FRAME_HEADER_BYTES);
+/// The wal-index growth those frames can cause: page 0 indexes 4062 frames and
+/// each later page 4096, so [`STRICT_WRITE_MAX_PAGES`] frames cross at most two
+/// 32 KiB pages.
+pub const STRICT_SHM_MAX_BYTES: u64 = 2 * crate::store::WAL_INDEX_PAGE_BYTES;
 /// The pages one INSERT of a bounded row dirties in the common case
 /// (effigy#977): one leaf in each of the three trees, page 1 and the freelist.
 /// The tests measure this budget rather than deriving a worst case; the row

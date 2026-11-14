@@ -1779,14 +1779,10 @@ fn store_open_states_and_enforces_the_side_file_bounds() {
     let state = root.path().to_path_buf();
     let wal = state.join(format!("{DB_NAME}-wal"));
     let mut store = Store::open(&cx, &root).unwrap();
-    assert_eq!(
-        store.sidecar_bounds().unwrap(),
-        SidecarBounds {
-            journal_size_limit: WAL_LIMIT_BYTES,
-            wal_autocheckpoint: WAL_AUTOCHECKPOINT_PAGES,
-            page_size: PAGE_SIZE,
-        }
-    );
+    let bounds = store.sidecar_bounds().unwrap();
+    assert_eq!(bounds.journal_size_limit, WAL_LIMIT_BYTES);
+    assert_eq!(bounds.wal_autocheckpoint, WAL_AUTOCHECKPOINT_PAGES);
+    assert_eq!(bounds.page_size, PAGE_SIZE);
     store
         .txn(&cx, |txn| {
             txn.resource(&task("bounded"), "task").map(|_| ())
@@ -2005,15 +2001,25 @@ fn store_strict_wal_and_index_stay_within_their_stated_maximum() {
         136 / 4,
         "the first wal-index page's header costs its own frame slots"
     );
-    // The budget is arithmetic over the format: one 32-byte log header plus one
-    // 24-byte frame header before each page. The page count itself is an
-    // operating budget the tests measure and the run verifies, not a modelled
-    // balance worst case (the source does not yield one; see
-    // `run::TERMINAL_STRICT_WRITE_MAX_PAGES`).
+    // The maximum is arithmetic over the format and the source: three trees,
+    // five levels each, nine balance pages plus 271 pointer-map entry pages per
+    // level, plus page 1, the freelist trunk and the freelist header; and one
+    // 32-byte log header plus one 24-byte frame header before each page.
+    let trees = effigy_kernel::run::TERMINAL_STRICT_INSERT_TREES;
+    let levels = effigy_kernel::run::TERMINAL_STRICT_TREE_LEVELS_MAX;
+    let balance = effigy_kernel::run::TERMINAL_STRICT_BALANCE_PAGES_MAX;
+    let ptrmap = effigy_kernel::run::TERMINAL_STRICT_PTRMAP_PAGES_MAX;
     let pages = effigy_kernel::run::TERMINAL_STRICT_WRITE_MAX_PAGES;
+    assert_eq!((trees, levels, balance, ptrmap), (3, 5, 9, 271));
+    assert_eq!(pages, trees * levels * (balance + ptrmap) + 3);
     assert_eq!(
         effigy_kernel::run::TERMINAL_STRICT_WAL_MAX_BYTES,
         WAL_HEADER_BYTES + u64::from(pages) * (PAGE_SIZE + WAL_FRAME_HEADER_BYTES)
+    );
+    assert_eq!(
+        effigy_kernel::run::TERMINAL_STRICT_SHM_MAX_BYTES,
+        2 * WAL_INDEX_PAGE_BYTES,
+        "the frames cross at most two wal-index pages"
     );
     let home = home();
     let cx = effects(EffectClass::Mutate);
@@ -2375,5 +2381,55 @@ fn store_strict_wal_frames_observes_without_a_checkpoint() {
         file_len(&root, "-wal"),
         log,
         "observing the log changed its length"
+    );
+}
+
+/// A strict run refuses a store whose index keys are longer than the frame
+/// maximum is derived for, rather than writing under a bound that does not hold
+/// for that store (effigy#981).
+#[test]
+fn store_strict_refuses_a_terminal_key_over_the_index_bound() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    drop(Store::open(&cx, &root).expect("current store"));
+    // A row an older build wrote, with a key this build's index bound does not
+    // describe. Written straight into the journal, as such a row would be.
+    rusqlite::Connection::open(root.path().join(DB_NAME))
+        .expect("open")
+        .execute_batch(&format!(
+            "INSERT INTO foreground_terminals \
+             (run_id, checkout, boot, task, outcome, exit_code, signal, cleanup, \
+              workload_groups, closed_at) \
+             VALUES ('{}', 'checkout', 'boot', 'task', 'succeeded', 0, NULL, 'complete', 0, 0)",
+            "k".repeat(effigy_kernel::run::TERMINAL_RUN_ID_MAX + 1)
+        ))
+        .expect("long key");
+
+    let error = verify_prepared(&root, Duration::from_secs(5))
+        .expect_err("the pre-admission check refuses it");
+    assert!(matches!(error, StoreError::NotPrepared { .. }), "{error:?}");
+    assert!(
+        error.to_string().contains("run id"),
+        "the refusal names the oversized key: {error}"
+    );
+    let error = Store::open_strict(&cx, &root).expect_err("a strict open refuses it too");
+    assert!(matches!(error, StoreError::NotPrepared { .. }), "{error:?}");
+}
+
+/// A strict connection holds the page cache the frame maximum is derived for,
+/// so the terminal write cannot spill and append a page twice (effigy#981).
+#[test]
+fn store_strict_holds_the_page_cache_its_maximum_needs() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    let store = Store::open_preparing(&cx, &root).expect("prepare");
+    drop(store);
+    let store = Store::open_strict(&cx, &root).expect("strict store");
+    let cache = store.sidecar_bounds().expect("bounds").page_cache_kib;
+    assert_eq!(
+        cache, -STRICT_CACHE_KIB,
+        "a strict connection keeps the cache its one-frame-per-page premise needs"
     );
 }
