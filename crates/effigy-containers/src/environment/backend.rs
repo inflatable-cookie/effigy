@@ -155,12 +155,9 @@ impl BackendSelection {
 
     /// The adapter that targets exactly this selection.
     pub fn adapter(&self) -> Box<dyn EnvironmentBackend> {
-        match self.kind {
-            BackendKind::Colima => Box::new(ColimaBackend::new(self.clone())),
-            BackendKind::DockerDesktop | BackendKind::DockerEngine => {
-                Box::new(DockerBackend::new(self.clone()))
-            }
-        }
+        Box::new(ComposeBackend {
+            selection: self.clone(),
+        })
     }
 
     /// The program and arguments for one Compose invocation on this backend.
@@ -169,7 +166,7 @@ impl BackendSelection {
         compose_args: &[OsString],
     ) -> Result<(OsString, Vec<OsString>), BackendError> {
         if self.context.trim().is_empty() {
-            return Err(BackendError::NotStarted(
+            return Err(BackendError::Refused(
                 "the selected backend context is unreadable".into(),
             ));
         }
@@ -257,14 +254,30 @@ pub fn effective(
 #[derive(Debug)]
 pub enum BackendError {
     NotStarted(String),
+    /// A local preflight refused before contacting the engine.
+    Refused(String),
+    /// A deadline expired after the effect may have started.
+    TimedOut(String),
+    /// The engine reported failure after the effect may have started.
+    Failed(String),
     Uncertain(String),
 }
 
 impl std::fmt::Display for BackendError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NotStarted(message) | Self::Uncertain(message) => f.write_str(message),
+            Self::NotStarted(message)
+            | Self::Refused(message)
+            | Self::TimedOut(message)
+            | Self::Failed(message)
+            | Self::Uncertain(message) => f.write_str(message),
         }
+    }
+}
+
+impl BackendError {
+    pub fn never_started(&self) -> bool {
+        matches!(self, Self::NotStarted(_) | Self::Refused(_))
     }
 }
 
@@ -294,10 +307,8 @@ pub struct Workload {
 /// through the caller's effect closure, so an adapter only observes.
 pub trait EnvironmentBackend {
     fn selection(&self) -> &BackendSelection;
-    /// Exact-identity inventory of one Compose project, stopped rows included.
-    fn inventory(&mut self, workdir: &Path, project: &str) -> Observed<Vec<Workload>>;
-
-    /// [`Self::inventory`] supervised by the caller's one absolute deadline,
+    /// Exact-identity inventory of one Compose project, including stopped rows,
+    /// supervised by the caller's one absolute deadline,
     /// so a runtime that stops answering fails the read instead of holding the
     /// environment gate open (effigy#510).
     fn inventory_until(
@@ -358,96 +369,46 @@ pub trait EnvironmentBackend {
             "this backend adapter cannot read containers back by id".to_owned(),
         ))
     }
-
-    /// The exact image id `reference` resolves to in this backend's image
-    /// table (effigy#510).
-    ///
-    /// A render declares an image *reference*; the engine's image table is the
-    /// only authority that turns it into the exact image id a container created
-    /// from it carries. A container bound only to a mutable reference is never
-    /// immutable image identity, so `Absent`/`Unknown` refuse the receipt
-    /// instead of falling back to the reference.
-    fn image_id(&mut self, workdir: &Path, reference: &str) -> Observed<String> {
-        let _ = (workdir, reference);
-        Observed::Unknown(UnknownReason::ToolUnavailable(
-            "this backend adapter cannot read its image table".to_owned(),
-        ))
-    }
 }
 
-/// Colima: `colima nerdctl --profile <profile> -- compose …`.
-#[derive(Debug)]
-pub struct ColimaBackend {
+/// Compose observations use the selected engine and exact context.
+struct ComposeBackend {
     selection: BackendSelection,
 }
 
-impl ColimaBackend {
-    pub fn new(selection: BackendSelection) -> Self {
-        Self { selection }
+impl EnvironmentBackend for ComposeBackend {
+    fn selection(&self) -> &BackendSelection {
+        &self.selection
+    }
+    fn inventory_until(
+        &mut self,
+        workdir: &Path,
+        project: &str,
+        deadline: Instant,
+    ) -> Observed<Vec<Workload>> {
+        inventory_until(&self.selection, workdir, project, Some(deadline))
+    }
+    fn image_id_until(
+        &mut self,
+        workdir: &Path,
+        reference: &str,
+        deadline: Instant,
+    ) -> Observed<String> {
+        image_id_until(&self.selection, workdir, reference, Some(deadline))
+    }
+    fn service_config_hashes_until(
+        &mut self,
+        workdir: &Path,
+        project: &str,
+        files: &[std::path::PathBuf],
+        deadline: Instant,
+    ) -> Observed<std::collections::BTreeMap<String, String>> {
+        service_config_hashes_until(&self.selection, workdir, project, files, deadline)
+    }
+    fn containers_by_id(&mut self, workdir: &Path, ids: &[String]) -> Observed<Vec<Workload>> {
+        containers_by_id(&self.selection, workdir, ids)
     }
 }
-
-/// Docker Desktop or Engine: the host `docker` CLI on its resolved context.
-#[derive(Debug)]
-pub struct DockerBackend {
-    selection: BackendSelection,
-}
-
-impl DockerBackend {
-    pub fn new(selection: BackendSelection) -> Self {
-        Self { selection }
-    }
-}
-
-macro_rules! compose_adapter {
-    ($adapter:ty) => {
-        impl EnvironmentBackend for $adapter {
-            fn selection(&self) -> &BackendSelection {
-                &self.selection
-            }
-            fn inventory(&mut self, workdir: &Path, project: &str) -> Observed<Vec<Workload>> {
-                inventory(&self.selection, workdir, project)
-            }
-            fn inventory_until(
-                &mut self,
-                workdir: &Path,
-                project: &str,
-                deadline: Instant,
-            ) -> Observed<Vec<Workload>> {
-                inventory_until(&self.selection, workdir, project, Some(deadline))
-            }
-            fn image_id_until(
-                &mut self,
-                workdir: &Path,
-                reference: &str,
-                deadline: Instant,
-            ) -> Observed<String> {
-                image_id_until(&self.selection, workdir, reference, Some(deadline))
-            }
-            fn service_config_hashes_until(
-                &mut self,
-                workdir: &Path,
-                project: &str,
-                files: &[std::path::PathBuf],
-                deadline: Instant,
-            ) -> Observed<std::collections::BTreeMap<String, String>> {
-                service_config_hashes_until(&self.selection, workdir, project, files, deadline)
-            }
-            fn containers_by_id(
-                &mut self,
-                workdir: &Path,
-                ids: &[String],
-            ) -> Observed<Vec<Workload>> {
-                containers_by_id(&self.selection, workdir, ids)
-            }
-            fn image_id(&mut self, workdir: &Path, reference: &str) -> Observed<String> {
-                image_id(&self.selection, workdir, reference)
-            }
-        }
-    };
-}
-compose_adapter!(ColimaBackend);
-compose_adapter!(DockerBackend);
 
 /// The exact containers `ids` name, one row each.
 fn containers_by_id(
@@ -472,11 +433,6 @@ fn containers_by_id(
         },
         Err(error) => Observed::Unknown(read_reason("inspect by id", error)),
     }
-}
-
-/// The exact image id `reference` resolves to on `selection`.
-fn image_id(selection: &BackendSelection, workdir: &Path, reference: &str) -> Observed<String> {
-    image_id_until(selection, workdir, reference, None)
 }
 
 fn image_id_until(
@@ -949,21 +905,16 @@ fn runtime_invocation(
     selection: &BackendSelection,
     tail: &[OsString],
 ) -> (OsString, Vec<OsString>) {
+    use crate::ContainerBackend;
     match selection.kind {
         BackendKind::Colima => {
-            let mut args = vec![
-                OsString::from("nerdctl"),
-                OsString::from("--profile"),
-                OsString::from(&selection.context),
-                OsString::from("--"),
-            ];
-            args.extend(tail.iter().cloned());
-            (OsString::from("colima"), args)
+            crate::ColimaNerdctlBackend.compose_process_invocation(&selection.context, tail)
         }
-        BackendKind::DockerDesktop | BackendKind::DockerEngine => (
-            OsString::from("docker"),
-            DockerTarget::resolve(&selection.context).arguments(tail),
-        ),
+        BackendKind::DockerDesktop | BackendKind::DockerEngine => crate::DockerComposeBackend
+            .compose_process_invocation(
+                &selection.context,
+                &DockerTarget::resolve(&selection.context).arguments(tail),
+            ),
     }
 }
 

@@ -1,0 +1,1 @@
+A capped output completeness footer now requires positive settlement of every foreground task's owned process group; incomplete or unknown settlement suppresses the footer without changing the task's exit status.

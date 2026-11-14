@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
-use crate::value_parsing::parse_repo_path;
 use crate::{CliParseError, Command, FmtArgs, FmtSubcommand, HelpTopic};
 
+use super::common::{CommonArgs, CommonFlag};
 use super::unknown_argument;
 
 pub(super) fn parse_fmt_command<I>(args: I) -> Result<Command, CliParseError>
@@ -35,17 +35,18 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut files: Vec<PathBuf> = Vec::new();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut check = false;
 
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
+        match common.take(&arg, &mut args, HelpTopic::Fmt)? {
+            CommonFlag::Help(topic) => return Ok(Command::Help(topic)),
+            CommonFlag::Consumed => continue,
+            CommonFlag::Unclaimed => {}
+        }
         match arg.as_str() {
-            "--json" => output_json = true,
             "--check" => check = true,
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Fmt)),
             other if other.starts_with('-') => return Err(unknown_argument(other)),
             _ => files.push(PathBuf::from(arg)),
         }
@@ -64,7 +65,7 @@ where
         } else {
             FmtSubcommand::Rust { files }
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }

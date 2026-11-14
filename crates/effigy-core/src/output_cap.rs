@@ -1,8 +1,16 @@
+//! Effigy's bounded process output.
+//!
+//! When a byte cap is configured, the completeness footer certifies that
+//! Effigy's writer reached its finish point and that each foreground task run
+//! reported positive settlement of its owned process group. It does not certify
+//! that an outer sink or forwarder drained its own buffers, or that file
+//! descriptors passed outside custody were closed.
 use std::io::{self, Write};
 use std::sync::{Mutex, OnceLock, PoisonError};
 
 pub const OUTPUT_CAP_ENV: &str = "EFFIGY_OUTPUT_CAP_BYTES";
 const MARKER: &str = "effigy: output cap {cap} bytes reached; remaining Effigy output discarded (output_truncated)\n";
+const FOOTER: &str = "\neffigy: output complete (payload {written} bytes; cap {cap} bytes)\n";
 
 #[derive(Clone, Copy)]
 pub enum Stream {
@@ -14,6 +22,11 @@ struct State {
     cap: Option<usize>,
     written: usize,
     truncated: bool,
+    incomplete: bool,
+    footer_enabled: bool,
+    finished: bool,
+    foreground_pending: usize,
+    foreground_incomplete: bool,
 }
 impl State {
     fn new(cap: Option<usize>) -> Self {
@@ -21,6 +34,11 @@ impl State {
             cap,
             written: 0,
             truncated: false,
+            incomplete: false,
+            footer_enabled: true,
+            finished: false,
+            foreground_pending: 0,
+            foreground_incomplete: false,
         }
     }
     fn write(&mut self, stream: Stream, bytes: &[u8]) -> io::Result<()> {
@@ -33,15 +51,20 @@ impl State {
         bytes: &[u8],
         mut emit: impl FnMut(Stream, &[u8]) -> io::Result<()>,
     ) -> io::Result<()> {
-        if bytes.is_empty() || self.truncated {
+        if bytes.is_empty() || self.truncated || self.finished {
             return Ok(());
         }
         let Some(cap) = self.cap else {
-            return emit(stream, bytes);
+            let result = emit(stream, bytes);
+            if result.is_err() {
+                self.incomplete = true;
+            }
+            return result;
         };
         let marker = marker(cap);
         let available = cap
             .saturating_sub(marker.len())
+            .saturating_sub(footer_reserve())
             .saturating_sub(self.written);
         let accepted = complete_lines(bytes, available);
         self.written += accepted;
@@ -51,22 +74,78 @@ impl State {
                 // error. Charge the whole attempt, reserve and attempt the
                 // marker once, then latch so ignored errors cannot retry it.
                 self.truncated = true;
+                self.incomplete = true;
                 self.written += marker.len();
-                let _ = emit(Stream::Stderr, &marker);
+                if emit(Stream::Stderr, &marker).is_err() {
+                    self.incomplete = true;
+                }
                 return Err(error);
             }
         }
         if accepted != bytes.len() {
             self.written += marker.len();
             self.truncated = true;
-            emit(Stream::Stderr, &marker)?;
+            if let Err(error) = emit(Stream::Stderr, &marker) {
+                self.incomplete = true;
+                return Err(error);
+            }
         }
         Ok(())
+    }
+
+    fn finish_with(
+        &mut self,
+        mut emit: impl FnMut(Stream, &[u8]) -> io::Result<()>,
+    ) -> io::Result<()> {
+        let Some(cap) = self.cap else {
+            self.finished = true;
+            return Ok(());
+        };
+        if self.finished
+            || !self.footer_enabled
+            || self.truncated
+            || self.incomplete
+            || self.foreground_pending > 0
+            || self.foreground_incomplete
+        {
+            self.finished = true;
+            return Ok(());
+        }
+        let footer = footer(self.written, cap);
+        self.finished = true;
+        if let Err(error) = emit(Stream::Stderr, &footer) {
+            self.incomplete = true;
+            return Err(error);
+        }
+        self.written += footer.len();
+        Ok(())
+    }
+
+    fn foreground_started(&mut self) {
+        self.foreground_pending = self.foreground_pending.saturating_add(1);
+    }
+
+    fn foreground_settled(&mut self, positive: bool) {
+        if self.foreground_pending == 0 {
+            self.foreground_incomplete = true;
+            return;
+        }
+        self.foreground_pending -= 1;
+        self.foreground_incomplete |= !positive;
     }
 }
 
 fn marker(cap: usize) -> Vec<u8> {
     MARKER.replace("{cap}", &cap.to_string()).into_bytes()
+}
+fn footer(written: usize, cap: usize) -> Vec<u8> {
+    FOOTER
+        .replace("{written}", &written.to_string())
+        .replace("{cap}", &cap.to_string())
+        .into_bytes()
+}
+fn footer_reserve() -> usize {
+    footer(usize::MAX, usize::MAX).len()
 }
 fn complete_lines(bytes: &[u8], limit: usize) -> usize {
     if bytes.len() <= limit {
@@ -101,7 +180,7 @@ pub fn marker_len(cap: usize) -> usize {
 }
 pub fn minimum_cap() -> usize {
     (1..)
-        .find(|cap| *cap >= marker_len(*cap))
+        .find(|cap| *cap >= marker_len(*cap) + footer_reserve())
         .unwrap_or(usize::MAX)
 }
 fn configure_env_once() -> Result<(), String> {
@@ -155,7 +234,7 @@ pub fn validate_cap(cap: Option<usize>) -> Result<(), String> {
             return Err(format!("{OUTPUT_CAP_ENV} must be greater than zero"));
         }
         if cap < minimum_cap() {
-            return Err(format!("{OUTPUT_CAP_ENV}={cap} is too small for the output truncation marker ({} bytes minimum)", minimum_cap()));
+            return Err(format!("{OUTPUT_CAP_ENV}={cap} is too small for the output marker and completeness footer ({} bytes minimum)", minimum_cap()));
         }
     }
     Ok(())
@@ -173,6 +252,35 @@ pub fn write(stream: Stream, bytes: &[u8]) -> io::Result<()> {
         .unwrap_or_else(PoisonError::into_inner)
         .write(stream, bytes)
 }
+pub fn finish() -> io::Result<()> {
+    state()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .finish_with(raw_write)
+}
+
+/// Include a foreground run in the completeness decision until it settles.
+pub fn foreground_started() {
+    state()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .foreground_started();
+}
+
+/// Record whether a foreground run positively settled its owned process group.
+/// A false result permanently suppresses this process's completeness footer.
+pub fn foreground_settled(positive: bool) {
+    state()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .foreground_settled(positive);
+}
+pub fn set_footer_enabled(enabled: bool) {
+    state()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .footer_enabled = enabled;
+}
 pub fn truncated() -> bool {
     state()
         .lock()
@@ -188,7 +296,12 @@ impl Write for ProcessStdout {
         Ok(bytes.len())
     }
     fn flush(&mut self) -> io::Result<()> {
-        io::stdout().flush()
+        io::stdout().flush().inspect_err(|_| {
+            state()
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .incomplete = true;
+        })
     }
 }
 impl Write for ProcessStderr {
@@ -197,7 +310,12 @@ impl Write for ProcessStderr {
         Ok(bytes.len())
     }
     fn flush(&mut self) -> io::Result<()> {
-        io::stderr().flush()
+        io::stderr().flush().inspect_err(|_| {
+            state()
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .incomplete = true;
+        })
     }
 }
 
@@ -207,7 +325,7 @@ mod tests {
 
     #[test]
     fn cap_counts_one_marker_and_drops_later_output() {
-        let cap = 110;
+        let cap = minimum_cap() + 40;
         let mut state = State::new(Some(cap));
         let mut out = Vec::new();
         let mut err = Vec::new();
@@ -249,7 +367,7 @@ mod tests {
 
     #[test]
     fn stdout_and_hook_stderr_share_the_budget() {
-        let mut state = State::new(Some(120));
+        let mut state = State::new(Some(minimum_cap() + 100));
         let mut out = Vec::new();
         let mut err = Vec::new();
         let mut emit = |stream, bytes: &[u8]| {
@@ -272,7 +390,7 @@ mod tests {
 
     #[test]
     fn an_early_stderr_notice_consumes_the_same_budget() {
-        let cap = 110;
+        let cap = minimum_cap() + 20;
         let mut state = State::new(Some(cap));
         let mut out = Vec::new();
         let mut err = Vec::new();
@@ -305,7 +423,7 @@ mod tests {
 
     #[test]
     fn a_partial_payload_write_error_charges_and_latches_before_retry() {
-        let cap = 120;
+        let cap = minimum_cap() + 20;
         let mut state = State::new(Some(cap));
         let mut calls = 0;
         let mut out = Vec::new();
@@ -346,7 +464,7 @@ mod tests {
 
     #[test]
     fn a_partial_marker_write_error_is_not_retried() {
-        let cap = 110;
+        let cap = minimum_cap() + 20;
         let mut state = State::new(Some(cap));
         let mut calls = 0;
         let mut output = Vec::new();
@@ -368,5 +486,209 @@ mod tests {
         assert_eq!(state.written, marker(cap).len());
         assert!(state.written <= cap);
         assert!(state.truncated);
+    }
+
+    #[test]
+    fn clean_capped_run_writes_a_reserved_completeness_footer() {
+        let cap = minimum_cap() + 100;
+        let mut state = State::new(Some(cap));
+        let mut output = Vec::new();
+        state
+            .write_with(Stream::Stdout, b"task output\n", |_, bytes| {
+                output.extend_from_slice(bytes);
+                Ok(())
+            })
+            .unwrap();
+        state
+            .finish_with(|stream, bytes| {
+                assert!(matches!(stream, Stream::Stderr));
+                output.extend_from_slice(bytes);
+                Ok(())
+            })
+            .unwrap();
+        assert!(output.ends_with(footer(b"task output\n".len(), cap).as_slice()));
+        assert!(output.len() <= cap);
+    }
+
+    #[test]
+    fn positive_foreground_settlement_allows_the_completeness_footer() {
+        let cap = minimum_cap() + 100;
+        let mut state = State::new(Some(cap));
+        state.foreground_started();
+        state.foreground_settled(true);
+        let mut output = Vec::new();
+        state
+            .finish_with(|_, bytes| {
+                output.extend_from_slice(bytes);
+                Ok(())
+            })
+            .unwrap();
+        assert!(output.ends_with(footer(0, cap).as_slice()));
+    }
+
+    #[test]
+    fn incomplete_or_pending_foreground_settlement_suppresses_the_footer() {
+        for settle in [Some(false), None] {
+            let mut state = State::new(Some(minimum_cap() + 100));
+            state.foreground_started();
+            if let Some(positive) = settle {
+                state.foreground_settled(positive);
+            }
+            let mut output = Vec::new();
+            state
+                .finish_with(|_, bytes| {
+                    output.extend_from_slice(bytes);
+                    Ok(())
+                })
+                .unwrap();
+            assert!(!output
+                .windows(b"output complete".len())
+                .any(|w| w == b"output complete"));
+        }
+    }
+
+    #[test]
+    fn no_foreground_run_keeps_capped_footer_behavior() {
+        let cap = minimum_cap() + 100;
+        let mut state = State::new(Some(cap));
+        let mut output = Vec::new();
+        state
+            .finish_with(|_, bytes| {
+                output.extend_from_slice(bytes);
+                Ok(())
+            })
+            .unwrap();
+        assert!(output.ends_with(footer(0, cap).as_slice()));
+    }
+
+    #[test]
+    fn overflow_marker_suppresses_the_completeness_footer() {
+        let cap = minimum_cap() + 20;
+        let mut state = State::new(Some(cap));
+        let mut output = Vec::new();
+        state
+            .write_with(Stream::Stdout, &[b'x'; 200], |_, bytes| {
+                output.extend_from_slice(bytes);
+                Ok(())
+            })
+            .unwrap();
+        state
+            .finish_with(|_, bytes| {
+                output.extend_from_slice(bytes);
+                Ok(())
+            })
+            .unwrap();
+        assert!(output.ends_with(&marker(cap)));
+        assert!(!output
+            .windows(b"output complete".len())
+            .any(|w| w == b"output complete"));
+        assert!(output.len() <= cap);
+    }
+
+    #[test]
+    fn failed_admission_output_suppresses_the_footer() {
+        let cap = minimum_cap() + 100;
+        let mut state = State::new(Some(cap));
+        let mut output = Vec::new();
+        let result = state.write_with(Stream::Stderr, b"admission progress\n", |_, bytes| {
+            output.extend_from_slice(&bytes[..5]);
+            Err(io::Error::other("admission output failed"))
+        });
+        assert!(result.is_err());
+        state
+            .finish_with(|_, bytes| {
+                output.extend_from_slice(bytes);
+                Ok(())
+            })
+            .unwrap();
+        assert!(!output
+            .windows(b"output complete".len())
+            .any(|w| w == b"output complete"));
+    }
+
+    #[test]
+    fn payload_and_marker_failures_leave_no_footer_or_retry() {
+        let cap = minimum_cap() + 40;
+        let mut state = State::new(Some(cap));
+        let mut calls = 0;
+        let mut output = Vec::new();
+        assert!(state
+            .write_with(
+                Stream::Stdout,
+                b"a complete payload line\n",
+                |stream, bytes| {
+                    calls += 1;
+                    output.extend_from_slice(&bytes[..bytes.len().min(3)]);
+                    if matches!(stream, Stream::Stdout) {
+                        Err(io::Error::other("payload failed"))
+                    } else {
+                        Err(io::Error::other("marker failed"))
+                    }
+                }
+            )
+            .is_err());
+        state
+            .finish_with(|_, bytes| {
+                calls += 1;
+                output.extend_from_slice(bytes);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(calls, 2);
+        assert!(!output
+            .windows(b"output complete".len())
+            .any(|w| w == b"output complete"));
+    }
+
+    #[test]
+    fn footer_failure_is_not_followed_by_more_output() {
+        let cap = minimum_cap() + 100;
+        let mut state = State::new(Some(cap));
+        let mut calls = 0;
+        let mut output = Vec::new();
+        state
+            .write_with(Stream::Stdout, b"payload\n", |_, bytes| {
+                calls += 1;
+                output.extend_from_slice(bytes);
+                Ok(())
+            })
+            .unwrap();
+        assert!(state
+            .finish_with(|_, bytes| {
+                calls += 1;
+                output.extend_from_slice(&bytes[..4]);
+                Err(io::Error::other("footer failed"))
+            })
+            .is_err());
+        state
+            .write_with(Stream::Stderr, b"later\n", |_, bytes| {
+                calls += 1;
+                output.extend_from_slice(bytes);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(calls, 2);
+        assert!(!output
+            .windows(b"output complete".len())
+            .any(|w| w == b"output complete"));
+    }
+
+    #[test]
+    fn uncapped_finish_adds_no_bytes() {
+        let mut state = State::new(None);
+        let mut output = Vec::new();
+        state
+            .write_with(Stream::Stdout, b"unchanged\n", |_, bytes| {
+                output.extend_from_slice(bytes);
+                Ok(())
+            })
+            .unwrap();
+        state
+            .finish_with(|_, bytes| {
+                output.extend_from_slice(bytes);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(output, b"unchanged\n");
     }
 }

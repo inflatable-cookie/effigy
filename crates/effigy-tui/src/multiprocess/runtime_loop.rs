@@ -42,11 +42,7 @@ pub(super) fn run_event_loop_with_control(
         runtime
             .state
             .apply_entry_waits(runtime.supervisor.entry_waits());
-        if runtime.state.shutdown_requested
-            && !runtime.state.startup_failed
-            && runtime.supervisor.startup_finished()
-            && startup_states_settled(runtime)
-        {
+        if may_stop_before_drawing(&runtime.state, runtime.supervisor.startup_finished()) {
             break;
         }
         runtime.state.spinner_tick = runtime.state.spinner_tick.wrapping_add(1);
@@ -118,10 +114,7 @@ pub(super) fn run_event_loop_with_control(
             return Err(error.into());
         }
         runtime.diagnostics.record_frame();
-        if runtime.state.shutdown_requested
-            && (runtime.state.startup_failed
-                || (runtime.supervisor.startup_finished() && startup_states_settled(runtime)))
-        {
+        if shutdown_settled(&runtime.state, runtime.supervisor.startup_finished()) {
             break;
         }
 
@@ -203,8 +196,19 @@ fn terminal_input_on(fd: libc::c_int, wait: Duration) -> TerminalInput {
     }
 }
 
-fn startup_states_settled(runtime: &SessionRuntime<'_>) -> bool {
-    runtime.state.pending_startup == 0
+/// The loop's stop decision: shutdown was requested and no entry is still
+/// starting. The session's own count decides the last condition, so a wait
+/// that settled on this tick ends the session instead of leaving it drawing.
+fn shutdown_settled(state: &super::state::SessionState, startup_finished: bool) -> bool {
+    state.shutdown_requested
+        && (state.startup_failed || (startup_finished && state.pending_startup == 0))
+}
+
+/// Whether drawing another frame would tell the operator nothing new. A failed
+/// startup is the exception: the loop draws one last frame so the failure is
+/// on screen, then stops through [`shutdown_settled`].
+fn may_stop_before_drawing(state: &super::state::SessionState, startup_finished: bool) -> bool {
+    !state.startup_failed && shutdown_settled(state, startup_finished)
 }
 
 #[cfg(test)]
@@ -263,5 +267,56 @@ mod terminal_input_tests {
         ));
         // SAFETY: closes the slave this test owns.
         unsafe { libc::close(slave) };
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+    use crate::multiprocess::state::SessionState;
+    use std::path::PathBuf;
+
+    fn state() -> SessionState {
+        SessionState::new(
+            PathBuf::from("/fixture"),
+            vec!["build".to_owned()],
+            40,
+            120,
+            500,
+        )
+    }
+
+    #[test]
+    fn a_session_stops_only_after_every_entry_settles() {
+        let mut session = state();
+        assert!(!shutdown_settled(&session, false), "nothing asked to stop");
+
+        session.shutdown_requested = true;
+        session.pending_startup = 1;
+        assert!(
+            !shutdown_settled(&session, true),
+            "an entry is still starting"
+        );
+
+        session.pending_startup = 0;
+        assert!(
+            !shutdown_settled(&session, false),
+            "startup has not finished"
+        );
+        assert!(shutdown_settled(&session, true));
+        assert!(may_stop_before_drawing(&session, true));
+    }
+
+    #[test]
+    fn a_failed_startup_draws_one_last_frame_before_stopping() {
+        let mut session = state();
+        session.shutdown_requested = true;
+        session.startup_failed = true;
+        session.pending_startup = 2;
+        assert!(shutdown_settled(&session, false), "failure ends the wait");
+        assert!(
+            !may_stop_before_drawing(&session, false),
+            "the failure frame must still be drawn"
+        );
     }
 }

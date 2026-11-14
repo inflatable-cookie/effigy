@@ -15,11 +15,16 @@ use effigy_ui::{OutputMode, PlainRenderer, Renderer};
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
+fn exit_process(code: i32) -> ! {
+    let _ = effigy_core::output_cap::finish();
+    std::process::exit(code)
+}
+
 pub fn run_cli(raw_args: Vec<String>) {
     if let Err(error) = effigy_core::output_cap::configure_from_env() {
         let message = format!("effigy: {error}\n");
         let _ = std::io::stderr().write_all(message.as_bytes());
-        std::process::exit(2);
+        exit_process(2);
     }
     let original_args = raw_args.clone();
     let requested_root_json = runtime_flag_present_before_passthrough(&raw_args, "--json");
@@ -32,6 +37,7 @@ pub fn run_cli(raw_args: Vec<String>) {
         Err(err) => {
             let output_mode = OutputMode::from_env();
             if requested_root_json {
+                effigy_core::output_cap::set_footer_enabled(false);
                 emit_json_envelope_error(
                     2,
                     "cli",
@@ -52,11 +58,14 @@ pub fn run_cli(raw_args: Vec<String>) {
                 &err.to_string(),
                 &usage_hint_for(&hint_argv),
             );
-            std::process::exit(2);
+            exit_process(2);
         }
     };
     hint_argv = args.clone();
     let global_json_mode = global_options.json_mode;
+    if requested_root_json || global_json_mode {
+        effigy_core::output_cap::set_footer_enabled(false);
+    }
     // `--json` never writes the retired-config notice to stderr; the envelope
     // carries it. Set before any manifest load so parse-time routing cannot
     // print it early.
@@ -90,7 +99,7 @@ pub fn run_cli(raw_args: Vec<String>) {
                 &err.to_string(),
                 &usage_hint_for(&hint_argv),
             );
-            std::process::exit(2);
+            exit_process(2);
         }
     };
     if global_json_mode && matches!(&parsed, Command::Skill(args) if args.stdio_passthrough()) {
@@ -99,7 +108,7 @@ pub fn run_cli(raw_args: Vec<String>) {
             "Task failed",
             "`--json` and `--stdio passthrough` are incompatible: JSON mode lets Effigy own a versioned envelope while passthrough lets the task own raw stdio; choose one".to_owned(),
         ));
-        std::process::exit(2);
+        exit_process(2);
     }
     let cmd = match apply_global_cli_flags(parsed, &global_options) {
         Ok(cmd) => cmd,
@@ -124,7 +133,7 @@ pub fn run_cli(raw_args: Vec<String>) {
                 &err.to_string(),
                 &usage_hint_for(&hint_argv),
             );
-            std::process::exit(2);
+            exit_process(2);
         }
     };
     let internal_suppress_header = std::env::var("EFFIGY_INTERNAL_SUPPRESS_HEADER")
@@ -138,6 +147,7 @@ pub fn run_cli(raw_args: Vec<String>) {
     // process supervisor.
     let json_requested = command_requests_json(&cmd, global_json_mode);
     let local_qa_json = !global_json_mode && command_requests_local_qa_json(&cmd);
+    effigy_core::output_cap::set_footer_enabled(!json_requested && !local_qa_json);
     let suppress_header = internal_suppress_header
         || effigy_ui::steps::in_managed_pane()
         || json_requested
@@ -181,7 +191,7 @@ pub fn run_cli(raw_args: Vec<String>) {
             }
             let mut renderer = PlainRenderer::stderr(output_mode);
             let _ = renderer.error_block(&MessageBlock::new("Task failed", message));
-            std::process::exit(1);
+            exit_process(1);
         }
     };
     let command_root = runtime_context.command_root().to_path_buf();
@@ -198,17 +208,18 @@ pub fn run_cli(raw_args: Vec<String>) {
     // Raw stdio passthrough bypasses Effigy's renderer, spinner, and JSON
     // envelope entirely: the selected task owns stdin/stdout/stderr and status.
     if matches!(&cmd, Command::Skill(args) if args.stdio_passthrough()) {
+        effigy_core::output_cap::set_footer_enabled(false);
         match crate::runner::run_skill_passthrough_with_context(cmd, context.runtime_context) {
-            Ok(status) => std::process::exit(status),
+            Ok(status) => exit_process(status),
             Err(error) => {
                 if let Some(status) = error.task_exit_status() {
                     // The task already owns stderr; do not add Effigy text.
-                    std::process::exit(status);
+                    exit_process(status);
                 }
                 let mut err_renderer = PlainRenderer::stderr(output_mode);
                 let _ =
                     err_renderer.error_block(&MessageBlock::new("Task failed", error.to_string()));
-                std::process::exit(1);
+                exit_process(1);
             }
         }
     }
@@ -299,12 +310,12 @@ fn run_and_render_command_in(
         Err(err) => {
             if let crate::runner::RunnerError::RunSettledJson { code, ref output } = err {
                 emit_json_envelope_success(context.command_kind, context.command_name, output);
-                std::process::exit(code);
+                exit_process(code);
             }
             if let crate::runner::RunnerError::RunSettled { code } = err {
                 // An attached or followed run already wrote its output; exit
                 // with that run's own result and add nothing.
-                std::process::exit(code);
+                exit_process(code);
             }
             let exit_code = err.process_exit_code();
             let human = err.human_error();
@@ -328,12 +339,12 @@ fn run_and_render_command_in(
                     // error's own exit code. Rewriting it to 1 would make its
                     // caller record a cancellation (130) or a task's own code
                     // as a generic failure.
-                    std::process::exit(exit_code);
+                    exit_process(exit_code);
                 }
             }
             let mut err_renderer = PlainRenderer::stderr(context.output_mode);
             let _ = err_renderer.text(&human.render_text());
-            std::process::exit(exit_code);
+            exit_process(exit_code);
         }
     }
 }

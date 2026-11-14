@@ -16,7 +16,7 @@ pub(super) struct ProjectedSuitePlan {
     pub(super) suite_env_files: Vec<String>,
     pub(super) setup_steps: usize,
     pub(super) teardown_steps: usize,
-    pub(super) teardown_policy: String,
+    pub(super) teardown_policy: ManifestTestSuiteTeardownPolicy,
     pub(super) is_default: bool,
 }
 
@@ -81,10 +81,7 @@ pub(super) fn project_target_plan(
             suite_env_files: plan.suite_env_files.clone(),
             setup_steps: plan.setup_steps,
             teardown_steps: plan.teardown_steps,
-            teardown_policy: match plan.teardown_policy {
-                ManifestTestSuiteTeardownPolicy::Always => "always".to_owned(),
-                ManifestTestSuiteTeardownPolicy::OnSuccess => "on-success".to_owned(),
-            },
+            teardown_policy: plan.teardown_policy,
             is_default: plan.is_default,
         });
     }

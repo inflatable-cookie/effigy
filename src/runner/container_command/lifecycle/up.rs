@@ -247,14 +247,16 @@ fn run_container_up_inner(
             match run_container_up_compose(&plan, &mut compose_steps.borrow_mut(), &observation) {
                 Ok(None) => {}
                 Ok(Some(end)) => {
-                    let message = match &end {
-                        AttachedComposeEnd::Interrupted => "compose up interrupted".to_owned(),
+                    let error = match &end {
+                        AttachedComposeEnd::Interrupted => {
+                            BackendError::Uncertain("compose up interrupted".to_owned())
+                        }
                         AttachedComposeEnd::Failed(status) => {
-                            format!("compose up exited with {status}")
+                            BackendError::Failed(format!("compose up exited with {status}"))
                         }
                     };
                     *attached_end.borrow_mut() = Some(end);
-                    return Err(BackendError::Uncertain(message));
+                    return Err(error);
                 }
                 Err(error) => {
                     let message = error.to_string();

@@ -26,7 +26,7 @@ fn main() -> std::io::Result<()> {
                 format!("{}:80", effigy_gateway::loopback::DEFAULT_LOOPBACK_START),
                 format!("{}:443", effigy_gateway::loopback::DEFAULT_LOOPBACK_END),
             ] {
-                let listener = std::net::TcpListener::bind(address)?;
+                let listener = std::net::TcpListener::bind(&address)?;
                 assert_eq!(listener.local_addr()?.to_string(), address);
             }
             println!("unprivileged Linux loopback low-port binds passed");

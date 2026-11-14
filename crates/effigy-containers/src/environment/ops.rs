@@ -8,6 +8,7 @@ use effigy_kernel::id::RunId;
 use effigy_kernel::objects::{Closure, Objects};
 use effigy_kernel::observe::{Observed, UnknownReason};
 use effigy_kernel::run::AttachMode;
+use effigy_ui::steps::ProgressSource;
 use std::time::Instant;
 
 use super::backend::{BackendError, BackendSelection};
@@ -226,7 +227,8 @@ fn live_holders(holders: Observed<Vec<Holder>>) -> Vec<RunId> {
 
 /// One stop. `exempt` is the holder whose own stop this is: it must already
 /// be settling. `stop` performs the backend effect and the caller's
-/// teardown of routes and host processes.
+/// teardown of routes and host processes, reporting the runtime's own lines
+/// into the transition's progress so the stop is one line (effigy#974).
 pub fn down(
     ctx: &EnvContext<'_>,
     env: &EnvRef,
@@ -234,7 +236,7 @@ pub fn down(
     backend: &BackendSelection,
     project: &str,
     exempt: Option<RunId>,
-    stop: impl FnOnce() -> Result<(), BackendError>,
+    stop: impl FnOnce(&ProgressSource) -> Result<(), BackendError>,
 ) -> Result<(), EnvError> {
     // A handover runs before the incoming environment's own runs begin, so
     // no environment gate is held while it waits (I-G3).
@@ -261,7 +263,7 @@ pub fn reset(
     env: &EnvRef,
     backend: &BackendSelection,
     project: &str,
-    stop: impl FnOnce() -> Result<(), BackendError>,
+    stop: impl FnOnce(&ProgressSource) -> Result<(), BackendError>,
 ) -> Result<(), EnvError> {
     let mut run = EnvRun::begin(
         ctx,

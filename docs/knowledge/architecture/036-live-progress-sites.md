@@ -54,9 +54,10 @@ on a reintroduced bare spinner.
   those rows is a follow-up, not a change to this rule.
 - There is no allowlist, ceiling or baseline file. Any such use fails, and so
   does an `#[allow(deprecated)]`-style suppression.
-- The spinner crate is owned the same way. `indicatif` may be named in exactly
-  one production file, the reviewed sink in `crates/effigy-ui/src/steps.rs`,
-  and that file may build exactly one bar with one style and one steady tick.
+- The spinner crate is owned the same way. `indicatif` may be named only in
+  the reviewed sink's own module, `crates/effigy-ui/src/steps/` (the API, the
+  progress source, streaming and terminal hand-over), and only its
+  `steps/mod.rs` may build exactly one bar with one style and one steady tick.
   A fixed-label spinner built through another constructor
   (`ProgressBar::no_length`, `ProgressBar::new`, `ProgressStyle::default_spinner`,
   `enable_steady_tick`) is therefore reported at its own file and line, whether
@@ -262,7 +263,7 @@ test reads the wall clock.
 | Primary container, health-log reads, shared services | `container_command::support::tests::the_primary_container_read_names_the_runtime_row_it_waits_on`, `the_declared_health_log_read_names_the_container_and_its_elapsed_wait`, `each_shared_service_names_its_own_wait` |
 | Health wait (`effigy-containers`) | `health::tests::a_health_wait_frame_names_the_probe_attempt_elapsed_and_last_answer` |
 | Colima profile | `container_command::profile::progress_tests::fake_clock_frames_name_the_profile_operation_and_its_state`, `recovery_phases_name_the_command_in_flight_on_the_fake_clock` (every `ColimaRecoveryPhase` through the production mapping) and `a_recreate_names_the_configuration_before_the_start_it_launches`; the phase sequence itself — including configuration preparation before the start — is proven on the fixture's fake `colima` in `exec::colima_runtime::tests::a_recovery_and_a_reset_report_each_phase_they_put_in_flight` |
-| Environment gate and settle | `environment::reconcile::tests::fake_clock_frames_name_the_gate_the_reconcile_phase_and_the_refusal` |
+| Environment gate and settle | `environment::reconcile::tests::fake_clock_frames_name_the_gate_the_reconcile_phase_and_the_refusal`, `environment::tests::a_stop_is_one_step_with_moving_sub_steps` (the stop is one step; the backend's stopping/removing lines are that step's sub-steps, effigy#974) and `environment::tests::a_failed_stop_keeps_the_backend_cause` |
 | Doctor | `effigy-doctor progress::tests::live_frames_name_the_probe_count_elapsed_and_check_transitions` |
 | Bootstrap | `bootstrap_command::tests::a_phase_frame_names_its_action_and_what_it_waits_on_as_time_passes` (one phase read at two times) |
 | Deploy provider fetch | `deploy_command::provider::tests::a_fetch_frame_names_the_exact_source_and_pin_as_time_passes` (one fetch read at two times) |
@@ -276,7 +277,7 @@ test reads the wall clock.
 | Heavy admission | `task_engine::admission::tests::an_admission_wait_frame_names_its_probe_the_hook_progress_and_elapsed` |
 | State apply and capture | `state_command::live_progress_tests::an_apply_layer_frame_names_its_place_and_the_source_it_waits_on`, `a_capture_artifact_frame_names_the_destination_it_pushes_to`, `the_artifact_phase_after_a_capture_task_keeps_the_destination_and_the_last_event` (the sticky last event never costs the frame its destination) |
 | Compose steps (`effigy-containers`) | `exec::compose_steps::tests::a_runtime_step_frame_moves_with_the_runtime_and_names_its_wait` |
-| Silent teardown (`effigy-runtime`) | `write::tests::a_silent_runtime_teardown_step_names_the_command_it_awaits_and_its_elapsed_wait` |
+| Silent teardown (`effigy-runtime`) | `write::tests::recognised_teardown_lines_become_the_transition_sub_step` and `an_unrecognised_teardown_line_leaves_the_transition_sub_step` |
 | TUI panes | `multiprocess::render::panes::tests::output_tests::a_starting_pane_names_its_wait_and_the_elapsed_time_not_just_a_glyph`, `an_entry_with_its_own_state_does_not_borrow_the_session_clock`, and `frame_tests::waiting_tabs_name_their_own_dependency_and_phase` |
 | TUI shutdown | `multiprocess::lifecycle::progress::tests::shutdown_frames_have_one_current_label` and `the_completion_frame_counts_the_processes_and_the_forced_ones` |
 
@@ -295,7 +296,7 @@ exactly the one a Services tab loses - the pre-fix shape was 110 live frames,
 a repeated wait and a nested `EFFIGY` banner inside one pane log (effigy#729).
 `effigy_ui::steps::LEGACY_MANAGED_PANE_ENV` still counts when present.
 
-Evidence: `crates/effigy-ui/src/steps.rs` tests
+Evidence: `crates/effigy-ui/src/steps/tests.rs`
 `the_pane_fact_survives_the_names_a_child_can_carry` and
 `pane_mode_writes_one_plain_start_and_finish` (the mode itself), plus the real
 PTY fixtures `tests/scripts/managed-pane-feedback.py` (a TUI pane and the

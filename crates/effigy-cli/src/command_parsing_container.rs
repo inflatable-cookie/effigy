@@ -1,12 +1,11 @@
-use std::path::PathBuf;
-
 use crate::{
     BoundedExecLimits, Command, ContainerArgs, ContainerCacheSubcommand,
     ContainerProfileSubcommand, ContainerSubcommand, ContainerVolumeSubcommand, HelpTopic,
 };
 
-use crate::value_parsing::{next_required_value, parse_repo_path};
+use crate::value_parsing::next_required_value;
 
+use super::common::{shared_flag_arm, shared_output_flag_arm, CommonArgs, CommonFlag};
 use super::container_data::parse_container_data;
 use super::{unknown_argument, CliParseError};
 
@@ -73,21 +72,17 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut attach = false;
     let mut detach = false;
     let mut system: Option<String> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--attach" => attach = true,
             "--detach" => detach = true,
             "--system" => system = Some(parse_system_selector(&mut args, name.as_deref())?),
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Container),
         }
     }
 
@@ -98,8 +93,8 @@ where
             attach,
             detach,
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -108,19 +103,15 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut global = false;
     let mut system: Option<String> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--global" => global = true,
             "--system" => system = Some(parse_system_selector(&mut args, name.as_deref())?),
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Container),
         }
     }
 
@@ -141,8 +132,8 @@ where
             system,
             global,
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -151,19 +142,15 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut global = false;
     let mut system: Option<String> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--global" => global = true,
             "--system" => system = Some(parse_system_selector(&mut args, name.as_deref())?),
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Container),
         }
     }
 
@@ -184,8 +171,8 @@ where
             system,
             global,
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -194,21 +181,17 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut keep_data = false;
     let mut wipe_data = false;
     let mut yes = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--keep-data" => keep_data = true,
             "--wipe-data" => wipe_data = true,
             "--yes" => yes = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Container),
         }
     }
     if keep_data && wipe_data {
@@ -225,8 +208,8 @@ where
             wipe_data,
             yes,
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -235,17 +218,13 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut global = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--global" => global = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Container),
         }
     }
 
@@ -262,8 +241,8 @@ where
 
     Ok(Command::Container(ContainerArgs {
         subcommand: ContainerSubcommand::Stats { global },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -277,21 +256,22 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     while let Some(arg) = args.next() {
+        match common.take(&arg, &mut args, HelpTopic::Container)? {
+            CommonFlag::Help(topic) => return Ok(Command::Help(topic)),
+            CommonFlag::Consumed => continue,
+            CommonFlag::Unclaimed => {}
+        }
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
             other if !other.starts_with('-') && name.is_none() => name = Some(arg),
             _ => return Err(unknown_argument(arg)),
         }
     }
     Ok(Command::Container(ContainerArgs {
         subcommand: subcommand(name),
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -313,22 +293,16 @@ where
     }
 
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
 
     while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
-        }
+        shared_flag_arm!(arg.as_str(), &mut args, common, HelpTopic::Container);
     }
 
     Ok(Command::Container(ContainerArgs {
         subcommand: ContainerSubcommand::Scope,
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -337,8 +311,7 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut yes = false;
     let mut dead = false;
     let mut keep_data = false;
@@ -346,8 +319,6 @@ where
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--yes" => yes = true,
             "--dead" => dead = true,
             "--keep-data" => keep_data = true,
@@ -359,8 +330,7 @@ where
                     },
                 )?)
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Container),
         }
     }
 
@@ -384,8 +354,8 @@ where
             keep_data,
             yes,
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -449,17 +419,13 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut system: Option<String> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--system" => system = Some(parse_system_selector(&mut args, None)?),
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Container),
         }
     }
 
@@ -471,8 +437,8 @@ where
 
     Ok(Command::Container(ContainerArgs {
         subcommand: ContainerSubcommand::Profile { subcommand },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -483,12 +449,11 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut profile: Option<String> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--json" => output_json = true,
             "--profile" => {
                 profile = Some(next_required_value(
                     &mut args,
@@ -497,8 +462,7 @@ where
                     },
                 )?)
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
+            other => shared_output_flag_arm!(other, common, HelpTopic::Container),
         }
     }
 
@@ -507,7 +471,7 @@ where
             subcommand: ContainerProfileSubcommand::PruneHealthPidFiles { profile },
         },
         repo_override: None,
-        output_json,
+        output_json: common.output_json,
     }))
 }
 
@@ -564,14 +528,11 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut profile: Option<String> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--profile" => {
                 profile = Some(next_required_value(
                     &mut args,
@@ -580,8 +541,7 @@ where
                     },
                 )?)
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Container),
         }
     }
 
@@ -589,8 +549,8 @@ where
         subcommand: ContainerSubcommand::Profile {
             subcommand: ContainerProfileSubcommand::Status { profile },
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -599,16 +559,13 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut profile: Option<String> = None;
     let mut disk_gib: Option<u64> = None;
     let mut yes = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--yes" => yes = true,
             "--disk" => disk_gib = Some(parse_positive_u64(&mut args, "--disk")?),
             "--profile" => {
@@ -619,8 +576,7 @@ where
                     },
                 )?)
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Container),
         }
     }
 
@@ -632,8 +588,8 @@ where
                 yes,
             },
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -642,15 +598,12 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut profile: Option<String> = None;
     let mut yes = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--yes" => yes = true,
             "--profile" => {
                 profile = Some(next_required_value(
@@ -660,8 +613,7 @@ where
                     },
                 )?)
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Container),
         }
     }
 
@@ -669,8 +621,8 @@ where
         subcommand: ContainerSubcommand::Profile {
             subcommand: ContainerProfileSubcommand::Purge { profile, yes },
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -700,14 +652,11 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut profile: Option<String> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--profile" => {
                 profile = Some(next_required_value(
                     &mut args,
@@ -716,8 +665,7 @@ where
                     },
                 )?)
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Container),
         }
     }
 
@@ -725,8 +673,8 @@ where
         subcommand: ContainerSubcommand::Profile {
             subcommand: ContainerProfileSubcommand::Resize { profile },
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -735,21 +683,17 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut global = false;
     let mut orphans = false;
     let mut dormant = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--global" => global = true,
             "--orphans" => orphans = true,
             "--dormant" => dormant = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Container),
         }
     }
 
@@ -780,8 +724,8 @@ where
                 dormant,
             },
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -790,8 +734,7 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut global = false;
     let mut yes = false;
     let mut orphans = false;
@@ -799,14 +742,11 @@ where
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--global" => global = true,
             "--yes" => yes = true,
             "--orphans" => orphans = true,
             "--dormant" => dormant = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Container),
         }
     }
 
@@ -844,8 +784,8 @@ where
                 dormant,
             },
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -854,16 +794,13 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut global = false;
     let mut project: Option<String> = None;
     let mut kind: Option<String> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--global" => global = true,
             "--project" => {
                 project = Some(next_required_value(
@@ -881,8 +818,7 @@ where
                     },
                 )?)
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Container),
         }
     }
 
@@ -905,8 +841,8 @@ where
                 kind,
             },
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -915,8 +851,7 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut global = false;
     let mut yes = false;
     let mut project: Option<String> = None;
@@ -924,8 +859,6 @@ where
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--global" => global = true,
             "--yes" => yes = true,
             "--project" => {
@@ -944,8 +877,7 @@ where
                     },
                 )?)
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Container),
         }
     }
 
@@ -969,8 +901,8 @@ where
                 kind,
             },
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -979,16 +911,13 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut service: Option<String> = None;
     let mut system: Option<String> = None;
     let mut follow = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--system" => system = Some(parse_system_selector(&mut args, name.as_deref())?),
             "--service" => {
                 service = Some(next_required_value(
@@ -999,8 +928,7 @@ where
                 )?);
             }
             "--follow" => follow = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Container),
         }
     }
 
@@ -1011,8 +939,8 @@ where
             service,
             follow,
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -1022,15 +950,16 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut processes: Vec<String> = Vec::new();
 
     while let Some(arg) = args.next() {
+        match common.take(&arg, &mut args, HelpTopic::Container)? {
+            CommonFlag::Help(topic) => return Ok(Command::Help(topic)),
+            CommonFlag::Consumed => continue,
+            CommonFlag::Unclaimed => {}
+        }
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
             other if other.starts_with('-') => return Err(unknown_argument(other)),
             _ => processes.push(arg),
         }
@@ -1044,8 +973,8 @@ where
 
     Ok(Command::Container(ContainerArgs {
         subcommand: ContainerSubcommand::Restart { name, processes },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -1054,8 +983,7 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut service: Option<String> = None;
     let mut command: Option<String> = None;
     let mut bounded = false;
@@ -1065,8 +993,6 @@ where
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--bounded" => bounded = true,
             "--service" => {
                 service = Some(next_required_value(
@@ -1091,8 +1017,7 @@ where
             "--stderr-limit-bytes" => {
                 stderr_limit_bytes = Some(parse_bounded_u64(&mut args, "--stderr-limit-bytes")?);
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Container),
         }
     }
 
@@ -1138,8 +1063,8 @@ where
             command,
             bounded: limits,
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -1171,22 +1096,16 @@ where
     F: FnOnce(Option<String>) -> ContainerSubcommand,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
 
     while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
-        }
+        shared_flag_arm!(arg.as_str(), &mut args, common, HelpTopic::Container);
     }
 
     Ok(Command::Container(ContainerArgs {
         subcommand: build(name),
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 

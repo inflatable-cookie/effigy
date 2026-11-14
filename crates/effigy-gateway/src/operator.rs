@@ -22,6 +22,8 @@ use effigy_kernel::supervise::{self, ClientMode, Executable};
 use serde::Serialize;
 
 use crate::server::GatewayConfig;
+mod fixture_guard;
+mod legacy_status;
 
 /// A gateway refusal as a person reads it: the reason's own sentence, never a
 /// `Debug` quotation.
@@ -133,7 +135,7 @@ pub fn daemon_entry(addresses: Option<[std::net::SocketAddr; 3]>) -> io::Result<
         config.proxy.bind_addr = http;
         config.proxy.tls_bind_addr = Some(https);
     }
-    require_fixture_isolation(&config)?;
+    fixture_guard::require_fixture_isolation(&config)?;
     crate::setup::read_receipt(&home)?;
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -144,37 +146,6 @@ pub fn daemon_entry(addresses: Option<[std::net::SocketAddr; 3]>) -> io::Result<
         ))
         .map_err(error)
 }
-/// Library-driven operator fixtures must select their own state directory and
-/// unprivileged loopback ports. CLI fixtures use GatewayConfig::private instead.
-fn require_fixture_isolation(config: &GatewayConfig) -> io::Result<()> {
-    if !cfg!(debug_assertions)
-        || cfg!(test)
-        || !std::env::vars_os()
-            .any(|(key, _)| key.to_string_lossy().starts_with("EFFIGY_TEST_") || key == "NEXTEST")
-    {
-        return Ok(());
-    }
-    let selected =
-        std::env::var_os(crate::private_state::PRIVATE_STATE_ROOT_ENV).map(PathBuf::from);
-    if let Some(root) =
-        selected.filter(|root| Some(root.as_path()) == config.pid_file_path.parent())
-    {
-        let endpoints = [
-            Some(config.dns.bind_addr),
-            Some(config.proxy.bind_addr),
-            config.proxy.tls_bind_addr,
-        ];
-        if endpoints
-            .into_iter()
-            .flatten()
-            .all(|addr| addr.ip().is_loopback() && addr.port() >= 1024 && addr.port() != 15353)
-        {
-            return crate::private_state::validate_root(&root).map_err(error);
-        }
-    }
-    Err(error("fixture process requires a private gateway root and test-only ports; refusing operator gateway mutation"))
-}
-
 pub(crate) fn require_operator() -> io::Result<()> {
     if nix::unistd::Uid::effective().is_root() {
         return Err(error("the standard gateway runs as the operator; run `effigy gateway setup` from your user account"));
@@ -223,34 +194,6 @@ fn observed<T>(value: Observed<T>) -> io::Result<Option<T>> {
         Observed::Unknown(reason) => Err(error(format!("gateway observation unknown: {reason}"))),
     }
 }
-fn legacy_status(config: &GatewayConfig) -> io::Result<Status> {
-    let has_pid = match std::fs::symlink_metadata(
-        config
-            .pid_file_path
-            .parent()
-            .ok_or_else(|| error("invalid gateway directory"))?,
-    ) {
-        Ok(_) => crate::identity::read_snapshot(&config.pid_file_path)
-            .map_err(error)?
-            .is_some(),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => false,
-        Err(e) => return Err(e),
-    };
-    if has_pid {
-        return Ok(Status::simple(
-            "setup_required",
-            Some("an existing gateway needs migration; run `effigy gateway setup`".into()),
-        ));
-    }
-    if crate::setup::read_receipt(home(config)?).is_err() {
-        Ok(Status::simple(
-            "setup_required",
-            Some("run `effigy gateway setup`".into()),
-        ))
-    } else {
-        Ok(Status::simple("stopped", None))
-    }
-}
 /// Pure, bounded observation: no repair, privilege request or exclusive gate.
 pub fn status(config: &GatewayConfig) -> io::Result<Status> {
     let mut result = observed_status(config)?;
@@ -276,7 +219,7 @@ fn observed_status(config: &GatewayConfig) -> io::Result<Status> {
             Ok(Some(result)) => return Ok(result),
             // Legacy identity failures are refusals, not a settling kernel
             // owner. Preserve them rather than translating them to unknown.
-            Ok(None) => return legacy_status(config),
+            Ok(None) => return legacy_status::legacy_status(config),
             Err(err) if op.remaining().unwrap_or_default() <= Duration::from_millis(10) => {
                 return Ok(Status::simple("unknown", Some(err.to_string())));
             }
@@ -586,7 +529,7 @@ fn up_with_executable_observed(
     report: &dyn Fn(StartPhase),
 ) -> io::Result<Status> {
     require_operator()?;
-    require_fixture_isolation(config)?;
+    fixture_guard::require_fixture_isolation(config)?;
     // This shared lifecycle writes no event: the explicit operator command that
     // asked for it records the action, so a `setup` step or a managed task start
     // never appears here as a `gateway up command` (effigy#450 review).
@@ -805,7 +748,7 @@ pub enum StopPhase {
 /// [`down`] that reports each phase it enters.
 pub fn down_observed(config: &GatewayConfig, report: &dyn Fn(StopPhase)) -> io::Result<Status> {
     require_operator()?;
-    require_fixture_isolation(config)?;
+    fixture_guard::require_fixture_isolation(config)?;
     // As `up`: no event here. The command boundary records the stop request, so
     // `gateway setup --remove` and a managed start are not mistaken for a
     // `gateway down command`.
@@ -1058,6 +1001,21 @@ mod tests {
         assert!(up(&config).is_err());
         assert!(down(&config).is_err());
         assert_eq!(std::fs::read_dir(home.path()).unwrap().count(), before);
+    }
+
+    #[test]
+    fn status_identifies_a_legacy_pid_record_as_needing_setup_migration() {
+        let home = tempfile::tempdir().unwrap();
+        let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+        std::fs::create_dir_all(config.pid_file_path.parent().unwrap()).unwrap();
+        std::fs::write(&config.pid_file_path, std::process::id().to_string()).unwrap();
+
+        let status = status(&config).unwrap();
+        assert_eq!(status.status, "setup_required");
+        assert!(status
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("existing gateway needs migration")));
     }
 
     /// The shared operator lifecycle writes no event of its own: the explicit

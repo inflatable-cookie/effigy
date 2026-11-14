@@ -15,6 +15,16 @@ pub(super) fn require_table<'a>(
     Some(table)
 }
 
+/// The value of a field under any of its accepted spellings, in declaration
+/// order. One rule for the snake_case/kebab-case aliases keeps every section
+/// reading the same field the same way.
+pub(super) fn aliased<'a>(
+    table: &'a toml::map::Map<String, Value>,
+    spellings: &[&str],
+) -> Option<&'a Value> {
+    spellings.iter().find_map(|spelling| table.get(*spelling))
+}
+
 pub(super) fn validate_allowed_keys(
     context: &mut SchemaContext<'_, '_>,
     base_path: &str,

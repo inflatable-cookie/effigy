@@ -1,4 +1,6 @@
 //! Real macOS/Linux custody qualification. All processes and files are fixtures.
+#[path = "support/mod.rs"]
+mod support;
 use effigy_kernel::{
     ctx::*, custody::*, gate::Wait, id::*, observe::*, outcome::*, root::StateRoot, run::*,
     supervise::*,
@@ -38,9 +40,9 @@ fn guard(floor: Duration) -> Duration {
     effigy_test_support::load_scaled_guard(floor)
 }
 
-fn home() -> tempfile::TempDir {
+fn home() -> support::Home {
     // Keep the fixture inside the run root; kernel socket probes support deep homes.
-    effigy_test_support::short_tempdir("kcustody-").unwrap()
+    support::Home::short("kcustody-")
 }
 fn fixture() -> PathBuf {
     std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE")
@@ -3048,7 +3050,7 @@ fn custody_completed_machine_store_run_closes_sentinel_and_releases_gate() {
 // owning pipe requests shutdown; a bounded wait retains uncertainty instead of
 // killing the sentinel or treating a reaped supervisor as workload closure.
 struct MachineFixture {
-    home: Option<tempfile::TempDir>,
+    home: Option<support::Home>,
     client: Option<SupervisorClient>,
     root: Option<StateRoot>,
     owner: Option<ResourceId>,
@@ -4351,4 +4353,189 @@ fn qualification_discard_refuses_genuine_old_helper_after_successful_admission()
         );
     }
     assert!(output.stdout.is_empty());
+}
+
+/// A failing custody proof must print the exact identities it recorded before
+/// its fixture home is removed, so the leftovers can be attributed and stopped
+/// by pid instead of a host-level search (effigy#962). The controlled failing
+/// child is a real run with a real workload and its real fixture home.
+#[test]
+fn failing_custody_proof_prints_recorded_identities_before_fixture_cleanup() {
+    const CHILD: &str = "EFFIGY_CUSTODY_RECEIPT_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "failing_custody_proof_prints_recorded_identities_before_fixture_cleanup",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(101),
+            "the controlled custody proof must fail"
+        );
+        let text = String::from_utf8(output.stderr).unwrap();
+        let receipt = text
+            .find("custody fixture identities before cleanup")
+            .unwrap_or_else(|| panic!("no identity receipt before cleanup:\n{text}"));
+        let workload: u32 = text
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("controlled custody workload pid="))
+            .unwrap_or_else(|| panic!("the controlled proof published no workload:\n{text}"))
+            .trim()
+            .parse()
+            .expect("published workload pid");
+        let published = text
+            .lines()
+            .find(|line| {
+                line.trim_start()
+                    .starts_with(&format!("workload:engine-workload.pid pid={workload} "))
+            })
+            .unwrap_or_else(|| panic!("the receipt never names workload {workload}:\n{text}"));
+        assert!(
+            !published.contains("live-start=absent"),
+            "the receipt must carry the live start identity of a running workload: {published}"
+        );
+        assert!(
+            !published.contains("pgid=absent"),
+            "the receipt must carry the workload's process group: {published}"
+        );
+        assert!(
+            text.lines().any(|line| {
+                let line = line.trim_start();
+                ["owner ", "supervisor ", "sentinel "]
+                    .iter()
+                    .any(|role| line.starts_with(role))
+                    && !line.ends_with("recorded-start=-")
+            }),
+            "the receipt must name a kernel-recorded helper identity:\n{text}"
+        );
+        let removed = text
+            .find("controlled fixture tree removed=")
+            .unwrap_or_else(|| panic!("the failing proof never reached fixture removal:\n{text}"));
+        assert!(
+            receipt < removed,
+            "the identities must be printed before the home is removed:\n{text}"
+        );
+
+        // The receipt is actionable: stop exactly the pids it names and show no
+        // recorded process escapes the failing proof.
+        let mut recorded = Vec::new();
+        for line in text
+            .lines()
+            .skip_while(|line| !line.starts_with("custody fixture identities"))
+            .skip(1)
+            .take_while(|line| line.starts_with("  "))
+        {
+            if line.trim_start().starts_with("owner ") {
+                // The failed proof itself; it has already exited.
+                continue;
+            }
+            let Some(pid) = line
+                .split("pid=")
+                .nth(1)
+                .and_then(|tail| tail.split(' ').next())
+                .and_then(|pid| pid.parse::<u32>().ok())
+            else {
+                continue;
+            };
+            recorded.push(pid);
+            if matches!(
+                effigy_kernel::ident::process_identity(pid),
+                Observed::Verified(_, _)
+            ) {
+                // SAFETY: the exact pid this failing proof recorded as its own.
+                unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+            }
+        }
+        assert!(
+            recorded.contains(&workload),
+            "the receipt must record the workload {workload}"
+        );
+        let deadline = Instant::now() + guard(Duration::from_secs(10));
+        for pid in recorded {
+            while !recorded_process_gone(pid) {
+                assert!(
+                    Instant::now() < deadline,
+                    "recorded process {pid} escaped the failing proof"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+        eprintln!("controlled failing subprocess captured stderr:\n{text}");
+        return;
+    }
+
+    let home_slot = std::sync::Arc::new(std::sync::Mutex::new(None::<PathBuf>));
+    // Declared before the home, so it drops after it: the marker observes the
+    // tree once the fixture has removed it.
+    let _removal = RemovalMarker(home_slot.clone());
+    let home = home();
+    *home_slot.lock().unwrap() = Some(home.path().to_path_buf());
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = begin(&cx, &root);
+    let child = Custody::spawn(
+        &mut run,
+        spec(
+            home.path(),
+            "echo $$ > engine-workload.pid.pending && /bin/mv engine-workload.pid.pending \
+             engine-workload.pid && exec /bin/sleep 40",
+        ),
+        &cx,
+    )
+    .unwrap();
+    report(&format!(
+        "controlled custody workload pid={}",
+        child.identity().identity.pid
+    ));
+    // The fixture publishes its pid by rename from a complete pending file, so
+    // a reader never sees a partial identity. Wait for that publication.
+    let published = home.path().join("engine-workload.pid");
+    let end = Instant::now() + guard(Duration::from_secs(10));
+    while !published.exists() {
+        assert!(
+            Instant::now() < end,
+            "the fixture workload never published its pid"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let identities = home.recorded_identities();
+    assert!(
+        identities.iter().any(|line| line.starts_with(&format!(
+            "workload:engine-workload.pid pid={} ",
+            child.identity().identity.pid
+        ))),
+        "the receipt must name the published workload: {identities:?}"
+    );
+    panic!("controlled custody failure after the fixture recorded its identities");
+}
+
+/// Reports whether the fixture home still exists when it drops, so the receipt
+/// above can prove it printed before the removal.
+struct RemovalMarker(std::sync::Arc<std::sync::Mutex<Option<PathBuf>>>);
+
+impl Drop for RemovalMarker {
+    fn drop(&mut self) {
+        let retained = self.0.lock().unwrap().clone();
+        let removed = retained.is_none_or(|home| !home.exists());
+        report(&format!("controlled fixture tree removed={removed}"));
+    }
+}
+
+/// Write to the process's own stderr, outside the test harness's capture: the
+/// controlled failing child's facts must reach the proof that reads them.
+fn report(text: &str) {
+    use std::io::Write;
+    writeln!(std::io::stderr().lock(), "{text}").unwrap();
+}
+
+/// A recorded process is gone once it is absent or only its exit status waits.
+fn recorded_process_gone(pid: u32) -> bool {
+    matches!(
+        effigy_kernel::ident::process_state(pid),
+        Observed::Absent(_) | Observed::Verified(effigy_kernel::ident::ProcessState::Zombie, _)
+    )
 }

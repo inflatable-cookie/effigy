@@ -120,7 +120,7 @@ fn operate(scenario: Scenario, home: &Path) -> Result<(), EnvError> {
         )
         .map(|_| ()),
         Scenario::Down => take_down(&ctx, &stack, Operation::Down, &fake, None),
-        Scenario::Reset => reset(&ctx, &stack, &selection(), PROJECT, || fake.stop()),
+        Scenario::Reset => reset(&ctx, &stack, &selection(), PROJECT, |_| fake.stop()),
     }
 }
 

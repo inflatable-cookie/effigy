@@ -102,6 +102,139 @@ pub enum GatewayIdentityProbe {
     Unknown,
 }
 
+/// Outcome of probing whether a recorded gateway PID is alive.
+///
+/// Unknown remains distinct from confirmed absence so lifecycle callers never
+/// claim that an unobserved process has stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GatewayProcessProbe {
+    /// A live, non-zombie process with exactly this PID was confirmed.
+    Running,
+    /// The probe confirmed that no live process with this PID exists.
+    ConfirmedAbsent,
+    /// The probe was unavailable or its output could not be interpreted.
+    Unknown,
+}
+
+impl GatewayProcessProbe {
+    /// True only when the probe confirmed a running process.
+    pub fn is_running(self) -> bool {
+        matches!(self, Self::Running)
+    }
+
+    /// True only when the probe confirmed the process is gone.
+    pub fn is_confirmed_absent(self) -> bool {
+        matches!(self, Self::ConfirmedAbsent)
+    }
+
+    /// True only when the probe could not determine the process state.
+    pub fn is_unknown(self) -> bool {
+        matches!(self, Self::Unknown)
+    }
+
+    /// Stable label used by the rendered and JSON diagnosis.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::ConfirmedAbsent => "confirmed-absent",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// Captured `ps` invocation result used to classify a liveness probe.
+#[cfg(unix)]
+#[derive(Debug, Clone)]
+pub(crate) struct PsProbeOutput {
+    /// Whether `ps` exited zero.
+    pub(crate) success: bool,
+    /// Standard output bytes.
+    pub(crate) stdout: Vec<u8>,
+    /// Standard error bytes.
+    pub(crate) stderr: Vec<u8>,
+}
+
+/// Probe whether a recorded gateway PID is alive.
+///
+/// A `ps` launch failure, a diagnostic from a failed invocation, or malformed
+/// rows remain unknown. Only a completed no-match response or exact zombie row
+/// proves absence on Unix.
+#[cfg(unix)]
+pub fn probe_gateway_process(pid: u32) -> GatewayProcessProbe {
+    probe_gateway_process_with(pid, |pid_t| {
+        let pid_text = pid_t.to_string();
+        let output = std::process::Command::new("ps")
+            .args(["-p", pid_text.as_str(), "-o", "pid=", "-o", "stat="])
+            .output()
+            .ok()?;
+        Some(PsProbeOutput {
+            success: output.status.success(),
+            stdout: output.stdout,
+            stderr: output.stderr,
+        })
+    })
+}
+
+#[cfg(unix)]
+pub(crate) fn probe_gateway_process_with(
+    pid: u32,
+    probe: impl FnOnce(i32) -> Option<PsProbeOutput>,
+) -> GatewayProcessProbe {
+    let Some(pid_t) = crate::server::checked_gateway_pid(pid) else {
+        return GatewayProcessProbe::ConfirmedAbsent;
+    };
+    let Some(output) = probe(pid_t) else {
+        return GatewayProcessProbe::Unknown;
+    };
+    if !output.success {
+        return if output.stdout.is_empty() && output.stderr.is_empty() {
+            GatewayProcessProbe::ConfirmedAbsent
+        } else {
+            GatewayProcessProbe::Unknown
+        };
+    }
+    classify_ps_rows(pid_t, &output.stdout)
+}
+
+#[cfg(unix)]
+fn classify_ps_rows(pid_t: i32, stdout: &[u8]) -> GatewayProcessProbe {
+    let output = String::from_utf8_lossy(stdout);
+    let mut rows = output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
+    let Some(row) = rows.next() else {
+        return GatewayProcessProbe::Unknown;
+    };
+    if rows.next().is_some() {
+        return GatewayProcessProbe::Unknown;
+    }
+    let mut fields = row.split_whitespace();
+    let Some(row_pid) = fields.next().and_then(|pid| pid.parse::<i32>().ok()) else {
+        return GatewayProcessProbe::Unknown;
+    };
+    let Some(state) = fields.next() else {
+        return GatewayProcessProbe::Unknown;
+    };
+    if row_pid != pid_t || fields.next().is_some() {
+        return GatewayProcessProbe::Unknown;
+    }
+    if state.starts_with('Z') {
+        GatewayProcessProbe::ConfirmedAbsent
+    } else {
+        GatewayProcessProbe::Running
+    }
+}
+
+#[cfg(not(unix))]
+pub fn probe_gateway_process(pid: u32) -> GatewayProcessProbe {
+    if crate::server::checked_gateway_pid(pid).is_some() {
+        GatewayProcessProbe::Running
+    } else {
+        GatewayProcessProbe::ConfirmedAbsent
+    }
+}
+
 /// Snapshot of both persisted files, including the exact bytes used for
 /// compare-and-remove and elevated-reader target binding.
 #[derive(Debug, Clone)]
@@ -245,6 +378,27 @@ pub fn read_snapshot(pid_path: &Path) -> Result<Option<GatewayRecordSnapshot>, G
     }
     let owner_uid = trusted_directory_owner(pid_path)?;
     read_snapshot_coordinated(pid_path, owner_uid)
+}
+
+/// Read only the decimal compatibility PID, safely and without interpreting
+/// the identity sidecar. This remains usable while a pair is being published:
+/// a visible PID is returned, while a missing PID remains absent.
+pub(crate) fn read_pid(pid_path: &Path) -> Result<Option<u32>, GatewayError> {
+    if gateway_directory_absent(pid_path)? {
+        return Ok(None);
+    }
+    let owner_uid = trusted_directory_owner(pid_path)?;
+    let Some((bytes, _, _)) = read_trusted_file(pid_path, owner_uid, MAX_PID_BYTES)? else {
+        return Ok(None);
+    };
+    let text = std::str::from_utf8(&bytes).map_err(|_| invalid_record("PID file is not UTF-8"))?;
+    let pid = text
+        .trim()
+        .parse::<u32>()
+        .ok()
+        .filter(|pid| crate::server::checked_gateway_pid(*pid).is_some())
+        .ok_or_else(|| invalid_record("PID file is malformed"))?;
+    Ok(Some(pid))
 }
 
 /// Whether the canonical gateway directory is verified absent.

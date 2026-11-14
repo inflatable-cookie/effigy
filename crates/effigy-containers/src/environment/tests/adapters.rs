@@ -86,7 +86,11 @@ impl Drop for FakeTools {
 fn exercise(selection: BackendSelection, tools: &FakeTools) -> Vec<Workload> {
     let workdir = tools.logs.parent().unwrap().to_path_buf();
     let mut adapter = selection.adapter();
-    match adapter.inventory(&workdir, PROJECT) {
+    match adapter.inventory_until(
+        &workdir,
+        PROJECT,
+        std::time::Instant::now() + std::time::Duration::from_secs(30),
+    ) {
         Observed::Verified(rows, _) => rows,
         other => panic!("inventory: {other:?}"),
     }
@@ -349,7 +353,11 @@ fn a_container_is_read_back_by_full_id_on_both_backends() {
         assert_eq!(rows[0].name, name, "{label}");
         assert_eq!(rows[0].image, format!("sha256:{}", "c".repeat(64)));
         assert_eq!(rows[0].image_reference, "fixture:latest");
-        let resolved = match adapter.image_id(&workdir, "fixture:latest") {
+        let resolved = match adapter.image_id_until(
+            &workdir,
+            "fixture:latest",
+            std::time::Instant::now() + std::time::Duration::from_secs(30),
+        ) {
             Observed::Verified(id, _) => id,
             other => panic!("{label}: image read: {other:?}"),
         };
@@ -390,7 +398,11 @@ fn an_image_read_that_is_only_a_reference_is_refused() {
     let mut adapter = selection().adapter();
     assert!(
         matches!(
-            adapter.image_id(&workdir, "fixture:latest"),
+            adapter.image_id_until(
+                &workdir,
+                "fixture:latest",
+                std::time::Instant::now() + std::time::Duration::from_secs(30)
+            ),
             Observed::Unknown(_)
         ),
         "a reference is not an image id"
@@ -716,9 +728,10 @@ fn unreadable_selected_context_refuses_without_launching_a_cli() {
     let workdir = tools.logs.parent().unwrap();
     let mut selected = docker_selection();
     selected.context.clear();
-    assert!(selected
-        .compose_invocation(&["compose".into(), "up".into()])
-        .is_err());
+    assert!(matches!(
+        selected.compose_invocation(&["compose".into(), "up".into()]),
+        Err(BackendError::Refused(_))
+    ));
     let mut backend = selected.adapter();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
     assert!(matches!(

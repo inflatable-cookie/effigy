@@ -1,4 +1,5 @@
 //! Pipe-only foreground sentinel. Receipts and inherited gates live in memory.
+use super::frame;
 use super::*;
 use crate::closure::ClosurePin;
 use crate::gate::GateGuard;
@@ -441,30 +442,15 @@ impl MemoryGuard {
     fn ready(&mut self) -> Result<(), RunError> {
         let mut byte = [0];
         let cx = self.cx.child(self.ack_budget);
-        loop {
-            cx.operation().check("foreground guard acknowledgement")?;
-            let output = self
-                .output
-                .as_mut()
-                .ok_or_else(|| io::Error::other("foreground guard output missing"))?;
-            match output.read(&mut byte) {
-                Ok(1) => break,
-                Ok(_) => {
-                    return Err(
-                        io::Error::other("foreground guard closed acknowledgement pipe").into(),
-                    )
-                }
-                Err(error)
-                    if matches!(
-                        error.kind(),
-                        io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
-                    ) =>
-                {
-                    std::thread::sleep(Duration::from_millis(2))
-                }
-                Err(error) => return Err(error.into()),
-            }
-        }
+        let output = self
+            .output
+            .as_mut()
+            .ok_or_else(|| io::Error::other("foreground guard output missing"))?;
+        frame::read_exact(output, &mut byte, cx.operation()).map_err(|_| {
+            RunError::from(io::Error::other(
+                "foreground guard closed acknowledgement pipe",
+            ))
+        })?;
         if byte != [1] {
             return Err(RunError::broken("invalid foreground guard acknowledgement"));
         }
@@ -508,25 +494,8 @@ impl MemoryGuard {
                 .ok_or_else(|| RunError::unavailable("custody output closed"))?;
             read_acknowledgement(output, request, cx.operation())?;
             let mut answer = [0];
-            loop {
-                cx.operation().check("interpolation cleanup answer")?;
-                match output.read(&mut answer) {
-                    Ok(1) => break,
-                    Err(error)
-                        if matches!(
-                            error.kind(),
-                            io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
-                        ) =>
-                    {
-                        std::thread::sleep(Duration::from_millis(2))
-                    }
-                    _ => {
-                        return Err(RunError::unavailable(
-                            "interpolation cleanup answer unavailable",
-                        ))
-                    }
-                }
-            }
+            frame::read_exact(output, &mut answer, cx.operation())
+                .map_err(|_| RunError::unavailable("interpolation cleanup answer unavailable"))?;
             crate::fault_point!(InterpolationFinishReply)?;
             self.pending_finish = None;
             if answer != [1] {
@@ -595,25 +564,11 @@ fn read_acknowledgement(
     cx: &crate::ctx::OperationContext,
 ) -> Result<(), RunError> {
     let mut bytes = [0u8; 8];
-    let mut offset = 0;
-    while offset < bytes.len() {
-        cx.check("foreground guard acknowledgement")?;
-        match reader.read(&mut bytes[offset..]) {
-            Ok(0) => {
-                return Err(io::Error::other("foreground guard closed acknowledgement pipe").into())
-            }
-            Ok(n) => offset += n,
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
-                ) =>
-            {
-                std::thread::sleep(Duration::from_millis(2))
-            }
-            Err(error) => return Err(error.into()),
-        }
-    }
+    frame::read_exact(reader, &mut bytes, cx).map_err(|_| {
+        RunError::from(io::Error::other(
+            "foreground guard closed acknowledgement pipe",
+        ))
+    })?;
     if u64::from_be_bytes(bytes) != request {
         return Err(RunError::broken(
             "foreground guard acknowledged another request",
@@ -622,36 +577,29 @@ fn read_acknowledgement(
     Ok(())
 }
 
+/// Read one registration frame whose first byte the open wait consumed. Each
+/// frame gets its own bounded budget; the open wait itself has none.
+fn read_frame_after_first(reader: &mut impl Read, first: u8) -> Result<Vec<u8>, RunError> {
+    let cx = context(CancelToken::default(), Duration::from_secs(30));
+    frame::read_after_first(reader, first, &cx).map_err(|error| match error {
+        frame::FrameError::TooLarge(_) => RunError::broken("foreground guard frame too large"),
+        other => RunError::from(io::Error::other(other.to_string())),
+    })
+}
+
 fn memory_frame(
     writer: &mut impl Write,
     value: &impl Serialize,
     cx: &OperationContext,
 ) -> Result<(), RunError> {
-    let bytes = serde_json::to_vec(value)?;
-    if bytes.len() > ResolvedInvocation::MAX_WIRE_BYTES {
-        return Err(RunError::broken("foreground guard frame too large"));
-    }
-    let mut frame = Vec::with_capacity(bytes.len() + 4);
-    frame.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
-    frame.extend_from_slice(&bytes);
-    let mut remaining = frame.as_slice();
-    while !remaining.is_empty() {
-        cx.check("foreground guard write")?;
-        match writer.write(remaining) {
-            Ok(0) => return Err(io::Error::other("foreground guard pipe closed").into()),
-            Ok(n) => remaining = &remaining[n..],
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
-                ) =>
-            {
-                std::thread::sleep(Duration::from_millis(2))
-            }
-            Err(error) => return Err(error.into()),
-        }
-    }
-    Ok(())
+    let frame = frame::encode(value).map_err(|error| match error {
+        frame::FrameError::Encode(error) => RunError::from(error),
+        other => RunError::broken(format!("foreground guard {other}")),
+    })?;
+    frame::write(writer, &frame, cx).map_err(|error| match error {
+        frame::FrameError::Encode(error) => RunError::from(error),
+        other => RunError::from(io::Error::other(other.to_string())),
+    })
 }
 
 pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<(), RunError> {
@@ -751,15 +699,7 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
             Ok(0) => break,
             Ok(_) => {
                 let result = (|| -> Result<(), RunError> {
-                    let mut size = [0; 4];
-                    size[0] = first[0];
-                    read_exact(input, &mut size[1..])?;
-                    let size = u32::from_be_bytes(size) as usize;
-                    if size > ResolvedInvocation::MAX_WIRE_BYTES {
-                        return Err(RunError::broken("foreground guard frame too large"));
-                    }
-                    let mut bytes = vec![0; size];
-                    read_exact(input, &mut bytes)?;
+                    let bytes = read_frame_after_first(input, first[0])?;
                     let request = match serde_json::from_slice(&bytes)? {
                         Message::Finish { request } => {
                             if request < last_request || request == 0 {

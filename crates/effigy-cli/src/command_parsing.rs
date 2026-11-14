@@ -4,6 +4,8 @@ use std::path::PathBuf;
 mod bootstrap;
 #[path = "command_parsing_changelog.rs"]
 mod changelog;
+#[path = "command_parsing_common.rs"]
+mod common;
 #[path = "command_parsing_container.rs"]
 mod container;
 #[path = "command_parsing_container_data.rs"]
@@ -46,6 +48,7 @@ use runtime::{
 use secrets::parse_secrets_command;
 use state::parse_state_command;
 
+use self::common::{shared_flag_arm, shared_output_flag_arm, CommonArgs, CommonFlag};
 use super::value_parsing::{next_required_value, parse_pretty_bool, parse_repo_path};
 use super::{unknown_argument, CliParseError};
 
@@ -291,9 +294,8 @@ where
 
     let is_run = subcommand == "run";
     let mut path = None;
-    let mut repo_override = None;
+    let mut common = CommonArgs::default();
     let mut selector = None;
-    let mut output_json = false;
     let mut stdio = SkillStdioMode::Default;
     let mut passthrough = Vec::new();
     let mut passthrough_mode = false;
@@ -326,13 +328,11 @@ where
                 }
                 stdio = SkillStdioMode::Passthrough;
             }
-            "--repo" if is_run => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Skill)),
+            "--repo" if is_run => common.repo_override = Some(parse_repo_path(&mut args)?),
             other if is_run && !other.starts_with('-') && selector.is_none() => {
                 selector = Some(other.to_owned());
             }
-            other => return Err(unknown_argument(other)),
+            other => shared_output_flag_arm!(other, common, HelpTopic::Skill),
         }
     }
 
@@ -349,11 +349,11 @@ where
         }
         return Ok(Command::Skill(SkillArgs {
             subcommand: SkillSubcommand::Tasks { path },
-            output_json,
+            output_json: common.output_json,
         }));
     }
 
-    if stdio.is_passthrough() && output_json {
+    if stdio.is_passthrough() && common.output_json {
         return Err(CliParseError::InvalidArguments(
             "`--json` and `--stdio passthrough` are incompatible: JSON mode lets Effigy own a versioned envelope while passthrough lets the task own raw stdio; choose one".to_owned(),
         ));
@@ -374,9 +374,9 @@ where
                 name: selector,
                 args: passthrough,
             },
-            repo_override,
+            repo_override: common.repo_override,
         },
-        output_json,
+        output_json: common.output_json,
     }))
 }
 
@@ -443,16 +443,12 @@ where
         Some(other) => return Err(unknown_argument(other)),
     };
 
-    let mut repo_override = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut dry_run = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--dry-run" => dry_run = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Deps)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Deps),
         }
     }
 
@@ -504,8 +500,8 @@ where
 
     Ok(Command::Deps(DepsArgs {
         subcommand,
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -525,15 +521,13 @@ where
 {
     let mut plan = false;
     let mut yes = false;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
 
     for arg in args {
         match arg.as_str() {
             "--plan" => plan = true,
             "--yes" => yes = true,
-            "--json" => output_json = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Uninstall)),
-            other => return Err(unknown_argument(other)),
+            other => shared_output_flag_arm!(other, common, HelpTopic::Uninstall),
         }
     }
 
@@ -546,7 +540,7 @@ where
     Ok(Command::Uninstall(UninstallArgs {
         plan,
         yes,
-        output_json,
+        output_json: common.output_json,
     }))
 }
 
@@ -571,17 +565,13 @@ where
     I: IntoIterator<Item = String>,
 {
     let args = args.into_iter();
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     for arg in args {
-        match arg.as_str() {
-            "--json" => output_json = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Rhai)),
-            other => return Err(unknown_argument(other)),
-        }
+        shared_output_flag_arm!(arg.as_str(), common, HelpTopic::Rhai);
     }
     Ok(Command::Rhai(RhaiArgs {
         subcommand: RhaiSubcommand::Surface,
-        output_json,
+        output_json: common.output_json,
     }))
 }
 
@@ -590,17 +580,18 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut request: Option<String> = None;
     let mut request_args = Vec::new();
 
     while let Some(arg) = args.next() {
+        match common.take(&arg, &mut args, HelpTopic::Defer)? {
+            CommonFlag::Help(topic) => return Ok(Command::Help(topic)),
+            CommonFlag::Consumed => continue,
+            CommonFlag::Unclaimed => {}
+        }
         if request.is_none() {
             match arg.as_str() {
-                "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-                "--json" => output_json = true,
-                "--help" | "-h" => return Ok(Command::Help(HelpTopic::Defer)),
                 other if other.starts_with('-') => return Err(unknown_argument(other)),
                 _ => {
                     request = Some(arg);
@@ -621,8 +612,8 @@ where
             name: request,
             args: request_args,
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -867,22 +858,16 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut output_json = false;
-    let mut repo_override: Option<PathBuf> = None;
+    let mut common = CommonArgs::default();
 
     while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--json" => output_json = true,
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Bundle)),
-            other => return Err(unknown_argument(other)),
-        }
+        shared_flag_arm!(arg.as_str(), &mut args, common, HelpTopic::Bundle);
     }
 
     Ok(Command::Bundle(BundleArgs {
         subcommand: BundleSubcommand::Inspect,
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -932,8 +917,7 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut index_path: Option<PathBuf> = None;
     let mut changed_only_base: Option<String> = None;
     let mut print_selected = ContractsSelectionPrintMode::None;
@@ -943,8 +927,6 @@ where
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--validate-selection" => validate_selection = true,
             "--contract" => {
                 contract_path = Some(PathBuf::from(next_required_value(
@@ -982,8 +964,7 @@ where
             "--print-selected=json" => {
                 print_selected = ContractsSelectionPrintMode::Json;
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Contracts)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Contracts),
         }
     }
 
@@ -996,8 +977,8 @@ where
             print_selected,
             validate_selection,
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -1005,16 +986,18 @@ fn parse_tasks<I>(args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
 {
-    let mut args = args.into_iter();
-    let mut passthrough: Vec<String> = Vec::new();
-    let mut repo_override: Option<PathBuf> = None;
+    // The raw argv is the one fact the built-in `tasks` route needs, so the
+    // parser hands it over unchanged instead of mirroring every flag a second
+    // time while it decodes the typed arguments.
+    let argv: Vec<String> = args.into_iter().collect();
+    let mut args = argv.clone().into_iter();
+    let mut common = CommonArgs::default();
     let mut task_name: Option<String> = None;
     let mut resolve_selector: Option<String> = None;
     let mut status_selector: Option<String> = None;
     let mut status_mode = false;
     let mut status_all = false;
     let mut all = false;
-    let mut output_json = false;
     let mut pretty_json = true;
     let mut pretty_seen = false;
 
@@ -1025,15 +1008,15 @@ where
             ));
         }
         if matches!(arg.as_str(), "unlock" | "cache") {
-            passthrough.push(arg);
-            passthrough.extend(args);
+            // `unlock` and `cache` are built-in `tasks` subcommands: they take
+            // the whole invocation unchanged, including the flags before them.
             return Ok(Command::Task(TaskInvocation {
                 name: "tasks".to_owned(),
-                args: passthrough,
+                args: argv,
             }));
         }
         if arg == "qa-groups" || arg == "qa-group" {
-            return parse_tasks_qa(arg == "qa-groups", args, repo_override);
+            return parse_tasks_qa(arg == "qa-groups", args, common.repo_override);
         }
         if arg == "request" {
             return Err(CliParseError::InvalidArguments(
@@ -1057,21 +1040,13 @@ where
                 }
                 status_mode = true;
             }
-            "--repo" => {
-                passthrough.push(arg);
-                let path = parse_repo_path(&mut args)?;
-                passthrough.push(path.display().to_string());
-                repo_override = Some(path);
-            }
             "--task" => {
                 if status_selector.is_some() || status_all {
                     return Err(CliParseError::InvalidArguments(
                         "`--task` is not supported together with `tasks status`".to_owned(),
                     ));
                 }
-                passthrough.push(arg);
                 let value = next_required_value(&mut args, CliParseError::MissingTaskNameValue)?;
-                passthrough.push(value.clone());
                 task_name = Some(value);
             }
             "--resolve" => {
@@ -1080,15 +1055,9 @@ where
                         "`--resolve` is not supported together with `tasks status`".to_owned(),
                     ));
                 }
-                passthrough.push(arg);
                 let value =
                     next_required_value(&mut args, CliParseError::MissingResolveSelectorValue)?;
-                passthrough.push(value.clone());
                 resolve_selector = Some(value);
-            }
-            "--json" => {
-                passthrough.push(arg);
-                output_json = true;
             }
             "--all" if status_mode => {
                 if status_selector.is_some() {
@@ -1107,10 +1076,8 @@ where
                     ));
                 }
                 let value = next_required_value(&mut args, CliParseError::MissingPrettyValue)?;
-                pretty_json = parse_pretty_bool(value.clone())?;
+                pretty_json = parse_pretty_bool(value)?;
                 pretty_seen = true;
-                passthrough.push(arg);
-                passthrough.push(value);
             }
             other if status_mode && !other.starts_with('-') && status_selector.is_none() => {
                 if status_all {
@@ -1121,8 +1088,7 @@ where
                 }
                 status_selector = Some(other.to_owned());
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Tasks)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Tasks),
         }
     }
 
@@ -1132,12 +1098,12 @@ where
 
     Ok(Command::Tasks(TasksArgs {
         all,
-        repo_override,
+        repo_override: common.repo_override,
         task_name,
         resolve_selector,
         status_selector,
         status_all,
-        output_json,
+        output_json: common.output_json,
         pretty_json,
         qa: None,
     }))
@@ -1336,7 +1302,10 @@ where
 {
     let mut filter = filter;
     let mut file = file;
-    let mut output_json = output_json;
+    let mut common = CommonArgs {
+        repo_override: None,
+        output_json,
+    };
     let mut pretty_json = pretty_json;
     let mut pretty_seen = pretty_seen;
     let mut args = args.into_iter();
@@ -1346,20 +1315,18 @@ where
                 let value = args.next().ok_or(CliParseError::MissingQaGroupFilePath)?;
                 file = Some(PathBuf::from(value));
             }
-            "--json" => output_json = true,
             "--pretty" => {
                 let value = next_required_value(&mut args, CliParseError::MissingPrettyValue)?;
                 pretty_json = parse_pretty_bool(value)?;
                 pretty_seen = true;
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Tasks)),
             other if !other.starts_with('-') && filter.is_none() => {
                 filter = Some(other.to_owned());
             }
-            other => return Err(unknown_argument(other)),
+            other => shared_output_flag_arm!(other, common, HelpTopic::Tasks),
         }
     }
-    if !output_json && pretty_seen {
+    if !common.output_json && pretty_seen {
         return Err(CliParseError::InvalidArguments(
             "`--pretty` is only supported together with `--json` for `tasks qa-groups list`"
                 .to_owned(),
@@ -1370,7 +1337,7 @@ where
         qa: Some(TasksQaCommand::GroupsList {
             filter,
             file,
-            output_json,
+            output_json: common.output_json,
             pretty_json,
         }),
         ..TasksArgs::default()
@@ -1522,8 +1489,7 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut fix = false;
     let mut verbose = false;
     let mut deep = false;
@@ -1534,6 +1500,11 @@ where
     let mut explain_passthrough = false;
 
     while let Some(arg) = args.next() {
+        match common.take(&arg, &mut args, HelpTopic::Doctor)? {
+            CommonFlag::Help(topic) => return Ok(Command::Help(topic)),
+            CommonFlag::Consumed => continue,
+            CommonFlag::Unclaimed => {}
+        }
         if let Some(request) = explain.as_mut() {
             if !explain_passthrough
                 && matches!(
@@ -1550,8 +1521,6 @@ where
             continue;
         }
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--fix" => fix = true,
             "--verbose" => verbose = true,
             "--deep" => deep = true,
@@ -1562,7 +1531,6 @@ where
             }
             "--all-catalogs" => all_catalogs = true,
             "--refresh" => refresh = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Doctor)),
             other => {
                 explain = Some(TaskInvocation {
                     name: other.to_owned(),
@@ -1581,8 +1549,8 @@ where
     )?;
 
     Ok(Command::Doctor(DoctorArgs {
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
         fix,
         verbose,
         deep,

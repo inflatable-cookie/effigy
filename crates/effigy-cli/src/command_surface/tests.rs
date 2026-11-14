@@ -6,7 +6,7 @@ use super::{
 };
 use crate::builtin_names::{
     builtin_command_name, builtin_escape_spelling, is_deferred_builtin_command,
-    BuiltinNameAuthority, BUILTIN_COMMAND_NAMES,
+    live_builtin_command_names, BuiltinNameAuthority, BUILTIN_COMMAND_NAMES,
 };
 use crate::{parse_command, Command, HelpTopic, TaskInvocation};
 use effigy_core::builtin_tasks::BUILTIN_TASKS;
@@ -409,6 +409,23 @@ fn every_builtin_top_level_command_is_classified() {
             assert_ne!(escape, entry.name);
         }
     }
+}
+
+/// A retired word keeps its classification but is never offered as a live
+/// command; the completion menu and candidate discovery read this set.
+#[test]
+fn only_retired_words_leave_the_live_command_inventory() {
+    let live = live_builtin_command_names().collect::<Vec<_>>();
+    for entry in BUILTIN_COMMAND_NAMES {
+        assert_eq!(
+            live.contains(&entry.name),
+            !entry.retired,
+            "`{}` live/retired classification must match its `retired` flag",
+            entry.name
+        );
+    }
+    assert!(live.contains(&"test") && live.contains(&"skill") && live.contains(&"runs"));
+    assert!(!live.contains(&"demo"));
 }
 
 /// The reserved set is the deliberate exception, not an accident: `test`

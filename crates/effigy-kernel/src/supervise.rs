@@ -36,6 +36,8 @@ pub(crate) mod anchor;
 #[allow(dead_code)]
 mod birth_hash;
 // Ordinary builds do not consume these qualification-only observations.
+/// One owner for the length-prefixed frames every helper pipe speaks.
+mod frame;
 #[allow(dead_code)]
 #[cfg(not(test))]
 pub(crate) mod image_identity;
@@ -657,13 +659,8 @@ fn write_frame_with(
     value: &impl Serialize,
     op: &OperationContext,
 ) -> io::Result<()> {
-    let bytes = serde_json::to_vec(value).map_err(io::Error::other)?;
-    if bytes.len() > ResolvedInvocation::MAX_WIRE_BYTES {
-        return Err(io::Error::other("helper frame too large"));
-    }
-    let mut frame = (bytes.len() as u32).to_be_bytes().to_vec();
-    frame.extend(bytes);
-    write_all_with(writer, &frame, op)
+    let frame = frame::encode(value).map_err(|error| io::Error::other(error.to_string()))?;
+    frame::write(writer, &frame, op).map_err(io::Error::other)
 }
 
 fn write_workspace_frame(
@@ -671,20 +668,19 @@ fn write_workspace_frame(
     value: &impl Serialize,
     op: &OperationContext,
 ) -> Result<(), RunError> {
-    let bytes = serde_json::to_vec(value)?;
-    if bytes.len() > ResolvedInvocation::MAX_WIRE_BYTES {
-        return Err(RunError::broken("workspace sentinel frame too large"));
-    }
-    let mut frame = (bytes.len() as u32).to_be_bytes().to_vec();
-    frame.extend(bytes);
+    let frame = frame::encode(value).map_err(|error| match error {
+        frame::FrameError::Encode(error) => RunError::from(error),
+        other => RunError::broken(format!("workspace sentinel {other}")),
+    })?;
     #[cfg(all(test, feature = "fault-injection"))]
     {
-        write_all_with(writer, &frame[..1], op)?;
+        let codec = |error: frame::FrameError| io::Error::other(error.to_string());
+        frame::write(writer, &frame[..1], op).map_err(codec)?;
         crate::fault_point!(WorkspaceSentinelPartialConfig)?;
-        write_all_with(writer, &frame[1..], op)?;
+        frame::write(writer, &frame[1..], op).map_err(codec)?;
     }
     #[cfg(not(all(test, feature = "fault-injection")))]
-    write_all_with(writer, &frame, op)?;
+    frame::write(writer, &frame, op).map_err(|error| io::Error::other(error.to_string()))?;
     Ok(())
 }
 /// A bounded write to a nonblocking helper pipe.
@@ -693,30 +689,7 @@ fn write_all(writer: &mut impl Write, frame: &[u8]) -> io::Result<()> {
     write_all_with(writer, frame, &op)
 }
 fn write_all_with(writer: &mut impl Write, frame: &[u8], op: &OperationContext) -> io::Result<()> {
-    let mut offset = 0;
-    while offset < frame.len() {
-        op.check("helper write")
-            .map_err(|e| io::Error::other(format!("{e:?}")))?;
-        match writer.write(&frame[offset..]) {
-            Ok(0) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::WriteZero,
-                    "helper pipe closed",
-                ))
-            }
-            Ok(count) => offset += count,
-            Err(e)
-                if matches!(
-                    e.kind(),
-                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
-                ) =>
-            {
-                std::thread::sleep(Duration::from_millis(2))
-            }
-            Err(e) => return Err(e),
-        }
-    }
-    Ok(())
+    frame::write(writer, frame, op).map_err(io::Error::other)
 }
 fn read_exact(reader: &mut impl Read, bytes: &mut [u8]) -> io::Result<()> {
     let op = context(CancelToken::default(), Duration::from_secs(30));
@@ -727,41 +700,11 @@ fn read_exact_with(
     bytes: &mut [u8],
     op: &OperationContext,
 ) -> io::Result<()> {
-    let mut offset = 0;
-    while offset < bytes.len() {
-        op.check("helper read")
-            .map_err(|e| io::Error::other(format!("{e:?}")))?;
-        match reader.read(&mut bytes[offset..]) {
-            Ok(0) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "helper pipe closed",
-                ))
-            }
-            Ok(n) => offset += n,
-            Err(e)
-                if matches!(
-                    e.kind(),
-                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
-                ) =>
-            {
-                std::thread::sleep(Duration::from_millis(2))
-            }
-            Err(e) => return Err(e),
-        }
-    }
-    Ok(())
+    frame::read_exact(reader, bytes, op).map_err(io::Error::other)
 }
 fn read_frame(reader: &mut impl Read) -> io::Result<Vec<u8>> {
-    let mut size = [0u8; 4];
-    read_exact(reader, &mut size)?;
-    let size = u32::from_be_bytes(size) as usize;
-    if size > ResolvedInvocation::MAX_WIRE_BYTES {
-        return Err(io::Error::other("helper frame too large"));
-    }
-    let mut bytes = vec![0u8; size];
-    read_exact(reader, &mut bytes)?;
-    Ok(bytes)
+    let op = context(CancelToken::default(), Duration::from_secs(30));
+    frame::read(reader, &op).map_err(io::Error::other)
 }
 fn nonblocking(fd: RawFd) -> io::Result<()> {
     // SAFETY: borrowed live fd, F_GETFL observes and F_SETFL adds O_NONBLOCK.
@@ -1132,17 +1075,9 @@ impl SupervisorClient {
     }
     pub fn event(&mut self, cx: &OperationContext) -> io::Result<Event> {
         loop {
-            if self.buffer.len() >= 4 {
-                let size =
-                    u32::from_be_bytes(self.buffer[..4].try_into().map_err(io::Error::other)?)
-                        as usize;
-                if size > ResolvedInvocation::MAX_WIRE_BYTES {
-                    return Err(io::Error::other("event too large"));
-                }
-                if self.buffer.len() >= size + 4 {
-                    let event: Event = serde_json::from_slice(&self.buffer[4..size + 4])
-                        .map_err(io::Error::other)?;
-                    self.buffer.drain(..size + 4);
+            match frame::take(&mut self.buffer) {
+                Ok(Some(body)) => {
+                    let event: Event = serde_json::from_slice(&body).map_err(io::Error::other)?;
                     if matches!(event, Event::Active) {
                         self.active = true;
                     }
@@ -1151,6 +1086,13 @@ impl SupervisorClient {
                     }
                     return Ok(event);
                 }
+                Ok(None) => {}
+                Err(frame::FrameError::TooLarge(size)) => {
+                    return Err(io::Error::other(format!(
+                        "event body of {size} bytes exceeds the wire bound"
+                    )))
+                }
+                Err(error) => return Err(io::Error::other(error.to_string())),
             }
             cx.check("supervisor event")
                 .map_err(|e| io::Error::other(format!("{e:?}")))?;
@@ -1210,11 +1152,8 @@ impl SupervisorClient {
             .writer
             .as_mut()
             .ok_or_else(|| io::Error::other("owning pipe already released"))?;
-        if bytes.len() > ResolvedInvocation::MAX_WIRE_BYTES {
-            return Err(io::Error::other("engine frame too large"));
-        }
-        let mut frame = (bytes.len() as u32).to_be_bytes().to_vec();
-        frame.extend_from_slice(bytes);
+        let frame =
+            frame::framed_body(bytes).map_err(|error| io::Error::other(error.to_string()))?;
         write_all(writer, &frame)
     }
     pub fn detach(mut self, cx: &EffectContext, id: RunId) -> Result<RunId, RunError> {
@@ -1590,23 +1529,17 @@ impl OwningChannel {
         if eof && !self.detached {
             control.stop.get_or_insert(StopCause::OwnerLost);
         }
-        while self.buffer.len() >= 4 {
-            let size = u32::from_be_bytes(
-                self.buffer[..4]
-                    .try_into()
-                    .map_err(|_| RunError::broken("client frame"))?,
-            ) as usize;
-            if size > ResolvedInvocation::MAX_WIRE_BYTES {
+        loop {
+            match frame::take(&mut self.buffer) {
+                Ok(Some(body)) => control.frames.push(body),
+                Ok(None) => break,
                 // A malformed client stream is a lost owning client.
-                self.buffer.clear();
-                control.stop.get_or_insert(StopCause::OwnerLost);
-                break;
+                Err(_) => {
+                    self.buffer.clear();
+                    control.stop.get_or_insert(StopCause::OwnerLost);
+                    break;
+                }
             }
-            if self.buffer.len() < size + 4 {
-                break;
-            }
-            control.frames.push(self.buffer[4..size + 4].to_vec());
-            self.buffer.drain(..size + 4);
         }
         Ok(control)
     }
@@ -2336,7 +2269,12 @@ mod client_order_tests {
         let op = context(CancelToken::default(), Duration::from_millis(30));
         let started = Instant::now();
         let error = write_all_with(&mut writer, &[1], &op).unwrap_err();
-        assert!(error.to_string().contains("TimedOut"));
+        // A person reads the interrupt's own sentence: the wait, the phase and
+        // the deadline. The internal variant name never reaches the message.
+        let sentence = error.to_string();
+        assert!(sentence.contains("timed out after"), "{sentence}");
+        assert!(sentence.contains("during the frame write"), "{sentence}");
+        assert!(!sentence.contains("TimedOut"), "{sentence}");
         assert!(started.elapsed() < Duration::from_secs(2));
 
         let (mut reader, _peer) = UnixStream::pair().unwrap();
@@ -2344,7 +2282,10 @@ mod client_order_tests {
         let op = context(CancelToken::default(), Duration::from_millis(30));
         let started = Instant::now();
         let error = read_exact_with(&mut reader, &mut [0], &op).unwrap_err();
-        assert!(error.to_string().contains("TimedOut"));
+        let sentence = error.to_string();
+        assert!(sentence.contains("timed out after"), "{sentence}");
+        assert!(sentence.contains("during the frame read"), "{sentence}");
+        assert!(!sentence.contains("TimedOut"), "{sentence}");
         assert!(started.elapsed() < Duration::from_secs(2));
     }
 

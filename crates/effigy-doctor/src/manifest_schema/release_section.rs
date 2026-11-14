@@ -1,10 +1,10 @@
 use toml::Value;
 
 use super::diagnostics::SchemaContext;
-use super::tables::{require_table, validate_allowed_keys};
+use super::tables::{aliased, require_table, validate_allowed_keys};
 use super::values::{
     validate_optional_boolean_field, validate_optional_non_empty_string_field,
-    validate_optional_string_array_field,
+    validate_optional_non_empty_string_fields, validate_optional_string_array_field,
 };
 
 pub(super) fn validate_release_section(context: &mut SchemaContext<'_, '_>, release: &Value) {
@@ -46,16 +46,12 @@ pub(super) fn validate_release_section(context: &mut SchemaContext<'_, '_>, rele
 
     validate_optional_non_empty_string_field(
         context,
-        release_table
-            .get("version_file")
-            .or_else(|| release_table.get("version-file")),
+        aliased(release_table, &["version_file", "version-file"]),
         "release.version_file",
     );
     validate_optional_non_empty_string_field(
         context,
-        release_table
-            .get("version_path")
-            .or_else(|| release_table.get("version-path")),
+        aliased(release_table, &["version_path", "version-path"]),
         "release.version_path",
     );
     validate_optional_non_empty_string_field(
@@ -66,24 +62,21 @@ pub(super) fn validate_release_section(context: &mut SchemaContext<'_, '_>, rele
     validate_optional_boolean_field(context, release_table.get("pre-1-0"), "release.pre-1-0");
     validate_optional_boolean_field(
         context,
-        release_table
-            .get("initial_tag_current_version")
-            .or_else(|| release_table.get("initial-tag-current-version")),
+        aliased(
+            release_table,
+            &["initial_tag_current_version", "initial-tag-current-version"],
+        ),
         "release.initial_tag_current_version",
     );
     validate_optional_string_array_field(
         context,
-        release_table
-            .get("sync_files")
-            .or_else(|| release_table.get("sync-files")),
+        aliased(release_table, &["sync_files", "sync-files"]),
         "release.sync_files",
         "expected array of strings",
     );
     validate_optional_non_empty_string_field(
         context,
-        release_table
-            .get("tag_format")
-            .or_else(|| release_table.get("tag-format")),
+        aliased(release_table, &["tag_format", "tag-format"]),
         "release.tag_format",
     );
 
@@ -173,16 +166,7 @@ fn validate_release_identities(context: &mut SchemaContext<'_, '_>, identities: 
                 &format!("{path}.{key}"),
             );
         }
-        validate_optional_non_empty_string_field(
-            context,
-            identity.get("follows"),
-            &format!("{path}.follows"),
-        );
-        validate_optional_non_empty_string_field(
-            context,
-            identity.get("task"),
-            &format!("{path}.task"),
-        );
+        validate_optional_non_empty_string_fields(context, &path, identity, &["follows", "task"]);
     }
 }
 
@@ -207,16 +191,7 @@ fn validate_release_artifacts(context: &mut SchemaContext<'_, '_>, artifacts: &V
             continue;
         };
         validate_allowed_keys(context, &path, artifact, &["task", "path"]);
-        validate_optional_non_empty_string_field(
-            context,
-            artifact.get("task"),
-            &format!("{path}.task"),
-        );
-        validate_optional_non_empty_string_field(
-            context,
-            artifact.get("path"),
-            &format!("{path}.path"),
-        );
+        validate_optional_non_empty_string_fields(context, &path, artifact, &["task", "path"]);
     }
 }
 

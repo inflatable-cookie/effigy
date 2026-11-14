@@ -17,11 +17,15 @@ pub fn run_help_command(context: &CliExecutionContext<'_>, topic: HelpTopic) {
             emit_json_envelope_success_value(context.command_kind, context.command_name, payload);
             return;
         }
-        println!(
-            "{}",
+        let output = format!(
+            "{}\n",
             serde_json::to_string_pretty(&payload).unwrap_or_else(|_| {
                 "{\"ok\":false,\"error\":{\"kind\":\"JsonEncodeError\"}}".to_owned()
             })
+        );
+        let _ = effigy_core::output_cap::write(
+            effigy_core::output_cap::Stream::Stdout,
+            output.as_bytes(),
         );
         return;
     }
@@ -46,11 +50,15 @@ pub fn run_help_group_command(context: &CliExecutionContext<'_>, group: HelpGrou
             emit_json_envelope_success_value(context.command_kind, context.command_name, payload);
             return;
         }
-        println!(
-            "{}",
+        let output = format!(
+            "{}\n",
             serde_json::to_string_pretty(&payload).unwrap_or_else(|_| {
                 "{\"ok\":false,\"error\":{\"kind\":\"JsonEncodeError\"}}".to_owned()
             })
+        );
+        let _ = effigy_core::output_cap::write(
+            effigy_core::output_cap::Stream::Stdout,
+            output.as_bytes(),
         );
         return;
     }

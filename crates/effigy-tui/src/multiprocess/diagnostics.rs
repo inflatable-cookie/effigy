@@ -155,3 +155,92 @@ impl RuntimeDiagnostics {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    fn enabled() -> RuntimeDiagnostics {
+        let mut diagnostics = RuntimeDiagnostics::from_env();
+        diagnostics.enabled = true;
+        // `from_env` owns the switch in production; the tests drive the
+        // counters directly so a stray `EFFIGY_TUI_DIAGNOSTICS` in the
+        // harness cannot silence them.
+        diagnostics
+    }
+
+    #[test]
+    fn counters_and_traces_stay_silent_until_enabled() {
+        let mut diagnostics = RuntimeDiagnostics::from_env();
+        diagnostics.enabled = false;
+        diagnostics.record_frame();
+        diagnostics.record_keypress(&KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        diagnostics.record_stdout_chunk("build", 12);
+        diagnostics.record_stderr_chunk("build", 3);
+        diagnostics.record_stdout_lines(4);
+        diagnostics.record_stderr_lines(1);
+        diagnostics.record_exit_event("build", "exit code 0");
+        diagnostics.record_vt_reset("build");
+        assert_eq!(diagnostics.frame_count(), 0);
+        assert_eq!(diagnostics.keypress_count(), 0);
+        assert_eq!(diagnostics.stdout_chunks(), 0);
+        assert_eq!(diagnostics.stderr_chunks(), 0);
+        assert_eq!(diagnostics.stdout_lines(), 0);
+        assert_eq!(diagnostics.stderr_lines(), 0);
+        assert_eq!(diagnostics.exit_events(), 0);
+        assert_eq!(diagnostics.vt_resets(), 0);
+        assert!(diagnostics.traces().is_empty());
+    }
+
+    #[test]
+    fn enabled_counters_record_what_the_runtime_saw() {
+        let mut diagnostics = enabled();
+        diagnostics.record_frame();
+        diagnostics.record_frame();
+        diagnostics.record_keypress(&KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL));
+        diagnostics.record_stdout_chunk("build", 40);
+        diagnostics.record_stderr_chunk("build", 7);
+        diagnostics.record_stdout_lines(3);
+        diagnostics.record_stderr_lines(2);
+        diagnostics.record_exit_event("build", "exit code 2\n");
+        diagnostics.record_vt_reset("build");
+
+        assert_eq!(diagnostics.frame_count(), 2);
+        assert_eq!(diagnostics.keypress_count(), 1);
+        assert_eq!(diagnostics.stdout_chunks(), 1);
+        assert_eq!(diagnostics.stderr_chunks(), 1);
+        assert_eq!(diagnostics.stdout_lines(), 3);
+        assert_eq!(diagnostics.stderr_lines(), 2);
+        assert_eq!(diagnostics.exit_events(), 1);
+        assert_eq!(diagnostics.vt_resets(), 1);
+
+        let traces = diagnostics.traces();
+        assert_eq!(traces.len(), 5, "{traces:?}");
+        assert!(traces[0].contains("key code=Char('j')"), "{traces:?}");
+        assert_eq!(traces[1], "stdout-chunk process=build bytes=40");
+        assert_eq!(traces[2], "stderr-chunk process=build bytes=7");
+        assert_eq!(traces[3], "exit process=build payload=exit code 2");
+        assert_eq!(traces[4], "vt-reset process=build");
+        // The elapsed clock is the session's, not a per-record stamp.
+        let _ = diagnostics.elapsed_ms();
+    }
+
+    #[test]
+    fn the_trace_ring_keeps_only_the_latest_lines() {
+        let mut diagnostics = enabled();
+        for index in 0..(MAX_TRACE_LINES + 5) {
+            diagnostics.record_stdout_chunk("build", index);
+        }
+        let traces = diagnostics.traces();
+        assert_eq!(traces.len(), MAX_TRACE_LINES);
+        assert!(
+            traces[0].ends_with("bytes=5"),
+            "the oldest five traces are dropped: {traces:?}"
+        );
+        assert!(
+            traces[MAX_TRACE_LINES - 1].ends_with("bytes=52"),
+            "{traces:?}"
+        );
+    }
+}

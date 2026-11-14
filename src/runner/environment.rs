@@ -452,12 +452,13 @@ pub(in crate::runner) fn requested_holder() -> Option<RunId> {
 
 /// One stop transition. A run settling in this process exempts its own hold by
 /// id ([`stop_exempting`]); every other holder refuses it (R4). `effect` is the
-/// host teardown plus the backend stop.
+/// host teardown plus the backend stop, reporting the runtime's lines into the
+/// transition's progress so the stop is one line (effigy#974).
 pub(in crate::runner) fn stop(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     op: Operation,
-    effect: impl FnOnce() -> Result<(), RunnerError>,
+    effect: impl FnOnce(&effigy_ui::steps::ProgressSource) -> Result<(), RunnerError>,
 ) -> Result<(), RunnerError> {
     stop_exempting(repo_root, policy, op, None, effect)
 }
@@ -468,7 +469,7 @@ pub(in crate::runner) fn stop_exempting(
     policy: &EffectiveContainerPolicy,
     op: Operation,
     exempt: Option<RunId>,
-    effect: impl FnOnce() -> Result<(), RunnerError>,
+    effect: impl FnOnce(&effigy_ui::steps::ProgressSource) -> Result<(), RunnerError>,
 ) -> Result<(), RunnerError> {
     let env = env_ref(policy)?;
     stop_env(
@@ -489,7 +490,7 @@ pub(in crate::runner) fn stop_peer(
     policy: &EffectiveContainerPolicy,
     peer: &str,
     project: &str,
-    effect: impl FnOnce() -> Result<(), RunnerError>,
+    effect: impl FnOnce(&effigy_ui::steps::ProgressSource) -> Result<(), RunnerError>,
 ) -> Result<(), RunnerError> {
     let env = EnvRef::new(env_ref(policy)?.checkout, peer).map_err(error)?;
     stop_env(
@@ -510,12 +511,12 @@ fn stop_env(
     project: &str,
     op: Operation,
     exempt: Option<RunId>,
-    effect: impl FnOnce() -> Result<(), RunnerError>,
+    effect: impl FnOnce(&effigy_ui::steps::ProgressSource) -> Result<(), RunnerError>,
 ) -> Result<(), RunnerError> {
     let ctx = context(repo_root)?;
     let mut failure = None;
-    let result = engine::down(&ctx, env, op, backend, project, exempt, || {
-        effect().map_err(|error| {
+    let result = engine::down(&ctx, env, op, backend, project, exempt, |progress| {
+        effect(progress).map_err(|error| {
             let message = error.to_string();
             failure = Some(error);
             BackendError::Uncertain(message)
@@ -533,14 +534,14 @@ fn stop_env(
 pub(in crate::runner) fn reset(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-    effect: impl FnOnce() -> Result<(), RunnerError>,
+    effect: impl FnOnce(&effigy_ui::steps::ProgressSource) -> Result<(), RunnerError>,
 ) -> Result<(), RunnerError> {
     let env = env_ref(policy)?;
     let ctx = context(&policy.repo_root)?;
     let backend = backend(repo_root, policy);
     let mut failure = None;
-    let result = engine::reset(&ctx, &env, &backend, &policy.project_name, || {
-        effect().map_err(|error| {
+    let result = engine::reset(&ctx, &env, &backend, &policy.project_name, |progress| {
+        effect(progress).map_err(|error| {
             let message = error.to_string();
             failure = Some(error);
             BackendError::Uncertain(message)
@@ -579,11 +580,11 @@ pub(in crate::runner) fn stop_hook_exempting(
         if op == Operation::Down && exempt.is_none() {
             workspace::down::retire_selected_session(repo_root, policy).map_err(runtime_error)?;
         }
-        stop_exempting(repo_root, policy, op, exempt, || {
+        stop_exempting(repo_root, policy, op, exempt, |progress| {
             report_host_process_stop(
                 crate::runner::host_process::stop_host_processes_for_container(repo_root, policy),
             );
-            effect().map_err(RunnerError::from)
+            effect(progress).map_err(RunnerError::from)
         })
         .map_err(runtime_error)
     }
@@ -596,11 +597,11 @@ pub(in crate::runner) fn reset_hook() -> impl Fn(
     effigy_runtime::write::ShutdownEffect<'_>,
 ) -> Result<(), effigy_runtime::EffigyRuntimeError> {
     move |repo_root, policy, effect| {
-        reset(repo_root, policy, || {
+        reset(repo_root, policy, |progress| {
             report_host_process_stop(
                 crate::runner::host_process::stop_host_processes_for_container(repo_root, policy),
             );
-            effect().map_err(RunnerError::from)
+            effect(progress).map_err(RunnerError::from)
         })
         .map_err(runtime_error)
     }
@@ -706,7 +707,7 @@ pub(in crate::runner) fn release(repo_root: &Path, policy: &EffectiveContainerPo
     };
     let backend = backend(repo_root, policy);
     let outcome = engine::reap_if_idle(&ctx, &env, |run| {
-        run.stop_with(&backend, &policy.project_name, None, || {
+        run.stop_with(&backend, &policy.project_name, None, |_| {
             effigy_containers::exec::shutdown_container(repo_root, policy)
                 .map_err(|error| BackendError::Uncertain(error.to_string()))
         })

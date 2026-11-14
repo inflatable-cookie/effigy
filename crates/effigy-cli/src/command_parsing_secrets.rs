@@ -4,6 +4,7 @@ use crate::{Command, HelpTopic, SecretsArgs, SecretsExportFormat, SecretsSubcomm
 
 use crate::value_parsing::parse_repo_path;
 
+use super::common::{shared_flag_arm, CommonArgs, CommonFlag};
 use super::{unknown_argument, CliParseError};
 
 pub(super) fn parse_secrets_command<I>(args: I) -> Result<Command, CliParseError>
@@ -39,16 +40,17 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut input = PathBuf::from(".env");
     let mut input_seen = false;
 
     while let Some(arg) = args.next() {
+        match common.take(&arg, &mut args, HelpTopic::Secrets)? {
+            CommonFlag::Help(topic) => return Ok(Command::Help(topic)),
+            CommonFlag::Consumed => continue,
+            CommonFlag::Unclaimed => {}
+        }
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Secrets)),
             value if value.starts_with('-') => return Err(unknown_argument(value)),
             value => {
                 if input_seen {
@@ -62,8 +64,8 @@ where
 
     Ok(Command::Secrets(SecretsArgs {
         subcommand: SecretsSubcommand::Import { input },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -72,16 +74,13 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
     let mut format: Option<SecretsExportFormat> = None;
     let mut output: Option<PathBuf> = None;
     let mut yes = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--format" => {
                 let Some(value) = args.next() else {
                     return Err(unknown_argument("missing --format value"));
@@ -93,8 +92,7 @@ where
             }
             "--output" => output = Some(parse_repo_path(&mut args)?),
             "--yes" => yes = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Secrets)),
-            other => return Err(unknown_argument(other)),
+            other => shared_flag_arm!(other, &mut args, common, HelpTopic::Secrets),
         }
     }
 
@@ -111,8 +109,8 @@ where
             output,
             yes,
         },
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -124,22 +122,16 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
 
     while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Secrets)),
-            other => return Err(unknown_argument(other)),
-        }
+        shared_flag_arm!(arg.as_str(), &mut args, common, HelpTopic::Secrets);
     }
 
     Ok(Command::Secrets(SecretsArgs {
         subcommand,
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }
 
@@ -152,21 +144,15 @@ where
     let Some(name) = args.next() else {
         return Err(unknown_argument("missing secret name"));
     };
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
+    let mut common = CommonArgs::default();
 
     while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Secrets)),
-            other => return Err(unknown_argument(other)),
-        }
+        shared_flag_arm!(arg.as_str(), &mut args, common, HelpTopic::Secrets);
     }
 
     Ok(Command::Secrets(SecretsArgs {
         subcommand: build(name),
-        repo_override,
-        output_json,
+        repo_override: common.repo_override,
+        output_json: common.output_json,
     }))
 }

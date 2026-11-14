@@ -246,16 +246,17 @@ The root manifest selects the façade and kernel as Cargo default members, so
 existing macOS/Linux CI test, doc-test and lint commands include the kernel.
 No engine depends on the kernel yet.
 `test:kernel:<area>` selectors own the narrow proof families; `check:kernel`
-compiles all kernel targets and runs strict clippy. Run `lint:linux` before
-native Linux qualification: it runs strict Clippy for `aarch64-unknown-linux-gnu`
-on `effigy-process`, whose Linux process-identity implementation can be checked
-without a cross C compiler. Its tests are omitted locally because their
-`effigy-test-support` dev-dependency pulls in the kernel and SQLite. The full
-workspace and native qualification feature sets, including test targets, are
-linted by Ubuntu CI. A broader local cross-target attempt currently stops at
-`libsqlite3-sys`, which needs `aarch64-linux-gnu-gcc`; the kernel and other
-SQLite-dependent Linux code therefore still require Linux CI or the native
-build. `lint:linux` does not replace a native build or proof. The
+compiles all kernel targets and runs strict clippy. `lint:linux` is the required
+pre-native check before native Linux qualification: it runs strict Clippy for
+`aarch64-unknown-linux-gnu`
+across the workspace with the CI lint feature sets, using zig (0.17.1 via
+Homebrew) as the Linux-target C compiler. `scripts/lint-linux.sh` points
+`CC`/`CXX`/`AR_aarch64_unknown_linux_gnu` at zig wrappers for that selector
+only, so normal macOS builds are unaffected; without zig on PATH it keeps a
+narrowed `effigy-process` scope and says so. It stays out of the everyday
+`lint:feedback` gate on timing grounds; run it directly before native
+qualification. `lint:linux` does not replace a
+native build or proof. The
 `fault-injection` feature's observation hook exists only under `cfg(test)`.
 
 The ratchet's `syn`/`proc-macro2` parser, `tempfile` fixtures and Rhai

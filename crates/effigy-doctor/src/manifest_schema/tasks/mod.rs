@@ -5,7 +5,8 @@ use super::tables::{require_table, validate_allowed_keys, validate_concurrent_ar
 use super::values::{
     validate_optional_boolean_field, validate_optional_enum_string_field,
     validate_optional_integer_field, validate_optional_non_empty_string_field,
-    validate_optional_non_empty_string_or_array_field, validate_optional_table_string_values_field,
+    validate_optional_non_empty_string_fields, validate_optional_non_empty_string_or_array_field,
+    validate_optional_table_string_values_field,
 };
 
 mod profiles;
@@ -117,20 +118,11 @@ fn validate_compact_inline_task_table(
             "description",
         ],
     );
-    validate_optional_non_empty_string_field(
+    validate_optional_non_empty_string_fields(
         context,
-        task_table.get("run"),
-        &format!("{task_path}.run"),
-    );
-    validate_optional_non_empty_string_field(
-        context,
-        task_table.get("task"),
-        &format!("{task_path}.task"),
-    );
-    validate_optional_non_empty_string_field(
-        context,
-        task_table.get("rhai"),
-        &format!("{task_path}.rhai"),
+        &task_path,
+        task_table,
+        &["run", "task", "rhai"],
     );
     validate_task_run_in_field(context, task_name, task_table.get("run_in"));
 }
