@@ -649,23 +649,29 @@ fn remote_admission_registration_obeys_original_deadline() {
 /// registers inside it is recorded and then stopped under the deadline that has
 /// already expired.
 ///
-/// The run mints its deadline from this scope's absolute instant, so the test
-/// knows the exact moment it expires. The barrier releases the registration line
-/// only once that instant has passed: no host-timing guess decides the order, and
-/// the registration cannot reach the kernel first. The launch's own grace is
-/// stretched for this fixture, so a loaded host cannot spend the launch window
-/// before the session exists; the deadline the run reports is the real one.
+/// The ordering is forced, not timed. The scope gives the run a finite deadline;
+/// the run publishes the deadline it actually minted, and the barrier releases the
+/// held registration line only after that exact instant plus a margin. A late
+/// start saturates the remaining budget and moves the minted deadline, so a
+/// prediction of it could fall before the real one; the published value cannot.
+/// The launch's own grace is stretched for this fixture, so a loaded host cannot
+/// spend the launch window before the session exists.
 #[test]
 fn a_deadline_that_expires_before_registration_still_stops_the_session() {
+    /// How far past the run's deadline the registration is released: enough for a
+    /// launch that gave up at the deadline to have done so first, and for the held
+    /// client's own poll interval.
+    const AFTER_DEADLINE: Duration = Duration::from_millis(100);
     let fixture = fixture();
     let mut task_run = begin(&fixture.root, "remote:pre-registration");
     let dir = fixture.model.dir.clone();
-    let _scope = super::super::SpawnScope::enter(&BTreeMap::new(), None, true, Some(200));
-    let deadline_at = Instant::now()
-        + super::super::spawn_env::remaining().expect("the scope's absolute deadline");
+    let _scope = super::super::SpawnScope::enter(&BTreeMap::new(), None, true, Some(2000));
     TEST_LAUNCH_GRACE.with(|grace| grace.set(Some(Duration::from_secs(30))));
+    let published = Arc::new(Mutex::new(None));
+    TEST_RUN_DEADLINE.with(|slot| *slot.borrow_mut() = Some(published.clone()));
+    let barrier_published = published.clone();
     let barrier = std::thread::spawn(move || {
-        let until = Instant::now() + Duration::from_secs(10);
+        let until = Instant::now() + Duration::from_secs(30);
         while !dir.join("waiting").exists() {
             if Instant::now() >= until {
                 // The launch gave up before its session could register. The
@@ -674,8 +680,22 @@ fn a_deadline_that_expires_before_registration_still_stops_the_session() {
             }
             std::thread::sleep(Duration::from_millis(2));
         }
-        while Instant::now() < deadline_at {
-            std::thread::sleep(Duration::from_millis(1));
+        let mut deadline_at = None;
+        while deadline_at.is_none() {
+            deadline_at = *barrier_published
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if deadline_at.is_none() {
+                if Instant::now() >= until {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+        if let Some(deadline_at) = deadline_at {
+            while Instant::now() < deadline_at + AFTER_DEADLINE {
+                std::thread::sleep(Duration::from_millis(1));
+            }
         }
         std::fs::write(dir.join("release"), b"").expect("release the registration");
         Instant::now()
@@ -695,14 +715,19 @@ fn a_deadline_that_expires_before_registration_still_stops_the_session() {
         &mut || current(&fixture.root, &env),
     )
     .expect("a deadline before registration is still an outcome");
+    TEST_RUN_DEADLINE.with(|slot| *slot.borrow_mut() = None);
     TEST_LAUNCH_GRACE.with(|grace| grace.set(None));
     let released_at = barrier.join().expect("registration barrier");
+    let deadline_at = published
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .expect("the run minted a deadline");
     assert!(matches!(exit.workload, WorkloadOutcome::TimedOut { .. }));
     assert_eq!(exit.code, 124);
     assert!(
-        released_at >= deadline_at,
-        "the registration was released {:?} before the run's deadline",
-        deadline_at.saturating_duration_since(released_at)
+        released_at >= deadline_at + AFTER_DEADLINE,
+        "the registration was released {:?} before the run's own deadline",
+        (deadline_at + AFTER_DEADLINE).saturating_duration_since(released_at)
     );
     assert!(
         fixture.model.dir.join("stop").exists(),

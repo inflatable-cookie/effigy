@@ -119,6 +119,8 @@ pub(in crate::runner) fn run_remote_with(
         .chain(super::spawn_env::remaining())
         .min()
         .map(|budget| Instant::now() + budget);
+    #[cfg(test)]
+    publish_deadline(deadline);
     let env = container_env(task.env)?;
     let cx = kernel::effects();
     let cx = deadline.map_or_else(|| cx.clone(), |at| cx.child_until(at));
@@ -314,6 +316,28 @@ pub(in crate::runner) fn run_remote_with(
         stdout: stdout.bytes,
         stderr: stderr.bytes,
     })
+}
+
+// A proof that must release a held registration line strictly after the run's
+// deadline reads the deadline this run actually minted, never a prediction of
+// it: a late start saturates the remaining budget, so the two can differ.
+// Production keeps no such record.
+#[cfg(test)]
+thread_local! {
+    static TEST_RUN_DEADLINE: std::cell::RefCell<
+        Option<std::sync::Arc<std::sync::Mutex<Option<Instant>>>>,
+    > = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn publish_deadline(deadline: Option<Instant>) {
+    TEST_RUN_DEADLINE.with(|slot| {
+        if let Some(published) = slot.borrow().as_ref() {
+            *published
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = deadline;
+        }
+    });
 }
 
 // A test that must hold a registration line across the workload deadline needs
