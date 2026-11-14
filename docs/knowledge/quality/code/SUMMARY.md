@@ -266,9 +266,10 @@ row's path.
 Floor 7 (F7a–F7h, PRs #997, #1002, #996, #1000, #1001, #1004, #1003, #1005) took
 the 61 modules that scored 6 or below, plus the round-6 ownership tranches
 #963/#970–#977 that landed after `e458614d8`. The frozen table then reported
-195 stale rows (152 changed, 36 new product files, 7 gone = 23.4%). Every
-drifted row was re-read at current main with the round-5 rubric and evidence
-standard, and the tables were rewritten in one pass:
+195 stale entries (152 changed rows, 36 new product files, 7 gone = 23.4%).
+Every changed row was re-read at current main with the round-5 rubric and
+evidence standard, a row was added for each new module, and the tables were
+rewritten in one pass:
 
 | Work | Count |
 |---|---|
