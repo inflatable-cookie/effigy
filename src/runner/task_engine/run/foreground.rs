@@ -45,10 +45,10 @@ impl TaskRun {
             .map_err(|error| start_error(&error.to_string()))?;
         let root = StateRoot::foreground_effects(&cx, &location)
             .map_err(|error| start_error(&error.to_string()))?;
-        // Strict persistence (effigy#981): a v2 admission settles one journal
-        // row, so the store must already be prepared before the hook runs.
-        // Refusing here writes no gate, no store page and no schema change.
-        super::super::admission::require_strict_store(&plan, &root)?;
+        // Strict persistence (effigy#985): a v2 admission settles one slot in
+        // the fixed terminal ring, so the ring must exist and have room before
+        // the hook runs. Refusing here writes no gate and no byte of any file.
+        super::super::admission::require_strict_terminal_ring(&plan, &root)?;
         let owner = if task_gate {
             request.target.owner(checkout)?
         } else {

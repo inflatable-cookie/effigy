@@ -430,7 +430,10 @@ effigy#325 implemented it: contract 049 owns the opt-in protocol
 witness, and 052 §3.1 records this note's narrow exception. The row lives in an
 additive schema-1 `foreground_terminals` table in the owning checkout journal,
 is retained for seven days, carries no process identity, and surfaces through
-`run status` as `foreground-terminal-record.v1`.
+`run status` as `foreground-terminal-record.v1`. Under strict persistence
+(effigy#985) the same record goes first to one slot of a fixed-size,
+preallocated ring with no SQLite connection opened, and the next non-strict
+store open ingests it into that table (contract 049).
 
 Follow-up ruling, same day (Queue decision d3bad004 v2, Tom on the board):
 "Yes: accept the escaped-process risk, and Queue releases automatically on the

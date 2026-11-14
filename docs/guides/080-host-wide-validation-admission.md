@@ -172,26 +172,39 @@ result from the journal; only an unreadable journal reports `unknown`.
 
 ## Account for every byte a run writes (strict persistence)
 
-A consumer that has to price a route's storage can ask for a run that prepares
-nothing. With `EFFIGY_STRICT_PERSISTENCE=1`, a v2-admitted plain foreground task
-writes only its own terminal row and that row's log and index frames: it never
-creates the journal, never migrates or backfills it, never prunes expired rows,
-never checkpoints — not at the commit and not when its last connection closes —
-and it performs no maintenance (no checkpoint, vacuum, retention sweep, machine
-compaction or repair) anywhere in the process. If the checkout journal is not
-already prepared, or needs recovery (a rollback journal, a torn log, or a log
-whose wal-index is missing), the run refuses **before the admission hook is
-called**, writes no journal byte and names the step that prepares it:
+A consumer that has to price a route's storage can ask for a run that writes
+almost nothing, at a fixed size. With `EFFIGY_STRICT_PERSISTENCE=1`, a
+v2-admitted plain foreground task does not open the checkout journal at all: its
+settled outcome goes into **one slot of a fixed-size, preallocated ring file**,
+and that is its whole durable contribution. `kernel.db`, `kernel.db-wal` and
+`kernel.db-shm` stay byte-identical across the route. Before this, a strict run
+still wrote a SQLite row whose log frames had no small physical maximum; the
+ring replaces that write (effigy#985).
+
+The ring is `<checkout>/.effigy/state/foreground-terminals.ring`: a 64-byte
+header and 16 slots of 1,024 bytes, 16,448 bytes in total. It is created and
+fully preallocated by `effigy run prepare`, **outside** the strict run. The route
+only overwrites one slot in place — 1,024 bytes, no growth and no allocation —
+so the file must already exist and have a free slot. If it does not, or is the
+wrong size, holds a corrupt slot, or is full, the run refuses **before the
+admission hook is called**, writes nothing, and names the step that fixes it:
 
 ```sh
-effigy run prepare --check   # verify only: writes nothing, fails if a write would be needed
-effigy run prepare           # prepare the journal outside the strict run
+effigy run prepare --check   # verify the journal and the ring: writes nothing
+effigy run prepare           # prepare both outside the strict run, and ingest old slots
 EFFIGY_STRICT_PERSISTENCE=1 effigy <heavy-task>
 ```
 
-The complete contribution table, its arithmetic, and the one premise it rests on
-(a shared wal-index that did not exist yet is sized by other writers' frames) are
-in [contract 049](../knowledge/contracts/049-heavy-validation-admission-contract.md).
+A slot is written body first, flushed, then a one-byte commit marker, flushed
+again, so a crash never leaves a half record that reads as valid: an unmarked
+slot is free, and a marked slot whose checksum does not match is reported
+`unknown`, never returned as a record. A repeated settle of the same run writes
+nothing. The next ordinary (non-strict) Effigy command that opens the checkout
+journal ingests committed slots into the usual terminal-record table and frees
+them, so `run status` and `runs` read the slot before that and the row after it.
+
+The complete file count, byte layout, write ordering and failure behaviour, with
+file:line, are in [contract 049](../knowledge/contracts/049-heavy-validation-admission-contract.md).
 The switch is off by default, and every run without it behaves exactly as before.
 
 ## Migration note for Queue

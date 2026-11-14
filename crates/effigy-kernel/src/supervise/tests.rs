@@ -1214,6 +1214,7 @@ fn a_stale_memory_acknowledgement_never_answers_a_later_frame() {
         descriptors: None,
         home: fixture(),
         foreground: true,
+        strict: false,
     };
     let frame = |sequence| Effect {
         sequence,

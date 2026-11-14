@@ -2846,7 +2846,7 @@ fn prelaunch_pending_obligation_is_atomic_and_legacy_unreadable() {
 /// gate descriptions and the pin are the real ones.
 #[test]
 fn run_a_foreground_guard_settles_a_run_whose_owner_died_with_its_pin_held() {
-    check_foreground_owner_loss(true);
+    check_foreground_owner_loss(true, OwnerEnd::Reaped, false);
 }
 
 /// The same takeover with every pin writer closed first: custody provably
@@ -2854,10 +2854,34 @@ fn run_a_foreground_guard_settles_a_run_whose_owner_died_with_its_pin_held() {
 /// still never a reported success.
 #[test]
 fn run_a_foreground_guard_settles_closed_custody_as_interrupted() {
-    check_foreground_owner_loss(false);
+    check_foreground_owner_loss(false, OwnerEnd::Reaped, false);
 }
 
-fn check_foreground_owner_loss(pin_held: bool) {
+/// An owner that has exited but whose parent has not reaped it is a zombie: it
+/// can never settle or report the run again, so waiting for it would hold the
+/// gate forever (effigy#986).
+#[test]
+fn run_a_foreground_guard_settles_a_zombie_owner() {
+    check_foreground_owner_loss(true, OwnerEnd::Zombie, false);
+}
+
+/// A strict-persistence run's owner-death record goes to the preallocated ring,
+/// so the guard opens no SQLite connection for it (effigy#985, effigy#986).
+#[test]
+fn run_a_foreground_guard_settles_a_strict_run_into_its_ring() {
+    check_foreground_owner_loss(false, OwnerEnd::Reaped, true);
+}
+
+/// How the stand-in owner ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OwnerEnd {
+    /// Killed and reaped: the pid is verifiably absent.
+    Reaped,
+    /// Killed and deliberately left unreaped: a zombie that can never run.
+    Zombie,
+}
+
+fn check_foreground_owner_loss(pin_held: bool, owner_end: OwnerEnd, strict: bool) {
     use std::os::fd::AsRawFd;
 
     let home = effigy_test_support::short_tempdir("og-").unwrap();
@@ -2910,7 +2934,11 @@ fn check_foreground_owner_loss(pin_held: bool) {
         home.path(),
         &gate_fds.iter().map(AsRawFd::as_raw_fd).collect::<Vec<_>>(),
         watch.as_raw_fd(),
+        strict,
     );
+    if strict {
+        crate::run::terminal_ring_prepare(&root).expect("preallocated strict ring");
+    }
     let (mut input, owner_pipe) = std::io::pipe().unwrap();
     // `serve` adopts these inherited descriptors exactly as the helper does, so
     // their ownership moves into it: leaking the duplicates here keeps one
@@ -2937,7 +2965,9 @@ fn check_foreground_owner_loss(pin_held: bool) {
     // loss is what the settle path has to notice.
     let owner_pid = owner_child.id();
     owner_child.kill().unwrap();
-    owner_child.wait().unwrap();
+    if owner_end == OwnerEnd::Reaped {
+        owner_child.wait().unwrap();
+    }
     if !pin_held {
         // Every pin writer closed before the guard reaches its wait.
         stop_owned(&mut residue);
@@ -2959,6 +2989,11 @@ fn check_foreground_owner_loss(pin_held: bool) {
             "unclosed descendant custody is residue, never a clean close"
         );
     }
+    if owner_end == OwnerEnd::Zombie {
+        // This test owned the unreaped child: reap it now that the guard has
+        // observed it as a zombie.
+        owner_child.wait().unwrap();
+    }
 
     // The gate is released, so the next invocation is admitted.
     assert!(
@@ -2972,14 +3007,26 @@ fn check_foreground_owner_loss(pin_held: bool) {
         .expect("a settled run admits the next invocation");
     drop(next);
 
-    // Its own journal row is the honest outcome: never success, no identity.
-    let reader = match Store::read(&cx.operation().observe().unwrap(), &root) {
-        Observed::Verified(reader, _) => reader,
-        other => panic!("the settled run's journal is readable: {other:?}"),
-    };
-    let record = match super::super::terminal_record(&reader, run) {
-        Observed::Verified(Some(record), _) => record,
-        other => panic!("the settling guard records the run: {other:?}"),
+    // Its own record is the honest outcome: never success, no identity. A
+    // strict run's record waits in the ring, and no store is created for it.
+    let record = if strict {
+        assert!(
+            !home.path().join(".effigy/state/kernel.db").exists(),
+            "a strict owner-death record opens no SQLite connection"
+        );
+        match crate::run::terminal_strict_record(&root, run) {
+            Observed::Verified(Some(record), _) => record,
+            other => panic!("the settling guard records the strict run: {other:?}"),
+        }
+    } else {
+        let reader = match Store::read(&cx.operation().observe().unwrap(), &root) {
+            Observed::Verified(reader, _) => reader,
+            other => panic!("the settled run's journal is readable: {other:?}"),
+        };
+        match super::super::terminal_record(&reader, run) {
+            Observed::Verified(Some(record), _) => record,
+            other => panic!("the settling guard records the run: {other:?}"),
+        }
     };
     assert_eq!(record.run_id, run.to_string());
     assert_eq!(record.task, "validate:owner-loss");

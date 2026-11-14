@@ -73,6 +73,12 @@ pub(super) struct Config {
     /// the lease until closure, exactly as before.
     #[serde(default)]
     pub(super) foreground: bool,
+    /// The persistence class of the run whose owner this guard observed. A
+    /// helper's environment is cleared, so the owner's strict-persistence
+    /// choice has to travel in the frame for the owner-death record to land in
+    /// the ring instead of opening SQLite (effigy#985, effigy#986).
+    #[serde(default)]
+    pub(super) strict: bool,
 }
 #[derive(Serialize, Deserialize)]
 enum Message {
@@ -178,6 +184,7 @@ impl MemoryGuard {
                 // owner dies while the guard still holds its gates.
                 home: root.owning_directory().path().to_path_buf(),
                 foreground: purpose == MemoryPurpose::Foreground,
+                strict: crate::store::strict_persistence(),
             };
             let mut command = helper(executable, SENTINEL)?;
             command.stdout(Stdio::piped());
@@ -633,6 +640,7 @@ pub(crate) fn test_frame(
     home: &Path,
     gate_fds: &[RawFd],
     watch: RawFd,
+    strict: bool,
 ) -> serde_json::Value {
     serde_json::json!({
         "protocol": HELPER_PROTOCOL,
@@ -645,6 +653,7 @@ pub(crate) fn test_frame(
         "watch": watch,
         "home": home,
         "foreground": true,
+        "strict": strict,
     })
 }
 
@@ -1003,14 +1012,25 @@ fn wait_for_closure(mut watch: std::fs::File, config: &Config) -> ClosureWait {
 }
 
 /// Whether the owner this guard recorded is verifiably gone: no process holds
-/// that pid, or another process has taken it. An observation this process
-/// cannot verify is never proof, so it never releases custody.
+/// that pid, another process has taken it, or the process is a zombie that has
+/// exited and can never run again. An observation this process cannot verify is
+/// never proof, so it never releases custody.
 pub(super) fn owner_is_gone(config: &Config) -> bool {
     match ident::process_identity(config.owner.pid) {
         Observed::Absent(_) => true,
         Observed::Verified(identity, _) => {
-            identity.start.text() != config.owner.start.text()
+            if identity.start.text() != config.owner.start.text()
                 || identity.boot.as_str() != config.owner.boot.as_str()
+            {
+                return true;
+            }
+            // The recorded process still exists but has exited: its parent has
+            // not reaped it yet. It will never settle or report the run again,
+            // so a guard that waits for it would hold the gate forever.
+            matches!(
+                ident::process_state(config.owner.pid),
+                Observed::Verified(ident::ProcessState::Zombie, _)
+            )
         }
         Observed::Unknown(_) => false,
     }
@@ -1050,7 +1070,13 @@ fn record_owner_loss(
         workload_groups: u64::try_from(groups).unwrap_or(u64::MAX),
         closed_at_ms: crate::store::wall_ms(),
     };
-    let _ = crate::run::record_terminal(&cx, &root, &record);
+    // The same writer the owner's own settle would have reached: one ring slot
+    // under strict persistence, one journal row otherwise (effigy#985).
+    let _ = if config.strict {
+        crate::run::terminal_ring_write(&root, &record)
+    } else {
+        crate::run::record_terminal(&cx, &root, &record)
+    };
 }
 
 fn finish_interpolations(
@@ -1176,6 +1202,7 @@ mod tests {
             descriptors: None,
             home: PathBuf::from("/nonexistent"),
             foreground: true,
+            strict: false,
         };
         assert!(!owner_is_gone(&config));
     }

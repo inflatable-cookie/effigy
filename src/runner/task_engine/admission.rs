@@ -74,8 +74,6 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 const ACK_TIMEOUT: Duration = Duration::from_secs(10);
 const GRACE: Duration = Duration::from_secs(3);
 const POLL: Duration = Duration::from_millis(20);
-/// How long a pre-admission strict-persistence check waits for the store.
-const STRICT_PREPARE_WAIT: Duration = Duration::from_secs(30);
 /// The decision line is short; a hook that writes more is malformed.
 const DECISION_MAX: usize = 4096;
 /// Ack lines are short too, and a hook that floods stdout is malformed.
@@ -130,29 +128,37 @@ impl Plan {
     }
 }
 
-/// Strict persistence: a run that will write a terminal journal row refuses
-/// **before admission** when the checkout journal is not already prepared
-/// (effigy#981).
+/// Strict persistence: a run that will write a terminal record refuses
+/// **before admission** when the fixed terminal ring cannot take it
+/// (effigy#985).
 ///
-/// Nothing this run would have to prepare — a missing store, a schema
-/// migration or backfill, a journal-mode conversion, a recovery — is a write
-/// this invocation may own, so it is refused here rather than performed inside
-/// the route. `effigy run prepare` prepares the store outside the strict run.
-pub(super) fn require_strict_store(
+/// The ring is created and fully preallocated by `effigy run prepare`, outside
+/// the route, so this check writes nothing: it re-reads the fixed file and
+/// refuses a ring that is missing, the wrong size, full, or holds a committed
+/// slot this build cannot verify. The route then opens no SQLite connection at
+/// all; its whole durable contribution is one ring slot.
+pub(super) fn require_strict_terminal_ring(
     plan: &Plan,
     root: &effigy_kernel::root::StateRoot,
 ) -> Result<(), RunnerError> {
     if !effigy_kernel::store::strict_persistence() || !plan.writes_terminal_record()? {
         return Ok(());
     }
-    effigy_kernel::store::verify_prepared(root, STRICT_PREPARE_WAIT)
-        .map(|_| ())
-        .map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "this run has not started: {error} ({})",
-                effigy_kernel::store::STRICT_PERSISTENCE_ENV
-            ))
-        })
+    let ring = effigy_kernel::run::terminal_ring_status(root).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "this run has not started: {error} ({})",
+            effigy_kernel::store::STRICT_PERSISTENCE_ENV
+        ))
+    })?;
+    if !ring.ready() {
+        return Err(RunnerError::task_invocation(
+            "this run has not started: the strict terminal ring has no free slot, so the settled \
+             record could not be written; `effigy run prepare` ingests its records into the \
+             checkout journal outside a strict run and frees them"
+                .to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// Decides admission before the run begins; a malformed timeout refuses.

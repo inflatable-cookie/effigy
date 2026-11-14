@@ -373,14 +373,22 @@ all died before settle writes nothing and stays `not-recorded`; there is no
 replay.
 
 One writer is not the admission hook. A foreground run whose *owner* died while
-its memory guard survived is settled by that guard, which writes one such row
-itself (effigy#986). The row says only what the guard can still prove:
+its memory guard survived is settled by that guard, which writes one such
+record itself (effigy#986). It says only what the guard can still prove:
 `interrupted` with `cleanup: "complete"` when the run's custody closed, and
 `unknown` with `cleanup: "incomplete"` when a pin or registered effect did not.
 It never says `succeeded`, and it carries no identity either, so the owner's
-death grants no signal, reclaim or replay. Every other foreground run keeps
-Q-010 unchanged, including no journal write at all. The provider-side release rule this evidence supports is
-contract 049's, and it is not an Effigy authority.
+death grants no signal, reclaim or replay. A guard carries the persistence
+class of the run whose owner it observed, so a strict run's owner-death record
+goes to the same preallocated ring instead of opening SQLite. Every other
+foreground run keeps Q-010 unchanged, including no journal write at all.
+
+Under strict persistence (effigy#985) the same record is first written to one
+slot of a fixed-size, preallocated ring under the state root, and the route
+opens no SQLite connection at all; the next non-strict store open ingests the
+slot into the same `foreground_terminals` table, and `run status` and `runs`
+read the slot until then (contract 049). The provider-side release rule this
+evidence supports is contract 049's, and it is not an Effigy authority.
 
 **Views and fencing.** Foreground runs have random `RunId`s and an in-memory
 incarnation fence containing that id; persistent resource generations are not

@@ -78,15 +78,17 @@ pub(in crate::runner) fn run_runs(args: RunsArgs) -> Result<String, RunnerError>
     }
 }
 
-/// `effigy run prepare`: prepares this checkout's run journal for a
-/// strict-persistence run, or with `--check` verifies that it needs no write
-/// (effigy#981).
+/// `effigy run prepare`: prepares this checkout's run journal and its fixed
+/// strict-mode terminal ring, or with `--check` verifies that a strict run
+/// would need no write (effigy#981, effigy#985).
 ///
-/// A strict run (`EFFIGY_STRICT_PERSISTENCE=1`) writes only its own terminal
-/// row, so schema creation, the additive `ALTER`/backfill, a journal-mode
-/// conversion, a bounded prune and recovery all belong to this step instead of
-/// the route. It therefore opens the store without strict persistence whatever
-/// the switch says: preparing is the whole point of the command.
+/// A strict run (`EFFIGY_STRICT_PERSISTENCE=1`) opens no SQLite connection at
+/// all: it overwrites one slot of the preallocated ring. Everything a store
+/// would have to prepare — schema creation, the additive `ALTER`/backfill, a
+/// journal-mode conversion, a bounded prune and recovery — belongs to this step
+/// instead, together with creating and fully preallocating the ring. Opening the
+/// store without strict persistence is the whole point of the command; the open
+/// also ingests any strict records the ring still holds and frees their slots.
 fn prepare(checkout: &Path, check: bool, json: bool) -> Result<String, RunnerError> {
     let root = checkout_effects_root(checkout)?;
     let cx = effect_context(OpenReason::Shell);
@@ -102,13 +104,38 @@ fn prepare(checkout: &Path, check: bool, json: bool) -> Result<String, RunnerErr
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
         (true, effigy_kernel::store::SCHEMA_VERSION, pages)
     };
+    // The fixed ring (effigy#985). `prepare` creates and fully preallocates a
+    // missing one; `--check` only verifies it. A full ring is not ready: the
+    // next non-strict open (this command, without `--check`) ingests it.
+    let ring = if check {
+        effigy_kernel::run::terminal_ring_status(root)
+    } else {
+        effigy_kernel::run::terminal_ring_prepare(root)
+    }
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    if check && !ring.ready() {
+        return Err(RunnerError::task_invocation(
+            "the strict terminal ring has no free slot, so a strict run would refuse; \
+             `effigy run prepare` ingests its records into the checkout journal and frees them"
+                .to_owned(),
+        ));
+    }
     let journal = root.path().join(effigy_kernel::store::DB_NAME);
+    let ring_file = root.path().join(effigy_kernel::run::TERMINAL_RING_FILE);
     if json {
         return Ok(serde_json::json!({
             "schema": PREPARE_SCHEMA,
             "schema_version": 1,
             "journal": journal.display().to_string(),
             "store": { "schema_version": schema_version, "pages": pages },
+            "ring": {
+                "file": ring_file.display().to_string(),
+                "slots": ring.slots,
+                "committed": ring.committed,
+                "free": ring.free,
+                "bytes": ring.bytes,
+                "per_write_bytes": ring.per_write_bytes,
+            },
             "prepared": prepared,
             "ready": true,
         })
@@ -118,6 +145,14 @@ fn prepare(checkout: &Path, check: bool, json: bool) -> Result<String, RunnerErr
         format!("journal  {}", journal.display()),
         format!("schema   {schema_version}"),
         format!("pages    {pages}"),
+        format!(
+            "ring     {} ({} slots x {} bytes, {} committed, {} free)",
+            ring_file.display(),
+            ring.slots,
+            ring.per_write_bytes,
+            ring.committed,
+            ring.free
+        ),
         format!(
             "state    {}",
             if prepared {
