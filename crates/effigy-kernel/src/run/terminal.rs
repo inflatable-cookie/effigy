@@ -80,8 +80,8 @@ pub const ROW_MAX_BYTES: usize =
 ///   (`sqlite3.c:63622-63662`) writes the dirty page and later re-dirties it, so
 ///   even "one frame per modified page" is not an upper bound.
 ///
-/// A number derived from those facts would be both enormous and still not a
-/// bound. What this route does instead is state an operating budget of 32 frames
+/// This module therefore does not derive a closed form from those facts. What it
+/// does instead is state an operating budget of 32 frames
 /// — about ten times the 3 frames it appends in every tested state
 /// (`run_terminal_strict_write_appends_at_most_its_stated_frames_and_defers_the_prune`),
 /// with room for a split in each of the three trees the insert maintains — and

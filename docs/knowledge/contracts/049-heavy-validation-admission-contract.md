@@ -404,13 +404,13 @@ change what this invocation writes.
 
 This invocation's complete physical contribution in strict mode:
 
-| File (under `<checkout>/.effigy/state/`) | This invocation's maximum | Enforced or derived by |
+| File (under `<checkout>/.effigy/state/`) | This invocation's contribution, and whether it is a maximum or a verified budget | Enforced or derived by |
 | --- | --- | --- |
 | `gates/<scope>.scope` | `s` files, 0 bytes each | `gate.rs::Gate::acquire` creates the empty marker (`crates/effigy-kernel/src/gate.rs:422-475`) |
 | `gates/<scope>/<gate>.gate` | `s + 1` files, 4096 bytes each | `gate::DIAG_MAX` (`gate.rs:20-22`) written by `write_body` (`gate.rs:472-475`) and `gate/foreground.rs::set_foreground` (`gate/foreground.rs:48-68`); at most `gate::FOREGROUND_GATES_MAX` = 4 gates (`run/foreground.rs:119-131`) |
 | `kernel.db` | **0 bytes**: no checkpoint, no migration, no prune | the strict checks above |
 | `kernel.db-wal` | **budget 32 frames = 131,872 bytes**, verified per run; no a-priori bound is claimed | `run::TERMINAL_STRICT_WAL_MAX_BYTES` (`crates/effigy-kernel/src/run/terminal.rs:85-101`) |
-| `kernel.db-shm` | one 32 KiB wal-index page | `store::WAL_INDEX_PAGE_BYTES` (`store.rs:87`) |
+| `kernel.db-shm` | **one 32 KiB page while the run stays inside the 32-frame budget**; otherwise `1 + ⌈(frames − 4062) / 4096⌉` pages from the frames the budget refusal reports | `store::WAL_INDEX_PAGE_BYTES` (`store.rs:87`); `wal.c` `WALINDEX_PGSZ` and `walFramePage` |
 | `kernel.db-journal` | none: a store that has one is refused | `store::refuse_recovery` |
 | `foreground_terminals` row | 1, at most 960 stored bytes | `run::TerminalRecord::checked` |
 | run journal, capture log, run history, per-run scratch | none | as above |
@@ -441,10 +441,10 @@ page (`store::WAL_FRAME_HEADER_BYTES`, `:83`, `WAL_FRAME_HDRSIZE` in `wal.c`;
   that per level. And SQLite can append the same page more than once in one
   transaction: on a cache spill `pagerStress` (`sqlite3.c:63622-63662`) writes a
   dirty page and later re-dirties it, so even "one frame per modified page" is
-  not an upper bound. A number built from those facts would be enormous and still
-  not a bound, so the contract states a measured, per-run-verified budget and a
-  consumer-facing measurement rather than an unprovable maximum. The earlier
-  per-level and one-frame-per-page figures are withdrawn.
+  not an upper bound. This contract therefore does **not derive** a closed form
+  from them: it states a measured, per-run-verified budget and a
+  consumer-facing measurement rather than a maximum it cannot support. The
+  earlier per-level and one-frame-per-page figures are withdrawn.
 
 SHM. `kernel.db-shm` holds SQLite's wal-index, allocated in `WALINDEX_PGSZ` = 32
 KiB pages (`store::WAL_INDEX_PAGE_BYTES`, `store.rs:87`; `wal.c` asserts that
@@ -459,12 +459,14 @@ and both are conditional on the run staying inside the budget:
   block** — which is also the whole file when this invocation creates it beside
   an empty log.
 - **For a run that trips the budget**, the `record` refusal names the frames
-  observed, and the index growth follows from them: one block for the first
-  4062 frames plus one per 4096 frames after that
-  (`1 + ⌈(frames − 4062) / 4096⌉`, with the first term dropped when
-  `frames ≤ 4062`). That formula is the format's own arithmetic, so the index
-  size is accounted for whatever the frame count turns out to be; the contract
-  does not claim a single-block maximum independent of the frames.
+  observed, and the index growth follows from them: the first 4062 frames fit in
+  page 0, then each further 4096 frames take one more page — `1 + ⌈(frames −
+  4062) / 4096⌉` pages, which is one page for any `frames ≤ 4062` (the count
+  never reaches zero). That is the format's own arithmetic
+  (`HASHTABLE_NPAGE_ONE` = 4062 in the bundled `sqlite3.c`, and
+  `walFramePage(N)` = `(N + 33) / 4096`), so the index size is accounted for
+  whatever the frame count turns out to be; the contract claims no single-block
+  maximum independent of the frames.
 
 Strict mode refuses the one state that would make the size depend on other
 writers' frames — a non-empty log with no wal-index beside it
