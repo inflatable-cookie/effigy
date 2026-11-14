@@ -262,6 +262,13 @@ impl WaitPublisher {
             .take()
     }
 
+    /// Record a failure exactly as a refused observation does, so a proof can
+    /// drive the reporting path without a broken journal.
+    #[cfg(test)]
+    pub(in crate::runner) fn record_failure_for_tests(&self, failure: &str) {
+        self.record_failure(failure);
+    }
+
     fn record_failure(&self, failure: impl std::fmt::Display) {
         let mut recorded = self
             .recording_failure
@@ -493,6 +500,10 @@ fn begin_run(
 pub(in crate::runner) struct ActivationWaits {
     run: Option<Arc<Mutex<Run<'static>>>>,
     publisher: WaitPublisher,
+    /// Every warning the drop path reported, so a proof can read what a
+    /// dropped activation said instead of scraping its stderr.
+    #[cfg(test)]
+    dropped: Arc<Mutex<Vec<String>>>,
 }
 
 impl std::fmt::Debug for ActivationWaits {
@@ -514,7 +525,32 @@ impl ActivationWaits {
         Ok(Self {
             run: Some(run),
             publisher,
+            #[cfg(test)]
+            dropped: Arc::new(Mutex::new(Vec::new())),
         })
+    }
+
+    /// Take the owner's strong handle so `close` must fail its
+    /// exclusive-ownership check, giving a deterministic settle failure.
+    #[cfg(test)]
+    pub(in crate::runner) fn borrow_owner_for_tests(&self) -> Option<Arc<Mutex<Run<'static>>>> {
+        self.run.clone()
+    }
+
+    /// The warnings this activation's drop path reported, in order.
+    #[cfg(test)]
+    pub(in crate::runner) fn dropped_warnings_for_tests(&self) -> Arc<Mutex<Vec<String>>> {
+        Arc::clone(&self.dropped)
+    }
+
+    fn report_dropped(&self, failure: RunnerError) {
+        let text = failure.to_string();
+        #[cfg(test)]
+        self.dropped
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(text.clone());
+        eprintln!("warning: {text}");
     }
 
     pub(in crate::runner) fn publisher(&self) -> &WaitPublisher {
@@ -530,14 +566,7 @@ impl ActivationWaits {
         // Both facts are reported. A run whose observations were lost and
         // whose owner also failed to settle must not be described by only one
         // of them: the caller decides on the joined failure either way.
-        match (closed, self.publisher.take_recording_failure()) {
-            (Ok(()), None) => Ok(()),
-            (Err(closed), None) => Err(closed),
-            (Ok(()), Some(recorded)) => Err(error(recorded)),
-            (Err(closed), Some(recorded)) => Err(error(format!(
-                "{recorded}; the activation owner also failed to settle: {closed}"
-            ))),
-        }
+        finish_failure(closed, self.publisher.take_recording_failure())
     }
 
     fn close(&mut self, outcome: WorkloadOutcome) -> Result<(), RunnerError> {
@@ -558,6 +587,39 @@ impl ActivationWaits {
     }
 }
 
+/// What `finish` reports: a failed settle and a lost observation are separate
+/// facts, so both are named when both happened.
+fn finish_failure(
+    closed: Result<(), RunnerError>,
+    recorded: Option<String>,
+) -> Result<(), RunnerError> {
+    match (closed, recorded) {
+        (Ok(()), None) => Ok(()),
+        (Err(closed), None) => Err(closed),
+        (Ok(()), Some(recorded)) => Err(error(recorded)),
+        (Err(closed), Some(recorded)) => Err(error(format!(
+            "{recorded}; the activation owner also failed to settle: {closed}"
+        ))),
+    }
+}
+
+/// What the drop path reports: every failure it found, never only the first.
+/// A lost observation and a failed settle are different facts about the same
+/// run, and neither may hide the other.
+fn reported_failures(
+    settled: Result<(), RunnerError>,
+    recorded: Option<String>,
+) -> Vec<RunnerError> {
+    let mut failures = Vec::new();
+    if let Some(recorded) = recorded {
+        failures.push(error(recorded));
+    }
+    if let Err(settled) = settled {
+        failures.push(settled);
+    }
+    failures
+}
+
 impl Drop for ActivationWaits {
     fn drop(&mut self) {
         if self.run.is_none() {
@@ -569,18 +631,8 @@ impl Drop for ActivationWaits {
         // is reported rather than discarded — a silently lost wait is exactly
         // the incomplete record this type exists to prevent.
         let settled = self.close(WorkloadOutcome::Interrupted);
-        // Report every failure the drop path found, not only the first: a lost
-        // observation and a failed settle are different facts about the same
-        // run, and neither may hide the other.
-        let mut failures = Vec::new();
-        if let Some(recorded) = self.publisher.take_recording_failure() {
-            failures.push(error(recorded));
-        }
-        if let Err(settled) = settled {
-            failures.push(settled);
-        }
-        for failure in failures {
-            eprintln!("warning: {failure}");
+        for failure in reported_failures(settled, self.publisher.take_recording_failure()) {
+            self.report_dropped(failure);
         }
     }
 }
@@ -715,6 +767,57 @@ mod tests {
             .detail
             .unwrap()
             .contains("without a terminal observation"));
+    }
+
+    #[test]
+    fn finish_reports_a_failed_settle_and_a_lost_observation_together() {
+        let repo = tempfile::tempdir().unwrap();
+        let mut activation = ActivationWaits::begin(repo.path(), "app", None).unwrap();
+        activation
+            .publisher()
+            .record_failure_for_tests("the managed wait observation was not recorded");
+        // A second strong handle makes the owner's exclusive settle check fail.
+        let borrowed = activation
+            .borrow_owner_for_tests()
+            .expect("the activation owner is open");
+        let failure = activation
+            .finish(true)
+            .expect_err("neither failure may be swallowed");
+        let text = failure.to_string();
+        assert!(
+            text.contains("the managed wait observation was not recorded"),
+            "the lost observation is named: {text}"
+        );
+        assert!(
+            text.contains("still borrowed"),
+            "the settle failure is named: {text}"
+        );
+        drop(borrowed);
+    }
+
+    #[test]
+    fn a_dropped_activation_reports_its_lost_observation_and_its_failed_settle() {
+        let repo = tempfile::tempdir().unwrap();
+        let activation = ActivationWaits::begin(repo.path(), "app", None).unwrap();
+        activation
+            .publisher()
+            .record_failure_for_tests("the managed wait observation was not recorded");
+        let reported = activation.dropped_warnings_for_tests();
+        let borrowed = activation
+            .borrow_owner_for_tests()
+            .expect("the activation owner is open");
+        drop(activation);
+        drop(borrowed);
+        let dropped = reported
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        assert_eq!(dropped.len(), 2, "every failure is reported: {dropped:?}");
+        assert!(
+            dropped[0].contains("the managed wait observation was not recorded"),
+            "{dropped:?}"
+        );
+        assert!(dropped[1].contains("still borrowed"), "{dropped:?}");
     }
 
     #[test]

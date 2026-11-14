@@ -131,9 +131,49 @@ pub(super) fn verify_live_checkout_mount_using(
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::Path;
 
-    use super::probe_tail;
+    use super::super::tests::temp_test_dir;
+    use super::{probe_tail, verify_live_checkout_mount_using};
+
+    #[test]
+    fn checkout_mount_probe_accepts_selected_checkout_and_rejects_sibling() {
+        let first = temp_test_dir("checkout-first");
+        let sibling = temp_test_dir("checkout-sibling");
+        let working_dir = Path::new("/workspace/root");
+        verify_live_checkout_mount_using(
+            &first,
+            working_dir,
+            |path| {
+                let name = Path::new(path).file_name().unwrap();
+                Ok(fs::read(first.join(name)).unwrap())
+            },
+            |path| {
+                let name = Path::new(path).file_name().unwrap();
+                fs::write(first.join(name), "generated").unwrap();
+                Ok(())
+            },
+        )
+        .expect("selected checkout must be visible");
+        let error = verify_live_checkout_mount_using(
+            &first,
+            working_dir,
+            |path| {
+                let name = Path::new(path).file_name().unwrap();
+                Ok(fs::read(sibling.join(name)).unwrap_or_default())
+            },
+            |_| Ok(()),
+        )
+        .expect_err("sibling mount must fail closed");
+        assert!(error
+            .to_string()
+            .contains("does not match selected checkout"));
+        assert_eq!(fs::read_dir(&first).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(&sibling).unwrap().count(), 0);
+        fs::remove_dir_all(first).unwrap();
+        fs::remove_dir_all(sibling).unwrap();
+    }
 
     /// The probe plan is the invocation the prep executor is handed. It must
     /// carry the Compose prefix once and target the environment's service in
