@@ -1750,37 +1750,46 @@ is the holder's liveness, so there is nothing to unlock.
   "prompted_action": false,
   "script": "# bash completion for effigy\n...",
   "commands": [
-    "help",
-    "version",
-    "bootstrap",
+    "distribution",
     "bundle",
     "changelog",
-    "config",
-    "container",
-    "contracts",
-    "defer",
+    "fmt",
+    "fmt-rust",
     "deploy",
     "deps",
-    "help",
-    "doctor",
-    "distribution",
-    "docs",
-    "exec",
-    "gateway",
-    "init",
-    "release",
-    "scan",
     "secrets",
-    "service",
+    "defer",
+    "exec",
     "state",
-    "tasks",
-    "test",
     "workspace",
-    "fmt",
-    "fmt-rust"
+    "gateway",
+    "service",
+    "rhai",
+    "skill",
+    "docs",
+    "contracts",
+    "container",
+    "bootstrap",
+    "release",
+    "doctor",
+    "tasks",
+    "run",
+    "runs",
+    "uninstall",
+    "config",
+    "init",
+    "scan",
+    "test",
+    "help",
+    "version"
   ]
 }
 ```
+
+`commands` lists every live built-in top-level command once, in the order the
+CLI's built-in command inventory declares them, so a completion consumer offers
+the commands that exist without keeping its own copy. A retired command word
+keeps its routing classification but is never offered here.
 
 ## Completion Candidates
 
