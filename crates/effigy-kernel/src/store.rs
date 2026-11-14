@@ -73,16 +73,6 @@ pub const SCHEMA_MAX_PAGES: u32 = 64;
 pub const STRICT_PERSISTENCE_ENV: &str = "EFFIGY_STRICT_PERSISTENCE";
 /// The command that prepares a checkout journal outside a strict run.
 pub const PREPARE_COMMAND: &str = "effigy run prepare";
-/// The page cache a strict connection holds (effigy#981).
-///
-/// SQLite appends a page to the log again when it spills the page cache and
-/// re-dirties the page (`pagerStress` in `sqlite3.c`), so "one frame per
-/// modified page" is only true while the cache can hold the transaction's whole
-/// dirty set. The strict terminal write's own maximum is
-/// `run::TERMINAL_STRICT_WRITE_MAX_PAGES` frames (4203 pages at this build's
-/// numbers), so 24 MiB leaves room for it; a strict open sets this value and
-/// reads it back, and refuses the open if it did not apply.
-pub const STRICT_CACHE_KIB: i64 = 24 * 1024;
 /// SQLite's write-ahead-log header (`WAL_HDRSIZE` in `wal.c`;
 /// <https://sqlite.org/fileformat2.html#walformat>).
 pub const WAL_HEADER_BYTES: u64 = 32;
@@ -200,12 +190,13 @@ pub enum StoreError {
     NotPrepared {
         reason: String,
     },
-    /// The store holds a record this build cannot account for, and no
-    /// preparation step clears it (effigy#981): its terminal table carries a
-    /// `run_id` longer than the index key the strict frame maximum is derived
-    /// for, so a strict run refuses rather than write under a bound that does
-    /// not hold for that store.
-    NotAccountable {
+    /// The strict-persistence terminal ring cannot accept this run's record
+    /// (effigy#985): it is missing, the wrong size, full, or holds a committed
+    /// slot this build cannot verify. The route refuses before admission, and a
+    /// write that meets the condition anyway fails closed without writing
+    /// anything else.
+    TerminalRing {
+        path: PathBuf,
         reason: String,
     },
 }
@@ -225,7 +216,7 @@ impl StoreError {
             | Self::TooLarge { .. }
             | Self::NotCorrupt
             | Self::NotPrepared { .. }
-            | Self::NotAccountable { .. }
+            | Self::TerminalRing { .. }
             | Self::StaleGeneration { .. }
             | Self::UnknownResource => Category::Refused,
             Self::Untrusted { .. }
@@ -365,11 +356,9 @@ impl std::fmt::Display for StoreError {
                  (`{STRICT_PERSISTENCE_ENV}=1`): {reason}; `{PREPARE_COMMAND}` prepares it outside \
                  such a run, and then the run works"
             ),
-            Self::NotAccountable { reason } => format!(
-                "the state store cannot be accounted for by a strict-persistence run \
-                 (`{STRICT_PERSISTENCE_ENV}=1`): {reason}; `{PREPARE_COMMAND}` does not clear that \
-                 record — remove it, or reset the checkout journal outside a strict run, and then \
-                 the run works"
+            Self::TerminalRing { path, reason } => format!(
+                "the strict terminal ring {} was refused: {reason}",
+                path.display()
             ),
             Self::Corrupt(_)
             | Self::UnknownSchema { .. }
@@ -568,6 +557,14 @@ impl Store {
             strict,
         };
         store.configure(cx, wait)?;
+        // The one point strict records enter SQLite (effigy#985): any writable
+        // non-strict open of a checkout journal ingests the strict terminal
+        // ring and frees the slots it copied. Absence is a cheap no-op, and a
+        // ring that cannot be read leaves the records for a later open rather
+        // than failing an ordinary run.
+        if !strict && !root.is_machine() {
+            let _ = crate::run::terminal_ring_ingest(cx, &mut store, root);
+        }
         Ok(store)
     }
     /// Names the run this store writes for, so a refused writer wait names it.
@@ -620,19 +617,11 @@ impl Store {
         } else {
             WAL_AUTOCHECKPOINT_PAGES
         };
-        // A strict connection holds enough page cache that the terminal write
-        // cannot spill, which is what makes "one frame per modified page" true
-        // (effigy#981); a non-strict connection keeps SQLite's default.
-        let cache = if self.strict {
-            format!("PRAGMA cache_size=-{STRICT_CACHE_KIB};")
-        } else {
-            String::new()
-        };
         self.conn.execute_batch(&format!(
             "PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF; \
              PRAGMA cell_size_check=ON; PRAGMA max_page_count={}; \
              PRAGMA journal_size_limit={WAL_LIMIT_BYTES}; \
-             PRAGMA wal_autocheckpoint={autocheckpoint}; {cache}",
+             PRAGMA wal_autocheckpoint={autocheckpoint}",
             MAX_DB_BYTES / PAGE_SIZE
         ))?;
         if self.strict {
@@ -673,14 +662,10 @@ impl Store {
         let page_size: i64 = self
             .conn
             .query_row("PRAGMA page_size", [], |row| row.get(0))?;
-        let cache: i64 = self
-            .conn
-            .query_row("PRAGMA cache_size", [], |row| row.get(0))?;
         Ok(SidecarBounds {
             journal_size_limit: limit.max(0) as u64,
             wal_autocheckpoint: pages.max(0) as u32,
             page_size: page_size.max(0) as u64,
-            page_cache_kib: cache,
         })
     }
     /// Refuses an open whose settings did not apply, so no write happens under
@@ -698,15 +683,6 @@ impl Store {
                 "the store's side-file bounds did not apply: journal_size_limit is {} \
                  (expected {WAL_LIMIT_BYTES}) and wal_autocheckpoint is {} (expected {expected})",
                 bounds.journal_size_limit, bounds.wal_autocheckpoint
-            )));
-        }
-        // A strict connection must hold the page cache its frame maximum is
-        // derived for, or a spill could append a page twice (effigy#981).
-        if self.strict && bounds.page_cache_kib != -STRICT_CACHE_KIB {
-            return Err(StoreError::Broken(format!(
-                "SQLite holds {} KiB of page cache on this strict connection instead of the {} \
-                 this build sets, so the terminal write could spill and append a page twice",
-                bounds.page_cache_kib, STRICT_CACHE_KIB
             )));
         }
         Ok(())
@@ -835,7 +811,6 @@ impl Store {
                 ),
             });
         }
-        refuse_oversized_keys(&self.conn)?;
         Ok(())
     }
     /// Read-only open (R2): one plain SQLite read, no copy. A checkpointed
@@ -913,7 +888,6 @@ impl Store {
             conn: &self.conn,
             now: wall_ms(),
             machine: self.root.is_machine(),
-            strict: self.strict,
         });
         let value = match value {
             Ok(value) => match crate::fault_point!(StoreCommitBefore) {
@@ -1290,9 +1264,6 @@ pub struct SidecarBounds {
     pub wal_autocheckpoint: u32,
     /// `PRAGMA page_size`: the unit both bounds above are measured in.
     pub page_size: u64,
-    /// `PRAGMA cache_size`: negative means KiB, so `-24576` is a 24 MiB cache.
-    /// A strict connection holds enough that its terminal write cannot spill.
-    pub page_cache_kib: i64,
 }
 
 /// What one bounded maintenance pass did (§7.4).
@@ -1319,15 +1290,6 @@ pub struct Txn<'a> {
     conn: &'a Connection,
     now: i64,
     machine: bool,
-    /// Strict persistence (effigy#981): this write appends only what the
-    /// caller's own statements need, with no retention delete of its own.
-    strict: bool,
-}
-impl Txn<'_> {
-    /// Whether this write must keep to strict persistence (effigy#981).
-    pub fn strict(&self) -> bool {
-        self.strict
-    }
 }
 impl std::fmt::Debug for Txn<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1836,37 +1798,6 @@ fn schema_gaps(conn: &Connection) -> Result<Vec<String>, StoreError> {
     Ok(gaps)
 }
 
-/// The key-length premise behind the strict frame maximum (effigy#981).
-///
-/// `run::TERMINAL_STRICT_WRITE_MAX_PAGES` derives the terminal row's b-tree depth
-/// and its pointer-map term from index keys of at most
-/// `run::TERMINAL_RUN_ID_MAX` = 64 bytes. A store that already holds a longer
-/// `run_id` — an older build's row, or a foreign writer — could have a deeper
-/// tree, so a strict run refuses it instead of writing under a bound that does
-/// not hold for that store.
-fn refuse_oversized_keys(conn: &Connection) -> Result<(), StoreError> {
-    let longest: Option<i64> = conn
-        .query_row(
-            "SELECT max(length(run_id)) FROM foreground_terminals",
-            [],
-            |row| row.get(0),
-        )
-        .optional()?
-        .flatten();
-    match longest {
-        Some(length) if length > crate::run::TERMINAL_RUN_ID_MAX as i64 => {
-            Err(StoreError::NotAccountable {
-                reason: format!(
-                    "its terminal table holds a {length}-byte run id, over the {}-byte index key \
-                     the strict frame maximum is derived for",
-                    crate::run::TERMINAL_RUN_ID_MAX
-                ),
-            })
-        }
-        _ => Ok(()),
-    }
-}
-
 /// Strict persistence refuses a store that needs recovery (effigy#981).
 ///
 /// Three on-disk states make the first open for writing do work this invocation
@@ -1991,7 +1922,6 @@ pub fn verify_prepared(root: &StateRoot, busy: Duration) -> Result<PreparedStore
             ),
         });
     }
-    refuse_oversized_keys(reader.conn())?;
     let pages: i64 = reader
         .conn()
         .query_row("PRAGMA page_count", [], |row| row.get(0))?;

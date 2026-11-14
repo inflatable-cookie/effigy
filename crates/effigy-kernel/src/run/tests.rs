@@ -2465,38 +2465,19 @@ fn read_count(root: &StateRoot, sql: &str) -> i64 {
     conn.query_row(sql, [], |row| row.get(0)).unwrap()
 }
 
-/// Strict persistence writes the terminal row and nothing else (effigy#981): no
-/// prune frames, no checkpoint, and a log whose growth stays inside the physical
-/// maximum this module states for the route.
-#[test]
-fn run_terminal_strict_write_appends_at_most_its_stated_frames_and_defers_the_prune() {
-    let fixture = effigy_test_support::Fixture::new("effigy-terminal-strict-").unwrap();
-    let cx = context();
-    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
-    let closed_at_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as i64)
-        .unwrap_or_default();
-    // A row the seven-day retention has already expired, written straight into
-    // its transaction: a non-strict write would prune it, and a strict write must
-    // leave it to a non-strict writer.
-    let mut store = Store::open(&cx, &root).unwrap();
-    store
-        .txn(&cx, |txn| {
-            txn.conn().execute(
-                "INSERT INTO foreground_terminals \
-                 (run_id, checkout, boot, task, outcome, exit_code, signal, cleanup, \
-                  workload_groups, closed_at) \
-                 VALUES ('expired-strict', 'checkout', 'boot', 'dev', 'succeeded', 0, NULL, \
-                         'complete', 0, 0)",
-                [],
-            )?;
-            Ok(())
-        })
-        .unwrap();
-    drop(store);
-    let record = TerminalRecord {
-        run_id: id(41).to_string(),
+// ---- The strict-persistence terminal ring (effigy#985) --------------------
+
+fn ring_bytes(root: &StateRoot) -> Vec<u8> {
+    std::fs::read(root.path().join(super::terminal_ring::RING_FILE)).expect("ring bytes")
+}
+
+fn ring_status(root: &StateRoot) -> super::terminal_ring::RingStatus {
+    super::terminal_ring::status(root).expect("verified ring")
+}
+
+fn ring_record(n: u8, closed_at_ms: i64) -> TerminalRecord {
+    TerminalRecord {
+        run_id: id(n).to_string(),
         checkout: checkout().text(),
         boot: "20a888e4-10fc-4798-a139-fe8e08758c34".into(),
         task: "dev".into(),
@@ -2506,131 +2487,333 @@ fn run_terminal_strict_write_appends_at_most_its_stated_frames_and_defers_the_pr
         cleanup: "complete".into(),
         workload_groups: 0,
         closed_at_ms,
-    };
-    // Enough rows that the insert walks real table and index pages rather than
-    // a one-page tree, so the measured frames are not a fresh-store minimum.
-    let mut store = Store::open(&cx, &root).unwrap();
-    store
-        .txn(&cx, |txn| {
-            for n in 0..600 {
-                txn.conn().execute(
-                    "INSERT INTO foreground_terminals \
-                     (run_id, checkout, boot, task, outcome, exit_code, signal, cleanup, \
-                      workload_groups, closed_at) \
-                     VALUES (?1, 'checkout', 'boot', 'dev', 'succeeded', 0, NULL, \
-                             'complete', 0, ?2)",
-                    rusqlite::params![format!("filler-{n}"), closed_at_ms],
-                )?;
-            }
-            Ok(())
-        })
-        .unwrap();
-    drop(store);
-    // A read transaction pins the log's end, so no reset can hide the frames.
-    let path = root.path().join("kernel.db");
-    let reader = rusqlite::Connection::open(&path).unwrap();
-    reader.busy_timeout(Duration::from_secs(30)).unwrap();
-    reader
-        .execute_batch("BEGIN; SELECT count(*) FROM meta;")
-        .unwrap();
-    let wal = root.path().join("kernel.db-wal");
-    let before = std::fs::metadata(&wal).map(|meta| meta.len()).unwrap_or(0);
-    let mut store = Store::open_strict(&cx, &root).unwrap();
-    store
-        .txn(&cx, |txn| super::terminal::write_row(txn, &record))
-        .unwrap();
-    drop(store);
-    let after = std::fs::metadata(&wal).map(|meta| meta.len()).unwrap_or(0);
-    let appended = after.saturating_sub(before);
-    assert!(
-        appended <= TERMINAL_STRICT_WAL_MAX_BYTES,
-        "one strict terminal write appended {appended} bytes of log, over the \
-         {TERMINAL_STRICT_WAL_MAX_BYTES}-byte maximum"
-    );
-    // The frames are the insert's, so they fit the insert's page bound.
-    let frames = appended.saturating_sub(crate::store::WAL_HEADER_BYTES)
-        / (crate::store::PAGE_SIZE + crate::store::WAL_FRAME_HEADER_BYTES);
-    assert!(
-        frames > 0,
-        "the measured write appended no frame, so it measured nothing"
-    );
-    assert!(
-        frames <= u64::from(TERMINAL_STRICT_WRITE_MAX_PAGES),
-        "one strict terminal write appended {frames} frames, over \
-         {TERMINAL_STRICT_WRITE_MAX_PAGES}"
-    );
-    assert_eq!(
-        read_count(
-            &root,
-            "SELECT count(*) FROM foreground_terminals WHERE run_id='expired-strict'"
-        ),
-        1,
-        "a strict write pruned rows it was meant to leave"
-    );
-    assert_eq!(
-        read_count(
-            &root,
-            &format!(
-                "SELECT count(*) FROM foreground_terminals WHERE run_id='{}'",
-                id(41)
-            )
-        ),
-        1,
-        "the strict write did not record the run"
-    );
-    reader.execute_batch("COMMIT").unwrap();
+    }
 }
 
-/// The strict write refuses to report success when its own transaction exceeds
-/// the frame budget, and says how many frames it appended (effigy#981). The
-/// budget is passed explicitly here so a small one can trip on a real write.
+fn open_ring_expired(n: u8, closed_at_ms: i64) -> TerminalRecord {
+    let mut record = ring_record(n, closed_at_ms);
+    record.outcome = "failed".into();
+    record.exit_code = Some(101);
+    record.cleanup = "incomplete".into();
+    record.workload_groups = 3;
+    record
+}
+
+/// A prepared ring takes one record in one slot, and reads it back exactly.
 #[test]
-fn run_terminal_strict_budget_refusal_names_the_observed_frames() {
-    use std::ffi::OsStr;
-    std::env::set_var(crate::store::STRICT_PERSISTENCE_ENV, OsStr::new("1"));
-    let fixture = effigy_test_support::Fixture::new("effigy-terminal-budget-").unwrap();
+fn run_terminal_ring_slot_round_trips() {
+    let fixture = effigy_test_support::Fixture::new("effigy-ring-roundtrip-").unwrap();
     let cx = context();
     let root = StateRoot::effects(&cx, fixture.path()).unwrap();
-    // The route's precondition: a store that is already prepared.
-    drop(Store::open_preparing(&cx, &root).unwrap());
-    let record = TerminalRecord {
-        run_id: id(42).to_string(),
-        checkout: checkout().text(),
-        boot: "20a888e4-10fc-4798-a139-fe8e08758c34".into(),
-        task: "dev".into(),
-        outcome: "succeeded".into(),
-        exit_code: Some(0),
-        signal: None,
-        cleanup: "complete".into(),
-        workload_groups: 0,
-        closed_at_ms: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_millis() as i64)
-            .unwrap_or_default(),
-    };
-    // No transaction can append zero frames, so a zero budget always trips.
-    let error = super::terminal::record_within_budget(&cx, &root, &record, 0)
-        .expect_err("a strict write over its budget must not report success");
-    let sentence = error.to_string();
-    assert!(
-        sentence.contains("0-frame budget") && sentence.contains("frames to this run's"),
-        "the refusal names the budget and the observed frames: {sentence}"
+    let status = super::terminal_ring::prepare(&root).expect("prepare creates the ring");
+    assert_eq!(
+        status.bytes,
+        std::fs::metadata(root.path().join(super::terminal_ring::RING_FILE))
+            .expect("stat")
+            .len()
     );
-    // The row is recorded — the refusal is about the claim, not the evidence —
-    // and the same write inside the real budget reports success.
+    let record = open_ring_expired(7, 1_700_000_000_000);
+    super::terminal_ring::write(&root, &record).expect("write");
+    let read = match super::terminal_strict_record(&root, id(7)) {
+        Observed::Verified(Some(read), _) => read,
+        other => panic!("no record read back: {other:?}"),
+    };
+    assert_eq!(read, record);
+    assert_eq!(ring_status(&root).committed, 1);
+    // The file never grew: one slot was overwritten in place.
+    assert_eq!(ring_status(&root).bytes, crate::run::TERMINAL_RING_BYTES);
+}
+
+/// A repeated settle of the same run neither changes nor duplicates its slot.
+#[test]
+fn run_terminal_ring_repeated_settle_is_idempotent() {
+    let fixture = effigy_test_support::Fixture::new("effigy-ring-idempotent-").unwrap();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    super::terminal_ring::prepare(&root).expect("prepare");
+    let record = ring_record(8, 1_700_000_000_000);
+    super::terminal_ring::write(&root, &record).expect("first settle");
+    let after_first = ring_bytes(&root);
+    super::terminal_ring::write(&root, &record).expect("repeated settle");
+    assert_eq!(
+        ring_bytes(&root),
+        after_first,
+        "a repeated settle rewrote its slot"
+    );
+    assert_eq!(ring_status(&root).committed, 1);
+    assert_eq!(
+        match super::terminal_strict_record(&root, id(8)) {
+            Observed::Verified(Some(read), _) => read,
+            other => panic!("no record: {other:?}"),
+        },
+        record
+    );
+}
+
+/// Two distinct runs take distinct slots and distinct sequence numbers, so
+/// neither coalesces with the other.
+#[test]
+fn run_terminal_ring_distinct_runs_take_distinct_slots() {
+    let fixture = effigy_test_support::Fixture::new("effigy-ring-distinct-").unwrap();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    super::terminal_ring::prepare(&root).expect("prepare");
+    let first = ring_record(9, 1_700_000_000_000);
+    let mut second = ring_record(10, 1_700_000_000_001);
+    second.task = "other".into();
+    super::terminal_ring::write(&root, &first).expect("first");
+    super::terminal_ring::write(&root, &second).expect("second");
+    assert_eq!(ring_status(&root).committed, 2);
+    assert_eq!(
+        match super::terminal_strict_record(&root, id(9)) {
+            Observed::Verified(Some(read), _) => read.task,
+            other => panic!("first run missing: {other:?}"),
+        },
+        "dev"
+    );
+    assert_eq!(
+        match super::terminal_strict_record(&root, id(10)) {
+            Observed::Verified(Some(read), _) => read.task,
+            other => panic!("second run missing: {other:?}"),
+        },
+        "other"
+    );
+}
+
+/// An identity that would name another run is refused, not cut, and nothing is
+/// written.
+#[test]
+fn run_terminal_ring_refuses_an_oversized_identity_and_writes_nothing() {
+    let fixture = effigy_test_support::Fixture::new("effigy-ring-identity-").unwrap();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    super::terminal_ring::prepare(&root).expect("prepare");
+    let before = ring_bytes(&root);
+    let mut record = ring_record(11, 1_700_000_000_000);
+    record.run_id = "k".repeat(crate::run::TERMINAL_RUN_ID_MAX + 1);
+    let error = super::terminal_ring::write(&root, &record).expect_err("oversized identity");
+    assert!(
+        error.to_string().contains("run_id")
+            && error.to_string().contains("refused rather than cut"),
+        "{error}"
+    );
+    assert!(ring_bytes(&root) == before, "a refusal wrote to the ring");
+}
+
+/// A ring that was never prepared refuses before writing: the route never
+/// creates its own file.
+#[test]
+fn run_terminal_ring_refuses_a_missing_file_and_writes_nothing() {
+    let fixture = effigy_test_support::Fixture::new("effigy-ring-missing-").unwrap();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let ring = root.path().join(super::terminal_ring::RING_FILE);
+    let error =
+        super::terminal_ring::write(&root, &ring_record(12, 0)).expect_err("missing ring refuses");
+    assert!(error.to_string().contains("does not exist"), "{error}");
+    assert!(!ring.exists(), "the route created the ring it refused");
+    assert!(super::terminal_ring::status(&root).is_err());
+}
+
+/// A ring whose size is not the fixed size refuses and writes nothing.
+#[test]
+fn run_terminal_ring_refuses_a_size_mismatch_and_writes_nothing() {
+    let fixture = effigy_test_support::Fixture::new("effigy-ring-size-").unwrap();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    super::terminal_ring::prepare(&root).expect("prepare");
+    let ring = root.path().join(super::terminal_ring::RING_FILE);
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&ring)
+        .expect("open");
+    file.set_len(crate::run::TERMINAL_RING_BYTES - 1)
+        .expect("shorten");
+    drop(file);
+    let before = ring_bytes(&root);
+    let error =
+        super::terminal_ring::write(&root, &ring_record(13, 0)).expect_err("size mismatch refuses");
+    assert!(
+        error.to_string().contains("instead of the fixed"),
+        "{error}"
+    );
+    assert!(ring_bytes(&root) == before, "a refusal wrote to the ring");
+}
+
+/// A full ring refuses before admission semantics: no slot is reused and the
+/// file is unchanged, so ingestion (or `effigy run prepare`) is the remedy.
+#[test]
+fn run_terminal_ring_refuses_a_full_ring_and_writes_nothing() {
+    let fixture = effigy_test_support::Fixture::new("effigy-ring-full-").unwrap();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    super::terminal_ring::prepare(&root).expect("prepare");
+    for n in 0..u8::try_from(crate::run::TERMINAL_RING_SLOTS).expect("slots fit") {
+        super::terminal_ring::write(&root, &ring_record(n, 1_700_000_000_000 + i64::from(n)))
+            .expect("fill a slot");
+    }
+    let status = ring_status(&root);
+    assert_eq!(status.committed, crate::run::TERMINAL_RING_SLOTS);
+    assert!(!status.ready(), "a full ring cannot take another record");
+    let before = ring_bytes(&root);
+    let overflow = u8::try_from(crate::run::TERMINAL_RING_SLOTS).expect("slots fit");
+    let error = super::terminal_ring::write(&root, &ring_record(overflow, 0))
+        .expect_err("a full ring refuses");
+    assert!(error.to_string().contains("no free slot"), "{error}");
+    assert!(ring_bytes(&root) == before, "a refusal wrote to the ring");
+}
+
+/// A torn slot is never read as a record: an uncommitted body is free, and a
+/// committed body whose checksum does not match is corrupt evidence, not a
+/// record.
+#[test]
+fn run_terminal_ring_detects_a_torn_slot() {
+    let fixture = effigy_test_support::Fixture::new("effigy-ring-torn-").unwrap();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    super::terminal_ring::prepare(&root).expect("prepare");
+    let record = ring_record(14, 1_700_000_000_000);
+    super::terminal_ring::write(&root, &record).expect("write");
+    let ring = root.path().join(super::terminal_ring::RING_FILE);
+    let slot = crate::run::terminal_ring::HEADER_BYTES;
+    // A body written before its marker: the slot is free, and the run has no
+    // record.
+    let mut bytes = ring_bytes(&root);
+    bytes[slot + super::terminal_ring::SLOT_BYTES - 1] = 0;
+    std::fs::write(&ring, &bytes).expect("torn marker");
+    assert_eq!(ring_status(&root).committed, 0);
+    assert!(matches!(
+        super::terminal_strict_record(&root, id(14)),
+        Observed::Absent(_)
+    ));
+    // A committed body whose bytes no longer match the checksum is corrupt:
+    // it is refused, never returned as a value.
+    std::fs::write(&ring, &{
+        let mut bytes = ring_bytes(&root);
+        bytes[slot + 300] ^= 0xFF;
+        bytes
+    })
+    .expect("corrupt body");
+    // The slot is still uncommitted above, so commit it again with the body it
+    // now holds: the checksum no longer matches.
+    let mut bytes = ring_bytes(&root);
+    bytes[slot + super::terminal_ring::SLOT_BYTES - 1] = super::terminal_ring::SLOT_COMMIT;
+    std::fs::write(&ring, &bytes).expect("corrupt commit");
+    assert!(super::terminal_ring::status(&root).is_err());
+    assert!(matches!(
+        super::terminal_strict_record(&root, id(14)),
+        Observed::Unknown(_)
+    ));
+    let before = ring_bytes(&root);
+    let error = super::terminal_ring::write(&root, &ring_record(15, 0))
+        .expect_err("a corrupt slot refuses the route");
+    assert!(error.to_string().contains("checksum"), "{error}");
+    assert!(ring_bytes(&root) == before, "a refusal wrote to the ring");
+}
+
+/// A non-strict store open ingests committed slots into
+/// `foreground_terminals`, keeps their identity and history, and frees the
+/// slots. A further open is idempotent, and retention still prunes expired
+/// rows.
+#[test]
+fn run_terminal_ring_ingests_into_the_journal_and_frees_the_slots() {
+    let fixture = effigy_test_support::Fixture::new("effigy-ring-ingest-").unwrap();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    super::terminal_ring::prepare(&root).expect("prepare");
+    // One recent record and one the seven-day retention has already expired.
+    let recent = open_ring_expired(16, crate::store::wall_ms());
+    let expired = open_ring_expired(17, 0);
+    super::terminal_ring::write(&root, &recent).expect("recent");
+    super::terminal_ring::write(&root, &expired).expect("expired");
+    assert_eq!(ring_status(&root).committed, 2);
+
+    // The next non-strict store open is the ingestion point.
+    drop(Store::open(&cx, &root).expect("a non-strict open ingests"));
     assert_eq!(
         read_count(
             &root,
             &format!(
                 "SELECT count(*) FROM foreground_terminals WHERE run_id='{}'",
-                id(42)
+                recent.run_id
             )
         ),
         1,
-        "the refused claim lost the row it wrote"
+        "the recent record was not ingested"
     );
-    let mut second = record.clone();
-    second.run_id = id(43).to_string();
-    super::terminal::record(&cx, &root, &second).expect("inside the real budget");
-    std::env::remove_var(crate::store::STRICT_PERSISTENCE_ENV);
+    assert_eq!(
+        read_count(
+            &root,
+            &format!(
+                "SELECT count(*) FROM foreground_terminals WHERE run_id='{}' AND \
+                 task='dev' AND outcome='failed' AND cleanup='incomplete' AND \
+                 exit_code=101 AND workload_groups=3",
+                recent.run_id
+            )
+        ),
+        1,
+        "ingestion did not keep the record's identity and outcome"
+    );
+    let status = ring_status(&root);
+    assert_eq!(status.committed, 0, "ingested slots were not freed");
+    assert_eq!(status.free, crate::run::TERMINAL_RING_SLOTS);
+
+    // Another open neither duplicates a row nor resurrects a freed slot.
+    drop(Store::open(&cx, &root).expect("second open"));
+    assert_eq!(
+        read_count(
+            &root,
+            &format!(
+                "SELECT count(*) FROM foreground_terminals WHERE run_id='{}'",
+                recent.run_id
+            )
+        ),
+        1,
+        "ingestion duplicated a row"
+    );
+    assert_eq!(ring_status(&root).committed, 0);
+
+    // Retention keeps its existing semantics: the next typed terminal write
+    // prunes the expired row the ingested slot carried.
+    let mut writer = Store::open(&cx, &root).expect("writer");
+    let fresh = ring_record(18, crate::store::wall_ms());
+    writer
+        .txn(&cx, |txn| super::terminal::write_row(txn, &fresh))
+        .expect("terminal write");
+    drop(writer);
+    assert_eq!(
+        read_count(
+            &root,
+            &format!(
+                "SELECT count(*) FROM foreground_terminals WHERE run_id='{}'",
+                expired.run_id
+            )
+        ),
+        0,
+        "retention no longer prunes an expired ingested record"
+    );
+}
+
+/// `effigy run prepare`'s verifier refuses a ring it would have to write and
+/// writes nothing; preparing the missing file is the supported step.
+#[test]
+fn run_terminal_ring_status_writes_nothing_and_prepare_creates_it() {
+    let fixture = effigy_test_support::Fixture::new("effigy-ring-prepare-").unwrap();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let ring = root.path().join(super::terminal_ring::RING_FILE);
+    assert!(
+        super::terminal_ring::status(&root).is_err(),
+        "an absent ring is not ready"
+    );
+    assert!(!ring.exists(), "verifying a ring created it");
+    super::terminal_ring::prepare(&root).expect("prepare");
+    assert!(ring.exists());
+    let prepared = ring_status(&root);
+    assert!(prepared.ready());
+    assert_eq!(prepared.free, crate::run::TERMINAL_RING_SLOTS);
+    // Preparing again verifies the existing file instead of rewriting it.
+    let before = ring_bytes(&root);
+    super::terminal_ring::prepare(&root).expect("prepare again");
+    assert!(ring_bytes(&root) == before);
 }

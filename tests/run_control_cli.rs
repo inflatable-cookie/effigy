@@ -1959,53 +1959,53 @@ fn focused_test_filters_are_one_lock_per_normalized_invocation() {
     );
 }
 
-/// Strict persistence refuses a run whose journal it would have to prepare,
-/// before the admission hook is called, and `effigy run prepare` readies that
-/// same route outside it (effigy#981).
+/// Strict persistence refuses a run whose fixed terminal ring it would have to
+/// prepare, before the admission hook is called; `effigy run prepare` readies
+/// that same route outside it, and the strict route then writes exactly one ring
+/// slot and no SQLite byte (effigy#985).
 #[test]
 fn strict_persistence_refuses_before_admission_and_prepare_readies_the_route() {
     let fixture = Fixture::new();
     let hook = v2_hook(&fixture, "strict.sh", "", "");
-    // One admitted run creates this checkout's journal and its terminal row.
+    // One admitted non-strict run creates this checkout's journal and writes
+    // its own terminal row, exactly as before.
     let first = fixture.with_v2_hook(&hook, &["heavy"]);
     assert!(first.status.success(), "{}", text(&first));
-    let journal = fixture.repo.join(".effigy/state/kernel.db");
+    let state = fixture.repo.join(".effigy/state");
+    let journal = state.join("kernel.db");
     assert!(journal.exists(), "the admitted run wrote no journal");
+    let ring = state.join("foreground-terminals.ring");
+    assert!(!ring.exists(), "a ring exists before any strict prepare");
 
-    // An older Effigy's journal: the additive table this build creates is gone,
-    // so the next strict run would have to migrate the store inside its route.
-    rusqlite::Connection::open(&journal)
-        .expect("journal")
-        .execute_batch("DROP INDEX foreground_terminals_closed; DROP TABLE foreground_terminals;")
-        .expect("downgrade");
-    let journal_files = || {
-        ["kernel.db", "kernel.db-wal", "kernel.db-shm"]
-            .into_iter()
-            .map(|name| fs::read(fixture.repo.join(".effigy/state").join(name)).ok())
-            .collect::<Vec<Option<Vec<u8>>>>()
+    let sqlite = || {
+        ["kernel.db", "kernel.db-wal", "kernel.db-shm"].map(|name| fs::read(state.join(name)).ok())
     };
-    let before = journal_files();
-    let admitted = fixture.events().len();
-    fs::remove_file(fixture.repo.join("ran.txt")).expect("clear the workload marker");
+    let events = fixture.events().len();
+    fs::remove_file(fixture.repo.join("ran.txt")).ok();
 
-    // The strict run refuses: no hook, no workload, no journal write.
-    let refused = fixture
-        .effigy(&["heavy"])
-        .env("EFFIGY_ADMISSION_HOOK", &hook)
-        .env("EFFIGY_ADMISSION_PROTOCOL", "2")
-        .env("EFFIGY_STRICT_PERSISTENCE", "1")
-        .output_owned()
-        .expect("refusal");
+    // The strict run refuses: the fixed ring does not exist. No hook, no
+    // workload and no byte of any file.
+    let strict = |fixture: &Fixture| {
+        fixture
+            .effigy(&["heavy"])
+            .env("EFFIGY_ADMISSION_HOOK", &hook)
+            .env("EFFIGY_ADMISSION_PROTOCOL", "2")
+            .env("EFFIGY_STRICT_PERSISTENCE", "1")
+            .output_owned()
+            .expect("strict run")
+    };
+    let sqlite_before = sqlite();
+    let refused = strict(&fixture);
     assert!(!refused.status.success(), "{}", text(&refused));
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(
-        stderr.contains("not prepared for a strict-persistence run")
+        stderr.contains("foreground-terminals.ring")
             && stderr.contains("EFFIGY_STRICT_PERSISTENCE"),
-        "the refusal names strict persistence and its switch: {stderr}"
+        "the refusal names the ring and its switch: {stderr}"
     );
     assert!(
         stderr.contains("effigy run prepare"),
-        "the refusal names the step that prepares the journal: {stderr}"
+        "the refusal names the step that prepares the ring: {stderr}"
     );
     assert!(
         !fixture.exists("ran.txt"),
@@ -2014,29 +2014,32 @@ fn strict_persistence_refuses_before_admission_and_prepare_readies_the_route() {
     );
     assert_eq!(
         fixture.events().len(),
-        admitted,
+        events,
         "the admission hook ran under a refusal"
     );
     assert!(
-        journal_files() == before,
+        sqlite() == sqlite_before,
         "the refusal wrote to the checkout journal"
     );
+    assert!(!ring.exists(), "the refusal created the ring");
 
     // The check step reports the same refusal and writes nothing.
     let checked = fixture.run(&["--json", "run", "prepare", "--check"]);
     assert!(!checked.status.success(), "{}", text(&checked));
     assert!(
-        journal_files() == before,
-        "`run prepare --check` wrote to the checkout journal"
+        sqlite() == sqlite_before,
+        "`run prepare --check` wrote to the journal"
     );
+    assert!(!ring.exists(), "`run prepare --check` created the ring");
 
-    // Preparing it is the supported step outside the route.
+    // Preparing is the supported step outside the route: it migrates the
+    // journal and creates and fully preallocates the ring.
     let prepared = fixture.run(&["run", "prepare"]);
     assert!(prepared.status.success(), "{}", text(&prepared));
-    assert!(
-        String::from_utf8_lossy(&prepared.stdout).contains("prepared"),
-        "{}",
-        text(&prepared)
+    assert_eq!(
+        fs::metadata(&ring).expect("ring").len(),
+        effigy_kernel::run::TERMINAL_RING_BYTES,
+        "prepare did not fully preallocate the ring"
     );
     let checked = fixture.run(&["--json", "run", "prepare", "--check"]);
     assert!(checked.status.success(), "{}", text(&checked));
@@ -2045,23 +2048,108 @@ fn strict_persistence_refuses_before_admission_and_prepare_readies_the_route() {
     assert_eq!(envelope["result"]["schema"], "effigy.run.prepare.v1");
     assert_eq!(envelope["result"]["prepared"], false);
     assert_eq!(envelope["result"]["ready"], true);
+    assert_eq!(
+        envelope["result"]["ring"]["slots"],
+        effigy_kernel::run::TERMINAL_RING_SLOTS
+    );
 
-    // The same strict run now works, and records its terminal row in the store
-    // the prepare step left prepared.
-    let strict = fixture
-        .effigy(&["heavy"])
-        .env("EFFIGY_ADMISSION_HOOK", &hook)
-        .env("EFFIGY_ADMISSION_PROTOCOL", "2")
-        .env("EFFIGY_STRICT_PERSISTENCE", "1")
-        .output_owned()
-        .expect("strict run");
-    assert!(strict.status.success(), "{}", text(&strict));
+    // The strict route now works, and its whole durable contribution is one
+    // slot of the ring: the journal, its log and its index are byte-identical,
+    // the ring file keeps its size and header, and exactly one slot's bytes
+    // differ.
+    let sqlite_before = sqlite();
+    let ring_before = fs::read(&ring).expect("ring bytes");
+    let settled = strict(&fixture);
+    assert!(settled.status.success(), "{}", text(&settled));
     assert!(fixture.exists("ran.txt"), "the admitted workload ran");
+    assert!(
+        sqlite() == sqlite_before,
+        "the strict route wrote a SQLite byte"
+    );
+    let ring_after = fs::read(&ring).expect("ring bytes");
+    assert_eq!(
+        ring_after.len(),
+        ring_before.len(),
+        "the strict route grew its ring"
+    );
+    let header = effigy_kernel::run::TERMINAL_RING_HEADER_BYTES;
+    let slot = effigy_kernel::run::TERMINAL_RING_SLOT_BYTES;
+    assert!(
+        ring_after[..header] == ring_before[..header],
+        "the strict route rewrote the ring header"
+    );
+    let changed: std::collections::BTreeSet<usize> = (header..ring_after.len())
+        .filter(|offset| ring_after[*offset] != ring_before[*offset])
+        .map(|offset| (offset - header) / slot)
+        .collect();
+    assert_eq!(
+        changed.len(),
+        1,
+        "the strict route changed {changed:?} slots instead of exactly one"
+    );
+
+    // Before any ingestion the outcome is read from the slot itself.
+    let listed = fixture.run(&["--json", "runs"]);
+    assert!(listed.status.success(), "{}", text(&listed));
+    let envelope: serde_json::Value = serde_json::from_slice(&listed.stdout).expect("runs json");
+    let run = envelope["result"]["runs"]
+        .as_array()
+        .expect("runs")
+        .iter()
+        .find(|run| {
+            run["evidence_source"] == "foreground-terminal-record.v1"
+                && run["task"] == "heavy"
+                && run["state"] == "succeeded"
+        })
+        .cloned()
+        .expect("the strict run is listed from its ring slot");
+    let run_id = run["run_id"].as_str().expect("run id").to_owned();
+    let status = fixture.run(&["--json", "run", "status", &run_id]);
+    assert!(status.status.success(), "{}", text(&status));
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&status.stdout).expect("status envelope");
+    assert_eq!(envelope["result"]["run"]["run_id"], run_id);
+    assert_eq!(
+        envelope["result"]["run"]["evidence_source"],
+        "foreground-terminal-record.v1"
+    );
+    assert_eq!(envelope["result"]["run"]["exit_code"], 0);
+    assert_eq!(envelope["result"]["run"]["cleanup"], "complete");
+
+    // The next non-strict store open ingests the slot into the journal and
+    // frees it; the run is then a normal row, and the first non-strict run's
+    // row is still there.
+    let ingested = fixture.run(&["run", "prepare"]);
+    assert!(ingested.status.success(), "{}", text(&ingested));
     let rows: i64 = rusqlite::Connection::open(&journal)
         .expect("journal")
-        .query_row("SELECT count(*) FROM foreground_terminals", [], |row| {
-            row.get(0)
-        })
+        .query_row(
+            "SELECT count(*) FROM foreground_terminals WHERE run_id=?1",
+            [&run_id],
+            |row| row.get(0),
+        )
         .expect("rows");
-    assert_eq!(rows, 1, "the strict run recorded no terminal row");
+    assert_eq!(
+        rows, 1,
+        "the strict record was not ingested into the journal"
+    );
+    let heavy: i64 = rusqlite::Connection::open(&journal)
+        .expect("journal")
+        .query_row(
+            "SELECT count(*) FROM foreground_terminals WHERE task='heavy'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("rows");
+    assert_eq!(
+        heavy, 2,
+        "the non-strict terminal row is not kept as before"
+    );
+    let ring_after_ingest = fs::read(&ring).expect("ring bytes");
+    let commits = ring_after_ingest
+        .chunks_exact(slot)
+        .skip(1)
+        .filter(|slot| slot[slot.len() - 1] != 0)
+        .count();
+    assert_eq!(commits, 0, "ingestion did not free the slot it copied");
 }

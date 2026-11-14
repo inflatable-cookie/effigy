@@ -219,6 +219,15 @@ ID, the `CheckoutId`, the boot identity, the task, the outcome, the exit code
 or signal, `cleanup`, the acknowledged `workload_groups` count and the closed
 time. It is retained for seven days.
 
+Under strict persistence (`EFFIGY_STRICT_PERSISTENCE=1`, effigy#985) the same
+record and the same fields are first written to **one slot** of the fixed-size,
+preallocated ring described below instead of to SQLite, because a SQLite row has
+no small physical maximum. The next writable non-strict store open ingests the
+slot into this table and frees it. Until then `run status` and `runs` read the
+slot directly, so the record is visible as soon as the run settles; both readers
+deduplicate by run id, and the retention, history and identity semantics are the
+row's own once ingested.
+
 It is **evidence, never authority**, and carries no PID, PGID or start
 identity: nothing in it can be signalled, reclaimed or recovered from.
 
@@ -259,11 +268,11 @@ agree, 2 when they differ. It is fixed before any file is written.
 | `gates/<scope>.scope` | `s` | `s` | 0 bytes: created empty and never written |
 | `gates/<scope>/<gate>.gate` | `s` | `s + 1` | 4096 bytes each |
 | `gates/<scope>/` directory | `s` | `s` | 0700, one entry per held gate |
-| `kernel.db` `foreground_terminals` row | none | 1 | 960 stored bytes |
+| `kernel.db` `foreground_terminals` row | none | 1 | 960 stored bytes (non-strict; strict mode writes a ring slot instead, effigy#985) |
 | `kernel.db` pages, when the store is created | none | fixed schema only | `store::SCHEMA_MAX_PAGES` = 64 pages, once per store lifetime |
-| `kernel.db-wal` | none | at most 1 | 96 frames = 384 KiB appended by this write |
-| `kernel.db-shm` | none | at most 1 | SQLite's wal-index, sized by the log the shared store reaches |
-| `kernel.db-journal` | none | none in the steady state | a single transaction's rollback journal, removed at commit |
+| `kernel.db-wal` | none | at most 1 | 96 frames = 384 KiB appended by this write (non-strict; **0** in strict mode) |
+| `kernel.db-shm` | none | at most 1 | SQLite's wal-index, sized by the log the shared store reaches (**0** in strict mode) |
+| `kernel.db-journal` | none | none in the steady state | a single transaction's rollback journal, removed at commit (**0** in strict mode) |
 | run journal, capture log, run history, per-run scratch | none | none | no file |
 
 Gates. `Gate::acquire` writes one diagnostic body per held gate; both writers
@@ -343,7 +352,7 @@ already existed, including rows an older build wrote before this bound
 (`ORDER BY closed_at LIMIT` prunes them in bounded slices, but their pages are
 pre-existing state); and the child's or hook's own files.
 
-### Strict persistence: the complete contribution (effigy#981)
+### Strict persistence: the complete contribution (effigy#981, effigy#985)
 
 The contribution above is honest but partial: a route that opens a store at an
 older schema migrates it and backfills it (`store.rs::Store::schema`), prunes
@@ -351,179 +360,170 @@ expired rows (`run/terminal.rs::write_row`), and checkpoints its log at close
 (`store.rs::Drop for Store`). Those are writes the invocation performs, so
 calling them "pre-existing state" would be a false exclusion. A consumer that
 must account for every byte can instead require the route to perform none of
-them, with `EFFIGY_STRICT_PERSISTENCE=1`
-(`store::STRICT_PERSISTENCE_ENV`; read by `store::strict_persistence`, exactly
-`1`, off otherwise, so every other run stays byte-identical). In strict mode the
-route either writes only its own terminal row and its log/index frames, or it
-refuses before admission.
+them, with `EFFIGY_STRICT_PERSISTENCE=1` (`store::STRICT_PERSISTENCE_ENV`; read
+by `store::strict_persistence`, exactly `1`, off otherwise, so every other run
+stays byte-identical).
 
-Refusal, before the hook runs. A v2 admission settles one terminal row, the only
-durable write this route makes, so a strict run that will write one verifies the
-store first (`run/foreground.rs::begin_foreground_with` →
-`task_engine/admission.rs::require_strict_store` →
-`store::verify_prepared`). It refuses, before any gate, hook or workload effect,
-when the store is absent, is missing any part of the current schema
-(`store::schema_gaps`), records another schema version, does not record the
-write-ahead log as its format (`store::header_facts`, the file header's byte 18),
-writes pages at a size other than 4096 (`store::header_facts`), or needs
-recovery (`store::refuse_recovery`): a rollback journal on disk, a write-ahead
-log whose size is not a whole number of frames (a crashed writer's torn log), or
-a log that holds frames while its wal-index is missing (which the first open
-would rebuild). The error is `StoreError::NotPrepared`, and it names
-`store::PREPARE_COMMAND` — `effigy run prepare` — as the step that prepares the
-store outside the route. That step opens the store *without* strict persistence
-whatever the switch says (`store::Store::open_preparing`), so the switch it
-satisfies cannot refuse it; `effigy run prepare --check` is the same verification
-without any write.
+A SQLite terminal row still has no small physical maximum: the write-ahead log
+it may append, with the b-tree balance and pointer-map pages it can dirty, is
+bounded only by roughly the store's own size (effigy#981 derived 1,899,352
+bytes from a 1 GiB store). That does not fit a consumer whose whole budget for
+everything outside its guard is smaller than that. Strict mode therefore does
+not write the row to SQLite at all (effigy#985): the settled record goes to one
+slot of a fixed-size, preallocated ring file, and **the route opens no SQLite
+connection of any kind** — not a writer, not a reader. `kernel.db`, its
+`-wal` and its `-shm` are byte-identical across the route; that is measured,
+not assumed.
 
-Nothing in the route migrates, converts, prunes or checkpoints — and nothing a
-durable-path maintenance call reaches can do them either, because strict mode
-also closes those paths:
+Refusal, before the hook runs. A v2 admission is the only route that settles a
+terminal record, so a strict run that will write one verifies the ring first
+(`run/foreground.rs::begin_foreground_with` →
+`src/runner/task_engine/admission.rs::require_strict_terminal_ring` →
+`run::terminal_ring::status`). It refuses, before any gate, hook or workload
+effect and without writing any file, when the ring does not exist, is not the
+fixed size, holds a header this build does not write, has no free slot, or
+holds a committed slot whose checksum does not match. The error is
+`StoreError::TerminalRing`, which names the ring's path and, for each condition,
+the step that clears it. A write that meets one of those conditions at settle
+instead fails closed with the same typed error, having written at most one
+slot's body and never falling back to SQLite.
 
-| Enforcing check (file:line) | What it makes impossible |
-| --- | --- |
-| `store::open_mode` opens without `O_CREAT` under strict mode (`crates/effigy-kernel/src/store.rs:492`) | creating `kernel.db` |
-| `store::refuse_recovery` (`store.rs:1807`) | opening a store whose rollback journal would be rolled back, whose log is torn, or whose log holds frames with no wal-index |
-| `store::configure` strict branch calls `require_wal` (`store.rs:757`) instead of `set_journal_mode` | converting the journal mode, which writes the database header |
-| `store::configure` skips `PRAGMA auto_vacuum=INCREMENTAL` in strict mode (`store.rs:586`) | writing an auto-vacuum choice |
-| `store::verify_schema` with `schema_gaps` (`store.rs:776`, `:1759`) | every additive `ALTER TABLE`, table creation, index creation and backfill `Store::schema` would run |
-| `store::configure` sets `PRAGMA wal_autocheckpoint=0` (`store.rs:596`) and reads it back (`check_sidecar_bounds`, `:655`) | SQLite's own checkpoint at COMMIT |
-| `store::configure` sets and confirms `SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE` (`store.rs:608-626`) | SQLite's checkpoint when the last connection closes |
-| `store::Drop for Store` returns early in strict mode (`store.rs:1222`) | Effigy's own `PRAGMA wal_checkpoint(TRUNCATE)` |
-| `store::Store::maintain` refuses a strict handle (`store.rs:973-988`) | the durable path's checkpoint, `VACUUM` and incremental vacuum |
-| `retention::sweep` returns before opening a store (`crates/effigy-kernel/src/retention.rs:105-118`); `retention::retain` returns `skipped` (`:156-172`) | the retention pass's deletes and its maintenance |
-| `run::settle::compact_machine_closed` returns early (`crates/effigy-kernel/src/run/settle.rs:67-80`) | the machine store's compaction deletes |
-| `store::Store::repair` refuses under the switch (`store.rs:1075-1087`) | moving `kernel.db` and its side files aside |
-| `run::terminal::write_row` returns after the insert (`crates/effigy-kernel/src/run/terminal.rs:229`) | the bounded prune's delete and its frames |
-| `store::configure` sets `PRAGMA cache_size` to `store::STRICT_CACHE_KIB` and reads it back (`store.rs:612`, `:655-668`) | a page-cache spill re-appending a page, which would break the one-frame-per-page arithmetic |
-| `store::refuse_oversized_keys` (`store.rs:1807`) returns `NotAccountable`, whose message says `effigy run prepare` does not clear it | writing under a b-tree depth the key-length premise does not cover |
-| `run::terminal::record` measures its own appended frames and reports a run that exceeded the maximum (`terminal.rs:164-195`) | a run passing as if it had stayed inside the maximum when its transaction appended more |
-| `store::Store::wal_frames` reads the log's length on a strict handle instead of attempting a passive checkpoint (`store.rs:684-698`) | an observation checkpointing a strict store |
+`effigy run prepare` creates and fully preallocates the ring outside the route
+(`src/runner/run_control.rs::prepare` → `run::terminal_ring::prepare`), beside
+preparing the checkout journal, and `effigy run prepare --check` verifies both
+without writing. `prepare` never repairs a ring it cannot verify: a missing file
+is created, the whole 16 KiB is written through a temporary name and published
+by rename, and an existing file that is the wrong size, has the wrong header, or
+holds a corrupt slot is refused rather than silently reset. Opening the store
+without strict persistence also ingests every committed slot and frees it, so
+`run prepare` is the one remedy for a full ring.
 
-The one bookkeeping write strict mode skips rather than refuses is `meta`'s
-`last_written_by`: a later non-strict open updates it, and its absence does not
-change what this invocation writes.
+The ring file: `<checkout>/.effigy/state/foreground-terminals.ring`, **16,448
+bytes**: a 64-byte header and 16 slots of 1,024 bytes. The format lives in
+`crates/effigy-kernel/src/run/terminal_ring.rs`:
+
+| Part | Bytes | Layout |
+| --- | --- | --- |
+| header | 64 | magic `EFRGTERM` (8), format `1` (4), slot count `16` (4), slot size `1024` (4), header size `64` (4), 8 reserved zero bytes, SHA-256 of the first 32 bytes (32) |
+| slot | 1024 | magic `EFTS` (4), slot format `1` (2), reserved (2), sequence `u64` (8), `closed_at_ms` `i64` (8), `workload_groups` `u64` (8), exit-code presence (1) and value (4), signal presence (1) and value (4), reserved (4), `run_id` (64), `checkout` (128), `boot` (64), `task` (512), `outcome` (32), `cleanup` (32), reserved, SHA-256 of bytes 0-990 (32), commit marker (1, value `0xA5`) |
+
+Numbers are little-endian and every text field is NUL-padded to its fixed width.
+The widths are the bounds `run::terminal` already enforces: an oversized
+`run_id`, `checkout`, `boot`, `outcome` or `cleanup` is **refused, never cut**, so
+two runs cannot coalesce on one key, and only the descriptive `task` label is cut
+and marked with `[truncated]` (`run::TerminalRecord::checked`).
+
+Crash safety. A slot is written in two ordered steps: the body (bytes 0-1022,
+which include the sequence number and checksum) is written and `fsync`ed, then
+the one-byte commit marker is written and `fsync`ed. A crash before the marker
+leaves the slot uncommitted — any value other than `0xA5` means "no record" —
+so a half-written body is never read. A slot whose marker is set but whose
+magic, slot format or SHA-256 does not verify is corrupt evidence: readers
+report `unknown`, and the route refuses with `StoreError::TerminalRing`. It is
+never returned as a value.
+
+Identity, idempotence and readback. Records are keyed by `run_id`. A write first
+reads the committed slots, and a committed slot naming the same `run_id`
+returns success **without writing**, so a repeated settle neither changes nor
+duplicates the slot. Two distinct runs take distinct slots and strictly
+increasing sequence numbers; two routes settling together serialize on an
+`flock(LOCK_EX)` taken on the ring file itself, which is not another file and
+writes no byte. `effigy run status <id>` and `effigy runs` read ring slots
+directly (`src/runner/task_engine/control.rs::strict_terminal`, `:587`), so a
+strict run's outcome is visible before any ingestion, and they deduplicate a
+record that is both a slot and a row by `run_id`.
+
+Ingestion. The next writable non-strict open of a checkout journal — including
+`effigy run prepare` — ingests every committed slot into the ordinary
+`foreground_terminals` table (`crates/effigy-kernel/src/store.rs:566` →
+`run::terminal_ring::ingest`). Each row is inserted with
+`ON CONFLICT(run_id) DO NOTHING` (`run/terminal.rs::insert_row`), then the slots
+that were copied are cleared in one `fsync`ed step (`terminal_ring.rs::clear_ingested`);
+a crash between commit and clear re-inserts idempotently and clears on the next
+open. Identity, retention and history are unchanged because the rows are the same
+rows, with their own `closed_at`: the seven-day retention and its bounded prune
+treat them exactly as before. The strict route never ingests.
 
 This invocation's complete physical contribution in strict mode:
 
-| File (under `<checkout>/.effigy/state/`) | This invocation's maximum | Enforced or derived by |
-| --- | --- | --- |
-| `gates/<scope>.scope` | `s` files, 0 bytes each | `gate.rs::Gate::acquire` creates the empty marker (`crates/effigy-kernel/src/gate.rs:422-475`) |
-| `gates/<scope>/<gate>.gate` | `s + 1` files, 4096 bytes each | `gate::DIAG_MAX` (`gate.rs:20-22`) written by `write_body` (`gate.rs:472-475`) and `gate/foreground.rs::set_foreground` (`gate/foreground.rs:48-68`); at most `gate::FOREGROUND_GATES_MAX` = 4 gates (`run/foreground.rs:119-131`) |
-| `kernel.db` | **0 bytes**: no checkpoint, no migration, no prune | the strict checks above |
-| `kernel.db-wal` | **maximum 461 frames = 1,899,352 bytes**, derived from the source and enforced by the premises below; every run also measures its own frames | `run::TERMINAL_STRICT_WAL_MAX_BYTES` (`crates/effigy-kernel/src/run/terminal.rs:117-146`) |
-| `kernel.db-shm` | **32 KiB**: the frame maximum fits inside the first wal-index page | `run::TERMINAL_STRICT_SHM_MAX_BYTES` (`run/terminal.rs:151`); `wal.c` `WALINDEX_PGSZ` and `walFramePage` |
-| `kernel.db-journal` | none: a store that has one is refused | `store::refuse_recovery` |
-| `foreground_terminals` row | 1, at most 960 stored bytes | `run::TerminalRecord::checked` |
-| run journal, capture log, run history, per-run scratch | none | as above |
+| Path (under `<checkout>/.effigy/state/`) | Count | Physical bytes | Failure / finalization | Enforced by |
+| --- | --- | --- | --- | --- |
+| `foreground-terminals.ring` | 0 created; 1 opened read-write | 0 growth, 0 allocation: **exactly one slot's 1,024 bytes rewritten** (body 1,023 then marker 1); header and the other 15 slots unchanged; length stays 16,448 | missing, wrong size, wrong header, full or corrupt refuses before admission; a settle-time failure writes at most that slot's body and falls back to nothing | `run::terminal_ring::write` (`terminal_ring.rs:273`), `verify_size` (`:450`), `verify_header` (`:464`), `decode` (`:581`), `admission.rs::require_strict_terminal_ring` (`:140`) |
+| ring file metadata | — | the file's inode `mtime`/`ctime` update; no directory entry is created or removed, so the state directory's `mtime` is unchanged | — | the only write is `pwrite` into an existing file (`terminal_ring.rs:315-330`) |
+| `kernel.db` | 0 | **0 bytes** | no connection is opened | `run/terminal.rs::record` strict branch (`:132-134`); measured by `strict_persistence_refuses_before_admission_and_prepare_readies_the_route` |
+| `kernel.db-wal` | 0 | **0 bytes** | — | same |
+| `kernel.db-shm` | 0 | **0 bytes** | — | same |
+| `kernel.db-journal` | 0 | none | — | same |
+| `gates/<scope>.scope` | `s` (created empty when absent) | 0 bytes each | a gate failure refuses the run | `gate.rs::Gate::acquire` (`gate.rs:422-475`), unchanged by strict mode |
+| `gates/<scope>/<gate>.gate` | `s + 1` files | at most 4,096 bytes each, rewritten in place | a failed diagnostic rewrite leaves the old body | `gate::DIAG_MAX` (`gate.rs:20-22`), `gate/foreground.rs::set_foreground` |
+| run journal, capture log, run history, per-run scratch | 0 | none | — | as above |
 
-WAL: a stated maximum, and the premises it needs are enforced. SQLite writes a
-32-byte log header (`store::WAL_HEADER_BYTES`,
-`crates/effigy-kernel/src/store.rs:79`) and one 24-byte frame header before each
-page (`store::WAL_FRAME_HEADER_BYTES`, `:81`, `WAL_FRAME_HDRSIZE` in `wal.c`;
-<https://sqlite.org/fileformat2.html#walformat>), so the bytes are
-`32 + frames × (page size + 24)`.
+`s` is the number of checkout-scope spellings the run's task identity resolves
+to (1 or 2), fixed before any file is written. The gate files are the route's
+only possible creations, and only when absent: the **terminal record adds zero
+files, grows nothing and rewrites exactly one 1 KiB slot**. A route on an
+already-used checkout rewrites existing gate bodies and nothing else.
 
-The insert is this route's only statement, and
-`run::TERMINAL_STRICT_WRITE_MAX_PAGES` (`run/terminal.rs:117`) bounds the pages
-it can dirty:
+What strict mode still closes on a store it opens. These checks are not the
+foreground route's — it opens no store — but a strict process may open one for
+another operation, and strict mode still refuses to create, migrate, backfill,
+prune, checkpoint or repair it (effigy#981):
 
-- `balance_nonroot` (`sqlite3.c`, `apOld[NB]` and `apNew[NB+2]` with `NB` = 3)
-  writes at most three sibling pages, the five pages they become, and their
-  parent — `run::TERMINAL_STRICT_BALANCE_PAGES_MAX` = 9 tree pages per level —
-  and a root split adds `run::TERMINAL_STRICT_DEEPER_PAGES_MAX` = 2
-  (`balance_deeper`: the root rewritten as an interior page and its new child).
-- Its pointer-map writes are bounded by the store's pointer-map size, not by a
-  per-level cell count: `balance_nonroot` writes one entry for every cell it
-  moves into a new page, across all siblings, and `balance_deeper` re-parents
-  every root child, but those entries can only land in the pointer-map pages the
-  store has. A pointer-map page holds `PAGE_SIZE/5` = 819 entries
-  (`PTRMAP_ENTRY_SIZE` = 5), and the store holds at most 262,144 pages, so
-  `run::TERMINAL_STRICT_PTRMAP_PAGES_MAX` = 321 is a hard ceiling for any write.
-- The insert maintains `run::TERMINAL_STRICT_INSERT_TREES` = 3 trees (the table,
-  the `run_id` unique index and the `closed_at` index) at
-  `run::TERMINAL_STRICT_TREE_LEVELS_MAX` = 5 levels each — a 4096-byte interior
-  page holds at least `4096/84` = 48 children for an 84-byte widest index cell
-  (4-byte child pointer, 4-byte page number, 1-byte key-size varint, 64-byte key,
-  9-byte rowid varint, 2-byte cell pointer), and `23^4` = 279,841 > 262,144, so
-  even a fan-out of 23 keeps the depth at five.
+| Enforcing check (file:line) | What it makes impossible |
+| --- | --- |
+| `store::open_mode` opens without `O_CREAT` under strict mode (`crates/effigy-kernel/src/store.rs:519`) | creating `kernel.db` |
+| `store::refuse_recovery` (`store.rs:1816`) | opening a store whose rollback journal would be rolled back, whose log is torn, or whose log holds frames with no wal-index |
+| `store::configure` strict branch calls `require_wal` (`store.rs:608`) instead of `set_journal_mode` | converting the journal mode, which writes the database header |
+| `store::configure` skips `PRAGMA auto_vacuum=INCREMENTAL` in strict mode (`store.rs:603`) | writing an auto-vacuum choice |
+| `store::verify_schema` with `schema_gaps` (`store.rs:795`, `:1768`) | every additive `ALTER TABLE`, table creation, index creation and backfill `Store::schema` would run |
+| `store::configure` sets `PRAGMA wal_autocheckpoint=0` (`store.rs:619-624`) and reads it back (`check_sidecar_bounds`) | SQLite's own checkpoint at COMMIT |
+| `store::configure` sets and confirms `SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE` (`store.rs:631-641`) | SQLite's checkpoint when the last connection closes |
+| `store::Drop for Store` returns early in strict mode (`store.rs:1235`) | Effigy's own `PRAGMA wal_checkpoint(TRUNCATE)` |
+| `store::Store::maintain` refuses a strict handle (`store.rs:991`) | the durable path's checkpoint, `VACUUM` and incremental vacuum |
+| `retention::sweep` returns before opening a store (`crates/effigy-kernel/src/retention.rs:105-118`); `retention::retain` returns `skipped` (`:156-172`) | the retention pass's deletes and its maintenance |
+| `run::settle::compact_machine_closed` returns early (`crates/effigy-kernel/src/run/settle.rs:67-80`) | the machine store's compaction deletes |
+| `store::Store::repair` refuses under the switch (`store.rs:1093`) | moving `kernel.db` and its side files aside |
 
-That is 3 × 5 × 9 + 2 + 321 + 3 = **461 frames**, or
-`32 + 461 × (4096 + 24)` = **1,899,352 bytes**.
+The former strict terminal-row claims are gone with the SQLite write: strict
+mode states **no** write-ahead-log maximum, no wal-index growth and no page-cache
+premise, because it appends no terminal frame at all. `store::STRICT_CACHE_KIB`
+and `store::refuse_oversized_keys` were removed with them (effigy#985); the
+`kernel.db-wal` and `kernel.db-shm` maxima above remain the *non-strict* route's.
 
-Two premises make that arithmetic hold for the store the run writes, and the code
-enforces both instead of assuming them:
-
-- **No page is appended twice.** SQLite re-appends a page when the page cache
-  spills and the page is dirtied again (`pagerStress`, `sqlite3.c:63622-63662`).
-  A strict connection therefore sets `PRAGMA cache_size` to
-  `store::STRICT_CACHE_KIB` = 24 MiB — far more than the 461-page maximum — and
-  reads it back (`store::check_sidecar_bounds`), refusing the open if it did not
-  apply. `store_strict_holds_the_page_cache_its_maximum_needs` proves it.
-- **Index keys stay inside `run::TERMINAL_RUN_ID_MAX` = 64 bytes**, which is what
-  gives the 48-child fan-out and therefore the 5-level depth above. A strict run
-  refuses a store that already holds a longer `run_id`
-  (`store::refuse_oversized_keys`), with `StoreError::NotAccountable`; that
-  refusal says plainly that `effigy run prepare` does not clear it — the record
-  must be removed or the journal reset outside a strict run — and
-  `store_strict_refuses_a_terminal_key_over_the_index_bound` proves both the
-  refusal and that `prepare` leaves it standing.
-
-`run::terminal::record` still measures its own appended frames and refuses to
-report success above the maximum, so a run never passes claiming a contribution
-it did not make; the measured contribution in every tested state is **3 frames**
-(12,392 bytes), asserted by
-`run_terminal_strict_write_appends_at_most_its_stated_frames_and_defers_the_prune`.
-
-SHM: `kernel.db-shm` holds SQLite's wal-index, allocated in `WALINDEX_PGSZ` = 32
-KiB pages (`store::WAL_INDEX_PAGE_BYTES`, `store.rs:85`; `wal.c` asserts that
-size, and page 0 indexes 4062 frames). The 461-frame maximum fits inside page 0,
-so the growth this invocation causes is at most
-`run::TERMINAL_STRICT_SHM_MAX_BYTES` = **32 KiB**, derived from the same maximum
-and asserted against the frame count in
-`store_strict_wal_and_index_stay_within_their_stated_maximum`. Strict mode
-refuses the one state that would make the size depend on other writers' frames —
-a non-empty log with no wal-index beside it (`store::refuse_recovery`) — so the
-only pre-existing size this rests on is a wal-index that already exists and is
-already sized for the frames other writers left. `store::Store::wal_frames`
-observes the log's length on a strict handle rather than attempting a passive
-checkpoint (`store.rs:684-698`), so even the observation writes nothing.
-
-Measured, not only derived. `test:kernel:store`
-(`store_strict_open_refuses_a_store_it_would_have_to_create`,
+Measured, not only derived. `test:kernel:run` proves the ring's mechanics
+(`run_terminal_ring_slot_round_trips`,
+`run_terminal_ring_repeated_settle_is_idempotent`,
+`run_terminal_ring_distinct_runs_take_distinct_slots`,
+`run_terminal_ring_refuses_an_oversized_identity_and_writes_nothing`,
+`run_terminal_ring_refuses_a_missing_file_and_writes_nothing`,
+`run_terminal_ring_refuses_a_size_mismatch_and_writes_nothing`,
+`run_terminal_ring_refuses_a_full_ring_and_writes_nothing`,
+`run_terminal_ring_detects_a_torn_slot`,
+`run_terminal_ring_ingests_into_the_journal_and_frees_the_slots`,
+`run_terminal_ring_status_writes_nothing_and_prepare_creates_it`).
+`test:task-engine:admission`
+(`strict_persistence_refuses_before_admission_and_prepare_readies_the_route`)
+exercises the whole route through the real binary: a strict run without a ring
+runs no hook and no workload and writes no byte, `run prepare --check` makes the
+same refusal without writing, `run prepare` preallocates the ring, the strict run
+then changes exactly one slot while `kernel.db`, `-wal` and `-shm` stay
+byte-identical, `run status` reads the settled slot, and the next non-strict open
+ingests it into the journal and frees the slot. `test:kernel:store` keeps the
+strict store checks (`store_strict_open_refuses_a_store_it_would_have_to_create`,
 `store_strict_open_refuses_an_unmigrated_store_and_writes_nothing`,
 `store_strict_write_leaves_the_main_database_byte_identical`,
-`store_strict_wal_and_index_stay_within_their_stated_maximum`,
 `store_strict_refuses_a_log_that_needs_recovery`,
 `store_strict_refuses_a_torn_log`,
 `store_strict_maintenance_and_retention_write_nothing`,
 `store_strict_wal_frames_observes_without_a_checkpoint`,
 `store_strict_persistence_switch_is_opt_in_and_exact`,
-`store_nonstrict_open_keeps_creating_migrating_pruning_and_resetting`) and
-`test:kernel:run`
-(`run_terminal_strict_write_appends_at_most_its_stated_frames_and_defers_the_prune`,
-`run_terminal_strict_budget_refusal_names_the_observed_frames`)
-measure each bound across a fresh store (refused), an at-schema store, a
-needs-migration store (refused), a committed write, a write that fails after its
-statements ran, and a write abandoned before any statement ran — with a reader
-pinning the log and through the last-connection close, and against a store with
-600 rows so the insert walks real pages. The main database is compared byte for
-byte, and a refusal is compared byte for byte over `kernel.db` and its log.
-`test:task-engine:admission`
-(`strict_persistence_refuses_before_admission_and_prepare_readies_the_route`)
-exercises the whole route through the real binary: a refused strict run runs no
-hook and no workload and writes no journal byte, `effigy run prepare --check`
-makes the same refusal without writing, `effigy run prepare` readies it, and the
-same strict run then records exactly one row.
+`store_nonstrict_open_keeps_creating_migrating_pruning_and_resetting`), which is
+also the non-strict byte-identical proof: without the switch nothing changed.
 
 Not claimed in strict mode: anything outside the maximums above — other writers'
-frames in the shared log, the wal-index's size before this invocation, the peak
-of the shared log, and anything the child or the hook writes.
-
-Not persisted. This route writes no run incarnation, request, event, capture
-log, run-history row or object, and opens no per-run scratch. It mints no
-checkout token: it reads the recorded one, or the same filesystem identity the
-journal binding uses.
+files, the ring's pre-existing contents, the child's or the hook's own files, and
+the filesystem's own allocation unit. The ring is one file of fixed size, but a
+filesystem allocation observation is not a contract.
 
 ### Release policy (Tom, decision d3bad004 v2)
 
@@ -677,10 +677,12 @@ Queue's migration to the hook is described in
 | Strict mode refuses a store it would create, or one at an older schema, and writes no byte of it | `test:kernel:store` (`store_strict_open_refuses_a_store_it_would_have_to_create`, `store_strict_open_refuses_an_unmigrated_store_and_writes_nothing`) |
 | Strict mode refuses a store that needs recovery (rollback journal, torn log, log without its wal-index) | `test:kernel:store` (`store_strict_refuses_a_log_that_needs_recovery`, `store_strict_refuses_a_torn_log`) |
 | A strict write never checkpoints: the main database is byte-identical with a pinned reader and through the last close | `test:kernel:store` (`store_strict_write_leaves_the_main_database_byte_identical`) |
-| The strict write's log and wal-index deltas stay inside their stated maximum across every starting state, including failed and rolled-back writes | `test:kernel:store` (`store_strict_wal_and_index_stay_within_their_stated_maximum`); `test:kernel:run` (`run_terminal_strict_write_appends_at_most_its_stated_frames_and_defers_the_prune`) |
 | Strict maintenance, retention and repair write nothing | `test:kernel:store` (`store_strict_maintenance_and_retention_write_nothing`) |
 | The switch is opt-in and exact, and the non-strict open still creates, migrates, prunes and resets | `test:kernel:store` (`store_strict_persistence_switch_is_opt_in_and_exact`, `store_nonstrict_open_keeps_creating_migrating_pruning_and_resetting`) |
-| A strict route refuses before the admission hook, `run prepare --check` refuses without writing, `run prepare` readies it, and the run then records one row | `test:task-engine:admission` (`strict_persistence_refuses_before_admission_and_prepare_readies_the_route`) |
+| A strict route refuses before the admission hook when the ring is missing, the wrong size, full or corrupt; `run prepare --check` refuses without writing; `run prepare` preallocates the ring; the run then changes exactly one slot and no SQLite byte | `test:task-engine:admission` (`strict_persistence_refuses_before_admission_and_prepare_readies_the_route`) |
+| A strict slot round-trips, a repeated settle is idempotent, and two runs take distinct slots | `test:kernel:run` (`run_terminal_ring_slot_round_trips`, `run_terminal_ring_repeated_settle_is_idempotent`, `run_terminal_ring_distinct_runs_take_distinct_slots`) |
+| An oversized identity is refused and nothing is written; a missing file, a size mismatch and a full ring refuse and write nothing; a torn slot is never a record | `test:kernel:run` (`run_terminal_ring_refuses_an_oversized_identity_and_writes_nothing`, `run_terminal_ring_refuses_a_missing_file_and_writes_nothing`, `run_terminal_ring_refuses_a_size_mismatch_and_writes_nothing`, `run_terminal_ring_refuses_a_full_ring_and_writes_nothing`, `run_terminal_ring_detects_a_torn_slot`) |
+| Ingestion copies a slot into the journal with its identity and outcome, is idempotent, frees the slot, and leaves retention pruning expired rows | `test:kernel:run` (`run_terminal_ring_ingests_into_the_journal_and_frees_the_slots`) |
 
 Q-010 implementation adds the classification, zero-write and multi-checkout
 discovery proofs in contract 052 §12.6 to these same run-control selectors. These are future acceptance requirements, not Phase 1

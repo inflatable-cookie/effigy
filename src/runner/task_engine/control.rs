@@ -242,14 +242,19 @@ fn lookup_at(
         Observed::Absent(_) => {
             return match foreground {
                 Some(row) => Lookup::Found(Box::new(row)),
-                None => Lookup::NotFound,
+                None => strict_terminal(root, id).unwrap_or_else(|reason| Lookup::Unknown(reason)),
             }
         }
         Observed::Unknown(reason) => {
             return match foreground {
                 Some(row) => Lookup::Found(Box::new(row)),
-                None => Lookup::Unknown(journal_unknown(root, &reason)),
-            }
+                // The journal is unreadable, so only a ring record can answer;
+                // without one the observation stays unknown, never absent.
+                None => match strict_terminal(root, id) {
+                    Ok(Lookup::Found(row)) => Lookup::Found(row),
+                    Ok(_) | Err(_) => Lookup::Unknown(journal_unknown(root, &reason)),
+                },
+            };
         }
     };
     let durable = match effigy_kernel::run::summary(&reader, id) {
@@ -263,8 +268,9 @@ fn lookup_at(
         )),
         (Some(row), None) => Lookup::Found(Box::new(row)),
         (None, Some(record)) => Lookup::Found(Box::new(record)),
-        // A v2 hook-admitted foreground run's narrow terminal row lives in
-        // the same journal; it is the only post-exit evidence Q-010 keeps.
+        // A v2 hook-admitted foreground run's narrow terminal record lives
+        // either in this journal or, before ingestion, in the strict ring; it
+        // is the only post-exit evidence Q-010 keeps.
         (None, None) => match effigy_kernel::run::terminal_record(&reader, id) {
             Observed::Verified(Some(record), _) => Lookup::Found(Box::new(RunRecord {
                 id,
@@ -273,9 +279,47 @@ fn lookup_at(
                 task: record.task.clone(),
                 source: RunSource::Terminal(record),
             })),
-            Observed::Verified(None, _) | Observed::Absent(_) => Lookup::NotFound,
+            Observed::Verified(None, _) | Observed::Absent(_) => match strict_terminal(root, id) {
+                Ok(row) => row,
+                Err(reason) => Lookup::Unknown(reason),
+            },
             Observed::Unknown(reason) => Lookup::Unknown(journal_unknown(root, &reason)),
         },
+    }
+}
+
+/// One terminal record as a run the listing reports: shared by the journal
+/// table and the strict ring, so both sources render one run the same way.
+fn terminal_record(
+    state: &effigy_kernel::root::StateRoot,
+    terminal: effigy_kernel::run::TerminalRecord,
+) -> RunRecord {
+    RunRecord {
+        id: terminal
+            .run_id
+            .parse::<RunId>()
+            .unwrap_or_else(|_| RunId::new(0, [0; 10]).expect("fixed run id")),
+        root: state.clone(),
+        view: project_terminal(&terminal),
+        task: terminal.task.clone(),
+        source: RunSource::Terminal(terminal),
+    }
+}
+
+/// A record still in the checkout's strict terminal ring (effigy#985):
+/// `run status` reads it before the next non-strict store open ingests it, so a
+/// strict run's settled outcome is visible immediately.
+fn strict_terminal(root: &effigy_kernel::root::StateRoot, id: RunId) -> Result<Lookup, String> {
+    match effigy_kernel::run::terminal_strict_record(root, id) {
+        Observed::Verified(Some(record), _) => Ok(Lookup::Found(Box::new(RunRecord {
+            id,
+            root: root.clone(),
+            view: project_terminal(&record),
+            task: record.task.clone(),
+            source: RunSource::Terminal(record),
+        }))),
+        Observed::Verified(None, _) | Observed::Absent(_) => Ok(Lookup::NotFound),
+        Observed::Unknown(reason) => Err(journal_unknown(root, &reason)),
     }
 }
 
@@ -481,60 +525,69 @@ fn list_roots(
             })),
             Err(reason) => omitted.push(reason),
         }
+        let mut covered = std::collections::BTreeSet::new();
         let reader = match Store::read(cx, &state) {
-            Observed::Verified(reader, _) => reader,
-            Observed::Absent(_) => continue,
+            Observed::Verified(reader, _) => Some(reader),
+            Observed::Absent(_) => None,
             Observed::Unknown(reason) => {
                 omitted.push(format!(
                     "{}: journal unavailable: {reason}",
                     state.path().display()
                 ));
-                continue;
+                None
             }
         };
-        let rows = match effigy_kernel::run::recent(&reader, None, limit.saturating_mul(4).max(64))
-        {
-            Observed::Verified(rows, _) => rows,
-            Observed::Absent(_) => Vec::new(),
-            Observed::Unknown(reason) => {
-                omitted.push(format!(
+        if let Some(reader) = &reader {
+            match effigy_kernel::run::recent(reader, None, limit.saturating_mul(4).max(64)) {
+                Observed::Verified(rows, _) => {
+                    records.extend(
+                        rows.into_iter()
+                            .map(|summary| record(cx, &state, summary))
+                            .filter(|record| {
+                                record
+                                    .summary()
+                                    .and_then(|summary| summary.invocation.as_ref())
+                                    .is_some_and(|invocation| {
+                                        invocation.spec().owner.kind() == ResourceKind::Task
+                                    })
+                                    || record.task.starts_with("qa-group:")
+                            }),
+                    );
+                }
+                Observed::Absent(_) => {}
+                Observed::Unknown(reason) => omitted.push(format!(
                     "{}: journal unavailable: {reason}",
                     state.path().display()
-                ));
-                continue;
+                )),
             }
-        };
-        records.extend(
-            rows.into_iter()
-                .map(|summary| record(cx, &state, summary))
-                .filter(|record| {
-                    record
-                        .summary()
-                        .and_then(|summary| summary.invocation.as_ref())
-                        .is_some_and(|invocation| {
-                            invocation.spec().owner.kind() == ResourceKind::Task
-                        })
-                        || record.task.starts_with("qa-group:")
-                }),
-        );
-        match effigy_kernel::run::terminal_records(&reader, limit.max(64)) {
-            Observed::Verified(terminals, _) => {
-                records.extend(terminals.into_iter().map(|terminal| {
-                    RunRecord {
-                        id: terminal
-                            .run_id
-                            .parse::<RunId>()
-                            .unwrap_or_else(|_| RunId::new(0, [0; 10]).expect("fixed run id")),
-                        root: state.clone(),
-                        view: project_terminal(&terminal),
-                        task: terminal.task.clone(),
-                        source: RunSource::Terminal(terminal),
+            match effigy_kernel::run::terminal_records(reader, limit.max(64)) {
+                Observed::Verified(terminals, _) => {
+                    for terminal in terminals {
+                        covered.insert(terminal.run_id.clone());
+                        records.push(terminal_record(&state, terminal));
                     }
-                }));
+                }
+                Observed::Absent(_) => {}
+                Observed::Unknown(reason) => omitted.push(format!(
+                    "{}: foreground terminal records unavailable: {reason}",
+                    state.path().display()
+                )),
+            }
+        }
+        // Records a strict route wrote that no store open has ingested yet
+        // (effigy#985). A record that is already a row is skipped, so the two
+        // stores never list the same run twice.
+        match effigy_kernel::run::terminal_strict_records(&state) {
+            Observed::Verified(terminals, _) => {
+                for terminal in terminals {
+                    if covered.insert(terminal.run_id.clone()) {
+                        records.push(terminal_record(&state, terminal));
+                    }
+                }
             }
             Observed::Absent(_) => {}
             Observed::Unknown(reason) => omitted.push(format!(
-                "{}: foreground terminal records unavailable: {reason}",
+                "{}: strict terminal ring unavailable: {reason}",
                 state.path().display()
             )),
         }
