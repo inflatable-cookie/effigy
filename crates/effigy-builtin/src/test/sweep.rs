@@ -12,6 +12,8 @@ use std::time::{Duration, Instant};
 
 /// The variable that reaches every suite descendant that keeps its environment.
 const TOKEN_ENV: &str = "EFFIGY_TEST_SUITE";
+/// PID of the built-in runner, which owns the suite even after its shell exits.
+const OWNER_PID_ENV: &str = "EFFIGY_TEST_SUITE_OWNER_PID";
 /// The descriptor a suite opens for itself, above the custody protocol's slots.
 const MARKER_FD: u32 = 9;
 const TERM_GRACE: Duration = Duration::from_secs(2);
@@ -47,6 +49,10 @@ impl Sweep {
 
     pub(super) fn token_env(&self) -> (&'static str, String) {
         (TOKEN_ENV, self.token.clone())
+    }
+
+    pub(super) fn owner_pid_env(&self) -> (&'static str, String) {
+        (OWNER_PID_ENV, std::process::id().to_string())
     }
 
     /// A suite command that first opens the marker descriptor for itself, so

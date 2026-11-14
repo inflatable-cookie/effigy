@@ -113,6 +113,79 @@ fn selector_sweeps_after_the_runner_is_killed_mid_test() {
     assert!(reaped(pid), "{pid} outlived the killed runner");
 }
 
+#[test]
+fn a_parent_bound_fixture_exits_when_its_runner_is_killed() {
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+
+    let mut runner = Command::new(std::env::current_exe().expect("test binary"))
+        .args([
+            "--ignored",
+            "--exact",
+            "parent_bound_fixture_runner",
+            "--nocapture",
+        ])
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("start fixture runner");
+    let mut line = String::new();
+    let mut output = BufReader::new(runner.stdout.take().expect("runner stdout"));
+    let mut fixture_pid = None;
+    let mut read_error = None;
+    loop {
+        line.clear();
+        match output.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {
+                if let Some(pid) = line.trim().strip_prefix("parent-bound-fixture=") {
+                    fixture_pid = Some(pid.to_owned());
+                    break;
+                }
+            }
+            Err(error) => {
+                read_error = Some(error);
+                break;
+            }
+        }
+    }
+    // SAFETY: this is the runner process this test just spawned. Kill and
+    // reap it before asserting on its output so every path settles the child.
+    let kill_result = unsafe { libc::kill(runner.id() as i32, libc::SIGKILL) };
+    let runner_status = runner.wait().expect("reap fixture runner");
+    assert_eq!(kill_result, 0, "kill fixture runner");
+    assert!(!runner_status.success(), "runner should have been killed");
+    assert!(read_error.is_none(), "read runner output: {read_error:?}");
+    let pid = fixture_pid
+        .expect("runner exited before publishing fixture PID")
+        .parse::<u32>()
+        .expect("fixture pid");
+    let gone = reaped(pid);
+    if !gone {
+        // SAFETY: this exact fixture PID was printed by the runner.
+        unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+    }
+    assert!(gone, "parent-bound fixture {pid} outlived its runner");
+}
+
+/// Inner runner used by the killed-runner proof above.
+#[test]
+#[ignore = "runner killed by its parent proof"]
+fn parent_bound_fixture_runner() {
+    use std::process::Stdio;
+
+    let mut fixture = Command::new("/bin/sh")
+        .args(["-c", effigy_test_support::process::parent_exit_guard()])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start parent-bound fixture");
+    println!("parent-bound-fixture={}", fixture.id());
+    std::io::stdout().flush().expect("publish fixture PID");
+    std::thread::sleep(Duration::from_secs(120));
+    let _ = fixture.wait();
+}
+
 /// The leaking runner: a detached child, then an unwind.
 #[test]
 #[ignore = "leaking runner; launched only by the suite sweep proof"]

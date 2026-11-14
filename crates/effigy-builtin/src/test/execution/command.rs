@@ -67,6 +67,8 @@ pub(super) fn begin_sweep(
     let sweep = Sweep::begin(scratch.as_deref())?;
     let (key, value) = sweep.token_env();
     host_env.insert(key.to_owned(), value);
+    let (key, value) = sweep.owner_pid_env();
+    host_env.insert(key.to_owned(), value);
     Some(sweep)
 }
 

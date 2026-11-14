@@ -183,7 +183,7 @@ fn run_manifest_task_builtin_test_sweeps_a_leaked_suite_process() {
         &root,
         &format!(
             "#!/bin/bash\nset -m\n\
-             sh -c 'trap \"\" TERM HUP; echo $$ > \"{pid}\"; while :; do /bin/sleep 0.05; done' \
+             sh -c 'trap \"\" TERM HUP; echo $$ > \"{pid}\"; while kill -0 \"$EFFIGY_TEST_SUITE_OWNER_PID\" 2>/dev/null; do /bin/sleep 0.05; done' \
              >/dev/null 2>&1 &\n\
              while [ ! -s \"{pid}\" ]; do /bin/sleep 0.01; done\n\
              exit 0\n",

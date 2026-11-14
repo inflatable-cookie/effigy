@@ -200,10 +200,26 @@ supervisors, fixture shells — inherit the marker and are swept.
 
 `effigy-test-support::process` gives a fixture child its own group and stops
 that group (TERM, 300 ms, KILL) on `Drop`. `Drop` runs during unwinding, so a
-panic is covered. `OwnedChild::group_closed` reads the live group, so a member
-that outlived its leader is still reported. This is deliberately the only
-in-test mechanism: a ledger, a receipt, a nonce and a pre-exec socket barrier
-recorded state the suite now reads from the kernel directly.
+panic is covered. `OwnedChild::group_closed` reads process states and ignores
+zombies, which have exited and hold no fixture resources; `kill(-pgid, 0)` alone
+mistakes delayed zombie reaping for a live group member. Output readers still
+wait for pipe EOF and the child wait still observes the leader's exit before
+this group check. If a live member has closed its pipes but is still exiting,
+the helper waits on its kqueue/pidfd exit event before reading the group again;
+it uses the existing output deadline. The `parent_exit_guard` is for a fixture
+that must outlive a workload but stop when its runner's pipe closes. The
+foreign kernel-fault witness owns that pipe, so runner death produces EOF
+without polling. This is deliberately the only in-test
+mechanism: a ledger, a receipt, a nonce and a pre-exec socket barrier recorded
+state the suite now reads from the kernel directly.
+
+The built-in suite sweep also passes its owner PID to host suites. The
+deliberate leak fixture uses that PID to stay alive after its workload shell
+exits, so the sweep still detects it; if the Effigy runner is killed before
+the sweep, the fixture exits once its owner PID disappears. Kernel sentinels
+and supervisors instead own a piped stdin channel: closing the owning
+`Run`'s writer on settlement or process exit gives their existing EOF path a
+bounded lifetime without killing a helper that still owes settlement.
 
 `Fixture` removes its tree on drop, waiting for kernel sentinels first
 (`wait_kernel_helpers`), and never follows a symlink inside it. An unreadable
