@@ -2916,11 +2916,13 @@ fn check_foreground_owner_loss(pin_held: bool, owner_end: OwnerEnd, strict: bool
 
     let (watch, pin) = crate::closure::ClosurePin::new().unwrap();
     let mut residue = spawn_pin_holder(&pin);
-    let mut owner_child = std::process::Command::new("/bin/sleep")
-        .arg("30")
-        .spawn()
-        .unwrap();
-    let identity = crate::ident::process_identity(owner_child.id())
+    let mut owner_child = OwnedChild(
+        std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .unwrap(),
+    );
+    let identity = crate::ident::process_identity(owner_child.0.id())
         .verified()
         .cloned()
         .expect("the stand-in owner's identity");
@@ -2963,10 +2965,10 @@ fn check_foreground_owner_loss(pin_held: bool, owner_end: OwnerEnd, strict: bool
     // The owner dies while its guard still holds the run's custody: an agent's
     // SIGKILL, a closed terminal. The guard has already validated it, so the
     // loss is what the settle path has to notice.
-    let owner_pid = owner_child.id();
-    owner_child.kill().unwrap();
+    let owner_pid = owner_child.0.id();
+    owner_child.0.kill().unwrap();
     if owner_end == OwnerEnd::Reaped {
-        owner_child.wait().unwrap();
+        owner_child.0.wait().unwrap();
     }
     if !pin_held {
         // Every pin writer closed before the guard reaches its wait.
@@ -2989,11 +2991,8 @@ fn check_foreground_owner_loss(pin_held: bool, owner_end: OwnerEnd, strict: bool
             "unclosed descendant custody is residue, never a clean close"
         );
     }
-    if owner_end == OwnerEnd::Zombie {
-        // This test owned the unreaped child: reap it now that the guard has
-        // observed it as a zombie.
-        owner_child.wait().unwrap();
-    }
+    // A zombie owner is reaped when `owner_child` leaves this scope, after the
+    // guard has observed it.
 
     // The gate is released, so the next invocation is admitted.
     assert!(
@@ -3069,6 +3068,18 @@ fn spawn_pin_holder(pin: &crate::closure::ClosurePin) -> std::process::Child {
     let child = command.spawn().expect("pin-holding descendant");
     drop(custody);
     child
+}
+
+/// A child this test started. Its drop kills and reaps exactly that process, so
+/// no path leaves a zombie behind (the owner child is deliberately one while the
+/// guard observes it).
+struct OwnedChild(std::process::Child);
+
+impl Drop for OwnedChild {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
 }
 
 /// Stop and reap exactly the fixture process this test started.
