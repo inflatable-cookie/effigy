@@ -536,6 +536,22 @@ fn workspace_identity<'a>(
     }
 }
 
+/// The shell a handover runs through.
+///
+/// A container that answered neither shell probe is refused here. Handing it
+/// `/bin/sh` on a guess ran the task through a shell the probe had just
+/// disproved, and the container's own error arrived far from the cause.
+pub(in crate::runner) fn required_container_shell(
+    capabilities: &effigy_exec::detection::ContainerCapabilities,
+) -> Result<String, effigy_runtime::EffigyRuntimeError> {
+    capabilities.shell.clone().ok_or_else(|| {
+        effigy_runtime::EffigyRuntimeError::unavailable(
+            effigy_runtime::Capability::ContainerShell,
+            "the container answered neither the bash nor the sh probe; install a POSIX shell in the image and retry",
+        )
+    })
+}
+
 fn run_in_service(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,

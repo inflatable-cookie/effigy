@@ -80,8 +80,10 @@ fn probe_runtime_shell_capability(
     service: &str,
 ) -> Result<String, effigy_runtime::EffigyRuntimeError> {
     probe_container_capabilities(repo_root, policy, service)
-        .map(|capabilities| capabilities.shell)
         .map_err(runtime_error_from_runner)
+        .and_then(|capabilities| {
+            crate::runner::exec_command::required_container_shell(&capabilities)
+        })
 }
 
 fn run_runtime_shell_exec(

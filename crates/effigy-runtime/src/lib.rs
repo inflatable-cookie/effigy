@@ -8,7 +8,7 @@ pub mod shell;
 pub mod signals;
 pub mod write;
 
-pub use error::EffigyRuntimeError;
+pub use error::{Capability, EffigyRuntimeError};
 
 #[cfg(test)]
 pub(crate) mod test_support {

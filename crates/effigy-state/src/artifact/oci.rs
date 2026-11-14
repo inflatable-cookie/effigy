@@ -1,4 +1,4 @@
-use super::errors::OciArtifactError;
+use super::errors::{OciArtifactError, OciFailureClass};
 use super::refs::OciArtifactRef;
 use super::util::{digest_from_ref, path_relative_to_root, safe_oci_pull_dir_name};
 use serde::{Deserialize, Serialize};
@@ -100,7 +100,7 @@ pub struct OrasCliArtifactAdapter {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OciOperation {
+pub(crate) enum OciOperation {
     Inspect,
     Pull,
     Push,
@@ -127,24 +127,28 @@ impl OciArtifactAdapter for OrasCliArtifactAdapter {
                 request.reference.reference(),
             ])
             .output()
-            .map_err(|error| OciArtifactError::InspectFailed {
-                reference: request.reference.redacted(),
-                message: oras_invocation_error_message(OciOperation::Inspect, error),
+            .map_err(|error| {
+                let (class, message) = oras_invocation_failure(OciOperation::Inspect, error);
+                OciArtifactError::InspectFailed {
+                    reference: request.reference.redacted(),
+                    message,
+                    class,
+                }
             })?;
         if !output.status.success() {
+            let (class, message) =
+                oras_failure(OciOperation::Inspect, &request.reference, &output.stderr);
             return Err(OciArtifactError::InspectFailed {
                 reference: request.reference.redacted(),
-                message: remediate_oras_failure(
-                    OciOperation::Inspect,
-                    &request.reference,
-                    &output.stderr,
-                ),
+                message,
+                class,
             });
         }
         parse_oras_descriptor(&request.reference, &output.stdout).map_err(|message| {
             OciArtifactError::InspectFailed {
                 reference: request.reference.redacted(),
                 message,
+                class: OciFailureClass::Unclassified,
             }
         })
     }
@@ -162,6 +166,7 @@ impl OciArtifactAdapter for OrasCliArtifactAdapter {
                 "failed to create pull directory {}: {error}",
                 pulled_root.display()
             ),
+            class: OciFailureClass::Unclassified,
         })?;
 
         let output = ProcessCommand::new(&self.executable)
@@ -172,18 +177,21 @@ impl OciArtifactAdapter for OrasCliArtifactAdapter {
             .arg("--format")
             .arg("json")
             .output()
-            .map_err(|error| OciArtifactError::PullFailed {
-                reference: request.reference.redacted(),
-                message: oras_invocation_error_message(OciOperation::Pull, error),
+            .map_err(|error| {
+                let (class, message) = oras_invocation_failure(OciOperation::Pull, error);
+                OciArtifactError::PullFailed {
+                    reference: request.reference.redacted(),
+                    message,
+                    class,
+                }
             })?;
         if !output.status.success() {
+            let (class, message) =
+                oras_failure(OciOperation::Pull, &request.reference, &output.stderr);
             return Err(OciArtifactError::PullFailed {
                 reference: request.reference.redacted(),
-                message: remediate_oras_failure(
-                    OciOperation::Pull,
-                    &request.reference,
-                    &output.stderr,
-                ),
+                message,
+                class,
             });
         }
 
@@ -196,6 +204,7 @@ impl OciArtifactAdapter for OrasCliArtifactAdapter {
             .ok_or_else(|| OciArtifactError::PullFailed {
                 reference: request.reference.redacted(),
                 message: "pull completed but no files were reported or discovered".to_owned(),
+                class: OciFailureClass::Unclassified,
             })?;
 
         Ok(OciArtifactPullReport {
@@ -213,6 +222,7 @@ impl OciArtifactAdapter for OrasCliArtifactAdapter {
             return Err(OciArtifactError::PushFailed {
                 reference: request.reference.redacted(),
                 message: "push request has no primary files".to_owned(),
+                class: OciFailureClass::Unclassified,
             });
         }
 
@@ -229,20 +239,21 @@ impl OciArtifactAdapter for OrasCliArtifactAdapter {
             command.arg(path_relative_to_root(&request.staged_root, file));
         }
         command.arg("--format").arg("json");
-        let output = command
-            .output()
-            .map_err(|error| OciArtifactError::PushFailed {
+        let output = command.output().map_err(|error| {
+            let (class, message) = oras_invocation_failure(OciOperation::Push, error);
+            OciArtifactError::PushFailed {
                 reference: request.reference.redacted(),
-                message: oras_invocation_error_message(OciOperation::Push, error),
-            })?;
+                message,
+                class,
+            }
+        })?;
         if !output.status.success() {
+            let (class, message) =
+                oras_failure(OciOperation::Push, &request.reference, &output.stderr);
             return Err(OciArtifactError::PushFailed {
                 reference: request.reference.redacted(),
-                message: remediate_oras_failure(
-                    OciOperation::Push,
-                    &request.reference,
-                    &output.stderr,
-                ),
+                message,
+                class,
             });
         }
 
@@ -320,38 +331,105 @@ pub fn sanitize_process_output(reference: &OciArtifactRef, bytes: &[u8]) -> Stri
         .to_owned()
 }
 
-fn oras_invocation_error_message(operation: OciOperation, error: std::io::Error) -> String {
-    format!(
-        "failed to run `oras`: {error}; install ORAS and authenticate with the registry before {} OCI artifacts",
-        operation_verb(operation)
-    )
+/// The markers `oras` prints, in precedence order: an expired token is an
+/// authentication failure even though the registry also denied the request, and
+/// a reachability failure never means the reference was wrong.
+const FAILURE_MARKERS: &[(&str, OciFailureClass)] = &[
+    ("unauthorized", OciFailureClass::NotAuthenticated),
+    ("authentication required", OciFailureClass::NotAuthenticated),
+    ("not logged in", OciFailureClass::NotAuthenticated),
+    (
+        "no basic auth credentials",
+        OciFailureClass::NotAuthenticated,
+    ),
+    ("token has expired", OciFailureClass::NotAuthenticated),
+    ("denied", OciFailureClass::NotPermitted),
+    ("insufficient_scope", OciFailureClass::NotPermitted),
+    ("permission_denied", OciFailureClass::NotPermitted),
+    ("no such host", OciFailureClass::Unreachable),
+    ("dial tcp", OciFailureClass::Unreachable),
+    ("connection refused", OciFailureClass::Unreachable),
+    ("timeout", OciFailureClass::Unreachable),
+    ("server misbehaving", OciFailureClass::Unreachable),
+    (
+        "temporary failure in name resolution",
+        OciFailureClass::Unreachable,
+    ),
+    (
+        "invalid artifact reference",
+        OciFailureClass::InvalidReference,
+    ),
+    ("invalid reference", OciFailureClass::InvalidReference),
+    ("invalid repository", OciFailureClass::InvalidReference),
+    ("invalid tag", OciFailureClass::InvalidReference),
+    ("bad reference", OciFailureClass::InvalidReference),
+    ("invalid checksum digest", OciFailureClass::InvalidReference),
+];
+
+/// The one classifier for `oras` output: every class this crate reports is
+/// decoded here, once, into a type.
+pub(crate) fn classify_oras_output(detail: &str) -> OciFailureClass {
+    let lower = detail.to_ascii_lowercase();
+    FAILURE_MARKERS
+        .iter()
+        .find(|(marker, _)| lower.contains(marker))
+        .map_or(OciFailureClass::Unclassified, |(_, class)| *class)
 }
 
-fn remediate_oras_failure(
+fn oras_invocation_failure(
+    operation: OciOperation,
+    error: std::io::Error,
+) -> (OciFailureClass, String) {
+    let message = format!(
+        "failed to run `oras`: {error}; install ORAS and authenticate with the registry before {} OCI artifacts",
+        operation_verb(operation)
+    );
+    (OciFailureClass::ClientMissing, message)
+}
+
+/// The registry's own detail plus the next step its class asks for.
+fn oras_failure(
     operation: OciOperation,
     reference: &OciArtifactRef,
     bytes: &[u8],
-) -> String {
+) -> (OciFailureClass, String) {
     let detail = sanitize_process_output(reference, bytes);
-    let lower = detail.to_ascii_lowercase();
+    let class = classify_oras_output(&detail);
+    let next = next_action(class, operation, reference);
+    (class, format!("{detail}; {next}"))
+}
 
-    let remediation = if looks_like_auth_failure(&lower) {
-        let registry = registry_host(reference.reference()).unwrap_or("the target registry");
-        format!("authenticate first with `oras login {registry}` and retry")
-    } else if operation == OciOperation::Push && looks_like_push_denial(&lower) {
-        "authenticate with push access for the target repository tag and retry".to_owned()
-    } else if looks_like_registry_reachability_failure(&lower) {
-        "check the registry hostname, network reachability, and TLS setup, then retry".to_owned()
-    } else if looks_like_reference_shape_failure(&lower) {
-        "check the explicit `oci://` reference shape and verify it manually with `oras manifest fetch <ref>`".to_owned()
-    } else {
-        format!(
+/// The next step each class asks for, said after the registry's own detail.
+pub(crate) fn next_action(
+    class: OciFailureClass,
+    operation: OciOperation,
+    reference: &OciArtifactRef,
+) -> String {
+    match class {
+        OciFailureClass::NotAuthenticated => {
+            let registry = registry_host(reference.reference()).unwrap_or("the target registry");
+            format!("authenticate first with `oras login {registry}` and retry")
+        }
+        OciFailureClass::NotPermitted if operation == OciOperation::Push => {
+            "authenticate with push access for the target repository tag and retry".to_owned()
+        }
+        OciFailureClass::NotPermitted => {
+            "authenticate with access to the target repository and retry".to_owned()
+        }
+        OciFailureClass::Unreachable => {
+            "check the registry hostname, network reachability, and TLS setup, then retry".to_owned()
+        }
+        OciFailureClass::InvalidReference => {
+            "check the explicit `oci://` reference shape and verify it manually with `oras manifest fetch <ref>`".to_owned()
+        }
+        OciFailureClass::ClientMissing => {
+            "install ORAS and authenticate with the registry, then retry".to_owned()
+        }
+        OciFailureClass::Unclassified => format!(
             "check the registry response above and retry the {} once the underlying issue is fixed",
             operation_label(operation)
-        )
-    };
-
-    format!("{detail}; {remediation}")
+        ),
+    }
 }
 
 fn operation_verb(operation: OciOperation) -> &'static str {
@@ -368,41 +446,6 @@ fn operation_label(operation: OciOperation) -> &'static str {
         OciOperation::Pull => "pull",
         OciOperation::Push => "push",
     }
-}
-
-fn looks_like_auth_failure(lower: &str) -> bool {
-    lower.contains("unauthorized")
-        || lower.contains("authentication required")
-        || lower.contains("not logged in")
-        || lower.contains("no basic auth credentials")
-        || lower.contains("token has expired")
-}
-
-fn looks_like_push_denial(lower: &str) -> bool {
-    lower.contains("denied")
-        || lower.contains("requested access to the resource is denied")
-        || lower.contains("insufficient_scope")
-        || lower.contains("permission_denied")
-}
-
-fn looks_like_registry_reachability_failure(lower: &str) -> bool {
-    lower.contains("no such host")
-        || lower.contains("dial tcp")
-        || lower.contains("connection refused")
-        || lower.contains("i/o timeout")
-        || lower.contains("timeout")
-        || lower.contains("tls handshake timeout")
-        || lower.contains("server misbehaving")
-        || lower.contains("temporary failure in name resolution")
-}
-
-fn looks_like_reference_shape_failure(lower: &str) -> bool {
-    lower.contains("invalid reference")
-        || lower.contains("invalid repository")
-        || lower.contains("invalid tag")
-        || lower.contains("bad reference")
-        || lower.contains("invalid checksum digest")
-        || lower.contains("invalid artifact reference")
 }
 
 fn registry_host(reference: &str) -> Option<&str> {

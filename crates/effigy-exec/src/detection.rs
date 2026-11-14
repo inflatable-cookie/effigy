@@ -3,32 +3,28 @@
 //! Probes a running container to determine:
 //!
 //! - Whether effigy is installed inside the container (for handoff)
-//! - Which shell is available (bash, sh, etc.)
-//! - Whether specific tools are available (composer, npm, etc.)
+//! - Which shell is available (bash, sh)
+//! - Which effigy version the container reports
 //!
-//! Detection results are cached per container session to avoid repeated
-//! probes during a single development session.
+//! A probe is identified by [`ProbeKind`] — never by its human description — so
+//! the result a caller records is the same value the builder reads back, and
+//! each kind owns how its result is interpreted.
 
 use std::collections::HashMap;
-use std::time::Instant;
 
 /// Result of probing a container for capabilities.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContainerCapabilities {
     /// Whether effigy is installed inside the container.
     pub has_effigy: bool,
 
-    /// Effigy version inside the container, if installed.
+    /// Effigy version inside the container, if a version probe reported one.
     pub effigy_version: Option<String>,
 
-    /// Available shell (first match from preferred list).
-    pub shell: String,
-
-    /// Map of tool names to their availability.
-    pub tools: HashMap<String, bool>,
-
-    /// When this probe was performed.
-    pub probed_at: Instant,
+    /// Available shell, when the container offered one. A container that
+    /// answered neither shell probe claims no shell; it is never reported as
+    /// `/bin/sh` by default.
+    pub shell: Option<String>,
 }
 
 impl ContainerCapabilities {
@@ -71,29 +67,6 @@ pub enum ExecStrategy {
     },
 }
 
-impl ExecStrategy {
-    /// Build the docker compose exec command arguments.
-    ///
-    /// Returns the arguments to append after `docker compose exec <service>`.
-    pub fn compose_exec_args(&self) -> Vec<String> {
-        match self {
-            Self::Handoff { args } => {
-                let mut result = vec!["effigy".to_string()];
-                result.extend(args.iter().cloned());
-                result
-            }
-            Self::RawExec {
-                working_dir,
-                command,
-            } => {
-                let mut result = vec!["-w".to_string(), working_dir.clone()];
-                result.extend(command.iter().cloned());
-                result
-            }
-        }
-    }
-}
-
 /// Determine the execution strategy for a task invocation.
 ///
 /// If the container has effigy installed, hands off the entire command.
@@ -119,39 +92,71 @@ pub fn determine_strategy(
     }
 }
 
+/// How a probe result is interpreted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbeInterpreter {
+    /// The exit status decides; stdout carries no capability fact.
+    ExitCode,
+
+    /// The exit status decides, and stdout carries the reported version.
+    VersionOutput,
+}
+
+impl ProbeInterpreter {
+    /// The version a probe reported, if its own interpreter reads output.
+    fn reported_version(self, output: &str) -> Option<String> {
+        match self {
+            Self::ExitCode => None,
+            Self::VersionOutput => {
+                let output = output.trim();
+                (!output.is_empty()).then(|| output.to_owned())
+            }
+        }
+    }
+}
+
+/// The identity of one capability probe: how its result is recorded and read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ProbeKind {
+    /// Whether effigy is installed inside the container.
+    EffigyInstallation,
+    /// Which effigy version the container reports.
+    EffigyVersion,
+    /// Whether bash is available.
+    Bash,
+    /// Whether sh is available.
+    Sh,
+}
+
+impl ProbeKind {
+    /// How this check's result is interpreted.
+    pub fn interpreter(self) -> ProbeInterpreter {
+        match self {
+            Self::EffigyInstallation | Self::Bash | Self::Sh => ProbeInterpreter::ExitCode,
+            Self::EffigyVersion => ProbeInterpreter::VersionOutput,
+        }
+    }
+}
+
 /// Probe specification for detecting container capabilities.
 ///
 /// This struct describes what to probe and how. The actual probing
 /// (running docker compose exec) is performed by the caller — this
 /// crate provides the logic, not the I/O.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProbeSpec {
-    /// Commands to run to detect capabilities. Each entry is
-    /// (description, command_args, what_it_detects).
+    /// Checks to run, each identified by the kind whose result it produces.
     pub checks: Vec<ProbeCheck>,
 }
 
 /// A single probe check.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProbeCheck {
-    /// What this check detects.
-    pub description: String,
+    /// Which capability this check reports.
+    pub kind: ProbeKind,
 
     /// Command to run inside the container (via docker compose exec).
     pub command: Vec<String>,
-
-    /// How to interpret the result.
-    pub interpreter: ProbeInterpreter,
-}
-
-/// How to interpret a probe check result.
-#[derive(Debug, Clone)]
-pub enum ProbeInterpreter {
-    /// Check exits 0 → capability present.
-    ExitCode,
-
-    /// Check outputs a version string → parse it.
-    VersionOutput,
 }
 
 /// Build the standard probe spec for a container.
@@ -163,31 +168,27 @@ pub fn standard_probe_spec() -> ProbeSpec {
     ProbeSpec {
         checks: vec![
             ProbeCheck {
-                description: "effigy installation".to_string(),
+                kind: ProbeKind::EffigyInstallation,
                 command: vec!["which".to_string(), "effigy".to_string()],
-                interpreter: ProbeInterpreter::ExitCode,
             },
             ProbeCheck {
-                description: "effigy version".to_string(),
+                kind: ProbeKind::EffigyVersion,
                 command: vec!["effigy".to_string(), "version".to_string()],
-                interpreter: ProbeInterpreter::VersionOutput,
             },
             ProbeCheck {
-                description: "bash availability".to_string(),
+                kind: ProbeKind::Bash,
                 command: vec!["which".to_string(), "bash".to_string()],
-                interpreter: ProbeInterpreter::ExitCode,
             },
             ProbeCheck {
-                description: "sh availability".to_string(),
+                kind: ProbeKind::Sh,
                 command: vec!["which".to_string(), "sh".to_string()],
-                interpreter: ProbeInterpreter::ExitCode,
             },
         ],
     }
 }
 
 /// Result of running a single probe check.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProbeResult {
     /// Whether the command exited successfully (exit code 0).
     pub success: bool,
@@ -198,42 +199,29 @@ pub struct ProbeResult {
 
 /// Build container capabilities from probe results.
 ///
-/// `results` is a map of check description → probe result, matching the
-/// checks from `standard_probe_spec()`.
+/// `results` is keyed by the [`ProbeKind`] each check reports, so every check in
+/// [`standard_probe_spec`] is read back by its own identity.
 pub fn build_capabilities_from_results(
-    results: &HashMap<String, ProbeResult>,
+    results: &HashMap<ProbeKind, ProbeResult>,
 ) -> ContainerCapabilities {
-    let has_effigy = results
-        .get("effigy installation")
-        .map(|r| r.success)
-        .unwrap_or(false);
+    let answered = |kind: ProbeKind| results.get(&kind).filter(|result| result.success);
 
-    let effigy_version = results
-        .get("effigy version")
-        .filter(|r| r.success)
-        .map(|r| r.output.clone());
+    let effigy_version = answered(ProbeKind::EffigyVersion).and_then(|result| {
+        ProbeKind::EffigyVersion
+            .interpreter()
+            .reported_version(&result.output)
+    });
 
-    let has_bash = results
-        .get("bash availability")
-        .map(|r| r.success)
-        .unwrap_or(false);
-
-    let shell = if has_bash {
-        "/bin/bash".to_string()
+    let shell = if answered(ProbeKind::Bash).is_some() {
+        Some("/bin/bash".to_string())
     } else {
-        "/bin/sh".to_string()
+        answered(ProbeKind::Sh).map(|_| "/bin/sh".to_string())
     };
 
-    let mut tools = HashMap::new();
-    tools.insert("effigy".to_string(), has_effigy);
-    tools.insert("bash".to_string(), has_bash);
-
     ContainerCapabilities {
-        has_effigy,
+        has_effigy: answered(ProbeKind::EffigyInstallation).is_some(),
         effigy_version,
         shell,
-        tools,
-        probed_at: Instant::now(),
     }
 }
 

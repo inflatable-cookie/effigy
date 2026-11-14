@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Output;
 
 use effigy_catalog::volumes::{
@@ -7,6 +7,7 @@ use effigy_catalog::volumes::{
     volume_cache_kind_batch_command, volume_usage_batch_command, DockerCommand,
 };
 use effigy_containers::ContainerCacheGlobalEntry;
+use effigy_core::repo;
 
 use super::planning::{
     cache_kind_from_volume_name, collect_global_cache_entries_from_names, effigy_owned_project,
@@ -172,15 +173,40 @@ pub(super) fn project_is_running(
     repo_root: &Path,
     project_name: &str,
 ) -> Result<bool, EffigyRuntimeError> {
-    let target_root = canonicalize_or_original(repo_root);
+    let target_root = match repo::canonicalize_or_original(repo_root) {
+        repo::ResolvedPath::Canonical(path) => path,
+        // Pruning reads `false` as "the stack is stopped" and then deletes its
+        // volumes, so a root that could not be resolved must not answer `false`.
+        repo::ResolvedPath::Unresolved { path, error } => {
+            return Err(EffigyRuntimeError::task_invocation(format!(
+                "failed to resolve {} while checking whether `{project_name}` is running: {error}; check that the checkout path exists and is readable, then retry",
+                path.display()
+            )));
+        }
+    };
     Ok(discover_running_environments()?
         .into_iter()
         .any(|environment| {
-            canonicalize_or_original(Path::new(&environment.repo_root)) == target_root
+            repo::canonicalize_or_original(Path::new(&environment.repo_root)).path() == target_root
                 && environment.policy.project_name == project_name
         }))
 }
 
-fn canonicalize_or_original(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+#[cfg(test)]
+mod tests {
+    use super::project_is_running;
+
+    /// Cache prune deletes volumes when this answers `false`, so a root that
+    /// could not be resolved must refuse rather than read as a stopped stack.
+    #[test]
+    fn an_unresolvable_root_refuses_instead_of_reporting_not_running() {
+        let parent = tempfile::tempdir().expect("temp dir");
+        let missing = parent.path().join("missing-checkout");
+
+        let error = project_is_running(&missing, "web").expect_err("unresolved root must refuse");
+
+        let rendered = error.to_string();
+        assert!(rendered.contains("missing-checkout"), "{rendered}");
+        assert!(rendered.contains("retry"), "{rendered}");
+    }
 }

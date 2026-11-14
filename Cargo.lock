@@ -1395,6 +1395,7 @@ dependencies = [
 name = "effigy-state"
 version = "0.14.1"
 dependencies = [
+ "chrono",
  "effigy-manifest",
  "effigy-test-support",
  "serde",

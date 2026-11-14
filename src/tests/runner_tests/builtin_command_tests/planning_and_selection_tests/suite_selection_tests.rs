@@ -780,7 +780,7 @@ fn assert_nested_invocation_container_default(command: &str, expected_default: &
         .expect("nested invocation should rediscover catalogs");
     assert_eq!(
         preflight.invocation_cwd,
-        crate::runner::command_context::canonicalize_or_original(&cwd),
+        crate::runner::command_context::canonicalize_or_original(&cwd).into_path(),
         "nested discovery must keep the child invocation cwd: {command}"
     );
     assert!(

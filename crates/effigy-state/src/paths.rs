@@ -1,7 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 use crate::{
@@ -286,42 +287,20 @@ fn short_safe_lineage(lineage: &str) -> String {
     safe.chars().take(48).collect()
 }
 
+/// The UTC instant one report name is built from. `chrono` owns the calendar,
+/// so a time before the Unix epoch keeps its own date instead of collapsing to
+/// the epoch.
+fn utc_instant(time: SystemTime) -> DateTime<Utc> {
+    DateTime::<Utc>::from(time)
+}
+
 fn utc_basic_timestamp(time: SystemTime) -> String {
-    let (year, month, day, hour, minute, second) = split_utc(time);
-    format!("{year:04}{month:02}{day:02}T{hour:02}{minute:02}{second:02}Z")
+    utc_instant(time).format("%Y%m%dT%H%M%SZ").to_string()
 }
 
-fn utc_compact_timestamp(time: SystemTime) -> String {
-    let (year, month, day, hour, minute, second) = split_utc(time);
-    format!("{year:04}{month:02}{day:02}-{hour:02}{minute:02}{second:02}")
-}
-
-fn split_utc(time: SystemTime) -> (i64, i64, i64, i64, i64, i64) {
-    let seconds = time
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
-    let days = seconds.div_euclid(86_400);
-    let day_seconds = seconds.rem_euclid(86_400);
-    let (year, month, day) = civil_from_unix_days(days);
-    let hour = day_seconds / 3_600;
-    let minute = (day_seconds % 3_600) / 60;
-    let second = day_seconds % 60;
-    (year, month, day, hour, minute, second)
-}
-
-fn civil_from_unix_days(days: i64) -> (i64, i64, i64) {
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 }.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let year = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = mp + if mp < 10 { 3 } else { -9 };
-    let year = year + if month <= 2 { 1 } else { 0 };
-    (year, month, day)
+/// The compact UTC stamp used for report history and capture-set keys.
+pub fn utc_compact_timestamp(time: SystemTime) -> String {
+    utc_instant(time).format("%Y%m%d-%H%M%S").to_string()
 }
 
 pub fn safe_path_component(value: &str) -> String {
@@ -342,4 +321,28 @@ pub fn path_display(path: &Path, repo_root: &Path) -> String {
         .unwrap_or(path)
         .display()
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{utc_basic_timestamp, utc_compact_timestamp};
+    use std::time::{Duration, UNIX_EPOCH};
+
+    /// One mechanism names every report instant: the calendar comes from
+    /// `chrono`, so the two formats below are the only shape difference.
+    #[test]
+    fn one_utc_calendar_names_both_timestamp_formats() {
+        let at = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        assert_eq!(utc_basic_timestamp(at), "20231114T221320Z");
+        assert_eq!(utc_compact_timestamp(at), "20231114-221320");
+    }
+
+    /// A clock before the epoch used to fall back to the epoch silently; the
+    /// instant's own date is what a report name may claim.
+    #[test]
+    fn a_pre_epoch_instant_keeps_its_own_date() {
+        let before_epoch = UNIX_EPOCH - Duration::from_secs(10);
+        assert_eq!(utc_basic_timestamp(before_epoch), "19691231T235950Z");
+        assert_eq!(utc_compact_timestamp(before_epoch), "19691231-235950");
+    }
 }

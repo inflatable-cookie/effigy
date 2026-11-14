@@ -35,7 +35,7 @@ pub(in crate::runner) fn resolve_command_context_from_cwd(
     cwd: std::path::PathBuf,
     repo_override: Option<std::path::PathBuf>,
 ) -> Result<ResolvedCommandContext, super::error::RunnerError> {
-    let invocation_cwd = canonicalize_or_original(&cwd);
+    let invocation_cwd = canonicalize_or_original(&cwd).into_path();
     let resolved = resolve_repo_root(cwd, repo_override)?;
     Ok(ResolvedCommandContext {
         invocation_cwd,
@@ -62,7 +62,7 @@ pub(in crate::runner) fn resolve_execution_context(
     repo_override: Option<std::path::PathBuf>,
 ) -> Result<ResolvedCommandContext, super::error::RunnerError> {
     if repo_override.is_none() {
-        let canonical_cwd = canonicalize_or_original(&cwd);
+        let canonical_cwd = canonicalize_or_original(&cwd).into_path();
         if let Some(active) = active_runtime_context() {
             if canonical_cwd == active.command_root() {
                 return Ok(ResolvedCommandContext {

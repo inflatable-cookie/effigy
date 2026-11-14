@@ -194,6 +194,9 @@ pub(super) fn fmt_runner_error(
         RunnerError::TaskCommandLaunch { command, error } => {
             write_task_command_launch(f, command, error)
         }
+        RunnerError::EnvironmentUnavailable { capability, detail } => {
+            write!(f, "the {capability} is unavailable: {detail}")
+        }
         RunnerError::TaskCommandFailure {
             command,
             code,

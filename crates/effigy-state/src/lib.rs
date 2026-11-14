@@ -50,7 +50,7 @@ pub use model::{
 pub use paths::{
     build_state_apply_hook_context, build_state_capture_task_context, path_display,
     resolve_repo_relative_path, safe_path_component, state_capture_set_report_write_paths,
-    state_report_write_paths, write_state_context_file, write_state_report,
+    state_report_write_paths, utc_compact_timestamp, write_state_context_file, write_state_report,
     StateCaptureContextRequest, StateContextFile, StateIoError, StateReportWritePaths,
     STATE_SURFACE_ROOT,
 };
