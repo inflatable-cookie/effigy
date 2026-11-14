@@ -299,9 +299,12 @@ fn foreign_fixture() -> &'static Foreign {
             .collect();
         let child = std::process::Command::new("/bin/sh")
             .arg("-c")
-            .arg(format!("{traps}while :; do /bin/sleep 0.05; done"))
+            .arg(format!(
+                "{traps}{}",
+                effigy_test_support::process::parent_exit_guard()
+            ))
             .process_group(0)
-            .stdin(std::process::Stdio::null())
+            .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
@@ -344,6 +347,7 @@ pub(super) fn stop_foreign() {
     // SAFETY: our own recorded child's own process group; never a pattern kill.
     unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
     let _ = child.wait();
+    let _ = std::fs::remove_dir_all(fixture.dir.path());
 }
 
 // --- Anchor retirement pin. ---

@@ -1407,7 +1407,7 @@ fn check_workspace_sentinel_interruption(deadline: bool) {
     let error = result.expect_err("interrupted startup must refuse");
     if deadline {
         assert!(
-            error.to_string().contains("TimedOut"),
+            error.to_string().contains("timed out after"),
             "deadline must cause refusal: {error}"
         );
     }

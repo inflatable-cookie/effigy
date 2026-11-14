@@ -15,6 +15,12 @@ const STOP_GRACE: Duration = Duration::from_millis(300);
 const POLL: Duration = Duration::from_millis(10);
 const OUTPUT_DEADLINE: Duration = Duration::from_secs(180);
 
+/// Shell tail for a fixture that must stop when its runner's pipe closes.
+/// The runner owns the pipe writer; its death closes it without polling.
+pub fn parent_exit_guard() -> &'static str {
+    "cat >/dev/null"
+}
+
 /// Observe kernel-owned writers before removing a private fixture HOME.
 ///
 /// A fixture's kernel journal is not always at its own root: a fixture that
@@ -106,9 +112,7 @@ impl OwnedChild {
     /// Whether the fixture's whole group has ended. Reads the live group, so a
     /// member that outlived its leader is reported.
     pub fn group_closed(&self) -> bool {
-        // SAFETY: signal 0 only observes the group this guard created.
-        let live = unsafe { libc::kill(-(self.group as i32), 0) } == 0;
-        !live && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+        group_members(self.group).is_ok_and(|members| members.is_empty())
     }
 
     pub fn deadline(&self) -> Instant {
@@ -143,9 +147,6 @@ impl OwnedChild {
 
     /// Stop the group within its grace, then escalate, and reap the leader.
     pub fn terminate_and_wait(&mut self) -> io::Result<ExitStatus> {
-        if let Some(status) = self.reaped {
-            return Ok(status);
-        }
         signal_group(self.group, libc::SIGTERM);
         let grace = Instant::now() + STOP_GRACE;
         while Instant::now() < grace {
@@ -155,7 +156,10 @@ impl OwnedChild {
             std::thread::sleep(POLL);
         }
         signal_group(self.group, libc::SIGKILL);
-        let status = self.child.wait()?;
+        let status = match self.reaped {
+            Some(status) => status,
+            None => self.child.wait()?,
+        };
         self.reaped = Some(status);
         Ok(status)
     }
@@ -186,9 +190,7 @@ impl OwnedChild {
             if stdout.is_finished() && stderr.is_finished() {
                 if let Some(status) = self.try_wait()? {
                     if !self.group_closed() {
-                        return Err(io::Error::other(
-                            "fixture child exited with surviving group members",
-                        ));
+                        wait_group_members(self.group, self.deadline)?;
                     }
                     let join = |reader: std::thread::JoinHandle<io::Result<Vec<u8>>>| {
                         reader
@@ -207,11 +209,194 @@ impl OwnedChild {
     }
 }
 
+/// Current live members of an owned process group. A zombie has exited and
+/// cannot retain fixture resources; `kill(-pgid, 0)` incorrectly counts it
+/// until its parent reaps it.
+fn group_members(group: u32) -> io::Result<Vec<u32>> {
+    let output = Command::new("ps")
+        .args(["-Ao", "pid=,pgid=,stat="])
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::other("process table listing command failed"));
+    }
+    let mut members = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let mut fields = line.split_whitespace();
+        let pid = fields
+            .next()
+            .and_then(|field| field.parse::<u32>().ok())
+            .ok_or_else(|| io::Error::other("process table listing contains a malformed row"))?;
+        let process_group = fields
+            .next()
+            .and_then(|field| field.parse::<u32>().ok())
+            .ok_or_else(|| io::Error::other("process table listing contains a malformed row"))?;
+        let state = fields
+            .next()
+            .ok_or_else(|| io::Error::other("process table listing contains a malformed row"))?;
+        if pid > 0 && process_group == group && !state.starts_with('Z') {
+            members.push(pid);
+        }
+    }
+    Ok(members)
+}
+
+/// Wait for a live owned-group member's exit notification, then re-read the
+/// group. The process exit event avoids sampling the narrow interval between
+/// a child closing its pipes and the kernel recording its exit.
+fn wait_group_members(group: u32, deadline: Instant) -> io::Result<()> {
+    loop {
+        let members = group_members(group)?;
+        if members.is_empty() {
+            return Ok(());
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "fixture child exited with surviving group members",
+            ));
+        }
+        wait_for_process_exit(&members, remaining)?;
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn wait_for_process_exit(pids: &[u32], timeout: Duration) -> io::Result<()> {
+    use std::os::fd::RawFd;
+
+    // SAFETY: kqueue has no pointer arguments or caller preconditions.
+    let queue: RawFd = unsafe { libc::kqueue() };
+    if queue < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut watched = 0;
+    for pid in pids {
+        let change = libc::kevent {
+            ident: usize::try_from(*pid).unwrap_or(usize::MAX),
+            filter: libc::EVFILT_PROC,
+            flags: libc::EV_ADD | libc::EV_ONESHOT,
+            fflags: libc::NOTE_EXIT,
+            data: 0,
+            udata: std::ptr::null_mut(),
+        };
+        // SAFETY: queue is open; `change` is initialized and readable. The
+        // output pointer is null with a zero event count, and the timeout is
+        // null for this nonblocking registration operation.
+        let result =
+            unsafe { libc::kevent(queue, &change, 1, std::ptr::null_mut(), 0, std::ptr::null()) };
+        if result == 0 {
+            watched += 1;
+        } else {
+            let error = io::Error::last_os_error();
+            if error.kind() == io::ErrorKind::Interrupted {
+                // The registration may or may not have taken effect. Closing
+                // this queue and resnapshotting makes the next pass exact.
+                // SAFETY: queue is the descriptor returned by kqueue above.
+                unsafe { libc::close(queue) };
+                return Ok(());
+            }
+            if error.raw_os_error() != Some(libc::ESRCH) {
+                // SAFETY: queue is the descriptor returned by kqueue above.
+                unsafe { libc::close(queue) };
+                return Err(error);
+            }
+        }
+    }
+    if watched == 0 {
+        // SAFETY: queue is the descriptor returned by kqueue above.
+        unsafe { libc::close(queue) };
+        return Ok(());
+    }
+    let timeout = libc::timespec {
+        tv_sec: timeout.as_secs().try_into().unwrap_or(libc::time_t::MAX),
+        tv_nsec: i64::from(timeout.subsec_nanos()),
+    };
+    let mut event = std::mem::MaybeUninit::<libc::kevent>::uninit();
+    // SAFETY: queue is open; the output pointer addresses one writable event,
+    // and timeout points to an initialized timespec for this wait.
+    let result =
+        unsafe { libc::kevent(queue, std::ptr::null(), 0, event.as_mut_ptr(), 1, &timeout) };
+    let error = if result < 0 {
+        let error = io::Error::last_os_error();
+        (error.kind() != io::ErrorKind::Interrupted).then_some(error)
+    } else if result == 0 {
+        Some(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "fixture process exit event",
+        ))
+    } else {
+        None
+    };
+    // SAFETY: queue is the descriptor returned by kqueue above.
+    unsafe { libc::close(queue) };
+    error.map_or(Ok(()), Err)
+}
+
+#[cfg(target_os = "linux")]
+fn wait_for_process_exit(pids: &[u32], timeout: Duration) -> io::Result<()> {
+    let mut descriptors = Vec::new();
+    for pid in pids {
+        // SAFETY: pidfd_open takes only the positive PID from the process
+        // table and flags by value; neither argument points into caller memory.
+        let descriptor = unsafe { libc::syscall(libc::SYS_pidfd_open, *pid as libc::pid_t, 0) };
+        if descriptor >= 0 {
+            descriptors.push(libc::pollfd {
+                fd: descriptor as libc::c_int,
+                events: libc::POLLIN,
+                revents: 0,
+            });
+        } else if io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH) {
+            let error = io::Error::last_os_error();
+            for descriptor in descriptors {
+                // SAFETY: each descriptor is a pidfd opened above.
+                unsafe { libc::close(descriptor.fd) };
+            }
+            return Err(error);
+        }
+    }
+    if descriptors.is_empty() {
+        return Ok(());
+    }
+    let millis = timeout.as_millis().min(i32::MAX as u128) as i32;
+    // SAFETY: poll receives the initialized descriptor slice for its length.
+    let result = unsafe {
+        libc::poll(
+            descriptors.as_mut_ptr(),
+            descriptors.len() as libc::nfds_t,
+            millis,
+        )
+    };
+    let error = if result < 0 {
+        let error = io::Error::last_os_error();
+        (error.kind() != io::ErrorKind::Interrupted).then_some(error)
+    } else if result == 0 {
+        Some(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "fixture process exit event",
+        ))
+    } else {
+        None
+    };
+    for descriptor in descriptors {
+        // SAFETY: each descriptor is a pidfd opened above.
+        unsafe { libc::close(descriptor.fd) };
+    }
+    error.map_or(Ok(()), Err)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn wait_for_process_exit(_pids: &[u32], _timeout: Duration) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "fixture process exit events are unsupported on this platform",
+    ))
+}
+
 impl Drop for OwnedChild {
     fn drop(&mut self) {
-        // `reaped` is set only after the group was closed, so a settled fixture
-        // costs nothing here. Unwinding still stops the group.
-        if self.reaped.is_some() {
+        // A reaped leader can still have live group members. Check the group
+        // before treating this launch as settled; unwinding stops survivors.
+        if self.reaped.is_some() && self.group_closed() {
             return;
         }
         if let Err(error) = self.terminate_and_wait() {

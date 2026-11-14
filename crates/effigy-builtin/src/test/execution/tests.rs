@@ -265,7 +265,10 @@ fn a_host_suite_is_dispatched_through_the_callers_run_custody() {
     // a marker could be created.
     assert!(
             fields[6].split(',').all(|key| {
-                key.is_empty() || key == "EFFIGY_EXECUTABLE" || key == "EFFIGY_TEST_SUITE"
+                key.is_empty()
+                    || key == "EFFIGY_EXECUTABLE"
+                    || key == "EFFIGY_TEST_SUITE"
+                    || key == "EFFIGY_TEST_SUITE_OWNER_PID"
             }),
             "no variable beyond the run's temp environment, the invoking Effigy, and the suite sweep token: {recorded}"
         );
