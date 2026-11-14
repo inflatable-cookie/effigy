@@ -1,13 +1,15 @@
-# Code ratings: `a9b3213f9` baseline, round 5 re-rate
+# Code ratings: `a9b3213f9` baseline, round 5 and floor-7 re-rates
 
-The tables `C1.csv`–`C5.csv` hold 799 product-code modules (C1 196, C2 74,
-C3 105, C4 182, C5 242). They were rated at commit `a9b3213f9` and re-rated at
-`e458614d8` after round 5's splits, so every row's `body_sha` matches the tree
-it was judged on. Columns are `id,files,loc,given,corrected,source,action,reason,body_sha`;
+The tables `C1.csv`–`C5.csv` hold 815 product-code modules (C1 200, C2 73,
+C3 110, C4 189, C5 243). They were rated at commit `a9b3213f9`, re-rated at
+`e458614d8` after round 5's splits and re-rated again at current main after
+round 6 and floor 7, so every row's `body_sha` matches the tree it was judged
+on. Columns are `id,files,loc,given,corrected,source,action,reason,body_sha`;
 scores stay frozen between re-rates: a re-rate writes new tables, never edits to
 the old snapshot. Column semantics are in `README.md`. The `corrected` column of
 the 244 round-5 rows was recalibrated in `effigy#960` from the planner's blind
-check; every distribution below quotes the recalibrated scores.
+check; the floor-7 section records the current distribution and every
+distribution in the round-5 section is the state at `e458614d8`.
 
 ## Round 5 re-rate (effigy#958)
 
@@ -241,10 +243,14 @@ Deliberate exceptions, all verified by exact file-count and line-total match:
 Round 5 works bottom-up, with smaller batches than for tests, and needs native
 proof for runtime paths. It runs after round 4 has brought tests to floor 7.
 
-## Drift: the work list for the next re-rate
+This table is the state before floor 7. The floor-7 re-rate below closed option
+B on score: no module sits at 6 or below.
+
+## Drift: each re-rate's work list
 
 Before round 5 the tables reported 95 new, 150 changed and 2 gone rows since
-`a9b3213f9` (30.8% stale). After the re-rate at `e458614d8`:
+`a9b3213f9` (30.8% stale). After the re-rate at `e458614d8` (the floor-7 re-rate's
+own drift line is in that section):
 
 ```text
 code quality: 799 rows, 0 new, 0 changed, 0 gone, 0.0% stale since e458614d8
@@ -254,3 +260,157 @@ code quality: 799 rows, 0 new, 0 changed, 0 gone, 0.0% stale since e458614d8
 new drift means a row's files changed after the re-rate and needs a fresh rating.
 Split groups are reported as `split: re-rate` when new files sit under a gone
 row's path.
+
+## Floor-7 re-rate (effigy#982)
+
+Floor 7 (F7a–F7h, PRs #997, #1002, #996, #1000, #1001, #1004, #1003, #1005) took
+the 61 modules that scored 6 or below, plus the round-6 ownership tranches
+#963/#970–#977 that landed after `e458614d8`. The frozen table then reported
+195 stale entries (152 changed rows, 36 new product files, 7 gone = 23.4%).
+Every changed row was re-read at current main with the round-5 rubric and
+evidence standard, a row was added for each new module, and the tables were
+rewritten in one pass:
+
+| Work | Count |
+|---|---|
+| Rows re-scored because their body changed | 152 |
+| New rows (split children, extracted owners and one new module) | 23 |
+| Gone rows | 7 (5 split into new rows, 2 deleted unused scaffolding) |
+| Rows untouched (kept verbatim, including `loc`) | 640 |
+| Tables after the re-rate | 815 (C1 200, C2 73, C3 110, C4 189, C5 243) |
+
+Method and limits: each re-rated row was read as it stands, using
+`git diff e458614d8 -- <files>` to locate the change plus the module's current
+public surface, ownership and failure paths; every rewritten `reason` ends in a
+concrete `path:line`. `location` for a re-rated row is its current line count
+with the same nested-row exclusion the round-5 pass used; untouched rows keep
+their rating-pass count, so re-rating one module never rewrites the arithmetic
+of a neighbour. No build, suite or native proof was run for the rating itself.
+New product files that are a private submodule of an existing group row are
+folded into that row (`test/render/suite_facts.rs`); a 27-line read-only
+extraction is folded into its module row (`gateway::operator` owns
+`operator/legacy_status.rs`). Every other new file has its own row.
+
+Calibration follows the rule recalibrated in `effigy#960`/PR #992: the rater's
+raw score is `given`, and `corrected = max(0, given − 1)` with
+`source: offset-f7` for all 175 re-rated and new rows. The planner's blind check
+runs afterwards.
+
+### Distribution after the re-rate
+
+- **Rows:** 815. **Mean:** 8.10 corrected (given 9.10).
+- **Corrected scores:** 7 × 167, 8 × 403, 9 × 243, 10 × 2; nothing at 6 or below.
+- **Given scores:** 7 × 2, 8 × 161, 9 × 407, 10 × 245.
+- **7 or below:** 167 modules, all at exactly 7: 38 of the re-rated rows landed
+  at `given` 8 (corrected 7) and 129 untouched rows already sat there.
+- **Floor-7 target (no module below 7):** met on score; the two `given` 7 rows
+  are the two largest remaining single-owner modules (`run/mod.rs`,
+  `supervise.rs`), both already carrying a `split` action.
+- **5 or below / 6 or below:** 0 modules (was 2 and 61).
+
+Before this pass the tables held 799 rows with a mean of 7.95 corrected (given
+8.96): `given` {6 × 2, 7 × 54, 8 × 155, 9 × 347, 10 × 241} and `corrected`
+{5 × 2, 6 × 59, 7 × 158, 8 × 341, 9 × 236, 10 × 3}.
+
+### The 61 floor-7 targets, before and after
+
+`before` is given / corrected in the frozen table; `after` is this pass.
+
+| Table | Module | Before | After |
+|---|---|---|---|
+| C1 | `crates/effigy-containers/src/backend.rs` | 7 / 6 | 9 / 8 |
+| C1 | `crates/effigy-containers/src/environment/backend.rs` | 7 / 6 | 8 / 7 |
+| C1 | `crates/effigy-containers/src/exec/colima_runtime.rs` | 7 / 6 | 8 / 7 |
+| C1 | `crates/effigy-containers/src/exec/implementation.rs` | 6 / 5 | 8 / 7 |
+| C1 | `src/runner/container_command/support/workspace_private.rs` | 7 / 6 | deleted (unused scaffolding) |
+| C1 | `src/runner/container_runtime_prep/cargo_inputs.rs` | 9 / 6 | 9 / 8 |
+| C1 | `src/runner/exec_command/transport.rs` | 7 / 6 | 8 / 7 |
+| C2 | `crates/effigy-gateway/src/proxy/performance.rs` | 7 / 6 | 9 / 8 |
+| C2 | `gateway::operator` | 7 / 6 | 9 / 8 |
+| C2 | `gateway::server` | 8 / 6 | 9 / 8 |
+| C2 | `gateway::tls` | 7 / 6 | 8 / 7 |
+| C2 | `managed::references` | 7 / 6 | 9 / 8 |
+| C2 | `managed::scheduler` | 7 / 6 | deleted (9-line dead module; its renderer moved to `managed::run_spec`) |
+| C3 | `crates/effigy-exec/src/detection.rs` | 7 / 6 | 9 / 8 |
+| C3 | `crates/effigy-kernel/src/custody.rs` | 8 / 6 | 9 / 8 |
+| C3 | `crates/effigy-kernel/src/supervise/memory.rs` | 7 / 6 | 8 / 7 |
+| C3 | `crates/effigy-kernel/src/workspace_session.rs` | 8 / 6 | split: `workspace_session` 10 / 9, `activation.rs` 9 / 8, `claims.rs` 9 / 8, `session.rs` 9 / 8 |
+| C3 | `crates/effigy-kernel/src/workspace_session/selection.rs` | 9 / 6 | split: `workspace_session/selection` 9 / 8 |
+| C3 | `crates/effigy-process/src/signal.rs` | 7 / 6 | 9 / 8 |
+| C4 | `crates/effigy-builtin/src/completion/scripts` | 7 / 6 | 9 / 8 |
+| C4 | `crates/effigy-builtin/src/config/output.rs` | 7 / 6 | split: `config/output` 9 / 8 |
+| C4 | `crates/effigy-builtin/src/config/schema.rs` | 7 / 6 | 9 / 8 |
+| C4 | `crates/effigy-builtin/src/doc_render.rs` | 7 / 6 | 9 / 8 |
+| C4 | `crates/effigy-builtin/src/help_text.rs` | 7 / 6 | 9 / 8 |
+| C4 | `crates/effigy-builtin/src/init/agent.rs` | 7 / 6 | 9 / 8 |
+| C4 | `crates/effigy-builtin/src/ports.rs` | 7 / 6 | 8 / 7 |
+| C4 | `crates/effigy-builtin/src/test/execution.rs` | 7 / 6 | split: `test/execution` 9 / 8 |
+| C4 | `crates/effigy-builtin/src/test/planning/runnable/cargo_env.rs` | 7 / 6 | 9 / 8 |
+| C4 | `crates/effigy-builtin/src/test/render` | 7 / 6 | 9 / 8 |
+| C4 | `crates/effigy-builtin/src/test/render/results` | 7 / 6 | 8 / 7 |
+| C4 | `crates/effigy-builtin/src/text_doc.rs` | 7 / 6 | 9 / 8 |
+| C4 | `crates/effigy-cli/src/command_parsing.rs` | 8 / 6 | 9 / 8 |
+| C4 | `crates/effigy-cli/src/header.rs` | 7 / 6 | 8 / 7 |
+| C4 | `crates/effigy-cli/src/help` | 7 / 6 | 8 / 7 |
+| C4 | `crates/effigy-manifest/src/config_sections/container.rs` | 7 / 6 | 9 / 8 |
+| C4 | `crates/effigy-manifest/src/loaded_catalog.rs` | 7 / 6 | 9 / 8 |
+| C4 | `crates/effigy-manifest/src/retired_bootstrap.rs` | 7 / 6 | 8 / 7 |
+| C4 | `crates/effigy-rhai/src/host_api/fs.rs` | 7 / 6 | 9 / 8 |
+| C4 | `crates/effigy-tasks/src/error.rs` | 7 / 6 | 8 / 7 |
+| C4 | `crates/effigy-tasks/src/listing.rs` | 7 / 6 | 8 / 7 |
+| C4 | `crates/effigy-tasks/src/qa_groups/render.rs` | 7 / 6 | 8 / 7 |
+| C4 | `crates/effigy-tasks/src/testing/vitest.rs` | 7 / 6 | 9 / 8 |
+| C4 | `crates/effigy-tui/src/core.rs` | 7 / 6 | 9 / 8 |
+| C4 | `crates/effigy-tui/src/multiprocess/diagnostics.rs` | 7 / 6 | 8 / 7 |
+| C4 | `crates/effigy-tui/src/multiprocess/render` | 7 / 6 | 8 / 7 |
+| C4 | `crates/effigy-tui/src/multiprocess/runtime_loop.rs` | 7 / 6 | 8 / 7 |
+| C4 | `crates/effigy-ui/src/lib.rs` | 6 / 5 | 8 / 7 |
+| C4 | `crates/effigy-ui/src/output.rs` | 7 / 6 | 9 / 8 |
+| C4 | `crates/effigy-ui/src/steps.rs` | 7 / 6 | split: `steps` 9 / 8 |
+| C4 | `crates/effigy-ui/src/theme.rs` | 7 / 6 | 9 / 8 |
+| C4 | `src/runner/execute/api.rs` | 7 / 6 | 9 / 8 |
+| C4 | `src/runner/execute/binding.rs` | 7 / 6 | 9 / 8 |
+| C5 | `effigy-core::container_detection` | 7 / 6 | 9 / 8 |
+| C5 | `effigy-core::repo` | 7 / 6 | 9 / 8 |
+| C5 | `effigy-doctor::deep_inventory` | 7 / 6 | 8 / 7 |
+| C5 | `effigy-doctor::manifest_schema` | 10 / 6 | 8 / 7 |
+| C5 | `effigy-runtime::error` | 7 / 6 | 9 / 8 |
+| C5 | `effigy-state::artifact` | 7 / 6 | 9 / 8 |
+| C5 | `effigy-state::paths` | 7 / 6 | 8 / 7 |
+| C5 | `runner::managed_wait` | 7 / 6 | 9 / 8 |
+| C5 | `runner::tasks_command` | 7 / 6 | 9 / 8 |
+
+The ten modules added outside the floor targets by the round-6 tranches (for
+example `effigy-core::output_cap`, `crates/effigy-kernel/src/custody/output.rs`,
+`crates/effigy-kernel/src/supervise/frame.rs`, `src/runner/execute/runtime_inputs.rs`
+and `src/runner/exec_command/transport/argv.rs`) each score 9–10 and are new
+owners rather than re-reads of an old row.
+
+### Gone rows
+
+Five rows left the table because their file became a module:
+
+- `crates/effigy-builtin/src/config/output.rs` → `crates/effigy-builtin/src/config/output`
+  (mod, inspect, payload, user).
+- `crates/effigy-builtin/src/test/execution.rs` → `crates/effigy-builtin/src/test/execution`
+  (mod, command, parallel, session).
+- `crates/effigy-kernel/src/workspace_session.rs` → `workspace_session` (facade),
+  `activation.rs`, `claims.rs`, `session.rs`; the nested selection row keeps its
+  own three files.
+- `crates/effigy-kernel/src/workspace_session/selection.rs` → `workspace_session/selection`
+  (mod, context, obligation).
+- `crates/effigy-ui/src/steps.rs` → `crates/effigy-ui/src/steps`
+  (mod, live, source, terminal).
+
+Two were deleted as unused scaffolding, both in F7g (#971):
+`managed::scheduler` (9 lines, no caller after its renderer moved to
+`managed::run_spec`) and `src/runner/container_command/support/workspace_private.rs`
+(197 lines, no caller, every entry point returning `Unavailable`).
+
+### Follow-up not taken here
+
+`scripts/quality-table.py` still defines an unused `CODE_EXPECTED_ROWS`
+(196/74/105/182/242). The re-rate changes the row counts to 200/73/110/189/243;
+the constant is not read by the drift report, and this task rates the tables
+rather than editing the tool, so it is recorded here for whoever next touches
+that script.
