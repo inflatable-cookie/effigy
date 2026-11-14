@@ -176,13 +176,47 @@ pub(in crate::runner) fn run_standard_task(
         _ => result,
     };
     // Observability never changes the task's outcome or exit code (K10).
-    for warning in run.close(workload) {
+    let warnings = run.close(workload);
+    // A settlement the invocation's absolute deadline cut short cannot certify
+    // the workload's success: fail closed with the interrupted outcome and
+    // residue, never a success (effigy#992).
+    let deadline_cut = effigy_core::run_deadline::take_settlement_truncated();
+    for warning in warnings {
         let _ = effigy_core::output_cap::write(
             effigy_core::output_cap::Stream::Stderr,
             format!("warning: {}: {warning}\n", target.label).as_bytes(),
         );
     }
+    if deadline_cut && result.is_ok() {
+        return Err(run_deadline_error(&target));
+    }
     result
+}
+
+/// The fail-closed result of a settlement the absolute deadline cut short.
+fn run_deadline_error(target: &TaskTarget) -> RunnerError {
+    let detail = format!(
+        "the run deadline (`{}`) expired while Effigy settled task `{}`: the workload's own \
+         result cannot be certified, settlement is incomplete, and the run is interrupted with \
+         residue",
+        effigy_core::run_deadline::RUN_DEADLINE_ENV,
+        target.label,
+    );
+    let details_json = serde_json::json!({
+        "schema": "effigy.run-deadline.v1",
+        "schema_version": 1,
+        "task": target.label,
+        "phase": "settlement",
+        "outcome": "unknown",
+        "residue": true,
+        "detail": detail,
+        "deadline": effigy_core::run_deadline::evidence(),
+    })
+    .to_string();
+    RunnerError::RunDeadline {
+        detail,
+        details_json,
+    }
 }
 
 /// The run's recorded outcome when the route did not report one itself.

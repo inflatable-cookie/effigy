@@ -574,6 +574,95 @@ running. The limits are named too:
 - **`run status` never reports a provider-side release.** A release on this
   evidence is never shown as `cleanup: "complete"`.
 
+## Absolute run deadline (effigy#992, operator decision 6ca7e791)
+
+`EFFIGY_RUN_DEADLINE_MS` opts one invocation into **one absolute deadline**
+covering admission, the workload and Effigy's own settlement. It is off by
+default: unset or blank means every budget is exactly what it was before.
+
+### Clock, origin and interface
+
+- The clock is `std::time::Instant` (monotonic). The origin is sampled **once**,
+  at process start in `src/bin/effigy.rs:1-10` (and idempotently in
+  `src/cli/entrypoint.rs:18-23`), before any capture, staging or admission.
+  It is never restarted at a workload spawn or per step; a nested Phase
+  inherits the remaining time, not a new span.
+- `crates/effigy-core/src/run_deadline.rs:30` fixes the **settlement allowance**
+  at 10 s. The workload boundary is `ceiling - allowance`
+  (`run_deadline.rs:75`), and no wait may pass the ceiling.
+- Readback: a foreground run writes one evidence line at admission naming the
+  clock, its origin, the ceiling, the allowance, the workload budget and the
+  remaining time (`run_deadline.rs:102`; written at
+  `src/runner/task_engine/run/foreground.rs:118-127`). The task run and plan
+  JSON carry the same facts in a `deadline` object
+  (`src/runner/execute/json_payload/payload.rs:48-91`), absent when the
+  opt-in is off. Numbers are monotonic milliseconds; nothing is converted to
+  a wall clock.
+
+### One ceiling for every phase
+
+| Phase | Bound | Location |
+| --- | --- | --- |
+| Task-gate wait | `min(--lock-wait, ceiling - allowance)`; `FailFast` unchanged | `src/runner/task_engine/run/foreground.rs:89-101` |
+| Admission (including a hung hook or a late grant) | capped at `ceiling - allowance`; expiry refuses before any workload spawn | `src/runner/task_engine/admission.rs:590-603,815-822` |
+| Workload lifetime | `min(timeout_ms, ceiling - allowance)`; an in-process step or nested scope may shorten it, never extend it | `src/runner/task_engine/spawn_env.rs:24-31,60-69,104-115`; `src/runner/task_engine/process.rs:145-152` |
+| Kernel operation waits | an open shell operation is capped at the ceiling; a finite one is shortened to it | `crates/effigy-kernel/src/ctx.rs:208` |
+| Settlement (escalation, guard closure, cleanup, terminal evidence) | one cleanup context and one signal window, both capped at the ceiling | `crates/effigy-kernel/src/ctx.rs:251-275,414-425` |
+
+A deadline that cannot fit the allowance is refused **at start**, before any
+capture, gate or effect: `EFFIGY_RUN_DEADLINE_MS <= 10000` exits 2 with a
+message naming the allowance (`run_deadline.rs:151-170`, `src/bin/effigy.rs`).
+
+### Failure shapes
+
+- **Admission expiry.** The refusal is typed: `effigy.admission.v1` with
+  `decision: "deadline"` (not `"timeout"`, which stays the hook's own
+  timeout) at `src/runner/task_engine/admission.rs:1160-1175`. The workload
+  never spawns. Admission protocol v1/v2 and the terminal accounting are
+  unchanged.
+- **Settlement overrun.** A settlement the ceiling cuts short records
+  `truncated`, keeps the surviving custodian and every unresolved handle, and
+  claims no closure (`crates/effigy-kernel/src/run/foreground.rs:31,260-277`);
+  the foreground guard is not closed, signalled or discarded by the owner's
+  drop (`:352-360`), and its own fallback wait is capped at the remaining time
+  (`crates/effigy-kernel/src/supervise/memory.rs:545-565`). The workload's
+  result is then not success: the run returns `effigy.run-deadline.v1` with
+  `outcome: "unknown"`, `residue: true` and the deadline evidence, and exits
+  124 (`src/runner/execute/pipeline/standard.rs:178-215`;
+  `src/runner/error.rs`). An already-failed result keeps its own failure.
+- **Custody shape is unchanged.** Escalation is still TERM, grace, KILL of the
+owned group, leader reaped after group closure, residue reported. Only the
+  time budgets come from the absolute deadline.
+
+### Nested Effigy children
+
+A child starts its own monotonic clock, so it receives only the parent's
+remaining **workload** budget in `EFFIGY_RUN_DEADLINE_MS`
+(`src/runner/task_engine/process.rs:520-532`). It can never inherit the
+parent's configured span (that would restart the clock and extend the
+ceiling). The value is applied after every inherited value and task override,
+so nothing can prolong it. Each nesting level therefore reserves its own
+allowance; if the remaining budget cannot fit one, the child refuses at start
+rather than overrunning the parent.
+
+### Composition
+
+- The completeness footer still requires positive settlement: a settle that
+the deadline cut calls `foreground_settled(false)`, so no footer is printed
+(`crates/effigy-kernel/src/run/foreground.rs`; `src/runner/task_engine/run/foreground.rs:318-333`).
+- Strict persistence and the terminal ring are unchanged, and a run with no
+  settled outcome still writes no terminal row.
+- Off by default means byte-identical behaviour: `current()` is `None`, no
+evidence line and no `deadline` field are written, and every budget keeps its
+  previous value.
+
+### Files and physical model
+
+This feature adds **no file and no helper write**. It changes time budgets
+only; the per-invocation persistence inventory above (state and gate files,
+`kernel.db` and its sidecars, the private unlinked helper log, the optional v2
+terminal row) is unchanged.
+
 ## Run control
 
 Every task run is a kernel `Run`. Only durable runs have a journal. The

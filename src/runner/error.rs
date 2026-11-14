@@ -102,6 +102,14 @@ pub enum RunnerError {
         detail: String,
         details_json: String,
     },
+    /// The invocation's absolute run deadline expired while Effigy settled
+    /// the run (effigy#992). Settlement is incomplete with residue, the
+    /// workload result cannot be certified, and the details carry
+    /// `effigy.run-deadline.v1`.
+    RunDeadline {
+        detail: String,
+        details_json: String,
+    },
     /// A run-control read or request that could not be answered, with its
     /// `effigy.run.v1` details.
     RunControl {
@@ -298,6 +306,9 @@ impl RunnerError {
             RunnerError::RunSettled { code }
             | RunnerError::RunSettledJson { code, .. }
             | RunnerError::RunControl { code, .. } => *code,
+            // The invocation's absolute deadline cut settlement short: the
+            // interrupted convention, never a success (effigy#992).
+            RunnerError::RunDeadline { .. } => 124,
             RunnerError::TaskCommandFailure {
                 code: Some(code), ..
             } if (1..=255).contains(code) => *code,
@@ -329,6 +340,11 @@ impl RunnerError {
     /// record a cancelled builtin test as a failure.
     pub fn workload_outcome(&self) -> effigy_kernel::outcome::WorkloadOutcome {
         use effigy_kernel::outcome::WorkloadOutcome;
+        if matches!(self, RunnerError::RunDeadline { .. }) {
+            // No workload result can be certified when settlement did not
+            // finish inside the deadline: the honest outcome is interrupted.
+            return WorkloadOutcome::Interrupted;
+        }
         if matches!(
             self,
             RunnerError::BuiltinTestNonZero {
@@ -375,6 +391,7 @@ impl RunnerError {
             | RunnerError::RunSettledJson { .. }
             | RunnerError::RunKeyExists { .. }
             | RunnerError::AdmissionRefused { .. }
+            | RunnerError::RunDeadline { .. }
             | RunnerError::TaskLockConflict(_)
             | RunnerError::TaskCatalogsMissing { .. }
             | RunnerError::TaskManifestParse { .. }
@@ -641,6 +658,7 @@ impl RunnerError {
             RunnerError::RunSettled { code }
             | RunnerError::RunSettledJson { code, .. }
             | RunnerError::RunControl { code, .. } => Some(*code),
+            RunnerError::RunDeadline { .. } => Some(124),
             RunnerError::TaskCommandFailure { code, .. } => Some(code.unwrap_or(1)),
             RunnerError::CommandJsonFailure { rendered } => Some(
                 serde_json::from_str::<serde_json::Value>(rendered)

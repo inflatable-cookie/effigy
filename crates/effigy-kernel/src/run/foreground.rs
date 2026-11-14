@@ -26,6 +26,9 @@ pub struct ForegroundRun {
     ancestor_owners: Vec<ResourceId>,
     children: Vec<Arc<Mutex<Option<WorkloadOutcome>>>>,
     completion: Option<Arc<Mutex<Option<WorkloadOutcome>>>>,
+    /// The invocation's absolute run deadline cut settlement short: the
+    /// surviving custodian is kept and no closure is claimed (effigy#992).
+    truncated: bool,
 }
 impl ForegroundRun {
     /// The caller classifies the whole tree before any effect, and supplies
@@ -172,6 +175,7 @@ impl ForegroundRun {
             ancestor_owners,
             children: Vec::new(),
             completion: None,
+            truncated: false,
         })
     }
     pub fn record(&self) -> &ForegroundRecord {
@@ -246,8 +250,34 @@ impl ForegroundRun {
     /// the cleanup the settle will reach unless that final stop fails, so a
     /// caller reports closure it can stand behind. The kernel never
     /// interprets the callback.
+    ///
+    /// If the invocation's absolute run deadline cuts settlement short, the
+    /// run records that fact, keeps its surviving custodian through the
+    /// bounded attempt, and reports the interrupted outcome rather than
+    /// pretending to have settled (effigy#992).
     pub fn settle_reporting(
         mut self,
+        cleanup: &CleanupContext,
+        report: &mut dyn FnMut(CleanupOutcome),
+    ) -> Result<Outcome<Settled>, RunError> {
+        let result = self.settle_inner(cleanup, report);
+        let deadline_cut = effigy_core::run_deadline::ceiling().is_some()
+            && matches!(
+                &result,
+                Err(RunError::Interrupted(Interrupt::TimedOut { .. }))
+            );
+        if deadline_cut {
+            // Keep the guard and every unresolved handle: dropping them would
+            // discard the last custodian and claim a closure Effigy never
+            // observed. The guard settles residue when its owner is gone.
+            self.truncated = true;
+            effigy_core::run_deadline::note_settlement_truncated();
+        }
+        result
+    }
+
+    fn settle_inner(
+        &mut self,
         cleanup: &CleanupContext,
         report: &mut dyn FnMut(CleanupOutcome),
     ) -> Result<Outcome<Settled>, RunError> {
@@ -319,6 +349,12 @@ impl ForegroundRun {
 
 impl Drop for ForegroundRun {
     fn drop(&mut self) {
+        // A settle the run deadline cut short keeps its surviving custodian:
+        // the memory guard settles residue after its owner exits, and this
+        // drop must not signal, close, or discard it and then imply closure.
+        if self.truncated {
+            return;
+        }
         // Owner custody remains if the guard died. A guard retains the locks
         // if the owner cannot finish; neither case permits numeric replay.
         if let Ok(cleanup) = self.cx.operation().cleanup(Duration::from_secs(60)) {

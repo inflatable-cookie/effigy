@@ -1,4 +1,11 @@
 fn main() {
+    // The absolute run deadline is sampled once, before any capture, staging or
+    // admission (effigy#992). A too-short deadline refuses here, before
+    // anything starts.
+    if let Err(error) = effigy_core::run_deadline::configure_from_env() {
+        eprintln!("effigy: {error}");
+        std::process::exit(2);
+    }
     if let Err(error) = effigy_core::output_cap::configure_from_env() {
         eprintln!("effigy: {error}");
         std::process::exit(2);

@@ -206,6 +206,7 @@ pub(super) fn fmt_runner_error(
         RunnerError::TaskLockConflict(details) => write_lock_conflict(f, details),
         RunnerError::RunAdmission { message, .. } => f.write_str(message),
         RunnerError::AdmissionRefused { detail, .. }
+        | RunnerError::RunDeadline { detail, .. }
         | RunnerError::RunControl { detail, .. } => f.write_str(detail),
         RunnerError::RunSettled { code } | RunnerError::RunSettledJson { code, .. } => write!(f, "the run settled with exit {code}"),
         RunnerError::RunKeyExists { run } => write!(f, "the `--run-id` key names run {run}"),
