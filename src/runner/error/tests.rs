@@ -907,3 +907,31 @@ fn command_payload_without_an_action_keeps_a_valid_null() {
     assert_eq!(json["what_failed"], "the lock is held");
     assert!(json["next_action"].is_null());
 }
+
+/// The tasks crate's failure classes keep their runner class: a refused
+/// selector request is a refused invocation, while a renderer refusal is a UI
+/// failure and never masquerades as bad user input. Before the typed
+/// conversion both arrived as `TaskInvocation` strings.
+#[test]
+fn tasks_crate_failures_keep_their_class_at_the_runner_edge() {
+    let refused = RunnerError::from(effigy_tasks::EffigyTasksError::message(
+        "qa-group selector is empty",
+    ));
+    assert!(
+        matches!(&refused, RunnerError::TaskInvocation(message) if message == "qa-group selector is empty"),
+        "a refused request stays an invocation refusal: {refused:?}"
+    );
+    assert_eq!(refused.to_string(), "qa-group selector is empty");
+
+    let render = RunnerError::from(effigy_tasks::EffigyTasksError::Render(
+        effigy_ui::UiError::Encoding("failed to encode json: refused".to_owned()),
+    ));
+    assert!(
+        matches!(&render, RunnerError::Ui(message) if message == "failed to encode json: refused"),
+        "a renderer refusal stays a UI failure: {render:?}"
+    );
+    assert!(
+        !matches!(render, RunnerError::TaskInvocation(_)),
+        "a renderer refusal must not be reported as bad user input"
+    );
+}

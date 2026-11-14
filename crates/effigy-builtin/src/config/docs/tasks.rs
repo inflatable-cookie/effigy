@@ -117,7 +117,18 @@ fn manifest_include_comment(profile: ConfigDocProfile) -> &'static str {
 }
 
 pub(super) fn manifest_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
-    vec![
+    manifest_section(profile, true)
+}
+
+/// The manifest section's include graph for the minimal starter: the starter
+/// documents no docs-policy section, so it does not include a docs fragment it
+/// would have to override.
+pub(super) fn manifest_minimal_lines() -> Vec<&'static str> {
+    manifest_section(ConfigDocProfile::Schema, false)
+}
+
+fn manifest_section(profile: ConfigDocProfile, include_docs_fragment: bool) -> Vec<&'static str> {
+    let mut lines = vec![
         "[manifest]",
         "# Optional binary floor for this manifest fragment and anything that includes it.",
         "minimum_effigy_version = \"0.6.2\"",
@@ -125,14 +136,20 @@ pub(super) fn manifest_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
         manifest_include_comment(profile),
         "include = [",
         "  \"effigy.tasks.toml\",",
-        "  { path = \"effigy.docs.toml\", override = [\"docs_policy.indexes.topic\"] },",
+    ];
+    if include_docs_fragment {
+        lines
+            .push("  { path = \"effigy.docs.toml\", override = [\"docs_policy.indexes.topic\"] },");
+    }
+    lines.extend([
         "]",
         "",
         "[task_defaults]",
         "# Optional defaults applied to tasks defined in this manifest only.",
         "run_in = \"either\"",
         "",
-    ]
+    ]);
+    lines
 }
 
 fn docs_policy_graph_comment(profile: ConfigDocProfile) -> &'static str {

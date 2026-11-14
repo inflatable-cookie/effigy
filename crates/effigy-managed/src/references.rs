@@ -160,7 +160,7 @@ mod tests {
     use super::context::{ManagedRefContext, StepRefContext};
     use super::parser::{is_builtin_task_selector, merge_args_rendered, parse_task_ref};
     use super::{expand_reference_placeholders, resolve_task_reference_run};
-    use effigy_manifest::{load_task_manifest, LoadedCatalog, TaskSelection};
+    use effigy_manifest::{load_task_manifest, LoadedCatalog, TaskResolveError, TaskSelection};
     use effigy_tasks::CatalogSelectionMode;
     use std::path::Path;
 
@@ -183,13 +183,17 @@ mod tests {
     fn select<'c>(
         selector: &effigy_tasks::TaskSelector,
         catalogs: &'c [LoadedCatalog],
-    ) -> Result<TaskSelection<'c>, String> {
-        let catalog = catalogs.first().ok_or("no catalog")?;
+    ) -> Result<TaskSelection<'c>, TaskResolveError> {
+        let catalog = catalogs
+            .first()
+            .ok_or_else(|| TaskResolveError::not_found("no catalog"))?;
         let task = catalog
             .manifest
             .tasks
             .get(&selector.task_name)
-            .ok_or_else(|| format!("unknown task `{}`", selector.task_name))?;
+            .ok_or_else(|| {
+                TaskResolveError::not_found(format!("unknown task `{}`", selector.task_name))
+            })?;
         Ok(TaskSelection {
             catalog,
             task,

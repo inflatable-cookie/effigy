@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 use super::super::signal;
 
 pub(super) fn terminate_child_graceful(child: &Arc<Mutex<Child>>, timeout: Duration) {
-    signal::send_terminate(&mut crate::locks::lock_tolerant(child));
+    // The direct child's exit is proved by `try_wait` below.
+    let _tree = signal::send_terminate(&mut crate::locks::lock_tolerant(child));
 
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
@@ -21,5 +22,5 @@ pub(super) fn terminate_child_graceful(child: &Arc<Mutex<Child>>, timeout: Durat
         thread::sleep(Duration::from_millis(30));
     }
 
-    signal::send_kill(&mut crate::locks::lock_tolerant(child));
+    let _tree = signal::send_kill(&mut crate::locks::lock_tolerant(child));
 }

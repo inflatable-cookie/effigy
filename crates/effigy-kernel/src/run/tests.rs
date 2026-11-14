@@ -2069,3 +2069,25 @@ fn guest_publication_is_typed_owner_bound_and_required_before_active() {
     run.finish(WorkloadOutcome::Succeeded).unwrap();
     run.settle(&cleanup(&cx), &mut fake).unwrap();
 }
+
+#[test]
+fn the_stored_attachment_mode_is_the_enum_encoding() {
+    // `attachments.mode` holds this enum's own encoding. The column and every
+    // reader ask `stored`/`decode_stored`, so no reader can drift onto a
+    // hand-written literal that silently matches nothing.
+    assert_eq!(AttachMode::Borrow.stored(), "\"Borrow\"");
+    assert_eq!(
+        AttachMode::decode_stored("\"Borrow\"").expect("the stored encoding decodes"),
+        AttachMode::Borrow
+    );
+    // A variant's name is not its stored encoding, and must not be accepted as
+    // one: the mode a row was written with is the only mode that row has.
+    assert!(AttachMode::decode_stored("Borrow").is_err());
+    let exclusive = AttachMode::Exclusive {
+        stop_on_release: true,
+    };
+    assert_eq!(
+        AttachMode::decode_stored(&exclusive.stored()).expect("the stored encoding decodes"),
+        exclusive
+    );
+}

@@ -22,6 +22,18 @@ pub enum OpenReason {
     FollowLogs,
     Shell,
 }
+impl OpenReason {
+    /// The stable identity of this reason. A journal digest depends on it, so
+    /// it is written here rather than derived from `Debug` text that a rename
+    /// would silently change.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::DevServer => "dev_server",
+            Self::FollowLogs => "follow_logs",
+            Self::Shell => "shell",
+        }
+    }
+}
 #[derive(Debug, Clone, Copy)]
 pub enum Deadline {
     At(Instant),

@@ -37,6 +37,10 @@ pub struct BuiltinCommandName {
     /// Explicit spelling that still reaches this built-in after a repository
     /// task has taken `name`.
     pub escape: Option<&'static str>,
+    /// A retired word that keeps its classification because repositories still
+    /// declare tasks with the name. It still answers with its retirement
+    /// refusal, but it is not offered as a live command.
+    pub retired: bool,
 }
 
 const fn shadowable(
@@ -49,6 +53,17 @@ const fn shadowable(
         authority: BuiltinNameAuthority::Shadowable,
         deferred_at_parse,
         escape,
+        retired: false,
+    }
+}
+
+const fn retired_shadowable(name: &'static str, deferred_at_parse: bool) -> BuiltinCommandName {
+    BuiltinCommandName {
+        name,
+        authority: BuiltinNameAuthority::Shadowable,
+        deferred_at_parse,
+        escape: None,
+        retired: true,
     }
 }
 
@@ -58,6 +73,7 @@ const fn reserved(name: &'static str) -> BuiltinCommandName {
         authority: BuiltinNameAuthority::Reserved,
         deferred_at_parse: false,
         escape: None,
+        retired: false,
     }
 }
 
@@ -71,7 +87,7 @@ pub const BUILTIN_COMMAND_NAMES: &[BuiltinCommandName] = &[
     // Retired words stay shadowable: repositories still declare tasks with
     // these names, and a retirement must not start running the built-in over
     // the repository's own task.
-    shadowable("demo", true, None),
+    retired_shadowable("demo", true),
     shadowable("distribution", false, None),
     shadowable("bundle", true, None),
     shadowable("changelog", true, None),
@@ -127,6 +143,18 @@ pub fn is_deferred_builtin_command(name: &str) -> bool {
     builtin_command_name(name).is_some_and(|entry| {
         entry.authority == BuiltinNameAuthority::Shadowable && entry.deferred_at_parse
     })
+}
+
+/// Every live built-in top-level command, in the order the table declares.
+///
+/// The single owner of "which commands exist" for completion menus and
+/// candidate discovery: a retired word keeps its classification but is not
+/// offered as a command to run.
+pub fn live_builtin_command_names() -> impl Iterator<Item = &'static str> {
+    BUILTIN_COMMAND_NAMES
+        .iter()
+        .filter(|entry| !entry.retired)
+        .map(|entry| entry.name)
 }
 
 /// Every built-in top-level command a repository task may shadow.

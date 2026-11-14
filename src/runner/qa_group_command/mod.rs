@@ -96,11 +96,11 @@ fn run_qa_groups_list(
         },
         &catalogs,
     )
-    .map_err(map_tasks_error)?;
+    .map_err(RunnerError::from)?;
     if output_json {
-        render_qa_groups_json(&listing, pretty_json).map_err(map_tasks_error)
+        render_qa_groups_json(&listing, pretty_json).map_err(RunnerError::from)
     } else {
-        render_qa_groups_text(&listing).map_err(map_tasks_error)
+        render_qa_groups_text(&listing).map_err(RunnerError::from)
     }
 }
 
@@ -138,14 +138,14 @@ fn resolve_run_plan(
         resolved_root: &root,
         file_tracking: tracking,
     })
-    .map_err(map_tasks_error)?;
+    .map_err(RunnerError::from)?;
     let mut plan = build_qa_group_plan(effigy_tasks::QaGroupPlanRequest {
         selected: &selected,
         catalogs: &catalogs,
         scope_tokens: scopes,
         today: ManifestLifecycleDate::today_local(),
     })
-    .map_err(map_tasks_error)?;
+    .map_err(RunnerError::from)?;
     let head = git_head_context(&root);
     plan.head = effigy_tasks::QaGroupHeadContext {
         commit: head.0,
@@ -164,10 +164,11 @@ fn run_qa_group(
 ) -> Result<String, RunnerError> {
     let (root, _invocation_cwd, plan) = resolve_run_plan(args, selector, file, scopes)?;
     let render_json = |plan: &effigy_tasks::QaGroupPlan| {
-        render_qa_group_plan_json(plan, true).map_err(map_tasks_error)
+        render_qa_group_plan_json(plan, true).map_err(RunnerError::from)
     };
-    let render_text =
-        |plan: &effigy_tasks::QaGroupPlan| render_qa_group_plan_text(plan).map_err(map_tasks_error);
+    let render_text = |plan: &effigy_tasks::QaGroupPlan| {
+        render_qa_group_plan_text(plan).map_err(RunnerError::from)
+    };
 
     if plan.scope_assessment == ScopeAssessment::NeedsPlanner {
         // A needs_planner plan is not executable and has no run ID; an
@@ -410,10 +411,6 @@ fn resolve_file_inside_root(root: &Path, file: &Path) -> PathBuf {
     } else {
         root.join(file)
     }
-}
-
-fn map_tasks_error(error: effigy_tasks::EffigyTasksError) -> RunnerError {
-    RunnerError::task_invocation(error.to_string())
 }
 
 /// `(commit, worktree state)` for the selected repository. Git identity is
