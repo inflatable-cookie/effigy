@@ -454,7 +454,7 @@ This invocation's complete physical contribution in strict mode:
 | `kernel.db-wal` | 0 | **0 bytes** | — | same |
 | `kernel.db-shm` | 0 | **0 bytes** | — | same |
 | `kernel.db-journal` | 0 | none | — | same |
-| `gates/<scope>.scope` | `s` (created empty when absent) | 0 bytes each | a gate failure refuses the run | `gate.rs::Gate::acquire` (`gate.rs:388-480`; the scope marker is created at `:456-458`), unchanged by strict mode |
+| `gates/<scope>.scope` | `s` (created empty when absent) | 0 bytes each | a gate failure refuses the run | `gate.rs::Gate::acquire` (`gate.rs:388-488`; the scope marker is created at `:457-458`), unchanged by strict mode |
 | `gates/<scope>/<gate>.gate` | `s` files (**no store writer gate**: the route opens no store) | at most 4,096 bytes each, rewritten in place | a failed diagnostic rewrite leaves the old body | `gate::DIAG_MAX` (`gate.rs:28`) written by `write_body` (`gate.rs:865`) and `gate/foreground.rs::set_foreground` (`:49`) |
 | run journal, capture log, run history, per-run scratch | 0 | none | — | as above |
 
