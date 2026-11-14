@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
 
 use crate::runner::error::RunnerError;
-use crate::runner::execute::api::{effective_runtime_inputs, resolve_execution_binding_resolution};
+use crate::runner::execute::binding::resolve_execution_binding_resolution;
 use crate::runner::execute::host_alias::{
     host_alias_resolver, host_plan_env_aliases, HostAliasResolver,
 };
 use crate::runner::execute::planning::ExecutionPreflight;
+use crate::runner::execute::runtime_inputs::effective_runtime_inputs;
 use crate::runner::execute::workspace_seeded::inside_container_handoff;
 use crate::runner::util::render_passthrough_args;
 use effigy_env::resolver::ResolvedEnv;

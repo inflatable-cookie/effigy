@@ -455,7 +455,7 @@ impl Drop for ProcessTreeCleanup {
         if self.active {
             // Child remains unreaped while this exact tree is signaled. Never
             // recover signal authority from a PID in a stale fixture file.
-            effigy_process::terminate_process_tree(self.child.id(), true);
+            let _tree = effigy_process::terminate_process_tree(self.child.id(), true);
             let _ = self.child.wait();
         }
     }
@@ -773,7 +773,7 @@ fn run_guarded_public_case(
             return GuardedPublicOutcome { stdout, stderr };
         }
         if started.elapsed() >= Duration::from_millis(deadline_ms) + Duration::from_secs(10) {
-            effigy_process::terminate_process_tree(cleanup.child.id(), true);
+            let _tree = effigy_process::terminate_process_tree(cleanup.child.id(), true);
             let _ = cleanup.child.wait();
             cleanup.active = false;
             panic!("public-path child exceeded its deadline plus 10s cleanup guard for {mode}");
@@ -1803,6 +1803,9 @@ fn refusal_accounting_overflow_snapshot_is_exact_for_the_failing_stream() {
 
 #[test]
 fn refusal_accounting_secret_partial_output_never_reaches_any_surface() {
+    // Redaction depends on reaching the timeout path, not on the production
+    // one-minute semantic budget used by the positive capture cases.
+    const REDACTION_DEADLINE_MS: u64 = 8_000;
     let (_dir, bin_dir, repo) = fixture("refusal-secrets");
     let policy = policy();
     with_fake_backend(&bin_dir, "docker", || {
@@ -1810,8 +1813,8 @@ fn refusal_accounting_secret_partial_output_never_reaches_any_surface() {
             &repo,
             &policy,
             "hang-secrets",
-            &limits(PUBLIC_SEMANTIC_BUDGET_MS, 64, 64),
-            PUBLIC_SEMANTIC_BUDGET_MS,
+            &limits(REDACTION_DEADLINE_MS, 64, 64),
+            REDACTION_DEADLINE_MS,
         )
         .expect_err("the hanging secret command must hit the deadline");
         let human = error.to_string();

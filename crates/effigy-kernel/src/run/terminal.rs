@@ -27,6 +27,70 @@ const TABLE: &str = "foreground_terminals";
 const COLUMNS: &str = "run_id, checkout, boot, task, outcome, exit_code, signal, \
     cleanup, workload_groups, closed_at";
 
+// Hard maxima for the row's variable-length fields, in bytes (effigy#977).
+//
+// A route that writes this row must have a finite per-invocation footprint.
+// Identity fields are **validated, never cut**: `run_id` is the primary key, so
+// cutting two runs to one key would coalesce their evidence, and a cut
+// `checkout` or `boot` would name a different runtime. An oversized identity is
+// refused and no row is written. The `task` label is descriptive, so it is cut
+// with [`TRUNCATION_MARKER`] and the loss stays visible in the row. The maxima
+// are wide against what the writers produce: a `RunId` renders in 26
+// characters, `CheckoutId::text` in 34, a boot identity is a 36-character UUID
+// and `outcome`/`cleanup` are words from a closed set.
+/// `run_id`: the primary key this journal records.
+pub const RUN_ID_MAX: usize = 64;
+/// `checkout`: a `CheckoutId` in text form.
+pub const CHECKOUT_MAX: usize = 128;
+/// `boot`: a boot identity in text form.
+pub const BOOT_MAX: usize = 64;
+/// `task`: the admitted task's label. Cut, not refused.
+pub const TASK_MAX: usize = 512;
+/// `outcome` and `cleanup`: two of a closed set of words, never cut.
+pub const WORD_MAX: usize = 32;
+/// Ends a label this writer cut. A reader therefore sees the loss in the row
+/// itself; nothing presents a cut value as complete.
+pub const TRUNCATION_MARKER: &str = "[truncated]";
+/// Expired rows one terminal write prunes. The prune is one indexed delete
+/// limited to this many rows, so it touches a fixed number of rows; the
+/// retention sweep still removes every expired row, so the seven-day retention
+/// is unchanged (see `crate::retention`).
+pub const PRUNE_MAX: u32 = 32;
+/// Fixed bytes the stored row adds beside its text: the two INTEGER columns
+/// (8 bytes each), their varint headers, the record header and the cell header.
+pub const ROW_OVERHEAD_BYTES: usize = 64;
+/// The largest row this module writes. Enforced at write time by
+/// [`TerminalRecord::checked`].
+pub const ROW_MAX_BYTES: usize =
+    RUN_ID_MAX + CHECKOUT_MAX + BOOT_MAX + TASK_MAX + 2 * WORD_MAX + ROW_OVERHEAD_BYTES;
+/// The pages one INSERT of a bounded row can dirty (effigy#977).
+///
+/// A store cannot exceed `store::MAX_DB_BYTES` = 1 GiB = 262144 pages of 4096
+/// bytes (`PRAGMA max_page_count`, set and read back on every open), so a
+/// b-tree over it is at most four levels deep: a leaf plus three interior
+/// levels. A split touches at most two pages per level, so one insert touches
+/// at most eight pages in the table and eight in the `closed_at` index. The row
+/// itself never chains to overflow pages: [`ROW_MAX_BYTES`] is smaller than one
+/// page, which this module asserts at compile time.
+pub const INSERT_MAX_PAGES: u32 = 16;
+/// The pages the bounded prune can dirty: one leaf in the table and one in the
+/// `closed_at` index per pruned row, plus a split path for each tree.
+pub const PRUNE_MAX_PAGES: u32 = 2 * PRUNE_MAX + 2 * 8;
+/// The frames one terminal write appends to the write-ahead log — the frames of
+/// its own transaction, not the log file's size (effigy#977).
+///
+/// Its two inputs are enforced: the insert is refused unless the row fits
+/// [`ROW_MAX_BYTES`] and one page ([`TerminalRecord::checked`]), and the prune
+/// is one SQL statement with `LIMIT PRUNE_MAX`. The b-tree term follows from the
+/// store's enforced page cap above. `run_terminal_write_appends_at_most_its_stated_frames`
+/// measures this constant against the statements this module issues.
+pub const WRITE_MAX_PAGES: u32 = INSERT_MAX_PAGES + PRUNE_MAX_PAGES;
+/// [`WRITE_MAX_PAGES`] in bytes at the page size Effigy writes.
+pub const WRITE_MAX_BYTES: u64 = WRITE_MAX_PAGES as u64 * crate::store::PAGE_SIZE;
+/// A row this module writes fits in one page, so it never takes an overflow
+/// chain. Enforced by the build, not only by a test.
+const _: () = assert!(ROW_MAX_BYTES <= crate::store::PAGE_SIZE as usize);
+
 /// One v2 hook-admitted foreground run's settled result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalRecord {
@@ -49,40 +113,140 @@ pub struct TerminalRecord {
 
 /// Writes one run's terminal record. Idempotent by run id; an existing row is
 /// kept, so a repeated settle never rewrites evidence.
+///
+/// The row is bounded and its identities are validated here, at the one place
+/// that writes it (effigy#977): a caller cannot make the row unbounded, and no
+/// two runs can coalesce on a cut key.
 pub fn record(
     cx: &EffectContext,
     root: &StateRoot,
     record: &TerminalRecord,
 ) -> Result<(), StoreError> {
+    let record = record.checked()?;
     let mut store = Store::open(cx, root)?;
-    store.txn(cx, |txn| {
-        txn.conn().execute(
-            "INSERT INTO foreground_terminals \
-             (run_id, checkout, boot, task, outcome, exit_code, signal, cleanup, \
-              workload_groups, closed_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
-             ON CONFLICT(run_id) DO NOTHING",
-            params![
-                record.run_id,
-                record.checkout,
-                record.boot,
-                record.task,
-                record.outcome,
-                record.exit_code,
-                record.signal,
-                record.cleanup,
-                record.workload_groups as i64,
-                record.closed_at_ms,
-            ],
-        )?;
-        // Bounded retention: the record is evidence for a recent run. One
-        // indexed delete per write keeps the table small without a scan.
-        txn.conn().execute(
-            "DELETE FROM foreground_terminals WHERE closed_at < ?1",
-            params![wall_ms() - KEEP_MS],
-        )?;
-        Ok(())
-    })
+    store.txn(cx, |txn| write_row(txn, &record))
+}
+
+/// The two statements one terminal write issues, in its own transaction: the
+/// bounded row insert, then one indexed delete of at most `PRUNE_MAX` expired
+/// rows. Split out so the page and frame arithmetic can be measured against
+/// exactly the statements this module writes.
+pub(crate) fn write_row(
+    txn: &mut crate::store::Txn<'_>,
+    record: &TerminalRecord,
+) -> Result<(), StoreError> {
+    txn.conn().execute(
+        "INSERT INTO foreground_terminals \
+         (run_id, checkout, boot, task, outcome, exit_code, signal, cleanup, \
+          workload_groups, closed_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
+         ON CONFLICT(run_id) DO NOTHING",
+        params![
+            record.run_id,
+            record.checkout,
+            record.boot,
+            record.task,
+            record.outcome,
+            record.exit_code,
+            record.signal,
+            record.cleanup,
+            record.workload_groups as i64,
+            record.closed_at_ms,
+        ],
+    )?;
+    // Bounded retention: the record is evidence for a recent run. One indexed
+    // delete of at most `PRUNE_MAX` expired rows per write keeps this write's
+    // rows fixed; the retention sweep still removes every expired row.
+    txn.conn().execute(
+        "DELETE FROM foreground_terminals WHERE run_id IN (\
+             SELECT run_id FROM foreground_terminals WHERE closed_at < ?1 \
+             ORDER BY closed_at LIMIT ?2)",
+        params![wall_ms() - KEEP_MS, PRUNE_MAX as i64],
+    )?;
+    Ok(())
+}
+
+impl TerminalRecord {
+    /// The row this writer stores, or the reason it may not be written.
+    ///
+    /// Every identity field and every closed-set word must already fit its
+    /// maximum: they name a run, a checkout, a boot or a state, so cutting one
+    /// would make the evidence name something else. Only the descriptive `task`
+    /// label is cut, and then the encoded row is refused if it would exceed
+    /// [`ROW_MAX_BYTES`] — a check that keeps the bound enforced if a field is
+    /// ever added.
+    pub fn checked(&self) -> Result<Self, StoreError> {
+        for (field, value, max) in [
+            ("run_id", &self.run_id, RUN_ID_MAX),
+            ("checkout", &self.checkout, CHECKOUT_MAX),
+            ("boot", &self.boot, BOOT_MAX),
+            ("outcome", &self.outcome, WORD_MAX),
+            ("cleanup", &self.cleanup, WORD_MAX),
+        ] {
+            if value.len() > max {
+                return Err(StoreError::Broken(format!(
+                    "the terminal record's {field} is {} bytes, over its {max}-byte maximum; \
+                     it names the run, so it is refused rather than cut and no record is written",
+                    value.len()
+                )));
+            }
+        }
+        let record = self.bounded();
+        let encoded = record.encoded_bytes();
+        if encoded > ROW_MAX_BYTES {
+            return Err(StoreError::Broken(format!(
+                "the terminal record encodes {encoded} bytes, over the {ROW_MAX_BYTES}-byte \
+                 row maximum"
+            )));
+        }
+        Ok(record)
+    }
+
+    /// The bytes this row stores: every text value plus the fixed overhead of
+    /// its two INTEGER columns and the record and cell headers.
+    pub fn encoded_bytes(&self) -> usize {
+        self.run_id.len()
+            + self.checkout.len()
+            + self.boot.len()
+            + self.task.len()
+            + self.outcome.len()
+            + self.cleanup.len()
+            + ROW_OVERHEAD_BYTES
+    }
+
+    /// The row this writer stores: the descriptive label cut to its maximum,
+    /// ending with [`TRUNCATION_MARKER`] when it was cut. Identities and the
+    /// closed-set words are left exactly as they are; [`Self::checked`] is what
+    /// refuses those. An in-bounds record is returned unchanged.
+    pub fn bounded(&self) -> Self {
+        Self {
+            task: bounded(&self.task, TASK_MAX),
+            ..self.clone()
+        }
+    }
+}
+
+/// `value` cut to at most `max` bytes. A cut value still ends on a character
+/// boundary and ends with the marker, so `max` is a byte ceiling rather than a
+/// hint: `bounded(value, max).len() <= max` always holds.
+fn bounded(value: &str, max: usize) -> String {
+    debug_assert!(max >= TRUNCATION_MARKER.len());
+    if value.len() <= max {
+        return value.to_owned();
+    }
+    let keep = max - TRUNCATION_MARKER.len();
+    let mut cut = 0;
+    for (offset, character) in value.char_indices() {
+        let end = offset + character.len_utf8();
+        if end > keep {
+            break;
+        }
+        cut = end;
+    }
+    let mut bounded = String::with_capacity(cut + TRUNCATION_MARKER.len());
+    bounded.push_str(&value[..cut]);
+    bounded.push_str(TRUNCATION_MARKER);
+    bounded
 }
 
 /// One run's record, `Absent` when the journal has none (never recorded, or

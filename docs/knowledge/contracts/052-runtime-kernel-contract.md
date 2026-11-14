@@ -348,7 +348,14 @@ The later v2 detached-owner claim boundary in §8.7 has different writer rules.
 
 The row holds the run id, the `CheckoutId`, the boot identity, the task, the
 outcome, the exit code or signal, `cleanup`, the acknowledged workload-group
-count and the closed time. It is **evidence, never authority**: it carries no
+count and the closed time. The row is bounded at write time: an oversized
+`run_id`, `checkout`, `boot`, `outcome` or `cleanup` is refused rather than cut,
+so no two runs can coalesce on one key, and only the descriptive `task` label is
+cut and marked. Contract
+[049](049-heavy-validation-admission-contract.md#per-invocation-persistence-effigy977)
+states the maxima, the row maximum and the rest of this route's per-invocation
+persistence. It is
+**evidence, never authority**: it carries no
 PID, PGID or start identity, so no run, provider or built-in may signal,
 reclaim, recover or settle from it. `run status <id>` reports it with
 `evidence_source: "foreground-terminal-record.v1"`; `run logs` reports no
@@ -822,9 +829,19 @@ inode locks and identity diagnostics, with only store-file authority and no
 machine journal initialization. Checkout backend logs use their checkout gate.
 
 SQLite settings: `journal_mode=WAL` (persistent), `synchronous=FULL`,
-`foreign_keys=ON`, `journal_size_limit` and `wal_autocheckpoint` so the log
-stays small, `auto_vacuum=INCREMENTAL` chosen while the store is empty, and a
-`busy_timeout` from the store's own window. Write-ahead logging is what lets a
+`foreign_keys=ON`, `journal_size_limit` = 16 MiB and `wal_autocheckpoint` = 1024
+pages, `auto_vacuum=INCREMENTAL` chosen while the store is empty, and a
+`busy_timeout` from the store's own window. The open reads both log settings
+back and refuses a store whose settings did not apply, and a closing writable
+store attempts `PRAGMA wal_checkpoint(TRUNCATE)` inside a short window, so a
+finished writer carries its log into the store and releases it when no
+concurrent reader needs it. `journal_size_limit` bounds the log after a
+completed checkpoint reset, not its peak: a reader that pins an older snapshot
+stops the reset, and writers keep appending while it does. What one invocation
+of a route contributes is therefore the frames of its own transaction, and
+contract
+[049](049-heavy-validation-admission-contract.md#per-invocation-persistence-effigy977)
+states that contribution and what it excludes. Write-ahead logging is what lets a
 reader and a writer share the store; it replaced the rollback journal in
 effigy#275 after concurrent runs refused each other with `Busy`.
 

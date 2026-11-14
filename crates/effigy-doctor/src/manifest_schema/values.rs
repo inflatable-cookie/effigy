@@ -2,6 +2,31 @@ use toml::Value;
 
 use super::diagnostics::SchemaContext;
 
+pub(super) fn validate_optional_string_field(
+    context: &mut SchemaContext<'_, '_>,
+    value: Option<&Value>,
+    path: &str,
+) {
+    let Some(value) = value else {
+        return;
+    };
+    if !value.is_str() {
+        context.unsupported_value(path, SchemaContext::value_type(value), "expected string");
+    }
+}
+
+/// Every named field that is present must be a string, in declaration order.
+pub(super) fn validate_optional_string_fields(
+    context: &mut SchemaContext<'_, '_>,
+    base_path: &str,
+    table: &toml::map::Map<String, Value>,
+    fields: &[&str],
+) {
+    for field in fields {
+        validate_optional_string_field(context, table.get(*field), &format!("{base_path}.{field}"));
+    }
+}
+
 pub(super) fn validate_optional_integer_field(
     context: &mut SchemaContext<'_, '_>,
     value: Option<&Value>,
@@ -61,6 +86,21 @@ pub(super) fn validate_optional_non_empty_string_field(
     };
     if raw.trim().is_empty() {
         context.unsupported_value(path, "empty string", "expected non-empty string");
+    }
+}
+
+pub(super) fn validate_optional_non_empty_string_fields(
+    context: &mut SchemaContext<'_, '_>,
+    base_path: &str,
+    table: &toml::map::Map<String, Value>,
+    fields: &[&str],
+) {
+    for field in fields {
+        validate_optional_non_empty_string_field(
+            context,
+            table.get(*field),
+            &format!("{base_path}.{field}"),
+        );
     }
 }
 

@@ -106,6 +106,7 @@ pub(in crate::runner) fn wait_views(
 ) -> Vec<ManagedWaitView> {
     let mut views = super::super::managed_wait::WaitLedger::run(repo_root, run)
         .read_all()
+        .unwrap_or_default()
         .into_iter()
         .filter(EntryState::holds_a_wait)
         .map(|state| ManagedWaitView {
@@ -124,7 +125,7 @@ pub(in crate::runner) fn wait_views(
                 state: phase,
             });
         }
-        for state in ledger.read_all() {
+        for state in ledger.read_all().unwrap_or_default() {
             if !state.holds_a_wait() {
                 continue;
             }
@@ -168,12 +169,12 @@ fn shown_state(state: &str) -> &str {
 /// The newest run of this task and profile, projected from the journal.
 pub(in crate::runner) fn status_view(addressed: &Addressed<'_>) -> ManagedStatus {
     let view = task_status(addressed.target, HISTORY_LIMIT);
-    let state = if view.state == "not-recorded" {
+    let state = if view.state == crate::runner::task_engine::TaskState::NotRecorded {
         view.latest
             .as_ref()
             .map_or(view.state.as_str(), |run| run.state.as_str())
     } else {
-        &view.state
+        view.state.as_str()
     };
     let state = shown_state(state).to_owned();
     let mut status = ManagedStatus {
@@ -900,6 +901,7 @@ mod tests {
             assert_eq!(pane.tab_label(), label);
             let text = source
                 .read_all()
+                .expect("observed run")
                 .into_iter()
                 .find_map(|state| state.headless_line());
             assert_eq!(

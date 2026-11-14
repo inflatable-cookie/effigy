@@ -801,7 +801,7 @@ fn assert_nested_invocation_container_default(command: &str, expected_default: &
     )
     .expect("nested invocation should select the child task");
     let (_default_run_in, _systems, containers) =
-        crate::runner::execute::api::effective_task_binding_inputs(
+        crate::runner::execute::runtime_inputs::effective_task_binding_inputs(
             &preflight.invocation_cwd,
             &preflight.catalogs,
             &selection,

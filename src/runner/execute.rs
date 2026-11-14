@@ -1,7 +1,7 @@
 #[path = "execute/api.rs"]
 pub(in crate::runner) mod api;
 #[path = "execute/binding.rs"]
-mod binding;
+pub(in crate::runner) mod binding;
 #[path = "execute/context.rs"]
 mod context;
 #[path = "execute/entry.rs"]
@@ -26,6 +26,8 @@ mod render;
 pub(in crate::runner) mod route;
 #[path = "execute/routing.rs"]
 mod routing;
+#[path = "execute/runtime_inputs.rs"]
+pub(in crate::runner) mod runtime_inputs;
 #[path = "execute/selection.rs"]
 mod selection;
 #[path = "execute/sequence_run.rs"]

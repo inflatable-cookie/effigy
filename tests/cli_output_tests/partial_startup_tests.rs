@@ -610,6 +610,7 @@ fn private_three_scopes_concurrent_resume_replacement_and_cli_refusals() {
     let mut fixture = Fixture::new();
     // Services and persistent exec connections belong to the test, not to any
     // CLI/inventory process group. All three stacks overlap in time.
+    fixture.set_health_budget(0, 4);
     for i in 0..3 {
         fixture.probe(i);
     }

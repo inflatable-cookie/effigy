@@ -1,0 +1,1 @@
+The fault-injection QA stage now shares one custody-fixture build across its kernel selections, and isolated cold-start tests can use four runner slots; slow fixtures use event handoffs or shorter injected deadlines without changing their assertions.

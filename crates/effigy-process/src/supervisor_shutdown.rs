@@ -17,7 +17,9 @@ impl ProcessSupervisor {
         let children = self.all_child_handles();
         for child in &children {
             let mut child = crate::locks::lock_tolerant(child);
-            signal::send_terminate(&mut child);
+            // The direct child's exit is proved by `try_wait` below; a tree
+            // verdict is not this shutdown's claim.
+            let _tree = signal::send_terminate(&mut child);
         }
 
         on_progress(ShutdownProgress::Waiting);
@@ -48,7 +50,7 @@ impl ProcessSupervisor {
             if !still_running {
                 continue;
             }
-            signal::send_kill(&mut child);
+            let _tree = signal::send_kill(&mut child);
             forced += 1;
         }
         on_progress(ShutdownProgress::Complete {

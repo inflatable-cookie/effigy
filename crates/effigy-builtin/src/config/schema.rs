@@ -1,4 +1,4 @@
-use super::super::doc_render::{append_doc_lines, render_prefixed_doc};
+use super::super::doc_render::append_doc_lines;
 use super::super::text_doc::TextDoc;
 use super::docs::{self, ConfigDocProfile};
 use super::request::{ConfigSchemaTarget, ConfigTestRunner};
@@ -7,52 +7,138 @@ use effigy_manifest::{BundleInputSpec, BundleInputType, BundleSpec};
 const HEADER_CANONICAL: &str = "# Canonical strict-valid effigy.toml schema template";
 const HEADER_MINIMAL: &str = "# Minimal strict-valid effigy.toml starter";
 
-pub(super) fn render_builtin_config_schema() -> String {
+/// One documented section of the config template.
+///
+/// The canonical template, the minimal starter and every `--target` view are
+/// assembled from these sections, so a section's text is named in exactly one
+/// place and a template cannot drift from the target view that shows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SchemaSection {
+    Manifest,
+    DocsIndex,
+    DocsPolicyGraph,
+    Containers,
+    PackageManager,
+    Test,
+    Secrets,
+    State,
+    Deploy,
+    Defer,
+    Scan,
+    Tasks,
+}
+
+/// The canonical template's sections, in the order it renders them.
+const CANONICAL_SECTIONS: &[SchemaSection] = &[
+    SchemaSection::Manifest,
+    SchemaSection::DocsIndex,
+    SchemaSection::DocsPolicyGraph,
+    SchemaSection::Containers,
+    SchemaSection::PackageManager,
+    SchemaSection::Test,
+    SchemaSection::Secrets,
+    SchemaSection::State,
+    SchemaSection::Deploy,
+    SchemaSection::Defer,
+    SchemaSection::Scan,
+    SchemaSection::Tasks,
+];
+
+/// The minimal starter's sections: only what a new repository must answer.
+const MINIMAL_SECTIONS: &[SchemaSection] = &[
+    SchemaSection::Manifest,
+    SchemaSection::Containers,
+    SchemaSection::PackageManager,
+    SchemaSection::Test,
+    SchemaSection::Tasks,
+];
+
+impl SchemaSection {
+    /// One section's lines for a template. `include_core` and the runner
+    /// example belong to the test section; the caller decides them once.
+    fn lines(self, include_core: bool, runner: Option<ConfigTestRunner>) -> Vec<&'static str> {
+        let profile = ConfigDocProfile::Schema;
+        match self {
+            Self::Manifest if include_core => docs::manifest_lines(profile),
+            Self::Manifest => docs::manifest_minimal_lines(),
+            // The manifest section's include graph overrides this entry from
+            // `effigy.docs.toml`, and composition refuses an override path the
+            // including manifest does not define. The template therefore
+            // carries the index it shows being overridden.
+            Self::DocsIndex => vec![
+                "[docs_policy.indexes.topic]",
+                "# Repository-owned docs index an agent reads first.",
+                "file = \"docs/README.md\"",
+                "dir = \"docs\"",
+                "",
+            ],
+            Self::DocsPolicyGraph => docs::docs_policy_graph_lines(profile),
+            Self::Containers => docs::containers_lines(profile),
+            Self::PackageManager => docs::package_manager_lines(profile),
+            Self::Test => docs::test_section_lines(
+                include_core,
+                profile,
+                runner.map(ConfigTestRunner::as_str),
+            ),
+            Self::Secrets => docs::secrets_lines(profile),
+            Self::State => docs::state_lines(profile),
+            Self::Deploy => docs::deploy_lines(profile),
+            Self::Defer => docs::defer_lines().to_vec(),
+            Self::Scan => docs::scan_lines().to_vec(),
+            Self::Tasks if include_core => docs::tasks_canonical_lines(profile),
+            Self::Tasks => docs::tasks_minimal_lines().to_vec(),
+        }
+    }
+}
+
+/// The sections a whole template or one `--target` view documents.
+fn sections_for(target: Option<ConfigSchemaTarget>, minimal: bool) -> &'static [SchemaSection] {
+    match target {
+        None if minimal => MINIMAL_SECTIONS,
+        None => CANONICAL_SECTIONS,
+        Some(ConfigSchemaTarget::Manifest) if minimal => &[SchemaSection::Manifest],
+        Some(ConfigSchemaTarget::Manifest) => &[
+            SchemaSection::Manifest,
+            SchemaSection::DocsIndex,
+            SchemaSection::DocsPolicyGraph,
+        ],
+        Some(ConfigSchemaTarget::PackageManager) => &[SchemaSection::PackageManager],
+        Some(ConfigSchemaTarget::Test) => &[SchemaSection::Test],
+        Some(ConfigSchemaTarget::Tasks) => &[SchemaSection::Tasks],
+        Some(ConfigSchemaTarget::Defer) => &[SchemaSection::Defer],
+        Some(ConfigSchemaTarget::Scan) => &[SchemaSection::Scan],
+        Some(ConfigSchemaTarget::Bundle) => {
+            unreachable!("bundle target is rendered dynamically")
+        }
+    }
+}
+
+fn render_schema_template(
+    header: &str,
+    sections: &[SchemaSection],
+    minimal: bool,
+    runner: Option<ConfigTestRunner>,
+) -> String {
     let mut doc = TextDoc::new();
-    doc.line(HEADER_CANONICAL);
+    doc.line(header);
     doc.blank();
-    append_doc_lines(&mut doc, docs::manifest_lines(ConfigDocProfile::Schema));
-    append_doc_lines(
-        &mut doc,
-        docs::docs_policy_graph_lines(ConfigDocProfile::Schema),
-    );
-    append_doc_lines(&mut doc, docs::containers_lines(ConfigDocProfile::Schema));
-    append_doc_lines(
-        &mut doc,
-        docs::package_manager_lines(ConfigDocProfile::Schema),
-    );
-    append_doc_lines(
-        &mut doc,
-        docs::test_section_lines(true, ConfigDocProfile::Schema, None),
-    );
-    append_doc_lines(&mut doc, docs::secrets_lines(ConfigDocProfile::Schema));
-    append_doc_lines(&mut doc, docs::state_lines(ConfigDocProfile::Schema));
-    append_doc_lines(&mut doc, docs::deploy_lines(ConfigDocProfile::Schema));
-    append_doc_lines(&mut doc, docs::defer_lines().iter().copied());
-    append_doc_lines(&mut doc, docs::scan_lines().iter().copied());
-    append_doc_lines(
-        &mut doc,
-        docs::tasks_canonical_lines(ConfigDocProfile::Schema),
-    );
+    for section in sections {
+        append_doc_lines(&mut doc, section.lines(!minimal, runner));
+    }
     doc.finish()
 }
 
+pub(super) fn render_builtin_config_schema() -> String {
+    render_schema_template(HEADER_CANONICAL, CANONICAL_SECTIONS, false, None)
+}
+
 pub(super) fn render_builtin_config_schema_minimal() -> String {
-    let mut doc = TextDoc::new();
-    doc.line(HEADER_MINIMAL);
-    doc.blank();
-    append_doc_lines(&mut doc, docs::manifest_lines(ConfigDocProfile::Schema));
-    append_doc_lines(&mut doc, docs::containers_lines(ConfigDocProfile::Schema));
-    append_doc_lines(
-        &mut doc,
-        docs::package_manager_lines(ConfigDocProfile::Schema),
-    );
-    append_doc_lines(
-        &mut doc,
-        docs::test_section_lines(false, ConfigDocProfile::Schema, Some("vitest")),
-    );
-    append_doc_lines(&mut doc, docs::tasks_minimal_lines().iter().copied());
-    doc.finish()
+    render_schema_template(
+        HEADER_MINIMAL,
+        MINIMAL_SECTIONS,
+        true,
+        Some(ConfigTestRunner::Vitest),
+    )
 }
 
 pub(super) fn render_builtin_config_schema_target(
@@ -63,13 +149,15 @@ pub(super) fn render_builtin_config_schema_target(
         return render_builtin_config_schema_bundle_target(minimal, None, &[]);
     }
 
-    render_prefixed_doc(
+    render_schema_template(
         &format!(
             "{} ({} target)",
             schema_header_prefix(minimal),
             target.as_str()
         ),
-        target_schema_lines(target, minimal),
+        sections_for(Some(target), minimal),
+        minimal,
+        None,
     )
 }
 
@@ -119,18 +207,7 @@ pub(super) fn render_builtin_config_schema_test_target(
         }
     };
 
-    let mut doc = TextDoc::new();
-    doc.line(header);
-    doc.blank();
-    append_doc_lines(
-        &mut doc,
-        docs::test_section_lines(
-            !minimal,
-            ConfigDocProfile::Schema,
-            runner.map(ConfigTestRunner::as_str),
-        ),
-    );
-    doc.finish()
+    render_schema_template(&header, &[SchemaSection::Test], minimal, runner)
 }
 
 fn schema_header_prefix(minimal: bool) -> &'static str {
@@ -138,37 +215,6 @@ fn schema_header_prefix(minimal: bool) -> &'static str {
         HEADER_MINIMAL
     } else {
         HEADER_CANONICAL
-    }
-}
-
-fn target_schema_lines(
-    target: ConfigSchemaTarget,
-    minimal: bool,
-) -> Box<dyn Iterator<Item = &'static str>> {
-    match target {
-        ConfigSchemaTarget::Manifest if minimal => {
-            Box::new(docs::manifest_lines(ConfigDocProfile::Schema).into_iter())
-        }
-        ConfigSchemaTarget::Manifest => Box::new(
-            docs::manifest_lines(ConfigDocProfile::Schema)
-                .into_iter()
-                .chain(docs::docs_policy_graph_lines(ConfigDocProfile::Schema)),
-        ),
-        ConfigSchemaTarget::Bundle => unreachable!("bundle target is rendered dynamically"),
-        ConfigSchemaTarget::PackageManager => {
-            Box::new(docs::package_manager_lines(ConfigDocProfile::Schema).into_iter())
-        }
-        ConfigSchemaTarget::Test => {
-            Box::new(docs::test_section_lines(!minimal, ConfigDocProfile::Schema, None).into_iter())
-        }
-        ConfigSchemaTarget::Tasks if minimal => {
-            Box::new(docs::tasks_minimal_lines().iter().copied())
-        }
-        ConfigSchemaTarget::Tasks => {
-            Box::new(docs::tasks_canonical_lines(ConfigDocProfile::Schema).into_iter())
-        }
-        ConfigSchemaTarget::Defer => Box::new(docs::defer_lines().iter().copied()),
-        ConfigSchemaTarget::Scan => Box::new(docs::scan_lines().iter().copied()),
     }
 }
 
@@ -270,3 +316,7 @@ fn render_bundle_placeholder_line(name: &str, value_type: BundleInputType) -> St
 
     format!("{name} = {value}")
 }
+
+#[cfg(test)]
+#[path = "schema/tests.rs"]
+mod tests;

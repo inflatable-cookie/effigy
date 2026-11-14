@@ -29,10 +29,11 @@ use effigy_gateway::routes::Route;
 use effigy_manifest::TaskSelection;
 
 use crate::runner::error::RunnerError;
-use crate::runner::execute::api::{
-    effective_runtime_inputs, resolve_execution_binding_resolution, ContainerExecutionBinding,
+use crate::runner::execute::binding::{
+    resolve_execution_binding_resolution, ContainerExecutionBinding,
 };
 use crate::runner::execute::planning::ExecutionPreflight;
+use crate::runner::execute::runtime_inputs::effective_runtime_inputs;
 
 /// The alias resolution an Effigy-owned host run owes its environment, or
 /// `None` for a checkout that keeps its declared names, for a run Effigy does

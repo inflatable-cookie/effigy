@@ -29,9 +29,8 @@ use crate::runner::container_runtime_prep::{
     activate_container_runtime_for_task, build_runtime_activation_plan, ActivationRequest,
 };
 use crate::runner::db_services::collect_manifest_database_services;
-use crate::runner::execute::api::{
-    resolve_execution_binding_resolution, run_manifest_task_with_surface_and_env,
-};
+use crate::runner::execute::api::run_manifest_task_with_surface_and_env;
+use crate::runner::execute::binding::resolve_execution_binding_resolution;
 use crate::runner::manifest::load_task_manifest;
 use crate::runner::runtime_session_context::{with_runtime_session_context, RuntimeSessionContext};
 use effigy_state::artifact::{infer_kind_from_primary_files, OrasCliArtifactAdapter};

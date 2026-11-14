@@ -850,3 +850,76 @@ mounts = [
         findings: None,
     },
 ];
+
+/// A kebab spelling of a release field is the same field: a wrong value is
+/// reported under the canonical path instead of being skipped.
+#[test]
+fn a_kebab_aliased_field_is_checked_under_its_canonical_path() {
+    let sink = validate(
+        r#"
+[release]
+version-file = 42
+"#,
+    );
+    assert_eq!(sink.findings.len(), 1, "{:?}", sink.findings);
+    assert!(
+        sink.findings[0].evidence.contains("release.version_file"),
+        "{:?}",
+        sink.findings
+    );
+}
+
+/// Every string field of a container entry is checked from one field table, in
+/// declaration order, so a second wrong field is not skipped.
+#[test]
+fn every_string_field_of_a_container_entry_is_checked() {
+    let sink = validate(
+        r#"
+[containers.web]
+driver = 1
+compose_file = false
+"#,
+    );
+    let evidence: Vec<&str> = sink
+        .findings
+        .iter()
+        .map(|finding| finding.evidence.as_str())
+        .collect();
+    assert_eq!(evidence.len(), 2, "{evidence:?}");
+    assert!(
+        evidence[0].contains("containers.web.driver"),
+        "{evidence:?}"
+    );
+    assert!(
+        evidence[1].contains("containers.web.compose_file"),
+        "{evidence:?}"
+    );
+}
+
+/// Nested listener fields are checked through the shared value helpers: a
+/// wrong-typed `path` and `status` are both reported.
+#[test]
+fn nested_listener_fields_are_checked_through_the_shared_helpers() {
+    let sink = validate(
+        r#"
+[[containers.web.host_processes]]
+name = "api"
+run = "serve"
+listener = { bind = "127.0.0.1:8080", readiness = { path = 7, status = "ready" } }
+"#,
+    );
+    let evidence: Vec<&str> = sink
+        .findings
+        .iter()
+        .map(|finding| finding.evidence.as_str())
+        .collect();
+    assert_eq!(evidence.len(), 2, "{evidence:?}");
+    assert!(
+        evidence[0].contains("listener.readiness.path"),
+        "{evidence:?}"
+    );
+    assert!(
+        evidence[1].contains("listener.readiness.status"),
+        "{evidence:?}"
+    );
+}

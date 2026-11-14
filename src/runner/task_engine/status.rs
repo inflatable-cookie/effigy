@@ -50,11 +50,66 @@ pub(in crate::runner) struct RunView {
     pub(in crate::runner) boot: Option<String>,
 }
 
+/// What a task's status is. The vocabulary is decoded here, once, so a
+/// renderer, a JSON envelope and a counter all name the same fact instead of
+/// comparing and formatting their own strings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::runner) enum TaskState {
+    /// A foreground gate held by a verified live owner.
+    Running,
+    /// An interrupted or stopping live run.
+    Interrupted,
+    Stopping,
+    /// No run journal record has ever been written for this task.
+    NotRecorded,
+    /// The evidence could not be read, so nothing is claimed.
+    Unknown,
+    /// A terminal outcome or residue the kernel journal recorded, by the
+    /// kernel's own name (`failed`, `cancelled`, `failed-cleanup`, …).
+    Recorded(String),
+}
+
+impl TaskState {
+    pub(in crate::runner) fn from_label(label: &str) -> Self {
+        match label {
+            "running" => Self::Running,
+            "interrupted" => Self::Interrupted,
+            "stopping" => Self::Stopping,
+            "not-recorded" => Self::NotRecorded,
+            "unknown" => Self::Unknown,
+            other => Self::Recorded(other.to_owned()),
+        }
+    }
+
+    pub(in crate::runner) fn as_str(&self) -> &str {
+        match self {
+            Self::Running => "running",
+            Self::Interrupted => "interrupted",
+            Self::Stopping => "stopping",
+            Self::NotRecorded => "not-recorded",
+            Self::Unknown => "unknown",
+            Self::Recorded(label) => label,
+        }
+    }
+}
+
+impl std::fmt::Display for TaskState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Serialize for TaskState {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub(in crate::runner) struct TaskStatusView {
     /// `running`, `stopping`, `interrupted`, a recorded residue, `not-recorded`
     /// or `unknown`.
-    pub(in crate::runner) state: String,
+    pub(in crate::runner) state: TaskState,
     /// The newest run while it is open (live or interrupted).
     pub(in crate::runner) current: Option<RunView>,
     /// The newest closed run.
@@ -77,7 +132,7 @@ pub(in crate::runner) fn task_status(target: &TaskTarget, limit: usize) -> TaskS
     let rows = match Gate::foreground_holders(&cx, &root) {
         Observed::Verified(rows, _) => rows,
         Observed::Unknown(reason) => {
-            view.state = "unknown".into();
+            view.state = TaskState::Unknown;
             view.warnings
                 .push(format!("foreground custody unavailable: {reason}"));
             return view;
@@ -98,7 +153,7 @@ pub(in crate::runner) fn task_status(target: &TaskTarget, limit: usize) -> TaskS
         live.entry(run).or_insert(row);
     }
     if live.len() > 1 {
-        view.state = "unknown".into();
+        view.state = TaskState::Unknown;
         view.warnings
             .push("conflicting foreground gate bindings".into());
     } else if let Some((run, row)) = live.into_iter().next() {
@@ -110,7 +165,11 @@ pub(in crate::runner) fn task_status(target: &TaskTarget, limit: usize) -> TaskS
                 _
             )
         );
-        view.state = if verified { "running" } else { "unknown" }.into();
+        view.state = if verified {
+            TaskState::Running
+        } else {
+            TaskState::Unknown
+        };
         if !verified {
             view.warnings.push("foreground gate remains held but its invoking owner is unavailable; cleanup or residue cannot be reconstructed".into());
         }
@@ -180,7 +239,7 @@ pub(in crate::runner) fn project_terminal(record: &effigy_kernel::run::TerminalR
 /// Pure read (R2): opens nothing for writing and mints no checkout token.
 fn durable_status(target: &TaskTarget, limit: usize) -> TaskStatusView {
     let mut view = TaskStatusView {
-        state: "not-recorded".to_owned(),
+        state: TaskState::NotRecorded,
         current: None,
         latest: None,
         history: Vec::new(),
@@ -191,7 +250,7 @@ fn durable_status(target: &TaskTarget, limit: usize) -> TaskStatusView {
         Ok(Some(checkout)) => checkout,
         Ok(None) => return view,
         Err(error) => {
-            view.state = "unknown".to_owned();
+            view.state = TaskState::Unknown;
             view.warnings
                 .push(format!("checkout identity is unreadable: {error}"));
             return view;
@@ -200,7 +259,7 @@ fn durable_status(target: &TaskTarget, limit: usize) -> TaskStatusView {
     let owner = match target.owner(checkout) {
         Ok(owner) => owner,
         Err(error) => {
-            view.state = "unknown".to_owned();
+            view.state = TaskState::Unknown;
             view.warnings.push(error.to_string());
             return view;
         }
@@ -210,7 +269,7 @@ fn durable_status(target: &TaskTarget, limit: usize) -> TaskStatusView {
         Observed::Verified(root, _) => root,
         Observed::Absent(_) => return view,
         Observed::Unknown(reason) => {
-            view.state = "unknown".to_owned();
+            view.state = TaskState::Unknown;
             view.warnings
                 .push(format!("state root is unreadable: {reason}"));
             return view;
@@ -220,7 +279,7 @@ fn durable_status(target: &TaskTarget, limit: usize) -> TaskStatusView {
         Observed::Verified(reader, _) => reader,
         Observed::Absent(_) => return view,
         Observed::Unknown(reason) => {
-            view.state = "unknown".to_owned();
+            view.state = TaskState::Unknown;
             view.warnings
                 .push(format!("run journal is unreadable: {reason}"));
             return view;
@@ -230,7 +289,7 @@ fn durable_status(target: &TaskTarget, limit: usize) -> TaskStatusView {
         Observed::Verified(runs, _) => runs,
         Observed::Absent(_) => Vec::new(),
         Observed::Unknown(reason) => {
-            view.state = "unknown".to_owned();
+            view.state = TaskState::Unknown;
             view.warnings
                 .push(format!("run journal is unreadable: {reason}"));
             return view;
@@ -256,7 +315,7 @@ fn durable_status(target: &TaskTarget, limit: usize) -> TaskStatusView {
             }
         }
         if index == 0 && summary.phase != Phase::Closed {
-            view.state = run.state.clone();
+            view.state = TaskState::from_label(&run.state);
             if run.state == "interrupted" {
                 view.next = Some(rerun_command(target, summary));
             }
@@ -266,7 +325,7 @@ fn durable_status(target: &TaskTarget, limit: usize) -> TaskStatusView {
             && summary.cleanup_complete == Some(false)
             && !summary.acknowledged
         {
-            view.state = "failed-cleanup".into();
+            view.state = TaskState::Recorded("failed-cleanup".to_owned());
             view.current = Some(run.clone());
             view.next = Some(rerun_command(target, summary));
         }

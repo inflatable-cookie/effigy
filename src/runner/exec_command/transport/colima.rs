@@ -14,7 +14,7 @@ use effigy_containers::{
 
 use crate::runner::error::RunnerError;
 
-use super::{resolve_host_program, ParsedComposeExec};
+use super::argv::{resolve_host_program, ParsedComposeExec};
 
 static SERVICE_CONTAINER_NAME_CACHE: OnceLock<Mutex<std::collections::HashMap<String, String>>> =
     OnceLock::new();
@@ -648,7 +648,7 @@ mod tests {
         let warmup_deadline = Instant::now() + Duration::from_secs(30);
         let warmup_capture =
             move |root_dir: &Path, program: &std::ffi::OsStr, args: &[OsString]| {
-                crate::runner::exec_command::transport::run_command_capture_until(
+                crate::runner::exec_command::bounded::run_command_capture_until(
                     root_dir,
                     program,
                     args,
@@ -684,7 +684,7 @@ mod tests {
         let started = Instant::now();
         let deadline = started + Duration::from_secs(3);
         let capture = move |root_dir: &Path, program: &std::ffi::OsStr, args: &[OsString]| {
-            crate::runner::exec_command::transport::run_command_capture_until(
+            crate::runner::exec_command::bounded::run_command_capture_until(
                 root_dir,
                 program,
                 args,
@@ -767,7 +767,7 @@ mod tests {
             .checked_sub(Duration::from_secs(1))
             .expect("expired instant");
         let capture = move |root_dir: &Path, program: &std::ffi::OsStr, args: &[OsString]| {
-            crate::runner::exec_command::transport::run_command_capture_until(
+            crate::runner::exec_command::bounded::run_command_capture_until(
                 root_dir,
                 program,
                 args,

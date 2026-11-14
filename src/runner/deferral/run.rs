@@ -25,7 +25,7 @@ use crate::runner::environment::emit_held_notice;
 use crate::runner::error::RunnerError;
 use crate::runner::exec_command::append_color_exec_env;
 use crate::runner::exec_command::run_compose_exec;
-use crate::runner::execute::api::{
+use crate::runner::execute::binding::{
     resolve_execution_binding_resolution, ContainerExecutionBinding,
 };
 use crate::runner::runtime_session_context::{

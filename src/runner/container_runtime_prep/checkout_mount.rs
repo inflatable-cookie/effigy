@@ -3,7 +3,6 @@
 
 use std::path::Path;
 
-use effigy_containers::compose::compose_args;
 use effigy_containers::EffectiveContainerPolicy;
 
 use crate::runner::error::RunnerError;
@@ -23,55 +22,49 @@ pub(super) fn verify_live_checkout_mount(
         repo_root,
         working_dir,
         |probe_path| {
-            let workdir = working_dir.to_string_lossy();
-            let args = compose_args(
-                policy,
-                [
-                    "exec",
-                    "-T",
-                    "-w",
-                    workdir.as_ref(),
-                    policy.primary_service.as_str(),
-                    "cat",
-                    probe_path,
-                ],
-            );
+            let tail = probe_tail(policy, working_dir, &["cat", probe_path]);
             let output = run_verified_prep_capture(
                 repo_root,
                 policy,
                 binding,
-                &args,
+                &tail,
                 "checkout mount read probe",
             )
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
             Ok(output.stdout)
         },
         |probe_path| {
-            let workdir = working_dir.to_string_lossy();
-            let args = compose_args(
-                policy,
-                [
-                    "exec",
-                    "-T",
-                    "-w",
-                    workdir.as_ref(),
-                    policy.primary_service.as_str(),
-                    "touch",
-                    "--",
-                    probe_path,
-                ],
-            );
+            let tail = probe_tail(policy, working_dir, &["touch", "--", probe_path]);
             run_verified_prep_capture(
                 repo_root,
                 policy,
                 binding,
-                &args,
+                &tail,
                 "checkout mount write probe",
             )
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
             Ok(())
         },
     )
+}
+
+/// The `compose exec` tail one probe runs: the environment's working directory,
+/// its service and the probe command. The plan builder spells the single
+/// Compose prefix, so a probe never carries one of its own.
+fn probe_tail(
+    policy: &EffectiveContainerPolicy,
+    working_dir: &Path,
+    command: &[&str],
+) -> Vec<std::ffi::OsString> {
+    let mut tail = vec![
+        std::ffi::OsString::from("exec"),
+        std::ffi::OsString::from("-T"),
+        std::ffi::OsString::from("-w"),
+        working_dir.as_os_str().to_owned(),
+        std::ffi::OsString::from(policy.primary_service.as_str()),
+    ];
+    tail.extend(command.iter().map(std::ffi::OsString::from));
+    tail
 }
 
 pub(super) fn verify_live_checkout_mount_using(
@@ -142,7 +135,7 @@ mod tests {
     use std::path::Path;
 
     use super::super::tests::temp_test_dir;
-    use super::verify_live_checkout_mount_using;
+    use super::{probe_tail, verify_live_checkout_mount_using};
 
     #[test]
     fn checkout_mount_probe_accepts_selected_checkout_and_rejects_sibling() {
@@ -180,5 +173,71 @@ mod tests {
         assert_eq!(fs::read_dir(&sibling).unwrap().count(), 0);
         fs::remove_dir_all(first).unwrap();
         fs::remove_dir_all(sibling).unwrap();
+    }
+
+    /// The probe plan is the invocation the prep executor is handed. It must
+    /// carry the Compose prefix once and target the environment's service in
+    /// its working directory, for both probes.
+    #[test]
+    fn each_checkout_probe_plan_targets_the_service_once() {
+        let root =
+            crate::runner::container_runtime_prep::tests::temp_test_dir("checkout-probe-plan");
+        let compose = root.join("docker-compose.yml");
+        std::fs::write(&compose, "services: {}\n").unwrap();
+        let policy = crate::runner::test_support::effective_container_policy(
+            "stack",
+            "demo-stack",
+            "workspace",
+            compose,
+        );
+        for command in [&["cat", "probe"][..], &["touch", "--", "probe"][..]] {
+            let tail = probe_tail(&policy, Path::new("/workspace"), command);
+            let plan = effigy_runtime::container_manager::compose_invocation_plan_from_tail_args(
+                &root,
+                &policy,
+                tail,
+                effigy_containers::ContainerAction::Exec,
+                "checkout mount probe",
+            )
+            .expect("probe plan");
+            let rendered = plan
+                .args
+                .iter()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                rendered
+                    .iter()
+                    .filter(|token| token.as_str() == "compose")
+                    .count(),
+                1,
+                "one Compose prefix for {command:?}: {rendered:?}"
+            );
+            let mut expected = ["exec", "-T", "-w", "/workspace", "workspace"]
+                .map(str::to_owned)
+                .to_vec();
+            expected.extend(command.iter().map(|value| (*value).to_owned()));
+            let exec = rendered
+                .iter()
+                .position(|token| token == "exec")
+                .expect("compose exec");
+            assert_eq!(&rendered[exec..], expected.as_slice());
+            let parsed = crate::runner::exec_command::parse_compose_exec_args(&plan.args)
+                .expect("the plan parses as the executor reads it");
+            assert_eq!(parsed.service, "workspace");
+            assert_eq!(
+                parsed.working_dir.as_deref(),
+                Some(std::ffi::OsStr::new("/workspace"))
+            );
+            assert!(!parsed.tty);
+            assert_eq!(
+                parsed.command,
+                command
+                    .iter()
+                    .map(std::ffi::OsString::from)
+                    .collect::<Vec<_>>()
+            );
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

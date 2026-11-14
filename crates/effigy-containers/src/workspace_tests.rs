@@ -69,7 +69,7 @@ container = { image = "node:20", mount = "." }
 #[cfg(test)]
 mod structured_mount_tests {
     use super::super::*;
-    use effigy_manifest::{ManifestSystemMount, ManifestSystemMountTable};
+    use effigy_manifest::{ManifestSystemMount, ManifestSystemMountSpec, ManifestSystemMountTable};
     use std::fs;
 
     /// A fixture directory owned until this test process exits, so nothing is
@@ -85,8 +85,9 @@ mod structured_mount_tests {
         let source = repo_root.join("shared");
         fs::create_dir_all(&source).expect("mkdir source");
         let workspace_root = Path::new("/workspace-root");
-        let legacy =
-            ManifestSystemMount::Spec("shared:/workspace-root/shared:ro,cached".to_owned());
+        let legacy = ManifestSystemMount::Spec(ManifestSystemMountSpec::parse(
+            "shared:/workspace-root/shared:ro,cached",
+        ));
         let structured = ManifestSystemMount::Table(ManifestSystemMountTable {
             member: None,
             source: Some("shared".to_owned()),
@@ -172,7 +173,7 @@ mod structured_mount_tests {
     #[test]
     fn absent_sibling_mount_is_skipped_instead_of_aborting() {
         let repo_root = temp_dir("absent-sibling");
-        let legacy = ManifestSystemMount::Spec("../book".to_owned());
+        let legacy = ManifestSystemMount::Spec(ManifestSystemMountSpec::parse("../book"));
         let structured = ManifestSystemMount::Table(ManifestSystemMountTable {
             member: None,
             source: Some("../book".to_owned()),

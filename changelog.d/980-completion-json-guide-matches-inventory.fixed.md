@@ -1,0 +1,1 @@
+The documented `effigy.completion.v2` payload now matches what completion emits: `commands` lists each live built-in command once, in the CLI inventory's order, including `rhai`, `skill`, `run`, `runs` and `uninstall`. The payload schema id and shape are unchanged; the retired `demo` word is never offered.

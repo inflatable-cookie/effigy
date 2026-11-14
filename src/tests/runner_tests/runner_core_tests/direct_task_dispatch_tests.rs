@@ -54,7 +54,7 @@ fn direct_foreground_dispatch_stays_in_memory_when_configured_program_is_inactiv
     });
 
     let status = root_task_status_for_tests(&root, "echo");
-    assert_eq!(status.state, "not-recorded", "{status:?}");
+    assert_eq!(status.state.as_str(), "not-recorded", "{status:?}");
     assert!(status.latest.is_none());
     assert!(status.history.is_empty());
 }
@@ -107,7 +107,7 @@ fn direct_foreground_dispatch_succeeds_without_recording_runtime_history() {
 
     assert_file_text_equals(&marker, "ok");
     let status = root_task_status_for_tests(&root, "echo");
-    assert_eq!(status.state, "not-recorded", "{status:?}");
+    assert_eq!(status.state.as_str(), "not-recorded", "{status:?}");
     assert!(status.latest.is_none());
     assert!(status.history.is_empty());
     assert!(!root.join(".effigy/state/kernel.db").exists());
@@ -131,7 +131,7 @@ fn direct_foreground_dispatch_reports_failure_without_recording_history() {
     }
 
     let status = root_task_status_for_tests(&root, "fail");
-    assert_eq!(status.state, "not-recorded", "{status:?}");
+    assert_eq!(status.state.as_str(), "not-recorded", "{status:?}");
     assert!(status.latest.is_none());
     assert!(status.history.is_empty());
 }
@@ -160,7 +160,7 @@ fn direct_foreground_dispatch_reports_cancellation_without_recording_history() {
     }
 
     let status = root_task_status_for_tests(&root, "stop");
-    assert_eq!(status.state, "not-recorded", "{status:?}");
+    assert_eq!(status.state.as_str(), "not-recorded", "{status:?}");
     assert!(status.latest.is_none());
     assert!(status.history.is_empty());
 }
@@ -187,7 +187,11 @@ fn direct_task_dispatch_refused_by_a_live_holder_records_no_run_of_its_own() {
     }
 
     let status = root_task_status_for_tests(&root, "echo");
-    assert_eq!(status.state, "running", "the holder's run is untouched");
+    assert_eq!(
+        status.state.as_str(),
+        "running",
+        "the holder's run is untouched"
+    );
     assert_eq!(status.history.len(), 1, "a refused admission writes no run");
     holder.close(effigy_kernel::outcome::WorkloadOutcome::Succeeded);
 }

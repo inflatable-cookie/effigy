@@ -6,10 +6,25 @@ use crate::observe::Observed;
 use crate::store::StoreReader;
 
 pub(super) const KIND: &str = "kernel:attachment";
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AttachMode {
     Borrow,
     Exclusive { stop_on_release: bool },
+}
+impl AttachMode {
+    /// The exact text `attachments.mode` stores.
+    ///
+    /// The column holds this enum's JSON encoding. Every writer and every
+    /// reader asks here, never a hand-written literal: a change to the
+    /// representation then moves the column and its readers together instead of
+    /// leaving a literal that silently matches nothing.
+    pub(crate) fn stored(self) -> String {
+        serde_json::to_string(&self).expect("attachment mode encoding")
+    }
+    /// Decode the stored text back into the typed mode it was written from.
+    pub(crate) fn decode_stored(text: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(text)
+    }
 }
 #[derive(Debug, Clone)]
 pub struct AttachmentTicket {
@@ -132,7 +147,7 @@ pub(crate) fn holder_attachment(
             env.resource.name().to_string(),
             holder.to_string(),
             env.generation.get() as i64,
-            serde_json::to_string(&mode)?
+            mode.stored()
         ],
     )?;
     journal::write_effect(
@@ -438,7 +453,7 @@ impl Attachments {
                 let spec = EffectSpec { target:env.clone(),kind:KIND.into(),payload:serde_json::to_value(mode)?,settlement:Settlement::Reconcile(Value::Null),required:true };
                 let sequence=journal::insert_effect(txn,run.id,&spec)?;
                 txn.conn().execute("INSERT INTO attachments(environment,run_id,env_generation,mode,state) VALUES (?1,?2,?3,?4,'attached')",
-                    params![env.resource.name().to_string(),run.id.to_string(),env.generation.get() as i64,serde_json::to_string(&mode)?])?;
+                    params![env.resource.name().to_string(),run.id.to_string(),env.generation.get() as i64,mode.stored()])?;
                 journal::write_effect(txn,run.id,sequence,EffectState::Applied,Some(&Value::Bool(true)),None)?;
                 Ok::<_,RunError>(sequence)
             })?;

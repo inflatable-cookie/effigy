@@ -128,6 +128,12 @@ impl ForegroundRun {
             ));
         }
         let ids = aliases::gates(root, &inv.spec().owner, &ids)?;
+        if ids.len() > crate::gate::FOREGROUND_GATES_MAX {
+            return Err(RunError::refused(
+                "a foreground admission holds at most the task's gate and one shared lock, \
+                 with each one's checkout-alias spelling",
+            ));
+        }
         let mut gate = Gate::acquire(cx, root, &ids, opts.wait)?;
         // Declared shared exclusion gates remain held too; adapter gates
         // cannot reach this local-only path. The held flock is the exclusion: a

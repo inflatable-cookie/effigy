@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use super::api::ContainerExecutionBinding;
+use super::binding::ContainerExecutionBinding;
 pub(super) use crate::runner::container_runtime::inside_container_handoff;
 use crate::runner::error::RunnerError;
 use crate::runner::runtime_session_context::PublicWorkspaceCleanupOverride;

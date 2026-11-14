@@ -31,15 +31,41 @@ pub const SCHEMA_VERSION: i64 = 1;
 pub const DB_NAME: &str = "kernel.db";
 /// Size bound for `kernel.db`; retention keeps it far below this.
 pub const MAX_DB_BYTES: u64 = 1 << 30;
-const PAGE_SIZE: u64 = 4096;
+/// The page size this kernel writes: SQLite's own default, and the unit every
+/// sidecar bound below is stated in. A store created by another build keeps
+/// its own page size, so a bound derived from this constant is a maximum for
+/// the stores Effigy creates, and scales with `PRAGMA page_size` otherwise.
+pub const PAGE_SIZE: u64 = 4096;
 /// The least one write waits for the store writer gate. Admission uses it
 /// even when the caller's remaining operation budget is shorter (§5.5).
 pub const STORE_BUSY_WAIT: Duration = Duration::from_secs(30);
 /// Settle and outcome writes keep trying long after any workload deadline:
 /// a busy store must never cost a run its recorded outcome (K4).
 pub const SETTLE_BUSY_WAIT: Duration = Duration::from_secs(120);
-/// A checkpoint truncates the write-ahead log to at most this size.
-const WAL_LIMIT_BYTES: u64 = 16 << 20;
+/// The most the write-ahead log may be when a checkpoint resets it (effigy#977).
+///
+/// `PRAGMA journal_size_limit` truncates the log to this at the end of a
+/// completed checkpoint reset, so it bounds the log *after* a reset and not the
+/// log's peak: a reader holding an older snapshot stops a checkpoint from
+/// completing, and writers keep appending beyond this while it does
+/// (sqlite.org/wal.html). The per-invocation contribution this route relies on
+/// is the frames of its own transaction, stated in contract 049's
+/// "Per-invocation persistence" section.
+pub const WAL_LIMIT_BYTES: u64 = 16 << 20;
+/// Pages one connection appends before SQLite attempts a checkpoint
+/// (effigy#977): a quarter of [`WAL_LIMIT_BYTES`]. An attempt is not a reset; it
+/// completes only when no reader pins an older snapshot.
+pub const WAL_AUTOCHECKPOINT_PAGES: u32 = (WAL_LIMIT_BYTES / PAGE_SIZE / 4) as u32;
+/// The pages the fixed schema occupies when this build creates a store
+/// (effigy#977). The statements are constants (`SCHEMA_V1`, the additive tables
+/// and their indexes), so a fresh store's size is a constant: one page per table
+/// and index, the schema page, the header and the auto-vacuum pointer maps.
+/// `store_fresh_schema_is_bounded` holds a created store to this.
+pub const SCHEMA_MAX_PAGES: u32 = 64;
+/// Wait one store close allows for its own truncating checkpoint. A log a
+/// concurrent reader still needs is left at its bounded size rather than stall
+/// the run that is closing (§5.5).
+const CLOSE_CHECKPOINT_WAIT: Duration = Duration::from_millis(250);
 const BUSY_RETRY_MIN: Duration = Duration::from_millis(10);
 const BUSY_RETRY_MAX: Duration = Duration::from_millis(250);
 /// The writer gate every store transaction holds: the store resource itself.
@@ -466,11 +492,69 @@ impl Store {
         self.conn.execute_batch(&format!(
             "PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF; \
              PRAGMA cell_size_check=ON; PRAGMA max_page_count={}; \
-             PRAGMA journal_size_limit={WAL_LIMIT_BYTES}; PRAGMA wal_autocheckpoint=1000;",
+             PRAGMA journal_size_limit={WAL_LIMIT_BYTES}; \
+             PRAGMA wal_autocheckpoint={WAL_AUTOCHECKPOINT_PAGES};",
             MAX_DB_BYTES / PAGE_SIZE
         ))?;
+        self.check_sidecar_bounds()?;
         self.schema(&patient, BusyWait::Context)?;
         Ok(())
+    }
+    /// Reads back the settings that bound this store's side files (effigy#977).
+    /// Both are per connection, so this is the same connection that writes.
+    pub fn sidecar_bounds(&self) -> Result<SidecarBounds, StoreError> {
+        let limit: i64 = self
+            .conn
+            .query_row("PRAGMA journal_size_limit", [], |row| row.get(0))?;
+        let pages: i64 = self
+            .conn
+            .query_row("PRAGMA wal_autocheckpoint", [], |row| row.get(0))?;
+        let page_size: i64 = self
+            .conn
+            .query_row("PRAGMA page_size", [], |row| row.get(0))?;
+        Ok(SidecarBounds {
+            journal_size_limit: limit.max(0) as u64,
+            wal_autocheckpoint: pages.max(0) as u32,
+            page_size: page_size.max(0) as u64,
+        })
+    }
+    /// Refuses an open whose settings did not apply, so no write happens under
+    /// a bound this connection never set.
+    fn check_sidecar_bounds(&self) -> Result<(), StoreError> {
+        let bounds = self.sidecar_bounds()?;
+        if bounds.journal_size_limit != WAL_LIMIT_BYTES
+            || bounds.wal_autocheckpoint != WAL_AUTOCHECKPOINT_PAGES
+        {
+            return Err(StoreError::Broken(format!(
+                "the store's side-file bounds did not apply: journal_size_limit is {} \
+                 (expected {WAL_LIMIT_BYTES}) and wal_autocheckpoint is {} (expected \
+                 {WAL_AUTOCHECKPOINT_PAGES})",
+                bounds.journal_size_limit, bounds.wal_autocheckpoint
+            )));
+        }
+        Ok(())
+    }
+    /// The number of frames in this store's write-ahead log, from a passive
+    /// checkpoint attempt (effigy#977). Passive never waits for another
+    /// connection and never blocks a reader, so this is a plain observation of
+    /// the log a writer shares. The count only grows by frames a writer appends
+    /// and only falls when a checkpoint resets the log, which a pinned reader
+    /// prevents; `run_terminal_write_appends_at_most_its_stated_frames` measures
+    /// one route write this way.
+    pub fn wal_frames(&self) -> Result<u32, StoreError> {
+        let (_busy, log, _checkpointed): (i64, i64, i64) =
+            self.conn
+                .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })?;
+        Ok(log.clamp(0, i64::from(u32::MAX)) as u32)
+    }
+    /// The store's page count and size, from the open connection.
+    pub fn page_count(&self) -> Result<u64, StoreError> {
+        let pages: i64 = self
+            .conn
+            .query_row("PRAGMA page_count", [], |row| row.get(0))?;
+        Ok(pages.max(0) as u64)
     }
     /// `journal_mode=WAL` is persistent in the file. A store last written in
     /// rollback mode needs a moment of exclusive access to change it, so a
@@ -917,6 +1001,41 @@ impl Store {
             Ok(())
         })
     }
+}
+
+/// Truncates the write-ahead log when a store handle closes (effigy#977).
+///
+/// A close is where one writer's log can be carried back into the store and
+/// the file released, so a completed invocation leaves no growing sidecar.
+/// `TRUNCATE` waits for readers and is refused rather than forced: a log a
+/// concurrent reader still needs is left at the size [`WAL_LIMIT_BYTES`]
+/// bounds, and the close never stalls the run that is finishing.
+impl Drop for Store {
+    fn drop(&mut self) {
+        let _ = self.conn.busy_timeout(CLOSE_CHECKPOINT_WAIT);
+        let _ = self
+            .conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            });
+    }
+}
+
+/// The side-file bounds one writable store connection holds (effigy#977), read
+/// back from SQLite rather than assumed from what the open asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SidecarBounds {
+    /// `PRAGMA journal_size_limit`: the most the log may be after a completed
+    /// checkpoint resets it.
+    pub journal_size_limit: u64,
+    /// `PRAGMA wal_autocheckpoint`: pages appended before a checkpoint attempt.
+    pub wal_autocheckpoint: u32,
+    /// `PRAGMA page_size`: the unit both bounds above are measured in.
+    pub page_size: u64,
 }
 
 /// What one bounded maintenance pass did (§7.4).

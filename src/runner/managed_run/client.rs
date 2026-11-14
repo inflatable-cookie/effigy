@@ -407,7 +407,9 @@ impl TextFollower {
     }
 
     fn relay(&mut self, finish: bool) {
-        self.relay_waits(self.wait_ledger.read_all());
+        if let Some(waits) = self.wait_ledger.read_all() {
+            self.relay_waits(waits);
+        }
         relay(&mut self.output);
         let mut host_lines = String::new();
         for host in &mut self.hosts {

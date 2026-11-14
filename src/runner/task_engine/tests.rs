@@ -76,11 +76,14 @@ fn equivalent_spellings_serialize_on_one_gate_and_distinct_tasks_do_not() {
 fn status_reports_the_live_run_then_its_outcome_without_staleness() {
     let root = tempfile::tempdir().expect("root");
     let target = TaskTarget::for_catalog(root.path(), "build", &catalog(root.path(), "", "", 0));
-    assert_eq!(task_status(&target, HISTORY_LIMIT).state, "not-recorded");
+    assert_eq!(
+        task_status(&target, HISTORY_LIMIT).state.as_str(),
+        "not-recorded"
+    );
 
     let run = begin(&target).expect("admitted");
     let live = task_status(&target, HISTORY_LIMIT);
-    assert_eq!(live.state, "running");
+    assert_eq!(live.state.as_str(), "running");
     assert_eq!(
         live.current.as_ref().and_then(|current| current.pid),
         Some(std::process::id())
@@ -92,7 +95,7 @@ fn status_reports_the_live_run_then_its_outcome_without_staleness() {
 
     assert!(run.close(WorkloadOutcome::Failed { code: 3 }).is_empty());
     let closed = task_status(&target, HISTORY_LIMIT);
-    assert_eq!(closed.state, "not-recorded");
+    assert_eq!(closed.state.as_str(), "not-recorded");
     assert!(closed.current.is_none());
     let latest = closed.latest.expect("latest run");
     assert_eq!(latest.exit_code, Some(3));
@@ -108,13 +111,13 @@ fn an_unclosed_run_reads_interrupted_once_its_gate_is_free_and_the_next_run_sett
     // exactly what a killed owner leaves behind.
     run.abandon_for_tests();
     let interrupted = task_status(&target, HISTORY_LIMIT);
-    assert_eq!(interrupted.state, "interrupted");
+    assert_eq!(interrupted.state.as_str(), "interrupted");
     assert_eq!(interrupted.next.as_deref(), Some("effigy dev"));
 
     let next = begin(&target).expect("the successor settles its predecessor first");
     assert!(next.close(WorkloadOutcome::Succeeded).is_empty());
     let settled = task_status(&target, HISTORY_LIMIT);
-    assert_eq!(settled.state, "not-recorded");
+    assert_eq!(settled.state.as_str(), "not-recorded");
     assert_eq!(settled.history.len(), 2);
     assert_eq!(settled.history[1].state, "interrupted");
 }

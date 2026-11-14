@@ -3,9 +3,11 @@ use effigy_containers::{
     load_container_policy_with_workspace, load_inline_workspace_container_policy,
     resolve_inline_workspace_exec_working_dir, EffectiveContainerPolicy,
 };
-use effigy_execution::{
-    ExecutionBindingInput, ExecutionBindingKind as SharedExecutionBindingKind, ExecutionBindingPlan,
-};
+use effigy_execution::{ExecutionBindingInput, ExecutionBindingPlan};
+
+/// The one execution-binding vocabulary. The runner names the shared enum
+/// rather than decoding a second one beside it (effigy#971).
+pub(in crate::runner) use effigy_execution::ExecutionBindingKind;
 use effigy_manifest::{
     resolve_task_execution_binding_from_parts, ManifestContainersConfig,
     ManifestInlineWorkspaceContainerConfig, ManifestSystemsConfig, ManifestTask,
@@ -96,14 +98,6 @@ impl ContainerExecutionBinding {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::runner) enum ExecutionBindingKind {
-    None,
-    Host,
-    NamedContainer,
-    InlineContainer,
-}
-
 #[derive(Debug, Clone)]
 pub(in crate::runner) struct ExecutionBindingResolution {
     binding: ContainerExecutionBinding,
@@ -145,14 +139,7 @@ impl ExecutionBindingResolution {
     pub(in crate::runner) fn plan(&self, input: ExecutionBindingInput) -> ExecutionBindingPlan {
         ExecutionBindingPlan::new(
             input,
-            match self.kind {
-                ExecutionBindingKind::None => SharedExecutionBindingKind::None,
-                ExecutionBindingKind::Host => SharedExecutionBindingKind::Host,
-                ExecutionBindingKind::NamedContainer => SharedExecutionBindingKind::NamedContainer,
-                ExecutionBindingKind::InlineContainer => {
-                    SharedExecutionBindingKind::InlineContainer
-                }
-            },
+            self.kind,
             self.requested_container_name.clone(),
             self.is_inline_container(),
         )

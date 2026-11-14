@@ -16,7 +16,8 @@ use serde_json::json;
 use crate::runner::command_context::resolve_active_command_context;
 use crate::runner::error::RunnerError;
 use crate::runner::task_engine::{
-    live_holders, task_status, HolderKind, RunView, TaskStatusView, TaskTarget, HISTORY_LIMIT,
+    live_holders, task_status, HolderKind, RunView, TaskState, TaskStatusView, TaskTarget,
+    HISTORY_LIMIT,
 };
 use effigy_routing::select_catalog_and_task;
 
@@ -53,13 +54,13 @@ pub(super) fn run_task_status(args: &TasksArgs, raw_selector: &str) -> Result<St
         });
         return render_json(&payload);
     }
-    Ok(render_task_status_text(
+    render_task_status_text(
         &repo_root,
         &target,
         &selection.catalog.alias,
         &selection.evidence,
         &view,
-    ))
+    )
 }
 
 pub(super) fn run_task_status_all(args: &TasksArgs) -> Result<String, RunnerError> {
@@ -69,9 +70,9 @@ pub(super) fn run_task_status_all(args: &TasksArgs) -> Result<String, RunnerErro
     let rows = build_status_inventory_rows(&repo_root, &catalogs);
 
     if args.output_json {
-        let mut counts = BTreeMap::<String, usize>::new();
+        let mut counts = BTreeMap::<&str, usize>::new();
         for row in &rows {
-            *counts.entry(row.state.clone()).or_default() += 1;
+            *counts.entry(row.state.as_str()).or_default() += 1;
         }
         let catalog_scopes = catalogs
             .iter()
@@ -94,14 +95,14 @@ pub(super) fn run_task_status_all(args: &TasksArgs) -> Result<String, RunnerErro
             "rows": rows,
         }));
     }
-    Ok(render_task_status_all_text(&repo_root, &rows))
+    render_task_status_all_text(&repo_root, &rows)
 }
 
 #[derive(Debug, Clone, Serialize)]
 struct TaskStatusInventoryRow {
     selector: String,
     selected_catalog_root: String,
-    state: String,
+    state: TaskState,
     currently_declared: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     current: Option<RunView>,
@@ -132,7 +133,7 @@ fn build_status_inventory_rows(
             rows.push(TaskStatusInventoryRow {
                 selector: "*".to_owned(),
                 selected_catalog_root: "root".to_owned(),
-                state: "unknown".to_owned(),
+                state: TaskState::Unknown,
                 currently_declared: false,
                 current: None,
                 latest: None,
@@ -158,7 +159,7 @@ fn build_status_inventory_rows(
             } else {
                 holder.catalog.clone()
             },
-            state: "running".to_owned(),
+            state: TaskState::Running,
             currently_declared: false,
             current: None,
             latest: None,
@@ -224,18 +225,18 @@ fn render_task_status_text(
     catalog_alias: &str,
     evidence: &[String],
     view: &TaskStatusView,
-) -> String {
+) -> Result<String, RunnerError> {
     use effigy_core::widgets::KeyValue;
     let mut renderer = text_renderer();
-    let _ = renderer.section("Task Status");
-    let _ = renderer.key_values(&[
+    renderer.section("Task Status")?;
+    renderer.key_values(&[
         KeyValue::new("task", target.label.clone()),
-        KeyValue::new("state", view.state.clone()),
+        KeyValue::new("state", view.state.to_string()),
         KeyValue::new("catalog", catalog_alias.to_owned()),
         KeyValue::new("repo-root", repo_root.display().to_string()),
-    ]);
+    ])?;
     if let Some(current) = &view.current {
-        let _ = renderer.text("");
+        renderer.text("")?;
         let mut values = vec![
             KeyValue::new("run", current.run_id.clone()),
             KeyValue::new("phase", current.phase.unwrap_or("unavailable").to_owned()),
@@ -253,16 +254,16 @@ fn render_task_status_text(
         if let Some(profile) = &current.profile {
             values.push(KeyValue::new("profile", profile.clone()));
         }
-        let _ = renderer.key_values(&values);
+        renderer.key_values(&values)?;
     }
     if let Some(next) = &view.next {
-        let _ = renderer.text("");
-        let _ = renderer.text(&format!(
+        renderer.text("")?;
+        renderer.text(&format!(
             "The run's owner exited without a result. `{next}` settles it before starting again."
-        ));
+        ))?;
     }
     if let Some(latest) = &view.latest {
-        let _ = renderer.text("");
+        renderer.text("")?;
         let mut values = vec![
             KeyValue::new("last-run", latest.run_id.clone()),
             KeyValue::new("outcome", latest.state.clone()),
@@ -283,7 +284,7 @@ fn render_task_status_text(
         if let Some(cleanup) = latest.cleanup {
             values.push(KeyValue::new("cleanup", cleanup.to_owned()));
         }
-        let _ = renderer.key_values(&values);
+        renderer.key_values(&values)?;
     }
     for (label, run) in [
         ("current steps", view.current.as_ref()),
@@ -293,23 +294,23 @@ fn render_task_status_text(
             let mut lines = Vec::new();
             step_status_lines(&run.steps, "", &mut lines);
             if !lines.is_empty() {
-                let _ = renderer.bullet_list(label, &lines);
+                renderer.bullet_list(label, &lines)?;
             }
         }
     }
     if view.history.is_empty() {
-        let _ = renderer.text("");
-        let _ = renderer.text("No runs recorded yet.");
+        renderer.text("")?;
+        renderer.text("No runs recorded yet.")?;
     }
     if !view.warnings.is_empty() {
-        let _ = renderer.text("");
-        let _ = renderer.bullet_list("warnings", &view.warnings);
+        renderer.text("")?;
+        renderer.bullet_list("warnings", &view.warnings)?;
     }
     if !evidence.is_empty() {
-        let _ = renderer.text("");
-        let _ = renderer.bullet_list("routing-evidence", evidence);
+        renderer.text("")?;
+        render(renderer.bullet_list("routing-evidence", evidence))?;
     }
-    String::from_utf8_lossy(&renderer.into_inner()).to_string()
+    Ok(text_of(renderer))
 }
 
 fn step_status_lines(steps: &[RunView], prefix: &str, lines: &mut Vec<String>) {
@@ -328,13 +329,16 @@ fn step_status_lines(steps: &[RunView], prefix: &str, lines: &mut Vec<String>) {
     }
 }
 
-fn render_task_status_all_text(repo_root: &Path, rows: &[TaskStatusInventoryRow]) -> String {
+fn render_task_status_all_text(
+    repo_root: &Path,
+    rows: &[TaskStatusInventoryRow],
+) -> Result<String, RunnerError> {
     let mut renderer = text_renderer();
-    let _ = renderer.section("Task Status");
-    let _ = renderer.key_values(&[
+    renderer.section("Task Status")?;
+    renderer.key_values(&[
         effigy_core::widgets::KeyValue::new("scope-root", repo_root.display().to_string()),
         effigy_core::widgets::KeyValue::new("row-count", rows.len().to_string()),
-    ]);
+    ])?;
     let mut grouped = BTreeMap::<String, Vec<&TaskStatusInventoryRow>>::new();
     for row in rows {
         grouped
@@ -343,8 +347,8 @@ fn render_task_status_all_text(repo_root: &Path, rows: &[TaskStatusInventoryRow]
             .push(row);
     }
     for (catalog_root, entries) in grouped {
-        let _ = renderer.text("");
-        let _ = renderer.section(&format!("Catalog: {catalog_root}"));
+        renderer.text("")?;
+        renderer.section(&format!("Catalog: {catalog_root}"))?;
         for row in entries {
             let mut line = format!("- {} [{}]", row.selector, row.state);
             if !row.currently_declared {
@@ -358,12 +362,24 @@ fn render_task_status_all_text(repo_root: &Path, rows: &[TaskStatusInventoryRow]
             if let Some(when) = when {
                 line.push_str(&format!(" started={when}"));
             }
-            let _ = renderer.text(&line);
+            renderer.text(&line)?;
             for warning in &row.warnings {
-                let _ = renderer.text(&format!("  warning: {warning}"));
+                render(renderer.text(&format!("  warning: {warning}")))?;
             }
         }
     }
+    Ok(text_of(renderer))
+}
+
+/// A rendered status is text the caller asked for; a write that could not be
+/// buffered is a failed command, not a shortened answer.
+fn render(result: effigy_ui::UiResult<()>) -> Result<(), RunnerError> {
+    result.map_err(|error| {
+        RunnerError::task_invocation(format!("failed to render task status: {error}"))
+    })
+}
+
+fn text_of(renderer: effigy_ui::PlainRenderer<Vec<u8>>) -> String {
     String::from_utf8_lossy(&renderer.into_inner()).to_string()
 }
 
@@ -395,5 +411,76 @@ fn selection_mode_label(mode: CatalogSelectionMode) -> &'static str {
         CatalogSelectionMode::ExplicitPrefix => "explicit-prefix",
         CatalogSelectionMode::CwdNearest => "cwd-nearest",
         CatalogSelectionMode::RootShallowest => "root-shallowest",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+
+    fn fixture(root: &Path) {
+        std::fs::write(
+            root.join("effigy.toml"),
+            r#"
+[tasks.build]
+run = "true"
+
+[tasks.check]
+run = "true"
+"#,
+        )
+        .expect("write manifest");
+    }
+
+    fn catalogs(root: &Path) -> Vec<LoadedCatalog> {
+        effigy_routing::load_effective_catalogs_allow_missing(root).expect("catalogs")
+    }
+
+    #[test]
+    fn a_declared_task_with_no_runs_reads_not_recorded_and_never_unknown() {
+        let home = tempfile::tempdir().expect("fixture");
+        fixture(home.path());
+        let catalogs = catalogs(home.path());
+        let rows = build_status_inventory_rows(home.path(), &catalogs);
+        assert_eq!(rows.len(), 2);
+        for row in &rows {
+            assert_eq!(row.state, TaskState::NotRecorded, "{}", row.selector);
+            assert!(row.currently_declared);
+            assert!(row.current.is_none());
+            assert!(row.warnings.is_empty(), "{:?}", row.warnings);
+        }
+        // The row's state is its own typed label, in JSON and in text alike.
+        let json = serde_json::to_value(&rows).expect("rows json");
+        assert_eq!(json[0]["state"], "not-recorded");
+        let text = render_task_status_all_text(home.path(), &rows).expect("rendered");
+        assert!(text.contains("[not-recorded]"), "{text}");
+        assert!(!text.contains("[unknown]"), "{text}");
+    }
+
+    #[test]
+    fn one_task_status_pairs_the_typed_state_with_its_routing_evidence() {
+        let home = tempfile::tempdir().expect("fixture");
+        fixture(home.path());
+        let catalogs = catalogs(home.path());
+        let catalog = catalogs.first().expect("root catalog");
+        let target = TaskTarget::for_catalog(home.path(), "build", catalog);
+        let view = task_status(&target, 2);
+        assert_eq!(view.state, TaskState::NotRecorded);
+        assert!(view.history.is_empty());
+
+        let text = render_task_status_text(
+            home.path(),
+            &target,
+            &catalog.alias,
+            &["fixture evidence".to_owned()],
+            &view,
+        )
+        .expect("rendered");
+        assert!(text.contains("not-recorded"), "{text}");
+        assert!(text.contains("No runs recorded yet."), "{text}");
+        assert!(text.contains("fixture evidence"), "{text}");
+        assert!(!text.contains("warning"), "{text}");
     }
 }

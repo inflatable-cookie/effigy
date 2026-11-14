@@ -873,6 +873,17 @@ impl From<effigy_ui::UiError> for RunnerError {
     }
 }
 
+/// The tasks crate's two failure classes keep their runner class: a refused
+/// request stays `TaskInvocation`; a renderer refusal stays `Ui`.
+impl From<effigy_tasks::EffigyTasksError> for RunnerError {
+    fn from(value: effigy_tasks::EffigyTasksError) -> Self {
+        match value {
+            effigy_tasks::EffigyTasksError::Message(message) => Self::task_invocation(message),
+            effigy_tasks::EffigyTasksError::Render(error) => Self::from(error),
+        }
+    }
+}
+
 impl From<ResolveError> for RunnerError {
     fn from(value: ResolveError) -> Self {
         Self::Resolve(value)

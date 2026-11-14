@@ -117,6 +117,7 @@ impl TaskRun {
             programs: None,
             keyed: false,
         };
+        effigy_core::output_cap::foreground_started();
         run.admit(request.admission, plan, request.cwd)?;
         Ok(run)
     }
@@ -304,6 +305,7 @@ pub(super) fn close_memory(
         | WorkloadOutcome::NotStarted => run.interrupt(workload),
         other => run.finish(other),
     };
+    let recorded_ok = recorded.is_ok();
     let mut warnings = recorded
         .err()
         .map(|error| format!("foreground outcome: {error}"))
@@ -311,6 +313,10 @@ pub(super) fn close_memory(
         .collect::<Vec<_>>();
     match run.settle_reporting(cleanup, report) {
         Ok(outcome) => {
+            effigy_core::output_cap::foreground_settled(
+                recorded_ok
+                    && outcome.cleanup() == effigy_kernel::outcome::CleanupOutcome::Complete,
+            );
             if outcome.cleanup() == CleanupOutcome::Incomplete {
                 warnings
                     .push("foreground cleanup is incomplete; remaining evidence is residue".into());
@@ -318,6 +324,7 @@ pub(super) fn close_memory(
             (Some(outcome), warnings)
         }
         Err(error) => {
+            effigy_core::output_cap::foreground_settled(false);
             warnings.push(format!("foreground settle: {error}"));
             (None, warnings)
         }
