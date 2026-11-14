@@ -444,13 +444,22 @@ impl SpawnGate for WorkloadGate {
             "leader": serde_json::to_value(&receipt.identity)
                 .unwrap_or(serde_json::Value::Null),
         });
-        match deliver(&self.core, event) {
+        match deliver(
+            &self.core,
+            event,
+            effigy_core::run_deadline::workload_ceiling(),
+        ) {
             Ok(()) => {
                 lock(&self.core.delivery).groups += 1;
                 Ok(())
             }
-            Err(reason) => {
-                let error = refusal(&self.target, &run_id, "failed", reason);
+            Err(error) => {
+                let error = match error {
+                    DeliveryError::Deadline => deadline_refusal(&self.target, &run_id),
+                    DeliveryError::Failed(reason) => {
+                        refusal(&self.target, &run_id, "failed", reason)
+                    }
+                };
                 self.failure = Some(error);
                 Err(SpawnError::Refused(
                     "the workload was not reported to the admission hook".into(),
@@ -464,22 +473,44 @@ impl SpawnGate for WorkloadGate {
 /// sequential: `seq` only advances on an ack, so the acknowledged sequences
 /// are always a gap-free prefix. Any write failure, EOF, malformed or
 /// out-of-order ack and timeout is a delivery failure.
-fn deliver(core: &AdmissionCore, event: serde_json::Value) -> Result<(), String> {
+fn deliver(
+    core: &AdmissionCore,
+    event: serde_json::Value,
+    deadline: Option<Instant>,
+) -> Result<(), DeliveryError> {
     let mut hook = lock(&core.hook);
     let mut delivery = lock(&core.delivery);
     if let Some(reason) = &delivery.stopped {
         // One undelivered report ends the sequence. Writing another with a
         // later `seq` would leave the hook with an unacknowledged hole.
-        return Err(format!(
+        return Err(DeliveryError::Failed(format!(
             "the report sequence stopped at seq {}: {reason}",
             delivery.seq
-        ));
+        )));
     }
-    let result = exchange(&mut hook, &mut delivery, event);
-    if let Err(reason) = &result {
-        delivery.stopped = Some(reason.clone());
+    let result = exchange(&mut hook, &mut delivery, event, deadline);
+    if let Err(error) = &result {
+        delivery.stopped = Some(error.reason());
     }
     result
+}
+
+/// Why one report exchange did not finish. A deadline expiry is the
+/// invocation's own ceiling, not the hook's timeout, so the two stay
+/// distinguishable to a caller.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DeliveryError {
+    Deadline,
+    Failed(String),
+}
+
+impl DeliveryError {
+    fn reason(&self) -> String {
+        match self {
+            Self::Deadline => "the run deadline expired during the report exchange".to_owned(),
+            Self::Failed(reason) => reason.clone(),
+        }
+    }
 }
 
 /// One report exchange: write it with the next sequence number and wait for
@@ -488,7 +519,8 @@ fn exchange(
     hook: &mut OwnedProcess,
     delivery: &mut Delivery,
     event: serde_json::Value,
-) -> Result<(), String> {
+    deadline: Option<Instant>,
+) -> Result<(), DeliveryError> {
     let seq = delivery.seq + 1;
     let name = event
         .get("event")
@@ -500,14 +532,22 @@ fn exchange(
         object.insert("seq".into(), seq.into());
         object.insert("run_id".into(), delivery.run_id.clone().into());
     }
-    let mut line = serde_json::to_vec(&event)
-        .map_err(|error| format!("the `{name}` report could not be encoded: {error}"))?;
+    let mut line = serde_json::to_vec(&event).map_err(|error| {
+        DeliveryError::Failed(format!("the `{name}` report could not be encoded: {error}"))
+    })?;
     line.push(b'\n');
-    let started = Instant::now();
-    hook.write_stdin(&line, started + delivery.ack_timeout)
-        .map_err(|error| {
-            format!("the hook did not accept the `{name}` report (seq {seq}): {error}")
-        })?;
+    let started = effigy_core::run_deadline::now();
+    let ack_at = started + delivery.ack_timeout;
+    let accept_until = deadline.map_or(ack_at, |at| ack_at.min(at));
+    hook.write_stdin(&line, accept_until).map_err(|error| {
+        if grant_is_late(effigy_core::run_deadline::now(), deadline) {
+            DeliveryError::Deadline
+        } else {
+            DeliveryError::Failed(format!(
+                "the hook did not accept the `{name}` report (seq {seq}): {error}"
+            ))
+        }
+    })?;
     loop {
         if let Some(line) = delivery.next_ack_line() {
             return acknowledge(delivery, &line, seq, &name);
@@ -527,27 +567,35 @@ fn exchange(
             return acknowledge(delivery, &line, seq, &name);
         }
         if matches!(exited, Observed::Verified(..)) {
-            return Err(format!(
+            return Err(DeliveryError::Failed(format!(
                 "the hook exited before acknowledging seq {seq} (`{name}`); the workload never ran"
-            ));
+            )));
         }
         if delivery.stdout.len() > ACK_MAX {
-            return Err(format!(
+            return Err(DeliveryError::Failed(format!(
                 "the hook wrote more than an acknowledgement while seq {seq} (`{name}`) was waiting"
-            ));
+            )));
         }
-        if started.elapsed() >= delivery.ack_timeout {
-            return Err(format!(
+        if grant_is_late(effigy_core::run_deadline::now(), deadline) {
+            return Err(DeliveryError::Deadline);
+        }
+        if effigy_core::run_deadline::now() >= ack_at {
+            return Err(DeliveryError::Failed(format!(
                 "the hook gave no acknowledgement for seq {seq} (`{name}`) within {} ms",
                 delivery.ack_timeout.as_millis()
-            ));
+            )));
         }
         std::thread::sleep(POLL);
     }
 }
 
 /// The exchange's answer: only the matching ack advances the sequence.
-fn acknowledge(delivery: &mut Delivery, line: &str, seq: u64, name: &str) -> Result<(), String> {
+fn acknowledge(
+    delivery: &mut Delivery,
+    line: &str,
+    seq: u64,
+    name: &str,
+) -> Result<(), DeliveryError> {
     let result = acknowledgement(line, seq, name);
     if result.is_ok() {
         delivery.seq = seq;
@@ -555,16 +603,22 @@ fn acknowledge(delivery: &mut Delivery, line: &str, seq: u64, name: &str) -> Res
     result
 }
 
-fn acknowledgement(line: &str, seq: u64, name: &str) -> Result<(), String> {
+fn acknowledgement(line: &str, seq: u64, name: &str) -> Result<(), DeliveryError> {
     match parse_ack(line) {
         Some(acked) if acked == seq => Ok(()),
-        Some(acked) => Err(format!(
+        Some(acked) => Err(DeliveryError::Failed(format!(
             "the hook acknowledged seq {acked} while seq {seq} (`{name}`) was waiting; reports are strictly sequential"
-        )),
-        None => Err(format!(
+        ))),
+        None => Err(DeliveryError::Failed(format!(
             "the hook answered `{line}` to seq {seq} (`{name}`); an acknowledgement is `ack <seq>`"
-        )),
+        ))),
     }
+}
+
+/// A grant or report that arrives only after the relevant absolute boundary
+/// is late: the workload must not start, and the refusal is the deadline's.
+fn grant_is_late(now: Instant, deadline: Option<Instant>) -> bool {
+    deadline.is_some_and(|at| now >= at)
 }
 
 fn parse_ack(line: &str) -> Option<u64> {
@@ -591,7 +645,7 @@ pub(super) fn admit(
     // One absolute deadline covers admission too. If it is already spent, the
     // task never starts and the refusal is the deadline's, not the hook's.
     let run_deadline = effigy_core::run_deadline::workload_ceiling();
-    if run_deadline.is_some_and(|at| Instant::now() >= at) {
+    if grant_is_late(effigy_core::run_deadline::now(), run_deadline) {
         effigy_ui::steps::finish_line(
             false,
             &format!(
@@ -726,7 +780,7 @@ pub(super) fn admit(
                     // A grant that arrives after the absolute deadline is a
                     // late grant: the workload must not start, even though the
                     // hook finally answered (effigy#992).
-                    if run_deadline.is_some_and(|at| Instant::now() >= at) {
+                    if grant_is_late(effigy_core::run_deadline::now(), run_deadline) {
                         step.fail(&format!(
                             "heavy admission for `{}` arrived after the run deadline",
                             target.label
@@ -756,7 +810,7 @@ pub(super) fn admit(
                             // The protocol reports (custodians, acks) are part
                             // of admission: if they consumed the budget, the
                             // workload still never starts.
-                            if run_deadline.is_some_and(|at| Instant::now() >= at) {
+                            if grant_is_late(effigy_core::run_deadline::now(), run_deadline) {
                                 step.fail(&format!(
                                     "heavy admission for `{}` completed after the run deadline",
                                     target.label
@@ -832,7 +886,7 @@ pub(super) fn admit(
                 "the hook wrote more than a decision line".to_owned(),
             ));
         }
-        let deadline_expired = run_deadline.is_some_and(|at| Instant::now() >= at);
+        let deadline_expired = grant_is_late(effigy_core::run_deadline::now(), run_deadline);
         if deadline_expired || started.elapsed() >= timeout {
             if deadline_expired {
                 step.fail(&format!(
@@ -915,13 +969,16 @@ fn finish_admission(
         "owner": serde_json::to_value(&owner).unwrap_or(serde_json::Value::Null),
         "guard": serde_json::to_value(&guard).unwrap_or(serde_json::Value::Null),
     });
-    deliver(&core, event).map_err(|reason| {
-        refusal(
-            target,
-            run_id,
-            "failed",
-            format!("the custodians were not reported: {reason}"),
-        )
+    deliver(&core, event, effigy_core::run_deadline::workload_ceiling()).map_err(|error| {
+        match error {
+            DeliveryError::Deadline => deadline_refusal(target, run_id),
+            DeliveryError::Failed(reason) => refusal(
+                target,
+                run_id,
+                "failed",
+                format!("the custodians were not reported: {reason}"),
+            ),
+        }
     })?;
     push_channel(&core);
     // The run holds the hook through its custody receipt: the settle observes
@@ -954,9 +1011,17 @@ pub(super) fn report_terminal(
         "cleanup": cleanup_name(cleanup),
         "workload_groups": admission.workload_groups(),
     });
-    match deliver(&admission.core, event) {
+    match deliver(
+        &admission.core,
+        event,
+        effigy_core::run_deadline::ceiling(),
+    ) {
         Ok(()) => Vec::new(),
-        Err(reason) => vec![format!(
+        Err(DeliveryError::Deadline) => vec![
+            "the terminal admission report was cut short by the run deadline; the settled              outcome is the record of truth"
+                .to_owned(),
+        ],
+        Err(DeliveryError::Failed(reason)) => vec![format!(
             "the terminal admission report was not delivered: {reason}"
         )],
     }

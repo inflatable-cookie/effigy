@@ -591,23 +591,32 @@ default: unset or blank means every budget is exactly what it was before.
   at 10 s. The workload boundary is `ceiling - allowance`
   (`run_deadline.rs:75`), and no wait may pass the ceiling.
 - Readback: a foreground run writes one evidence line at admission naming the
-  clock, its origin, the ceiling, the allowance, the workload budget and the
-  remaining time (`run_deadline.rs:104`; written at
-  `src/runner/task_engine/run/foreground.rs:132-140`). The task run and plan
-  JSON carry the same facts in a `deadline` object
+  clock, its observable origin, the elapsed time since that origin, the
+  ceiling, the allowance, the workload budget and the remaining time
+  (`run_deadline.rs:161-190`; written at
+  `src/runner/task_engine/run/foreground.rs`). The task run and plan JSON
+  carry the same facts in a `deadline` object
   (`src/runner/execute/json_payload/payload.rs:40-104`), absent when the
-  opt-in is off. Numbers are monotonic milliseconds; nothing is converted to
-  a wall clock.
+  opt-in is off. It records `origin: "process_start"`,
+  `origin_readback: "elapsed_since_origin_ms"`, `since_origin_ms`, the
+  configured phase budgets (`phase_budgets_ms`) and a `phases` object with,
+  for each of admission, workload, settlement and terminal, the
+  `since_origin_ms` (the observable origin) and the `remaining_ms` observed
+  when that phase ended (`run_deadline.rs:120-235`). Numbers are monotonic
+  milliseconds; nothing is converted to a wall clock.
+- Owned tests drive phase progression through the same seam: production reads
+  `Instant::now()`; a test advances a monotonic offset, never a wall clock
+  (`run_deadline.rs:20-28,247-262`).
 
 ### One ceiling for every phase
 
 | Phase | Bound | Location |
 | --- | --- | --- |
 | Task-gate wait | `min(--lock-wait, ceiling - allowance)`; `FailFast` unchanged | `src/runner/task_engine/run/foreground.rs:89-103` |
-| Admission (including a hung hook or a late grant) | capped at `ceiling - allowance`; expiry refuses before any workload spawn | `src/runner/task_engine/admission.rs:590-603,815-822` |
+| Admission (including a hung hook or a late grant) | capped at `ceiling - allowance`; expiry refuses before any workload spawn. The v2 `custodians` and `workload` report exchanges, including their writes, are bounded at the same boundary; a stalled acknowledgement refuses with the same typed `deadline` decision | `src/runner/task_engine/admission.rs:431-470,486-598,634-660` |
 | Workload lifetime | `min(timeout_ms, ceiling - allowance)`; an in-process step or nested scope may shorten it, never extend it | `src/runner/task_engine/spawn_env.rs:24-31,60-69,104-115`; `src/runner/task_engine/process.rs:145-152` |
 | Kernel operation waits | an open shell operation is capped at the ceiling; a finite one is shortened to it | `crates/effigy-kernel/src/ctx.rs:192-200` |
-| Settlement (escalation, guard closure, cleanup, terminal evidence) | one cleanup context and one signal window, both capped at the ceiling | `crates/effigy-kernel/src/ctx.rs:251-276,418-425` |
+| Settlement (escalation, guard closure, cleanup, terminal evidence) | one cleanup context and one signal window, both capped at the ceiling; the v2 `terminal` report exchange and its write are bounded at the ceiling | `crates/effigy-kernel/src/ctx.rs:251-276,418-425`; `src/runner/task_engine/admission.rs:700-760` |
 
 A deadline that cannot fit the allowance is refused **at start**, before any
 capture, gate or effect: `EFFIGY_RUN_DEADLINE_MS <= 10000` exits 2 with a
@@ -617,21 +626,35 @@ message naming the allowance (`run_deadline.rs:154-170`, `src/bin/effigy.rs`).
 
 - **Admission expiry.** The refusal is typed: `effigy.admission.v1` with
   `decision: "deadline"` (not `"timeout"`, which stays the hook's own
-  timeout) at `src/runner/task_engine/admission.rs:1176-1191`. The workload
+  timeout) at `src/runner/task_engine/admission.rs:1180-1195`. The workload
   never spawns. A grant, or a completed v2 report, that arrives after the
-  ceiling is a **late grant** and refuses the same way before the workload
-  spawns (`admission.rs:724-735,758-776`). Admission protocol v1/v2 and the
-  terminal accounting are unchanged.
-- **Settlement overrun.** A settlement the ceiling cuts short records
-  `truncated`, keeps the surviving custodian and every unresolved handle, and
-  claims no closure (`crates/effigy-kernel/src/run/foreground.rs:31,260-277,279-345`);
-  the foreground guard is not closed, signalled or discarded by the owner's
-  drop (`:352-360`), and its own fallback wait is capped at the remaining time
-  (`crates/effigy-kernel/src/supervise/memory.rs:548-566`). The workload's
-  result is then not success: the run returns `effigy.run-deadline.v1` with
-  `outcome: "unknown"`, `residue: true` and the deadline evidence, and exits
-  124 (`src/runner/execute/pipeline/standard.rs:178-215`;
-  `src/runner/error.rs`). An already-failed result keeps its own failure.
+  relevant boundary is a **late grant** and refuses the same way before the
+  workload spawns. A stalled v2 `custodians`/`workload` acknowledgement is the
+  same typed refusal: the exchange's write and poll are bounded by
+  `ceiling - allowance` (`admission.rs:486-598`). Admission protocol v1/v2 and
+  the terminal accounting are unchanged.
+- **Settlement not positively complete.** Under the opt-in, *any* settlement
+  that is not positively complete -- a cleanup-context timeout, a settle
+  error, a residue effect, or a settled outcome whose cleanup is
+  `Incomplete` -- records the run as incomplete and is never presented as
+  success (`crates/effigy-kernel/src/run/foreground.rs:258-345`). The
+  surviving custodian is kept: an incomplete settle does not close, signal or
+  discard the guard, so the guard retains the gates and settles residue after
+  its owner's EOF; the outcome's residue names the retained guard and every
+  unresolved effect (`crates/effigy-kernel/src/run/foreground.rs:320-345`).
+  The owner drop does not retry stops after that
+  (`crates/effigy-kernel/src/run/foreground.rs:390-400`), and the guard's own
+  fallback wait is capped at the remaining time
+  (`crates/effigy-kernel/src/supervise/memory.rs:548-566`). The task returns
+  `effigy.run-deadline.v1` with `outcome: "incomplete"`, `residue: true`,
+  `settlement_notes` naming the retained resources and the deadline evidence,
+  and exits 124 (`src/runner/execute/pipeline/standard.rs:178-233`;
+  `src/runner/error.rs`). An already-failed result keeps its own failure; the
+  marker never upgrades a failure to success.
+- **Terminal report.** A v2 `terminal` exchange is bounded at the ceiling;
+  expiry is a warning (the workload result is already decided) and the
+  settled outcome remains the record of truth, so no terminal row is written
+  without a settled outcome (`admission.rs:700-760`).
 - **Custody shape is unchanged.** Escalation is still TERM, grace, KILL of the
 owned group, leader reaped after group closure, residue reported. Only the
   time budgets come from the absolute deadline.
@@ -649,9 +672,11 @@ rather than overrunning the parent.
 
 ### Composition
 
-- The completeness footer still requires positive settlement: a settle that
-the deadline cut calls `foreground_settled(false)`, so no footer is printed
-(`crates/effigy-kernel/src/run/foreground.rs`; `src/runner/task_engine/run/foreground.rs:318-333`).
+- The completeness footer still requires positive settlement: any settle that
+is not positively complete calls `foreground_settled(false)`, so no footer is
+printed, and `output_cap::foreground_complete()` is false
+(`src/runner/task_engine/run/foreground.rs:340-380`;
+`crates/effigy-core/src/output_cap.rs`).
 - Strict persistence and the terminal ring are unchanged, and a run with no
   settled outcome still writes no terminal row.
 - Off by default means byte-identical behaviour: `current()` is `None`, no

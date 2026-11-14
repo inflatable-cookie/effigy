@@ -99,6 +99,13 @@ run = "sleep 300 & echo $! > child.pid; echo $$ > leader.pid; wait"
 
 [tasks.deadline-env]
 run = "printf '%s' \"$EFFIGY_RUN_DEADLINE_MS\" > child-deadline.txt"
+
+[tasks.stubborn]
+admission = "heavy"
+run = "trap '' TERM; echo $$ > leader.pid; sleep 300"
+
+[tasks.owner-loss]
+run = "sleep 300 & echo $! > child.pid; echo $$ > leader.pid; wait"
 "#;
 
 /// Admits, then holds its slot until Effigy stops it at the run's end.
@@ -2350,4 +2357,127 @@ fn a_nested_effigy_child_receives_the_remaining_budget_not_the_configured_span()
         inherited < 10_000,
         "the child inherited the configured span instead of the workload budget: {inherited}"
     );
+}
+
+#[test]
+fn a_run_deadline_bounds_a_stalled_v2_acknowledgement_during_admission() {
+    let fixture = Fixture::new();
+    let hook = v2_hook(
+        &fixture,
+        "stall-admission.sh",
+        "if [ \"$seq\" = \"2\" ]; then sleep 30; fi",
+        "",
+    );
+    let started = Instant::now();
+    let output = fixture
+        .effigy(&["--json", "heavy"])
+        .env("EFFIGY_ADMISSION_HOOK", hook)
+        .env("EFFIGY_ADMISSION_PROTOCOL", "2")
+        .env("EFFIGY_RUN_DEADLINE_MS", "11000")
+        .output_owned()
+        .expect("effigy runs");
+    let elapsed = started.elapsed();
+    let rendered = text(&output);
+    assert!(!output.status.success(), "{rendered}");
+    assert!(
+        elapsed < Duration::from_millis(11_000),
+        "a stalled report acknowledgement outlived the deadline: {elapsed:?}"
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|_| panic!("{rendered}"));
+    assert_eq!(
+        envelope["error"]["details"]["decision"], "deadline",
+        "a stalled acknowledgement is the deadline's refusal: {rendered}"
+    );
+    assert!(
+        !fixture.exists("ran.txt"),
+        "the workload started despite the stalled report"
+    );
+}
+
+#[test]
+fn a_run_deadline_bounds_a_stalled_terminal_report_and_keeps_the_outcome() {
+    let fixture = Fixture::new();
+    let hook = v2_hook(
+        &fixture,
+        "stall-terminal.sh",
+        "echo $$ > hook.pid; if [ \"$seq\" = \"3\" ]; then sleep 30; fi",
+        "",
+    );
+    let started = Instant::now();
+    let output = fixture
+        .effigy(&["--json", "stubborn"])
+        .env("EFFIGY_ADMISSION_HOOK", hook)
+        .env("EFFIGY_ADMISSION_PROTOCOL", "2")
+        .env("EFFIGY_RUN_DEADLINE_MS", "13000")
+        .output_owned()
+        .expect("effigy runs");
+    let elapsed = started.elapsed();
+    let rendered = text(&output);
+    // The stalled terminal report may legitimately leave the hook as residue
+    // when it consumes the remaining allowance: stop it by its recorded pid
+    // before this fixture is removed.
+    let hook_pid: i32 = fixture.read("hook.pid").trim().parse().unwrap_or_default();
+    if hook_pid > 1 && alive(hook_pid as u32) {
+        // SAFETY: signal 0/kill only the hook group this test started.
+        unsafe {
+            libc::kill(-hook_pid, libc::SIGKILL);
+            libc::kill(hook_pid, libc::SIGKILL);
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while alive(hook_pid as u32) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        std::thread::sleep(Duration::from_millis(150));
+    }
+    assert!(
+        elapsed < Duration::from_millis(14_000),
+        "a stalled terminal report outlived the deadline: {elapsed:?}"
+    );
+    assert_eq!(output.status.code(), Some(124), "{rendered}");
+    let leader: i32 = fixture
+        .read("leader.pid")
+        .trim()
+        .parse()
+        .expect("leader pid");
+    assert!(!alive(leader as u32), "the workload survived: {leader}");
+    assert!(group_gone(leader), "the workload group {} remains", leader);
+}
+
+#[test]
+fn a_run_deadline_owner_loss_is_settled_by_the_surviving_custodian() {
+    let fixture = Fixture::new();
+    let mut owner = fixture
+        .effigy(&["owner-loss"])
+        .env("EFFIGY_RUN_DEADLINE_MS", "12000")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("effigy starts");
+    fixture.wait_for("the workload group", || {
+        fixture.exists("leader.pid") && fixture.exists("child.pid")
+    });
+    let leader: i32 = fixture
+        .read("leader.pid")
+        .trim()
+        .parse()
+        .expect("leader pid");
+    let child: i32 = fixture.read("child.pid").trim().parse().expect("child pid");
+    owner.kill().expect("the owning process is killed");
+    let _ = owner.wait();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while (alive(leader as u32) || alive(child as u32) || !group_gone(leader))
+        && Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        !alive(leader as u32),
+        "the surviving custodian did not settle leader {leader}"
+    );
+    assert!(
+        !alive(child as u32),
+        "the surviving custodian did not settle child {child}"
+    );
+    assert!(group_gone(leader), "the group {leader} remains");
 }

@@ -64,7 +64,9 @@ impl SpawnScope {
         inputs.deadline = inputs
             .deadline
             .into_iter()
-            .chain(timeout_ms.map(|ms| Instant::now() + Duration::from_millis(ms)))
+            .chain(
+                timeout_ms.map(|ms| effigy_core::run_deadline::now() + Duration::from_millis(ms)),
+            )
             .chain(effigy_core::run_deadline::workload_ceiling())
             .min();
         SCOPES.with(|scopes| scopes.borrow_mut().push(inputs));
@@ -110,7 +112,7 @@ pub(in crate::runner) fn remaining() -> Option<Duration> {
         .into_iter()
         .chain(effigy_core::run_deadline::workload_ceiling())
         .min()?;
-    Some(at.saturating_duration_since(Instant::now()))
+    Some(at.saturating_duration_since(effigy_core::run_deadline::now()))
 }
 
 #[cfg(test)]
@@ -122,6 +124,7 @@ mod tests {
         let origin = Instant::now();
         let deadline =
             effigy_core::run_deadline::RunDeadline::from_origin(origin, 30_000).expect("deadline");
+        effigy_core::run_deadline::clear_clock_for_tests();
         effigy_core::run_deadline::inject_for_tests(Some(deadline));
         let root = SpawnScope::enter(&BTreeMap::new(), None, false, None);
         assert_eq!(
@@ -136,6 +139,7 @@ mod tests {
         );
         drop(step);
         drop(root);
+        effigy_core::run_deadline::clear_clock_for_tests();
         effigy_core::run_deadline::clear_injected_for_tests();
         assert_eq!(
             SpawnScope::capture().deadline,
@@ -149,10 +153,15 @@ mod tests {
         let origin = Instant::now();
         let deadline =
             effigy_core::run_deadline::RunDeadline::from_origin(origin, 30_000).expect("deadline");
+        effigy_core::run_deadline::clear_clock_for_tests();
         effigy_core::run_deadline::inject_for_tests(Some(deadline));
         let child_ms = effigy_core::run_deadline::child_env_ms().expect("configured");
         assert!(child_ms <= 20_000, "{child_ms}");
         assert!(child_ms >= 19_900, "{child_ms}");
+        // An injected clock advance shortens the child's inherited budget.
+        effigy_core::run_deadline::advance_clock_for_tests(Duration::from_secs(25));
+        assert_eq!(effigy_core::run_deadline::child_env_ms(), Some(0));
+        effigy_core::run_deadline::clear_clock_for_tests();
         effigy_core::run_deadline::clear_injected_for_tests();
         assert_eq!(effigy_core::run_deadline::child_env_ms(), None);
     }

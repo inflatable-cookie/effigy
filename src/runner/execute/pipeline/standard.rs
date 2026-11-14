@@ -177,28 +177,30 @@ pub(in crate::runner) fn run_standard_task(
     };
     // Observability never changes the task's outcome or exit code (K10).
     let warnings = run.close(workload);
-    // A settlement the invocation's absolute deadline cut short cannot certify
-    // the workload's success: fail closed with the interrupted outcome and
-    // residue, never a success (effigy#992).
-    let deadline_cut = effigy_core::run_deadline::take_settlement_truncated();
-    for warning in warnings {
+    // A settlement the absolute deadline left incomplete cannot certify the
+    // workload's success: fail closed with the interrupted outcome, residue
+    // and the named retained resources, never a success (effigy#992).
+    let settlement_incomplete = effigy_core::run_deadline::take_settlement_incomplete();
+    for warning in &warnings {
         let _ = effigy_core::output_cap::write(
             effigy_core::output_cap::Stream::Stderr,
             format!("warning: {}: {warning}\n", target.label).as_bytes(),
         );
     }
-    if deadline_cut && result.is_ok() {
-        return Err(run_deadline_error(&target));
+    effigy_core::run_deadline::note_phase(effigy_core::run_deadline::Phase::Terminal);
+    if settlement_incomplete && result.is_ok() {
+        return Err(run_deadline_incomplete(&target, &warnings));
     }
     result
 }
 
-/// The fail-closed result of a settlement the absolute deadline cut short.
-fn run_deadline_error(target: &TaskTarget) -> RunnerError {
+/// The fail-closed result of a settlement that was not positively complete
+/// under the absolute deadline.
+fn run_deadline_incomplete(target: &TaskTarget, notes: &[String]) -> RunnerError {
     let detail = format!(
-        "the run deadline (`{}`) expired while Effigy settled task `{}`: the workload's own \
-         result cannot be certified, settlement is incomplete, and the run is interrupted with \
-         residue",
+        "the run deadline (`{}`) did not leave settlement of task `{}` positively complete: the \
+         workload's own result cannot be certified, the run is interrupted with residue, and the \
+         retained resources are named in the details",
         effigy_core::run_deadline::RUN_DEADLINE_ENV,
         target.label,
     );
@@ -207,9 +209,10 @@ fn run_deadline_error(target: &TaskTarget) -> RunnerError {
         "schema_version": 1,
         "task": target.label,
         "phase": "settlement",
-        "outcome": "unknown",
+        "outcome": "incomplete",
         "residue": true,
         "detail": detail,
+        "settlement_notes": notes,
         "deadline": effigy_core::run_deadline::evidence(),
     })
     .to_string();

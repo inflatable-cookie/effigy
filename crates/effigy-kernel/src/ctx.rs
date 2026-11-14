@@ -206,7 +206,7 @@ impl OperationContext {
     ) -> Self {
         Self {
             deadline: capped(deadline),
-            started: Instant::now(),
+            started: effigy_core::run_deadline::now(),
             cancel,
             limits,
             class,
@@ -215,7 +215,7 @@ impl OperationContext {
     }
     /// A child can shorten a budget, never extend it, including after expiry.
     pub fn child(&self, budget: Duration) -> Self {
-        let now = Instant::now();
+        let now = effigy_core::run_deadline::now();
         // Overflow means the requested budget exceeds Instant's range. The
         // parent's finite deadline still wins; open parents fail closed.
         let requested = now.checked_add(budget);
@@ -239,7 +239,7 @@ impl OperationContext {
         };
         Self {
             deadline: Deadline::At(deadline),
-            started: Instant::now(),
+            started: effigy_core::run_deadline::now(),
             ..self.clone()
         }
     }
@@ -249,7 +249,7 @@ impl OperationContext {
     /// the parent's remaining time: the store's own writer window must not
     /// shrink to a workload deadline (§5.5, K4).
     pub(crate) fn patience(&self, window: Duration) -> Self {
-        let now = Instant::now();
+        let now = effigy_core::run_deadline::now();
         let mut deadline = now.checked_add(window).unwrap_or(now);
         if let Some(cap) = effigy_core::run_deadline::ceiling() {
             deadline = deadline.min(cap);
@@ -265,7 +265,7 @@ impl OperationContext {
     /// invocation's absolute run deadline still caps it: settlement may never
     /// run past the ceiling (effigy#992).
     pub fn cleanup(&self, budget: Duration) -> Result<CleanupContext, BudgetOverflow> {
-        let now = Instant::now();
+        let now = effigy_core::run_deadline::now();
         let deadline = now.checked_add(budget).ok_or(BudgetOverflow)?;
         let deadline = deadline.min(effigy_core::run_deadline::ceiling().unwrap_or(deadline));
         let mut operation = self.clone();
@@ -282,7 +282,9 @@ impl OperationContext {
     }
     pub fn remaining(&self) -> Option<Duration> {
         match self.deadline {
-            Deadline::At(at) => Some(at.saturating_duration_since(Instant::now())),
+            Deadline::At(at) => {
+                Some(at.saturating_duration_since(effigy_core::run_deadline::now()))
+            }
             Deadline::Open(_) => None,
         }
     }
@@ -526,6 +528,7 @@ mod deadline_tests {
     fn the_run_deadline_caps_an_open_shell_cleanup_and_its_window() {
         let deadline = effigy_core::run_deadline::RunDeadline::from_origin(Instant::now(), 10_000)
             .expect("deadline");
+        effigy_core::run_deadline::clear_clock_for_tests();
         effigy_core::run_deadline::inject_for_tests(Some(deadline));
         let cx = OperationContext::new(
             Deadline::Open(OpenReason::Shell),
@@ -537,7 +540,7 @@ mod deadline_tests {
         assert!(
             matches!(
                 cx.deadline(),
-                Deadline::At(at) if at <= deadline.ceiling()
+                Deadline::At(at) if at <= deadline.ceiling_at()
             ),
             "an open shell operation is bounded by the run ceiling"
         );
@@ -560,6 +563,15 @@ mod deadline_tests {
             Placement::Host,
         );
         assert!(matches!(follow.deadline(), Deadline::Open(_)));
+        // Advancing the injected clock expires the same ceiling without any
+        // real wait, and a fresh cleanup then has no budget.
+        effigy_core::run_deadline::advance_clock_for_tests(Duration::from_secs(11));
+        let spent = cleanup.window(Duration::from_secs(1));
+        assert!(matches!(
+            spent.operation().check("settlement"),
+            Err(Interrupt::TimedOut { .. })
+        ));
+        effigy_core::run_deadline::clear_clock_for_tests();
         effigy_core::run_deadline::clear_injected_for_tests();
     }
 
@@ -570,6 +582,7 @@ mod deadline_tests {
             10_000,
         )
         .expect("deadline");
+        effigy_core::run_deadline::clear_clock_for_tests();
         effigy_core::run_deadline::inject_for_tests(Some(deadline));
         let cx = OperationContext::new(
             Deadline::Open(OpenReason::Shell),

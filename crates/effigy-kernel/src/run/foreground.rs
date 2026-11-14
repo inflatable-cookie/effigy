@@ -181,7 +181,9 @@ impl ForegroundRun {
     pub fn record(&self) -> &ForegroundRecord {
         &self.record
     }
-    pub(crate) fn record_mut(&mut self) -> &mut ForegroundRecord {
+    /// The owning engine's mutable record handle. The record's own methods
+    /// keep the custody invariants; this accessor only lends it.
+    pub fn record_mut(&mut self) -> &mut ForegroundRecord {
         &mut self.record
     }
     pub fn guard_identity(&self) -> Option<&ProcessIdentity> {
@@ -254,24 +256,21 @@ impl ForegroundRun {
     /// If the invocation's absolute run deadline cuts settlement short, the
     /// run records that fact, keeps its surviving custodian through the
     /// bounded attempt, and reports the interrupted outcome rather than
-    /// pretending to have settled (effigy#992).
+    /// pretending to have settled (effigy#992). Under the opt-in any
+    /// settlement that is not positively complete -- an error, a timeout or
+    /// residue -- is recorded as incomplete, never as success.
     pub fn settle_reporting(
         mut self,
         cleanup: &CleanupContext,
         report: &mut dyn FnMut(CleanupOutcome),
     ) -> Result<Outcome<Settled>, RunError> {
         let result = self.settle_inner(cleanup, report);
-        let deadline_cut = effigy_core::run_deadline::ceiling().is_some()
-            && matches!(
-                &result,
-                Err(RunError::Interrupted(Interrupt::TimedOut { .. }))
-            );
-        if deadline_cut {
-            // Keep the guard and every unresolved handle: dropping them would
-            // discard the last custodian and claim a closure Effigy never
-            // observed. The guard settles residue when its owner is gone.
+        if effigy_core::run_deadline::ceiling().is_some() && result.is_err() {
+            // A settle that failed for any reason under the deadline leaves
+            // the run unsettled: keep the guard and every unresolved handle
+            // rather than discarding the last custodian and implying closure.
             self.truncated = true;
-            effigy_core::run_deadline::note_settlement_truncated();
+            effigy_core::run_deadline::note_settlement_incomplete();
         }
         result
     }
@@ -311,9 +310,6 @@ impl ForegroundRun {
             self.record.settle_effect(effect.sequence, state, reason)?;
         }
         self.record.close()?;
-        if let Some(mut guard) = self.guard.take() {
-            guard.close(cleanup)?;
-        }
         let outcome = settle::outcome(
             self.record.incarnation().run,
             &self.next,
@@ -325,7 +321,7 @@ impl ForegroundRun {
         )?;
         // Shared custody disables GateFile's ordinary explicit unlock. Restore
         // it only after complete effects, positive descendant closure and the
-        // exact memory guard's successful exit above. A concurrent unrelated
+        // exact memory guard's successful exit below. A concurrent unrelated
         // fork may still hold CLOEXEC copies until exec; those are no longer
         // custody and must not make a settled foreground run appear live.
         let descendants_closed = self.children.iter().all(|child| {
@@ -334,7 +330,31 @@ impl ForegroundRun {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .is_some()
         });
-        if outcome.cleanup() != CleanupOutcome::Incomplete && descendants_closed {
+        let incomplete = outcome.cleanup() == CleanupOutcome::Incomplete;
+        if incomplete && effigy_core::run_deadline::ceiling().is_some() {
+            // Keep the surviving custodian and every unresolved handle. The
+            // guard is not closed or signalled here: it retains the gates and
+            // settles residue after its owner's EOF, so closure is never
+            // claimed for work this settle could not prove. The retained
+            // resources are named in the outcome's residue.
+            self.truncated = true;
+            effigy_core::run_deadline::note_settlement_incomplete();
+            let mut outcome = outcome;
+            outcome.add_residue(crate::outcome::Residue::unresolved(
+                0,
+                "custodian",
+                self.record.incarnation().owner.clone(),
+                Some("foreground guard"),
+                "retained as the surviving custodian: settlement did not close positively \
+                 within the run deadline",
+                self.next.clone(),
+            ));
+            return Ok(outcome);
+        }
+        if let Some(mut guard) = self.guard.take() {
+            guard.close(cleanup)?;
+        }
+        if !incomplete && descendants_closed {
             self._gate.release_closed_custody();
             if let Some(completion) = &self.completion {
                 *completion

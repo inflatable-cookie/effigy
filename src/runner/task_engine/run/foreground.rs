@@ -132,13 +132,17 @@ impl TaskRun {
         effigy_core::output_cap::foreground_started();
         // The deadline's own evidence: its clock, origin and phase budgets.
         // Off by default, so an invocation without the opt-in writes nothing.
+        effigy_core::run_deadline::clear_phases();
+        effigy_core::run_deadline::note_phase(effigy_core::run_deadline::Phase::Admission);
         if let Some(deadline) = effigy_core::run_deadline::current() {
             let _ = effigy_core::output_cap::write(
                 effigy_core::output_cap::Stream::Stderr,
                 deadline.describe().as_bytes(),
             );
         }
-        run.admit(request.admission, plan, request.cwd)?;
+        let admitted = run.admit(request.admission, plan, request.cwd);
+        effigy_core::run_deadline::note_phase(effigy_core::run_deadline::Phase::Admission);
+        admitted?;
         Ok(run)
     }
 
@@ -319,6 +323,7 @@ pub(super) fn close_memory(
     Option<effigy_kernel::outcome::Outcome<effigy_kernel::run::Settled>>,
     Vec<String>,
 ) {
+    effigy_core::run_deadline::note_phase(effigy_core::run_deadline::Phase::Settlement);
     let recorded = match workload {
         WorkloadOutcome::Cancelled { .. }
         | WorkloadOutcome::TimedOut { .. }
@@ -333,18 +338,35 @@ pub(super) fn close_memory(
         .collect::<Vec<_>>();
     match run.settle_reporting(cleanup, report) {
         Ok(outcome) => {
-            effigy_core::output_cap::foreground_settled(
-                recorded_ok
-                    && outcome.cleanup() == effigy_kernel::outcome::CleanupOutcome::Complete,
-            );
-            if outcome.cleanup() == CleanupOutcome::Incomplete {
-                warnings
-                    .push("foreground cleanup is incomplete; remaining evidence is residue".into());
+            let positive = recorded_ok
+                && outcome.cleanup() == effigy_kernel::outcome::CleanupOutcome::Complete;
+            effigy_core::output_cap::foreground_settled(positive);
+            if !positive {
+                // Under the opt-in an incomplete settlement is never success;
+                // the marker makes the caller fail closed. The retained
+                // resources are named by the outcome's own residue.
+                if effigy_core::run_deadline::ceiling().is_some() {
+                    effigy_core::run_deadline::note_settlement_incomplete();
+                }
+                let unresolved = outcome.unresolved();
+                if unresolved.is_empty() {
+                    warnings.push(
+                        "foreground cleanup is incomplete; remaining evidence is residue".into(),
+                    );
+                } else {
+                    warnings.push(format!(
+                        "foreground cleanup is incomplete; retained: {}",
+                        unresolved.join("; ")
+                    ));
+                }
             }
             (Some(outcome), warnings)
         }
         Err(error) => {
             effigy_core::output_cap::foreground_settled(false);
+            if effigy_core::run_deadline::ceiling().is_some() {
+                effigy_core::run_deadline::note_settlement_incomplete();
+            }
             warnings.push(format!("foreground settle: {error}"));
             (None, warnings)
         }
@@ -355,23 +377,31 @@ pub(super) fn close_memory(
 mod tests {
     use super::*;
     use crate::runner::task_engine::{run_plain, PlainCommand, TaskRunRequest};
+    use effigy_kernel::observe::Observed;
     use std::path::Path;
     use std::time::{Duration, Instant};
 
-    /// Installs the thread's deterministic deadline and clears it even when a
-    /// test fails.
+    /// Installs the deterministic deadline and clock, and clears both even
+    /// when a test fails.
     struct InjectedDeadline;
     impl InjectedDeadline {
         fn at(origin: Instant, ms: u64) -> Self {
             let deadline = effigy_core::run_deadline::RunDeadline::from_origin(origin, ms)
                 .expect("injected deadline");
+            effigy_core::run_deadline::clear_clock_for_tests();
+            effigy_core::run_deadline::clear_phases();
             effigy_core::run_deadline::inject_for_tests(Some(deadline));
             Self
+        }
+        fn advance(by: Duration) {
+            effigy_core::run_deadline::advance_clock_for_tests(by);
         }
     }
     impl Drop for InjectedDeadline {
         fn drop(&mut self) {
             effigy_core::run_deadline::clear_injected_for_tests();
+            effigy_core::run_deadline::clear_clock_for_tests();
+            effigy_core::run_deadline::clear_phases();
         }
     }
 
@@ -402,23 +432,26 @@ mod tests {
     }
 
     #[test]
-    fn the_run_deadline_times_out_the_workload_and_settles_inside_the_ceiling() {
+    fn the_clock_expires_the_workload_and_settlement_still_finishes() {
         let _lock = crate::contract_test_support::lock_test();
         let root = tempfile::tempdir().expect("root");
         let target = target(root.path(), "sleepy");
         let mut run = begin(&target);
         let origin = Instant::now();
         let _deadline = InjectedDeadline::at(origin, 12_000);
-        assert!(
-            effigy_core::run_deadline::current().is_some(),
-            "injection visible"
-        );
         let budget = effigy_core::run_deadline::workload_remaining().expect("configured");
         assert!(
             budget > Duration::from_millis(500) && budget <= Duration::from_secs(2),
             "workload budget is the ceiling less the allowance: {budget:?}"
         );
         assert!(crate::runner::task_engine::remaining_lifetime().is_some());
+        // The clock, not a wall-clock sleep, ends the workload: a helper
+        // advances it past the workload boundary while the owner polls.
+        let advance = std::thread::spawn(|| {
+            std::thread::sleep(Duration::from_millis(80));
+            InjectedDeadline::advance(Duration::from_secs(3));
+        });
+        let _ = effigy_core::run_deadline::take_settlement_incomplete();
         let started = Instant::now();
         let exit = run_plain(
             &mut run,
@@ -431,6 +464,7 @@ mod tests {
             },
         )
         .expect("the workload ran");
+        advance.join().expect("clock helper");
         let elapsed = started.elapsed();
         assert_eq!(
             exit.workload,
@@ -440,46 +474,52 @@ mod tests {
         );
         assert_eq!(exit.code, 124);
         assert!(
-            elapsed < Duration::from_millis(12_000),
-            "the workload outlived the deadline: {elapsed:?}"
+            elapsed < Duration::from_secs(5),
+            "the injected clock, not a real wait, ended the workload: {elapsed:?}"
         );
-        let _ = effigy_core::run_deadline::take_settlement_truncated();
         let warnings = run.close(exit.workload);
         assert!(
-            !effigy_core::run_deadline::take_settlement_truncated(),
+            !effigy_core::run_deadline::take_settlement_incomplete(),
             "settlement fit inside the reserved allowance: {warnings:?}"
         );
         assert!(warnings.is_empty(), "{warnings:?}");
-        assert!(Instant::now() < origin + Duration::from_millis(12_000));
+        assert!(effigy_core::output_cap::foreground_complete());
     }
 
     #[test]
-    fn a_settlement_cut_by_the_deadline_is_not_success() {
+    fn a_settlement_after_the_ceiling_is_not_success() {
         let _lock = crate::contract_test_support::lock_test();
         let root = tempfile::tempdir().expect("root");
         let target = target(root.path(), "cut");
         let run = begin(&target);
-        // A ceiling that has already elapsed: settlement has no allowance.
-        let _deadline = InjectedDeadline::at(Instant::now() - Duration::from_secs(20), 10_000);
-        let _ = effigy_core::run_deadline::take_settlement_truncated();
+        // The clock advances past the whole ceiling: settlement has no
+        // allowance and cannot claim closure.
+        let _deadline = InjectedDeadline::at(Instant::now(), 12_000);
+        InjectedDeadline::advance(Duration::from_secs(13));
+        let _ = effigy_core::run_deadline::take_settlement_incomplete();
         let warnings = run.close(WorkloadOutcome::Succeeded);
         assert!(
-            effigy_core::run_deadline::take_settlement_truncated(),
+            effigy_core::run_deadline::take_settlement_incomplete(),
             "an expired settlement must be recorded: {warnings:?}"
         );
         assert!(
             !warnings.is_empty(),
             "an incomplete settlement reports its residue"
         );
+        assert!(
+            !effigy_core::output_cap::foreground_complete(),
+            "an incomplete settlement suppresses the completeness footer"
+        );
     }
 
     #[test]
-    fn a_spawned_workload_is_not_started_when_the_deadline_is_spent() {
+    fn expiry_before_any_effect_starts_no_workload() {
         let _lock = crate::contract_test_support::lock_test();
         let root = tempfile::tempdir().expect("root");
         let target = target(root.path(), "spent");
         let mut run = begin(&target);
-        let _deadline = InjectedDeadline::at(Instant::now() - Duration::from_secs(20), 10_000);
+        let _deadline = InjectedDeadline::at(Instant::now(), 12_000);
+        InjectedDeadline::advance(Duration::from_secs(3));
         assert_eq!(
             crate::runner::task_engine::remaining_lifetime(),
             Some(Duration::ZERO)
@@ -497,7 +537,112 @@ mod tests {
         .expect("no workload ran");
         assert_eq!(exit.code, 124);
         assert!(!root.path().join("must-not-exist").exists());
-        let _ = effigy_core::run_deadline::take_settlement_truncated();
+        let _ = effigy_core::run_deadline::take_settlement_incomplete();
         let _ = run.close(exit.workload);
+    }
+
+    /// An effect that settlement can classify only as residue: its receipt
+    /// names an invalid group. The settle then returns a normal
+    /// `Ok(incomplete)` outcome, which the opt-in must still fail closed.
+    #[test]
+    fn an_incomplete_settlement_fails_closed_and_names_retained_resources() {
+        let _lock = crate::contract_test_support::lock_test();
+        let root = tempfile::tempdir().expect("root");
+        let target = target(root.path(), "residue");
+        let run = begin(&target);
+        let identity = match effigy_kernel::ident::process_identity(std::process::id()) {
+            Observed::Verified(identity, _) => identity,
+            _ => panic!("the test process identity is not verified"),
+        };
+        let memory = run.memory.as_ref().expect("foreground record").clone();
+        {
+            let mut record = memory
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let fence = record.record().fence().clone();
+            let ticket = record
+                .record_mut()
+                .intend_process(effigy_kernel::run::EffectSpec {
+                    target: fence,
+                    // The kernel's local process effect kind, checked by
+                    // `intend_process`.
+                    kind: "kernel:process".into(),
+                    payload: serde_json::Value::Null,
+                    settlement: effigy_kernel::run::Settlement::Release(serde_json::Value::Null),
+                    required: true,
+                })
+                .expect("intent");
+            record
+                .record_mut()
+                .applied(
+                    &ticket,
+                    serde_json::json!({
+                        "identity": identity,
+                        "pgid": 0u32,
+                        "nonce": "residue-proof",
+                        "grace_millis": 1u64,
+                    }),
+                )
+                .expect("receipt");
+        }
+        drop(memory);
+
+        let _deadline = InjectedDeadline::at(Instant::now(), 12_000);
+        let _ = effigy_core::run_deadline::take_settlement_incomplete();
+        let warnings = run.close(WorkloadOutcome::Succeeded);
+        assert!(
+            effigy_core::run_deadline::take_settlement_incomplete(),
+            "an Ok(incomplete) settle must fail closed under the deadline: {warnings:?}"
+        );
+        let rendered = warnings.join(" ");
+        assert!(rendered.contains("retained"), "{rendered}");
+        assert!(rendered.contains("custodian"), "{rendered}");
+        assert!(rendered.contains("foreground guard"), "{rendered}");
+        assert!(
+            rendered.contains("invalid group identity"),
+            "the unresolved effect is named: {rendered}"
+        );
+        assert!(
+            !effigy_core::output_cap::foreground_complete(),
+            "an incomplete settlement suppresses the completeness footer"
+        );
+    }
+
+    #[test]
+    fn the_feature_off_path_is_byte_identical_and_writes_no_evidence() {
+        let _lock = crate::contract_test_support::lock_test();
+        let root = tempfile::tempdir().expect("root");
+        let target = target(root.path(), "same");
+        let run_once = || {
+            let mut run = begin(&target);
+            let exit = run_plain(
+                &mut run,
+                PlainCommand {
+                    command: "printf same",
+                    cwd: root.path(),
+                    env: Vec::new(),
+                    capture: true,
+                    timeout_ms: None,
+                },
+            )
+            .expect("the workload ran");
+            assert_eq!(exit.code, 0);
+            let _ = run.close(exit.workload);
+            exit.stdout
+        };
+        assert!(effigy_core::run_deadline::current().is_none());
+        assert!(effigy_core::run_deadline::evidence().is_none());
+        let off = run_once();
+        assert_eq!(off, b"same");
+        {
+            let _deadline = InjectedDeadline::at(Instant::now(), 12_000);
+            let on = run_once();
+            assert_eq!(
+                on, off,
+                "the opt-in changes budgets, never the workload's own bytes"
+            );
+        }
+        assert!(effigy_core::run_deadline::current().is_none());
+        assert!(effigy_core::run_deadline::evidence().is_none());
     }
 }

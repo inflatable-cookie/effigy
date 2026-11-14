@@ -118,7 +118,7 @@ pub(in crate::runner) fn run_remote_with(
         .into_iter()
         .chain(super::spawn_env::remaining())
         .min()
-        .map(|budget| Instant::now() + budget);
+        .map(|budget| effigy_core::run_deadline::now() + budget);
     #[cfg(test)]
     publish_deadline(deadline);
     let env = container_env(task.env)?;

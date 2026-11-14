@@ -15,10 +15,13 @@
 //!
 //! The feature is off by default: [current] is `None`, and every consumer
 //! keeps its previous budget byte for byte.
+//!
+//! Owned tests drive phase progression through [now], an injectable monotonic
+//! clock (an offset on the real `Instant`, never a wall-clock conversion).
+//! Production always reads the real monotonic clock.
 
-use std::cell::RefCell;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 /// The opt-in: milliseconds from this process's start.
@@ -28,6 +31,26 @@ pub const RUN_DEADLINE_ENV: &str = "EFFIGY_RUN_DEADLINE_MS";
 /// foreground guard's closure, effect cleanup and the terminal evidence.
 /// Charge it against a phase's remaining time, never in addition to it.
 pub const SETTLEMENT_ALLOWANCE: Duration = Duration::from_secs(10);
+
+/// The phases whose remaining budget is read back into the run's evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    Admission,
+    Workload,
+    Settlement,
+    Terminal,
+}
+
+impl Phase {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Admission => "admission",
+            Self::Workload => "workload",
+            Self::Settlement => "settlement",
+            Self::Terminal => "terminal",
+        }
+    }
+}
 
 /// A resolved invocation deadline. `origin` is the monotonic process-start
 /// sample and `ceiling` the absolute instant the invocation must end by.
@@ -56,7 +79,7 @@ impl RunDeadline {
     }
 
     /// The absolute instant the invocation must end by.
-    pub fn ceiling(&self) -> Instant {
+    pub fn ceiling_at(&self) -> Instant {
         self.ceiling
     }
 
@@ -67,11 +90,11 @@ impl RunDeadline {
 
     /// How long the whole invocation has left.
     pub fn remaining(&self) -> Duration {
-        self.ceiling.saturating_duration_since(Instant::now())
+        self.ceiling.saturating_duration_since(now())
     }
 
     /// The absolute instant the workload must end by: the ceiling less the
-    /// settlement allowance. Never after [Self::ceiling].
+    /// settlement allowance. Never after [Self::ceiling_at].
     pub fn workload_ceiling(&self) -> Instant {
         self.ceiling
             .checked_sub(SETTLEMENT_ALLOWANCE)
@@ -80,22 +103,49 @@ impl RunDeadline {
 
     /// How long the workload has left before its own settlement reserve.
     pub fn workload_remaining(&self) -> Duration {
-        self.workload_ceiling()
-            .saturating_duration_since(Instant::now())
+        self.workload_ceiling().saturating_duration_since(now())
     }
 
-    /// The run's evidence: the clock, its origin, the ceiling and the two
-    /// phase budgets. Numbers are monotonic milliseconds; nothing here is a
-    /// wall-clock time.
+    /// The phase's own remaining budget: admission and the workload share the
+    /// workload boundary; settlement and the terminal evidence share the
+    /// absolute ceiling.
+    pub fn phase_remaining(&self, phase: Phase) -> Duration {
+        let at = match phase {
+            Phase::Admission | Phase::Workload => self.workload_ceiling(),
+            Phase::Settlement | Phase::Terminal => self.ceiling,
+        };
+        at.saturating_duration_since(now())
+    }
+
+    /// Milliseconds elapsed since the origin was sampled. This is the
+    /// observable origin: the phase readback below is stated on the same
+    /// monotonic axis, so the origin is the zero point a reader can verify.
+    pub fn since_origin(&self) -> Duration {
+        now().saturating_duration_since(self.origin)
+    }
+
+    /// The run's evidence: the clock, its observable origin, the ceiling, the
+    /// phase budgets and each phase's observed remaining time.
     pub fn evidence(&self) -> serde_json::Value {
+        let workload_budget = self
+            .configured_ms
+            .saturating_sub(SETTLEMENT_ALLOWANCE.as_millis() as u64);
         serde_json::json!({
             "clock": "monotonic",
             "origin": "process_start",
+            "origin_sample": "before capture, staging or admission",
+            "origin_readback": "elapsed_since_origin_ms",
+            "since_origin_ms": self.since_origin().as_millis() as u64,
             "ceiling_ms": self.configured_ms,
             "settlement_allowance_ms": SETTLEMENT_ALLOWANCE.as_millis() as u64,
-            "workload_budget_ms": self
-                .configured_ms
-                .saturating_sub(SETTLEMENT_ALLOWANCE.as_millis() as u64),
+            "workload_budget_ms": workload_budget,
+            "phase_budgets_ms": {
+                "admission": workload_budget,
+                "workload": workload_budget,
+                "settlement": SETTLEMENT_ALLOWANCE.as_millis() as u64,
+                "terminal": SETTLEMENT_ALLOWANCE.as_millis() as u64,
+            },
+            "phases": phase_evidence(),
         })
     }
 
@@ -103,13 +153,15 @@ impl RunDeadline {
     /// evidence an operator keeps.
     pub fn describe(&self) -> String {
         format!(
-            "run deadline {}ms: clock monotonic, origin process start, settlement allowance {}ms, \
-             workload budget {}ms, {}ms remaining at admission\n",
+            "run deadline {}ms: clock monotonic, origin process start (sampled before capture, \
+             staging or admission), {}ms since origin, settlement allowance {}ms, workload budget \
+             {}ms, {}ms remaining at admission\n",
             self.configured_ms,
+            self.since_origin().as_millis(),
             SETTLEMENT_ALLOWANCE.as_millis(),
             self.configured_ms
                 .saturating_sub(SETTLEMENT_ALLOWANCE.as_millis() as u64),
-            self.remaining().as_millis(),
+            self.phase_remaining(Phase::Admission).as_millis(),
         )
     }
 
@@ -125,14 +177,88 @@ impl RunDeadline {
 
 static CONFIGURED: OnceLock<Option<RunDeadline>> = OnceLock::new();
 static CONFIGURED_ENV: OnceLock<Result<(), String>> = OnceLock::new();
-// A deterministic clock injection for owned tests. Thread-local so parallel
-// tests in one binary never see each other's deadline.
-thread_local! {
-    static INJECTED: RefCell<Option<Option<RunDeadline>>> = const { RefCell::new(None) };
-}
-/// A settlement that could not finish inside the reserved allowance. Process
+/// A deterministic clock injection for owned tests: milliseconds added to the
+/// real monotonic clock. Zero in production, so [now] is the real clock.
+static CLOCK_OFFSET_MS: AtomicU64 = AtomicU64::new(0);
+static INJECTED: OnceLock<Mutex<Option<RunDeadline>>> = OnceLock::new();
+/// A settlement that did not finish positively under the run deadline. Process
 /// wide because the footer decision is process wide.
-static SETTLEMENT_TRUNCATED: AtomicBool = AtomicBool::new(false);
+static SETTLEMENT_INCOMPLETE: AtomicBool = AtomicBool::new(false);
+static PHASES: OnceLock<Mutex<Vec<PhaseReadback>>> = OnceLock::new();
+
+#[derive(Debug, Clone, Copy)]
+struct PhaseReadback {
+    phase: Phase,
+    since_origin_ms: u64,
+    remaining_ms: u64,
+    budget_ms: u64,
+}
+
+/// The monotonic clock every deadline consumer uses. Production is
+/// `Instant::now`; an owned test can advance it without sleeping.
+pub fn now() -> Instant {
+    let offset = CLOCK_OFFSET_MS.load(Ordering::SeqCst);
+    if offset == 0 {
+        return Instant::now();
+    }
+    Instant::now()
+        .checked_add(Duration::from_millis(offset))
+        .unwrap_or_else(Instant::now)
+}
+
+/// Records one phase's observed remaining budget in the run's evidence. The
+/// latest observation of a phase wins, so the readback names where each phase
+/// actually ended rather than only where it began.
+pub fn note_phase(phase: Phase) {
+    let Some(deadline) = current() else {
+        return;
+    };
+    let observation = PhaseReadback {
+        phase,
+        since_origin_ms: deadline.since_origin().as_millis() as u64,
+        remaining_ms: deadline.phase_remaining(phase).as_millis() as u64,
+        budget_ms: match phase {
+            Phase::Admission | Phase::Workload => deadline
+                .configured_ms
+                .saturating_sub(SETTLEMENT_ALLOWANCE.as_millis() as u64),
+            Phase::Settlement | Phase::Terminal => SETTLEMENT_ALLOWANCE.as_millis() as u64,
+        },
+    };
+    let mut phases = phases().lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(existing) = phases.iter_mut().find(|existing| existing.phase == phase) {
+        *existing = observation;
+    } else {
+        phases.push(observation);
+    }
+}
+
+/// Clears the phase readback at the start of a run.
+pub fn clear_phases() {
+    phases()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clear();
+}
+
+fn phases() -> &'static Mutex<Vec<PhaseReadback>> {
+    PHASES.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn phase_evidence() -> serde_json::Value {
+    let phases = phases().lock().unwrap_or_else(PoisonError::into_inner);
+    let mut object = serde_json::Map::new();
+    for readback in phases.iter() {
+        object.insert(
+            readback.phase.name().to_owned(),
+            serde_json::json!({
+                "since_origin_ms": readback.since_origin_ms,
+                "remaining_ms": readback.remaining_ms,
+                "budget_ms": readback.budget_ms,
+            }),
+        );
+    }
+    serde_json::Value::Object(object)
+}
 
 /// Parses one `EFFIGY_RUN_DEADLINE_MS` value against an explicit origin.
 /// `None` means the variable is absent or blank: the feature is off.
@@ -166,6 +292,7 @@ pub fn validate(ms: u64) -> Result<(), String> {
 }
 
 fn configure_env_once() -> Result<(), String> {
+    // The true process-start sample: a test clock is never installed here.
     let origin = Instant::now();
     let raw = match std::env::var(RUN_DEADLINE_ENV) {
         Ok(value) => Some(value),
@@ -186,8 +313,9 @@ pub fn configure_from_env() -> Result<(), String> {
 
 /// The process's resolved deadline, if the feature is on.
 pub fn current() -> Option<RunDeadline> {
-    if let Some(explicit) = INJECTED.with(|injected| *injected.borrow()) {
-        return explicit;
+    let injected = INJECTED.get_or_init(|| Mutex::new(None));
+    if let Some(explicit) = *injected.lock().unwrap_or_else(PoisonError::into_inner) {
+        return Some(explicit);
     }
     CONFIGURED.get().copied().flatten()
 }
@@ -199,7 +327,7 @@ pub fn remaining() -> Option<Duration> {
 
 /// The absolute instant the invocation must end by, if the feature is on.
 pub fn ceiling() -> Option<Instant> {
-    current().map(|deadline| deadline.ceiling())
+    current().map(|deadline| deadline.ceiling_at())
 }
 
 /// The workload's remaining time, after the reserved settlement allowance.
@@ -222,32 +350,60 @@ pub fn evidence() -> Option<serde_json::Value> {
     current().map(|deadline| deadline.evidence())
 }
 
-/// Records that settlement could not finish inside the reserved allowance.
-pub fn note_settlement_truncated() {
-    SETTLEMENT_TRUNCATED.store(true, Ordering::SeqCst);
+/// Records that settlement did not finish positively under the run deadline.
+pub fn note_settlement_incomplete() {
+    SETTLEMENT_INCOMPLETE.store(true, Ordering::SeqCst);
 }
 
-/// Whether an earlier settlement in this process was cut short by the
-/// deadline, clearing the marker so one run reports it once.
-pub fn take_settlement_truncated() -> bool {
-    SETTLEMENT_TRUNCATED.swap(false, Ordering::SeqCst)
+/// Whether an earlier settlement in this process was incomplete, clearing the
+/// marker so one run reports it once.
+pub fn take_settlement_incomplete() -> bool {
+    SETTLEMENT_INCOMPLETE.swap(false, Ordering::SeqCst)
 }
 
-/// Installs a deterministic clock for the current thread. Test-only.
+/// Installs a deadline for owned tests. Test-only.
 #[doc(hidden)]
 pub fn inject_for_tests(deadline: Option<RunDeadline>) {
-    INJECTED.with(|injected| *injected.borrow_mut() = Some(deadline));
+    let injected = INJECTED.get_or_init(|| Mutex::new(None));
+    *injected.lock().unwrap_or_else(PoisonError::into_inner) = deadline;
 }
 
-/// Removes a test clock from the current thread. Test-only.
+/// Clears a deadline installed by [inject_for_tests]. Test-only.
 #[doc(hidden)]
 pub fn clear_injected_for_tests() {
-    INJECTED.with(|injected| *injected.borrow_mut() = None);
+    inject_for_tests(None);
+}
+
+/// Advances the deterministic clock owned tests share. Test-only.
+#[doc(hidden)]
+pub fn advance_clock_for_tests(by: Duration) {
+    let ms = u64::try_from(by.as_millis()).unwrap_or(u64::MAX);
+    CLOCK_OFFSET_MS.fetch_add(ms, Ordering::SeqCst);
+}
+
+/// Resets the deterministic clock. Test-only.
+#[doc(hidden)]
+pub fn clear_clock_for_tests() {
+    CLOCK_OFFSET_MS.store(0, Ordering::SeqCst);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn injected(ms: u64) -> RunDeadline {
+        let deadline = RunDeadline::from_origin(Instant::now(), ms).expect("deadline");
+        inject_for_tests(Some(deadline));
+        clear_clock_for_tests();
+        clear_phases();
+        deadline
+    }
+
+    fn clear() {
+        clear_injected_for_tests();
+        clear_clock_for_tests();
+        clear_phases();
+    }
 
     #[test]
     fn absent_or_blank_is_off() {
@@ -272,13 +428,63 @@ mod tests {
         let origin = Instant::now();
         let deadline = parse(origin, Some("30000")).unwrap().expect("on");
         assert_eq!(deadline.origin(), origin);
-        assert_eq!(deadline.ceiling(), origin + Duration::from_secs(30));
+        assert_eq!(deadline.ceiling_at(), origin + Duration::from_secs(30));
         assert_eq!(
             deadline.workload_ceiling(),
             origin + Duration::from_secs(30) - SETTLEMENT_ALLOWANCE
         );
-        assert!(deadline.workload_ceiling() < deadline.ceiling());
+        assert!(deadline.workload_ceiling() < deadline.ceiling_at());
         assert_eq!(deadline.configured_ms(), 30_000);
+    }
+
+    #[test]
+    fn the_clock_advances_every_phase_without_sleeping() {
+        let deadline = injected(30_000);
+        let admission = deadline.phase_remaining(Phase::Admission);
+        assert!(admission > Duration::from_secs(19));
+        advance_clock_for_tests(Duration::from_secs(15));
+        assert!(deadline.phase_remaining(Phase::Admission) < Duration::from_secs(5));
+        assert!(deadline.phase_remaining(Phase::Settlement) > Duration::from_secs(14));
+        advance_clock_for_tests(Duration::from_secs(6));
+        assert_eq!(deadline.phase_remaining(Phase::Admission), Duration::ZERO);
+        assert!(deadline.phase_remaining(Phase::Settlement) > Duration::from_secs(8));
+        advance_clock_for_tests(Duration::from_secs(10));
+        assert_eq!(deadline.phase_remaining(Phase::Settlement), Duration::ZERO);
+        assert!(deadline.since_origin() > Duration::from_secs(30));
+        clear();
+    }
+
+    #[test]
+    fn the_evidence_records_the_observable_origin_and_each_phase() {
+        let deadline = injected(30_000);
+        advance_clock_for_tests(Duration::from_secs(2));
+        note_phase(Phase::Admission);
+        advance_clock_for_tests(Duration::from_secs(3));
+        note_phase(Phase::Workload);
+        advance_clock_for_tests(Duration::from_secs(10));
+        note_phase(Phase::Settlement);
+        note_phase(Phase::Terminal);
+        let evidence = deadline.evidence();
+        assert_eq!(evidence["clock"], "monotonic");
+        assert_eq!(evidence["origin"], "process_start");
+        assert_eq!(evidence["origin_readback"], "elapsed_since_origin_ms");
+        assert_eq!(evidence["ceiling_ms"], 30_000);
+        assert_eq!(evidence["phase_budgets_ms"]["admission"], 20_000);
+        assert_eq!(evidence["phase_budgets_ms"]["settlement"], 10_000);
+        assert_eq!(evidence["phases"]["admission"]["since_origin_ms"], 2_000);
+        assert_eq!(evidence["phases"]["workload"]["since_origin_ms"], 5_000);
+        assert_eq!(evidence["phases"]["settlement"]["since_origin_ms"], 15_000);
+        let settlement_remaining = evidence["phases"]["settlement"]["remaining_ms"]
+            .as_u64()
+            .unwrap();
+        assert!(
+            (14_900..=15_000).contains(&settlement_remaining),
+            "{settlement_remaining}"
+        );
+        assert!(deadline
+            .describe()
+            .contains("origin process start (sampled before capture"));
+        clear();
     }
 
     #[test]
@@ -295,34 +501,10 @@ mod tests {
     }
 
     #[test]
-    fn evidence_names_the_clock_origin_and_phase_budgets() {
-        let deadline = parse(Instant::now(), Some("30000")).unwrap().expect("on");
-        let evidence = deadline.evidence();
-        assert_eq!(evidence["clock"], "monotonic");
-        assert_eq!(evidence["origin"], "process_start");
-        assert_eq!(evidence["ceiling_ms"], 30_000);
-        assert_eq!(evidence["settlement_allowance_ms"], 10_000);
-        assert_eq!(evidence["workload_budget_ms"], 20_000);
-        assert!(deadline.describe().contains("origin process start"));
-    }
-
-    #[test]
-    fn an_injected_clock_reaches_every_reader_and_clears() {
-        let deadline = parse(Instant::now(), Some("30000")).unwrap().expect("on");
-        inject_for_tests(Some(deadline));
-        assert_eq!(current(), Some(deadline));
-        assert_eq!(ceiling(), Some(deadline.ceiling()));
-        assert!(workload_remaining().is_some());
-        clear_injected_for_tests();
-        assert_eq!(current(), CONFIGURED.get().copied().flatten());
-    }
-
-    #[test]
-    fn the_truncation_marker_reports_once() {
-        clear_injected_for_tests();
-        assert!(!take_settlement_truncated());
-        note_settlement_truncated();
-        assert!(take_settlement_truncated());
-        assert!(!take_settlement_truncated());
+    fn the_incomplete_marker_reports_once() {
+        assert!(!take_settlement_incomplete());
+        note_settlement_incomplete();
+        assert!(take_settlement_incomplete());
+        assert!(!take_settlement_incomplete());
     }
 }
