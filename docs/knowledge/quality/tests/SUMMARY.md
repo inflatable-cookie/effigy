@@ -55,7 +55,7 @@ The `effigy qa` invocation completed the main suite, kernel faults and matrix, t
 | `journal-matrix` | 14,690 ms | 1 | 1 |
 | `kernel-fault-drivers` | 912,392 ms | 13 | 2 |
 
-### Current main-suite slowest 50 tests (2026-11-13)
+### Current main-suite slowest 50 tests (2026-11-14)
 
 | Duration | Selector / test |
 |---:|---|
@@ -146,30 +146,55 @@ The pair had no native-smoke, fault-injection or milestone-QA run active.
 Load was high in both runs, so these are observed A/B values rather than an
 isolated host benchmark.
 
-### Current main-suite duration collection and closeout validation (2026-11-13)
+### Current main-suite duration collection and closeout validation (2026-11-14)
 
 The current duration tables and slowest-50 list above come from complete JUnit
-report `main.xml`, source run `f1b905bb-4fb0-4895-b054-0d31028cf26a`, collected
-at `2026-11-13T23:14:29Z`: 6,161 cases, 6,159 passed, 2 failed and 31
-skipped. Nextest wall was 610.678 s; summed case duration was 8,846,387 ms.
+report `main.xml`, source run `dada7636-027d-47d5-bd03-9f44b00b5c65`, collected
+at `2026-11-14T01:11:41.861Z`: 6,278 cases, 6,275 passed, 3 failed and 31
+skipped. Nextest wall was 363.851 s; summed case duration was 5,361,707 ms.
 `effigy qa:quality:tests -- --durations target/nextest/default/main.xml --top 50`
-updated 4,824 quality rows; 1,337 cases had no unique table identity. The
-main `cold-start` group accumulated 348,844 ms across 16 tests with the
-configured four-thread cap; `journal-matrix` accumulated 30,358 ms at one
-thread. Other Effigy tests overlapped and host load was high, so these are
-observations rather than isolated performance measurements.
+updated 4,819 quality rows; 1,459 cases had no unique table identity. The
+main `cold-start` group accumulated 267,364 ms across 16 tests; the default
+configuration in `.config/nextest.toml` caps that group at four. The quality
+table command also reads gateway-specific nextest configuration, where the
+same group name has a one-thread cap; its printed group limit is therefore not
+the default-suite setting. `journal-matrix` accumulated 16,674 ms at one
+thread. Load at suite start was 57.42/55.51/56.74. Other Effigy tests,
+including fault selectors, were active; no `linux_native_smoke` was running.
+These are observations under host contention, not isolated performance
+measurements, and this full run was not green.
 
-The full run's `nested_remote_deadlines_take_the_minimum_and_settle_the_registered_session`
-failed at the existing `stop_moment().expect("the enforced stop")` assertion
-in `src/runner/task_engine/remote/tests.rs:1673`. Immediate focused run
-`9afdce28-f7b9-4144-b46b-901ab4214541` also failed there (1/1, 1.571 s).
-This test and production path are untouched in this branch and belong to task
-`c9bac288`; record the result as that external baseline issue under the
-planner's ruling. `racing_invocations_with_one_run_id_start_one_run` failed in
-the full run at 2.860 s during overlapping Effigy tests; immediate focused run
-`34cf1180-ef25-45eb-9c0c-4f016b455487` passed 1/1 in 12.897 s, so record it
-as overlap-sensitive. The full command returned exit 100 and is not described
-as wholly green.
+The failures were all reproduced or classified after the full command:
+
+- `builtin_completion_json_contract_has_versioned_shape` failed in the full
+  suite and focused run `80ee02b9-b9ef-4943-9a93-a87648125500` (1/1). The
+  current command inventory differs from the older command list embedded in
+  the guide's JSON example. The inventory change was merged in PR #1001 (task
+  969); this baseline mismatch is outside this PR.
+- `managed_headless_status_logs_and_stop_control_live_session` aborted in the
+  full suite and focused run `06f20fb8-3526-48a3-8d13-39c765d961c8` with the
+  same `torn gate body` refusal at `crates/effigy-kernel/src/gate.rs:875`, then
+  a 30 s fixture-helper wait timeout. The gate's fail-closed parse behavior is
+  from PR #334; the unchanged status test originated in PR #366. It reproduced
+  while other Effigy selectors were active, and no code in this PR touches the
+  gate or this test.
+- `container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over`
+  failed with a TLS `AccessDenied` alert in this full run (23.325 s). It also
+  failed in the earlier pre-sync full run, but passed immediate focused runs
+  `3791f7ae-e65f-423c-b440-28fdf024fff0` (25.315 s) and
+  `19671636-df32-4678-8357-3feeab28aa7d` (29.626 s), so the result is recorded
+  as overlap-sensitive under the planner's direction.
+
+Earlier pre-sync full runs were also not green and remain history. Run
+`beb14a32-e141-4f87-9502-862f895b44ea` collected 6,161 tests, with 6,159
+passing, two failing and 31 skipped; the nested-remote deadline and gateway
+TLS cases each passed their immediate focused rerun (`03aee710-466a-4998-a98a-094827a3884c`,
+3.633 s; `3791f7ae-e65f-423c-b440-28fdf024fff0`, 25.315 s). An earlier run
+`f1b905bb-4fb0-4895-b054-0d31028cf26a` had attributed the nested-remote result
+to task `c9bac288` after one focused failure; the later exact focused pass
+does not establish that ownership, so that attribution is withdrawn. Its
+`racing_invocations_with_one_run_id_start_one_run` failure also passed its
+immediate focused run `34cf1180-ef25-45eb-9c0c-4f016b455487` (12.897 s).
 
 The earlier fault aggregate run `9d2c45ee-6bf7-4d50-913e-18f3305573c6`
 passed 15/18 in the faults selection while load ranged from 50 to 115 and
