@@ -377,9 +377,9 @@ not assumed.
 
 Refusal, before the hook runs. A v2 admission is the only route that settles a
 terminal record, so a strict run that will write one verifies the ring first
-(`run/foreground.rs::begin_foreground_with` →
-`src/runner/task_engine/admission.rs::require_strict_terminal_ring` →
-`run::terminal_ring::status`). It refuses, before any gate, hook or workload
+(`run/foreground.rs::begin_foreground_with` `:51` →
+`src/runner/task_engine/admission.rs::require_strict_terminal_ring` `:140` →
+`run::terminal_ring::status` `:200`). It refuses, before any gate, hook or workload
 effect and without writing any file, when the ring does not exist, is not the
 fixed size, holds a header this build does not write, has no free slot, or
 holds a committed slot whose checksum does not match. The error is
@@ -429,9 +429,9 @@ duplicates the slot. Two distinct runs take distinct slots and strictly
 increasing sequence numbers; two routes settling together serialize on an
 `flock(LOCK_EX)` taken on the ring file itself, which is not another file and
 writes no byte. `effigy run status <id>` and `effigy runs` read ring slots
-directly (`src/runner/task_engine/control.rs::strict_terminal`, `:587`), so a
-strict run's outcome is visible before any ingestion, and they deduplicate a
-record that is both a slot and a row by `run_id`.
+directly (`src/runner/task_engine/control.rs::strict_terminal` `:312`, ring
+listing `:580`), so a strict run's outcome is visible before any ingestion, and
+they deduplicate a record that is both a slot and a row by `run_id`.
 
 Ingestion. The next writable non-strict open of a checkout journal — including
 `effigy run prepare` — ingests every committed slot into the ordinary
@@ -448,21 +448,24 @@ This invocation's complete physical contribution in strict mode:
 
 | Path (under `<checkout>/.effigy/state/`) | Count | Physical bytes | Failure / finalization | Enforced by |
 | --- | --- | --- | --- | --- |
-| `foreground-terminals.ring` | 0 created; 1 opened read-write | 0 growth, 0 allocation: **exactly one slot's 1,024 bytes rewritten** (body 1,023 then marker 1); header and the other 15 slots unchanged; length stays 16,448 | missing, wrong size, wrong header, full or corrupt refuses before admission; a settle-time failure writes at most that slot's body and falls back to nothing | `run::terminal_ring::write` (`terminal_ring.rs:273`), `verify_size` (`:450`), `verify_header` (`:464`), `decode` (`:581`), `admission.rs::require_strict_terminal_ring` (`:140`) |
-| ring file metadata | — | the file's inode `mtime`/`ctime` update; no directory entry is created or removed, so the state directory's `mtime` is unchanged | — | the only write is `pwrite` into an existing file (`terminal_ring.rs:315-330`) |
+| `foreground-terminals.ring` | 0 created; 1 opened read-write | 0 growth, 0 allocation: **exactly one slot's 1,024 bytes rewritten** (body 1,023 then marker 1); header and the other 15 slots unchanged; length stays 16,448 | missing, wrong size, wrong header, full or corrupt refuses before admission; a settle-time failure writes at most that slot's body and falls back to nothing | `run::terminal_ring::write` (`terminal_ring.rs:280`), `verify_size` (`:457`), `verify_header` (`:471`), `decode` (`:595`), `admission.rs::require_strict_terminal_ring` (`:140`) |
+| ring file metadata | — | the file's inode `mtime`/`ctime` update; no directory entry is created or removed, so the state directory's `mtime` is unchanged | — | the only writes are the two `pwrite`s into the existing file: body `terminal_ring.rs:329`, commit marker `:335` |
 | `kernel.db` | 0 | **0 bytes** | no connection is opened | `run/terminal.rs::record` strict branch (`:132-134`); measured by `strict_persistence_refuses_before_admission_and_prepare_readies_the_route` |
 | `kernel.db-wal` | 0 | **0 bytes** | — | same |
 | `kernel.db-shm` | 0 | **0 bytes** | — | same |
 | `kernel.db-journal` | 0 | none | — | same |
-| `gates/<scope>.scope` | `s` (created empty when absent) | 0 bytes each | a gate failure refuses the run | `gate.rs::Gate::acquire` (`gate.rs:422-475`), unchanged by strict mode |
-| `gates/<scope>/<gate>.gate` | `s + 1` files | at most 4,096 bytes each, rewritten in place | a failed diagnostic rewrite leaves the old body | `gate::DIAG_MAX` (`gate.rs:20-22`), `gate/foreground.rs::set_foreground` |
+| `gates/<scope>.scope` | `s` (created empty when absent) | 0 bytes each | a gate failure refuses the run | `gate.rs::Gate::acquire` (`gate.rs:388-480`; the scope marker is created at `:456-458`), unchanged by strict mode |
+| `gates/<scope>/<gate>.gate` | `s` files (**no store writer gate**: the route opens no store) | at most 4,096 bytes each, rewritten in place | a failed diagnostic rewrite leaves the old body | `gate::DIAG_MAX` (`gate.rs:28`) written by `write_body` (`gate.rs:865`) and `gate/foreground.rs::set_foreground` (`:49`) |
 | run journal, capture log, run history, per-run scratch | 0 | none | — | as above |
 
 `s` is the number of checkout-scope spellings the run's task identity resolves
-to (1 or 2), fixed before any file is written. The gate files are the route's
-only possible creations, and only when absent: the **terminal record adds zero
-files, grows nothing and rewrites exactly one 1 KiB slot**. A route on an
-already-used checkout rewrites existing gate bodies and nothing else.
+to (1 or 2), fixed before any file is written. Unlike the non-strict v2 route
+(`s + 1`, where the terminal row opens the store and takes its writer gate), the
+strict route carries only the task's own gate files, `s`: it opens no store, so
+no store writer gate exists. The gate files are the route's only possible
+creations, and only when absent: the **terminal record adds zero files, grows
+nothing and rewrites exactly one 1 KiB slot**. A route on an already-used
+checkout rewrites existing gate bodies and nothing else.
 
 What strict mode still closes on a store it opens. These checks are not the
 foreground route's — it opens no store — but a strict process may open one for
