@@ -135,7 +135,7 @@ impl RuntimeIntegrationContext<'_> {
         &self,
         state: &mut RuntimeIntegrationState,
         step: workspace_integrations::WorkspaceIntegrationStep,
-        deadline: std::time::Instant,
+        deadline: Option<std::time::Instant>,
     ) -> Result<(), RunnerError> {
         use workspace_integrations::WorkspaceIntegrationStep as Step;
         let Self {
@@ -150,9 +150,7 @@ impl RuntimeIntegrationContext<'_> {
             self.stage(0, "reading the primary service binding");
             state.binding = Some(
                 crate::runner::container_runtime_prep::ensure_primary_service_binding(
-                    root,
-                    policy,
-                    Some(deadline),
+                    root, policy, deadline,
                 )?,
             );
             return Ok(());
@@ -185,7 +183,7 @@ impl RuntimeIntegrationContext<'_> {
             }
             Step::Routes => {
                 self.stage(3, "checking pinned host ports");
-                support::ensure_pinned_host_ports_available(root, policy, Some(deadline))?;
+                support::ensure_pinned_host_ports_available(root, policy, deadline)?;
                 self.stage(4, "starting the gateway");
                 gateway_registration::ensure_gateway_running_for_container(policy)?;
                 self.stage(5, "registering gateway routes");
@@ -204,19 +202,15 @@ impl RuntimeIntegrationContext<'_> {
             }
             Step::HostIntegrations => {
                 self.stage(6, "reconciling tcp alias hosts");
-                state.report.tcp_alias_host_notes = reconcile_primary_service_tcp_alias_hosts(
-                    root,
-                    policy,
-                    binding,
-                    Some(deadline),
-                )?;
+                state.report.tcp_alias_host_notes =
+                    reconcile_primary_service_tcp_alias_hosts(root, policy, binding, deadline)?;
                 // A late listener withholds only its own route. A supervisor
                 // start failure is fatal in every mode, including non-listeners.
                 self.stage(7, "starting host listeners");
                 let report = crate::runner::host_process::start_host_processes_in_activation(
                     root,
                     policy,
-                    Some(deadline),
+                    deadline,
                     self.publisher,
                 )?;
                 state.report.managed_host_listeners = report.ready;
@@ -368,7 +362,7 @@ impl crate::runner::workspace_client::container_up::integrations::IntegrationEff
             self.health = wait_for_container_ready(
                 &self.policy,
                 None,
-                Some(deadline),
+                crate::runner::container_command::readiness::ObservationBudget::Until(deadline),
                 Some(&mut observe_phase),
             )
             .map_err(failed)?;
@@ -401,7 +395,7 @@ impl crate::runner::workspace_client::container_up::integrations::IntegrationEff
             progress: None,
             publisher: waits.publisher(),
         }
-        .reconcile(&mut self.runtime, step, deadline)
+        .reconcile(&mut self.runtime, step, Some(deadline))
         .map_err(failed)?;
         if step == Step::HostIntegrations {
             let complete = self

@@ -27,6 +27,18 @@ use crate::runner::managed_wait::WaitPublisher;
 
 pub(super) type PhaseObserver<'a> = Option<&'a mut dyn FnMut(&EntryState)>;
 
+/// Which observation budget a container bring-up uses.
+#[derive(Clone, Copy)]
+pub(super) enum ObservationBudget {
+    /// Use the deadline shared by activation, readiness and integrations.
+    Until(Instant),
+    /// Use the environment's configured health timeout.
+    HealthTimeout,
+    /// Leave successful fake-runtime observations unbounded; individual
+    /// runtime probes remain bounded by their own command budgets.
+    Unbounded,
+}
+
 use super::steps::{ProgressSource, TimedStep};
 
 /// How often the wait reads the services' own health while a stack is still
@@ -144,24 +156,23 @@ impl ProbeRead {
 
 /// Wait until every service of `policy`'s environment reports ready.
 ///
-/// The wait is bounded by `deadline`, the one budget the bring-up shares with
-/// the runtime reads it made before this wait; without one it starts the
-/// environment's own `health` timeout now. The parent step counts the healthy
-/// services and names the one still failing; each waiting service has its own
-/// step with its attempt and last check output (effigy#460, Q-017).
+/// `budget` carries the bring-up's shared deadline, the configured health
+/// timeout, or the success-fixture's unbounded observation mode. Individual
+/// runtime probes remain bounded in every mode. The parent step counts the
+/// healthy services and names the one still failing; each waiting service has
+/// its own step with its attempt and last check output (effigy#460, Q-017).
 pub(super) fn await_services_ready(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     stop_requested: Option<&AtomicBool>,
-    deadline: Option<Instant>,
+    budget: ObservationBudget,
     mut waits: PhaseObserver<'_>,
 ) -> Result<ReadinessReport, RunnerError> {
     // A new session's phase begins settled and without counts: a record left by
     // an earlier run is never read while this one is still probing, and the
     // staged host graph in the same scope is untouched (effigy#458).
     begin_environment_phase(&mut waits);
-    let result =
-        await_services_ready_inner(repo_root, policy, stop_requested, deadline, &mut waits);
+    let result = await_services_ready_inner(repo_root, policy, stop_requested, budget, &mut waits);
     // Every exit is terminal: a success, a nothing-to-await fallback or a stop
     // settles the phase, and a failure or timeout names what ended it, so
     // status never reports a live wait after the phase is over.
@@ -218,11 +229,15 @@ fn await_services_ready_inner(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     stop_requested: Option<&AtomicBool>,
-    deadline: Option<Instant>,
+    budget: ObservationBudget,
     waits: &mut PhaseObserver<'_>,
 ) -> Result<ReadinessReport, RunnerError> {
     let started = Instant::now();
-    let deadline = deadline.unwrap_or_else(|| observation_deadline(policy));
+    let deadline = match budget {
+        ObservationBudget::Until(deadline) => Some(deadline),
+        ObservationBudget::HealthTimeout => Some(observation_deadline(policy)),
+        ObservationBudget::Unbounded => None,
+    };
     let progress = ProgressSource::waiting_for("the environment's services to report healthy");
     let parent = TimedStep::live(progress.clone());
     let mut steps = BTreeMap::<String, ServiceStep>::new();
@@ -246,7 +261,10 @@ fn await_services_ready_inner(
                 observed: last_services,
             });
         }
-        let probe_deadline = probe_budget_deadline(Instant::now(), deadline);
+        let now = Instant::now();
+        let probe_deadline = deadline
+            .map(|deadline| probe_budget_deadline(now, deadline))
+            .unwrap_or(now + PROBE_BUDGET);
         probes += 1;
         observe_probe_started(
             &progress,
@@ -366,7 +384,7 @@ fn await_services_ready_inner(
                 last_failed_read = Some(read);
             }
         }
-        if Instant::now() >= deadline {
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
             break;
         }
         let interval = if started.elapsed() < PROBE_STARTING_WINDOW {
@@ -374,7 +392,10 @@ fn await_services_ready_inner(
         } else {
             PROBE_INTERVAL_SETTLED
         };
-        std::thread::sleep(interval.min(deadline.saturating_duration_since(Instant::now())));
+        let sleep_for = deadline.map_or(interval, |deadline| {
+            interval.min(deadline.saturating_duration_since(Instant::now()))
+        });
+        std::thread::sleep(sleep_for);
     }
 
     if !observed {

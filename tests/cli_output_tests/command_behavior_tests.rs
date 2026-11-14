@@ -2540,24 +2540,6 @@ run = "sh -lc 'printf seeded > .effigy/local/db-seed.marker'"
     .expect("write generated data-seed manifest");
 }
 
-/// The readiness budget the fake-runtime proofs declare: the fixture's original
-/// two seconds on a quiet host, stretched by one second for every 20ms of
-/// measured host spawn latency (whole seconds, rounded down, so the floor holds
-/// below 20ms), capped at the shipped default. Nothing here asserts how long
-/// readiness takes; the value only keeps a loaded host from spending the
-/// activation's observation budget on fork latency.
-fn container_health_timeout_secs() -> u64 {
-    static SECS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    *SECS.get_or_init(|| {
-        let started = Instant::now();
-        let _ = Command::new("/bin/sh").arg("-c").arg("exit 0").status();
-        let measured = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        // 10ms of host spawn latency buys 0.5s of budget: a quiet host keeps 2s.
-        let stretched = measured.saturating_mul(50) / 1_000;
-        stretched.saturating_add(2).clamp(2, 60)
-    })
-}
-
 fn write_container_fixture_with_task(
     root: &std::path::Path,
     health_check: Option<&str>,
@@ -2579,18 +2561,11 @@ fn write_container_fixture_with_task(
         ""
     };
     let health_block = health_check.map_or(String::new(), |check| {
-        // The check a proof declares here is already satisfied by the fixture's
-        // own listener, and no assertion in these proofs bounds readiness
-        // latency. The budget is the fixture's original two seconds, stretched
-        // by this host's own measured spawn round trip: it is the activation's
-        // one observation budget for readiness *and* the binding reads after
-        // it, so on a loaded host a flat two seconds spent itself on fork
-        // latency and the binding read expired after readiness had passed. A
-        // proof that asserts a bounded refusal injects its own budget.
-        format!(
-            "\n[containers.web.health]\ncheck = \"{check}\"\ntimeout_secs = {}\n",
-            container_health_timeout_secs()
-        )
+        // Success-cohort assertions cover state, readiness and exposure, not
+        // elapsed time. Their explicit test-only budget bypass keeps fake
+        // runtime startup from consuming this configured readiness value.
+        // Bounded-refusal proofs inject and assert their own budgets.
+        format!("\n[containers.web.health]\ncheck = \"{check}\"\ntimeout_secs = 2\n",)
     });
     let task_block = if include_task {
         "\n[systems]\ndefault = \"dev\"\n\n[systems.dev]\ndefault_workspace = \"app\"\n\n[systems.dev.workspaces.app]\ncontainer = \"web\"\nworking_dir = \"/workspace\"\n\n[tasks.dev]\nworkspace = \"app\"\n"
@@ -4247,6 +4222,7 @@ fn cli_container_up_detached_starts_colima_and_reports_ready() {
             root.join("service-running"),
         )
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .env("EFFIGY_TEST_CONTAINER_UP_UNBOUNDED_OBSERVATIONS", "1")
         .output()
         .expect("run effigy");
 
@@ -4485,6 +4461,7 @@ fn cli_container_up_applies_the_restart_policy_after_compose_started_the_stack()
             )
             .env("EFFIGY_TEST_RESTART_UPDATE_FILE", &restart_updates)
             .env("EFFIGY_TEST_RACE_ON_RENDERED_RESTART", "1")
+            .env("EFFIGY_TEST_CONTAINER_UP_UNBOUNDED_OBSERVATIONS", "1")
             .output()
             .expect("run effigy")
     };
@@ -6135,6 +6112,7 @@ fn cli_container_falls_back_to_colima_nerdctl_when_docker_is_missing() {
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
         .env("EFFIGY_TEST_SERVICE_STATE_FILE", root.join("service-state"))
+        .env("EFFIGY_TEST_CONTAINER_UP_UNBOUNDED_OBSERVATIONS", "1")
         .output()
         .expect("run effigy");
 

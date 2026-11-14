@@ -523,8 +523,13 @@ fn a_definite_health_refusal_names_the_container_the_runtime_reports() {
     policy.repo_root = root.clone();
     policy.health_check = Some(check.clone());
     policy.health_timeout_secs = 60;
-    let error = wait_for_container_ready(&policy, None, None, None)
-        .expect_err("a definite 500 is a terminal refusal");
+    let error = wait_for_container_ready(
+        &policy,
+        None,
+        crate::runner::container_command::readiness::ObservationBudget::HealthTimeout,
+        None,
+    )
+    .expect_err("a definite 500 is a terminal refusal");
     // The readiness probe already reported the primary service's container,
     // so the declared wait carries that identity instead of asking the
     // runtime a second time: no bare `ps` (the readiness read is `ps
@@ -662,8 +667,13 @@ fn a_health_refusal_without_a_container_names_the_environment_and_service() {
     policy.health_check = Some(check.clone());
     policy.health_timeout_secs = 60;
     assert_eq!(primary_service_container_observed(&policy, None), None);
-    let error = wait_for_container_ready(&policy, None, None, None)
-        .expect_err("a definite 500 is a terminal refusal");
+    let error = wait_for_container_ready(
+        &policy,
+        None,
+        crate::runner::container_command::readiness::ObservationBudget::HealthTimeout,
+        None,
+    )
+    .expect_err("a definite 500 is a terminal refusal");
     assert!(
         matches!(error, crate::runner::error::RunnerError::ContainerWaitRefused { ref environment, .. } if environment == "web")
     );
