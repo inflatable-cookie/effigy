@@ -271,6 +271,29 @@ fresh evidence. Disk custody, native-root placement, writer confinement,
 snapshot/filesystem decisions, candidate binding and receipt/window gates
 remain. It launches nothing and grants no native credit or publication authority.
 
+### Blanket local-install approval — 2026-11-14
+
+Tom's exact words, relayed by the Nucleus planner: “effigy can have blanket
+approval to install new versions when they're ready.” The planner (Chatterbox)
+therefore runs `effigy install:local` for a ready version without a per-install
+ask to Tom.
+
+A version is ready when all three hold:
+
+- the change is independently reviewed and merged;
+- milestone QA is green at the commit being installed;
+- the Nucleus QA fence inventory is empty under a set fence at install time.
+
+The installer writes its ordinary receipt. The planner relays it to dependent
+projects: the installed head, `effigy.source-receipt`, the binary SHA-256 and
+the launcher identity, so a consumer can check which build it runs.
+
+This is local development install authority only. Tagging, releasing and
+publishing still need Tom's separate explicit authority, and every existing
+install, signing, rollback, protected-state inventory and consumer-ownership
+limit is unchanged. A refused or failed install stays failed. The approval
+grants no proof credit, native allowance or production activation.
+
 ## Governing v0.15 direction — 2026-10-18
 
 Tom's answered Queue decision `5bcf44e4-7e9d-49ee-99d1-c6a46b47a93b`
@@ -476,7 +499,8 @@ admission; no direct raw gate bundle, copied prepared
 fingerprints or temporary Queue validation setting is a substitute. The
 selector itself must be independently reviewed before use. Preparation
 approval still does not permit tagging, publishing, installing or live
-operations.
+operations; installing a ready version has its own standing approval
+([2026-11-14](#blanket-local-install-approval--2026-11-14)).
 
 The maintained selector is `effigy release:run`, declared
 `admission = "heavy"` in [`config/tasks.toml`](../../../config/tasks.toml) and
@@ -614,8 +638,11 @@ PATCH proposal is not the selected MINOR version. The existing public-update
 capability remains `Present` and the 0.13.0 support floor is retained.
 
 It does not permit workflow edits, retagging a failed release, host installation,
-live consumer or gateway migration, or cleanup. Optional dead-scope retirement
-is not a release prerequisite and needs its own actual operator authority.
+live consumer or gateway migration, or cleanup. This decision grants no install
+authority itself: local installs of a ready version follow the separate
+[blanket approval](#blanket-local-install-approval--2026-11-14). Optional
+dead-scope retirement is not a release prerequisite and needs its own actual
+operator authority.
 Older QA and private artifact receipts remain dated to their original source;
 none substitutes for this candidate's release gates or publication evidence.
 
