@@ -239,7 +239,7 @@ mod tests {
         assert_eq!(output, container_shell_completion("web", "app"));
         assert!(
             output.contains('\u{1b}'),
-            "the handoff step takes the shared styling decision: {output:?}"
+            "the handoff step takes the shared styling decision: {output}"
         );
         assert_eq!(
             fs::read_to_string(&marker).expect("read marker"),

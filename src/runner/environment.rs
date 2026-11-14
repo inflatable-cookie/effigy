@@ -895,7 +895,10 @@ mod tests {
                 detail.contains("the Docker daemon"),
                 "the typed answer names what to start: {detail}"
             ),
-            other => panic!("an unreachable engine must not be a false absence: {other:?}"),
+            other => panic!(
+                "an unreachable engine must not be a false absence: {}",
+                other.unproven()
+            ),
         }
     }
 
@@ -952,7 +955,8 @@ mod tests {
         let observed = record_until(&policy, Instant::now() + Duration::from_secs(5));
         assert!(
             matches!(observed, Observed::Absent(_)),
-            "a missing environment journal is an absence with proof: {observed:?}"
+            "a missing environment journal is an absence with proof: {}",
+            observed.unproven()
         );
         assert!(
             record(&policy).is_none(),

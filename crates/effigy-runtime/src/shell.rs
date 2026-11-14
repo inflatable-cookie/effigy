@@ -166,7 +166,7 @@ where
         "docker compose exec",
     )?;
     run_exec(policy, &plan, false)?;
-    Ok(container_shell_completion(&policy.name, &service))
+    Ok(container_shell_completion(&policy.name, service))
 }
 
 fn resolve_container_shell_session<FValidate>(
@@ -273,7 +273,7 @@ where
             output.status
         )));
     }
-    Ok(container_shell_completion(&policy.name, &service))
+    Ok(container_shell_completion(&policy.name, service))
 }
 
 struct CommandModeShell<'a> {
