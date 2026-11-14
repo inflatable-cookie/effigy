@@ -327,8 +327,8 @@ created store to `store::SCHEMA_MAX_PAGES`. A modelled worst case for one
 SQLite statement is *not* claimed here: `balance_nonroot` balances up to three
 sibling pages into up to five new ones and rewrites their parent, and it writes
 a pointer-map entry for every cell it moves, so a closed form would be far above
-what this write does. The strict section below states the ceiling and the
-verified budget that replace such a claim for the route that needs one.
+what this write does. The strict section below states the measured, verified
+budget that replaces such a claim for the route that needs one.
 
 A closing store still attempts `PRAGMA wal_checkpoint(TRUNCATE)` inside a 250 ms
 window: when no reader blocks it, the log is carried into the store and
@@ -449,14 +449,28 @@ page (`store::WAL_FRAME_HEADER_BYTES`, `:83`, `WAL_FRAME_HDRSIZE` in `wal.c`;
 SHM. `kernel.db-shm` holds SQLite's wal-index, allocated in `WALINDEX_PGSZ` = 32
 KiB pages (`store::WAL_INDEX_PAGE_BYTES`, `store.rs:87`; `wal.c` asserts that
 size, and each page indexes 4062 frames on the first page and 4096 on each later
-one). This route appends at most 21 frames and never checkpoints, so it can
-cross at most one page boundary: **one 32 KiB block**, which is also the whole
-file when this invocation creates it beside an empty log. Strict mode refuses
-the one state that would make the size depend on other writers' frames — a
-non-empty log with no wal-index beside it (`store::refuse_recovery`) — so the
-only pre-existing size this rests on is a wal-index that already exists and is
-already sized for the frames other writers left; this invocation's growth on top
-of it is one block. `store::Store::wal_frames` observes the log's length on a
+one). This invocation never checkpoints, so the index only grows by the pages it
+needs for the log's frames, and its growth is a function of the frames actually
+appended — which is a measured budget here, not a bound. Two statements follow,
+and both are conditional on the run staying inside the budget:
+
+- **Inside the 32-frame budget** (`run::TERMINAL_STRICT_WRITE_MAX_PAGES`): the
+  frames fit well inside one page's 4062, so the growth is **at most one 32 KiB
+  block** — which is also the whole file when this invocation creates it beside
+  an empty log.
+- **For a run that trips the budget**, the `record` refusal names the frames
+  observed, and the index growth follows from them: one block for the first
+  4062 frames plus one per 4096 frames after that
+  (`1 + ⌈(frames − 4062) / 4096⌉`, with the first term dropped when
+  `frames ≤ 4062`). That formula is the format's own arithmetic, so the index
+  size is accounted for whatever the frame count turns out to be; the contract
+  does not claim a single-block maximum independent of the frames.
+
+Strict mode refuses the one state that would make the size depend on other
+writers' frames — a non-empty log with no wal-index beside it
+(`store::refuse_recovery`) — so the only pre-existing size either statement
+rests on is a wal-index that already exists and is already sized for the frames
+other writers left. `store::Store::wal_frames` observes the log's length on a
 strict handle rather than attempting a passive checkpoint
 (`store.rs:684-698`), so even the observation writes nothing.
 
