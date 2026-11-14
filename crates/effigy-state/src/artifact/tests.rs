@@ -501,6 +501,10 @@ fn oras_output_classifies_once_into_typed_classes() {
             OciFailureClass::InvalidReference,
         ),
         (
+            "invalid artifact reference: ghcr.io/acme/private:latest",
+            OciFailureClass::InvalidReference,
+        ),
+        (
             "the registry said something else",
             OciFailureClass::Unclassified,
         ),
