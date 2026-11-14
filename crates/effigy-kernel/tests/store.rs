@@ -1749,9 +1749,28 @@ fn store_private_file_mutex_keeps_the_stable_inode_without_a_database() {
     ));
 }
 
-/// The store's own side files are bounded by settings the open states and
-/// verifies, and a closing writer truncates the log it wrote (effigy#977): one
-/// committed write leaves no growing sidecar behind it.
+/// A store this build creates holds only the fixed schema, so its size is a
+/// constant rather than a function of anything a run does (effigy#977). A
+/// checkout with no journal pays that once, on the first write that needs it.
+#[test]
+fn store_fresh_schema_is_bounded() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    let store = Store::open(&cx, &root).unwrap();
+    let pages = store.page_count().unwrap();
+    assert!(
+        pages <= u64::from(SCHEMA_MAX_PAGES),
+        "a fresh store is {pages} pages, over the {SCHEMA_MAX_PAGES}-page schema bound"
+    );
+}
+
+/// The store's open states and verifies the settings that limit its log, and a
+/// closing writer truncates the log it wrote (effigy#977). `journal_size_limit`
+/// bounds the log after a completed checkpoint reset, not its peak: a reader
+/// that pins an older snapshot stops the reset, which is why the per-invocation
+/// claim is the frames one write appends, measured in
+/// `run_terminal_write_appends_at_most_its_stated_frames`.
 #[test]
 fn store_open_states_and_enforces_the_side_file_bounds() {
     let home = home();
@@ -1773,10 +1792,13 @@ fn store_open_states_and_enforces_the_side_file_bounds() {
             txn.resource(&task("bounded"), "task").map(|_| ())
         })
         .unwrap();
+    // Frames a single write appends are small at any log size; the reset limit
+    // is what an unbounded reader scenario can exceed, so this only observes
+    // this writer's own write.
     let written = std::fs::metadata(&wal).map(|meta| meta.len()).unwrap_or(0);
     assert!(
         written <= WAL_LIMIT_BYTES,
-        "one write grew the log to {written} bytes, over its {WAL_LIMIT_BYTES} limit"
+        "one write appended {written} bytes of log, over the {WAL_LIMIT_BYTES}-byte reset limit"
     );
     drop(store);
     let left = std::fs::metadata(&wal).map(|meta| meta.len()).unwrap_or(0);

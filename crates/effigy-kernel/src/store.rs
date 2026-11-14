@@ -44,16 +44,24 @@ pub const STORE_BUSY_WAIT: Duration = Duration::from_secs(30);
 pub const SETTLE_BUSY_WAIT: Duration = Duration::from_secs(120);
 /// The most the write-ahead log may be when a checkpoint resets it (effigy#977).
 ///
-/// `PRAGMA journal_size_limit` truncates the log to this at the end of every
-/// completed checkpoint, so the log a writer leaves behind is bounded here and
-/// not by how much it appended. An invocation's own contribution is the frames
-/// it appends, bounded per write; see `run::TERMINAL_ROW_MAX_BYTES` and the
-/// contract's per-invocation persistence table.
+/// `PRAGMA journal_size_limit` truncates the log to this at the end of a
+/// completed checkpoint reset, so it bounds the log *after* a reset and not the
+/// log's peak: a reader holding an older snapshot stops a checkpoint from
+/// completing, and writers keep appending beyond this while it does
+/// (sqlite.org/wal.html). The per-invocation contribution this route relies on
+/// is the frames of its own transaction, stated in contract 049's
+/// "Per-invocation persistence" section.
 pub const WAL_LIMIT_BYTES: u64 = 16 << 20;
 /// Pages one connection appends before SQLite attempts a checkpoint
-/// (effigy#977): a quarter of [`WAL_LIMIT_BYTES`], so a writer that appends
-/// steadily is checkpointed long before the log reaches its limit.
+/// (effigy#977): a quarter of [`WAL_LIMIT_BYTES`]. An attempt is not a reset; it
+/// completes only when no reader pins an older snapshot.
 pub const WAL_AUTOCHECKPOINT_PAGES: u32 = (WAL_LIMIT_BYTES / PAGE_SIZE / 4) as u32;
+/// The pages the fixed schema occupies when this build creates a store
+/// (effigy#977). The statements are constants (`SCHEMA_V1`, the additive tables
+/// and their indexes), so a fresh store's size is a constant: one page per table
+/// and index, the schema page, the header and the auto-vacuum pointer maps.
+/// `store_fresh_schema_is_bounded` holds a created store to this.
+pub const SCHEMA_MAX_PAGES: u32 = 64;
 /// Wait one store close allows for its own truncating checkpoint. A log a
 /// concurrent reader still needs is left at its bounded size rather than stall
 /// the run that is closing (§5.5).
@@ -525,6 +533,28 @@ impl Store {
             )));
         }
         Ok(())
+    }
+    /// The number of frames in this store's write-ahead log, from a passive
+    /// checkpoint attempt (effigy#977). Passive never waits for another
+    /// connection and never blocks a reader, so this is a plain observation of
+    /// the log a writer shares. The count only grows by frames a writer appends
+    /// and only falls when a checkpoint resets the log, which a pinned reader
+    /// prevents; `run_terminal_write_appends_at_most_its_stated_frames` measures
+    /// one route write this way.
+    pub fn wal_frames(&self) -> Result<u32, StoreError> {
+        let (_busy, log, _checkpointed): (i64, i64, i64) =
+            self.conn
+                .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })?;
+        Ok(log.clamp(0, i64::from(u32::MAX)) as u32)
+    }
+    /// The store's page count and size, from the open connection.
+    pub fn page_count(&self) -> Result<u64, StoreError> {
+        let pages: i64 = self
+            .conn
+            .query_row("PRAGMA page_count", [], |row| row.get(0))?;
+        Ok(pages.max(0) as u64)
     }
     /// `journal_mode=WAL` is persistent in the file. A store last written in
     /// rollback mode needs a moment of exclusive access to change it, so a
