@@ -170,6 +170,28 @@ with. Bytes older than the kept log are reported as expired, never skipped.
 If the log is gone, `run logs --follow` still exits with the run's real
 result from the journal; only an unreadable journal reports `unknown`.
 
+## Account for every byte a run writes (strict persistence)
+
+A consumer that has to price a route's storage can ask for a run that prepares
+nothing. With `EFFIGY_STRICT_PERSISTENCE=1`, a v2-admitted plain foreground task
+writes only its own terminal row and that row's log and index frames: it never
+creates the journal, never migrates or backfills it, never prunes expired rows,
+and never checkpoints — not at the commit and not when its last connection
+closes. If the checkout journal is not already prepared, the run refuses
+**before the admission hook is called**, writes no journal byte and names the
+step that prepares it:
+
+```sh
+effigy run prepare --check   # verify only: writes nothing, fails if a write would be needed
+effigy run prepare           # prepare the journal outside the strict run
+EFFIGY_STRICT_PERSISTENCE=1 effigy <heavy-task>
+```
+
+The complete contribution table, its arithmetic, and the one premise it rests on
+(a shared wal-index that did not exist yet is sized by other writers' frames) are
+in [contract 049](../knowledge/contracts/049-heavy-validation-admission-contract.md).
+The switch is off by default, and every run without it behaves exactly as before.
+
 ## Migration note for Queue
 
 Queue workers used the host-run client: `--host-run-request-id`, parent

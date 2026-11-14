@@ -23,13 +23,17 @@ use effigy_kernel::observe::Observed;
 use super::command_context::resolve_active_command_context;
 use super::error::RunnerError;
 use super::task_engine::{
-    list_runs, lookup_checkout, request_stop, resolve_in, signal_owner, Lookup, RunRecord,
-    StopStarted, RUN_POLL,
+    checkout_effects_root, effect_context, list_runs, lookup_checkout, request_stop, resolve_in,
+    signal_owner, Lookup, RunRecord, StopStarted, RUN_POLL,
 };
+use effigy_kernel::ctx::OpenReason;
 
 const RUN_SCHEMA: &str = "effigy.run.v1";
 const RUNS_SCHEMA: &str = "effigy.runs.v1";
 const LOGS_SCHEMA: &str = "effigy.run.logs.v1";
+const PREPARE_SCHEMA: &str = "effigy.run.prepare.v1";
+/// How long `run prepare` waits for a busy store.
+const PREPARE_WAIT: Duration = Duration::from_secs(30);
 /// One log read; a follower loops until it reaches the log's end.
 const READ_MAX: usize = 256 * 1024;
 /// How long a follower keeps retrying an observation it cannot verify — the
@@ -70,7 +74,60 @@ pub(in crate::runner) fn run_runs(args: RunsArgs) -> Result<String, RunnerError>
             wait_ms.map_or(STOP_WAIT_DEFAULT, Duration::from_millis),
             json,
         ),
+        RunsAction::Prepare { check } => prepare(&checkout(repo_override)?, check, json),
     }
+}
+
+/// `effigy run prepare`: prepares this checkout's run journal for a
+/// strict-persistence run, or with `--check` verifies that it needs no write
+/// (effigy#981).
+///
+/// A strict run (`EFFIGY_STRICT_PERSISTENCE=1`) writes only its own terminal
+/// row, so schema creation, the additive `ALTER`/backfill, a journal-mode
+/// conversion, a bounded prune and recovery all belong to this step instead of
+/// the route. It therefore opens the store without strict persistence whatever
+/// the switch says: preparing is the whole point of the command.
+fn prepare(checkout: &Path, check: bool, json: bool) -> Result<String, RunnerError> {
+    let root = checkout_effects_root(checkout)?;
+    let cx = effect_context(OpenReason::Shell);
+    let (prepared, schema_version, pages) = if check {
+        let observed = effigy_kernel::store::verify_prepared(root, PREPARE_WAIT)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        (false, observed.schema_version, observed.pages)
+    } else {
+        let store = effigy_kernel::store::Store::open_preparing(&cx, root)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        let pages = store
+            .page_count()
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        (true, effigy_kernel::store::SCHEMA_VERSION, pages)
+    };
+    let journal = root.path().join(effigy_kernel::store::DB_NAME);
+    if json {
+        return Ok(serde_json::json!({
+            "schema": PREPARE_SCHEMA,
+            "schema_version": 1,
+            "journal": journal.display().to_string(),
+            "store": { "schema_version": schema_version, "pages": pages },
+            "prepared": prepared,
+            "ready": true,
+        })
+        .to_string());
+    }
+    Ok([
+        format!("journal  {}", journal.display()),
+        format!("schema   {schema_version}"),
+        format!("pages    {pages}"),
+        format!(
+            "state    {}",
+            if prepared {
+                "prepared"
+            } else {
+                "ready (nothing was written)"
+            }
+        ),
+    ]
+    .join("\n"))
 }
 
 /// The checkout a run query belongs to: its journal is the only one the query

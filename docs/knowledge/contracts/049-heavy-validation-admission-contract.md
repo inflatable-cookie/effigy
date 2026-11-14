@@ -340,11 +340,118 @@ Excluded from this contribution, with the reason: other runs' and readers'
 frames in the shared log (not this invocation's writes); rows and files that
 already existed, including rows an older build wrote before this bound
 (`ORDER BY closed_at LIMIT` prunes them in bounded slices, but their pages are
-pre-existing state); the additive `ALTER TABLE`/backfill statements `Store::open`
-runs against a store written by an older build (a one-time migration whose pages
-are a function of pre-existing rows); a checkpoint's writeback of frames already
-in the log (it adds no frames, it moves them into the database); and the child's
-or hook's own files.
+pre-existing state); and the child's or hook's own files.
+
+### Strict persistence: the complete contribution (effigy#981)
+
+The contribution above is honest but partial: a route that opens a store at an
+older schema migrates it and backfills it (`store.rs::Store::schema`), prunes
+expired rows (`run/terminal.rs::write_row`), and checkpoints its log at close
+(`store.rs::Drop for Store`). Those are writes the invocation performs, so
+calling them "pre-existing state" would be a false exclusion. A consumer that
+must account for every byte can instead require the route to perform none of
+them, with `EFFIGY_STRICT_PERSISTENCE=1`
+(`store::STRICT_PERSISTENCE_ENV`; read by `store::strict_persistence`, exactly
+`1`, off otherwise, so every other run stays byte-identical). In strict mode the
+route either writes only its own terminal row and its log/index frames, or it
+refuses before admission.
+
+Refusal, before the hook runs. A v2 admission settles one terminal row, the only
+durable write this route makes, so a strict run that will write one verifies the
+store first (`run/foreground.rs::begin_foreground_with` →
+`task_engine/admission.rs::require_strict_store` →
+`store::verify_prepared`). It refuses, before any gate, hook or workload effect,
+when the store is absent, is missing any part of the current schema
+(`store::schema_gaps`), records another schema version, does not record the
+write-ahead log as its format (`store::header_facts`, the file header's byte 18),
+writes pages at a size other than 4096 (`store::header_facts`), or has a
+rollback journal on disk (`store::refuse_recovery`, whose first open would roll
+it back into the database). The error is `StoreError::NotPrepared`, and it names
+`store::PREPARE_COMMAND` — `effigy run prepare` — as the step that prepares the
+store outside the route. That step opens the store *without* strict persistence
+whatever the switch says (`store::Store::open_preparing`), so the switch it
+satisfies cannot refuse it; `effigy run prepare --check` is the same verification
+without any write.
+
+Nothing in the route migrates, converts, prunes or checkpoints.
+
+| Enforcing check | What it makes impossible |
+| --- | --- |
+| `store.rs::open_mode` opens without `O_CREAT` under strict mode; a missing file is `NotPrepared` | creating `kernel.db` |
+| `store.rs::refuse_recovery` | opening a store whose rollback journal would be rolled back |
+| `store.rs::configure` (strict branch) calls `require_wal` instead of `set_journal_mode` | converting the journal mode, which writes the database header |
+| `store.rs::configure` skips `PRAGMA auto_vacuum=INCREMENTAL` in strict mode | writing an auto-vacuum choice |
+| `store.rs::verify_schema` (`schema_gaps`) | every additive `ALTER TABLE`, table creation, index creation and backfill `Store::schema` would run |
+| `store.rs::configure` sets `PRAGMA wal_autocheckpoint=0` and reads it back (`check_sidecar_bounds`) | SQLite's own checkpoint at COMMIT |
+| `store.rs::configure` sets and confirms `SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE` | SQLite's checkpoint when the last connection closes |
+| `store.rs::Drop for Store` returns early in strict mode | Effigy's own `PRAGMA wal_checkpoint(TRUNCATE)` |
+| `run/terminal.rs::write_row` returns after the insert when `Txn::strict` | the bounded prune's delete statement and its frames |
+
+The one bookkeeping write strict mode skips rather than refuses is `meta`'s
+`last_written_by`: a later non-strict open updates it, and its absence does not
+change what this invocation writes.
+
+This invocation's complete physical contribution in strict mode:
+
+| File (under `<checkout>/.effigy/state/`) | This invocation's maximum | Enforced or derived by |
+| --- | --- | --- |
+| `gates/<scope>.scope` | `s` files, 0 bytes each | as above |
+| `gates/<scope>/<gate>.gate` | `s + 1` files, 4096 bytes each | as above |
+| `kernel.db` | **0 bytes**: no checkpoint, no migration, no prune | the strict checks above |
+| `kernel.db-wal` | `32 + 16 × (page size + 24)` = 65,952 bytes at 4096-byte pages | `run::TERMINAL_STRICT_WAL_MAX_BYTES` from `run::TERMINAL_STRICT_WRITE_MAX_PAGES` = `INSERT_MAX_PAGES` |
+| `kernel.db-shm` | one 32 KiB wal-index page beyond what the shared log already indexed | `store::WAL_INDEX_PAGE_BYTES` |
+| `kernel.db-journal` | none: a store that has one is refused | `store::refuse_recovery` |
+| `foreground_terminals` row | 1, at most 960 stored bytes | `run::TerminalRecord::checked` |
+| run journal, capture log, run history, per-run scratch | none | as above |
+
+WAL arithmetic. SQLite writes a 32-byte log header
+(`store::WAL_HEADER_BYTES`; <https://sqlite.org/fileformat2.html#walformat>) and
+precedes every page with a 24-byte frame header
+(`store::WAL_FRAME_HEADER_BYTES`, `WAL_FRAME_HDRSIZE` in SQLite's `wal.c`), so one
+strict terminal write appends at most `32 + 16 × (4096 + 24)` = 65,952 bytes. The
+frame count is the one this code enforces: the insert is refused unless the row
+fits `run::TERMINAL_ROW_MAX_BYTES` and one page, and the prune it would have run
+does not happen. The b-tree term follows from the store's enforced
+`store::MAX_DB_BYTES` page cap. `effigy run prepare` also settles the page size:
+a store that writes pages at another size is refused, so the number above is not
+a bound for a page size this build never creates.
+
+SHM arithmetic, and its one premise. `kernel.db-shm` holds SQLite's wal-index,
+which is allocated in `WALINDEX_PGSZ` = 32 KiB pages (`store::WAL_INDEX_PAGE_BYTES`;
+SQLite's `wal.c` asserts that size, and each page indexes `HASHTABLE_NPAGE_ONE` =
+`store::WAL_INDEX_FIRST_PAGE_FRAMES` = 4062 frames on the first page and
+`store::WAL_INDEX_PAGE_FRAMES` = 4096 on each later one). This route appends at
+most 16 frames and never checkpoints, so it can at most cross one page boundary:
+**one 32 KiB block**. The remaining premise is stated rather than assumed: when
+the wal-index file does not exist yet, SQLite creates it sized for every frame
+other writers left in the shared, unreset log — `1 + ⌈(frames − 4062) / 4096⌉`
+blocks — and the read that creates it is `store::verify_prepared`, which reads
+through SQLite's own log. That size is a function of other writers' frames, which
+are not this invocation's to bound; the block this invocation adds on top is one.
+
+Measured, not only derived. `test:kernel:store`
+(`store_strict_open_refuses_a_store_it_would_have_to_create`,
+`store_strict_open_refuses_an_unmigrated_store_and_writes_nothing`,
+`store_strict_write_leaves_the_main_database_byte_identical`,
+`store_strict_wal_and_index_stay_within_their_stated_maximum`,
+`store_strict_persistence_switch_is_opt_in_and_exact`,
+`store_nonstrict_open_keeps_creating_migrating_pruning_and_resetting`) and
+`test:kernel:run`
+(`run_terminal_strict_write_appends_at_most_its_stated_frames_and_defers_the_prune`)
+measure each bound across a fresh store (refused), an at-schema store, a
+needs-migration store (refused), a committed write, a write that fails after its
+statements ran, and a write abandoned before any statement ran — with a reader
+pinning the log and through the last-connection close. The main database is
+compared byte for byte, and a refusal is compared byte for byte over
+`kernel.db` and its log. `test:task-engine:admission`
+(`strict_persistence_refuses_before_admission_and_prepare_readies_the_route`)
+exercises the whole route through the real binary: a refused strict run runs no
+hook and no workload and writes no journal byte, `effigy run prepare --check`
+makes the same refusal without writing, `effigy run prepare` readies it, and the
+same strict run then records exactly one row.
+
+Not claimed in strict mode: the size of the shared wal-index before this
+invocation, the peak of the shared log, and anything the child or the hook writes.
 
 Not persisted. This route writes no run incarnation, request, event, capture
 log, run-history row or object, and opens no per-run scratch. It mints no

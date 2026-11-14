@@ -87,6 +87,23 @@ pub const PRUNE_MAX_PAGES: u32 = 2 * PRUNE_MAX + 2 * 8;
 pub const WRITE_MAX_PAGES: u32 = INSERT_MAX_PAGES + PRUNE_MAX_PAGES;
 /// [`WRITE_MAX_PAGES`] in bytes at the page size Effigy writes.
 pub const WRITE_MAX_BYTES: u64 = WRITE_MAX_PAGES as u64 * crate::store::PAGE_SIZE;
+/// The frames one **strict** terminal write appends (effigy#981).
+///
+/// Strict persistence defers the bounded prune to a later non-strict write or
+/// the retention sweep, so the only statement it issues is the row insert.
+pub const STRICT_WRITE_MAX_PAGES: u32 = INSERT_MAX_PAGES;
+/// This invocation's whole physical contribution to `kernel.db-wal` under
+/// strict persistence (effigy#981).
+///
+/// SQLite writes a 32-byte log header, then one 24-byte frame header before
+/// each page (`WAL_FRAME_HDRSIZE`, <https://sqlite.org/fileformat2.html#walformat>),
+/// so [`STRICT_WRITE_MAX_PAGES`] frames occupy
+/// `frames * (page size + 24)`, plus the header when this invocation is the one
+/// that creates the log. Strict persistence never checkpoints, so every frame
+/// this write appends is still in the file when the run ends.
+pub const STRICT_WAL_MAX_BYTES: u64 = crate::store::WAL_HEADER_BYTES
+    + STRICT_WRITE_MAX_PAGES as u64
+        * (crate::store::PAGE_SIZE + crate::store::WAL_FRAME_HEADER_BYTES);
 /// A row this module writes fits in one page, so it never takes an overflow
 /// chain. Enforced by the build, not only by a test.
 const _: () = assert!(ROW_MAX_BYTES <= crate::store::PAGE_SIZE as usize);
@@ -154,6 +171,14 @@ pub(crate) fn write_row(
             record.closed_at_ms,
         ],
     )?;
+    // Strict persistence defers this prune (effigy#981): the row this write
+    // inserts is then the invocation's whole database contribution, and one
+    // fewer statement is one fewer log frame. A later non-strict write and the
+    // retention sweep still remove every expired row, so the seven-day
+    // retention is unchanged.
+    if txn.strict() {
+        return Ok(());
+    }
     // Bounded retention: the record is evidence for a recent run. One indexed
     // delete of at most `PRUNE_MAX` expired rows per write keeps this write's
     // rows fixed; the retention sweep still removes every expired row.
