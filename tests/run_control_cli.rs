@@ -1624,7 +1624,9 @@ while :; do sleep 0.1; done
 /// The ack sequence is the coverage witness. A hook that kills Effigy and its
 /// guard after two acknowledged groups leaves `custodians` plus exactly those
 /// two in the acknowledged prefix, and the third group never executes: it is
-/// still held at the spawn barrier when the owner dies.
+/// still held at the spawn barrier when the owner dies. The guard can record
+/// the verified owner death before the hook's SIGKILL reaches it; otherwise
+/// loss of both custodians leaves the run unrecorded.
 #[test]
 fn admission_protocol_v2_coverage_witness_survives_losing_both_custodians() {
     let fixture = Fixture::new();
@@ -1673,14 +1675,30 @@ fn admission_protocol_v2_coverage_witness_survives_losing_both_custodians() {
     fixture.wait_for("the dead owner's gate to drain", || {
         gates_drained(&fixture.repo)
     });
-    assert!(!fixture.has_journal(), "no settle means no terminal record");
     let status = fixture.run(&["--json", "run", "status", run_id]);
-    assert!(!status.status.success(), "{}", text(&status));
-    assert!(
-        String::from_utf8_lossy(&status.stdout).contains("not-recorded"),
-        "{}",
-        text(&status)
-    );
+    if status.status.success() {
+        // #986 lets the surviving guard settle a verified owner death. This
+        // record is honest only if it preserves the acknowledged prefix and
+        // reports a non-success outcome; it is not evidence that the whole
+        // workload completed or that the guard survived the subsequent kill.
+        let envelope = json_of(&String::from_utf8_lossy(&status.stdout));
+        let run = &envelope["result"]["run"];
+        assert_eq!(run["evidence_source"], "foreground-terminal-record.v1");
+        assert!(
+            matches!(run["state"].as_str(), Some("interrupted" | "unknown")),
+            "owner-death record must remain non-successful: {run}"
+        );
+        assert_eq!(run["workload_groups"], 2, "preserve the ack prefix: {run}");
+    } else {
+        // If the guard was killed before it could settle, losing both
+        // custodians still leaves no terminal record and no inferred outcome.
+        assert!(
+            json_of(&String::from_utf8_lossy(&status.stdout))["error"]["details"]["recording"]
+                == "not-recorded",
+            "no row should remain unrecorded: {}",
+            text(&status)
+        );
+    }
 }
 
 /// A run killed after `custodians` alone proves no group ever started: a
