@@ -440,6 +440,28 @@ fn model_launch(home: &Path, ack: bool, keep_client: bool) -> RemoteReply {
         })
     }))
 }
+/// A client that registers only after `delay`, as a loaded backend does.
+fn late_ack_launch(home: &Path, delay: Duration) -> RemoteReply {
+    let cwd = home.to_owned();
+    RemoteReply::Launch(Box::new(move |command| {
+        let mut env = command.env;
+        let remote_nonce = env.remove(&OsString::from("EFFIGY_CUSTODY_NONCE")).unwrap();
+        env.insert("TEST_REMOTE_NONCE".into(), remote_nonce);
+        let script = format!(
+            "sleep {}; printf '\\036EFFIGY-CUSTODY v1 %s 42 42 100 boot-a 401\\n' \"$TEST_REMOTE_NONCE\" >&2; exec /bin/sleep 60",
+            delay.as_secs_f64()
+        );
+        Ok(ProcessSpec {
+            argv: vec!["/bin/sh".into(), "-c".into(), script.into()],
+            cwd,
+            env,
+            grace: Duration::from_millis(20),
+            lifetime: crate::custody::Lifetime::Finite(Duration::from_secs(5)),
+            terminal: Terminal::None,
+            label: "remote fake exec".into(),
+        })
+    }))
+}
 fn launch_spec() -> RemoteLaunch {
     RemoteLaunch {
         env: env(),
@@ -678,6 +700,59 @@ fn ack_deadline_and_partial_launch_effect_require_nonce_recovery() {
         )
         .unwrap();
     assert_eq!(outcome.cleanup(), CleanupOutcome::Incomplete);
+    a.0.tape.assert_finished();
+}
+#[test]
+fn a_registration_inside_the_stop_grace_is_recorded_for_the_expired_deadline() {
+    let home = tempfile::tempdir().unwrap();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut a = Adapter(remote(vec![
+        step(
+            RemoteCall::Identity(ContainerTarget("selected".into())),
+            RemoteReply::Identity(Observed::Verified(container(), evidence())),
+        ),
+        step(
+            RemoteCall::Launch(container()),
+            late_ack_launch(home.path(), Duration::from_millis(250)),
+        ),
+    ]));
+    let mut run = begin(&cx, &root, &mut a);
+    let r = expected(&run);
+    let mut spec = launch_spec();
+    spec.grace = Duration::from_secs(3);
+    // The workload deadline expires long before the registration arrives, and
+    // the registration still arrives inside the acknowledgement budget.
+    let expired = cx.child_until(Instant::now() + Duration::from_millis(150));
+    let remote = RemoteCustody::launch(&mut run, spec, &expired, &mut a.0)
+        .expect("a late registration is still the session to stop");
+    assert_eq!(remote.registration, r);
+    let effects = run.effects().unwrap();
+    let entry = effects
+        .iter()
+        .find(|effect| effect.spec.kind == KIND)
+        .unwrap();
+    assert_eq!(entry.state, EffectState::Applied);
+    assert!(entry.receipt.is_some());
+    a.0.tape.expect(step(
+        RemoteCall::Observe(r.clone()),
+        session(SessionState::Running),
+    ));
+    a.0.tape.expect(step(
+        RemoteCall::Signal(r.clone(), Signal::Term),
+        session(SessionState::Running),
+    ));
+    a.0.tape.expect(step(
+        RemoteCall::Signal(r, Signal::Continue),
+        session(SessionState::Closed),
+    ));
+    let outcome = run
+        .settle(
+            &cx.operation().cleanup(Duration::from_secs(3)).unwrap(),
+            &mut a,
+        )
+        .unwrap();
+    assert_eq!(outcome.cleanup(), CleanupOutcome::Complete);
     a.0.tape.assert_finished();
 }
 #[test]

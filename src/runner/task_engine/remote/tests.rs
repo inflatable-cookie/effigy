@@ -643,6 +643,59 @@ fn remote_admission_registration_obeys_original_deadline() {
     close(task_run, exit.workload);
 }
 
+/// The other half of the registration deadline: a deadline that expires while the
+/// session is still registering must not discard the session. The registration
+/// window keeps that deadline plus the launch's stop grace, so a session that
+/// registers inside it is recorded and then stopped under the deadline that has
+/// already expired. The barrier, not host load, puts the deadline first.
+#[test]
+fn a_deadline_that_expires_before_registration_still_stops_the_session() {
+    let fixture = fixture();
+    let mut task_run = begin(&fixture.root, "remote:pre-registration");
+    let dir = fixture.model.dir.clone();
+    let deadline = Duration::from_millis(300);
+    let start = Instant::now();
+    let barrier = std::thread::spawn(move || {
+        let until = Instant::now() + Duration::from_secs(10);
+        while !dir.join("waiting").exists() {
+            if Instant::now() >= until {
+                // The launch gave up before its session could register. The
+                // assertions below report what that cost the session.
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        while start.elapsed() < deadline {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        std::fs::write(dir.join("release"), b"").expect("release the registration");
+    });
+    let mut adapter = PendingAck(fixture.model.clone());
+    let env = fixture.env.clone();
+    let exit = run_remote_with(
+        &mut task_run,
+        task(
+            &fixture.root,
+            "while [ ! -f \"$MODEL_STOP\" ]; do sleep 0.02; done; exit 143",
+            true,
+            Some(300),
+        ),
+        &mut adapter,
+        ContainerTarget(CONTAINER.into()),
+        &mut || current(&fixture.root, &env),
+    )
+    .expect("a deadline before registration is still an outcome");
+    barrier.join().expect("registration barrier");
+    assert!(matches!(exit.workload, WorkloadOutcome::TimedOut { .. }));
+    assert_eq!(exit.code, 124);
+    assert!(
+        fixture.model.dir.join("stop").exists(),
+        "the deadline never reached the remote session"
+    );
+    assert!(fixture.model.closed(), "the session was left running");
+    close(task_run, exit.workload);
+}
+
 #[test]
 fn remote_admission_held_honors_stop_request() {
     let matrix = matrix();
