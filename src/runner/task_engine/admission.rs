@@ -1061,7 +1061,10 @@ pub(super) fn report_terminal(
     });
     let report_deadline = effigy_core::run_deadline::ceiling().map(|ceiling| {
         ceiling
-            .checked_sub(effigy_core::run_deadline::EVIDENCE_RESERVE)
+            .checked_sub(
+                effigy_core::run_deadline::EVIDENCE_RESERVE
+                    + effigy_core::run_deadline::HOOK_SETTLEMENT_RESERVE,
+            )
             .unwrap_or(ceiling)
     });
     match deliver(&admission.core, event, report_deadline) {

@@ -33,10 +33,14 @@ pub const RUN_DEADLINE_ENV: &str = "EFFIGY_RUN_DEADLINE_MS";
 /// Charge it against a phase's remaining time, never in addition to it.
 pub const SETTLEMENT_ALLOWANCE: Duration = Duration::from_secs(10);
 
-/// A slice of the allowance reserved for the terminal record and the process
-/// exit itself. The v2 terminal report exchange stops this far before the
-/// ceiling to leave time for final writes; it cannot guarantee their completion.
+/// A slice of the allowance reserved for terminal accounting and exit.
+/// Owner cleanup stops before this window; the guard retains exclusion if
+/// closure is not proved.
 pub const EVIDENCE_RESERVE: Duration = Duration::from_secs(1);
+
+/// Time left for hook cleanup between the terminal report cutoff and the
+/// final evidence window.
+pub const HOOK_SETTLEMENT_RESERVE: Duration = Duration::from_secs(1);
 
 /// The phases whose remaining budget is read back into the run's evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -442,6 +446,16 @@ pub fn remaining() -> Option<Duration> {
 /// The absolute instant the invocation must end by, if the feature is on.
 pub fn ceiling() -> Option<Instant> {
     current().map(|deadline| deadline.ceiling_at())
+}
+
+/// The owner cleanup boundary, leaving the final evidence window.
+pub fn cleanup_ceiling() -> Option<Instant> {
+    current().map(|deadline| {
+        deadline
+            .ceiling_at()
+            .checked_sub(EVIDENCE_RESERVE)
+            .unwrap_or(deadline.origin)
+    })
 }
 
 /// The workload's remaining time, after the reserved settlement allowance.

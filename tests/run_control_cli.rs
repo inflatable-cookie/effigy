@@ -2523,7 +2523,7 @@ fn a_run_deadline_bounds_a_stalled_terminal_report_and_keeps_the_outcome() {
         std::thread::sleep(Duration::from_millis(150));
     }
     // A guard that could not prove closure parks as the verified exclusion
-    // holder; stop it by its recorded pid after the assertions.
+    // holder; stop it by its recorded pid before the assertions.
     if guard_pid > 1 && alive(guard_pid as u32) {
         // SAFETY: only the guard this run recorded.
         unsafe {

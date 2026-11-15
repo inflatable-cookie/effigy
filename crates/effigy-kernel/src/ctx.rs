@@ -267,7 +267,8 @@ impl OperationContext {
     pub fn cleanup(&self, budget: Duration) -> Result<CleanupContext, BudgetOverflow> {
         let now = effigy_core::run_deadline::now();
         let deadline = now.checked_add(budget).ok_or(BudgetOverflow)?;
-        let deadline = deadline.min(effigy_core::run_deadline::ceiling().unwrap_or(deadline));
+        let deadline =
+            deadline.min(effigy_core::run_deadline::cleanup_ceiling().unwrap_or(deadline));
         let mut operation = self.clone();
         operation.deadline = Deadline::At(deadline);
         operation.started = now;
@@ -418,8 +419,8 @@ impl CleanupContext {
     /// long-lived owner started says nothing about how long the step may take.
     /// The invocation's absolute run deadline still caps it (effigy#992).
     pub(crate) fn window(&self, window: Duration) -> Self {
-        let window = match effigy_core::run_deadline::remaining() {
-            Some(remaining) => window.min(remaining),
+        let window = match effigy_core::run_deadline::cleanup_ceiling() {
+            Some(at) => window.min(at.saturating_duration_since(effigy_core::run_deadline::now())),
             None => window,
         };
         Self(self.0.patience(window))
@@ -546,12 +547,12 @@ mod deadline_tests {
         );
         let cleanup = cx.cleanup(Duration::from_secs(60)).expect("cleanup");
         assert!(
-            cleanup.operation().remaining().unwrap() <= Duration::from_millis(10_000),
+            cleanup.operation().remaining().unwrap() <= Duration::from_millis(9_000),
             "a 60s cleanup may not outlive the ceiling"
         );
         let window = cleanup.window(Duration::from_secs(33));
         assert!(
-            window.operation().remaining().unwrap() <= Duration::from_millis(10_000),
+            window.operation().remaining().unwrap() <= Duration::from_millis(9_000),
             "a signal window may not outlive the ceiling"
         );
         // A declared long-lived reason keeps its own lifetime.
@@ -565,7 +566,7 @@ mod deadline_tests {
         assert!(matches!(follow.deadline(), Deadline::Open(_)));
         // Advancing the injected clock expires the same ceiling without any
         // real wait, and a fresh cleanup then has no budget.
-        effigy_core::run_deadline::advance_clock_for_tests(Duration::from_secs(11));
+        effigy_core::run_deadline::advance_clock_for_tests(Duration::from_secs(9));
         let spent = cleanup.window(Duration::from_secs(1));
         assert!(matches!(
             spent.operation().check("settlement"),
