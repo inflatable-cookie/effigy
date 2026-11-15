@@ -1059,7 +1059,12 @@ pub(super) fn report_terminal(
         "cleanup": cleanup_name(cleanup),
         "workload_groups": admission.workload_groups(),
     });
-    match deliver(&admission.core, event, effigy_core::run_deadline::ceiling()) {
+    let report_deadline = effigy_core::run_deadline::ceiling().map(|ceiling| {
+        ceiling
+            .checked_sub(effigy_core::run_deadline::EVIDENCE_RESERVE)
+            .unwrap_or(ceiling)
+    });
+    match deliver(&admission.core, event, report_deadline) {
         Ok(()) => Vec::new(),
         Err(DeliveryError::Deadline) => {
             if effigy_core::run_deadline::ceiling().is_some() {

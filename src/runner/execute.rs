@@ -45,3 +45,23 @@ pub(in crate::runner) use pipeline::managed::{
 #[cfg(test)]
 pub(in crate::runner) use selection::{resolve_task_selection, SelectionResolution};
 pub(in crate::runner) use sequence_run::render_script_path;
+
+/// Whether a declared task tree can use the in-memory foreground route.
+/// Preparation uses the same tree resolver as execution so it only advertises
+/// gates for routes that verify them before admission.
+pub(in crate::runner) fn task_tree_is_foreground(
+    preflight: &planning::ExecutionPreflight,
+    selection: &effigy_manifest::TaskSelection<'_>,
+) -> Result<bool, crate::runner::error::RunnerError> {
+    Ok(sequence_run::resolve_tree(preflight, selection)?.foreground)
+}
+
+/// Whether the selected task starts separate Effigy task invocations. Strict
+/// preparation is per invocation, so callers prepare each declared selector
+/// independently and each receives its own bounded ring write.
+pub(in crate::runner) fn task_tree_has_task_invocations(
+    preflight: &planning::ExecutionPreflight,
+    selection: &effigy_manifest::TaskSelection<'_>,
+) -> Result<bool, crate::runner::error::RunnerError> {
+    Ok(sequence_run::resolve_tree(preflight, selection)?.has_task_invocations())
+}

@@ -39,7 +39,7 @@ fn canonical(path: &Path) -> PathBuf {
 
 impl StateRoot {
     /// The one gate spelling of the checkout this root belongs to.
-    pub(crate) fn checkout_gate_identity(&self) -> CheckoutId {
+    pub fn checkout_gate_identity(&self) -> CheckoutId {
         filesystem_identity(self.owner.path())
     }
 
@@ -87,5 +87,47 @@ impl StateRoot {
         let mut root = Self::effects(cx, &location.root)?;
         root.checkout = true;
         Ok(root)
+    }
+
+    /// Opens existing checkout state for a strict foreground run. Unlike
+    /// `foreground_effects`, this never creates or repairs a directory: the
+    /// matching `run prepare --task` invocation must have created the root.
+    pub fn foreground_effects_prepared(
+        cx: &EffectContext,
+        location: &CheckoutLocation,
+    ) -> Result<Self, StoreError> {
+        cx.require(Capability::HostAuthority)
+            .map_err(|_| StoreError::HostAuthorityRequired)?;
+        let observe = cx
+            .child(std::time::Duration::from_secs(10))
+            .operation()
+            .observe()
+            .map_err(|_| StoreError::Unbounded)?;
+        Self::filesystem_checkout(&observe, location)?;
+
+        let home = DirFd::walk(&location.root, Trust::Ancestor).map_err(StoreError::from)?;
+        let effigy = home
+            .child(".effigy", Trust::Ancestor, false)
+            .map_err(StoreError::from)?
+            .ok_or_else(missing_prepared_state)?;
+        let dir = effigy
+            .child("state", Trust::Private, false)
+            .map_err(StoreError::from)?
+            .ok_or_else(missing_prepared_state)?;
+        dir.require_local().map_err(StoreError::from)?;
+        Ok(Self {
+            dir,
+            owner: home,
+            writable: true,
+            database: Database::Checkout,
+            checkout: true,
+            machine_gates: None,
+        })
+    }
+}
+
+fn missing_prepared_state() -> StoreError {
+    StoreError::NotPrepared {
+        reason: "the checkout state directory is missing; run `effigy run prepare --task SELECTOR` before the strict route".into(),
     }
 }

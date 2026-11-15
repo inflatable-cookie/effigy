@@ -74,13 +74,16 @@ pub(in crate::runner) fn run_runs(args: RunsArgs) -> Result<String, RunnerError>
             wait_ms.map_or(STOP_WAIT_DEFAULT, Duration::from_millis),
             json,
         ),
-        RunsAction::Prepare { check } => prepare(&checkout(repo_override)?, check, json),
+        RunsAction::Prepare { check, task } => {
+            prepare(&checkout(repo_override)?, check, task.as_deref(), json)
+        }
     }
 }
 
-/// `effigy run prepare`: prepares this checkout's run journal and its fixed
-/// strict-mode terminal ring, or with `--check` verifies that a strict run
-/// would need no write (effigy#981, effigy#985).
+/// `effigy run prepare`: prepares this checkout's run journal, fixed
+/// strict-mode terminal ring and, when selected, a foreground task's gates.
+/// `--check` verifies strict preconditions without migrating the journal or
+/// writing the ring and task gates (effigy#981, effigy#985, effigy#991).
 ///
 /// A strict run (`EFFIGY_STRICT_PERSISTENCE=1`) opens no SQLite connection at
 /// all: it overwrites one slot of the preallocated ring. Everything a store
@@ -89,8 +92,16 @@ pub(in crate::runner) fn run_runs(args: RunsArgs) -> Result<String, RunnerError>
 /// instead, together with creating and fully preallocating the ring. Opening the
 /// store without strict persistence is the whole point of the command; the open
 /// also ingests any strict records the ring still holds and frees their slots.
-fn prepare(checkout: &Path, check: bool, json: bool) -> Result<String, RunnerError> {
+fn prepare(
+    checkout: &Path,
+    check: bool,
+    task_selector: Option<&str>,
+    json: bool,
+) -> Result<String, RunnerError> {
     let root = checkout_effects_root(checkout)?;
+    let task_gates = task_selector
+        .map(|selector| resolve_prepare_gates(checkout, root, selector))
+        .transpose()?;
     let cx = effect_context(OpenReason::Shell);
     let (prepared, schema_version, pages) = if check {
         let observed = effigy_kernel::store::verify_prepared(root, PREPARE_WAIT)
@@ -113,6 +124,15 @@ fn prepare(checkout: &Path, check: bool, json: bool) -> Result<String, RunnerErr
         effigy_kernel::run::terminal_ring_prepare(root)
     }
     .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    if let Some((owner, ids, _)) = &task_gates {
+        if check {
+            effigy_kernel::run::verify_prepared_foreground_gates(root, owner, ids)
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        } else {
+            effigy_kernel::run::prepare_foreground_gates(root, owner, ids)
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        }
+    }
     if check && !ring.ready() {
         return Err(RunnerError::task_invocation(
             "the strict terminal ring has no free slot, so a strict run would refuse; \
@@ -122,6 +142,9 @@ fn prepare(checkout: &Path, check: bool, json: bool) -> Result<String, RunnerErr
     }
     let journal = root.path().join(effigy_kernel::store::DB_NAME);
     let ring_file = root.path().join(effigy_kernel::run::TERMINAL_RING_FILE);
+    let allocation_unit_bytes = root
+        .allocation_unit_bytes()
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     if json {
         return Ok(serde_json::json!({
             "schema": PREPARE_SCHEMA,
@@ -136,6 +159,11 @@ fn prepare(checkout: &Path, check: bool, json: bool) -> Result<String, RunnerErr
                 "bytes": ring.bytes,
                 "per_write_bytes": ring.per_write_bytes,
             },
+            "task_gates": task_gates.as_ref().map(|(_, ids, task)| serde_json::json!({
+                "task": task,
+                "resources": ids.len(),
+            })),
+            "allocation_unit_bytes": allocation_unit_bytes,
             "prepared": prepared,
             "ready": true,
         })
@@ -153,6 +181,16 @@ fn prepare(checkout: &Path, check: bool, json: bool) -> Result<String, RunnerErr
             ring.committed,
             ring.free
         ),
+        format!("allocation unit  {allocation_unit_bytes} bytes (statfs)"),
+        task_gates.as_ref().map_or_else(
+            || "task gates       not requested".to_owned(),
+            |(_, ids, task)| {
+                format!(
+                    "task gates       {task} ({} gate files; scope markers prepared)",
+                    ids.len()
+                )
+            },
+        ),
         format!(
             "state    {}",
             if prepared {
@@ -163,6 +201,66 @@ fn prepare(checkout: &Path, check: bool, json: bool) -> Result<String, RunnerErr
         ),
     ]
     .join("\n"))
+}
+
+fn resolve_prepare_gates(
+    checkout: &Path,
+    root: &effigy_kernel::root::StateRoot,
+    raw_selector: &str,
+) -> Result<
+    (
+        effigy_kernel::id::ResourceId,
+        Vec<effigy_kernel::id::ResourceId>,
+        String,
+    ),
+    RunnerError,
+> {
+    let (selector, args) = effigy_tasks::parse_task_reference_invocation(raw_selector)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let invocation = effigy_cli::TaskInvocation {
+        name: effigy_tasks::render_task_selector(&selector),
+        args: args.clone(),
+    };
+    let preflight = crate::runner::execute::api::build_execution_preflight(
+        &invocation,
+        checkout.to_path_buf(),
+    )?;
+    let route = crate::runner::execute::route::resolve_route(&invocation, &preflight)?;
+    let crate::runner::execute::route::Route::Task { selection, .. } = route else {
+        return Err(RunnerError::task_invocation(
+            "`run prepare --task` needs a declared task selector",
+        ));
+    };
+    if !crate::runner::execute::task_tree_is_foreground(&preflight, &selection)? {
+        return Err(RunnerError::task_invocation(
+            "`run prepare --task` supports foreground task trees only",
+        ));
+    }
+    if crate::runner::execute::task_tree_has_task_invocations(&preflight, &selection)? {
+        return Err(RunnerError::task_invocation(
+            "`run prepare --task` prepares one task identity at a time; prepare each declared task selector in the tree separately",
+        ));
+    }
+    if selection.task.mode.as_deref() == Some("tui") {
+        return Err(RunnerError::task_invocation(
+            "`run prepare --task` supports foreground task gates, not managed TUI tasks",
+        ));
+    }
+    let target = crate::runner::task_engine::TaskTarget::for_selection(
+        &preflight.resolved.resolved_root,
+        &preflight.selector.task_name,
+        &selection,
+    )
+    .with_arguments(&args);
+    let checkout_id = crate::runner::task_engine::checkout::read(checkout)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+        .unwrap_or_else(|| root.checkout_gate_identity());
+    let owner = target.owner(checkout_id)?;
+    let mut ids = vec![owner.clone()];
+    if let Some(shared) = target.shared_lock_owner(checkout_id)? {
+        ids.push(shared);
+    }
+    Ok((owner, ids, target.label))
 }
 
 /// The checkout a run query belongs to: its journal is the only one the query

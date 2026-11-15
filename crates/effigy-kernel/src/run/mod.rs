@@ -52,6 +52,27 @@ pub use terminal_ring::{
     SLOTS as TERMINAL_RING_SLOTS, SLOT_BYTES as TERMINAL_RING_SLOT_BYTES,
 };
 
+/// Prepare the gate files used by one foreground task, including the
+/// filesystem-derived checkout alias that admission also holds.
+pub fn prepare_foreground_gates(
+    root: &crate::root::StateRoot,
+    owner: &crate::id::ResourceId,
+    ids: &[crate::id::ResourceId],
+) -> Result<(), RunError> {
+    let ids = aliases::gates(root, owner, ids)?;
+    crate::gate::Gate::prepare_foreground(root, &ids).map_err(RunError::from)
+}
+
+/// Check the exact foreground gate paths without creating or changing them.
+pub fn verify_prepared_foreground_gates(
+    root: &crate::root::StateRoot,
+    owner: &crate::id::ResourceId,
+    ids: &[crate::id::ResourceId],
+) -> Result<(), RunError> {
+    let ids = aliases::gates(root, owner, ids)?;
+    crate::gate::Gate::verify_prepared_foreground(root, &ids).map_err(RunError::from)
+}
+
 pub(crate) use attachments::{
     check_activation_fence, holder_attachment, publish_active_state, workspace_bindings,
 };
