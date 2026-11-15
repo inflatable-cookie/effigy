@@ -60,6 +60,18 @@ fn fake_colima(root: &Path, name: &str, status: i32) -> PathBuf {
     path
 }
 
+/// A `colima` fake that stays alive past a short launch deadline, so the end of
+/// the invocation cannot be proven while the child is running.
+fn hanging_colima(root: &Path, name: &str, seconds: u64) -> PathBuf {
+    let bin = root.join(name);
+    fs::create_dir_all(&bin).expect("fake bin dir");
+    let script = format!("#!/bin/sh\nsleep {seconds}\n");
+    let path = bin.join("colima");
+    fs::write(&path, script).expect("hanging colima");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("hanging colima mode");
+    path
+}
+
 fn compose_args() -> Vec<OsString> {
     ["compose", "-f", "compose.yml", "up", "-d", "-p", "stack"]
         .into_iter()
@@ -146,6 +158,15 @@ impl SettlementAdapter for NoExternalEffects {
 fn harness<T>(
     body: impl FnOnce(&mut Run<'static>, &EffectContext, &Path, &Path) -> T,
 ) -> (T, CleanupOutcome) {
+    let (value, cleanup) = harness_settling(body);
+    (value, cleanup.expect("retained custody settlement"))
+}
+
+/// [`harness`] that leaves the settlement result to the caller, so a proof can
+/// ask what the kernel proves about a launch whose end was unproven.
+fn harness_settling<T>(
+    body: impl FnOnce(&mut Run<'static>, &EffectContext, &Path, &Path) -> T,
+) -> (T, Result<CleanupOutcome, String>) {
     let repo = tempfile::tempdir().expect("fixture checkout");
     let state = effigy_test_support::short_tempdir("rc-").expect("private state home");
     let effigy_home = state.path().join(".effigy");
@@ -213,10 +234,11 @@ fn harness<T>(
         .operation()
         .cleanup(Duration::from_secs(60))
         .expect("settlement window");
-    let outcome = run
-        .settle(&settlement, &mut adapter)
-        .expect("retained custody settlement");
-    (value, outcome.cleanup())
+    let settled = match run.settle(&settlement, &mut adapter) {
+        Ok(outcome) => Ok(outcome.cleanup()),
+        Err(error) => Err(error.to_string()),
+    };
+    (value, settled)
 }
 
 /// The interpolation files a live or finished launch left, excluding the
@@ -510,6 +532,64 @@ fn a_state_home_the_profile_does_not_share_refuses_before_spawn() {
         None => std::env::remove_var("COLIMA_HOME"),
     }
     assert_eq!(cleanup, CleanupOutcome::Complete);
+}
+
+/// A launch whose end cannot be proven retains its interpolation file: the
+/// kernel, not the caller, decides when the group has closed (brief Proof:
+/// "retained on Unknown and removed only after verified closure").
+#[test]
+fn an_unproven_end_retains_the_file_until_verified_closure() {
+    let (retained_path, cleanup) = harness_settling(|run, cx, repo, state| {
+        let program = hanging_colima(repo, "hanging", 30);
+        let env = secret_env();
+        let error = with_helper(|| {
+            retained::capture(
+                repo,
+                program.as_os_str(),
+                &compose_args(),
+                "unproven end",
+                &env,
+                // The launch's own deadline passes while the child is alive.
+                Instant::now() + Duration::from_millis(400),
+                &mut RetainedComposeOwner::new(run, cx),
+            )
+        })
+        .expect_err("a launch whose end is unproven is reported");
+        let message = error.to_string();
+        assert!(
+            message.contains("end is unproven"),
+            "the report names the unproven end: {message}"
+        );
+        assert!(
+            message.contains("stays in kernel custody"),
+            "the report says the file is retained: {message}"
+        );
+        let files = compose_env_files(state);
+        assert_eq!(
+            files.len(),
+            1,
+            "the file is retained while its group's closure is unproven: {files:?}"
+        );
+        // The custody journal beside it names the exact invocation that owns it.
+        let journals: Vec<_> = fs::read_dir(state.join(".effigy").join("compose-env"))
+            .expect("compose-env directory")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(".custody-"))
+            .collect();
+        assert_eq!(
+            journals.len(),
+            1,
+            "one binding journal per invocation: {journals:?}"
+        );
+        files[0].clone()
+    });
+    let cleanup = cleanup.expect("a proved closure settles the retained launch");
+    assert_eq!(cleanup, CleanupOutcome::Complete);
+    assert!(
+        !retained_path.exists(),
+        "verified closure removes the interpolation file"
+    );
 }
 
 /// Settlement removes the file only after verified closure, and no state-home
