@@ -159,6 +159,7 @@ pub(super) fn capture(
 /// exactly as a direct child's was, and each complete line reaches `on_line`
 /// while the runtime writes it. Nothing about the record's bounded tail or the
 /// one-record-per-project rule changes.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn detached(
     repo_root: &Path,
     program: &OsStr,
@@ -376,26 +377,6 @@ fn custody_executable() -> std::io::Result<Executable> {
     Executable::current()
 }
 
-#[cfg(test)]
-pub(super) mod test_executable {
-    use std::cell::RefCell;
-    use std::path::{Path, PathBuf};
-    thread_local! {
-        static PATH: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
-    }
-    pub(in crate::exec) fn get() -> Option<PathBuf> {
-        PATH.with(|slot| slot.borrow().clone())
-    }
-    /// Point this fixture's custody helpers at a binary that speaks the helper
-    /// protocol. Callers restore with [`clear`].
-    pub(in crate::exec) fn set(path: &Path) {
-        PATH.with(|slot| *slot.borrow_mut() = Some(path.to_path_buf()));
-    }
-    pub(in crate::exec) fn clear() {
-        PATH.with(|slot| *slot.borrow_mut() = None);
-    }
-}
-
 /// The bounded context one retained spawn and its wait run under: the apply's
 /// own deadline and cancellation, with a relay budget large enough that a
 /// drained queue never loses the bytes a record keeps.
@@ -471,4 +452,24 @@ fn launch(label: &str, error: impl std::fmt::Display) -> ContainerExecError {
 fn exit_status(exit: Exit) -> std::process::ExitStatus {
     use std::os::unix::process::ExitStatusExt;
     std::process::ExitStatus::from_raw((exit.code & 0xff) << 8)
+}
+
+#[cfg(test)]
+pub(super) mod test_executable {
+    use std::cell::RefCell;
+    use std::path::{Path, PathBuf};
+    thread_local! {
+        static PATH: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    }
+    pub(in crate::exec) fn get() -> Option<PathBuf> {
+        PATH.with(|slot| slot.borrow().clone())
+    }
+    /// Point this fixture's custody helpers at a binary that speaks the helper
+    /// protocol. Callers restore with [`clear`].
+    pub(in crate::exec) fn set(path: &Path) {
+        PATH.with(|slot| *slot.borrow_mut() = Some(path.to_path_buf()));
+    }
+    pub(in crate::exec) fn clear() {
+        PATH.with(|slot| *slot.borrow_mut() = None);
+    }
 }

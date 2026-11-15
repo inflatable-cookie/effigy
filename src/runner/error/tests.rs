@@ -661,9 +661,9 @@ fn a_long_backend_failure_keeps_the_fatal_line_it_ended_with() {
 /// the bound instead of only reaching `--json` (effigy#1003).
 #[test]
 fn a_long_launch_refusal_keeps_its_cause_in_the_human_output() {
+    let objects = format!("/Users/operator/.effigy/state/objects/{}", "a".repeat(420));
     let command = format!(
-        "colima nerdctl --profile effigy -- compose -f {} up -d --build --remove-orphans",
-        format!("/Users/operator/.effigy/state/objects/{}", "a".repeat(420))
+        "colima nerdctl --profile effigy -- compose -f {objects} up -d --build --remove-orphans"
     );
     let failure = RunnerError::from(ContainerExecError::Launch {
         command,
