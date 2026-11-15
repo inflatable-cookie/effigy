@@ -538,19 +538,19 @@ Effigy ownership:
 - a captured launch's output is redacted **in place**: the delivered value's own
   bytes become `[REDACTED]` where they were (`DATABASE_URL=[REDACTED]`), and
   everything the runtime wrote before and after it is kept, in order. The one
-  stopping case is `Redactor::blocked`: when every candidate printable ASCII byte
-  occurs in some secret there is no replacement a reader could not re-join, so
-  `ProcessCore::sink` emits nothing further for that stream and records the
-  capture as truncated rather than leak. A caller of the captured path then holds
-  only the bytes emitted before that point; the detached path relays those same
-  bytes, so its retained record also stops there and gains nothing after it, and
-  Effigy does not add a marker to the record. The kernel's separate canonical
-  output consumer (`spawn_logged_auxiliary` and the styled routes) builds its
-  writer failed for a blocked secret set, marks that log truncated and writes no
-  bytes for that launch at all. The invariant in every case is that no secret is emitted, never that the
-  projection stops at an ordinary printable value: an ordinary value loses
-  nothing, and a blocked one keeps the exit status and the bytes captured before
-  the stop
+  blocking case is `Redactor::blocked`: when every candidate printable ASCII byte
+  occurs in some secret, no replacement exists that a reader could not re-join, so
+  `ProcessCore::sink` refuses that stream outright — it returns before writing any
+  byte, and because `blocked()` is a property of the secret set, the Compose path
+  emits **nothing from the first byte** of that launch, not a prefix. A captured
+  Compose invocation therefore returns an empty capture, and its detached relay
+  writes an empty retained record; Effigy adds no marker to either. The kernel's
+  separate canonical output consumer (`spawn_logged_auxiliary` and the styled
+  routes) builds its writer failed for the same secret set, marks that log
+  truncated, and also writes no bytes for that launch. The invariant in every case
+  is that no secret is emitted, never that the projection stops at an ordinary
+  printable value: an ordinary printable value loses nothing, and a blocked secret
+  set yields an empty capture with the process exit status still reported
 - limits of this slice: explicit removal borrows the file owner, retaining its
   descriptor and lock after failure, and drop does not retry a failed removal.
   The retained Run's own settlement is the production cleanup authority; a
