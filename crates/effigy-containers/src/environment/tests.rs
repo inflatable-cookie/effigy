@@ -1259,15 +1259,13 @@ fn settlements_start_their_own_budget_after_slow_or_failed_activations() {
     assert_eq!(CLEANUP_BUDGET, std::time::Duration::from_secs(60));
     let home1 = home();
     let root1 = root(home1.path());
-    // The settlement budget under test, and the activation that must outlive
-    // all of it. One settle-store commit measured 0.7-1.3s at load 30-60
-    // (effigy#955), so a flat 700ms budget is spent by the machinery the
-    // settle has to drive rather than by the activation it must outlive. Both
-    // stretch with measured host load and keep their ratio, so a quiet host
-    // keeps the original pair and a loaded one still proves the same claim.
-    let budget = effigy_test_support::load_scaled_guard(std::time::Duration::from_millis(700));
-    let slow_activation = budget + std::time::Duration::from_millis(200);
-    let ctx1 = EnvContext::with_cleanup_budget(&root1, CancelToken::default(), budget).unwrap();
+    // The settlement budget the activation spends entirely.
+    let ctx1 = EnvContext::with_cleanup_budget(
+        &root1,
+        CancelToken::default(),
+        std::time::Duration::from_millis(700),
+    )
+    .unwrap();
     let stack1 = env("stack");
     let fake1 = Fake::new();
     let render1 = closure("one");
@@ -1286,7 +1284,7 @@ fn settlements_start_their_own_budget_after_slow_or_failed_activations() {
         },
         || {
             // A cold stack's bring-up, longer than the settlement budget.
-            std::thread::sleep(slow_activation);
+            std::thread::sleep(std::time::Duration::from_millis(900));
             fake1.apply()
         },
     )
@@ -1311,7 +1309,12 @@ fn settlements_start_their_own_budget_after_slow_or_failed_activations() {
     // running (effigy#447).
     let home2 = home();
     let root2 = root(home2.path());
-    let ctx2 = EnvContext::with_cleanup_budget(&root2, CancelToken::default(), budget).unwrap();
+    let ctx2 = EnvContext::with_cleanup_budget(
+        &root2,
+        CancelToken::default(),
+        std::time::Duration::from_millis(700),
+    )
+    .unwrap();
     let stack2 = env("stack");
     let fake2 = Fake::new();
     fake2.queue(Err(BackendError::NotStarted("runtime refused".into())));
@@ -1329,7 +1332,7 @@ fn settlements_start_their_own_budget_after_slow_or_failed_activations() {
             compose_files: &[],
         },
         || {
-            std::thread::sleep(slow_activation);
+            std::thread::sleep(std::time::Duration::from_millis(900));
             fake2.apply()
         },
     );
@@ -1357,13 +1360,12 @@ fn an_interrupted_activation_settles_without_another_effect() {
     let home = home();
     let root = root(home.path());
     let cancel = CancelToken::default();
-    // The settlement budget under test, stretched with measured host load: one
-    // settle-store commit is enough to spend the flat 700ms this used to ask
-    // for (effigy#955), and that commit belongs to the settle, not to the
-    // activation the settle must outlive. The stop below still spends the
-    // whole of whichever budget this host gets.
-    let budget = effigy_test_support::load_scaled_guard(std::time::Duration::from_millis(700));
-    let ctx = EnvContext::with_cleanup_budget(&root, cancel.clone(), budget).unwrap();
+    let ctx = EnvContext::with_cleanup_budget(
+        &root,
+        cancel.clone(),
+        std::time::Duration::from_millis(700),
+    )
+    .unwrap();
     let stack = env("stack");
     let fake = Fake::new();
     let mut run = EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).unwrap();
@@ -1373,10 +1375,9 @@ fn an_interrupted_activation_settles_without_another_effect() {
         fake.apply()
     })
     .unwrap();
-    // The operator stops the activation after the backend acted, and the stop
-    // outlives the settlement budget it must not inherit.
+    // The operator stops the activation after the backend acted.
     cancel.cancel(effigy_kernel::ctx::StopCause::Signal(2));
-    std::thread::sleep(budget + std::time::Duration::from_millis(200));
+    std::thread::sleep(std::time::Duration::from_millis(900));
     assert_eq!(run.finish(false).unwrap(), CleanupOutcome::Complete);
     assert_eq!(
         fake.calls(),
