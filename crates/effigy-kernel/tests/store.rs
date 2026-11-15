@@ -1442,6 +1442,56 @@ fn store_read_beside_a_continuous_writer_is_one_plain_read() {
     );
 }
 
+/// A reader that opened a checkpointed store and then reads a tree the writer
+/// grew beside it must read a whole record, never a malformed database
+/// (effigy#999).
+///
+/// The reader warms its cached page count from a small store, and the writer's
+/// close checkpoint grows the resources tree far past it. An immutable read
+/// walks the grown tree with the stale count and reports SQLite's
+/// `database disk image is malformed` for a store that was never damaged.
+#[test]
+fn store_read_of_a_tree_a_writer_grew_beside_it_is_never_malformed() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .txn(&cx, |txn| txn.resource(&task("seed"), "task").map(|_| ()))
+        .unwrap();
+    drop(store);
+    assert!(
+        !root.path().join(format!("{DB_NAME}-wal")).exists(),
+        "the writer left a hot log, so the reader never took the checkpointed path"
+    );
+    let observed = reader(home.path());
+    let reader = observed.verified().unwrap();
+    // Warm the pages of a small store only: `meta`, not the resources tree.
+    assert!(reader.last_written_by().verified().is_some());
+    let mut writer = Store::open(&cx, &root).unwrap();
+    writer
+        .txn(&cx, |txn| {
+            for index in 0..3000 {
+                txn.resource(&task(&format!("later-{index}")), "task")?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    // Closing the writer checkpoints its log into `kernel.db`, under the
+    // reader: the resources tree the reader has not read yet is now much
+    // larger than the page count its cached database header states.
+    drop(writer);
+    for index in 0..3000 {
+        match reader.resource(&task(&format!("later-{index}"))) {
+            Observed::Verified(..) => {}
+            other => panic!(
+                "a read of a tree a writer grew beside it saw no whole record for later-{index}: \
+                 {other:?}"
+            ),
+        }
+    }
+}
+
 /// A reader that opened a checkpointed store keeps reading whole records while
 /// a writer commits and its close checkpoint rewrites the database pages under
 /// the reader (effigy#999).
