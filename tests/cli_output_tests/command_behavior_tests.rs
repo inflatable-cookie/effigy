@@ -4498,8 +4498,11 @@ fn compose_inputs(log: &str) -> std::collections::BTreeSet<String> {
     files
 }
 
-/// Keep the three fake-runtime up proofs in one libtest process so concurrent
+/// Keep the fake-runtime up proofs in one libtest process so concurrent
 /// cold activations exercise their original budgets and report full JSON errors.
+/// The secret-bearing case is here on purpose: it runs the same cold activation
+/// and adds retained custody, so a custody admission that serialised the
+/// cohort would fail here rather than in a quiet isolated process.
 #[test]
 fn shared_cli_container_up_cohort() {
     let mut command = Command::new(std::env::current_exe().expect("CLI test binary"));
@@ -4525,6 +4528,7 @@ fn shared_cli_container_up_cohort() {
     let stdout = String::from_utf8(output.stdout).expect("cohort stdout");
     for test in [
         "cli_container_up_detached_starts_colima_and_reports_ready",
+        "cli_container_up_detached_delivers_a_secret_bearing_compose_env_through_custody",
         "cli_container_up_null_dns_overlay_reaches_fake_colima_and_keeps_budget_refusal",
         "cli_container_up_applies_the_restart_policy_after_compose_started_the_stack",
     ] {
@@ -4540,8 +4544,8 @@ fn shared_cli_container_up_cohort() {
     assert!(
         stdout
             .lines()
-            .any(|line| line.starts_with("test result: ok. 3 passed; 0 failed; 0 ignored;")),
-        "cohort must run all three cases without failures or ignores: {stdout}"
+            .any(|line| line.starts_with("test result: ok. 4 passed; 0 failed; 0 ignored;")),
+        "cohort must run all four cases without failures or ignores: {stdout}"
     );
 }
 
