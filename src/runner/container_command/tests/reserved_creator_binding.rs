@@ -267,20 +267,13 @@ esac
             value
         };
         let mut external = backend();
-        let plan = plan(
+        // Every case plans and applies against a live publication deadline. The
+        // expired case expires it below, after the fixture exists, so how long a
+        // loaded host takes to build the fixture can no longer decide the proof.
+        let mut plan = plan(
             ReservedPlanRequest {
                 policy: &policy,
-                deadline: PublicationDeadline::new(
-                    Instant::now()
-                        + Duration::from_secs(if matches!(case, Case::Expired) {
-                            // The test waits for this deadline after its
-                            // local setup; two seconds preserves that expiry
-                            // boundary without a fixed twenty-second tail.
-                            2
-                        } else {
-                            120
-                        }),
-                ),
+                deadline: PublicationDeadline::new(Instant::now() + Duration::from_secs(120)),
             },
             &mut external,
         )
@@ -354,12 +347,10 @@ esac
         let original_guest = shared.borrow().tree_digest();
         assert!(matches!(facts.inputs.target, TargetEvidence::Absent { .. }));
         if matches!(case, Case::Expired) {
-            std::thread::sleep(
-                plan.deadline()
-                    .at()
-                    .saturating_duration_since(Instant::now())
-                    + Duration::from_millis(1),
-            );
+            // Expiry is the condition under test, so it is set, not waited for:
+            // the plan and its apply above ran against the live deadline, and
+            // the observation below must refuse against an already-spent one.
+            plan.deadline = PublicationDeadline::new(Instant::now() - Duration::from_millis(1));
         }
         if matches!(case, Case::WrongId) {
             external.binding = Observed::Verified(

@@ -1887,8 +1887,10 @@ fn parked_integration_cleanup_survives_session_context_expiry_and_cancel() {
             let cx = context().patience(Duration::from_secs(120));
             let root = StateRoot::effects(&cx, fixture.path()).unwrap();
             let reservation = decided(&cx, &root, &environment());
-            // Expiry is the condition under test; allow local setup time
-            // without holding two scenarios open for ten seconds each.
+            // A staged session must precede the activation decision that claims
+            // the reservation, so the expiring window is minted as late as that
+            // order allows: after the checkout fixture, over the reservation's
+            // own admissions only.
             let deadline = Instant::now() + Duration::from_secs(2);
             let session_cx = context().child_until(deadline);
             let (mut session, _) = admit_staged(&session_cx, &root, &reservation, run_id(247));
@@ -9536,10 +9538,17 @@ fn cancelled_decision_releases_gate_while_observer_is_stalled() {
         done_tx.send(result).expect("decision result");
     });
     started_rx
-        .recv_timeout(Duration::from_secs(2))
+        .recv_timeout(effigy_test_support::load_scaled_guard(Duration::from_secs(
+            2,
+        )))
         .expect("observer starts");
     cancel.cancel(StopCause::Signal(2));
-    let prompt = done_rx.recv_timeout(Duration::from_millis(700));
+    // The decision returning is the event under test; the guard only stops a
+    // decision that never arrives. A loaded host cannot be mistaken for one that
+    // waited on the stalled observer.
+    let prompt = done_rx.recv_timeout(effigy_test_support::load_scaled_guard(
+        Duration::from_millis(700),
+    ));
     let fresh = context();
     let competing = if prompt.is_ok() {
         Some(crate::gate::Gate::acquire(

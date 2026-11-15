@@ -1,7 +1,10 @@
 use effigy_process::{ProcessEventKind, ProcessManagerError, ProcessSupervisor};
 use std::time::{Duration, Instant};
 
-use super::support::{process_exists, process_spec, process_spec_with_delay, temp_workspace};
+use super::support::{
+    load_guard, process_exists, process_spec, process_spec_with_delay, temp_workspace,
+    wait_for_event, wait_until,
+};
 use std::fs;
 
 #[test]
@@ -15,27 +18,17 @@ fn supervisor_graceful_shutdown_terminates_long_running_process() {
 
     supervisor.terminate_all_graceful(Duration::from_millis(500));
 
-    let mut saw_exit = false;
-    let mut exit_payload = String::new();
-    for _ in 0..20 {
-        if let Some(event) = supervisor.next_event_timeout(Duration::from_millis(100)) {
-            if event.kind == ProcessEventKind::Exit && event.process == "sleeper" {
-                saw_exit = true;
-                exit_payload = event.payload;
-                break;
-            }
-        }
-    }
-
-    assert!(
-        saw_exit,
-        "expected sleeper to exit during graceful shutdown"
-    );
+    // The exit event is the fact under test; the wait ends on that event and
+    // the fixture guard only stops a child that never reports one.
+    let exit = wait_for_event(&supervisor, Duration::from_secs(2), |event| {
+        event.kind == ProcessEventKind::Exit && event.process == "sleeper"
+    })
+    .expect("expected sleeper to exit during graceful shutdown");
     // The stop-record contract the tui session parser consumes
     // (`ProcessExitState::from_record`): a stop-sent signal is reported as
     // `signal=<n>` so the session records a stop, never a plain exit code.
     assert_eq!(
-        exit_payload, "signal=15",
+        exit.payload, "signal=15",
         "a graceful stop must report its terminating signal"
     );
 }
@@ -55,17 +48,13 @@ fn supervisor_respects_process_start_delay() {
     )
     .expect("spawn");
 
-    let mut saw_output = false;
-    for _ in 0..20 {
-        if let Some(event) = supervisor.next_event_timeout(Duration::from_millis(50)) {
-            if event.kind == ProcessEventKind::Stdout && event.process == "delayed" {
-                saw_output = true;
-                break;
-            }
-        }
-    }
-
-    assert!(saw_output, "expected delayed process output");
+    assert!(
+        wait_for_event(&supervisor, Duration::from_secs(1), |event| {
+            event.kind == ProcessEventKind::Stdout && event.process == "delayed"
+        })
+        .is_some(),
+        "expected delayed process output"
+    );
     assert!(
         start.elapsed() >= Duration::from_millis(120),
         "expected process start delay to be applied"
@@ -93,17 +82,11 @@ fn supervisor_can_terminate_individual_process() {
         "terminating an unknown process must refuse with ProcessNotFound, got {missing:?}"
     );
 
-    let mut saw_exit = false;
-    for _ in 0..20 {
-        if let Some(event) = supervisor.next_event_timeout(Duration::from_millis(100)) {
-            if event.kind == ProcessEventKind::Exit && event.process == "sleeper" {
-                saw_exit = true;
-                break;
-            }
-        }
-    }
     assert!(
-        saw_exit,
+        wait_for_event(&supervisor, Duration::from_secs(2), |event| {
+            event.kind == ProcessEventKind::Exit && event.process == "sleeper"
+        })
+        .is_some(),
         "expected sleeper exit event after terminate_process"
     );
 }
@@ -117,18 +100,15 @@ fn supervisor_can_restart_individual_process() {
     )
     .expect("spawn");
 
-    let mut booted_count = 0usize;
-    for _ in 0..20 {
-        if let Some(event) = supervisor.next_event_timeout(Duration::from_millis(100)) {
-            if event.kind == ProcessEventKind::Stdout
-                && event.process == "service"
-                && event.payload.contains("booted")
-            {
-                booted_count += 1;
-                break;
-            }
-        }
-    }
+    // Both startup outputs are the events under test: wait for each rather
+    // than spending a fixed slice budget that a loaded host exhausts.
+    let booted = |event: &effigy_process::ProcessEvent| {
+        event.kind == ProcessEventKind::Stdout
+            && event.process == "service"
+            && event.payload.contains("booted")
+    };
+    let mut booted_count =
+        usize::from(wait_for_event(&supervisor, Duration::from_secs(2), booted).is_some());
 
     supervisor
         .restart_process("service")
@@ -140,17 +120,8 @@ fn supervisor_can_restart_individual_process() {
         "restarting an unknown process must refuse with ProcessNotFound, got {missing:?}"
     );
 
-    for _ in 0..30 {
-        if let Some(event) = supervisor.next_event_timeout(Duration::from_millis(120)) {
-            if event.kind == ProcessEventKind::Stdout
-                && event.process == "service"
-                && event.payload.contains("booted")
-            {
-                booted_count += 1;
-                break;
-            }
-        }
-    }
+    booted_count +=
+        usize::from(wait_for_event(&supervisor, Duration::from_millis(3_600), booted).is_some());
     // The restarted replacement keeps running; stop it before asserting so
     // the fixture owns its process on every exit path.
     supervisor.terminate_all();
@@ -181,44 +152,36 @@ fn supervisor_graceful_shutdown_terminates_descendants_with_separate_process_gro
 
     supervisor.terminate_all_graceful(Duration::from_millis(800));
 
-    let mut saw_parent_exit = false;
-    for _ in 0..20 {
-        if let Some(event) = supervisor.next_event_timeout(Duration::from_millis(100)) {
-            if event.kind == ProcessEventKind::Exit && event.process == "parent" {
-                saw_parent_exit = true;
-                break;
-            }
-        }
-    }
     assert!(
-        saw_parent_exit,
+        wait_for_event(&supervisor, Duration::from_secs(2), |event| {
+            event.kind == ProcessEventKind::Exit && event.process == "parent"
+        })
+        .is_some(),
         "expected parent exit event during shutdown"
     );
 
-    let descendant_stopped = (0..20).any(|_| {
-        let exists = process_exists(descendant_pid);
-        if exists {
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        !exists
-    });
     assert!(
-        descendant_stopped,
+        wait_until(Duration::from_secs(2), || !process_exists(descendant_pid)),
         "expected graceful shutdown to terminate descendant pid {descendant_pid}"
     );
 }
 
 #[cfg(unix)]
 fn wait_for_descendant_pid(pid_file: &std::path::Path) -> i32 {
-    for _ in 0..20 {
+    let until = Instant::now() + load_guard(Duration::from_secs(2));
+    loop {
         if let Ok(rendered) = fs::read_to_string(pid_file) {
             if let Ok(pid) = rendered.trim().parse::<i32>() {
                 return pid;
             }
         }
-        std::thread::sleep(Duration::from_millis(100));
+        assert!(
+            Instant::now() < until,
+            "expected descendant pid file at {}",
+            pid_file.display()
+        );
+        std::thread::sleep(Duration::from_millis(10));
     }
-    panic!("expected descendant pid file at {}", pid_file.display());
 }
 
 /// `spawn_progressively` is the `effigy open` shell startup path: managed_run
@@ -242,8 +205,7 @@ fn supervisor_progressive_startup_reports_lifecycle_and_cancel_stops_pending_sta
     let mut starting_seen = false;
     let mut started_seen = false;
     let mut exit_seen = false;
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline && !(starting_seen && started_seen && exit_seen) {
+    let lifecycle_complete = wait_until(Duration::from_secs(5), || {
         if let Some(event) = supervisor.next_event_timeout(Duration::from_millis(100)) {
             if event.process == "boots" {
                 match event.kind {
@@ -254,9 +216,10 @@ fn supervisor_progressive_startup_reports_lifecycle_and_cancel_stops_pending_sta
                 }
             }
         }
-    }
+        starting_seen && started_seen && exit_seen
+    });
     assert!(
-        starting_seen && started_seen && exit_seen,
+        lifecycle_complete,
         "expected the first spec to report Starting, Started and Exit in order"
     );
 

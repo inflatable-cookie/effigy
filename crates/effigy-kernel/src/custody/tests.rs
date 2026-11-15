@@ -770,8 +770,15 @@ fn recovery_never_group_signals_without_a_verified_live_leader() {
     // so "no foreign signal" is an assertion about the record, not a hope.
     let run = |label: &str, leader: Observed<ProcessIdentity>| {
         // A fresh bounded cleanup per case: one spent budget must never stand in
-        // for an observation in the next case.
-        let cleanup = cx().operation().cleanup(Duration::from_millis(80)).unwrap();
+        // for an observation in the next case. The length is the fixture's own
+        // guard, not a bound any case asserts, so it keeps its original floor and
+        // stretches with the host's measured load.
+        let cleanup = cx()
+            .operation()
+            .cleanup(effigy_test_support::load_scaled_guard(
+                Duration::from_millis(80),
+            ))
+            .unwrap();
         let mut table = Table {
             leader,
             members: vec![member.clone()],
@@ -902,8 +909,16 @@ fn recovery_foreign_reused_group_unknown_and_nonce_evidence_oracle() {
         nonce: "run:effect".into(),
         grace_millis: 0,
     };
-    let cleanup = cx().operation().cleanup(Duration::from_secs(1)).unwrap();
     for case in 0..7 {
+        // Each case mints its own cleanup budget: a shared one would let an
+        // earlier case's descent decide a later case's outcome. The floor is the
+        // original second, stretched by the host's measured load.
+        let cleanup = cx()
+            .operation()
+            .cleanup(effigy_test_support::load_scaled_guard(Duration::from_secs(
+                1,
+            )))
+            .unwrap();
         let mut own = identity.clone();
         own.pid += 1;
         let mut foreign = identity.clone();
