@@ -61,6 +61,9 @@ pub(in crate::runner) struct RegisteredGatewayRoute {
     pub(in crate::runner) tcp_port: Option<u16>,
     pub(in crate::runner) tcp_target: Option<String>,
     pub(in crate::runner) tls: bool,
+    /// Best-effort result of the post-registration TLS check. Absent for
+    /// non-TLS routes and independent of workload readiness.
+    pub(in crate::runner) tls_exposure: Option<TlsRouteExposure>,
     pub(in crate::runner) service: Option<String>,
     /// True when the route's target was supplied directly via the
     /// manifest's `target_host = "..."` field, rather than resolved
@@ -68,6 +71,23 @@ pub(in crate::runner) struct RegisteredGatewayRoute {
     /// container-runtime validation but still go through the
     /// host-listener collision check.
     pub(in crate::runner) external_target: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::runner) enum TlsRouteExposure {
+    Verified,
+    Pending,
+    Unverified,
+}
+
+impl TlsRouteExposure {
+    pub(in crate::runner) fn as_str(self) -> &'static str {
+        match self {
+            Self::Verified => "verified",
+            Self::Pending => "pending",
+            Self::Unverified => "unverified",
+        }
+    }
 }
 
 /// `up` starts the gateway when it is not running, so a gateway stopped by a
@@ -356,12 +376,7 @@ fn finish_gateway_route_registration_with_tls(
     on_wait(GatewayPortWait::ReconcilingRoutes);
     let route_table_path = gateway_route_table_path()?;
     reconcile_gateway_routes_with_tls(&route_table_path, repo_root, &routes, ensure_tls)?;
-    verify_registered_tls_routes(
-        &routes,
-        await_tls,
-        probe_tls,
-        &mut running_gateway_build_note,
-    )?;
+    verify_registered_tls_routes(&mut routes, await_tls, probe_tls)?;
     Ok(routes)
 }
 
@@ -376,49 +391,37 @@ enum TlsReloadAck {
     Unconfirmed,
 }
 
-/// After the route write, prove the running gateway can serve every TLS route
-/// it just registered (papercut 9604503b).
-///
-/// The handshake no longer runs at once: it waits on the gateway's live
-/// routes view until the single reload owner has applied the route and loaded
-/// its certificate, then handshakes exactly once. A handshake failure after
-/// that acknowledgement is still a real serving failure and refuses with the
-/// remedy; a reload the gateway never acknowledges within the probe budget is
-/// unverified, and names the pending reload instead of blaming the build.
-///
-/// A gateway that never loaded the route's certificate answers the SNI with an
-/// access-denied alert, so the container comes up while every browser request
-/// fails. The write therefore does not report success: the refusal names the
-/// route, the running gateway build, and the one command pair that replaces
-/// that gateway with the current build.
+/// Check each newly registered TLS route once and record the result as
+/// advisory exposure state. The check never decides whether activation
+/// succeeds.
 fn verify_registered_tls_routes(
-    routes: &[RegisteredGatewayRoute],
+    routes: &mut [RegisteredGatewayRoute],
     await_reload: &mut dyn FnMut(&str) -> Result<TlsReloadAck, RunnerError>,
     probe: &mut dyn FnMut(&str, Duration) -> Result<(), RunnerError>,
-    running_build: &mut dyn FnMut() -> String,
 ) -> Result<(), RunnerError> {
-    for route in routes.iter().filter(|route| route.tls) {
+    for route in routes.iter_mut().filter(|route| route.tls) {
         let started = Instant::now();
-        match await_reload(&route.domain)? {
+        let readiness = match await_reload(&route.domain) {
+            Ok(readiness) => readiness,
+            Err(_) => {
+                route.tls_exposure = Some(TlsRouteExposure::Unverified);
+                continue;
+            }
+        };
+        match readiness {
             TlsReloadAck::Ready => {
                 let timeout = GATEWAY_TLS_ROUTE_PROBE_TIMEOUT
                     .saturating_sub(started.elapsed())
                     .max(GATEWAY_TLS_ROUTE_HANDSHAKE_RESERVE);
-                if let Err(error) = probe(&route.domain, timeout) {
-                    return Err(RunnerError::task_invocation(format!(
-                        "gateway route `{}` is registered but the {} cannot serve it: {error}; `effigy gateway down` then `effigy gateway up` replaces the running gateway with this build and reloads the route's certificate",
-                        route.domain,
-                        running_build(),
-                    )));
+                match probe(&route.domain, timeout) {
+                    Ok(()) => route.tls_exposure = Some(TlsRouteExposure::Verified),
+                    Err(_) => {
+                        route.tls_exposure = Some(TlsRouteExposure::Unverified);
+                    }
                 }
             }
             TlsReloadAck::Unconfirmed => {
-                return Err(RunnerError::task_invocation(format!(
-                    "gateway route `{}` is registered but unverified: the {} has not loaded this route's certificate within {}s (pending reload). Re-run `container up` once the gateway finishes reloading, or run `effigy gateway down` then `effigy gateway up` to replace the running gateway with this build and reload the route's certificate",
-                    route.domain,
-                    running_build(),
-                    GATEWAY_TLS_ROUTE_PROBE_TIMEOUT.as_secs(),
-                )));
+                route.tls_exposure = Some(TlsRouteExposure::Pending);
             }
         }
     }
@@ -442,17 +445,26 @@ fn await_registered_tls_reload(domain: &str) -> Result<TlsReloadAck, RunnerError
     }
 }
 
-/// The running gateway's own build, for the refusal above. An unreadable or
-/// absent build record is reported as unknown rather than guessed.
-fn running_gateway_build_note() -> String {
-    let build = gateway_config().ok().and_then(|config| {
-        effigy_gateway::server::get_status(&config)
-            .ok()
-            .and_then(|status| status.binary_version)
-    });
-    match build {
-        Some(build) => format!("running gateway build {build}"),
-        None => "running gateway build unknown".to_owned(),
+/// Observe the current TLS exposure for one registered route for use by
+/// `container status`. This is a bounded read of the gateway's live route
+/// view; inability to confirm is reported as uncertainty, never as a status
+/// command failure.
+pub(in crate::runner) fn observe_tls_route_exposure(domain: &str) -> TlsRouteExposure {
+    let readiness = gateway_config()
+        .and_then(|config| gateway_routes_view_address(&config))
+        .map(|address| {
+            effigy_gateway::tls::await_tls_route_loaded(
+                address,
+                domain,
+                Instant::now() + Duration::from_millis(100),
+            )
+        });
+    match readiness {
+        Ok(effigy_gateway::tls::TlsRouteReadiness::Loaded) => TlsRouteExposure::Verified,
+        Ok(effigy_gateway::tls::TlsRouteReadiness::Pending) => TlsRouteExposure::Pending,
+        Ok(effigy_gateway::tls::TlsRouteReadiness::Unknown) | Err(_) => {
+            TlsRouteExposure::Unverified
+        }
     }
 }
 
@@ -1176,6 +1188,7 @@ fn observe_gateway_routes<'a>(
             tcp_port: None,
             tcp_target: None,
             tls: dns_route.tls,
+            tls_exposure: None,
             service: dns_route.service.clone(),
             external_target: dns_route.target_host.is_some(),
         });
@@ -1225,6 +1238,7 @@ fn resolve_gateway_service_alias_routes(
                 tcp_port: Some(alias.container_port),
                 tcp_target,
                 tls: false,
+                tls_exposure: None,
                 service: Some(alias.service.clone()),
                 external_target: false,
             }
@@ -1265,6 +1279,7 @@ fn resolve_gateway_shared_service_alias_routes(
                 None
             },
             tls: false,
+            tls_exposure: None,
             service: Some(shared.service_name.clone()),
             external_target: false,
         });
