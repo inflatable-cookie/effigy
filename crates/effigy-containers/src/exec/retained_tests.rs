@@ -60,16 +60,37 @@ fn fake_colima(root: &Path, name: &str, status: i32) -> PathBuf {
     path
 }
 
-/// A `colima` fake that stays alive past a short launch deadline, so the end of
-/// the invocation cannot be proven while the child is running.
-fn hanging_colima(root: &Path, name: &str, seconds: u64) -> PathBuf {
+/// A `colima` fake that proves it is running, then blocks. The marker makes the
+/// fixture wait for a confirmed spawn instead of racing a wall-clock deadline
+/// against admission.
+fn signalling_colima(root: &Path, name: &str, seconds: u64) -> (PathBuf, PathBuf) {
     let bin = root.join(name);
     fs::create_dir_all(&bin).expect("fake bin dir");
-    let script = format!("#!/bin/sh\nsleep {seconds}\n");
+    let marker = root.join(format!("{name}.ready"));
+    let script = format!(
+        "#!/bin/sh\nprintf ready > '{}'\nsleep {seconds}\n",
+        marker.display()
+    );
     let path = bin.join("colima");
-    fs::write(&path, script).expect("hanging colima");
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("hanging colima mode");
-    path
+    fs::write(&path, script).expect("signalling colima");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("signalling colima mode");
+    (path, marker)
+}
+
+/// Restores the process's deterministic clock, even after a panic.
+struct ClockGuard;
+
+impl ClockGuard {
+    fn advance(by: Duration) -> Self {
+        effigy_core::run_deadline::advance_clock_for_tests(by);
+        Self
+    }
+}
+
+impl Drop for ClockGuard {
+    fn drop(&mut self) {
+        effigy_core::run_deadline::clear_clock_for_tests();
+    }
 }
 
 fn compose_args() -> Vec<OsString> {
@@ -537,22 +558,51 @@ fn a_state_home_the_profile_does_not_share_refuses_before_spawn() {
 /// A launch whose end cannot be proven retains its interpolation file: the
 /// kernel, not the caller, decides when the group has closed (brief Proof:
 /// "retained on Unknown and removed only after verified closure").
+///
+/// The fixture waits for the fake child to prove it is running and only then
+/// advances the deterministic run clock past the launch budget. The unproven
+/// end is therefore the child outliving its own lifetime, reached every time at
+/// any load, and never a spawn that admission's real-world latency refused.
 #[test]
 fn an_unproven_end_retains_the_file_until_verified_closure() {
     let (retained_path, cleanup) = harness_settling(|run, cx, repo, state| {
-        let program = hanging_colima(repo, "hanging", 30);
+        let (program, marker) = signalling_colima(repo, "signalling", 30);
         let env = secret_env();
-        let error = with_helper(|| {
-            retained::capture(
-                repo,
-                program.as_os_str(),
-                &compose_args(),
-                "unproven end",
-                &env,
-                // The launch's own deadline passes while the child is alive.
-                Instant::now() + Duration::from_millis(400),
-                &mut RetainedComposeOwner::new(run, cx),
-            )
+        let deadline = effigy_core::run_deadline::now() + Duration::from_secs(3);
+        let effigy_home = state.join(".effigy");
+        let error = std::thread::scope(|scope| {
+            // The custody-helper seam is thread-local, so the launch thread
+            // names the helper binary itself.
+            let launcher = scope.spawn(|| {
+                with_helper(|| {
+                    crate::with_test_effigy_home(&effigy_home, || {
+                        retained::capture(
+                            repo,
+                            program.as_os_str(),
+                            &compose_args(),
+                            "unproven end",
+                            &env,
+                            deadline,
+                            &mut RetainedComposeOwner::new(run, cx),
+                        )
+                    })
+                })
+            });
+            let marker_deadline = std::time::Instant::now() + Duration::from_secs(30);
+            while !marker.exists() {
+                if launcher.is_finished() {
+                    let result = launcher.join().expect("launch thread");
+                    panic!("the launch finished before the child signalled readiness: {result:?}");
+                }
+                assert!(
+                    std::time::Instant::now() < marker_deadline,
+                    "the fake Compose child never signalled that it was running"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            // The child is running: only now does its budget elapse.
+            let _clock = ClockGuard::advance(Duration::from_secs(5));
+            launcher.join().expect("launch thread")
         })
         .expect_err("a launch whose end is unproven is reported");
         let message = error.to_string();

@@ -31,7 +31,7 @@ use std::process::Output;
 use std::time::{Duration, Instant};
 
 use effigy_kernel::ctx::{
-    CleanupContext, Deadline, EffectClass, EffectContext, Limits, OperationContext, Placement,
+    CleanupContext, EffectClass, EffectContext, Limits, OperationContext, Placement,
 };
 use effigy_kernel::custody::Terminal;
 use effigy_kernel::custody::{EnvValue, Exit, Lifetime, OwnedProcess, ProcessSpec, SecretValue};
@@ -115,11 +115,22 @@ fn spawn_retained<'r>(
             }
         }
     }
+    // An expired launch budget never spawns a child: the direct-child routes
+    // report the same timeout instead of buying the invocation fresh time.
+    if effigy_core::run_deadline::now() >= deadline {
+        return Err(launch(
+            label,
+            "the launch deadline expired before the Compose invocation could start",
+        ));
+    }
     enable_custody(run, label)?;
-    let cx = spawn_context(apply, deadline);
-    let lifetime = deadline
-        .saturating_duration_since(effigy_core::run_deadline::now())
-        .max(Duration::from_millis(1));
+    // Admission (sentinel, checkout backup, durable file binding) runs under
+    // the apply's own context; the child's lifetime carries the launch budget.
+    // Sharing one short budget used to refuse the launch as "timed out during
+    // spawn" whenever admission was slow, which is not the same event as a
+    // child that outlived its budget.
+    let cx = spawn_context(apply);
+    let lifetime = deadline.saturating_duration_since(effigy_core::run_deadline::now());
     let spec = ProcessSpec {
         argv: vec![program],
         cwd: cwd.to_path_buf(),
@@ -425,14 +436,14 @@ fn custody_executable() -> std::io::Result<Executable> {
 /// The bounded context one retained spawn and its wait run under: the apply's
 /// own deadline and cancellation, with a relay budget large enough that a
 /// drained queue never loses the bytes a record keeps.
-fn spawn_context(apply: &EffectContext, deadline: Instant) -> EffectContext {
+///
+/// The launch budget is *not* applied here: it is the child's `Lifetime`, which
+/// is what makes a slow admission different from a child that outlived its
+/// budget.
+fn spawn_context(apply: &EffectContext) -> EffectContext {
     let operation = apply.operation();
-    let deadline = match operation.deadline() {
-        Deadline::At(at) => at.min(deadline),
-        Deadline::Open(_) => deadline,
-    };
     OperationContext::new(
-        Deadline::At(deadline),
+        operation.deadline(),
         operation.cancel_token().clone(),
         Limits {
             capture_tail: CAPTURE_TAIL_BYTES,
