@@ -1346,6 +1346,28 @@ fn settlements_start_their_own_budget_after_slow_or_failed_activations() {
     assert_store_sound(&ctx2);
 }
 
+/// Advances the deterministic monotonic clock for one owned test, and restores
+/// it even when an assertion fails.
+///
+/// `cargo nextest` — which the suite's route runs — gives every test its own
+/// process, so this process-wide seam reaches nothing else. A plain
+/// `cargo test` thread run would share it; that is not a suite this repository
+/// runs.
+struct SettleClock;
+
+impl SettleClock {
+    fn advance(by: std::time::Duration) -> Self {
+        effigy_core::run_deadline::advance_clock_for_tests(by);
+        Self
+    }
+}
+
+impl Drop for SettleClock {
+    fn drop(&mut self) {
+        effigy_core::run_deadline::clear_clock_for_tests();
+    }
+}
+
 /// The operator sees which phase a transition is in: one live step per
 /// transition names the gate it waits for and each reconcile phase, and the
 /// run ends with its own settlement line, so a slow activation never looks
@@ -1357,15 +1379,13 @@ fn settlements_start_their_own_budget_after_slow_or_failed_activations() {
 /// when the settle starts (effigy#447).
 #[test]
 fn an_interrupted_activation_settles_without_another_effect() {
+    // The budget is the product's, unchanged; the test's own elapsed time is
+    // driven on the injected monotonic clock.
+    const BUDGET: std::time::Duration = std::time::Duration::from_millis(700);
     let home = home();
     let root = root(home.path());
     let cancel = CancelToken::default();
-    let ctx = EnvContext::with_cleanup_budget(
-        &root,
-        cancel.clone(),
-        std::time::Duration::from_millis(700),
-    )
-    .unwrap();
+    let ctx = EnvContext::with_cleanup_budget(&root, cancel.clone(), BUDGET).unwrap();
     let stack = env("stack");
     let fake = Fake::new();
     let mut run = EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).unwrap();
@@ -1375,10 +1395,18 @@ fn an_interrupted_activation_settles_without_another_effect() {
         fake.apply()
     })
     .unwrap();
-    // The operator stops the activation after the backend acted.
+    // The operator stops the activation after the backend acted, and the
+    // activation outlives the whole settlement budget it must not bequeath.
+    // That elapsed time is advanced on the injected clock instead of being
+    // slept, so the settle's own store commit — measured at 0.7-1.3s at load
+    // 30-60, the whole budget (effigy#955) — cannot be charged against the
+    // budget the settle has to receive in full. A settle that inherited the
+    // activation's deadline would already be spent at this reading, which is
+    // exactly what the assertion below still refuses.
     cancel.cancel(effigy_kernel::ctx::StopCause::Signal(2));
-    std::thread::sleep(std::time::Duration::from_millis(900));
+    let clock = SettleClock::advance(BUDGET + std::time::Duration::from_millis(200));
     assert_eq!(run.finish(false).unwrap(), CleanupOutcome::Complete);
+    drop(clock);
     assert_eq!(
         fake.calls(),
         ["apply"],

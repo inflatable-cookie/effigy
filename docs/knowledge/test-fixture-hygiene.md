@@ -634,9 +634,17 @@ and stretches with measured load through the shared helper, so the peer's
 end-of-file, a spawned sentinel and the fixture's own record keep their
 original numbers instead of the scheduler's. A budget that is the behaviour
 under test and also a product promise is neither moved nor handed extra room:
-the container settlement budget stays 700ms in its two proofs even though one
-settle-store commit measured 0.7-1.3s at load 30-60 (effigy#955), so those two
-report the miss a loaded host causes. The same rule keeps the run lookup's
+the container settlement budget stays 700ms even though one settle-store commit
+measured 0.7-1.3s at load 30-60 (effigy#955). The proof that the settle starts
+its own budget therefore drives the activation's elapsed time on the injected
+monotonic clock rather than sleeping it, so the settle's own commit is not
+charged to the budget it must receive in full, and a settle that inherited the
+activation's deadline is still spent at that reading
+(`an_interrupted_activation_settles_without_another_effect`; nextest gives each
+test its own process, so the seam reaches nothing else). Its sibling,
+`settlements_start_their_own_budget_after_slow_or_failed_activations`, keeps
+`main`'s wall clock and reports the miss a loaded host causes. The same rule
+keeps the run lookup's
 one-second and four-second promptness bounds beside a writer or fifty peer
 worktrees (`tests/run_control_cli.rs`) and the two invoked run-deadline
 ceilings at their original numbers, original measurement and original
