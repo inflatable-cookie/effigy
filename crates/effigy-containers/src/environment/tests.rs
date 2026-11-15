@@ -1346,8 +1346,17 @@ fn settlements_start_their_own_budget_after_slow_or_failed_activations() {
     assert_store_sound(&ctx2);
 }
 
-/// Advances the deterministic monotonic clock for one owned test, and restores
-/// it even when an assertion fails.
+/// Moves the deterministic monotonic clock past the settlement budget, then
+/// holds its reading still for the rest of the test, and restores both even when
+/// an assertion fails.
+///
+/// Moving it past the budget is what the proof asserts: the activation outlives
+/// the whole settlement budget it must not bequeath. Holding it still is what
+/// keeps a loaded host out of the result: the settle's own durable store commit
+/// is real work (0.7-1.3s at load 30-60, the whole 700ms budget — effigy#955),
+/// and an offset alone moves with the real clock, so only a held reading stops
+/// that commit spending the budget the settle is handed. A settle that
+/// inherited the activation's deadline is still spent at the held reading.
 ///
 /// `cargo nextest` — which the suite's route runs — gives every test its own
 /// process, so this process-wide seam reaches nothing else. A plain
@@ -1356,8 +1365,9 @@ fn settlements_start_their_own_budget_after_slow_or_failed_activations() {
 struct SettleClock;
 
 impl SettleClock {
-    fn advance(by: std::time::Duration) -> Self {
+    fn outlive(by: std::time::Duration) -> Self {
         effigy_core::run_deadline::advance_clock_for_tests(by);
+        effigy_core::run_deadline::freeze_clock_for_tests();
         Self
     }
 }
@@ -1395,17 +1405,22 @@ fn an_interrupted_activation_settles_without_another_effect() {
         fake.apply()
     })
     .unwrap();
-    // The operator stops the activation after the backend acted, and the
-    // activation outlives the whole settlement budget it must not bequeath.
-    // That elapsed time is advanced on the injected clock instead of being
-    // slept, so the settle's own store commit — measured at 0.7-1.3s at load
-    // 30-60, the whole budget (effigy#955) — cannot be charged against the
-    // budget the settle has to receive in full. A settle that inherited the
-    // activation's deadline would already be spent at this reading, which is
-    // exactly what the assertion below still refuses.
+    // The operator stops the activation after the backend acted. The activation
+    // outlives the whole settlement budget it must not bequeath, and the clock
+    // then holds still so the settle's own store commit cannot spend the budget
+    // it has to receive in full. Both are asserted below: Complete means the
+    // settle got its whole budget, and the unwrap also fails if the settle
+    // inherited the activation's already-spent deadline.
     cancel.cancel(effigy_kernel::ctx::StopCause::Signal(2));
-    let clock = SettleClock::advance(BUDGET + std::time::Duration::from_millis(200));
-    assert_eq!(run.finish(false).unwrap(), CleanupOutcome::Complete);
+    let clock = SettleClock::outlive(BUDGET + std::time::Duration::from_millis(200));
+    let held = effigy_core::run_deadline::now();
+    let outcome = run.finish(false);
+    let after = effigy_core::run_deadline::now();
+    assert_eq!(outcome.unwrap(), CleanupOutcome::Complete);
+    assert_eq!(
+        held, after,
+        "the settle ran on a held clock, so real time is not what decided it"
+    );
     drop(clock);
     assert_eq!(
         fake.calls(),
