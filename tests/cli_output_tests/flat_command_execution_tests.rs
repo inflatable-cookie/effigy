@@ -4,8 +4,11 @@
 
 use serde_json::Value;
 use std::fs;
+use std::time::Duration;
 
 use super::support::{parse_stdout_json, run_cli_command, run_json_cli_command, temp_workspace};
+
+use crate::sentinel::Sentinels;
 
 fn stdout_of(output: &std::process::Output) -> String {
     String::from_utf8(output.stdout.clone()).expect("utf8 stdout")
@@ -446,6 +449,7 @@ run = "touch started; exec sleep 30"
         );
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
+    let mut sentinels = Sentinels::for_owner(child.id(), Duration::from_secs(10));
     // Only this proof's own recorded child PID is signalled.
     let signalled = unsafe { libc::kill(child.id() as i32, libc::SIGINT) };
     assert_eq!(signalled, 0, "signal the run this proof started");
@@ -468,4 +472,5 @@ run = "touch started; exec sleep 30"
         !recorded["outcome"]["Cancelled"].is_null(),
         "the stopped step is recorded as cancelled: {recorded}"
     );
+    sentinels.wait_exit(Duration::from_secs(30));
 }

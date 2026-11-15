@@ -32,6 +32,10 @@ use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
+#[path = "support/sentinel.rs"]
+mod sentinel;
+use sentinel::Sentinels;
+
 const TASK: &str = r#"[tasks.hold]
 run = "sleep 300 & echo $! > grandchild.pid; echo $$ > leader.pid; wait"
 
@@ -388,6 +392,7 @@ fn kill_case(signal: i32) {
         .as_str()
         .expect("live run id")
         .to_owned();
+    let mut sentinels = Sentinels::for_owner(owner.id(), Duration::from_secs(10));
 
     // SAFETY: our own direct child.
     assert_eq!(unsafe { libc::kill(owner.id() as i32, signal) }, 0);
@@ -418,6 +423,7 @@ fn kill_case(signal: i32) {
     } else {
         assert_no_result_or_owner_death_record(&fixture, &run_id, &cell);
     }
+    sentinels.wait_exit(Duration::from_secs(40));
 }
 
 #[test]
@@ -465,6 +471,7 @@ fn task_engine_reclaim_race_after_holder_kill_never_overlaps_runs() {
         );
         std::thread::sleep(Duration::from_millis(10));
     }
+    let mut sentinels = Sentinels::for_owner(holder.id(), Duration::from_secs(10));
     let mut waiters = (0..2)
         .map(|_| {
             fixture
@@ -519,6 +526,7 @@ fn task_engine_reclaim_race_after_holder_kill_never_overlaps_runs() {
         states[2], "interrupted",
         "the killed run is settled, not lost"
     );
+    sentinels.wait_exit(Duration::from_secs(60));
 }
 
 /// Equivalent spellings from two processes share one gate.
@@ -552,6 +560,7 @@ fn task_engine_equivalent_spellings_from_two_processes_serialize() {
         );
         std::thread::sleep(Duration::from_millis(50));
     }
+    let mut sentinels = Sentinels::for_owner(first.id(), Duration::from_secs(10));
     let second = fixture
         .effigy(&["hold"])
         .current_dir(fixture.repo.join("apps/api"))
@@ -563,6 +572,7 @@ fn task_engine_equivalent_spellings_from_two_processes_serialize() {
     assert!(stderr.contains(&format!("pid {}", first.id())), "{stderr}");
     let _ = first.kill();
     let _ = first.wait();
+    sentinels.wait_exit(Duration::from_secs(20));
 }
 
 /// A sequence whose step rebuilds the running binary (as `cargo run` of
@@ -665,6 +675,7 @@ fn sequence_signal_cell(step: usize, signal: i32, json: bool) {
         .as_str()
         .unwrap_or_else(|| panic!("{cell}: live run id: {live}"))
         .to_owned();
+    let mut sentinels = Sentinels::for_owner(owner.id(), Duration::from_secs(10));
     // SAFETY: our direct fixture child, never a pattern or foreign PID.
     assert_eq!(unsafe { libc::kill(owner.id() as i32, signal) }, 0);
     let exit = wait_exit(&mut owner, Duration::from_secs(40)).expect("sequence exits");
@@ -719,6 +730,7 @@ fn sequence_signal_cell(step: usize, signal: i32, json: bool) {
     } else {
         assert_no_result_or_owner_death_record(&fixture, &run_id, &cell);
     }
+    sentinels.wait_exit(Duration::from_secs(40));
 }
 
 /// Each cell settles the whole tree: first and last step, INT and KILL, and

@@ -17,6 +17,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+#[path = "support/sentinel.rs"]
+mod sentinel;
+use sentinel::Sentinels;
+
 use effigy_kernel::observe::Observed;
 
 const MANIFEST: &str = r#"[tasks.heavy]
@@ -2577,7 +2581,7 @@ fn a_run_deadline_owner_loss_is_settled_by_the_surviving_custodian() {
         .env("EFFIGY_RUN_DEADLINE_MS", "12000")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn()
+        .spawn_owned()
         .expect("effigy starts");
     fixture.wait_for("the workload group", || {
         fixture.exists("leader.pid") && fixture.exists("child.pid")
@@ -2588,6 +2592,7 @@ fn a_run_deadline_owner_loss_is_settled_by_the_surviving_custodian() {
         .parse()
         .expect("leader pid");
     let child: i32 = fixture.read("child.pid").trim().parse().expect("child pid");
+    let mut sentinels = Sentinels::for_owner(owner.id(), Duration::from_secs(10));
     owner.kill().expect("the owning process is killed");
     let _ = owner.wait();
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -2613,6 +2618,7 @@ fn a_run_deadline_owner_loss_is_settled_by_the_surviving_custodian() {
         "the surviving custodian did not reap the direct leader {leader}"
     );
     fixture.wait_for("the guard to drain", || gates_drained(&fixture.repo));
+    sentinels.wait_exit(Duration::from_secs(10));
     assert!(
         spawned.elapsed() < Duration::from_secs(13),
         "the guard outlived the run's original ceiling: {:?}",
