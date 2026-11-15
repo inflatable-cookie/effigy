@@ -31,6 +31,8 @@ mod reset_generation_tests;
 mod retire_label_tests;
 #[path = "cli_output_tests/selector_plan_tests.rs"]
 mod selector_plan_tests;
+#[path = "support/sentinel.rs"]
+mod sentinel;
 #[path = "cli_output_tests/skill_command_tests.rs"]
 mod skill_command_tests;
 #[path = "cli_output_tests/state_command_tests.rs"]

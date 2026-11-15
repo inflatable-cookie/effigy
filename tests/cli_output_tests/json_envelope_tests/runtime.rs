@@ -5,6 +5,8 @@ use std::path::Path;
 use std::process::{ExitStatus, Output, Stdio};
 use std::time::Instant;
 
+use crate::sentinel::Sentinels;
+
 const LOCK_HOLDER_EXIT_TIMEOUT: Duration = Duration::from_secs(2);
 
 struct HeldCliTask {
@@ -550,8 +552,10 @@ fn cli_lock_wait_timeout_keeps_owner_on_status_and_omits_json_from_text_stdout()
     );
     assert_ne!(status_parsed["result"]["current"]["pid"], Value::Null);
 
+    let mut sentinels = Sentinels::for_owner(owner.id(), Duration::from_secs(10));
     let _ = owner.kill();
     let _ = owner.wait();
+    sentinels.wait_exit(Duration::from_secs(10));
 }
 
 fn write_failing_rhai_fixture(root: &Path, script: &str) {
