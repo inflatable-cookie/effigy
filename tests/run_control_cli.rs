@@ -2522,6 +2522,18 @@ fn a_run_deadline_bounds_a_stalled_terminal_report_and_keeps_the_outcome() {
         }
         std::thread::sleep(Duration::from_millis(150));
     }
+    // A guard that could not prove closure parks as the verified exclusion
+    // holder; stop it by its recorded pid after the assertions.
+    if guard_pid > 1 && alive(guard_pid as u32) {
+        // SAFETY: only the guard this run recorded.
+        unsafe {
+            libc::kill(guard_pid, libc::SIGKILL);
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while alive(guard_pid as u32) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
     assert!(
         elapsed < Duration::from_millis(14_000),
         "a stalled terminal report crossed the deadline: {elapsed:?}"
@@ -2547,18 +2559,6 @@ fn a_run_deadline_bounds_a_stalled_terminal_report_and_keeps_the_outcome() {
         .trim()
         .parse()
         .expect("leader pid");
-    // A guard that could not prove closure parks as the verified exclusion
-    // holder; stop it by its recorded pid after the assertions.
-    if guard_pid > 1 && alive(guard_pid as u32) {
-        // SAFETY: only the guard this run recorded.
-        unsafe {
-            libc::kill(guard_pid, libc::SIGKILL);
-        }
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while alive(guard_pid as u32) && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(25));
-        }
-    }
     assert!(!alive(leader as u32), "the workload survived: {leader}");
     assert!(group_gone(leader), "the workload group {} remains", leader);
     // The residual hook and the guard must finish before this fixture is

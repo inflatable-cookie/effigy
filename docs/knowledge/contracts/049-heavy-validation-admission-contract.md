@@ -757,7 +757,7 @@ message naming the allowance (`run_deadline.rs:154-170`, `src/bin/effigy.rs`).
   further settlement, and a new invocation cannot acquire the gate until that
   holder is explicitly stopped. Releasing the holder is an explicit later
   action, never an implication of the deadline. The v2 terminal report
-  exchange also stops `EVIDENCE_RESERVE` (250 ms) before the ceiling to leave time for the terminal record and process exit;
+  exchange also stops `EVIDENCE_RESERVE` (1 s) before the ceiling to leave time for the terminal record and process exit;
   the reserve does not guarantee that those operations finish.
   The guard has receipts, not the owner's direct-child handles, and a handoff
   is never reported as complete. The task returns
@@ -766,7 +766,7 @@ message naming the allowance (`run_deadline.rs:154-170`, `src/bin/effigy.rs`).
   and exits 124 (`src/runner/execute/pipeline/standard.rs`;
   `src/runner/error.rs`). An already-failed result keeps its own failure; the
   marker never upgrades a failure to success.
-- **Terminal evidence.** A v2 `terminal` exchange is bounded 250 ms before the ceiling.
+- **Terminal evidence.** A v2 `terminal` exchange is bounded 1 s before the ceiling.
   Under the opt-in, a report that is not delivered, or a terminal record that
   cannot be written, is lost final evidence: it marks the settle incomplete,
   downgrades the settled outcome before the terminal record is written, and

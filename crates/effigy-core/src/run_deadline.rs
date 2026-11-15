@@ -35,8 +35,8 @@ pub const SETTLEMENT_ALLOWANCE: Duration = Duration::from_secs(10);
 
 /// A slice of the allowance reserved for the terminal record and the process
 /// exit itself. The v2 terminal report exchange stops this far before the
-/// ceiling so those final writes still fit inside the original deadline.
-pub const EVIDENCE_RESERVE: Duration = Duration::from_millis(250);
+/// ceiling to leave time for final writes; it cannot guarantee their completion.
+pub const EVIDENCE_RESERVE: Duration = Duration::from_secs(1);
 
 /// The phases whose remaining budget is read back into the run's evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
