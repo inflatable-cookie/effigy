@@ -866,6 +866,23 @@ fn inventory_and_ownership_child() {
             "the pending inventory stays inside its bound: {:?}",
             started.elapsed()
         );
+        // The tidy child records the attempt as it starts, but its own
+        // interpreter start is not the 900ms window this case bounds: that
+        // window is the product's observation window and has already expired.
+        // Wait for the dispatched attempt's record under a load-scaled guard
+        // rather than report "no observation" for one that was dispatched.
+        let recorded = |fixture: &Fixture| {
+            fs::read_to_string(fixture.root.join("runtime-calls.jsonl"))
+                .unwrap_or_default()
+                .lines()
+                .filter(|line| line.trim_start().starts_with('{') && line.trim_end().ends_with('}'))
+                .count()
+        };
+        let record_deadline =
+            Instant::now() + effigy_test_support::load_scaled_guard(Duration::from_secs(10));
+        while recorded(&fixture) < warmed + 1 && Instant::now() < record_deadline {
+            std::thread::sleep(Duration::from_millis(25));
+        }
         let pending = fixture.calls();
         assert_eq!(
             pending.len(),

@@ -624,6 +624,33 @@ effect. Releasing from the parent and then opening the handle could instead
 race a turn that had already observed a live row. The original no-geometry,
 retirement and post-retirement assertions and existing wait bounds remain.
 
+A five-iteration census (effigy#998) ran the whole suite five times with a
+second full suite beside it, plus sixteen nice-19 CPU hogs for the first ten
+minutes, and recorded every failure and whether it also passes alone. Two
+classes came out of it, and only the first is a test-timing defect. Timing
+bounds a loaded host spent on work that is not the behaviour under test now
+follow one of three rules. A wait for an event keeps its floor on a quiet host
+and stretches with measured load through the shared helper, so the peer's
+end-of-file, a spawned sentinel and the fixture's own record keep their
+original numbers instead of the scheduler's. A real-time performance bound is
+measured against the same command taken with no contention, so the run lookup
+beside a continuous writer and beside fifty peer worktrees (`tests/run_control_cli.rs`)
+is proved on the lookup's own added cost rather than this host's process
+startup. And a budget that is itself the behaviour under test — the settlement
+budget, the invoked run deadline's ceiling, the observation window — is given
+the room its own setup needs, never a longer proof: the settle still has to
+outlive its whole budget, the run ceiling still cuts the stalled terminal
+report ten seconds beyond it, and the observation window stays 900ms. Fixture
+state that a second process can collide on is isolated rather than waited out:
+the listener fixtures seed their port probe with a per-process nonce, the
+checkout-scoped run lock is waited for like any other caller, and the
+hypervisor-dependent dependent-replacement proof reports the phase it is in,
+because the suite's slow timeout is a silence bound and not a runtime bound.
+The one class this census does not own is running two builds of one checkout at
+once: the `builder_recovery` proofs read the checkout's uplifted host-binary
+identity, which each concurrent build necessarily rewrites through the shared
+profile links, so they run outside a doubled suite.
+
 ## Custody descriptor remapping (effigy#814)
 
 The hosted macOS core cohort exposed a missing secret grant in

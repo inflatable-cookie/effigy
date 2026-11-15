@@ -255,6 +255,13 @@ fn v0_2_13_repo_owned_smoke_task_runs_against_the_binary() {
         .env("HOME", &home)
         .arg("--repo")
         .arg(repo_root)
+        // The run lock belongs to the checkout, and a suite running alongside
+        // this one may already hold `smoke:release` here. Wait for its owner
+        // like any other caller instead of failing on the lock: the released
+        // surface this proof carries is the task's output, not which process
+        // reached the checkout first.
+        .arg("--lock-wait-ms")
+        .arg("600000")
         .arg("smoke:release")
         .arg(binary)
         .env("NO_COLOR", "1")

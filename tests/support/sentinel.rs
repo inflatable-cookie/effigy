@@ -17,7 +17,13 @@ pub(super) struct Sentinels {
 impl Sentinels {
     /// Capture the sentinel while its owner is still alive, using the OS
     /// parent relationship and then pinning its PID to the kernel start ID.
+    ///
+    /// The wait is for an event — the owner's sentinel appearing — and the
+    /// timeout only stops a sentinel that never starts, so it keeps its floor
+    /// on a quiet host and stretches with measured load: a spawned helper
+    /// waits for the scheduler, and that is not the behaviour under test.
     pub(super) fn for_owner(owner_pid: u32, timeout: Duration) -> Self {
+        let timeout = effigy_test_support::load_scaled_guard(timeout);
         let started = Instant::now();
         loop {
             let output = Command::new("ps")

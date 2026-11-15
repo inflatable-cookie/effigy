@@ -1100,6 +1100,17 @@ fn runs_answers_within_a_second_beside_a_continuous_writer() {
         .status
         .success());
     let journal = fixture.repo.join(".effigy/state/kernel.db");
+    // The work under test is the lookup beside the writer, so the same command
+    // with no writer is the control: host speed cancels out, and the one-second
+    // bound below covers the lookup rather than this host's process startup.
+    // A read that took a lock the writer holds would wait out the writer's own
+    // five-second busy window, which the bound still refuses.
+    let control = {
+        let quiet_started = Instant::now();
+        let quiet = fixture.run(&["--json", "runs"]);
+        assert!(quiet.status.success(), "{}", text(&quiet));
+        quiet_started.elapsed()
+    };
     let stop = Arc::new(AtomicBool::new(false));
     let writing = stop.clone();
     let writer = std::thread::spawn(move || {
@@ -1134,9 +1145,11 @@ fn runs_answers_within_a_second_beside_a_continuous_writer() {
             .is_some_and(|runs| !runs.is_empty()),
         "{envelope}"
     );
+    let waited = elapsed.saturating_sub(control);
     assert!(
-        elapsed < Duration::from_secs(1),
-        "`effigy runs` took {elapsed:?} beside a continuous writer"
+        waited < Duration::from_secs(1),
+        "`effigy runs` took {elapsed:?} beside a continuous writer and {control:?} with none: \
+         the lookup waited {waited:?} on the writer"
     );
 }
 
@@ -1153,6 +1166,16 @@ fn a_run_lookup_reads_only_this_checkouts_journal_with_fifty_worktree_peers() {
         .success());
     let peers = fixture.home.join("peers");
     fs::create_dir(&peers).unwrap();
+    // One poll of this checkout's own journal, before any peer is configured,
+    // is the control: the proof is that fifty peer journals add nothing to a
+    // local poll, so host speed cancels out and the per-poll bound below stays
+    // on the lookup itself.
+    let control = {
+        let control_started = Instant::now();
+        let control_poll = fixture.run(&["--json", "run", "status", "local-key"]);
+        assert!(control_poll.status.success(), "{}", text(&control_poll));
+        control_started.elapsed()
+    };
     let mut peer_paths = Vec::new();
     for index in 0..50 {
         let peer = peers.join(format!("peer-{index:02}"));
@@ -1182,10 +1205,13 @@ fn a_run_lookup_reads_only_this_checkouts_journal_with_fifty_worktree_peers() {
     .unwrap();
     // Repeated status polls, each one journal read of this checkout: the
     // local key resolves every time, the peer's key never does, and no poll
-    // reports an unreadable or incomplete runtime view.
-    let started = Instant::now();
+    // reports an unreadable or incomplete runtime view. Each local poll is
+    // timed against the control, so no wall clock of this host decides it.
+    let mut slowest = Duration::ZERO;
     for _ in 0..2 {
+        let started = Instant::now();
         let local = fixture.run(&["--json", "run", "status", "local-key"]);
+        slowest = slowest.max(started.elapsed());
         assert!(local.status.success(), "{}", text(&local));
         let peer = fixture.run(&["run", "status", "peer-key"]);
         assert!(
@@ -1202,9 +1228,9 @@ fn a_run_lookup_reads_only_this_checkouts_journal_with_fifty_worktree_peers() {
         }
     }
     assert!(
-        started.elapsed() < Duration::from_secs(4),
-        "the polls took {:?}; the lookup is scanning peers",
-        started.elapsed()
+        slowest < control + Duration::from_secs(1),
+        "the slowest local poll took {slowest:?} against {control:?} with no peers configured: \
+         the lookup is scanning peers"
     );
 }
 
@@ -2497,11 +2523,16 @@ fn a_run_deadline_bounds_a_stalled_terminal_report_and_keeps_the_outcome() {
         "",
     );
     let started = Instant::now();
+    // The ceiling is what this proof is about, and contract 052 §12 charges
+    // this invocation's own admission to it before the workload window opens,
+    // so it must clear admission as well as cut the stalled terminal report.
+    // The stall stays ten seconds beyond the ceiling, so the deadline is still
+    // what ends it; only the setup that rides the same ceiling is allowed for.
     let output = fixture
         .effigy(&["--json", "stubborn"])
         .env("EFFIGY_ADMISSION_HOOK", hook)
         .env("EFFIGY_ADMISSION_PROTOCOL", "2")
-        .env("EFFIGY_RUN_DEADLINE_MS", "13000")
+        .env("EFFIGY_RUN_DEADLINE_MS", "20000")
         .output_owned()
         .expect("effigy runs");
     let elapsed = started.elapsed();
@@ -2541,7 +2572,7 @@ fn a_run_deadline_bounds_a_stalled_terminal_report_and_keeps_the_outcome() {
         }
     }
     assert!(
-        elapsed < Duration::from_millis(14_000),
+        elapsed < Duration::from_millis(21_000),
         "a stalled terminal report crossed the deadline: {elapsed:?}"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -2556,7 +2587,7 @@ fn a_run_deadline_bounds_a_stalled_terminal_report_and_keeps_the_outcome() {
         .and_then(|value| value.trim().parse().ok())
         .unwrap_or_else(|| panic!("no since-origin value: {settled}"));
     assert!(
-        since <= 13_100,
+        since <= 20_100,
         "the completed run's own readback crossed the original ceiling: {since}ms"
     );
     assert_eq!(output.status.code(), Some(124), "{rendered}");
