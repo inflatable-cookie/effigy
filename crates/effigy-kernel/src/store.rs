@@ -2113,9 +2113,7 @@ fn open_checkpointed(root: &StateRoot, busy: Duration) -> Result<Option<StoreRea
             // read-only connection cannot create the index its WAL read needs.
             // That is the copied or read-only checkout, where no writer can
             // appear, so the immutable snapshot is the right form there.
-            Err(StoreError::Io(io)) if io.errno == Some(libc::EACCES) => {
-                open_immutable(root, busy)
-            }
+            Err(StoreError::Io(io)) if io.errno == Some(libc::EACCES) => open_immutable(root, busy),
             other => other,
         },
         Err(_) => open_immutable(root, busy),

@@ -1545,6 +1545,48 @@ fn store_read_of_a_leftover_empty_log_succeeds() {
     assert!(reader.resource(&task("kept")).verified().is_some());
 }
 
+/// The same tearing across processes: a reader in this process holds a
+/// checkpointed store while another process publishes and its close carries the
+/// log into the database, so the reader's cached page tree is behind the file
+/// (effigy#999).
+#[test]
+fn store_read_beside_a_writer_in_another_process_sees_whole_records() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .txn(&cx, |txn| {
+            for index in 0..400 {
+                txn.resource(&task(&format!("xproc-{index}")), "task")?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    drop(store);
+    let reader = match reader(home.path()) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("a checkpointed store refused its reader: {other:?}"),
+    };
+    // Warm one row only: the rest of the tree is read after the other process
+    // has rewritten it, so a snapshot that ignores the checkpoint is stale.
+    assert!(reader.resource(&task("xproc-0")).verified().is_some());
+    let mut helper = support::Helper::spawn(
+        "store_helper_publish_beside_a_reader",
+        &[("EFFIGY_STORE_STRESS_HOME", home.path().to_str().unwrap())],
+    );
+    helper.expect("PUBLISHED", Duration::from_secs(120));
+    assert!(helper.wait_for_exit().success());
+    for index in 0..400 {
+        match reader.resource(&task(&format!("xproc-{index}"))) {
+            Observed::Verified(..) => {}
+            other => panic!(
+                "a read beside a writing process saw no whole record for xproc-{index}: {other:?}"
+            ),
+        }
+    }
+}
+
 #[test]
 fn store_read_of_a_crashed_writers_log_succeeds() {
     let home = home();
@@ -1581,6 +1623,29 @@ fn store_read_of_a_crashed_writers_log_succeeds() {
         before,
         "a read rewrote the log"
     );
+}
+
+#[test]
+#[ignore]
+fn store_helper_publish_beside_a_reader() {
+    if !support::helper_is("store_helper_publish_beside_a_reader") {
+        return;
+    }
+    let cx = effects(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, &stress_home()).unwrap();
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .txn(&cx, |txn| {
+            for index in 0..3000 {
+                txn.resource(&task(&format!("xproc-0-{index}")), "task")?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    // Closing the writer carries its log into `kernel.db`: the exact write the
+    // other process's reader must never see as a torn page tree.
+    drop(store);
+    println!("PUBLISHED");
 }
 
 #[test]

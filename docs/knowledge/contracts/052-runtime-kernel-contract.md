@@ -905,13 +905,15 @@ malformed` for a store that was never damaged, or answered with a torn row.
 The query-only connection is SQLite's own WAL reader: it sees committed
 records, a checkpoint is a consistent page image, and a writer beside it is no
 obstacle. It materialises the write-ahead index for the length of the read and
-removes it again at close, so it creates no file that survives it and changes
-no database byte, mode, size or identity; only the state directory's own
-modification time moves. A root that cannot be written (a copied or read-only
-checkout) has no writer to race, so it is still an immutable open, which needs
-no lock, no index and no file at all. A read that fails is `Unknown`: the
-foreground path warns once and proceeds, and `runs` reports the journal as
-unavailable rather than refusing.
+removes it again at close, so it creates no file that survives it and writes
+no database page of its own; the only trace of the read is the state
+directory's own modification time. When it is the last connection, SQLite's
+close may carry a concurrent writer's already-committed frames into the
+store; that is the writer's own checkpoint, not a repair. A root that cannot
+be written (a copied or read-only checkout) has no writer to race, so it is
+still an immutable open, which needs no lock, no index and no file at all. A
+read that fails is `Unknown`: the foreground path warns once and proceeds, and
+`runs` reports the journal as unavailable rather than refusing.
 
 Every write takes the store's own writer gate (`Store(kernel)`), then one short
 `BEGIN IMMEDIATE` transaction, and commits it. The gate serializes Effigy's
