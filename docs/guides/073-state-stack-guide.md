@@ -237,7 +237,9 @@ State reports are plain files under `.effigy/reports/state/`:
 ```
 
 These are operator artifacts, not proof of execution. The canonical proof is the
-lineage record inside each report.
+lineage record inside each report. Every report is published atomically, so a
+concurrent `state history` read sees the complete previous report or the
+complete new one rather than an empty or partial file.
 
 ## Standalone Data Artifacts
 

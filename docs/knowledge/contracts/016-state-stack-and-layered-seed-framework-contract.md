@@ -664,6 +664,10 @@ Directory shape:
 Rules:
 
 - latest files are convenience pointers and may be overwritten
+- every report file (latest, history and compatibility copies) is published
+  atomically: one complete generation is written beside the destination and
+  renamed over it, so a concurrent reader sees the complete previous report or
+  the complete new one and never a truncated intermediate
 - `history/` files are append-only by convention
 - file names must be filesystem-safe and lexically sortable
 - `<created-at>` should use UTC basic timestamp form when execution creates the

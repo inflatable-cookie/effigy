@@ -204,6 +204,89 @@ fn write_state_report_persists_latest_history_and_compatibility_files() {
 }
 
 #[test]
+fn concurrent_readers_never_observe_a_partial_state_report() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    let repo = temp_state_repo("report-atomic");
+    let paths = state_report_write_paths(
+        &repo,
+        "acowtancy-uat",
+        StateHistoryKind::Apply,
+        Some("lineage-a"),
+        Some("apply.json"),
+    );
+    // A report big enough that a truncate-and-rewrite leaves a wide window in
+    // which a concurrent reader sees an empty or partial file.
+    let report = serde_json::json!({
+        "schema": STATE_STACK_APPLY_SCHEMA,
+        "schema_version": 1,
+        "ok": true,
+        "layers": (0..512)
+            .map(|index| serde_json::json!({
+                "key": format!("layer-{index}"),
+                "status": "applied",
+            }))
+            .collect::<Vec<_>>(),
+    });
+    write_state_report(&repo, &paths, &report).expect("seed state report");
+    let expected = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&report).expect("encode expected report")
+    );
+    let compatibility_path = paths
+        .compatibility_path
+        .clone()
+        .expect("compatibility report path");
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let writer_stop = Arc::clone(&stop);
+    let writer_repo = repo.clone();
+    let writer_paths = paths.clone();
+    let writer_report = report.clone();
+    let writer = std::thread::spawn(move || {
+        while !writer_stop.load(Ordering::Relaxed) {
+            write_state_report(&writer_repo, &writer_paths, &writer_report)
+                .expect("rewrite state report");
+        }
+    });
+
+    // Fifty rounds of concurrent reads: a reader sees the complete previous
+    // report or the complete new one, never a truncated intermediate.
+    let mut torn = None;
+    for round in 0..50 {
+        for path in [&paths.latest_path, &compatibility_path] {
+            let observed = match std::fs::read_to_string(path) {
+                Ok(observed) => observed,
+                Err(error) => {
+                    torn = Some(format!(
+                        "round {round} failed to read {}: {error}",
+                        path.display()
+                    ));
+                    break;
+                }
+            };
+            if observed != expected {
+                torn = Some(format!(
+                    "round {round} read {} bytes instead of {} from {}",
+                    observed.len(),
+                    expected.len(),
+                    path.display()
+                ));
+                break;
+            }
+        }
+        if torn.is_some() {
+            break;
+        }
+    }
+
+    stop.store(true, Ordering::Relaxed);
+    writer.join().expect("writer joins");
+    assert!(torn.is_none(), "a reader observed a torn report: {torn:?}");
+}
+
+#[test]
 fn capture_and_apply_env_helpers_expose_expected_keys() {
     let repo = temp_state_repo("state-env");
     let lineage = StateStackManifest::parse_toml(acowtancy_fixture())
