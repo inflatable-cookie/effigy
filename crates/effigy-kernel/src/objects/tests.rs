@@ -587,7 +587,15 @@ fn super_snapshot(root: &Path) -> Vec<(PathBuf, u64, i64, i64)> {
     use std::os::unix::fs::MetadataExt;
     fn walk(root: &Path, out: &mut Vec<(PathBuf, u64, i64, i64)>) {
         let meta = std::fs::symlink_metadata(root).unwrap();
-        out.push((root.into(), meta.ino(), meta.mtime(), meta.mtime_nsec()));
+        // SQLite may create and remove its transient WAL index during a
+        // checkpointed read, which changes parent directory mtimes. Entry
+        // sets and file metadata still prove the read left no persistent data.
+        let (mtime, mtime_nsec) = if meta.is_dir() {
+            (0, 0)
+        } else {
+            (meta.mtime(), meta.mtime_nsec())
+        };
+        out.push((root.into(), meta.ino(), mtime, mtime_nsec));
         if meta.is_dir() {
             let mut entries = std::fs::read_dir(root)
                 .unwrap()

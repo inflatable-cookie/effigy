@@ -293,19 +293,26 @@ pub fn assert_read_left_tree_unchanged(root: &Path, before: &BTreeMap<PathBuf, E
         assert_eq!(after.get(path), Some(entry), "a read changed {path:?}");
     }
 }
-/// Every entry under `root` with mode, size, mtime and inode: an empty diff
-/// between two snapshots means nothing was created, changed or replaced.
+/// Every entry under `root`, with mode, size and inode for directories and
+/// mode, size, mtime and inode for files. Directory mtimes are omitted because
+/// SQLite may create and remove its transient WAL index while reading a
+/// checkpointed store; entry names and every file's metadata remain compared.
 pub fn snapshot(root: &Path) -> BTreeMap<PathBuf, Entry> {
     fn walk(root: &Path, path: &Path, out: &mut BTreeMap<PathBuf, Entry>) {
         let Ok(meta) = std::fs::symlink_metadata(path) else {
             return;
+        };
+        let mtime = if meta.is_dir() {
+            (0, 0)
+        } else {
+            (meta.mtime(), meta.mtime_nsec())
         };
         out.insert(
             path.strip_prefix(root).unwrap().to_path_buf(),
             Entry {
                 mode: meta.mode(),
                 size: meta.size(),
-                mtime: (meta.mtime(), meta.mtime_nsec()),
+                mtime,
                 ino: meta.ino(),
             },
         );
