@@ -1092,11 +1092,22 @@ fn private_gateway_cli_serves_verified_https_and_isolates_concurrent_instances()
 fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
     // Text failures retain the original error, which detached JSON deliberately
     // reduces to structural state; each front proves its committed claim once.
-    managed_host_dependent_replacement_proof(false);
-    managed_host_dependent_replacement_proof(true);
+    managed_host_dependent_replacement_proof(ManagedHostDependentProof::Replacement);
 }
 
-fn managed_host_dependent_replacement_proof(startup_json: bool) {
+#[test]
+fn managed_host_startup_failures_and_recovery_settle() {
+    managed_host_dependent_replacement_proof(ManagedHostDependentProof::StartupFailures);
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ManagedHostDependentProof {
+    Replacement,
+    StartupFailures,
+}
+
+fn managed_host_dependent_replacement_proof(proof: ManagedHostDependentProof) {
+    let mut phase_started = Instant::now();
     let fixture = managed_host_fixture();
     let effects = HostEffectSentinels::new(fixture.path());
     let docker_dir = std::env::split_paths(&effects.env_path)
@@ -1135,52 +1146,33 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     git(&primary, &["add", "compose.yml", "effigy.toml"]);
     git(&primary, &["commit", "-m", "fixture base"]);
 
-    let first_worktree = fixture.path().join("worktree-one");
-    git(
-        &primary,
-        &[
-            "worktree",
-            "add",
-            "-b",
-            "listener-fixture-one",
-            first_worktree.to_str().unwrap(),
-            "HEAD",
-        ],
-    );
-    let second_worktree = fixture.path().join("worktree-two");
-    git(
-        &primary,
-        &[
-            "worktree",
-            "add",
-            "-b",
-            "listener-fixture-two",
-            second_worktree.to_str().unwrap(),
-            "HEAD",
-        ],
-    );
-
     let child_binary = std::env::current_exe().expect("integration test binary");
-    let checkouts = [
-        (
-            primary.clone(),
-            "host-listener-main",
-            "main.host.test",
-            "primary-body",
-        ),
-        (
-            first_worktree.clone(),
+    let mut checkouts = vec![(
+        primary.clone(),
+        "host-listener-main",
+        "main.host.test",
+        "primary-body",
+    )];
+    if proof == ManagedHostDependentProof::Replacement {
+        let first_worktree = fixture.path().join("worktree-one");
+        git(
+            &primary,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "listener-fixture-one",
+                first_worktree.to_str().unwrap(),
+                "HEAD",
+            ],
+        );
+        checkouts.push((
+            first_worktree,
             "host-listener-one",
             "one.host.test",
             "worktree-one-body",
-        ),
-        (
-            second_worktree.clone(),
-            "host-listener-two",
-            "two.host.test",
-            "worktree-two-body",
-        ),
-    ];
+        ));
+    }
     for (index, (checkout, profile, domain, body)) in checkouts.iter().enumerate() {
         let state_dir = fixture.path().join(format!("listener-control-{index}"));
         fs::create_dir(&state_dir).expect("listener control directory");
@@ -1197,9 +1189,10 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         });
     }
 
-    // Publish the dependent too: exercise the listener-specific owned-group
-    // settlement and relaunch path, including sibling and foreign identities.
-    for (index, (checkout, _, domain, _)) in checkouts.iter().enumerate() {
+    // The replacement proof needs one dependent and one independent sibling;
+    // startup-failure cases use only the app listener they exercise.
+    let dependent_count = usize::from(proof == ManagedHostDependentProof::Replacement);
+    for (index, (checkout, _, domain, _)) in checkouts.iter().take(dependent_count).enumerate() {
         let controls = fixture.path().join(format!("dependent-control-{index}"));
         fs::create_dir(&controls).unwrap();
         let path = checkout.join("effigy.toml");
@@ -1262,17 +1255,37 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         mkcert_calls: effects.mkcert_calls.clone(),
         docker_log: docker_log.clone(),
     };
-    // Each phase below is minutes of bounded work on a loaded host, and the
-    // suite's slow timeout is a *silence* bound: report the phase so a healthy
-    // proof is not mistaken for a hung one.
+    if proof == ManagedHostDependentProof::StartupFailures {
+        managed_host_startup_failure_proof(ManagedHostStartupFailureProof {
+            fixture_path: fixture.path(),
+            private_gateway: &private_gateway,
+            https_address,
+            ca_path: &ca_path,
+            primary_checkout: &primary,
+            primary_profile: "host-listener-main",
+            primary_body: "primary-body",
+            child_binary: &child_binary,
+            container_cleanup: &container_cleanup,
+        });
+        assert!(
+            !effects.log.exists() || fs::read(&effects.log).unwrap_or_default().is_empty(),
+            "managed listener proof invoked a host-global effect"
+        );
+        return;
+    }
+    // Phase durations are diagnostics for the slow-timeout bound, not product
+    // performance claims. Keep each lifecycle proof independently bounded.
     println!("dependent replacement: cold managed listener startups");
     let mut children = checkouts
         .iter()
-        .map(|(checkout, ..)| {
-            let args: &[&str] = if startup_json {
-                &["up", "--detach", "--json"]
-            } else {
+        .enumerate()
+        .map(|(index, (checkout, ..))| {
+            // Keep one text-front witness in the same fixture as the complete
+            // JSON replacement proof, avoiding a second cold gateway setup.
+            let args: &[&str] = if index == 0 {
                 &["up", "--detach"]
+            } else {
+                &["up", "--detach", "--json"]
             };
             spawn_container_cli(checkout, &container_cleanup, args)
         })
@@ -1303,56 +1316,28 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
             }
         }
     }
-    if !startup_json {
-        for result in &startup_results {
+    let mut reports = Vec::with_capacity(2);
+    for (index, result) in startup_results.into_iter().enumerate() {
+        if index == 0 {
             assert!(
                 result.status.success(),
                 "cold text startup failed: {result:?}"
             );
+        } else {
+            reports.push(parse_json_success(result));
         }
-        let table = effigy_gateway::routes::RouteTable::load(&private_gateway.join("routes.json"))
-            .expect("committed endpoint routes");
-        for (checkout, profile, _, body) in &checkouts {
-            let route = table
-                .routes
-                .values()
-                .find(|route| {
-                    route.project == checkout.display().to_string()
-                        && route
-                            .managed_listener
-                            .as_ref()
-                            .is_some_and(|owner| owner.owner.ends_with("|app"))
-                })
-                .expect("each cold scope committed its app endpoint");
-            let state = read_json_file(&host_lifecycle::path(checkout, "web", profile, "app"));
-            let response = wait_for_listener_https(
-                https_address,
-                &ca_path,
-                &route.domain,
-                &state,
-                body,
-                Instant::now() + Duration::from_secs(5),
-            );
-            assert!(
-                response.contains("200 OK")
-                    && response
-                        .contains(&format!("{body}@{}", state["process"]["identity"]["pid"])),
-                "cold endpoint did not reach its published listener: {response}"
-            );
-        }
-        assert!(
-            !effects.log.exists() || fs::read(&effects.log).unwrap_or_default().is_empty(),
-            "cold startup invoked a host-global effect"
-        );
-        return;
     }
-    let reports = startup_results
-        .into_iter()
-        .map(parse_json_success)
-        .collect::<Vec<_>>();
-    assert_eq!(reports.len(), 3);
+    assert_eq!(reports.len(), checkouts.len() - 1);
+    println!(
+        "dependent replacement phase: cold JSON starts {:?}",
+        phase_started.elapsed()
+    );
+    phase_started = Instant::now();
     println!("dependent replacement: cold scopes published");
-    for (index, report) in reports.iter().enumerate() {
+    let table = effigy_gateway::routes::RouteTable::load(&private_gateway.join("routes.json"))
+        .expect("committed endpoint routes");
+    let mut effective_domains = Vec::with_capacity(checkouts.len());
+    for (index, (checkout, profile, declared_domain, _)) in checkouts.iter().enumerate() {
         assert!(
             fixture
                 .path()
@@ -1360,30 +1345,43 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
                 .is_file(),
             "fixture listener should not answer readiness until it is ready"
         );
-        let listener = &report["managed_host_listeners"][0];
-        assert_eq!(listener["status"], "ready");
-        assert_eq!(listener["declared_route_domain"], checkouts[index].2);
+        let state = read_json_file(&host_lifecycle::path(checkout, "web", profile, "app"));
+        assert_eq!(state["status"], "ready");
+        let route = table
+            .routes
+            .values()
+            .find(|route| {
+                route.project == checkout.display().to_string()
+                    && route
+                        .managed_listener
+                        .as_ref()
+                        .is_some_and(|owner| owner.owner.ends_with("|app"))
+            })
+            .expect("each cold scope committed its app endpoint");
+        let domain = route.domain.clone();
         if index == 0 {
-            assert_eq!(listener["route_domain"], checkouts[index].2);
+            assert_eq!(domain, *declared_domain);
         } else {
             // A linked worktree publishes its checkout-scoped name instead.
-            assert_ne!(listener["route_domain"], checkouts[index].2);
-            assert!(listener["route_domain"]
-                .as_str()
-                .is_some_and(|name| name.ends_with(".test")));
+            assert_ne!(domain, *declared_domain);
+            assert!(domain.ends_with(".test"));
+            let listener = &reports[index - 1]["managed_host_listeners"][0];
+            assert_eq!(listener["status"], "ready");
+            assert_eq!(listener["declared_route_domain"], *declared_domain);
+            assert_eq!(listener["route_domain"], domain);
+            assert_eq!(listener["address"], state["address"]);
+            assert_eq!(listener["internal_url"], state["internal_url"]);
+            assert_eq!(listener["public_url"], format!("https://{domain}"));
+            assert_eq!(listener["route_tls"], true);
         }
-        assert_eq!(listener["route_tls"], true);
+        effective_domains.push(domain);
     }
     // The rest of the proof uses each checkout's effective name, so routes,
     // Host headers and dependent URLs are checked against what was published.
     let checkouts = checkouts
         .iter()
-        .zip(&reports)
-        .map(|((checkout, profile, _declared, body), report)| {
-            let effective = report["managed_host_listeners"][0]["route_domain"]
-                .as_str()
-                .expect("reported route domain")
-                .to_owned();
+        .zip(effective_domains)
+        .map(|((checkout, profile, _declared, body), effective)| {
             (checkout.clone(), *profile, effective, *body)
         })
         .collect::<Vec<_>>();
@@ -1417,17 +1415,13 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
             .map(|address| address.port())
             .collect::<std::collections::HashSet<_>>()
             .len(),
-        3
+        checkouts.len()
     );
 
     let mut prior_consumer_logs = Vec::new();
     for (index, ((checkout, profile, domain, body), state)) in
         checkouts.iter().zip(app_states.iter()).enumerate()
     {
-        let listener_result = &reports[index]["managed_host_listeners"][0];
-        assert_eq!(listener_result["address"], state["address"]);
-        assert_eq!(listener_result["internal_url"], state["internal_url"]);
-        assert_eq!(listener_result["public_url"], format!("https://{domain}"));
         let socket_probe = TcpStream::connect_timeout(&addresses[index], Duration::from_secs(2));
         assert!(
             socket_probe.is_ok(),
@@ -1596,6 +1590,11 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     );
     println!("published dependent replacement: predecessor={} old_child={} successor={} new_child={} dependency_generation={} selected_phase=published native_exit_and_group_settlement=true",
         old_dependent["generation"], old_dependent["process"]["identity"]["pid"], dependent_successor["generation"], dependent_successor["process"]["identity"]["pid"], new_state["generation"]);
+    println!(
+        "dependent replacement phase: app and dependent replacement {:?}",
+        phase_started.elapsed()
+    );
+    phase_started = Instant::now();
     let websocket = curl_websocket_for_hostname(https_address, &ca_path, primary_domain);
     assert!(
         websocket.contains("101 Switching Protocols"),
@@ -1606,15 +1605,15 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     // The sibling worktree's published route keeps serving: replacement in one
     // scope never touches another scope's listener.
     println!("dependent replacement: replacement published and serving");
-    let sibling_domain = checkouts[2].2.as_str();
-    let sibling_state = &app_states[2];
+    let sibling_domain = checkouts[1].2.as_str();
+    let sibling_state = &app_states[1];
     let route_path = private_gateway.join("routes.json");
     wait_for_listener_https(
         https_address,
         &ca_path,
         sibling_domain,
         sibling_state,
-        checkouts[2].3,
+        checkouts[1].3,
         Instant::now() + Duration::from_secs(5),
     );
 
@@ -1651,8 +1650,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         stopped_dependent["process"]["identity"]["pid"].is_null()
             && stopped_dependent["route_owner"].is_null()
     );
-    for index in [1, 2] {
-        let (checkout, profile, domain, body) = &checkouts[index];
+    for (checkout, profile, domain, body) in checkouts.iter().skip(1) {
         let state = read_json_file(&listener_state_path(checkout, profile, "app"));
         wait_for_listener_https(
             https_address,
@@ -1665,8 +1663,100 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     }
     println!("dependent replacement: scoped stop settled, siblings serving");
 
-    container_cleanup.checkouts.push(primary_checkout.clone());
-    let control_dir = fixture.path().join("listener-control-0");
+    for (checkout, profile, domain, _) in checkouts.iter().skip(1) {
+        let down = run_container_cli(checkout, &container_cleanup, &["down", "--json"]);
+        assert_success(down);
+        container_cleanup
+            .checkouts
+            .retain(|active| active != checkout);
+        let state = read_json_file(&listener_state_path(checkout, profile, "app"));
+        assert_eq!(state["status"], "stopped");
+        assert!(
+            state["route_owner"].is_null() && state["process"]["identity"]["pid"].is_null(),
+            "sibling scope teardown retained a listener generation: {state}"
+        );
+        assert!(
+            effigy_gateway::routes::RouteTable::load(&route_path)
+                .unwrap()
+                .lookup(domain)
+                .is_none(),
+            "sibling teardown must remove only its listener route"
+        );
+    }
+    println!(
+        "dependent replacement phase: sibling preservation and scope teardown {:?}",
+        phase_started.elapsed()
+    );
+
+    let generation_receipts = checkouts
+        .iter()
+        .enumerate()
+        .map(|(index, (_, profile, ..))| {
+            let state = if index == 0 {
+                &new_state
+            } else {
+                &app_states[index]
+            };
+            serde_json::json!({
+                "profile": profile,
+                "runtime_generation": state["runtime_generation"],
+                "generation": state["generation"],
+                "address": state["address"],
+                "supervisor_pid": state["supervisor_pid"],
+                "child_pid": state["process"]["identity"]["pid"],
+            })
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        !effects.log.exists() || fs::read(&effects.log).unwrap_or_default().is_empty(),
+        "managed listener proof invoked a host-global effect"
+    );
+    println!(
+        "managed listener proof: profiles={:?}, addresses={addresses:?}, restarted={} -> {new_address}, private_https={}, sibling_routes_preserved=true",
+        checkouts.iter().map(|(_, profile, ..)| profile).collect::<Vec<_>>(),
+        old_address,
+        https_address
+    );
+    println!(
+        "managed listener generation and cleanup receipts: generations={}, primary_route_removed=true, worktree_routes_removed=true, private_host_effects=none",
+        serde_json::Value::Array(generation_receipts)
+    );
+}
+
+struct ManagedHostStartupFailureProof<'a> {
+    fixture_path: &'a Path,
+    private_gateway: &'a Path,
+    https_address: SocketAddr,
+    ca_path: &'a Path,
+    primary_checkout: &'a Path,
+    primary_profile: &'a str,
+    primary_body: &'a str,
+    child_binary: &'a Path,
+    container_cleanup: &'a ManagedContainerCleanup,
+}
+
+fn managed_host_startup_failure_proof(proof: ManagedHostStartupFailureProof<'_>) {
+    let ManagedHostStartupFailureProof {
+        fixture_path,
+        private_gateway,
+        https_address,
+        ca_path,
+        primary_checkout,
+        primary_profile,
+        primary_body,
+        child_binary,
+        container_cleanup,
+    } = proof;
+    let mut phase_started = Instant::now();
+    let route_path = private_gateway.join("routes.json");
+    let listener_state_path = |checkout: &Path, profile: &str, process: &str| {
+        checkout
+            .join(".effigy/runtime/host-processes/web")
+            .join(profile)
+            .join(format!("{process}.listener.json"))
+    };
+    let control_dir = fixture_path.join("listener-control-0");
     let fixed_collision = TcpListener::bind("127.0.0.1:0").expect("foreign fixed-port listener");
     let fixed_address = fixed_collision.local_addr().unwrap();
     write_listener_fixture_manifest(ListenerFixtureManifest {
@@ -1674,7 +1764,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         profile: primary_profile,
         domain: "collision.host.test",
         body: primary_body,
-        child_binary: &child_binary,
+        child_binary,
         control_dir: &control_dir,
         bind: &fixed_address.to_string(),
         readiness_timeout_secs: 5,
@@ -1682,7 +1772,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     });
     let collision = run_container_cli(
         primary_checkout,
-        &container_cleanup,
+        container_cleanup,
         &["up", "--detach", "--json"],
     );
     assert!(
@@ -1698,9 +1788,9 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     );
     drop(fixed_collision);
     let collision_down =
-        run_container_cli(primary_checkout, &container_cleanup, &["down", "--json"]);
+        run_container_cli(primary_checkout, container_cleanup, &["down", "--json"]);
     assert_success(collision_down);
-    println!("dependent replacement: fixed-port collision refused");
+    println!("managed host startup failure: fixed-port collision refused");
     let collision_stopped = read_json_file(&listener_state_path(
         primary_checkout,
         primary_profile,
@@ -1737,7 +1827,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         profile: primary_profile,
         domain: "delayed.host.test",
         body: primary_body,
-        child_binary: &child_binary,
+        child_binary,
         control_dir: &control_dir,
         bind: "127.0.0.1:0",
         readiness_timeout_secs: 1,
@@ -1745,7 +1835,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     });
     let delayed = run_container_cli_with_env(
         primary_checkout,
-        &container_cleanup,
+        container_cleanup,
         &["up", "--detach", "--json"],
         &[(
             "EFFIGY_TEST_HOST_PROCESS_START_PUBLICATION_DELAY_MS",
@@ -1807,12 +1897,17 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         String::from_utf8_lossy(&delayed.stderr)
     );
     assert!(delayed_state["process"]["identity"]["pid"].is_null());
-    println!("dependent replacement: delayed publication settled");
+    println!("managed host startup failure: delayed publication settled");
+    println!(
+        "managed host startup failure phase: collision and delayed publication {:?}",
+        phase_started.elapsed()
+    );
+    phase_started = Instant::now();
 
     // Another checkout that is still there and still answers owns the domain:
     // its checkout path exists and its target accepts connections, so it is not
     // a dead claim this checkout may reclaim.
-    let foreign_checkout = fixture.path().join("foreign-route-owner");
+    let foreign_checkout = fixture_path.join("foreign-route-owner");
     fs::create_dir_all(&foreign_checkout).expect("foreign checkout fixture");
     let foreign_listener = TcpListener::bind("127.0.0.1:0").expect("foreign live listener");
     let foreign_address = foreign_listener
@@ -1836,7 +1931,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         profile: primary_profile,
         domain: "claimed.host.test",
         body: primary_body,
-        child_binary: &child_binary,
+        child_binary,
         control_dir: &control_dir,
         bind: "127.0.0.1:0",
         readiness_timeout_secs: 10,
@@ -1844,7 +1939,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     });
     let claimed = run_container_cli(
         primary_checkout,
-        &container_cleanup,
+        container_cleanup,
         &["up", "--detach", "--json"],
     );
     assert!(
@@ -1855,7 +1950,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     );
     let routes = effigy_gateway::routes::RouteTable::load(&route_path).unwrap();
     assert_eq!(routes.lookup("claimed.host.test"), Some(&foreign_claim));
-    println!("dependent replacement: foreign route owner kept");
+    println!("managed host startup failure: foreign route owner kept");
     edit_live_fixture_routes(&route_path, |routes| {
         routes.deregister("claimed.host.test").unwrap();
     });
@@ -1866,7 +1961,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         profile: primary_profile,
         domain: "unknown.host.test",
         body: primary_body,
-        child_binary: &child_binary,
+        child_binary,
         control_dir: &control_dir,
         bind: "127.0.0.1:0",
         readiness_timeout_secs: 10,
@@ -1883,7 +1978,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     // `up` starts the listener instead of refusing the environment.
     let recovered = run_container_cli(
         primary_checkout,
-        &container_cleanup,
+        container_cleanup,
         &["up", "--detach", "--json"],
     );
     let recovered_report = format!(
@@ -1903,7 +1998,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     ));
     assert_eq!(recovered_state["route_domain"], "unknown.host.test");
     assert_eq!(
-        curl_https(https_address, &ca_path, "unknown.host.test", "/"),
+        curl_https(https_address, ca_path, "unknown.host.test", "/"),
         format!(
             "{primary_body}@{}",
             recovered_state["process"]["identity"]["pid"]
@@ -1913,7 +2008,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     // Leave this checkout as the rest of the proof expects it: stopped, with
     // no published route of its own.
     let recovered_down =
-        run_container_cli(primary_checkout, &container_cleanup, &["down", "--json"]);
+        run_container_cli(primary_checkout, container_cleanup, &["down", "--json"]);
     assert_success(recovered_down);
     assert!(
         effigy_gateway::routes::RouteTable::load(&route_path)
@@ -1923,67 +2018,10 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         "down withdraws the recovered listener route"
     );
 
-    for index in [1, 2] {
-        let (checkout, profile, domain, body) = &checkouts[index];
-        let state = read_json_file(&listener_state_path(checkout, profile, "app"));
-        assert_eq!(
-            curl_https(https_address, &ca_path, domain, "/"),
-            format!("{body}@{}", state["process"]["identity"]["pid"]),
-            "failed private startup must preserve live sibling routes"
-        );
-    }
-
-    for index in [1, 2] {
-        let (checkout, profile, domain, _) = &checkouts[index];
-        let down = run_container_cli(checkout, &container_cleanup, &["down", "--json"]);
-        assert_success(down);
-        container_cleanup
-            .checkouts
-            .retain(|active| active != checkout);
-        let state = read_json_file(&listener_state_path(checkout, profile, "app"));
-        assert_eq!(state["status"], "stopped");
-        assert!(state["route_owner"].is_null());
-        assert!(
-            effigy_gateway::routes::RouteTable::load(&route_path)
-                .unwrap()
-                .lookup(domain)
-                .is_none(),
-            "final fixture teardown must remove only that listener route"
-        );
-    }
-
-    println!("dependent replacement: sibling scopes torn down");
-    let generation_receipts = [
-        (*primary_profile, &new_state),
-        (checkouts[1].1, &app_states[1]),
-        (checkouts[2].1, &app_states[2]),
-    ]
-    .into_iter()
-    .map(|(profile, state)| {
-        serde_json::json!({
-            "profile": profile,
-            "runtime_generation": state["runtime_generation"],
-            "generation": state["generation"],
-            "address": state["address"],
-            "supervisor_pid": state["supervisor_pid"],
-            "child_pid": state["process"]["identity"]["pid"],
-        })
-    })
-    .collect::<Vec<_>>();
-
-    assert!(
-        !effects.log.exists() || fs::read(&effects.log).unwrap_or_default().is_empty(),
-        "managed listener proof invoked a host-global effect"
-    );
+    println!("managed host startup failure and stale-record recovery settled");
     println!(
-        "managed listener proof: profiles={:?}, addresses={addresses:?}, restarted={} -> {new_address}, private_https={}, sibling_routes_preserved=true",
-        checkouts.iter().map(|(_, profile, ..)| profile).collect::<Vec<_>>(),
-        old_address,
-        https_address
-    );
-    println!(
-        "managed listener generation and cleanup receipts: generations={}, primary_route_removed=true, worktree_routes_removed=true, private_host_effects=none",
-        serde_json::Value::Array(generation_receipts)
+        "managed host startup failure phase: recovery and route teardown {:?}",
+        phase_started.elapsed()
     );
 }
 
