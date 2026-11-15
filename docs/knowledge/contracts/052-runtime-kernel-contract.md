@@ -884,7 +884,7 @@ states that contribution and what it excludes. Write-ahead logging is what lets 
 reader and a writer share the store; it replaced the rollback journal in
 effigy#275 after concurrent runs refused each other with `Busy`.
 
-Reads copy nothing and leave nothing behind: `Store::read` is one SQLite
+Reads copy nothing and leave no persistent data behind: `Store::read` is one SQLite
 connection with `PRAGMA query_only` and a short busy timeout (K1, Q-011). A
 store with write-ahead side files is read through SQLite's own WAL with a plain
 read-only connection (`mode=ro`), so a writer beside the read is
@@ -907,7 +907,10 @@ records, a checkpoint is a consistent page image, and a writer beside it is no
 obstacle. It materialises the write-ahead index for the length of the read and
 removes it again at close, so it creates no file that survives it and writes
 no database page of its own; the only trace of the read is the state
-directory's own modification time. When it is the last connection, SQLite's
+directory's own modification time. Purity means the same directory entries
+remain, with each file's identity and metadata unchanged; directory mtimes may
+move when SQLite creates and removes `kernel.db-shm` for a read. Tests compare
+directory identities and entry sets, but omit directory mtimes. When it is the last connection, SQLite's
 close may carry a concurrent writer's already-committed frames into the
 store; that is the writer's own checkpoint, not a repair. A root that cannot
 be written (a copied or read-only checkout) has no writer to race, so it is
