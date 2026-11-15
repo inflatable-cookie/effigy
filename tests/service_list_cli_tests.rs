@@ -28,7 +28,7 @@ fn effigy(home: &Path, args: &[&str]) -> Run {
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .args(args)
         .env("HOME", home)
-        .env("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1")
+        .env("EFFIGY_TEST_SKIP_COLIMA_HOST_PATH_CHECK", "1")
         .stdin(Stdio::null())
         .output_owned()
         .expect("run effigy");
