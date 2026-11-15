@@ -629,18 +629,20 @@ second full suite beside it, plus sixteen nice-19 CPU hogs for the first ten
 minutes, and recorded every failure and whether it also passes alone. Two
 classes came out of it, and only the first is a test-timing defect. Timing
 bounds a loaded host spent on work that is not the behaviour under test now
-follow one of three rules. A wait for an event keeps its floor on a quiet host
+follow one of two rules. A wait for an event keeps its floor on a quiet host
 and stretches with measured load through the shared helper, so the peer's
 end-of-file, a spawned sentinel and the fixture's own record keep their
-original numbers instead of the scheduler's. A real-time performance bound is
-measured against the same command taken with no contention, so the run lookup
-beside a continuous writer and beside fifty peer worktrees (`tests/run_control_cli.rs`)
-is proved on the lookup's own added cost rather than this host's process
-startup. And a budget that is itself the behaviour under test — the settlement
-budget, the invoked run deadline's ceiling, the observation window — is given
+original numbers instead of the scheduler's. And a budget that is itself the
+behaviour under test — the settlement budget, the observation window — is given
 the room its own setup needs, never a longer proof: the settle still has to
-outlive its whole budget, the run ceiling still cuts the stalled terminal
-report ten seconds beyond it, and the observation window stays 900ms. Fixture
+outlive its whole budget and the observation window stays 900ms. An absolute
+product promise is not a fixture guard and is never adjusted to suit the host:
+the run lookup's one-second and four-second promptness bounds beside a writer or
+fifty peer worktrees (`tests/run_control_cli.rs`) and the two invoked
+run-deadline ceilings keep their original numbers, their original measurement
+and their original failures. A host slow enough to miss them reports a miss
+(planner ruling, 2026-11-15, after review 5911198438), and the doubled-suite
+tail those misses belong to is tracked separately. Fixture
 state that a second process can collide on is isolated rather than waited out:
 the listener fixtures seed their port probe with a per-process nonce, the
 checkout-scoped run lock is waited for like any other caller, and the
