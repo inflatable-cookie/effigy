@@ -145,7 +145,7 @@ else: raise AssertionError(args)
 "#;
 
 const BUILDER_PTY_PROOF: &str = r#"
-import errno, hashlib, json, os, pathlib, pty, select, subprocess, sys, time
+import errno, hashlib, json, os, pathlib, pty, queue, select, subprocess, sys, threading, time
 binary, root = sys.argv[1:]
 root = pathlib.Path(root).resolve()
 state = root / 'adapter'
@@ -165,15 +165,32 @@ def run(mode):
     child = subprocess.Popen([binary, 'workspace:linux:artifact'], cwd=root, env=env, stdin=subprocess.DEVNULL, stdout=slave, stderr=slave)
     os.close(slave)
     transcript = bytearray()
+    reads = queue.Queue()
+    child_exited = threading.Event()
+    reader_done = threading.Event()
     deadline = time.monotonic() + 45
+    def drain_pty():
+        try:
+            while True:
+                if not select.select([master], [], [], .05)[0]:
+                    if child_exited.is_set(): break
+                    continue
+                try: data = os.read(master, 65536)
+                except OSError as error:
+                    if error.errno == errno.EIO: break
+                    raise
+                if not data: break
+                reads.put(data)
+        finally:
+            reader_done.set()
+            reads.put(None)
+    reader = threading.Thread(target=drain_pty)
+    reader.start()
     def read_once():
-        if select.select([master], [], [], .05)[0]:
-            try: data = os.read(master, 65536)
-            except OSError as error:
-                if error.errno == errno.EIO: return False
-                raise
-            transcript.extend(data)
-            return bool(data)
+        try: data = reads.get(timeout=.05)
+        except queue.Empty: return not reader_done.is_set()
+        if data is None: return False
+        transcript.extend(data)
         return True
     try:
         if mode != 'foreign':
@@ -189,8 +206,11 @@ def run(mode):
         while child.poll() is None:
             assert time.monotonic() < deadline, bytes(transcript)
             read_once()
+        child_exited.set()
         while read_once():
             assert time.monotonic() < deadline, bytes(transcript)
+        reader.join(timeout=max(0, deadline - time.monotonic()))
+        assert not reader.is_alive(), bytes(transcript)
         code = child.wait()
         text = transcript.decode(errors='replace')
         if mode == 'success':
@@ -232,6 +252,7 @@ def run(mode):
             try: child.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 child.kill(); child.wait()
+        reader.join(timeout=5)
         os.close(master)
 print(run('success'))
 prior = {path.name:path.read_bytes() for path in artifacts.iterdir() if path.is_file()}

@@ -138,7 +138,7 @@ fn capped_plain_host_task_omits_footer_when_a_descendant_escapes_custody() {
     fs::write(
         &leaker,
         format!(
-            "import subprocess\n\nchild = subprocess.Popen(\n    [\"/usr/bin/python3\", \"-c\", \"import time; time.sleep(120)\"],\n    start_new_session=True,\n    close_fds=False,\n    stdout=subprocess.DEVNULL,\n    stderr=subprocess.DEVNULL,\n)\nopen(\"{}\", \"w\").write(str(child.pid))\nprint(\"workload\")\n",
+            "import subprocess\n\nchild = subprocess.Popen(\n    [\"/usr/bin/python3\", \"-c\", \"import time; time.sleep(3)\"],\n    start_new_session=True,\n    close_fds=False,\n    stdout=subprocess.DEVNULL,\n    stderr=subprocess.DEVNULL,\n)\nopen(\"{}\", \"w\").write(str(child.pid))\nprint(\"workload\")\n",
             pid_file.display()
         ),
     )
@@ -152,13 +152,17 @@ fn capped_plain_host_task_omits_footer_when_a_descendant_escapes_custody() {
     )
     .expect("write manifest");
 
-    let result = Command::new(env!("CARGO_BIN_EXE_effigy"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("--repo")
         .arg(&root)
         .arg("probe")
         .env("NO_COLOR", "1")
         .env("EFFIGY_OUTPUT_CAP_BYTES", "1024")
-        .output_owned();
+        .spawn_owned()
+        .expect("spawn capped task");
+    let status = child
+        .wait_for_leader()
+        .expect("wait for capped task leader");
 
     // The fixture's descendant is deliberately outside the owned process
     // group. Stop only its recorded PID, even if the CLI assertion fails.
@@ -181,9 +185,11 @@ fn capped_plain_host_task_omits_footer_when_a_descendant_escapes_custody() {
             );
         }
     }
-    let output = result.expect("run capped task");
+    let output = child
+        .wait_with_output()
+        .expect("wait for capped task helpers");
     assert!(
-        output.status.success(),
+        status.success(),
         "task failed: stdout={}, stderr={}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
