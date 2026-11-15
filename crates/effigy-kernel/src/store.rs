@@ -411,7 +411,12 @@ impl From<rusqlite::Error> for StoreError {
             ErrorCode::NotADatabase | ErrorCode::DatabaseCorrupt => {
                 Self::Corrupt(error.to_string())
             }
-            ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked => Self::Busy {
+            // WAL locking-protocol failures are transient too: SQLite says
+            // retrying is safe, and the store's existing bounded retry paths
+            // already handle `Busy` without extending their wait windows.
+            ErrorCode::DatabaseBusy
+            | ErrorCode::DatabaseLocked
+            | ErrorCode::FileLockingProtocolFailed => Self::Busy {
                 waited: Duration::ZERO,
                 holder: Box::new(Observed::Unknown(UnknownReason::Inconsistent(
                     "SQLite reported a busy store without a writer gate holder".into(),
@@ -951,17 +956,29 @@ impl Store {
         }
     }
     fn begin_immediate(&self, cx: &EffectContext, deadline: Instant) -> Result<(), StoreError> {
+        Self::retry_busy_until(cx, deadline, "store transaction", |left| {
+            self.conn
+                .busy_timeout(left.min(Duration::from_millis(i32::MAX as u64)))?;
+            self.conn
+                .execute_batch("BEGIN IMMEDIATE")
+                .map_err(StoreError::from)
+        })
+    }
+    /// Retry one transient SQLite contention error until the store's already
+    /// selected deadline. The operation must be safe to attempt again; callers
+    /// use this for `BEGIN IMMEDIATE`, before running the transaction closure.
+    fn retry_busy_until<T>(
+        cx: &EffectContext,
+        deadline: Instant,
+        phase: &str,
+        mut attempt: impl FnMut(Duration) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
         let mut pause = BUSY_RETRY_MIN;
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
-            self.conn
-                .busy_timeout(left.min(Duration::from_millis(i32::MAX as u64)))?;
-            match self.conn.execute_batch("BEGIN IMMEDIATE") {
-                Ok(()) => return Ok(()),
-                Err(error) => match StoreError::from(error) {
-                    StoreError::Busy { .. } if !left.is_zero() => {}
-                    other => return Err(other),
-                },
+            match attempt(left) {
+                Err(StoreError::Busy { .. }) if !left.is_zero() => {}
+                other => return other,
             }
             if left.is_zero() {
                 return Err(StoreError::Busy {
@@ -972,7 +989,7 @@ impl Store {
                 });
             }
             cx.operation()
-                .check("store transaction")
+                .check(phase)
                 .map_err(StoreError::Interrupted)?;
             std::thread::sleep(pause.min(left));
             pause = (pause * 2).min(BUSY_RETRY_MAX);
@@ -2612,6 +2629,25 @@ mod tests {
     use super::*;
     use crate::ctx::{CancelToken, Deadline, Limits, OperationContext, Placement};
 
+    fn effect_window(budget: Duration) -> EffectContext {
+        OperationContext::new(
+            Deadline::At(Instant::now() + budget),
+            CancelToken::default(),
+            Limits {
+                capture_tail: 64 * 1024,
+                log_rotate: 1 << 20,
+                log_keep: 3,
+                line_max: 64 * 1024,
+                queue_bytes: 1 << 20,
+                probe_concurrency: 1,
+            },
+            EffectClass::Mutate,
+            Placement::Host,
+        )
+        .effects()
+        .expect("effect context")
+    }
+
     fn observe_window(budget: Duration) -> ObserveContext {
         OperationContext::new(
             Deadline::At(Instant::now() + budget),
@@ -2640,6 +2676,16 @@ mod tests {
         }
     }
 
+    fn protocol_error() -> rusqlite::Error {
+        rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: ErrorCode::FileLockingProtocolFailed,
+                extended_code: 15,
+            },
+            Some("locking protocol".into()),
+        )
+    }
+
     /// A busy store is retried, not reported: a supervisor writes this store
     /// beside the read, and `Busy` means "try again, never a failure".
     #[test]
@@ -2658,6 +2704,25 @@ mod tests {
         assert_eq!(attempts, 3);
     }
 
+    /// SQLITE_PROTOCOL at transaction start is retried within the existing
+    /// write deadline, before the transaction closure has run.
+    #[test]
+    fn store_protocol_at_transaction_start_is_retried_inside_its_window() {
+        let cx = effect_window(Duration::from_secs(2));
+        let mut attempts = 0;
+        let value =
+            Store::retry_busy_until(&cx, Instant::now() + Duration::from_secs(1), "test", |_| {
+                attempts += 1;
+                if attempts == 1 {
+                    return Err(StoreError::from(protocol_error()));
+                }
+                Ok(7u8)
+            })
+            .expect("the operation succeeds after one protocol error");
+        assert_eq!(value, 7);
+        assert_eq!(attempts, 2);
+    }
+
     /// The caller's own budget cuts the retry short: a store held for the whole
     /// window is still reported as `Busy`, never waited on forever.
     #[test]
@@ -2669,6 +2734,32 @@ mod tests {
         assert!(
             started.elapsed() < READ_BUSY_WINDOW,
             "the caller's shorter window bounds the retry: {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// Repeated SQLITE_PROTOCOL stays an honest Busy refusal when the
+    /// store's existing write window runs out.
+    #[test]
+    fn store_repeated_protocol_errors_refuse_after_the_write_window() {
+        let cx = effect_window(Duration::from_millis(120));
+        let started = Instant::now();
+        let mut attempts = 0;
+        let error = Store::retry_busy_until::<u8>(
+            &cx,
+            Instant::now() + Duration::from_millis(120),
+            "test",
+            |_| {
+                attempts += 1;
+                Err(StoreError::from(protocol_error()))
+            },
+        )
+        .expect_err("protocol errors outlasting the window remain a refusal");
+        assert!(matches!(error, StoreError::Busy { .. }), "{error}");
+        assert!(attempts > 1, "the protocol condition should be retried");
+        assert!(
+            started.elapsed() < READ_BUSY_WINDOW,
+            "the selected write window bounds the retry: {:?}",
             started.elapsed()
         );
     }
