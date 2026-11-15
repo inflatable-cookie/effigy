@@ -327,6 +327,14 @@ pub(super) fn tree(dir: &Path) -> BTreeMap<String, String> {
             } else {
                 String::new()
             };
+            // Contract 052 allows SQLite's transient WAL index to move a
+            // directory mtime; entry names and file metadata still prove
+            // that the read left no persistent filesystem change.
+            let mtime = if meta.is_dir() {
+                0
+            } else {
+                meta.mtime_nsec() + meta.mtime() * 1_000_000_000
+            };
             out.insert(
                 key,
                 format!(
@@ -334,7 +342,7 @@ pub(super) fn tree(dir: &Path) -> BTreeMap<String, String> {
                     meta.mode(),
                     meta.ino(),
                     meta.len(),
-                    meta.mtime_nsec() + meta.mtime() * 1_000_000_000
+                    mtime
                 ),
             );
             if meta.is_dir() {
