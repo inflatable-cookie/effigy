@@ -1092,7 +1092,15 @@ fn private_gateway_cli_serves_verified_https_and_isolates_concurrent_instances()
 fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
     // Text failures retain the original error, which detached JSON deliberately
     // reduces to structural state; each front proves its committed claim once.
+    // The two fronts are separate tests because each one is a full cold-start
+    // proof of its own: one test ran both inside a single cold-start budget,
+    // where a loaded host could spend it on the first front alone
+    // (effigy#998). Assertions and deadlines are unchanged.
     managed_host_dependent_replacement_proof(false);
+}
+
+#[test]
+fn managed_host_dependent_replacement_json_front_keeps_the_settled_record() {
     managed_host_dependent_replacement_proof(true);
 }
 
