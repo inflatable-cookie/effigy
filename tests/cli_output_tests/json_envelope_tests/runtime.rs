@@ -469,7 +469,7 @@ fn cli_lock_wait_timeout_keeps_owner_on_status_and_omits_json_from_text_stdout()
             .arg(&root)
             .args(["tasks", "status", "dev"])
             .env("NO_COLOR", "1")
-            .output()
+            .output_owned()
             .expect("probe owner status");
         let state = serde_json::from_slice::<Value>(&probe.stdout)
             .ok()
@@ -488,7 +488,7 @@ fn cli_lock_wait_timeout_keeps_owner_on_status_and_omits_json_from_text_stdout()
         .arg("150")
         .arg("dev")
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run timed-out waiter");
     assert!(!text.status.success());
     let stdout = String::from_utf8(text.stdout).expect("utf8 stdout");
@@ -514,7 +514,7 @@ fn cli_lock_wait_timeout_keeps_owner_on_status_and_omits_json_from_text_stdout()
         .arg("150")
         .arg("dev")
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run json timed-out waiter");
     assert!(!json.status.success());
     let parsed: Value =
@@ -537,7 +537,7 @@ fn cli_lock_wait_timeout_keeps_owner_on_status_and_omits_json_from_text_stdout()
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run tasks status");
     // The waiters never started a run of their own: the owner's run stays
     // current.
@@ -552,10 +552,9 @@ fn cli_lock_wait_timeout_keeps_owner_on_status_and_omits_json_from_text_stdout()
     );
     assert_ne!(status_parsed["result"]["current"]["pid"], Value::Null);
 
-    let mut sentinels = Sentinels::for_owner(owner.id(), Duration::from_secs(10));
+    let _sentinels = Sentinels::for_owner(owner.id(), Duration::from_secs(10));
     let _ = owner.kill();
     let _ = owner.wait();
-    sentinels.wait_exit(Duration::from_secs(10));
 }
 
 fn write_failing_rhai_fixture(root: &Path, script: &str) {
@@ -735,7 +734,7 @@ fn cli_json_mode_deploy_execution_refuses_with_nonzero_exit() {
             }
             let output = command
                 .env("NO_COLOR", "1")
-                .output()
+                .output_owned()
                 .expect("run deploy refusal");
             assert!(!output.status.success());
             let parsed: Value = serde_json::from_slice(&output.stdout).expect("json envelope");
@@ -760,7 +759,7 @@ fn cli_json_mode_deploy_execution_refuses_with_nonzero_exit() {
     let help = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .args(["deploy", "model", "--help"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run deploy model help");
     assert!(help.status.success(), "{help:?}");
     assert!(!root.join(".effigy/reports/deploy").exists());
@@ -814,7 +813,7 @@ api = "acme-api"
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run deploy model");
 
     assert!(output.status.success());
@@ -882,7 +881,7 @@ fn cli_json_mode_deploy_export_render_wraps_export_payload() {
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run deploy export render");
 
     assert!(output.status.success());
@@ -950,7 +949,7 @@ fn cli_json_mode_deploy_export_railway_wraps_export_payload() {
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run deploy export railway");
 
     assert!(output.status.success());

@@ -50,7 +50,11 @@ pub fn close_root(owner: &Path) -> io::Result<()> {
 
 pub trait FixtureCommandExt {
     fn spawn_owned(&mut self) -> io::Result<OwnedChild>;
+    /// Spawn while preserving a process group or session the caller set up.
+    /// That group must be the child's PID, so this guard can own it precisely.
+    fn spawn_owned_preserving_group(&mut self) -> io::Result<OwnedChild>;
     fn output_owned(&mut self) -> io::Result<Output>;
+    fn status_owned(&mut self) -> io::Result<ExitStatus>;
 }
 
 impl FixtureCommandExt for Command {
@@ -62,18 +66,62 @@ impl FixtureCommandExt for Command {
             .wait_with_output()
     }
     fn spawn_owned(&mut self) -> io::Result<OwnedChild> {
-        self.process_group(0);
-        let mut child = self.spawn()?;
-        Ok(OwnedChild {
-            stdin: child.stdin.take(),
-            stdout: child.stdout.take(),
-            stderr: child.stderr.take(),
-            group: child.id(),
-            reaped: None,
-            child,
-            deadline: Instant::now() + OUTPUT_DEADLINE,
-        })
+        spawn_owned_inner(self, true)
     }
+    fn spawn_owned_preserving_group(&mut self) -> io::Result<OwnedChild> {
+        spawn_owned_inner(self, false)
+    }
+    fn status_owned(&mut self) -> io::Result<ExitStatus> {
+        self.stdin(std::process::Stdio::null())
+            .spawn_owned()?
+            .wait()
+    }
+}
+
+fn spawn_owned_inner(command: &mut Command, establish_group: bool) -> io::Result<OwnedChild> {
+    let watches_helpers = is_effigy_executable(command.get_program());
+    if watches_helpers
+        && !command
+            .get_envs()
+            .any(|(key, _)| key == std::ffi::OsStr::new("NEXTEST_TEST_NAME"))
+    {
+        let test_name = std::env::var_os("NEXTEST_TEST_NAME").or_else(|| {
+            std::thread::current()
+                .name()
+                .filter(|name| !name.is_empty())
+                .map(std::ffi::OsString::from)
+        });
+        if let Some(test_name) = test_name {
+            let marker = test_name.to_string_lossy();
+            let arg0 = format!(
+                "{} --effigy-suite-test={marker}",
+                command.get_program().to_string_lossy()
+            );
+            command.env("NEXTEST_TEST_NAME", test_name).arg0(arg0);
+        }
+    }
+    if establish_group {
+        command.process_group(0);
+    }
+    let mut child = command.spawn()?;
+    let pid = child.id();
+    Ok(OwnedChild {
+        stdin: child.stdin.take(),
+        stdout: child.stdout.take(),
+        stderr: child.stderr.take(),
+        group: pid,
+        reaped: None,
+        child,
+        deadline: Instant::now() + OUTPUT_DEADLINE,
+        helpers: Vec::new(),
+        watches_helpers,
+    })
+}
+
+fn is_effigy_executable(program: &std::ffi::OsStr) -> bool {
+    Path::new(program)
+        .file_name()
+        .is_some_and(|name| name == "effigy")
 }
 
 /// Signal the whole group of a fixture launch. Only a group this guard created
@@ -97,6 +145,8 @@ pub struct OwnedChild {
     pub stdout: Option<ChildStdout>,
     pub stderr: Option<ChildStderr>,
     deadline: Instant,
+    helpers: Vec<effigy_kernel::ident::ProcessIdentity>,
+    watches_helpers: bool,
 }
 
 impl OwnedChild {
@@ -132,7 +182,9 @@ impl OwnedChild {
 
     pub fn wait(&mut self) -> io::Result<ExitStatus> {
         loop {
+            self.capture_kernel_helpers()?;
             if let Some(status) = self.try_wait()? {
+                self.wait_for_helpers()?;
                 return Ok(status);
             }
             if Instant::now() >= self.deadline {
@@ -147,9 +199,11 @@ impl OwnedChild {
 
     /// Stop the group within its grace, then escalate, and reap the leader.
     pub fn terminate_and_wait(&mut self) -> io::Result<ExitStatus> {
+        self.capture_kernel_helpers()?;
         signal_group(self.group, libc::SIGTERM);
         let grace = Instant::now() + STOP_GRACE;
         while Instant::now() < grace {
+            self.capture_kernel_helpers()?;
             if self.try_wait()?.is_some() && self.group_closed() {
                 break;
             }
@@ -161,10 +215,103 @@ impl OwnedChild {
             None => self.child.wait()?,
         };
         self.reaped = Some(status);
+        self.wait_for_helpers()?;
         Ok(status)
     }
 
-    pub fn wait_with_output(mut self) -> io::Result<Output> {
+    pub fn wait_with_output(self) -> io::Result<Output> {
+        self.wait_with_output_inner()
+    }
+
+    fn capture_kernel_helpers(&mut self) -> io::Result<()> {
+        if !self.watches_helpers {
+            return Ok(());
+        }
+        let owner_marker = format!("--effigy-suite-parent={}", self.child.id());
+        let output = Command::new("ps")
+            .args(["-axo", "pid=,ppid=,args="])
+            .output()?;
+        if !output.status.success() {
+            return Err(io::Error::other("process table listing command failed"));
+        }
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let mut fields = line.split_whitespace();
+            let Some(pid) = fields.next().and_then(|field| field.parse::<u32>().ok()) else {
+                continue;
+            };
+            let Some(parent) = fields.next().and_then(|field| field.parse::<u32>().ok()) else {
+                continue;
+            };
+            let args = fields.collect::<Vec<_>>();
+            let is_kernel_helper = args
+                .iter()
+                .any(|arg| matches!(*arg, "__kernel-sentinel" | "__kernel-guard"));
+            let belongs_to_fixture =
+                parent == self.child.id() || args.contains(&owner_marker.as_str());
+            if !is_kernel_helper || !belongs_to_fixture {
+                continue;
+            }
+            match effigy_kernel::ident::process_identity(pid) {
+                effigy_kernel::observe::Observed::Absent(_) => {}
+                effigy_kernel::observe::Observed::Verified(identity, _) => {
+                    if !self.helpers.contains(&identity) {
+                        self.helpers.push(identity);
+                    }
+                }
+                effigy_kernel::observe::Observed::Unknown(_) => {
+                    return Err(io::Error::other(format!(
+                        "test {}: cannot establish Effigy helper identity for PID {pid}",
+                        current_test_name().as_deref().unwrap_or("unknown test")
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn wait_for_helpers(&mut self) -> io::Result<()> {
+        loop {
+            self.capture_kernel_helpers()?;
+            self.helpers.retain(|identity| {
+                match effigy_kernel::ident::process_identity(identity.pid) {
+                    effigy_kernel::observe::Observed::Absent(_) => false,
+                    effigy_kernel::observe::Observed::Verified(current, _)
+                        if current != *identity =>
+                    {
+                        false
+                    }
+                    effigy_kernel::observe::Observed::Verified(..) => !matches!(
+                        effigy_kernel::ident::process_state(identity.pid),
+                        effigy_kernel::observe::Observed::Verified(
+                            effigy_kernel::ident::ProcessState::Zombie,
+                            _
+                        )
+                    ),
+                    effigy_kernel::observe::Observed::Unknown(_) => true,
+                }
+            });
+            if self.helpers.is_empty() {
+                return Ok(());
+            }
+            if Instant::now() >= self.deadline {
+                let pids = self
+                    .helpers
+                    .iter()
+                    .map(|identity| identity.pid)
+                    .collect::<Vec<_>>();
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!(
+                        "test {}: Effigy helper PID(s) {pids:?} did not exit before the fixture deadline",
+                        current_test_name().as_deref().unwrap_or("unknown test")
+                    ),
+                ));
+            }
+            std::thread::sleep(POLL);
+        }
+    }
+
+    fn wait_with_output_inner(mut self) -> io::Result<Output> {
         use std::io::Read;
         fn reader<R: Read + Send + 'static>(
             stream: Option<R>,
@@ -181,6 +328,7 @@ impl OwnedChild {
         let stdout = reader(self.stdout.take());
         let stderr = reader(self.stderr.take());
         loop {
+            self.capture_kernel_helpers()?;
             if Instant::now() >= self.deadline {
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
@@ -192,6 +340,7 @@ impl OwnedChild {
                     if !self.group_closed() {
                         wait_group_members(self.group, self.deadline)?;
                     }
+                    self.wait_for_helpers()?;
                     let join = |reader: std::thread::JoinHandle<io::Result<Vec<u8>>>| {
                         reader
                             .join()
@@ -207,6 +356,14 @@ impl OwnedChild {
             std::thread::sleep(POLL);
         }
     }
+}
+
+fn current_test_name() -> Option<String> {
+    std::thread::current()
+        .name()
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .or_else(|| std::env::var("NEXTEST_TEST_NAME").ok())
 }
 
 /// Current live members of an owned process group. A zombie has exited and
@@ -397,6 +554,13 @@ impl Drop for OwnedChild {
         // A reaped leader can still have live group members. Check the group
         // before treating this launch as settled; unwinding stops survivors.
         if self.reaped.is_some() && self.group_closed() {
+            if let Err(error) = self.wait_for_helpers() {
+                if std::thread::panicking() {
+                    eprintln!("fixture helper cleanup failed: {error}");
+                } else {
+                    panic!("fixture helper cleanup failed: {error}");
+                }
+            }
             return;
         }
         if let Err(error) = self.terminate_and_wait() {
@@ -420,4 +584,42 @@ pub fn run_recorded(command: &mut Command, done: &Path) -> io::Result<()> {
         ));
     }
     std::fs::write(done, b"")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FixtureCommandExt;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn waits_for_a_kernel_helper_reparented_before_the_cli_exits() {
+        let fixture = tempfile::Builder::new()
+            .prefix("effigy-helper-wait-")
+            .tempdir()
+            .expect("fixture directory");
+        let executable = fixture.path().join("effigy");
+        fs::write(
+            &executable,
+            "#!/bin/sh\n/bin/sh -c 'sleep 0.1; exec /bin/sh -c \"sleep 0.3\" __kernel-sentinel \"$2\"' delayed \"$$\" \"--effigy-suite-parent=$$\" &\nexit 0\n",
+        )
+        .expect("fixture executable");
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
+            .expect("executable mode");
+
+        let started = Instant::now();
+        let status = Command::new(executable)
+            .spawn_owned()
+            .expect("fixture launch")
+            .wait()
+            .expect("wait for CLI and its helper");
+
+        assert!(status.success());
+        assert!(
+            started.elapsed() >= Duration::from_millis(300),
+            "the owned waiter returned before the reparented helper exited"
+        );
+    }
 }

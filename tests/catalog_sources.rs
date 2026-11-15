@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use effigy_test_support::process::FixtureCommandExt;
+
 struct Fixture {
     owner: tempfile::TempDir,
     repo: PathBuf,
@@ -88,7 +90,7 @@ impl Fixture {
         if let Some(path) = path {
             command.env("PATH", path);
         }
-        let mut child = command.spawn().unwrap();
+        let mut child = command.spawn_owned_preserving_group().unwrap();
         let deadline = Instant::now() + bound;
         let status = loop {
             if let Some(status) = child.try_wait().unwrap() {

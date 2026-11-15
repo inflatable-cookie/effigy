@@ -1,3 +1,4 @@
+use effigy_test_support::process::FixtureCommandExt;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -50,7 +51,7 @@ fn run_scan_command(root: &Path, scan: &str, args: &[&str]) -> Value {
         .arg("--repo")
         .arg(root)
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     serde_json::from_str(&stdout).expect("json parse")

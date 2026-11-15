@@ -434,8 +434,19 @@ fn nonce() -> u128 {
 /// while a foreground guard re-execs whatever binary is beside the run (K1).
 pub(crate) fn helper(executable: &Executable, entry: &str) -> io::Result<Command> {
     let mut command = Command::new(&executable.path);
+    command.arg(entry);
+    // Keep test ownership visible to fixture settlement and the suite guard on
+    // macOS, where detached-process environments are not exposed by process
+    // table APIs. These markers stay in argv for this internal helper only;
+    // they are never added to the task invocation or inherited environment.
+    if let Some(test_name) = std::env::var_os("NEXTEST_TEST_NAME") {
+        command.arg(format!(
+            "--effigy-suite-test={}",
+            test_name.to_string_lossy()
+        ));
+        command.arg(format!("--effigy-suite-parent={}", std::process::id()));
+    }
     command
-        .arg(entry)
         .env_clear()
         .stdin(Stdio::piped())
         .stdout(Stdio::null())

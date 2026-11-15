@@ -1,4 +1,5 @@
 use effigy_core::builtin_tasks::BUILTIN_TASKS;
+use effigy_test_support::process::FixtureCommandExt;
 use std::{
     collections::BTreeSet,
     fs,
@@ -173,7 +174,7 @@ fn program_fallback_conditions_are_documented_in_help_and_both_skill_copies() {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("help")
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy help");
     assert!(output.status.success(), "effigy help failed");
     let help = normalized(&String::from_utf8_lossy(&output.stdout));

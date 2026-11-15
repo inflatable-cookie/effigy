@@ -5,6 +5,7 @@
 //! logs/status honesty, and scheduler execution metadata are proven through
 //! the real command surface.
 
+use effigy_test_support::process::FixtureCommandExt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -40,7 +41,10 @@ fn run_effigy(root: &Path, args: &[&str]) -> std::process::Output {
     for arg in args {
         command.arg(arg);
     }
-    command.env("NO_COLOR", "1").output().expect("run effigy")
+    command
+        .env("NO_COLOR", "1")
+        .output_owned()
+        .expect("run effigy")
 }
 
 fn run_effigy_json(root: &Path, args: &[&str]) -> Value {
@@ -58,7 +62,7 @@ fn run_effigy_json_with_env(root: &Path, args: &[&str], envs: &[(&str, &Path)]) 
     for (key, value) in envs {
         command.env(key, value);
     }
-    let output = command.output().expect("run effigy json");
+    let output = command.output_owned().expect("run effigy json");
     assert!(
         output.status.success(),
         "stdout: {} | stderr: {}",
@@ -1017,7 +1021,7 @@ fn run_group_and_capture_with_env(root: &Path, args: &[&str], envs: &[(&str, &st
     for (key, value) in envs {
         command.env(key, value);
     }
-    let output = command.output().expect("run group");
+    let output = command.output_owned().expect("run group");
     assert!(!output.status.success(), "expected a failing group run");
     let reports = root.join(".effigy/reports/qa-groups");
     let mut runs: Vec<PathBuf> = fs::read_dir(&reports)
@@ -1084,7 +1088,7 @@ run = "sleep 0.4"
             .arg("--repo")
             .arg(root.as_path())
             .env("NO_COLOR", "1");
-        let output = command.output().expect("run group");
+        let output = command.output_owned().expect("run group");
         assert!(
             output.status.success(),
             "{}",

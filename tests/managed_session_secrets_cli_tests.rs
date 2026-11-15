@@ -12,12 +12,13 @@ use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use effigy_secrets::{
     local_unlock_credential_path, SecretValue, VaultPlaintextPayload, VaultSecretRecord,
 };
+use effigy_test_support::process::FixtureCommandExt;
 use nix::pty::{openpty, Winsize};
 
 const PROMPT: &str = "Vault passphrase";
@@ -137,7 +138,7 @@ fn a_managed_session_without_a_terminal_or_source_refuses_before_starting() {
     for key in PASSHRASE_SOURCES {
         command.env_remove(key);
     }
-    let output = command.output().expect("run headless session");
+    let output = command.output_owned().expect("run headless session");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -397,7 +398,7 @@ fn occupy_below_handoff() -> Vec<std::os::fd::OwnedFd> {
 /// makes the passphrase prompt (an `/dev/tty` read) ask here rather than
 /// fail.
 struct PtySession {
-    child: Child,
+    child: effigy_test_support::process::OwnedChild,
     master: fs::File,
     output: Vec<u8>,
 }
@@ -458,7 +459,9 @@ impl PtySession {
         // where `dup2` onto the same number must still clear CLOEXEC for the
         // supervisor to find its grant after exec (effigy#338).
         let inherited = occupy_below_handoff();
-        let child = command.spawn().expect("spawn session on a PTY");
+        let child = command
+            .spawn_owned_preserving_group()
+            .expect("spawn session on a PTY");
         drop(inherited);
         Self {
             child,

@@ -1,3 +1,4 @@
+use effigy_test_support::process::FixtureCommandExt;
 mod support;
 
 use std::fs;
@@ -17,7 +18,7 @@ fn dev_and_get_use_the_local_dev_key_and_other_tasks_still_need_a_passphrase() {
         .arg("dev")
         .current_dir(&root)
         .stdin(Stdio::null())
-        .output()
+        .output_owned()
         .expect("run dev");
     assert!(
         dev.status.success(),
@@ -31,7 +32,7 @@ fn dev_and_get_use_the_local_dev_key_and_other_tasks_still_need_a_passphrase() {
         .args(["secrets", "get", "api_token"])
         .current_dir(&root)
         .stdin(Stdio::null())
-        .output()
+        .output_owned()
         .expect("run direct get");
     assert!(
         direct_get.status.success(),
@@ -44,7 +45,7 @@ fn dev_and_get_use_the_local_dev_key_and_other_tasks_still_need_a_passphrase() {
         .arg("serve")
         .current_dir(&root)
         .stdin(Stdio::null())
-        .output()
+        .output_owned()
         .expect("run non-dev task");
     assert!(!other_task.status.success());
     assert!(String::from_utf8_lossy(&other_task.stderr)
@@ -62,7 +63,7 @@ fn dev_key_alone_lets_doctor_report_what_it_can_read() {
         .stdin(Stdio::null())
         .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
         .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
-        .output()
+        .output_owned()
         .expect("run doctor");
     assert!(
         doctor.status.success(),
@@ -119,7 +120,7 @@ fn doctor_reports_a_passphrase_unlock_through_the_sealed_credential() {
         .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
         .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
         .env_remove("EFFIGY_SECRET_PASSPHRASE")
-        .output()
+        .output_owned()
         .expect("run doctor");
     assert!(
         doctor.status.success(),
@@ -157,7 +158,7 @@ fn doctor_reports_a_passphrase_unlock_through_the_sealed_credential() {
         .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
         .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
         .env_remove("EFFIGY_SECRET_PASSPHRASE")
-        .output()
+        .output_owned()
         .expect("run text doctor");
     assert!(
         text.status.success(),
@@ -202,7 +203,7 @@ fn doctor_fails_closed_when_the_sealed_credential_cannot_be_opened() {
         .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
         .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
         .env_remove("EFFIGY_SECRET_PASSPHRASE")
-        .output()
+        .output_owned()
         .expect("run doctor");
 
     assert!(!doctor.status.success(), "doctor unexpectedly succeeded");
@@ -228,7 +229,7 @@ fn first_dev_unlock_upgrades_a_legacy_vault() {
         .current_dir(&root)
         .env("EFFIGY_TEST_SECRETS_PASSPHRASE", "vault-passphrase")
         .stdin(Stdio::null())
-        .output()
+        .output_owned()
         .expect("run first dev");
     assert!(
         upgrade.status.success(),
@@ -243,7 +244,7 @@ fn first_dev_unlock_upgrades_a_legacy_vault() {
         .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
         .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
         .stdin(Stdio::null())
-        .output()
+        .output_owned()
         .expect("run unattended dev");
     assert!(
         unattended.status.success(),
@@ -261,7 +262,7 @@ fn manual_unlock_allows_commands_and_tasks_then_lock_revokes_access() {
         .current_dir(&root)
         .env("EFFIGY_TEST_SECRETS_PASSPHRASE", "vault-passphrase")
         .stdin(Stdio::null())
-        .output()
+        .output_owned()
         .expect("unlock vault");
     assert!(
         unlock.status.success(),
@@ -296,7 +297,7 @@ fn manual_unlock_allows_commands_and_tasks_then_lock_revokes_access() {
             .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
             .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
             .stdin(Stdio::null())
-            .output()
+            .output_owned()
             .expect("use unlocked vault");
         assert!(
             output.status.success(),
@@ -313,7 +314,7 @@ fn manual_unlock_allows_commands_and_tasks_then_lock_revokes_access() {
         .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
         .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
         .stdin(Stdio::null())
-        .output()
+        .output_owned()
         .expect("set with unlocked vault");
     assert!(
         set.status.success(),
@@ -328,7 +329,7 @@ fn manual_unlock_allows_commands_and_tasks_then_lock_revokes_access() {
         .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
         .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
         .stdin(Stdio::null())
-        .output()
+        .output_owned()
         .expect("change passphrase with unlocked vault");
     assert!(
         changed.status.success(),
@@ -341,7 +342,7 @@ fn manual_unlock_allows_commands_and_tasks_then_lock_revokes_access() {
         .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
         .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
         .stdin(Stdio::null())
-        .output()
+        .output_owned()
         .expect("get after passphrase change");
     assert!(
         get.status.success(),
@@ -354,7 +355,7 @@ fn manual_unlock_allows_commands_and_tasks_then_lock_revokes_access() {
         .args(["secrets", "lock"])
         .current_dir(&root)
         .stdin(Stdio::null())
-        .output()
+        .output_owned()
         .expect("lock vault");
     assert!(
         lock.status.success(),
@@ -374,7 +375,7 @@ fn manual_unlock_allows_commands_and_tasks_then_lock_revokes_access() {
             .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
             .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
             .stdin(Stdio::null())
-            .output()
+            .output_owned()
             .expect("use locked vault");
         assert!(!output.status.success(), "{args:?} unexpectedly succeeded");
     }
@@ -484,7 +485,10 @@ run = [{ rhai = "write-rhai.rhai" }]
             .stderr(Stdio::piped());
         command
     };
-    let output = command().args(["secrets", "init"]).output().expect("init");
+    let output = command()
+        .args(["secrets", "init"])
+        .output_owned()
+        .expect("init");
     assert!(
         output.status.success(),
         "{}",
@@ -493,9 +497,12 @@ run = [{ rhai = "write-rhai.rhai" }]
     let first = command()
         .args(["secrets", "set", "cli_token"])
         .env("EFFIGY_TEST_SECRETS_VALUE", "from-cli")
-        .spawn()
+        .spawn_owned()
         .expect("CLI writer");
-    let second = command().arg("write-rhai").spawn().expect("Rhai writer");
+    let second = command()
+        .arg("write-rhai")
+        .spawn_owned()
+        .expect("Rhai writer");
     for child in [first, second] {
         let output = child.wait_with_output().expect("writer exits");
         assert!(

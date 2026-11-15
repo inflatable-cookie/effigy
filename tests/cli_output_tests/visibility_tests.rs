@@ -1,4 +1,5 @@
 //! Public/internal discovery and retired task-namespace keys, through the CLI.
+use effigy_test_support::process::FixtureCommandExt;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -18,7 +19,7 @@ fn run(root: &Path, args: &[&str]) -> Output {
         .env("HOME", root.join("home"))
         .env("NO_COLOR", "1")
         .args(args)
-        .output()
+        .output_owned()
         .expect("run CLI")
 }
 

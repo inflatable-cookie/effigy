@@ -11,6 +11,7 @@
 //! backend only; every child is stopped by the fixture that started it.
 use super::*;
 use effigy_gateway::identity::{read_live_process_identity, GatewayStartIdentity};
+use effigy_test_support::process::FixtureCommandExt;
 
 /// The interrupted-parent proof's owner helper, and the file it writes its
 /// fixture root to once its listener is ready.
@@ -316,7 +317,7 @@ impl Drop for AdapterlessSetup {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .status();
+            .status_owned();
         if let Err(error) = status {
             eprintln!("adapterless fixture could not stop its private gateway: {error}");
         }

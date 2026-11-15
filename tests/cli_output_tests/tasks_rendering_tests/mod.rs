@@ -1,3 +1,4 @@
+use effigy_test_support::process::FixtureCommandExt;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -49,7 +50,7 @@ fn run_effigy(args: &[&str], repo: Option<&Path>, color: bool) -> String {
         command.env("NO_COLOR", "1");
     }
 
-    let output = command.output().expect("run effigy");
+    let output = command.output_owned().expect("run effigy");
     assert!(output.status.success());
     String::from_utf8(output.stdout).expect("utf8 stdout")
 }

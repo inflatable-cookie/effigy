@@ -1,4 +1,5 @@
 //! Public reset/teardown must never send Compose an unpublished generation.
+use effigy_test_support::process::FixtureCommandExt;
 use effigy_test_support::Fixture as FixtureRoot;
 use serde_json::Value;
 use std::fs;
@@ -52,7 +53,7 @@ impl Fixture {
             )
             .env("EFFIGY_COMPOSE_BACKEND", "docker")
             .env("RESET_PROOF_LOG", self.root().join("backend.jsonl"))
-            .output()
+            .output_owned()
             .unwrap();
         assert!(output.status.success(), "{args:?}: {output:?}");
         serde_json::from_slice(&output.stdout).unwrap()

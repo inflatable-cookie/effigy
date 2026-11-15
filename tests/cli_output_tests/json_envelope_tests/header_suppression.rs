@@ -7,6 +7,7 @@
 //! marker from a host-process supervisor (effigy#330).
 
 use super::temp_workspace;
+use effigy_test_support::process::FixtureCommandExt;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -31,7 +32,9 @@ fn effigy_command(root: &Path, args: &[&str]) -> Command {
 }
 
 fn run(root: &Path, args: &[&str]) -> Output {
-    effigy_command(root, args).output().expect("run effigy")
+    effigy_command(root, args)
+        .output_owned()
+        .expect("run effigy")
 }
 
 fn parse_stdout(output: &Output) -> Value {
@@ -167,7 +170,7 @@ fn a_workload_that_inherits_the_marker_still_gets_the_envelope() {
         .current_dir(&root)
         .env("NO_COLOR", "1")
         .env(MARKER, "1")
-        .output()
+        .output_owned()
         .expect("run the workload");
 
     assert!(output.status.success(), "{output:?}");

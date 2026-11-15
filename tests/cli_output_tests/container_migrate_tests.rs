@@ -1,5 +1,6 @@
 //! `compose_file` is read as project catalog fragments for one release, and
 //! `effigy container migrate` writes exactly those fragments out.
+use effigy_test_support::process::FixtureCommandExt;
 use effigy_test_support::Fixture as DirectoryFixture;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -41,7 +42,7 @@ impl Fixture {
             .env("HOME", root.join("home"))
             .env("EFFIGY_TEST_CONTAINERS_HOME", root.join("home/.effigy"))
             .env("EFFIGY_COMPOSE_BACKEND", "docker")
-            .output()
+            .output_owned()
             .unwrap()
     }
 

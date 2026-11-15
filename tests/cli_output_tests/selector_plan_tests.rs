@@ -1,3 +1,4 @@
+use effigy_test_support::process::FixtureCommandExt;
 use serde_json::Value;
 use std::fs;
 use std::process::Command;
@@ -144,7 +145,7 @@ fn cli_plan_after_passthrough_delimiter_still_executes() {
         .current_dir(&root)
         .args(["probe", "--", "--plan"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);

@@ -521,7 +521,7 @@ fn pinned_reader_reads_a_store_this_build_wrote() {
         ])
         .env_remove(effigy_gateway::private_state::PRIVATE_STATE_ROOT_ENV)
         .stdin(Stdio::null())
-        .output()
+        .output_owned()
         .expect("run the pinned build");
     let rendered = format!(
         "{}{}",
@@ -704,7 +704,7 @@ fn private_gateway_cli_serves_verified_https_and_isolates_concurrent_instances()
         .env_remove("EFFIGY_GATEWAY_PROXY_ADDR")
         .env_remove("EFFIGY_GATEWAY_HTTPS_ADDR")
         .env("EFFIGY_GATEWAY_PROXY_ADDR", "127.0.0.1:0")
-        .output()
+        .output_owned()
         .expect("reject operator-mode address override");
     let address_override_output = format!(
         "{}{}",
@@ -983,7 +983,7 @@ fn private_gateway_cli_serves_verified_https_and_isolates_concurrent_instances()
         .env("CAROOT", &foreign_ca_root)
         .env("FOREIGN_CAROOT", &foreign_ca_root)
         .env("PATH", &effects.env_path)
-        .output()
+        .output_owned()
         .expect("run managed gateway command");
     if managed.status.success() {
         cleanup.track(&first_root);
@@ -6933,7 +6933,7 @@ fn container_hybrid_environment_switch_hands_the_whole_environment_over() {
     let switch_up = |env: &str| {
         let output = container(env)
             .args(["up", "--detach"])
-            .output()
+            .output_owned()
             .expect("run switch container up");
         assert!(
             output.status.success(),
@@ -7077,7 +7077,7 @@ fn container_hybrid_environment_switch_hands_the_whole_environment_over() {
     .expect("register foreign route");
     let refused = container("hybrid")
         .args(["up", "--detach"])
-        .output()
+        .output_owned()
         .expect("run refused hybrid up");
     assert!(
         !refused.status.success(),
@@ -7108,7 +7108,7 @@ fn container_hybrid_environment_switch_hands_the_whole_environment_over() {
     for env in ["stack", "hybrid"] {
         let _ = container(env)
             .args(["down", "--json"])
-            .output()
+            .output_owned()
             .expect("run switch container down");
     }
 }
@@ -7353,7 +7353,7 @@ fn container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over() {
     let switch_up = |env: &str| {
         let output = container(env)
             .args(["up", "--detach"])
-            .output()
+            .output_owned()
             .expect("run switch container up");
         if !output.status.success() {
             let table = RouteTable::load(&routes_path)
@@ -7468,7 +7468,7 @@ fn container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over() {
     for env in ["stack", "hybrid"] {
         let _ = container(env)
             .args(["down", "--json"])
-            .output()
+            .output_owned()
             .expect("run switch container down");
     }
 }
@@ -7759,7 +7759,7 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
         let mut status = Command::new(EFFIGY);
         status.args(["dev:container", "status", "--json"]);
         managed_env(&mut status);
-        let output = status.output().expect("managed status");
+        let output = status.output_owned().expect("managed status");
         String::from_utf8_lossy(&output.stdout)
             .lines()
             .rev()
@@ -7770,7 +7770,7 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
         let mut logs = Command::new(EFFIGY);
         logs.args(["dev:container", "logs", "lifecycle"]);
         managed_env(&mut logs);
-        logs.output()
+        logs.output_owned()
             .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
             .unwrap_or_default()
     };
@@ -7859,7 +7859,7 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
     let mut takeover = Command::new(EFFIGY);
     takeover.args(["container", "hybrid", "up", "--detach"]);
     managed_env(&mut takeover);
-    let takeover = takeover.output().expect("run hybrid takeover");
+    let takeover = takeover.output_owned().expect("run hybrid takeover");
     let takeover_text = format!(
         "{}{}",
         String::from_utf8_lossy(&takeover.stdout),
@@ -7896,7 +7896,7 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
     let mut stop = Command::new(EFFIGY);
     stop.args(["dev:container", "stop"]);
     managed_env(&mut stop);
-    let _ = stop.output();
+    let _ = stop.output_owned();
 
     let log = fs::read_to_string(&docker_log).expect("docker fixture log");
     assert!(
@@ -7909,7 +7909,7 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
         let mut down = Command::new(EFFIGY);
         down.args(["container", env, "down", "--json"]);
         managed_env(&mut down);
-        let _ = down.output();
+        let _ = down.output_owned();
     }
 }
 

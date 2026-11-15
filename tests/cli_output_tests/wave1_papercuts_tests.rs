@@ -1,3 +1,4 @@
+use effigy_test_support::process::FixtureCommandExt;
 use serde_json::Value;
 use std::fs;
 use std::process::Command;
@@ -29,7 +30,7 @@ fn cli_task_passthrough_after_delimiter_does_not_switch_repo() {
             other.to_str().expect("utf8 other path"),
         ])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -77,7 +78,7 @@ fn cli_leading_repo_still_switches_catalog() {
         .arg(&other)
         .arg("echo")
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(
@@ -99,13 +100,13 @@ fn cli_json_after_passthrough_delimiter_does_not_emit_envelope() {
         .current_dir(&root)
         .args(["definitely-not-a-task", "--", "--json"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
     let not_json_after = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .current_dir(&root)
         .args(["definitely-not-a-task", "--", "--not-json"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     let json_stdout = String::from_utf8_lossy(&json_after.stdout);
@@ -128,7 +129,7 @@ fn cli_json_after_passthrough_delimiter_does_not_emit_envelope() {
         .current_dir(&root)
         .args(["--not-a-global", "--", "--json"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
     let parse_stdout = String::from_utf8_lossy(&parse_error.stdout);
     assert!(
@@ -174,7 +175,7 @@ run_in = "host"
         .args(["--json", "doctor", "--repo"])
         .arg(&root)
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run doctor");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -232,7 +233,7 @@ run = [{ task = "missing-task" }]
         .args(["--json", "doctor", "--repo"])
         .arg(&root)
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run doctor");
 
     let stdout = String::from_utf8_lossy(&output.stdout);

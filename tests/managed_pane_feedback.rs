@@ -3,6 +3,7 @@
 //! Both fixtures drive the real binary in a real PTY and judge its canonical
 //! pane logs plus the rendered screen stream: a pane is not a terminal for the
 //! process inside it, so its feedback must stay bounded plain lines.
+use effigy_test_support::process::FixtureCommandExt;
 #[cfg(unix)]
 fn pane_fixture(script: &str) {
     use std::process::Command;
@@ -15,7 +16,7 @@ fn pane_fixture(script: &str) {
             "EFFIGY_PANE_LIVE_STEP_FIXTURE",
             std::env::current_exe().expect("pane fixture binary"),
         )
-        .output()
+        .output_owned()
         .expect("run pane fixture");
     assert!(
         output.status.success(),

@@ -1,4 +1,5 @@
 //! Real user daemon custody, probes and control, entirely inside a fresh HOME.
+use effigy_test_support::process::FixtureCommandExt;
 #[path = "support/route_table_fixture.rs"]
 mod route_table_fixture;
 use effigy_gateway::{operator, GatewayConfig};
@@ -353,7 +354,7 @@ fn operator_cli_reads_the_home_gateway_root_and_never_drives_it_as_a_fixture() {
         if let Some(private) = private_root {
             command.env("EFFIGY_GATEWAY_PRIVATE_STATE_ROOT", private);
         }
-        let output = command.output().expect("run effigy gateway");
+        let output = command.output_owned().expect("run effigy gateway");
         (
             output.status.success(),
             String::from_utf8_lossy(&output.stdout).into_owned(),

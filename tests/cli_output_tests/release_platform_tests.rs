@@ -6,6 +6,7 @@
 //! the plan reports the working tree. Nothing in these tests pushes, tags or
 //! publishes.
 
+use effigy_test_support::process::FixtureCommandExt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -492,7 +493,7 @@ fn run_release_cli(root: &Path, home: &Path, args: &[&str]) -> Output {
         // A gate builds the fixture with plain Cargo, so its output belongs in
         // the fixture, not in whatever target directory the test host set.
         .env("CARGO_TARGET_DIR", root.join("target"))
-        .output()
+        .output_owned()
         .expect("run effigy")
 }
 
@@ -1144,7 +1145,7 @@ fn effigy_release_run_certifies_and_then_publishes_through_the_fake_dispatch() {
             .arg("-C")
             .arg(&remote)
             .args(["rev-parse", "--verify", "refs/tags/v0.2.5"])
-            .output()
+            .output_owned()
             .expect("read remote tag")
             .status
             .code()

@@ -1,4 +1,5 @@
 use super::*;
+use effigy_test_support::process::FixtureCommandExt;
 
 #[test]
 fn cli_config_global_json_mode_emits_machine_readable_payload() {
@@ -27,7 +28,7 @@ fn cli_tasks_color_policy_preserves_plain_and_styled_rows() {
         .arg(&root)
         .env("NO_COLOR", "1")
         .env("EFFIGY_COLOR", "always")
-        .output()
+        .output_owned()
         .expect("run effigy with NO_COLOR overriding forced color");
     assert!(plain_output.status.success(), "{plain_output:?}");
     let plain = String::from_utf8(plain_output.stdout).expect("utf8 stdout");

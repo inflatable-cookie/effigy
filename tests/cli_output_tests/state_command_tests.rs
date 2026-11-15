@@ -1,3 +1,4 @@
+use effigy_test_support::process::FixtureCommandExt;
 use std::fs;
 use std::process::Command;
 
@@ -14,7 +15,7 @@ fn cli_state_plan_json_reports_lineage() {
         .arg("--json")
         .args(["state", "plan", "state-stack.toml"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(
@@ -41,7 +42,7 @@ fn cli_state_plan_text_is_plan_only() {
         .arg(&root)
         .args(["state", "plan", "state-stack.toml"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(
@@ -73,7 +74,7 @@ fn cli_state_plan_selects_default_and_requested_manifest_stacks() {
         if let Some(stack) = requested_stack {
             command.args(["--stack", stack]);
         }
-        let output = command.output().expect("run effigy");
+        let output = command.output_owned().expect("run effigy");
         assert!(
             output.status.success(),
             "state plan failed: {}",
@@ -116,7 +117,7 @@ fn cli_state_plan_reports_missing_manifest_state_config() {
         .arg(&root)
         .args(["state", "plan"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(!output.status.success());
@@ -139,7 +140,7 @@ fn cli_state_plan_reports_ambiguous_manifest_stacks() {
         .arg(&root)
         .args(["state", "plan"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(!output.status.success());
@@ -160,7 +161,7 @@ fn cli_state_plan_rejects_stack_with_standalone_manifest() {
         .arg(&root)
         .args(["state", "plan", "state-stack.toml", "--stack", "uat"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(!output.status.success());
@@ -179,7 +180,7 @@ fn cli_state_plan_write_report_text_writes_lineage_file() {
         .arg(&root)
         .args(["state", "plan", "--write-report"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(
@@ -223,7 +224,7 @@ fn cli_state_plan_write_report_json_reports_written_path() {
         .arg("--json")
         .args(["state", "plan", "--write-report", "--stack", "prod"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(
@@ -313,7 +314,7 @@ fn cli_state_history_json_scans_report_files() {
             "5",
         ])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(
@@ -364,7 +365,7 @@ fn cli_state_history_text_lists_reports() {
         .arg(&root)
         .args(["state", "history", "--stack", "uat"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(
@@ -412,7 +413,7 @@ fn cli_state_history_resolves_named_stack_to_report_stack_name() {
         .arg("--json")
         .args(["state", "history", "uat", "--kind", "capture"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(
@@ -437,7 +438,7 @@ fn cli_state_apply_without_yes_reports_plan_only() {
         .arg("--json")
         .args(["state", "apply"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(
@@ -480,7 +481,7 @@ fn cli_state_apply_without_yes_reports_sql_import_plan() {
         .arg("--json")
         .args(["state", "apply"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(
@@ -510,7 +511,7 @@ fn cli_state_apply_yes_rejects_ambiguous_sql_target_before_tasks() {
         .arg(&root)
         .args(["state", "apply", "--yes"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(!output.status.success());
@@ -538,7 +539,7 @@ fn cli_state_apply_yes_imports_sql_layer_through_db_seed_task() {
         .arg("--json")
         .args(["state", "apply", "--yes"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(
@@ -594,7 +595,7 @@ fn cli_state_capture_json_reports_plan_only_capture() {
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(
@@ -658,7 +659,7 @@ fn cli_state_capture_uses_named_profile_from_stack_config() {
         .arg("--json")
         .args(["state", "capture", "uat", "new-content", "--yes"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(
@@ -704,7 +705,7 @@ fn cli_state_capture_set_runs_named_profiles_with_shared_key() {
             "--yes",
         ])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(
@@ -759,7 +760,7 @@ fn cli_state_capture_uses_named_profile_from_single_default_stack() {
         .arg("--json")
         .args(["state", "capture", "uat", "new-content", "--yes"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(
@@ -795,7 +796,7 @@ fn cli_state_capture_text_is_plan_only() {
             "full-capture-2026-05-08",
         ])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(
@@ -839,7 +840,7 @@ fn cli_state_capture_yes_stages_local_artifact_without_push() {
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(
@@ -891,7 +892,7 @@ fn cli_state_capture_yes_requires_source() {
             "--yes",
         ])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(!output.status.success());
@@ -931,7 +932,7 @@ fn cli_state_capture_yes_runs_task_before_staging() {
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(
@@ -1009,7 +1010,7 @@ fn cli_state_capture_named_profile_accepts_inline_rhai_task() {
             "--yes",
         ])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(
@@ -1069,7 +1070,7 @@ fn cli_state_capture_adopts_a_legacy_open_state_root_mode() {
             "--yes",
         ])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(
@@ -1128,7 +1129,7 @@ fn cli_state_capture_task_failure_prevents_staging() {
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(
@@ -1160,7 +1161,7 @@ fn cli_state_apply_yes_executes_task_layers_in_order() {
         .arg("--json")
         .args(["state", "apply", "--yes"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(
@@ -1554,7 +1555,7 @@ fn cli_state_artifact_inspect_and_stage_report_the_moved_payloads() {
         .arg("--json")
         .args(["state", "artifact", "inspect", "seed.sql"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
     assert!(
         inspect.status.success(),
@@ -1577,7 +1578,7 @@ fn cli_state_artifact_inspect_and_stage_report_the_moved_payloads() {
         .arg("--json")
         .args(["state", "artifact", "stage", "seed.sql"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
     assert!(
         stage.status.success(),
@@ -1606,7 +1607,7 @@ fn cli_retired_artifact_command_names_the_state_replacement() {
         .arg("--json")
         .args(["artifact", "inspect", "seed.sql"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(!output.status.success(), "{output:?}");

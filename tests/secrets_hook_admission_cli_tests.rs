@@ -4,6 +4,7 @@
 //! hook's task run inside the admitted tree instead of refusing a late durable
 //! effect. An undeclared late durable child still refuses before its effects.
 
+use effigy_test_support::process::FixtureCommandExt;
 mod support;
 
 use std::fs;
@@ -110,7 +111,7 @@ fn effigy(root: &Path, args: &[&str]) -> Output {
         .env("EFFIGY_TEST_SECRETS_VALUE", "tok_generated")
         .env_remove("EFFIGY_INTERNAL_TASK_SECRET_GENERATION_ACTIVE")
         .stdin(Stdio::null())
-        .output()
+        .output_owned()
         .expect("run effigy")
 }
 

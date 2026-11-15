@@ -1,3 +1,4 @@
+use effigy_test_support::process::FixtureCommandExt;
 use serde::Deserialize;
 use std::fs;
 use std::process::Command;
@@ -257,7 +258,7 @@ fn v0_2_13_repo_owned_smoke_task_runs_against_the_binary() {
         .arg("smoke:release")
         .arg(binary)
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run release smoke task");
 
     assert!(output.status.success(), "{output:?}");

@@ -9,6 +9,7 @@
 //! asserts exactly one environment down, no surviving owned process, a closed
 //! run with complete cleanup, and an immediate restart.
 use super::*;
+use effigy_test_support::process::FixtureCommandExt;
 use std::os::unix::process::CommandExt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -506,7 +507,7 @@ impl<'a> Case<'a> {
         // No run of this checkout still holds its gate.
         let status = self
             .command(&["--json", "tasks", "status", "--all"])
-            .output()
+            .output_owned()
             .expect("status inventory");
         let parsed: serde_json::Value =
             serde_json::from_slice(&status.stdout).expect("status inventory json");

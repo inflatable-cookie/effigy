@@ -657,7 +657,7 @@ fn cli_contracts_qa_json_binds_checker_to_invoking_executable() {
             .env("PATH", &path)
             .env("NO_COLOR", "1")
             .env_remove("EFFIGY_EXECUTABLE")
-            .output()
+            .output_owned()
             .expect("run QA-owned checker route")
     };
     // Original command must select the foreign PATH executable.
@@ -928,7 +928,7 @@ fn cli_doctor_supports_colorized_output_when_forced() {
         .arg(&root)
         .env("EFFIGY_COLOR", "always")
         .env_remove("NO_COLOR")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(!output.status.success());
@@ -964,7 +964,7 @@ fn cli_doctor_supports_colorized_output_when_forced() {
 /// thread cannot outlive it.
 #[cfg(unix)]
 fn bounded_doctor_output(
-    mut doctor: std::process::Child,
+    mut doctor: effigy_test_support::process::OwnedChild,
     bound: Duration,
     label: &str,
 ) -> std::process::Output {
@@ -1074,7 +1074,7 @@ fn cli_deep_doctor_timeout_terminates_health_process_tree() {
         .env("EFFIGY_DOCTOR_TIMEOUT_MS", "1000")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_owned()
         .expect("run bounded doctor");
     let output = bounded_doctor_output(doctor, Duration::from_secs(30), "bounded doctor");
     assert!(
@@ -1204,7 +1204,7 @@ fn write_cargo_link_library(library: &std::path::Path) {
         .arg("-C")
         .arg(library)
         .args(["tag", "v0.1.0"])
-        .output()
+        .output_owned()
         .expect("git tag");
     assert!(tag.status.success(), "git tag failed: {tag:?}");
 }
@@ -1236,7 +1236,7 @@ fn write_cargo_link_consumer(consumer: &std::path::Path, library: &std::path::Pa
             "--manifest-path",
             &consumer.join("Cargo.toml").display().to_string(),
         ])
-        .output()
+        .output_owned()
         .expect("cargo generate-lockfile");
     assert!(
         lockfile.status.success(),
@@ -1252,7 +1252,7 @@ fn link_cargo_library(consumer: &std::path::Path, library: &std::path::Path) {
         .arg(consumer)
         .args(["deps", "link", "cargo"])
         .arg(library)
-        .output()
+        .output_owned()
         .expect("run deps link");
     assert!(output.status.success(), "deps link failed: {output:?}");
 }
@@ -1279,7 +1279,7 @@ fn cli_fast_doctor_timeout_terminates_cargo_metadata_tree() {
         .arg(&consumer)
         .env("EFFIGY_DOCTOR_TIMEOUT_MS", "1000")
         .env("PATH", &path_value)
-        .output()
+        .output_owned()
         .expect("run bounded doctor");
 
     assert!(
@@ -1302,7 +1302,7 @@ fn cli_fast_doctor_timeout_terminates_cargo_metadata_tree() {
         .arg(&consumer)
         .env("EFFIGY_DOCTOR_TIMEOUT_MS", "1000")
         .env("PATH", &path_value)
-        .output()
+        .output_owned()
         .expect("run bounded doctor json");
     assert!(!json.status.success());
     let parsed = parse_stdout_json(&json);
@@ -1429,7 +1429,7 @@ fn cli_changelog_extract_emits_release_notes_for_specific_version() {
         .args(["changelog", "extract", "CHANGELOG.md", "--version", "0.2.5"])
         .current_dir(&root)
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run changelog extract");
 
     assert!(
@@ -1460,7 +1460,7 @@ fn cli_changelog_extract_fails_for_missing_version() {
         .args(["changelog", "extract", "CHANGELOG.md", "--version", "9.9.9"])
         .current_dir(&root)
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run changelog extract");
 
     assert!(!output.status.success(), "extract should fail");
@@ -1888,7 +1888,7 @@ fn release_verify_install_repo_task_proves_a_tagged_install() {
         .env_remove("CARGO_NET_OFFLINE")
         // Keep cargo's git checkout and install cache inside this fixture.
         .env("CARGO_HOME", root.join("cargo-home"))
-        .output()
+        .output_owned()
         .expect("run the release:verify:install script");
 
     assert!(
@@ -2061,7 +2061,7 @@ fn cli_release_plan_text_mode_shows_identities_files_and_targets() {
         .args(["release", "--plan", "--repo"])
         .arg(&root)
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
@@ -2253,7 +2253,7 @@ fn cli_explicitly_deferred_release_bypasses_builtin_release_command() {
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(output.status.success(), "release should defer cleanly");
@@ -3201,7 +3201,7 @@ fn cli_container_status_json_reports_default_container_contract() {
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(output.status.success(), "status failed: {output:?}");
@@ -3290,7 +3290,7 @@ fn cli_container_status_json_reports_observed_stopped_runtime_with_empty_service
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", root.join("colima-running"))
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(output.status.success(), "status failed: {output:?}");
@@ -3353,7 +3353,7 @@ fn cli_container_status_json_fails_unavailable_runtime_without_empty_success() {
         )
         .env("EFFIGY_COMPOSE_BACKEND", "colima")
         .env("PATH", path)
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(!output.status.success(), "unavailable status must fail");
@@ -3423,7 +3423,7 @@ fn cli_container_status_json_reports_warnings_matching_its_schema() {
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(output.status.success(), "status failed: {output:?}");
@@ -3475,7 +3475,7 @@ fn cli_container_status_succeeds_with_unrelated_required_container_secrets() {
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -3566,7 +3566,7 @@ fn cli_container_reset_succeeds_with_unrelated_required_container_secrets() {
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -3616,7 +3616,7 @@ fn cli_container_data_list_json_reports_managed_volumes() {
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(output.status.success(), "data list failed: {output:?}");
@@ -3717,7 +3717,7 @@ fn cli_container_cache_list_json_reports_purge_safe_isolated_volumes() {
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(output.status.success(), "cache list failed: {output:?}");
@@ -3811,7 +3811,7 @@ fn cli_generated_container_status_json_reports_media_mounts() {
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(output.status.success(), "status failed: {output:?}");
@@ -3832,7 +3832,7 @@ fn cli_generated_container_status_json_reports_media_mounts() {
             "EFFIGY_TEST_CONTAINERS_HOME",
             private_home(&root).join(".effigy"),
         )
-        .output()
+        .output_owned()
         .unwrap();
     assert!(rendered.status.success(), "{rendered:?}");
     let payload = parse_stdout_json(&rendered);
@@ -3888,7 +3888,7 @@ fn cli_container_data_export_json_reports_transfer_contract() {
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(output.status.success(), "data export failed: {output:?}");
@@ -3963,7 +3963,7 @@ fn cli_container_data_import_json_reports_transfer_contract() {
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(output.status.success(), "data import failed: {output:?}");
@@ -4032,7 +4032,7 @@ fn cli_container_data_pull_production_json_reports_hook_contract() {
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(
@@ -4090,7 +4090,7 @@ fn cli_container_data_seed_json_reports_seed_contract() {
 
 fn run_container_data_seed_fixture(fixture_root: &std::path::Path) -> std::process::Output {
     container_data_seed_command(fixture_root)
-        .output()
+        .output_owned()
         .expect("run fake-runtime data seed")
 }
 
@@ -4223,7 +4223,7 @@ fn cli_container_up_detached_starts_colima_and_reports_ready() {
         )
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
         .env("EFFIGY_TEST_CONTAINER_UP_UNBOUNDED_OBSERVATIONS", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(output.status.success(), "up failed: {output:?}");
@@ -4284,7 +4284,7 @@ fn cli_container_up_null_dns_overlay_reaches_fake_colima_and_keeps_budget_refusa
                 "EFFIGY_TEST_SERVICE_STATE_FILE",
                 root.join("service-running"),
             )
-            .output()
+            .output_owned()
             .expect("run effigy");
         let colima_invocations = fs::read_to_string(&colima_args).unwrap_or_default();
         let reached_null_overlay = compose_inputs(&colima_invocations).iter().any(|path| {
@@ -4462,7 +4462,7 @@ fn cli_container_up_applies_the_restart_policy_after_compose_started_the_stack()
             .env("EFFIGY_TEST_RESTART_UPDATE_FILE", &restart_updates)
             .env("EFFIGY_TEST_RACE_ON_RENDERED_RESTART", "1")
             .env("EFFIGY_TEST_CONTAINER_UP_UNBOUNDED_OBSERVATIONS", "1")
-            .output()
+            .output_owned()
             .expect("run effigy")
     };
 
@@ -4821,7 +4821,7 @@ mounts = ["./app:/workspace"]
                             .iter()
                             .map(|(key, value)| (key.as_str(), value.as_str())),
                     )
-                    .output()
+                    .output_owned()
                     .expect("observe exec completion");
                 let raw = String::from_utf8_lossy(&status.stdout);
                 let completed = raw
@@ -4864,7 +4864,7 @@ mounts = ["./app:/workspace"]
                     .iter()
                     .map(|(key, value)| (key.as_str(), value.as_str())),
             )
-            .output()
+            .output_owned()
             .expect("run effigy")
     };
 
@@ -5107,7 +5107,7 @@ detach_timeout_secs = 1
                     .iter()
                     .map(|(key, value)| (key.as_str(), value.as_str())),
             )
-            .output()
+            .output_owned()
             .ok()?;
         serde_json::from_slice::<serde_json::Value>(&output.stdout).ok()?["result"]["state"]
             .as_str()
@@ -5168,7 +5168,7 @@ detach_timeout_secs = 1
                 .iter()
                 .map(|(key, value)| (key.as_str(), value.as_str())),
         )
-        .output()
+        .output_owned()
         .expect("run dev stop");
     let stop_deadline = Instant::now() + Duration::from_secs(120);
     let mut runtime_calls_at_stop = fs::read_to_string(&colima_args).unwrap_or_default();
@@ -5181,7 +5181,7 @@ detach_timeout_secs = 1
         hold_state(),
         Command::new("ps")
             .args(["-eo", "pid,ppid,pgid,sid,stat,command"])
-            .output()
+            .output_owned()
             .map(|output| String::from_utf8_lossy(&output.stdout)
                 .lines()
                 .filter(|line| line.contains("effigy") || line.contains("sleep") || line.contains("hold"))
@@ -5280,7 +5280,7 @@ detach_timeout_secs = 1
                 .iter()
                 .map(|(key, value)| (key.as_str(), value.as_str())),
         )
-        .output()
+        .output_owned()
         .expect("run restart dev stop");
     assert!(
         restart_stop.status.success()
@@ -5962,7 +5962,7 @@ fn cli_workspace_binding_handoff_stops_environment_after_return() {
         .env("EFFIGY_TEST_OWNED_INSPECT_FILE", &inspect)
         .env("EFFIGY_TEST_OWNED_CHECKOUT", &canonical_root)
         .env("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF", "1")
-        .output()
+        .output_owned()
         .expect("run workspace handoff");
     assert!(
         output.status.success(),
@@ -6113,7 +6113,7 @@ fn cli_container_falls_back_to_colima_nerdctl_when_docker_is_missing() {
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
         .env("EFFIGY_TEST_SERVICE_STATE_FILE", root.join("service-state"))
         .env("EFFIGY_TEST_CONTAINER_UP_UNBOUNDED_OBSERVATIONS", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(output.status.success(), "fallback up failed: {output:?}",);
@@ -6161,7 +6161,7 @@ fn cli_container_shell_command_runs_via_sh_lc() {
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(output.status.success(), "shell failed: {output:?}");
@@ -6226,7 +6226,7 @@ fn cli_container_rejects_mounts_that_escape_repo_root() {
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(!output.status.success(), "expected invalid mount failure");
