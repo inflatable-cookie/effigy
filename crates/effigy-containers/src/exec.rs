@@ -20,6 +20,11 @@ mod interpolation_tests;
 #[path = "exec/name_store_tests.rs"]
 mod name_store_tests;
 mod process;
+mod retained;
+#[cfg(all(test, unix))]
+#[path = "exec/retained_tests.rs"]
+mod retained_tests;
+pub use retained::RetainedComposeOwner;
 #[cfg(any(test, feature = "test-support"))]
 pub use process::capture_test_clock;
 pub(crate) use process::error_is_timeout;
@@ -61,8 +66,9 @@ pub use implementation::{
     list_running_compose_containers_profiled, observed_workspace_artifact_builder,
     owned_service_listing_args, run_backend_invocation, run_backend_invocation_private_until,
     run_backend_invocation_until, run_compose_capture, run_compose_capture_with_env,
-    run_compose_invocation_capture, run_compose_invocation_capture_with_env,
-    run_compose_invocation_streaming_with_env, run_docker_capture, set_restart_policy,
+    run_compose_capture_with_env_owner, run_compose_invocation_capture,
+    run_compose_invocation_capture_with_env, run_compose_invocation_streaming_with_env,
+    run_compose_invocation_streaming_with_env_owner, run_docker_capture, set_restart_policy,
     shared_project_containers, shared_render_identity, shutdown_container,
     verify_owned_running_compose_identities, verify_owned_running_compose_rows,
     verify_shared_render_container, verify_workspace_artifact_builder,

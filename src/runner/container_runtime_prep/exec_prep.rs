@@ -4,7 +4,9 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use effigy_containers::exec::{ensure_colima_running, run_compose_capture_with_env};
+use effigy_containers::exec::{
+    ensure_colima_running, run_compose_capture_with_env_owner, RetainedComposeOwner,
+};
 use effigy_containers::{load_container_exec_working_dir, EffectiveContainerPolicy};
 
 use crate::runner::error::RunnerError;
@@ -36,28 +38,37 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
             // shared services are started first, the same secrets reach the
             // same Compose args, and Compose recreates only changed services
             // (effigy#371).
-            let apply = || {
-                run_task_apply(
-                    repo_root,
-                    policy,
-                    start.reconcile_shared_services,
-                    crate::runner::container_command::support::ensure_shared_services_running,
-                    crate::runner::container_command::secret_env::compose_secret_env_for_apply,
-                    |repo_root, policy, args, label, env| {
-                        run_compose_capture_with_env(repo_root, policy, args, label, env)
-                            .map(|_| ())
-                            .map_err(RunnerError::from)
-                    },
-                )
-                .map_err(|error| {
-                    effigy_containers::environment::BackendError::Uncertain(error.to_string())
-                })
-            };
-            bring_up = Some(crate::runner::environment::reconcile(
+            // The apply owns this reconcile run's custody, so a secret-bearing
+            // VM Compose launch spawns under it instead of refusing (effigy#1003).
+            bring_up = Some(crate::runner::environment::reconcile_owned(
                 repo_root,
                 policy,
                 start.retention,
-                apply,
+                |run, effect, deadline| {
+                    run_task_apply(
+                        repo_root,
+                        policy,
+                        start.reconcile_shared_services,
+                        crate::runner::container_command::support::ensure_shared_services_running,
+                        crate::runner::container_command::secret_env::compose_secret_env_for_apply,
+                        |repo_root, policy, args, label, env| {
+                            run_compose_capture_with_env_owner(
+                                repo_root,
+                                policy,
+                                args,
+                                label,
+                                env,
+                                deadline,
+                                &mut RetainedComposeOwner::new(run, effect),
+                            )
+                            .map(|_| ())
+                            .map_err(RunnerError::from)
+                        },
+                    )
+                    .map_err(|error| {
+                        effigy_containers::environment::BackendError::Uncertain(error.to_string())
+                    })
+                },
             )?);
             Ok(())
         },

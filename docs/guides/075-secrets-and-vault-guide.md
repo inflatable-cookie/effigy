@@ -349,6 +349,31 @@ delivered nothing leaves the files alone instead of replacing them with an
 empty file the service reads as "no secrets configured".
 
 By default, Effigy passes those values through the compose process environment.
+On Colima, Compose runs inside the VM and never inherits that environment, so
+Effigy writes the forwarded values to a per-invocation interpolation file under
+`<effigy state home>/compose-env/` and names it with `--env-file`. Each such
+launch runs under a retained kernel Run: the file stays in kernel custody until
+the exact Compose group has provably closed, and only then is it removed. A
+launch that cannot be admitted as a Run refuses before it starts, naming why.
+
+That directory can keep crash residue: a `compose-<32 hex>.env` file, a
+`.rm-<32 hex>` quarantine name from an interrupted removal, or a legacy
+`<16 hex>.env` file from an older Effigy. Effigy reports the count once —
+`N Compose interpolation file(s) … are left in place` — and never blocks a
+launch or deletes one on its own, because a free file lock does not prove the
+Compose group behind a file has closed. To clear them by hand, first make sure
+no Effigy Compose invocation is running against that state home (no
+`effigy container up`, `effigy dev` or task apply is active on this host), then
+delete the individual files you recognise:
+
+```sh
+ls -la "$HOME/.effigy/compose-env"
+rm "$HOME/.effigy/compose-env/compose-<32 hex>.env"
+```
+
+List before deleting: a name removed while an invocation is live makes that
+invocation fail to read its file. Deleting a file that is not crash residue is
+outside what Effigy can help you decide.
 
 Bundles and repos that need a tighter runtime contract can opt a container into
 runtime-file delivery:

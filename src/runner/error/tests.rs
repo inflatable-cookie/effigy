@@ -656,6 +656,33 @@ fn a_long_backend_failure_keeps_the_fatal_line_it_ended_with() {
     assert!(human.evidence_lines().len() <= effigy_ui::human::MAX_EVIDENCE_LINES);
 }
 
+/// A Compose launch refusal is one long line: the command it would have run,
+/// then why it refused. The human view keeps both ends, so the reason survives
+/// the bound instead of only reaching `--json` (effigy#1003).
+#[test]
+fn a_long_launch_refusal_keeps_its_cause_in_the_human_output() {
+    let command = format!(
+        "colima nerdctl --profile effigy -- compose -f {} up -d --build --remove-orphans",
+        format!("/Users/operator/.effigy/state/objects/{}", "a".repeat(420))
+    );
+    let failure = RunnerError::from(ContainerExecError::Launch {
+        command,
+        error: std::io::Error::other(
+            "VM Compose interpolation requires retained kernel custody",
+        ),
+    });
+    let human = failure.human_error();
+    let rendered = human.render_text();
+    assert!(
+        rendered.contains("VM Compose interpolation requires retained kernel custody"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("colima nerdctl --profile effigy"),
+        "the head still names the command: {rendered}"
+    );
+}
+
 #[test]
 fn retained_step_capture_is_complete_private_and_named_in_text_and_json() {
     use std::os::unix::fs::PermissionsExt;

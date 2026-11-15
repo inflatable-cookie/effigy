@@ -544,7 +544,7 @@ fn run_detached_command_controlled(
 /// The bounded failure text: the retained file's name and its own tail. No
 /// raw backend bytes enter a JSON failure detail; this text belongs to the
 /// operator-facing error only.
-fn detached_failure(
+pub(super) fn detached_failure(
     record: &DetachedOutputRecord,
     code: Option<i32>,
     retention_error: Option<std::io::Error>,
@@ -575,8 +575,8 @@ fn detached_failure(
 /// The retained output of one detached backend run. The file is rewritten by
 /// every run of the same project and bounded to its last
 /// [`DETACHED_OUTPUT_LIMIT`] bytes, so it stays a record rather than a log.
-struct DetachedOutputRecord {
-    path: PathBuf,
+pub(super) struct DetachedOutputRecord {
+    pub(super) path: PathBuf,
     cx: effigy_kernel::ctx::EffectContext,
     gate: effigy_kernel::gate::GateGuard,
     directory: effigy_kernel::fs::DirFd,
@@ -584,7 +584,7 @@ struct DetachedOutputRecord {
 }
 
 impl DetachedOutputRecord {
-    fn for_invocation(repo_root: &Path, args: &[OsString]) -> std::io::Result<Self> {
+    pub(super) fn for_invocation(repo_root: &Path, args: &[OsString]) -> std::io::Result<Self> {
         use effigy_kernel::{
             fs::{DirFd, FileName},
             gate::{Gate, Wait},
@@ -651,15 +651,20 @@ impl DetachedOutputRecord {
     }
 
     fn open(&self) -> std::io::Result<(Stdio, Stdio)> {
-        let file =
-            effigy_kernel::record::open_output(&self.cx, &self.gate, &self.directory, &self.name)
-                .map_err(std::io::Error::other)?;
+        let file = self.open_file()?;
         Ok((Stdio::from(file.try_clone()?), Stdio::from(file)))
+    }
+
+    /// The record's one writable handle. A direct child's stdio used it; a
+    /// retained launch relays the captured output into it instead.
+    pub(super) fn open_file(&self) -> std::io::Result<std::fs::File> {
+        effigy_kernel::record::open_output(&self.cx, &self.gate, &self.directory, &self.name)
+            .map_err(std::io::Error::other)
     }
 
     /// Keep the last bounded bytes of a run that wrote more than the record
     /// holds. The marker makes the loss visible instead of silent.
-    fn retain_tail(&self) -> std::io::Result<()> {
+    pub(super) fn retain_tail(&self) -> std::io::Result<()> {
         let length = std::fs::metadata(&self.path)?.len();
         if length <= DETACHED_OUTPUT_LIMIT {
             return Ok(());
@@ -707,7 +712,7 @@ impl DetachedOutputRecord {
     ///
     /// Only newline-terminated lines are reported: a half-written line is
     /// read again on the next poll rather than shown truncated.
-    fn report_new_lines(&self, offset: &mut u64, on_line: &mut dyn FnMut(&str)) {
+    pub(super) fn report_new_lines(&self, offset: &mut u64, on_line: &mut dyn FnMut(&str)) {
         let Ok(mut file) = std::fs::File::open(&self.path) else {
             return;
         };

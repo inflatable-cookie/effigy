@@ -191,6 +191,14 @@ fn runs_in_vm(program: &OsStr) -> bool {
     Path::new(program).file_name() == Some(OsStr::new(COLIMA))
 }
 
+/// Whether this invocation is the one the retained custody ruling covers: a
+/// VM-hosted Compose launch that has values the VM cannot inherit. A launcher
+/// asks this before it decides between retained custody and a direct child, so
+/// a host backend and a value-free invocation keep their current path.
+pub fn vm_interpolation_required(program: &OsStr, env: &[(String, OsString)]) -> bool {
+    runs_in_vm(program) && !env.is_empty()
+}
+
 /// A Compose variable name. The file is a shell-free format, but a name that is
 /// not a portable identifier can never be forwarded faithfully.
 fn validate_name(name: &str) -> io::Result<()> {
@@ -680,7 +688,8 @@ fn sweep(path: &Path) {
     if residue > 0 {
         DEFERRED_NOTICE.call_once(|| {
             eprintln!(
-                "effigy: {residue} Compose interpolation file(s) in {} are left in place: a live invocation or an earlier crash may own them, and a free lock does not prove their Compose group closed",
+                "effigy: {residue} Compose interpolation file(s) in {} are left in place: a live invocation or an earlier crash may own them, and a free lock does not prove their Compose group closed. They never block a launch. When no Effigy Compose invocation is running against this state home, each one can be deleted by hand: `ls -la {}` shows the names, and a `compose-*.env`, `.rm-*` or legacy `<16 hex>.env` file that is minutes old and unheld is crash residue. See docs/guides/075-secrets-and-vault-guide.md",
+                path.display(),
                 path.display()
             );
         });

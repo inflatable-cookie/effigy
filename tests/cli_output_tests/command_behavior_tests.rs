@@ -862,8 +862,26 @@ fn cli_contracts_contract_body_refusal_keeps_its_bytes() {
     );
 
     assert_eq!(normalize(&json.stderr), "");
+    // The bounded `what_failed` keeps both ends of the refusal: the head names
+    // the payload and the tail names the schema it was read against, so a cut
+    // never hides the reason the line ended with (effigy#1003).
+    let rendered = normalize(&json.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("json envelope");
+    let what_failed = parsed["error"]["human"]["what_failed"]
+        .as_str()
+        .expect("bounded what_failed")
+        .to_owned();
+    assert!(
+        what_failed.starts_with(r#"{"changed_only_base":null"#),
+        "{what_failed}"
+    );
+    assert!(
+        what_failed.ends_with(r#""schema":"effigy.json-contract-body.v1"}"#)
+            || what_failed.ends_with(r#""schema":"effigy.contracts.check-json.v1"}"#),
+        "{what_failed}"
+    );
     assert_eq!(
-        normalize(&json.stdout),
+        rendered,
         r#"{
   "binary": {
     "active_version": "<version>",
@@ -880,7 +898,7 @@ fn cli_contracts_contract_body_refusal_keeps_its_bytes() {
     "human": {
       "evidence": [],
       "next_action": null,
-      "what_failed": "{\"changed_only_base\":null,\"checks\":1,\"failures\":[{\"command\":\"<repo>/missing.json\",\"reason\":\"failed to read <repo>/missing.json: No such file or directory (os error 2)\",\"schema\":\"effigy.json-contract-body.… (truncated)"
+      "what_failed": "__WHAT_FAILED__"
     },
     "kind": "refused",
     "message": "{\"changed_only_base\":null,\"checks\":1,\"failures\":[{\"command\":\"<repo>/missing.json\",\"reason\":\"failed to read <repo>/missing.json: No such file or directory (os error 2)\",\"schema\":\"effigy.json-contract-body.v1\"}],\"index\":\"<repo>/index.json\",\"ok\":false,\"schema\":\"effigy.contracts.check-json.v1\",\"schema_version\":1,\"selection\":{\"changed_only_base\":null,\"count\":0,\"selected\":[]},\"selection_artifact\":null,\"selection_contract\":null}",
@@ -894,6 +912,7 @@ fn cli_contracts_contract_body_refusal_keeps_its_bytes() {
   "warnings": []
 }
 "#
+        .replace("__WHAT_FAILED__", &what_failed)
     );
 }
 
