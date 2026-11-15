@@ -504,6 +504,23 @@ exactly its own route: the container's published routes, and every other
 listener that did publish, stay exposed, and no unrelated route is withdrawn
 with it.
 
+After a TLS route is registered, `up` performs one advisory reload check and,
+when the gateway confirms that route's certificate is loaded, one TLS
+handshake. A pending reload records that route's exposure as `pending`; a
+failed status read or handshake records it as `unverified`. Either state adds
+one warning with the route and recovery commands, but neither refuses or rolls
+back workload activation. Successful checks are `verified` and silent. The
+detached `up` JSON `gateway_routes` rows and `container status` expose the same
+per-route `exposure` field; status reads the gateway's current live route view.
+
+The gateway's single route-reload worker is signalled by endpoint-store
+filesystem events, coalesces a burst into one observation, and applies the
+whole committed snapshot while refreshing SNI certificates. It checks every
+route in the snapshot; each acknowledgement polls that route's own live view
+entry. There is no debounce. If an event is missed, periodic re-observation
+recovers within 250 ms, rather than the former 5-second interval that could
+outlast the post-registration check's 4-second reload window.
+
 A detached `up` still fails when a listener is withheld, and it reports the
 partial exposure instead of one blanket verdict: the text and JSON name the
 routes that are published, the listener whose route is not, its observed status

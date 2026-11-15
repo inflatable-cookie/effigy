@@ -33,9 +33,30 @@ pub(in crate::runner::container_command) fn annotate_registered_gateway_routes(
                     "target": route.target,
                     "dns_ip": route.dns_ip.map(|value| value.to_string()),
                     "tls": route.tls,
+                    "exposure": route.tls_exposure.map(|state| state.as_str()),
                 }))
                 .collect::<Vec<_>>()),
         );
+        let warnings = routes
+            .iter()
+            .filter_map(tls_exposure_warning)
+            .collect::<Vec<_>>();
+        if !warnings.is_empty() {
+            let existing = json_object
+                .get("warnings")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            json_object.insert(
+                "warnings".to_owned(),
+                serde_json::Value::Array(
+                    existing
+                        .into_iter()
+                        .chain(warnings.iter().cloned().map(serde_json::Value::String))
+                        .collect(),
+                ),
+            );
+        }
     }
     for route in routes {
         report.success_text.push('\n');
@@ -53,6 +74,32 @@ pub(in crate::runner::container_command) fn annotate_registered_gateway_routes(
                     .unwrap_or_else(|| "default".to_owned())
             )),
         }
+        if let Some(exposure) = route
+            .tls_exposure
+            .filter(|exposure| *exposure != crate::runner::container_command::gateway_registration::TlsRouteExposure::Verified)
+        {
+            report
+                .success_text
+                .push_str(&format!(" [TLS exposure: {}]", exposure.as_str()));
+        }
+    }
+    for warning in routes.iter().filter_map(tls_exposure_warning) {
+        report.success_text.push('\n');
+        report.success_text.push_str(&format!("[warn] {warning}"));
+    }
+}
+
+fn tls_exposure_warning(route: &RegisteredGatewayRoute) -> Option<String> {
+    match route.tls_exposure? {
+        crate::runner::container_command::gateway_registration::TlsRouteExposure::Verified => None,
+        crate::runner::container_command::gateway_registration::TlsRouteExposure::Pending => Some(format!(
+            "TLS exposure for gateway route `{}` is pending; inspect `effigy gateway status`, then run `effigy gateway down` and `effigy gateway up` if it stays stale",
+            route.domain
+        )),
+        crate::runner::container_command::gateway_registration::TlsRouteExposure::Unverified => Some(format!(
+            "TLS exposure for gateway route `{}` is unverified; inspect `effigy gateway status`, then run `effigy gateway down` and `effigy gateway up` if it stays stale",
+            route.domain
+        )),
     }
 }
 

@@ -642,6 +642,7 @@ fn prune_stale_container_routes_removes_old_domains_for_same_project() {
         tcp_port: Some(3306),
         tcp_target: Some("127.0.0.1:21306".to_owned()),
         tls: false,
+        tls_exposure: None,
         service: Some("db".to_owned()),
         external_target: false,
     }];
@@ -1188,6 +1189,7 @@ fn alias_route(
         tcp_port: Some(port),
         tcp_target: Some(target.to_owned()),
         tls: false,
+        tls_exposure: None,
         service: Some("db".to_owned()),
         external_target: false,
     }
@@ -1678,6 +1680,7 @@ fn container_down_removes_the_checkouts_listener_route_and_the_next_up_takes_the
             tcp_port: None,
             tcp_target: None,
             tls: false,
+            tls_exposure: None,
             service: Some("web".to_owned()),
             external_target: false,
         };
@@ -1752,6 +1755,7 @@ fn two_live_worktrees_cannot_register_one_fixed_domain() {
             tcp_port: None,
             tcp_target: None,
             tls: false,
+            tls_exposure: None,
             service: Some("web".to_owned()),
             external_target: false,
         };
@@ -1835,6 +1839,7 @@ fn stale_tcp_alias_can_be_reclaimed_without_live_listener_takeover() {
                 tcp_port: Some(5432),
                 tcp_target: Some("127.0.0.1:8232".to_owned()),
                 tls: false,
+                tls_exposure: None,
                 service: Some("db".to_owned()),
                 external_target: false,
             }],
@@ -1891,6 +1896,7 @@ fn rejects_tcp_alias_bind_tuple_collision_with_different_upstream() {
                 tcp_port: Some(5432),
                 tcp_target: Some(upstream.into()),
                 tls: false,
+                tls_exposure: None,
                 service: Some("db".into()),
                 external_target: false,
             }],
@@ -2205,12 +2211,10 @@ fn dev_handoff_and_registration_refuse_running_route_without_published_port() {
     }
 }
 
-/// A route write is not complete until the running gateway can serve every TLS
-/// route it registered (papercut 9604503b). A gateway that answers the route's
-/// SNI with an access-denied alert fails the registration with its own build
-/// and the restart remedy, and a non-TLS route is never probed.
+/// The post-registration handshake is advisory: failure records per-route
+/// exposure and warns, but the route write still succeeds.
 #[test]
-fn a_registered_tls_route_the_running_gateway_cannot_serve_is_refused() {
+fn a_registered_tls_route_the_running_gateway_cannot_serve_is_unverified_advisory() {
     let route = |domain: &str, tls: bool| RegisteredGatewayRoute {
         domain: domain.to_owned(),
         target: Some("127.0.0.1:8100".to_owned()),
@@ -2218,16 +2222,17 @@ fn a_registered_tls_route_the_running_gateway_cannot_serve_is_refused() {
         tcp_port: None,
         tcp_target: None,
         tls,
+        tls_exposure: None,
         service: Some("web".to_owned()),
         external_target: false,
     };
-    let routes = vec![
+    let mut routes = vec![
         route("plain.clientname.test", false),
         route("app.clientname.test", true),
     ];
     let mut probed = Vec::new();
-    let refusal = verify_registered_tls_routes(
-        &routes,
+    verify_registered_tls_routes(
+        &mut routes,
         &mut |_: &str| Ok(TlsReloadAck::Ready),
         &mut |domain, _timeout| {
             probed.push(domain.to_owned());
@@ -2235,58 +2240,43 @@ fn a_registered_tls_route_the_running_gateway_cannot_serve_is_refused() {
                 "the running gateway at 127.0.0.1:443 did not complete a TLS handshake: received fatal alert: AccessDenied",
             ))
         },
-        &mut || "running gateway build 48e7c01".to_owned(),
     )
-    .expect_err("a TLS route the running gateway cannot serve refuses the write");
-    let message = refusal.to_string();
+    .expect("a failed post-registration TLS check is advisory");
     assert_eq!(
         probed,
         ["app.clientname.test"],
         "only the TLS route is probed"
     );
-    for expected in [
-        "app.clientname.test",
-        "running gateway build 48e7c01",
-        "AccessDenied",
-        "`effigy gateway down` then `effigy gateway up`",
-        "reloads the route's certificate",
-    ] {
-        assert!(message.contains(expected), "{message}");
-    }
+    assert_eq!(routes[0].tls_exposure, None);
+    assert_eq!(routes[1].tls_exposure, Some(TlsRouteExposure::Unverified));
 
     // A gateway that serves every route keeps the write successful, and an
     // unknown build is still named rather than guessed.
     let mut probed = Vec::new();
     verify_registered_tls_routes(
-        &routes,
+        &mut routes,
         &mut |_: &str| Ok(TlsReloadAck::Ready),
         &mut |domain, _timeout| {
             probed.push(domain.to_owned());
             Ok(())
         },
-        &mut || "running gateway build unknown".to_owned(),
     )
-    .expect("a served TLS route completes the write");
+    .expect("a served TLS route completes the advisory check");
     assert_eq!(probed, ["app.clientname.test"]);
-    let refusal = verify_registered_tls_routes(
-        &routes,
+    assert_eq!(routes[1].tls_exposure, Some(TlsRouteExposure::Verified));
+    verify_registered_tls_routes(
+        &mut routes,
         &mut |_: &str| Ok(TlsReloadAck::Ready),
         &mut |_, _| Err(RunnerError::task_invocation("no handshake")),
-        &mut running_gateway_build_note,
     )
-    .expect_err("the same failure with an unreadable build record refuses");
-    assert!(
-        refusal.to_string().contains("running gateway build"),
-        "{refusal}"
-    );
+    .expect("a failure with an unreadable build record remains advisory");
+    assert_eq!(routes[1].tls_exposure, Some(TlsRouteExposure::Unverified));
 }
 
-/// The registration itself refuses when the running gateway cannot serve the
-/// TLS route it just wrote (papercut 9604503b): the route is in the table, and
-/// the refusal names the route and the command pair that fixes it, so a
-/// successful `container up` never leaves a browser-broken route behind.
+/// A pending reload does not refuse route registration and is attached to its
+/// TLS route so the detached report can show pending exposure.
 #[test]
-fn registration_refuses_when_the_running_gateway_cannot_serve_the_new_tls_route() {
+fn registration_succeeds_with_a_pending_tls_route_exposure() {
     with_test_home("post-registration-tls-probe", || {
         let route_table_path = gateway_route_table_path().expect("route table path");
         std::fs::create_dir_all(route_table_path.parent().expect("route table parent"))
@@ -2298,30 +2288,22 @@ fn registration_refuses_when_the_running_gateway_cannot_serve_the_new_tls_route(
         let rows = vec![runtime_row(&format!(
             "demo-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tdemo-web-dev\t{project_path}\tapp\tfalse"
         ))];
-        let refusal = finish_gateway_route_registration_with_tls(
+        let routes = finish_gateway_route_registration_with_tls(
             &policy.repo_root,
             &policy,
             None,
             &rows,
             &mut |_| {},
             &mut |_| Ok(()),
-            &mut |_: &str| Ok(TlsReloadAck::Ready),
-            &mut |domain, _timeout| {
-                assert_eq!(domain, "clientname.test", "only the TLS route is probed");
-                Err(RunnerError::task_invocation(
-                    "the running gateway at 127.0.0.1:443 did not complete a TLS handshake: received fatal alert: AccessDenied",
-                ))
-            },
+            &mut |_: &str| Ok(TlsReloadAck::Unconfirmed),
+            &mut |_, _| panic!("a pending reload does not run the handshake"),
         )
-        .expect_err("a TLS route the running gateway cannot serve refuses the registration");
-        let message = refusal.to_string();
-        for expected in [
-            "clientname.test",
-            "AccessDenied",
-            "`effigy gateway down` then `effigy gateway up`",
-        ] {
-            assert!(message.contains(expected), "{message}");
-        }
+        .expect("pending TLS exposure is advisory");
+        let tls_route = routes
+            .iter()
+            .find(|route| route.domain == "clientname.test")
+            .expect("TLS route remains registered");
+        assert_eq!(tls_route.tls_exposure, Some(TlsRouteExposure::Pending));
         assert!(
             RouteTable::load(&route_table_path)
                 .expect("persisted routes")
@@ -2382,17 +2364,17 @@ fn tls_test_route(domain: &str) -> RegisteredGatewayRoute {
         tcp_port: None,
         tcp_target: None,
         tls: true,
+        tls_exposure: None,
         service: Some("web".to_owned()),
         external_target: false,
     }
 }
 
-/// The race this repair closes, deterministically: a TLS reload the gateway
-/// has not applied yet. An immediate handshake (the old order) is refused with
-/// the unservable-build remedy, while waiting on the reload acknowledgement
-/// first lets the very same single handshake pass.
+/// A delayed reload first records pending exposure without handshaking. A later
+/// check sees the route-specific acknowledgement, handshakes once and records
+/// verified exposure.
 #[test]
-fn delayed_tls_reload_refuses_an_immediate_probe_but_passes_after_the_ack() {
+fn delayed_tls_reload_advisory_moves_from_pending_to_verified_after_ack() {
     use std::sync::atomic::Ordering;
 
     let access_denied = || {
@@ -2401,34 +2383,23 @@ fn delayed_tls_reload_refuses_an_immediate_probe_but_passes_after_the_ack() {
         )
     };
 
-    // The old order: handshake at once, before the reload. The daemon has not
-    // applied the route, so the SNI is unresolvable and the write refuses.
-    let routes = vec![tls_test_route("clientname.test")];
-    let immediate = verify_registered_tls_routes(
-        &routes,
-        &mut |_: &str| Ok(TlsReloadAck::Ready),
-        &mut |_, _| Err(access_denied()),
-        &mut || "running gateway build 0.14.1".to_owned(),
+    let mut routes = vec![tls_test_route("clientname.test")];
+    verify_registered_tls_routes(
+        &mut routes,
+        &mut |_: &str| Ok(TlsReloadAck::Unconfirmed),
+        &mut |_, _| panic!("unconfirmed reload does not handshake"),
     )
-    .expect_err("an immediate probe before the reload refuses");
-    let message = immediate.to_string();
-    for expected in [
-        "clientname.test",
-        "cannot serve it",
-        "running gateway build 0.14.1",
-        "AccessDenied",
-    ] {
-        assert!(message.contains(expected), "{message}");
-    }
+    .expect("a pending reload remains advisory");
+    assert_eq!(routes[0].tls_exposure, Some(TlsRouteExposure::Pending));
 
     // The new order: the acknowledgement wait polls the live view (which the
     // reload flips after two polls), then the single handshake runs and
     // succeeds because the daemon has loaded the certificate by then.
     let (view, polls) = stub_routes_view(2);
-    let routes = vec![tls_test_route("clientname.test")];
+    let mut routes = vec![tls_test_route("clientname.test")];
     let mut handshakes = 0_usize;
     verify_registered_tls_routes(
-        &routes,
+        &mut routes,
         &mut |domain| {
             assert_eq!(domain, "clientname.test");
             match effigy_gateway::tls::await_tls_route_loaded(
@@ -2450,35 +2421,26 @@ fn delayed_tls_reload_refuses_an_immediate_probe_but_passes_after_the_ack() {
                 Err(access_denied())
             }
         },
-        &mut || "running gateway build 0.15.0".to_owned(),
     )
-    .expect("the acknowledged reload handshakes once and passes");
+    .expect("the acknowledged reload handshakes once and verifies");
     assert_eq!(handshakes, 1, "the probe runs exactly once, after the ack");
+    assert_eq!(routes[0].tls_exposure, Some(TlsRouteExposure::Verified));
     assert!(
         polls.load(Ordering::SeqCst) > 2,
         "the wait polled until the reload flipped the view"
     );
 }
 
-/// A reload the gateway never acknowledges is unverified, not unservable: no
-/// handshake runs, and the refusal names the pending reload instead of
-/// claiming the build cannot serve the route.
+/// A reload the gateway never acknowledges remains pending without refusing
+/// activation or running the handshake.
 #[test]
-fn unconfirmed_tls_reload_is_unverified_not_unservable() {
-    let routes = vec![tls_test_route("clientname.test")];
-    let refusal = verify_registered_tls_routes(
-        &routes,
+fn unconfirmed_tls_reload_is_pending_without_refusing_activation() {
+    let mut routes = vec![tls_test_route("clientname.test")];
+    verify_registered_tls_routes(
+        &mut routes,
         &mut |_: &str| Ok(TlsReloadAck::Unconfirmed),
         &mut |_, _| panic!("no handshake runs without the reload acknowledgement"),
-        &mut || "running gateway build 0.15.0".to_owned(),
     )
-    .expect_err("a pending reload refuses as unverified");
-    let message = refusal.to_string();
-    for expected in ["clientname.test", "unverified", "pending reload"] {
-        assert!(message.contains(expected), "{message}");
-    }
-    assert!(
-        !message.contains("cannot serve it"),
-        "an unconfirmed reload never blames the build: {message}"
-    );
+    .expect("an unconfirmed reload is advisory");
+    assert_eq!(routes[0].tls_exposure, Some(TlsRouteExposure::Pending));
 }

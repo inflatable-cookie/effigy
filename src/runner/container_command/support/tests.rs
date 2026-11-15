@@ -785,6 +785,7 @@ fn tcp_alias_host_pairs_use_gateway_tcp_routes_only() {
             tcp_port: None,
             tcp_target: None,
             tls: false,
+            tls_exposure: None,
             service: Some("workspace".to_owned()),
             external_target: false,
         },
@@ -795,6 +796,7 @@ fn tcp_alias_host_pairs_use_gateway_tcp_routes_only() {
             tcp_port: Some(5432),
             tcp_target: Some("127.0.0.1:19932".to_owned()),
             tls: false,
+            tls_exposure: None,
             service: Some("postgres".to_owned()),
             external_target: false,
         },
@@ -828,6 +830,7 @@ fn tcp_alias_host_pairs_rewrite_shared_service_targets_to_shared_host() {
         tcp_port: Some(3306),
         tcp_target: Some("127.0.0.1:23306".to_owned()),
         tls: false,
+        tls_exposure: None,
         service: Some("db".to_owned()),
         external_target: false,
     }];
@@ -884,6 +887,37 @@ fn tcp_alias_hosts_script_rewrites_existing_alias_entries() {
     assert!(String::from_utf8(output.stderr)
         .unwrap()
         .contains("could not resolve service `missing`"));
+}
+
+#[test]
+fn pending_tls_exposure_is_in_the_route_status_and_emits_one_warning() {
+    let policy = test_policy();
+    let mut report = effigy_containers::up_detached_report(&policy, false, None);
+    let routes = vec![RegisteredGatewayRoute {
+        domain: "app.demo.test".to_owned(),
+        target: Some("127.0.0.1:19900".to_owned()),
+        dns_ip: None,
+        tcp_port: None,
+        tcp_target: None,
+        tls: true,
+        tls_exposure: Some(
+            crate::runner::container_command::gateway_registration::TlsRouteExposure::Pending,
+        ),
+        service: Some("app".to_owned()),
+        external_target: false,
+    }];
+
+    super::gateway_aliases::annotate_registered_gateway_routes(&mut report, &routes);
+
+    let json = report.json;
+    assert_eq!(json["gateway_routes"][0]["exposure"], "pending");
+    assert_eq!(json["warnings"].as_array().unwrap().len(), 1);
+    assert_eq!(report.success_text.matches("[warn]").count(), 1);
+    assert!(report.success_text.contains("app.demo.test"));
+    assert!(report.success_text.contains("effigy gateway status"));
+    assert!(report
+        .success_text
+        .contains("effigy gateway down` and `effigy gateway up"));
 }
 
 /// A private checkout whose runtime is a script recording every call. The

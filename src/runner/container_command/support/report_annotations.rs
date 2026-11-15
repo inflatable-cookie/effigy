@@ -97,7 +97,18 @@ pub(in crate::runner::container_command) fn annotate_warning_lines(
         return;
     }
     if let Some(json_object) = report.json.as_object_mut() {
-        json_object.insert("warnings".to_owned(), json!(warnings));
+        let existing = json_object
+            .get("warnings")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        json_object.insert(
+            "warnings".to_owned(),
+            json!(existing
+                .into_iter()
+                .chain(warnings.iter().cloned().map(serde_json::Value::String))
+                .collect::<Vec<_>>()),
+        );
     }
     for warning in warnings {
         report.success_text.push('\n');

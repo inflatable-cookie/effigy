@@ -1,0 +1,1 @@
+Post-registration TLS checks now report per-route exposure as advisory state, so a pending reload or failed handshake no longer refuses container activation; missed reload events recover within 250 ms instead of waiting up to five seconds.

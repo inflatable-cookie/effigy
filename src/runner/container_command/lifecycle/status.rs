@@ -55,11 +55,31 @@ pub(super) fn annotate_host_process_status(
     let Ok(policy) = load_container_policy(repo_root, name) else {
         return rendered;
     };
-    if policy.host_processes.is_empty() {
-        return rendered;
-    }
     let rows = crate::runner::host_process::host_process_status(repo_root, &policy);
-    if rows.is_empty() {
+    let gateway_routes = crate::runner::container_command::gateway_registration::gateway_route_table_path()
+        .ok()
+        .and_then(|path| effigy_gateway::routes::RouteTable::load(&path).ok())
+        .map(|table| {
+            table
+                .all_routes()
+                .into_iter()
+                .filter(|route| route.project == repo_root.to_string_lossy())
+                .map(|route| {
+                    let exposure = route.tls.then(|| {
+                        crate::runner::container_command::gateway_registration::observe_tls_route_exposure(
+                            &route.domain,
+                        )
+                    });
+                    serde_json::json!({
+                        "domain": route.domain,
+                        "tls": route.tls,
+                        "exposure": exposure.map(|value| value.as_str()),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if rows.is_empty() && gateway_routes.is_empty() {
         return rendered;
     }
     if output_json {
@@ -69,11 +89,13 @@ pub(super) fn annotate_host_process_status(
         let Some(object) = value.as_object_mut() else {
             return rendered;
         };
-        object.insert(
-            "host_processes".to_owned(),
-            serde_json::to_value(&rows).unwrap_or(serde_json::Value::Null),
-        );
-        return value.to_string();
+        if !rows.is_empty() {
+            object.insert(
+                "host_processes".to_owned(),
+                serde_json::to_value(&rows).unwrap_or(serde_json::Value::Null),
+            );
+        }
+        return annotate_gateway_route_status(value.to_string(), gateway_routes, true);
     }
     let mut text = rendered;
     for row in rows {
@@ -101,6 +123,44 @@ pub(super) fn annotate_host_process_status(
         }
         if let Some(diagnostic) = &row.diagnostic {
             text.push_str(&format!(": {diagnostic}"));
+        }
+    }
+    annotate_gateway_route_status(text, gateway_routes, false)
+}
+
+pub(super) fn annotate_gateway_route_status(
+    rendered: String,
+    gateway_routes: Vec<serde_json::Value>,
+    output_json: bool,
+) -> String {
+    if gateway_routes.is_empty() {
+        return rendered;
+    }
+    if output_json {
+        let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&rendered) else {
+            return rendered;
+        };
+        let Some(object) = value.as_object_mut() else {
+            return rendered;
+        };
+        object.insert(
+            "gateway_routes".to_owned(),
+            serde_json::Value::Array(gateway_routes),
+        );
+        return value.to_string();
+    }
+    let mut text = rendered;
+    for route in gateway_routes {
+        text.push('\n');
+        match route["exposure"].as_str() {
+            Some(exposure) => text.push_str(&format!(
+                "[gateway] {} TLS exposure {exposure}",
+                route["domain"].as_str().unwrap_or("unknown"),
+            )),
+            None => text.push_str(&format!(
+                "[gateway] {} registered",
+                route["domain"].as_str().unwrap_or("unknown"),
+            )),
         }
     }
     text

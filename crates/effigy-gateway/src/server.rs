@@ -47,10 +47,10 @@ const IDLE_SHUTDOWN_DELAY: Duration = Duration::from_secs(5 * 60);
 const CERT_PRUNE_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// How often the daemon re-observes the committed endpoint snapshot when no
-/// filesystem event arrives (effigy#716). A missed notification must not strand
-/// a route: one Store read at this interval is far below the daemon's other
-/// timers and bounds a missed event's visibility to a few seconds.
-const ROUTE_RECONCILE_INTERVAL: Duration = Duration::from_secs(5);
+/// filesystem event arrives (effigy#716). Notifications are the fast path;
+/// this shorter interval bounds recovery from a dropped event so reload latency
+/// cannot consume the caller's post-registration TLS-check budget.
+const ROUTE_RECONCILE_INTERVAL: Duration = Duration::from_millis(250);
 
 /// The first retry delay after a failed re-observation; each consecutive
 /// failure doubles it up to [`ROUTE_RECONCILE_MAX_RETRY`]. A refused read is

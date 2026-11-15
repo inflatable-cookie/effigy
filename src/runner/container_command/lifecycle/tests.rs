@@ -471,6 +471,7 @@ fn partial_exposure_fixture() -> (EffectiveContainerPolicy, ContainerUpRuntimeIn
                 tcp_port: None,
                 tcp_target: None,
                 tls: false,
+                tls_exposure: None,
                 service: Some("app".to_owned()),
                 external_target: false,
             }],
@@ -1776,4 +1777,26 @@ fn container_up_binding_check_does_not_depend_on_the_image_working_dir() {
         !log.lines().any(|line| line.starts_with("exec ")),
         "up runs no exec readiness probe: {log}"
     );
+}
+
+#[test]
+fn container_status_carries_the_current_tls_exposure_per_route() {
+    let routes = vec![serde_json::json!({
+        "domain": "app.demo.test",
+        "tls": true,
+        "exposure": "pending",
+    })];
+
+    let json = super::status::annotate_gateway_route_status(
+        r#"{"status":"running"}"#.to_owned(),
+        routes.clone(),
+        true,
+    );
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&json).unwrap()["gateway_routes"][0]["exposure"],
+        "pending"
+    );
+
+    let text = super::status::annotate_gateway_route_status("running".to_owned(), routes, false);
+    assert!(text.contains("app.demo.test TLS exposure pending"));
 }
