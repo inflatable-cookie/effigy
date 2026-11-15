@@ -97,6 +97,19 @@ run = "exec 9>/dev/null; \"$EFFIGY_TEST_BIN\" nested"
 
 [tasks.nine-leaked]
 run = "EFFIGY_PARENT_CAPABILITY=memory-v1:9:0000000000000000000000000000000000000000000000000000000000000000 \"$EFFIGY_TEST_BIN\" nested"
+
+[tasks.sleepy-child]
+run = "sleep 300 & echo $! > child.pid; echo $$ > leader.pid; wait"
+
+[tasks.deadline-env]
+run = "printf '%s' \"$EFFIGY_RUN_DEADLINE_MS\" > child-deadline.txt"
+
+[tasks.stubborn]
+admission = "heavy"
+run = "trap '' TERM; echo $$ > leader.pid; sleep 300"
+
+[tasks.owner-loss]
+run = "sleep 300 & echo $! > child.pid; echo $$ > leader.pid; wait"
 "#;
 
 /// Admits, then holds its slot until Effigy stops it at the run's end.
@@ -152,6 +165,7 @@ impl Fixture {
             .env_remove("EFFIGY_MANAGED_RUN_TOKEN")
             .env_remove("EFFIGY_CUSTODY_NONCE")
             .env_remove("EFFIGY_LOCK_WAIT_MS")
+            .env_remove("EFFIGY_RUN_DEADLINE_MS")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -2202,6 +2216,456 @@ fn strict_persistence_refuses_before_admission_and_prepare_readies_the_route() {
         .filter(|slot| slot[slot.len() - 1] != 0)
         .count();
     assert_eq!(commits, 0, "ingestion did not free the slot it copied");
+}
+
+// ---------------------------------------------------------------------------
+// One absolute deadline for the whole invocation (effigy#992)
+// ---------------------------------------------------------------------------
+
+/// True when no process of `pgid` remains, by `kill(-pgid, 0)` returning
+/// `ESRCH`. A surviving member keeps the group reachable.
+fn group_gone(pgid: i32) -> bool {
+    // SAFETY: signal 0 only probes existence; it delivers nothing.
+    let result = unsafe { libc::kill(-pgid, 0) };
+    result != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+}
+
+#[test]
+fn a_deadline_without_a_workload_budget_refuses_before_anything_starts() {
+    let fixture = Fixture::new();
+    let output = fixture
+        .effigy(&["light"])
+        .env("EFFIGY_RUN_DEADLINE_MS", "5000")
+        .output_owned()
+        .expect("effigy runs");
+    assert_eq!(output.status.code(), Some(2), "{}", text(&output));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("EFFIGY_RUN_DEADLINE_MS=5000"), "{stderr}");
+    assert!(stderr.contains("settlement"), "{stderr}");
+    assert!(
+        !fixture.exists("light.txt"),
+        "a refused deadline must not start the task"
+    );
+}
+
+#[test]
+fn a_run_deadline_cuts_a_hung_admission_before_the_task_runs() {
+    let fixture = Fixture::new();
+    let hook = fixture.hook(
+        "hung-hook.sh",
+        "#!/bin/sh\necho 'waiting for capacity' >&2\nwhile :; do sleep 0.1; done\n",
+    );
+    let started = Instant::now();
+    let output = fixture
+        .effigy(&["--json", "heavy"])
+        .env("EFFIGY_ADMISSION_HOOK", hook)
+        .env("EFFIGY_ADMISSION_HOOK_TIMEOUT_MS", "60000")
+        .env("EFFIGY_RUN_DEADLINE_MS", "11000")
+        .output_owned()
+        .expect("effigy runs");
+    let elapsed = started.elapsed();
+    let rendered = text(&output);
+    assert!(!output.status.success(), "{rendered}");
+    assert!(
+        elapsed < Duration::from_millis(11_000),
+        "admission outlived the run deadline: {elapsed:?}"
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|_| panic!("{rendered}"));
+    assert_eq!(
+        envelope["error"]["details"]["schema"],
+        "effigy.admission.v1"
+    );
+    assert_eq!(
+        envelope["error"]["details"]["decision"], "deadline",
+        "the refusal must be the deadline's, not the hook timeout: {rendered}"
+    );
+    assert!(
+        envelope["error"]["details"]["deadline"]["phases"]["admission"].is_object(),
+        "the admission refusal carries its phase readback: {rendered}"
+    );
+    let admission_since = envelope["error"]["details"]["deadline"]["phases"]["admission"]
+        ["since_origin_ms"]
+        .as_u64()
+        .unwrap_or_default();
+    assert!(
+        admission_since >= 900,
+        "the refusal captures the elapsed admission wait, not only its start: {admission_since}ms"
+    );
+    assert!(
+        !fixture.exists("ran.txt"),
+        "the workload started despite the refused admission"
+    );
+}
+
+#[test]
+fn a_late_admission_grant_after_the_deadline_never_starts_the_task() {
+    let fixture = Fixture::new();
+    let hook = fixture.hook(
+        "late-hook.sh",
+        "#!/bin/sh\nsleep 2\necho admit\nwhile :; do sleep 0.1; done\n",
+    );
+    let started = Instant::now();
+    let output = fixture
+        .effigy(&["--json", "heavy"])
+        .env("EFFIGY_ADMISSION_HOOK", hook)
+        .env("EFFIGY_ADMISSION_HOOK_TIMEOUT_MS", "60000")
+        .env("EFFIGY_RUN_DEADLINE_MS", "11000")
+        .output_owned()
+        .expect("effigy runs");
+    let elapsed = started.elapsed();
+    let rendered = text(&output);
+    assert!(!output.status.success(), "{rendered}");
+    assert!(
+        elapsed < Duration::from_millis(11_000),
+        "admission outlived the run deadline: {elapsed:?}"
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|_| panic!("{rendered}"));
+    assert_eq!(
+        envelope["error"]["details"]["decision"], "deadline",
+        "a late grant is the deadline's refusal: {rendered}"
+    );
+    assert!(
+        !fixture.exists("ran.txt"),
+        "a late grant started the workload"
+    );
+}
+
+#[test]
+fn a_run_deadline_stops_a_sleeping_workload_inside_the_ceiling() {
+    let fixture = Fixture::new();
+    let started = Instant::now();
+    let output = fixture
+        .effigy(&["--json", "sleepy-child"])
+        .env("EFFIGY_RUN_DEADLINE_MS", "12000")
+        .output_owned()
+        .expect("effigy runs");
+    let elapsed = started.elapsed();
+    let rendered = text(&output);
+    assert!(
+        elapsed < Duration::from_millis(12_000),
+        "the run outlived its ceiling: {elapsed:?}\n{rendered}"
+    );
+    assert_eq!(output.status.code(), Some(124), "{rendered}");
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|_| panic!("{rendered}"));
+    let details = &envelope["error"]["details"];
+    assert_eq!(details["exit_code"], 124, "{rendered}");
+    assert_eq!(details["deadline"]["clock"], "monotonic");
+    assert_eq!(details["deadline"]["origin"], "process_start");
+    assert_eq!(details["deadline"]["ceiling_ms"], 12000);
+    assert_eq!(details["deadline"]["settlement_allowance_ms"], 10000);
+    assert_eq!(details["deadline"]["workload_budget_ms"], 2000);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("run deadline 12000ms"),
+        "the run's deadline evidence is written: {stderr}"
+    );
+    assert!(
+        stderr.contains("run deadline settled")
+            && stderr.contains("\"settlement\"")
+            && stderr.contains("\"terminal\""),
+        "the completed run's phase readback is written after settlement: {stderr}"
+    );
+
+    let leader: i32 = fixture
+        .read("leader.pid")
+        .trim()
+        .parse()
+        .expect("leader pid");
+    let child: i32 = fixture.read("child.pid").trim().parse().expect("child pid");
+    assert!(
+        leader > 1 && child > 1,
+        "the workload recorded its own group: {leader} {child}"
+    );
+    assert!(!alive(leader as u32), "the leader survived: {leader}");
+    assert!(!alive(child as u32), "the owned child survived: {child}");
+    assert!(
+        group_gone(leader),
+        "the workload group {} was not closed",
+        leader
+    );
+}
+
+#[test]
+fn a_nested_effigy_child_receives_the_remaining_budget_not_the_configured_span() {
+    let fixture = Fixture::new();
+    let output = fixture
+        .effigy(&["deadline-env"])
+        .env("EFFIGY_RUN_DEADLINE_MS", "20000")
+        .output_owned()
+        .expect("effigy runs");
+    assert!(output.status.success(), "{}", text(&output));
+    let inherited: u64 = fixture
+        .read("child-deadline.txt")
+        .trim()
+        .parse()
+        .expect("inherited deadline");
+    assert!(inherited > 0, "the child inherited no deadline");
+    assert!(
+        inherited < 10_000,
+        "the child inherited the configured span instead of the workload budget: {inherited}"
+    );
+}
+
+#[test]
+fn a_run_deadline_bounds_a_stalled_v2_acknowledgement_during_admission() {
+    let fixture = Fixture::new();
+    let hook = v2_hook(
+        &fixture,
+        "stall-admission.sh",
+        "if [ \"$seq\" = \"2\" ]; then sleep 30; fi",
+        "",
+    );
+    let started = Instant::now();
+    let output = fixture
+        .effigy(&["--json", "heavy"])
+        .env("EFFIGY_ADMISSION_HOOK", hook)
+        .env("EFFIGY_ADMISSION_PROTOCOL", "2")
+        .env("EFFIGY_RUN_DEADLINE_MS", "11000")
+        .output_owned()
+        .expect("effigy runs");
+    let elapsed = started.elapsed();
+    let rendered = text(&output);
+    assert!(!output.status.success(), "{rendered}");
+    assert!(
+        elapsed < Duration::from_millis(11_000),
+        "a stalled report acknowledgement outlived the deadline: {elapsed:?}"
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|_| panic!("{rendered}"));
+    assert_eq!(
+        envelope["error"]["details"]["decision"], "deadline",
+        "a stalled acknowledgement is the deadline's refusal: {rendered}"
+    );
+    assert!(
+        !fixture.exists("ran.txt"),
+        "the workload started despite the stalled report"
+    );
+}
+
+#[test]
+fn a_run_deadline_refuses_a_late_v2_acknowledgement() {
+    let fixture = Fixture::new();
+    let hook = v2_hook(
+        &fixture,
+        "late-ack.sh",
+        "if [ \"$seq\" = \"2\" ]; then sleep 2; fi",
+        "",
+    );
+    let started = Instant::now();
+    let output = fixture
+        .effigy(&["--json", "heavy"])
+        .env("EFFIGY_ADMISSION_HOOK", hook)
+        .env("EFFIGY_ADMISSION_PROTOCOL", "2")
+        .env("EFFIGY_RUN_DEADLINE_MS", "11000")
+        .output_owned()
+        .expect("effigy runs");
+    let elapsed = started.elapsed();
+    let rendered = text(&output);
+    assert!(!output.status.success(), "{rendered}");
+    assert!(
+        elapsed < Duration::from_millis(11_000),
+        "a late acknowledgement outlived the deadline: {elapsed:?}"
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|_| panic!("{rendered}"));
+    assert_eq!(
+        envelope["error"]["details"]["decision"], "deadline",
+        "a late acknowledgement is refused at the boundary: {rendered}"
+    );
+    assert!(
+        !fixture.exists("ran.txt"),
+        "the workload started despite the late acknowledgement"
+    );
+}
+
+#[test]
+fn a_run_deadline_bounds_a_stalled_terminal_report_and_keeps_the_outcome() {
+    let fixture = Fixture::new();
+    let hook = v2_hook(
+        &fixture,
+        "stall-terminal.sh",
+        "echo $$ > hook.pid; if [ \"$seq\" = \"3\" ]; then sleep 30; fi",
+        "",
+    );
+    let started = Instant::now();
+    let output = fixture
+        .effigy(&["--json", "stubborn"])
+        .env("EFFIGY_ADMISSION_HOOK", hook)
+        .env("EFFIGY_ADMISSION_PROTOCOL", "2")
+        .env("EFFIGY_RUN_DEADLINE_MS", "13000")
+        .output_owned()
+        .expect("effigy runs");
+    let elapsed = started.elapsed();
+    let rendered = text(&output);
+    // The stalled terminal report may legitimately leave the hook as residue
+    // when it consumes the remaining allowance: stop it by its recorded pid
+    // before this fixture is removed.
+    let guard_pid: i32 = String::from_utf8_lossy(&output.stderr)
+        .split("guard pid ")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_default();
+    let hook_pid: i32 = fixture.read("hook.pid").trim().parse().unwrap_or_default();
+    if hook_pid > 1 && alive(hook_pid as u32) {
+        // SAFETY: signal 0/kill only the hook group this test started.
+        unsafe {
+            libc::kill(-hook_pid, libc::SIGKILL);
+            libc::kill(hook_pid, libc::SIGKILL);
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while alive(hook_pid as u32) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        std::thread::sleep(Duration::from_millis(150));
+    }
+    // A guard that could not prove closure parks as the verified exclusion
+    // holder; stop it by its recorded pid before the assertions.
+    if guard_pid > 1 && alive(guard_pid as u32) {
+        // SAFETY: only the guard this run recorded.
+        unsafe {
+            libc::kill(guard_pid, libc::SIGKILL);
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while alive(guard_pid as u32) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+    assert!(
+        elapsed < Duration::from_millis(14_000),
+        "a stalled terminal report crossed the deadline: {elapsed:?}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let settled = stderr
+        .lines()
+        .find(|line| line.contains("run deadline settled"))
+        .unwrap_or_else(|| panic!("the completed run's readback is missing: {stderr}"));
+    let since: u64 = settled
+        .split("ms since origin")
+        .next()
+        .and_then(|prefix| prefix.rsplit([' ', ',']).next())
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or_else(|| panic!("no since-origin value: {settled}"));
+    assert!(
+        since <= 13_100,
+        "the completed run's own readback crossed the original ceiling: {since}ms"
+    );
+    assert_eq!(output.status.code(), Some(124), "{rendered}");
+    let leader: i32 = fixture
+        .read("leader.pid")
+        .trim()
+        .parse()
+        .expect("leader pid");
+    assert!(!alive(leader as u32), "the workload survived: {leader}");
+    assert!(group_gone(leader), "the workload group {} remains", leader);
+    // The residual hook and the guard must finish before this fixture is
+    // removed; otherwise its teardown races their last writes.
+    fixture.wait_for("the owned custody to drain", || {
+        gates_drained(&fixture.repo)
+    });
+}
+
+#[test]
+fn a_run_deadline_owner_loss_is_settled_by_the_surviving_custodian() {
+    let fixture = Fixture::new();
+    let spawned = Instant::now();
+    let mut owner = fixture
+        .effigy(&["owner-loss"])
+        .env("EFFIGY_RUN_DEADLINE_MS", "12000")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("effigy starts");
+    fixture.wait_for("the workload group", || {
+        fixture.exists("leader.pid") && fixture.exists("child.pid")
+    });
+    let leader: i32 = fixture
+        .read("leader.pid")
+        .trim()
+        .parse()
+        .expect("leader pid");
+    let child: i32 = fixture.read("child.pid").trim().parse().expect("child pid");
+    owner.kill().expect("the owning process is killed");
+    let _ = owner.wait();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while (alive(leader as u32) || alive(child as u32) || !group_gone(leader))
+        && Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        !alive(leader as u32),
+        "the surviving custodian did not settle leader {leader}"
+    );
+    assert!(
+        !alive(child as u32),
+        "the surviving custodian did not settle child {child}"
+    );
+    assert!(group_gone(leader), "the group {leader} remains");
+    assert!(
+        matches!(
+            effigy_kernel::ident::process_identity(leader as u32),
+            Observed::Absent(_)
+        ),
+        "the surviving custodian did not reap the direct leader {leader}"
+    );
+    fixture.wait_for("the guard to drain", || gates_drained(&fixture.repo));
+    assert!(
+        spawned.elapsed() < Duration::from_secs(13),
+        "the guard outlived the run's original ceiling: {:?}",
+        spawned.elapsed()
+    );
+}
+
+#[test]
+fn the_opt_in_changes_no_workload_output() {
+    let fixture = Fixture::new();
+    let off = fixture
+        .effigy(&["deadline-env"])
+        .output_owned()
+        .expect("effigy runs");
+    let off_again = fixture
+        .effigy(&["deadline-env"])
+        .output_owned()
+        .expect("effigy runs");
+    let on = fixture
+        .effigy(&["deadline-env"])
+        .env("EFFIGY_RUN_DEADLINE_MS", "20000")
+        .output_owned()
+        .expect("effigy runs");
+    // Complete no-option output: two unset runs are byte-identical, and the
+    // opt-in changes no workload stdout, stderr payload or exit code.
+    assert_eq!(off.status.code(), off_again.status.code());
+    assert_eq!(
+        off.stdout, off_again.stdout,
+        "no-option stdout is byte-stable"
+    );
+    assert_eq!(
+        off.stderr, off_again.stderr,
+        "no-option stderr is byte-stable"
+    );
+    assert_eq!(off.status.code(), on.status.code());
+    assert_eq!(
+        off.stdout, on.stdout,
+        "the opt-in changes no workload stdout"
+    );
+    let off_err = String::from_utf8_lossy(&off.stderr);
+    let on_err = String::from_utf8_lossy(&on.stderr);
+    assert!(
+        !off_err.contains("run deadline"),
+        "the no-option path writes no deadline evidence: {off_err}"
+    );
+    assert!(
+        on_err.contains("run deadline"),
+        "the opted-in path names its deadline: {on_err}"
+    );
+    assert!(
+        on_err.len() > off_err.len(),
+        "the only difference is the deadline evidence"
+    );
 }
 
 /// Strict admission only rewrites pre-existing task gate entries. Preparation

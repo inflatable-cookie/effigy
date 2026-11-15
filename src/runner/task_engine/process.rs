@@ -124,6 +124,7 @@ fn run_plain_inner(
         !interactive && !command.capture && crate::runner::scratch::record_relay_active();
     let relay = stream || recorded || (!command.capture && run.keyed() && !interactive);
     let mut env = environment(command.cwd, command.env)?;
+    effigy_core::run_deadline::note_phase(effigy_core::run_deadline::Phase::Workload);
     let grant = if effigy_child {
         crate::runner::secret_session::take_child_grant()
     } else {
@@ -160,6 +161,12 @@ fn run_plain_inner(
     let spawned = run.spawn_with_handoff(spec, false, grant.map(|grant| grant.into_reader()));
     let mut process = match spawned {
         Ok(process) => process,
+        // An admission refusal keeps its own error shape: the workload was
+        // stopped before `go` because its report was not acknowledged (or the
+        // run deadline expired while it waited), and the caller must see
+        // `effigy.admission.v1`. It is never reclassified as a workload
+        // timeout just because the same deadline also spent the budget.
+        Err(refusal @ RunnerError::AdmissionRefused { .. }) => return Err(refusal),
         Err(error) => {
             // Cancellation can win after the spawn barrier releases workload,
             // before spawn returns. Settlement still owns that recorded effect.
@@ -172,16 +179,10 @@ fn run_plain_inner(
                     stderr: Vec::new(),
                 });
             }
-            // An admission refusal keeps its own error shape: the workload
-            // was stopped before `go` because its report was not
-            // acknowledged, and the caller must see `effigy.admission.v1`.
-            return match error {
-                refusal @ RunnerError::AdmissionRefused { .. } => Err(refusal),
-                other => Err(RunnerError::TaskCommandLaunch {
-                    command: command.command.to_owned(),
-                    error: std::io::Error::other(format!("{other:?}")),
-                }),
-            };
+            return Err(RunnerError::TaskCommandLaunch {
+                command: command.command.to_owned(),
+                error: std::io::Error::other(format!("{error:?}")),
+            });
         }
     };
     let mut stdout = Tail::default();
@@ -302,6 +303,7 @@ fn run_plain_inner(
         (_, Some(code)) => code,
         (_, None) => 1,
     };
+    effigy_core::run_deadline::note_phase(effigy_core::run_deadline::Phase::Workload);
     Ok(PlainExit {
         workload,
         code,
@@ -519,6 +521,17 @@ pub(in crate::runner) fn environment(
             }
         };
         env.insert(OsString::from(key), value);
+    }
+    // The absolute run deadline never travels verbatim: a child starts its own
+    // monotonic clock, so it receives only the parent's remaining workload
+    // budget. Inheriting the parent's configured span would restart the clock
+    // and extend the ceiling (effigy#992). This is applied last, so neither an
+    // inherited value nor a task's own environment can extend it.
+    if let Some(ms) = effigy_core::run_deadline::child_env_ms() {
+        env.insert(
+            OsString::from(effigy_core::run_deadline::RUN_DEADLINE_ENV),
+            EnvValue::Plain(OsString::from(ms.to_string())),
+        );
     }
     // A declared override cannot hand session access back to a workload
     // either: the route is Effigy's own descriptor, not a name.

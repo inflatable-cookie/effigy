@@ -21,6 +21,11 @@ fn exit_process(code: i32) -> ! {
 }
 
 pub fn run_cli(raw_args: Vec<String>) {
+    if let Err(error) = effigy_core::run_deadline::configure_from_env() {
+        let message = format!("effigy: {error}\n");
+        let _ = std::io::stderr().write_all(message.as_bytes());
+        std::process::exit(2);
+    }
     if let Err(error) = effigy_core::output_cap::configure_from_env() {
         let message = format!("effigy: {error}\n");
         let _ = std::io::stderr().write_all(message.as_bytes());

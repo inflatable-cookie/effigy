@@ -24,6 +24,7 @@ pub mod repo;
 pub mod repo_markers;
 pub mod resolver;
 pub mod retirement_text;
+pub mod run_deadline;
 pub mod runtime_dir;
 pub mod shell;
 pub mod task_args;

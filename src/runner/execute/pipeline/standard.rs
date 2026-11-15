@@ -176,13 +176,88 @@ pub(in crate::runner) fn run_standard_task(
         _ => result,
     };
     // Observability never changes the task's outcome or exit code (K10).
-    for warning in run.close(workload) {
+    let deadline_handle = run.deadline_handle();
+    let warnings = run.close(workload);
+    // A settlement the absolute deadline left incomplete cannot certify the
+    // workload's success: fail closed with the interrupted outcome, residue
+    // and the named retained resources, never a success (effigy#992).
+    let settlement_incomplete = effigy_core::run_deadline::take_settlement_incomplete();
+    for warning in &warnings {
         let _ = effigy_core::output_cap::write(
             effigy_core::output_cap::Stream::Stderr,
             format!("warning: {}: {warning}\n", target.label).as_bytes(),
         );
     }
+    // The task JSON is rendered before settlement, so the completed run's
+    // full phase readback is written here, after final accounting, from the
+    // run's own retained frame (never a parent's).
+    if let Some(deadline) = effigy_core::run_deadline::current() {
+        let phases = match &deadline_handle {
+            Some(handle) => {
+                handle.note(effigy_core::run_deadline::Phase::Terminal);
+                handle.evidence()
+            }
+            None => effigy_core::run_deadline::phases_evidence(),
+        };
+        let line = format!(
+            "effigy: run deadline settled: clock monotonic, origin process start, {}ms since \
+             origin; phases {}\n",
+            deadline.since_origin().as_millis(),
+            phases,
+        );
+        let _ = effigy_core::output_cap::write(
+            effigy_core::output_cap::Stream::Stderr,
+            line.as_bytes(),
+        );
+    }
+    if settlement_incomplete && result.is_ok() {
+        return Err(run_deadline_incomplete(
+            &target,
+            &warnings,
+            deadline_handle.as_ref(),
+        ));
+    }
     result
+}
+
+/// The fail-closed result of a settlement that was not positively complete
+/// under the absolute deadline.
+fn run_deadline_incomplete(
+    target: &TaskTarget,
+    notes: &[String],
+    handle: Option<&effigy_core::run_deadline::PhaseHandle>,
+) -> RunnerError {
+    let detail = format!(
+        "the run deadline (`{}`) did not leave settlement of task `{}` positively complete: the \
+         workload's own result cannot be certified, the run is interrupted with residue, and the \
+         retained resources are named in the details",
+        effigy_core::run_deadline::RUN_DEADLINE_ENV,
+        target.label,
+    );
+    let details_json = serde_json::json!({
+        "schema": "effigy.run-deadline.v1",
+        "schema_version": 1,
+        "task": target.label,
+        "phase": "settlement",
+        "outcome": "incomplete",
+        "residue": true,
+        "detail": detail,
+        "settlement_notes": notes,
+        "deadline": deadline_evidence(handle),
+    })
+    .to_string();
+    RunnerError::RunDeadline {
+        detail,
+        details_json,
+    }
+}
+
+fn deadline_evidence(handle: Option<&effigy_core::run_deadline::PhaseHandle>) -> serde_json::Value {
+    let mut evidence = effigy_core::run_deadline::evidence().unwrap_or(serde_json::Value::Null);
+    if let (Some(handle), Some(object)) = (handle, evidence.as_object_mut()) {
+        object.insert("phases".to_owned(), handle.evidence());
+    }
+    evidence
 }
 
 /// The run's recorded outcome when the route did not report one itself.

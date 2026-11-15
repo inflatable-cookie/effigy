@@ -1063,6 +1063,7 @@ version = "0.14.1"
 dependencies = [
  "effigy-test-support",
  "hex",
+ "libc",
  "ratatui-core",
  "serde",
  "serde_json",

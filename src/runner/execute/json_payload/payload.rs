@@ -45,7 +45,7 @@ pub(super) fn task_run_payload(
     stdout: &str,
     stderr: &str,
 ) -> serde_json::Value {
-    json!({
+    let mut payload = json!({
         "schema": "effigy.task.run.v1",
         "schema_version": 1,
         "ok": exit_code == Some(0),
@@ -56,7 +56,15 @@ pub(super) fn task_run_payload(
         "exit_code": exit_code,
         "stdout": stdout,
         "stderr": stderr,
-    })
+    });
+    // The invocation's absolute deadline, if the opt-in is on. Absent by
+    // default, so an invocation without it keeps its exact envelope.
+    if let Some(deadline) = effigy_core::run_deadline::evidence() {
+        if let Some(object) = payload.as_object_mut() {
+            object.insert("deadline".to_owned(), deadline);
+        }
+    }
+    payload
 }
 
 fn render_selector(selector: &TaskSelector) -> String {
@@ -101,6 +109,14 @@ pub(super) fn task_plan_payload(
     if let Some(admission) = selection.task.admission {
         if let Some(object) = payload.as_object_mut() {
             object.insert("admission".to_owned(), json!(admission.as_str()));
+        }
+    }
+
+    // The invocation's absolute deadline, if the opt-in is on. Absent by
+    // default, so a plan without it keeps its exact envelope.
+    if let Some(deadline) = effigy_core::run_deadline::evidence() {
+        if let Some(object) = payload.as_object_mut() {
+            object.insert("deadline".to_owned(), deadline);
         }
     }
 

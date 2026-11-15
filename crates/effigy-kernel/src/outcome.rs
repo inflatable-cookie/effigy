@@ -256,6 +256,16 @@ impl<T> Outcome<T> {
         self.cleanup = CleanupOutcome::Incomplete;
         self.residue.push(residue);
     }
+    /// Record a condition that makes the settled outcome not positive: an
+    /// unresolved child obligation, lost final evidence or a terminal write
+    /// failure. No caller can then present the run as positively complete.
+    pub fn mark_incomplete(&mut self, reason: &str) {
+        self.cleanup = CleanupOutcome::Incomplete;
+        self.warnings.push(Warning {
+            code: "incomplete".into(),
+            message: reason.to_owned(),
+        });
+    }
     /// Every effect the settle could not release, one entry each, in the
     /// kernel's own words. Empty when cleanup completed.
     pub fn unresolved(&self) -> Vec<String> {

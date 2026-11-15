@@ -1099,7 +1099,9 @@ impl Custody {
                 exit: None,
                 reaped: false,
                 deadline: match spec.lifetime {
-                    Lifetime::Finite(budget) => Instant::now().checked_add(budget),
+                    Lifetime::Finite(budget) => {
+                        effigy_core::run_deadline::now().checked_add(budget)
+                    }
                     Lifetime::Open(_) => None,
                 },
                 terminal,
@@ -1213,7 +1215,7 @@ impl OwnedProcess {
     pub fn expired(&self) -> bool {
         lock(&self.core)
             .deadline
-            .is_some_and(|at| Instant::now() >= at)
+            .is_some_and(|at| effigy_core::run_deadline::now() >= at)
     }
     // A source result is usable only after both pipes reach EOF under the same deadline.
     fn finish_source_capture(&self, cx: &OperationContext) -> Result<(), String> {
@@ -1226,13 +1228,19 @@ impl OwnedProcess {
             if core.exit.is_none() {
                 return Err("source exit is not verified".into());
             }
-            if core.deadline.is_some_and(|at| Instant::now() >= at) {
+            if core
+                .deadline
+                .is_some_and(|at| effigy_core::run_deadline::now() >= at)
+            {
                 return Err("source capture deadline expired".into());
             }
             core.drain();
             if core.stdout.is_none() && core.stderr.is_none() {
                 cx.check("source capture").map_err(|e| e.to_string())?;
-                if core.deadline.is_some_and(|at| Instant::now() >= at) {
+                if core
+                    .deadline
+                    .is_some_and(|at| effigy_core::run_deadline::now() >= at)
+                {
                     return Err("source capture deadline expired".into());
                 }
                 if core.output_truncated || core.capture != CaptureState::Complete {
@@ -1285,7 +1293,10 @@ impl OwnedProcess {
                 return Observed::Unknown(unknown(format!("{e}")));
             }
             let mut core = lock(&self.core);
-            if core.deadline.is_some_and(|at| Instant::now() >= at) {
+            if core
+                .deadline
+                .is_some_and(|at| effigy_core::run_deadline::now() >= at)
+            {
                 return Observed::Unknown(UnknownReason::TimedOut {
                     phase: "workload".into(),
                 });

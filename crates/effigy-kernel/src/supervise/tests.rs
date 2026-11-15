@@ -1215,6 +1215,7 @@ fn a_stale_memory_acknowledgement_never_answers_a_later_frame() {
         home: fixture(),
         foreground: true,
         strict: false,
+        deadline_nanos: None,
     };
     let frame = |sequence| Effect {
         sequence,

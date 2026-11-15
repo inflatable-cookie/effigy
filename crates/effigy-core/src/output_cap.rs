@@ -275,6 +275,20 @@ pub fn foreground_settled(positive: bool) {
         .unwrap_or_else(PoisonError::into_inner)
         .foreground_settled(positive);
 }
+/// Whether every foreground run this process started reported positive
+/// settlement. False suppresses the completeness footer: a run whose cleanup
+/// was not positively complete never certifies the stream as complete.
+/// Mark this process's foreground settlement incomplete after a settle that
+/// already reported `foreground_settled(true)` (for example lost terminal
+/// evidence). The footer is suppressed from then on.
+pub fn foreground_incomplete() {
+    let mut state = state().lock().unwrap_or_else(PoisonError::into_inner);
+    state.foreground_incomplete = true;
+}
+pub fn foreground_complete() -> bool {
+    let state = state().lock().unwrap_or_else(PoisonError::into_inner);
+    state.foreground_pending == 0 && !state.foreground_incomplete
+}
 pub fn set_footer_enabled(enabled: bool) {
     state()
         .lock()

@@ -651,6 +651,166 @@ running. The limits are named too:
 - **`run status` never reports a provider-side release.** A release on this
   evidence is never shown as `cleanup: "complete"`.
 
+## Absolute run deadline (effigy#992, operator decision 6ca7e791)
+
+`EFFIGY_RUN_DEADLINE_MS` opts one invocation into **one absolute deadline**
+covering admission, the workload and Effigy's own settlement. It is off by
+default: unset or blank means every budget is exactly what it was before.
+
+### Clock, origin and interface
+
+- The clock is `std::time::Instant` (monotonic). The origin is sampled **once**,
+  at process start in `src/bin/effigy.rs:1-10` (and idempotently in
+  `src/cli/entrypoint.rs:18-23`), before any capture, staging or admission.
+  It is never restarted at a workload spawn or per step; a nested Phase
+  inherits the remaining time, not a new span.
+- `crates/effigy-core/src/run_deadline.rs:30` fixes the **settlement allowance**
+  at 10 s. The workload boundary is `ceiling - allowance`
+  (`run_deadline.rs:75`), and no wait may pass the ceiling.
+- Readback: a foreground run writes one evidence line at admission naming the
+  clock, its observable origin, the elapsed time since that origin, the
+  ceiling, the allowance, the workload budget and the remaining time
+  (`run_deadline.rs:161-190`; written at
+  `src/runner/task_engine/run/foreground.rs`). The task run and plan JSON
+  carry the same facts in a `deadline` object
+  (`src/runner/execute/json_payload/payload.rs:40-104`), absent when the
+  opt-in is off. It records `origin: "process_start"`,
+  `origin_readback: "elapsed_since_origin_ms"`, `since_origin_ms`, the
+  configured phase budgets (`phase_budgets_ms`) and a `phases` object with,
+  for each of admission, workload, settlement and terminal, the
+  `since_origin_ms` (the observable origin) and the `remaining_ms` observed
+  when that phase ended (`run_deadline.rs:120-280`). Because the task JSON is
+  rendered before settlement, its `deadline` object carries the phases
+  observed up to that point; the completed run's full readback (all four
+  phases, including settlement and terminal) is written as one post-settlement
+  stderr line by `src/runner/execute/pipeline/standard.rs`, and the
+  `effigy.run-deadline.v1` error carries the same complete `deadline` object.
+  Phase observations are genuinely run-scoped: `run_deadline::begin_run`
+  pushes a per-run frame, so a nested run's Admission, Workload or Settlement
+  observation never overwrites its parent's same-named one, and concurrent
+  threads never share a frame. `standard.rs` keeps the run's `PhaseHandle`
+  across `close`, so a nested run's terminal observation and post-settlement
+  line come from its own completed frame, never its parent's. Observations are
+  taken at phase end (admission refusal, workload completion, settlement
+  completion, terminal evidence), not only at start. An admission refusal's
+  details are serialized after its admission phase is recorded, so they carry
+  the elapsed wait. Numbers are monotonic milliseconds; nothing is converted
+  to a wall clock.
+- Owned tests drive phase progression through the same seam: production reads
+  `Instant::now()`; a test advances a monotonic offset, never a wall clock
+  (`run_deadline.rs:20-28,247-262`).
+
+### One ceiling for every phase
+
+| Phase | Bound | Location |
+| --- | --- | --- |
+| Task-gate wait | `min(--lock-wait, ceiling - allowance)`; `FailFast` unchanged | `src/runner/task_engine/run/foreground.rs:89-103` |
+| Admission (including a hung hook or a late grant) | capped at `ceiling - allowance`; expiry refuses before any workload spawn. The v2 `custodians` and `workload` report exchanges, including their writes, are bounded at the same boundary; a stalled acknowledgement refuses with the same typed `deadline` decision | `src/runner/task_engine/admission.rs:431-470,486-598,634-660` |
+| Workload lifetime | `min(timeout_ms, ceiling - allowance)`; an in-process step or nested scope may shorten it, never extend it | `src/runner/task_engine/spawn_env.rs:24-31,60-69,104-115`; `src/runner/task_engine/process.rs:145-152` |
+| Kernel operation waits | an open shell operation is capped at the ceiling; a finite one is shortened to it | `crates/effigy-kernel/src/ctx.rs:192-200` |
+| Settlement (escalation, guard closure, cleanup, terminal evidence) | one cleanup context and one signal window, both capped at the ceiling; the v2 `terminal` report exchange and its write are bounded at the ceiling | `crates/effigy-kernel/src/ctx.rs:251-276,418-425`; `src/runner/task_engine/admission.rs:700-760` |
+
+A deadline that cannot fit the allowance is refused **at start**, before any
+capture, gate or effect: `EFFIGY_RUN_DEADLINE_MS <= 10000` exits 2 with a
+message naming the allowance (`run_deadline.rs:154-170`, `src/bin/effigy.rs`).
+
+### Failure shapes
+
+- **Admission expiry.** The refusal is typed: `effigy.admission.v1` with
+  `decision: "deadline"` (not `"timeout"`, which stays the hook's own
+  timeout) at `src/runner/task_engine/admission.rs:1180-1195`. The workload
+  never spawns. A grant, or a completed v2 report, that arrives after the
+  relevant boundary is a **late grant** and refuses the same way before the
+  workload spawns. A stalled v2 `custodians`/`workload` acknowledgement is the
+  same typed refusal: the exchange's write and poll are bounded by
+  `ceiling - allowance`, an acknowledgement read after the boundary is not
+  accepted, and the poll sleep never starts with less time remaining than its
+  interval (`admission.rs:486-606`). Admission protocol v1/v2 and the terminal
+  accounting are unchanged.
+- **Settlement not positively complete.** Under the opt-in, *any* settlement
+  that is not positively complete -- a cleanup-context timeout, a settle
+  error, a residue effect, a child run that never reported positive
+  completion, or a settled outcome whose cleanup is `Incomplete` -- records
+  the run as incomplete and is never presented as success
+  (`crates/effigy-kernel/src/run/foreground.rs`). **The owner keeps custody**:
+  it holds the direct-child handles and runs positive settlement (effect
+  stops, group closure, leader reap, guard close) bounded by the cleanup
+  context, which the run deadline already caps (`ctx.rs`). An unresolved
+  child obligation is added as residue only under the opt-in, so the
+  no-option behaviour is unchanged. If the owner cannot finish by the
+  ceiling, it records `incomplete`/`unknown` with the retained guard and every
+  unresolved effect named, abandons only its own drop wait (pins released, no
+  second wait), and exits by the deadline; it never claims closure. **The
+  guard is bounded by the same ceiling**: the owner's original ceiling travels
+  in the guard's configuration as its **absolute system-monotonic nanosecond
+  value** (`Config::deadline_nanos`, because `helper()` clears the
+  environment). The helper compares that absolute value and never adds a fresh
+  remaining duration after its own startup, so spawn, scheduling and
+  config-decode time cannot extend the deadline. Every guard settlement path
+  -- the retained/prelaunch interpolation retry, effect settlement, the
+  closure poll and the final terminal record -- is bounded by
+  `min(60s, remaining)`, and the closure poll sleeps no longer than the
+  remaining time (`supervise/memory.rs`; `settlement_budget`, `deadline_left`,
+  `wait_for_closure`). A guard that reaches the ceiling with an unproved
+  closure or residue records `unknown`/`incomplete` (never complete) and
+  **remains alive as the verified holder of the exclusion**: it performs no
+  further settlement, and a new invocation cannot acquire the gate until that
+  holder is explicitly stopped. Releasing the holder is an explicit later
+  action, never an implication of the deadline. The v2 terminal report
+  exchange stops 2 s before the ceiling, leaving 1 s for hook settlement.
+  Owner cleanup stops 1 s before the ceiling, leaving the final second for
+  terminal accounting and exit; an unproved closure remains residue held by
+  the guard. Scheduling and blocking I/O are not bounded by this reserve.
+  The guard has receipts, not the owner's direct-child handles, and a handoff
+  is never reported as complete. The task returns
+  `effigy.run-deadline.v1` with `outcome: "incomplete"`, `residue: true`,
+  `settlement_notes` naming the retained resources and the deadline evidence,
+  and exits 124 (`src/runner/execute/pipeline/standard.rs`;
+  `src/runner/error.rs`). An already-failed result keeps its own failure; the
+  marker never upgrades a failure to success.
+- **Terminal evidence.** A v2 `terminal` exchange is bounded 2 s before the ceiling.
+  Under the opt-in, a report that is not delivered, or a terminal record that
+  cannot be written, is lost final evidence: it marks the settle incomplete,
+  downgrades the settled outcome before the terminal record is written, and
+  suppresses the footer (`src/runner/task_engine/run.rs`,
+  `src/runner/task_engine/admission.rs`). The workload result is never
+  upgraded to success by a lost report, and no terminal row is written
+  without a settled outcome.
+- **Custody shape is unchanged.** Escalation is still TERM, grace, KILL of the
+owned group, leader reaped after group closure, residue reported. Only the
+  time budgets come from the absolute deadline.
+
+### Nested Effigy children
+
+A child starts its own monotonic clock, so it receives only the parent's
+remaining **workload** budget in `EFFIGY_RUN_DEADLINE_MS`
+(`src/runner/task_engine/process.rs:520-533`). It can never inherit the
+parent's configured span (that would restart the clock and extend the
+ceiling). The value is applied after every inherited value and task override,
+so nothing can prolong it. Each nesting level therefore reserves its own
+allowance; if the remaining budget cannot fit one, the child refuses at start
+rather than overrunning the parent.
+
+### Composition
+
+- The completeness footer still requires positive settlement: any settle that
+is not positively complete calls `foreground_settled(false)`, so no footer is
+printed, and `output_cap::foreground_complete()` is false
+(`src/runner/task_engine/run/foreground.rs:340-380`;
+`crates/effigy-core/src/output_cap.rs`).
+- Strict persistence and the terminal ring are unchanged, and a run with no
+  settled outcome still writes no terminal row.
+- Off by default means byte-identical behaviour: `current()` is `None`, no
+evidence line and no `deadline` field are written, and every budget keeps its
+  previous value.
+
+### Files and physical model
+
+This feature adds **no file and no helper write**. It changes time budgets
+only; the per-invocation persistence inventory above (state and gate files,
+`kernel.db` and its sidecars, the private unlinked helper log, the optional v2
+terminal row) is unchanged.
+
 ## Run control
 
 Every task run is a kernel `Run`. Only durable runs have a journal. The

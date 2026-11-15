@@ -26,6 +26,9 @@ pub struct ForegroundRun {
     ancestor_owners: Vec<ResourceId>,
     children: Vec<Arc<Mutex<Option<WorkloadOutcome>>>>,
     completion: Option<Arc<Mutex<Option<WorkloadOutcome>>>>,
+    /// The invocation's absolute run deadline cut settlement short: the
+    /// surviving custodian is kept and no closure is claimed (effigy#992).
+    truncated: bool,
 }
 impl ForegroundRun {
     /// The caller classifies the whole tree before any effect, and supplies
@@ -162,6 +165,8 @@ impl ForegroundRun {
                     generation: Generation::new(0),
                 },
                 purpose: crate::supervise::memory::MemoryPurpose::Foreground,
+                deadline_nanos: effigy_core::run_deadline::current()
+                    .map(|deadline| deadline.ceiling_nanos()),
             },
         )?;
         Ok(Self {
@@ -176,12 +181,15 @@ impl ForegroundRun {
             ancestor_owners,
             children: Vec::new(),
             completion: None,
+            truncated: false,
         })
     }
     pub fn record(&self) -> &ForegroundRecord {
         &self.record
     }
-    pub(crate) fn record_mut(&mut self) -> &mut ForegroundRecord {
+    /// The owning engine's mutable record handle. The record's own methods
+    /// keep the custody invariants; this accessor only lends it.
+    pub fn record_mut(&mut self) -> &mut ForegroundRecord {
         &mut self.record
     }
     pub fn guard_identity(&self) -> Option<&ProcessIdentity> {
@@ -195,6 +203,16 @@ impl ForegroundRun {
     }
     pub(crate) fn has_guard(&self) -> bool {
         self.guard.is_some()
+    }
+    /// The effects this run has not released, in the kernel's own words, so a
+    /// settle that cannot finish names what stays retained (effigy#992).
+    pub fn retained_effects(&self) -> Vec<String> {
+        self.record
+            .effects()
+            .iter()
+            .filter(|effect| !effect.state.terminal())
+            .map(|effect| format!("`{}` effect {}", effect.spec.kind, effect.sequence))
+            .collect()
     }
     pub(crate) fn anchor_image(&self) -> Result<crate::supervise::anchor::Image, RunError> {
         crate::supervise::anchor::Image::prepare(&self.executable)
@@ -250,8 +268,43 @@ impl ForegroundRun {
     /// the cleanup the settle will reach unless that final stop fails, so a
     /// caller reports closure it can stand behind. The kernel never
     /// interprets the callback.
+    ///
+    /// If the invocation's absolute run deadline cuts settlement short, the
+    /// run records that fact, keeps its surviving custodian through the
+    /// bounded attempt, and reports the interrupted outcome rather than
+    /// pretending to have settled (effigy#992). Under the opt-in any
+    /// settlement that is not positively complete -- an error, a timeout or
+    /// residue -- is recorded as incomplete, never as success.
     pub fn settle_reporting(
         mut self,
+        cleanup: &CleanupContext,
+        report: &mut dyn FnMut(CleanupOutcome),
+    ) -> Result<Outcome<Settled>, RunError> {
+        let result = self.settle_inner(cleanup, report);
+        if effigy_core::run_deadline::ceiling().is_some() && result.is_err() {
+            // A settle that failed for any reason under the deadline leaves
+            // the run unsettled: the guard is left as the surviving custodian
+            // and is not closed or waited for. Its owner-death settlement
+            // keeps the gates and settles residue after our EOF.
+            self.truncated = true;
+            self.abandon_guard();
+            effigy_core::run_deadline::note_settlement_incomplete();
+        }
+        result
+    }
+
+    /// Leave the memory guard to the owner-death settlement it already owns.
+    /// The kernel never kills or closes it here: it releases its own pins,
+    /// returns at once, and the guard process settles residue with the gates
+    /// it holds.
+    fn abandon_guard(&mut self) {
+        if let Some(guard) = self.guard.as_mut() {
+            guard.abandon();
+        }
+    }
+
+    fn settle_inner(
+        &mut self,
         cleanup: &CleanupContext,
         report: &mut dyn FnMut(CleanupOutcome),
     ) -> Result<Outcome<Settled>, RunError> {
@@ -285,9 +338,6 @@ impl ForegroundRun {
             self.record.settle_effect(effect.sequence, state, reason)?;
         }
         self.record.close()?;
-        if let Some(mut guard) = self.guard.take() {
-            guard.close(cleanup)?;
-        }
         let outcome = settle::outcome(
             self.record.incarnation().run,
             &self.next,
@@ -299,7 +349,7 @@ impl ForegroundRun {
         )?;
         // Shared custody disables GateFile's ordinary explicit unlock. Restore
         // it only after complete effects, positive descendant closure and the
-        // exact memory guard's successful exit above. A concurrent unrelated
+        // exact memory guard's successful exit below. A concurrent unrelated
         // fork may still hold CLOEXEC copies until exec; those are no longer
         // custody and must not make a settled foreground run appear live.
         let descendants_closed = self.children.iter().all(|child| {
@@ -308,7 +358,40 @@ impl ForegroundRun {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .is_some()
         });
-        if outcome.cleanup() != CleanupOutcome::Incomplete && descendants_closed {
+        let effects_complete = outcome.cleanup() != CleanupOutcome::Incomplete;
+        let mut outcome = outcome;
+        if !descendants_closed && effigy_core::run_deadline::ceiling().is_some() {
+            // Under the opt-in a child run that never reported positive
+            // completion leaves this tree unsettled. It is residue, not
+            // success, and it is carried into the outcome, the terminal
+            // record and the footer decision. Without the opt-in the previous
+            // behaviour is unchanged.
+            outcome.add_residue(crate::outcome::Residue::unresolved(
+                0,
+                "in-process child",
+                self.record.incarnation().owner.clone(),
+                Some("foreground child obligation"),
+                "a child run did not report positive completion",
+                self.next.clone(),
+            ));
+        }
+        let incomplete = outcome.cleanup() == CleanupOutcome::Incomplete;
+        if incomplete && effigy_core::run_deadline::ceiling().is_some() {
+            // The owner keeps its handles and runs positive settlement right
+            // up to the ceiling. Reaching it unsettled records the run as
+            // incomplete; nothing here claims closure.
+            self.truncated = true;
+            effigy_core::run_deadline::note_settlement_incomplete();
+        }
+        // Always attempt the guard's positive close, bounded by the cleanup
+        // context (which the run deadline already caps). An error leaves the
+        // guard field for `settle_reporting` to abandon without a second wait;
+        // a successful close is the only case where the guard is taken.
+        if let Some(guard) = self.guard.as_mut() {
+            guard.close(cleanup)?;
+        }
+        self.guard.take();
+        if effects_complete && descendants_closed {
             self._gate.release_closed_custody();
             if let Some(completion) = &self.completion {
                 *completion
@@ -323,6 +406,12 @@ impl ForegroundRun {
 
 impl Drop for ForegroundRun {
     fn drop(&mut self) {
+        // A settle the run deadline cut short keeps its surviving custodian:
+        // the memory guard settles residue after its owner exits, and this
+        // drop must not signal, close, or discard it and then imply closure.
+        if self.truncated {
+            return;
+        }
         // Owner custody remains if the guard died. A guard retains the locks
         // if the owner cannot finish; neither case permits numeric replay.
         if let Ok(cleanup) = self.cx.operation().cleanup(Duration::from_secs(60)) {

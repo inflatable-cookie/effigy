@@ -34,6 +34,11 @@ pub(crate) struct MemoryGuard {
     /// How long one frame waits for its own acknowledgement, within the
     /// caller's remaining context budget.
     ack_budget: Duration,
+    /// The owner is leaving this guard to settle residue after its own EOF
+    /// instead of closing it. Drop then releases the pins and returns
+    /// immediately: no wait may consume the remaining run deadline before the
+    /// result and terminal evidence are written (effigy#992).
+    abandoned: bool,
 }
 
 /// Owns a helper whose startup did not complete. Deliberately exposes no
@@ -79,6 +84,13 @@ pub(super) struct Config {
     /// the ring instead of opening SQLite (effigy#985, effigy#986).
     #[serde(default)]
     pub(super) strict: bool,
+    /// The owner's original absolute ceiling on the system-wide monotonic
+    /// clock, in nanoseconds. Every guard settlement path caps its cleanup at
+    /// `min(60s, remaining)` and compares this value directly; the guard never
+    /// restarts the remaining duration after its own startup (effigy#992).
+    /// The helper's environment is cleared, so this has to travel in the frame.
+    #[serde(default)]
+    pub(super) deadline_nanos: Option<u64>,
 }
 #[derive(Serialize, Deserialize)]
 enum Message {
@@ -124,6 +136,29 @@ pub(crate) struct MemoryStart<'a> {
     pub run: RunId,
     pub fence: Fence,
     pub purpose: MemoryPurpose,
+    /// The owner's original absolute ceiling, in system-monotonic nanoseconds.
+    pub deadline_nanos: Option<u64>,
+}
+impl Config {
+    /// The remaining time to the owner's original ceiling, on the
+    /// system-wide monotonic clock. No startup delay is added back.
+    pub(super) fn deadline_left(&self) -> Option<Duration> {
+        self.deadline_nanos.map(|at| {
+            Duration::from_nanos(
+                at.saturating_sub(effigy_core::run_deadline::system_monotonic_nanos()),
+            )
+        })
+    }
+    pub(super) fn deadline_passed(&self) -> bool {
+        self.deadline_left().is_some_and(|left| left.is_zero())
+    }
+    /// The guard's own settlement budget: the declared allowance, never past
+    /// the owner's remaining ceiling, and never a fresh 60 s beyond it.
+    pub(super) fn settlement_budget(&self) -> Duration {
+        let allowance = Duration::from_secs(60);
+        self.deadline_left()
+            .map_or(allowance, |left| left.min(allowance))
+    }
 }
 impl MemoryGuard {
     pub(crate) fn start(gate: &mut GateGuard, start: MemoryStart<'_>) -> Result<Self, RunError> {
@@ -144,6 +179,7 @@ impl MemoryGuard {
             run,
             fence,
             purpose,
+            deadline_nanos,
         } = start;
         let (mut child, closure, config, descriptors) = (|| -> Result<_, RunError> {
             // Memory custody never pins or copies an image into runtime state, and
@@ -185,6 +221,7 @@ impl MemoryGuard {
                 home: root.owning_directory().path().to_path_buf(),
                 foreground: purpose == MemoryPurpose::Foreground,
                 strict: crate::store::strict_persistence(),
+                deadline_nanos,
             };
             let mut command = helper(executable, SENTINEL)?;
             command.stdout(Stdio::piped());
@@ -238,6 +275,7 @@ impl MemoryGuard {
             closure: Some(closure),
             requests: Requests::default(),
             ack_budget: ACK_BUDGET,
+            abandoned: false,
         };
         let started = (|| -> Result<(), RunError> {
             if purpose == MemoryPurpose::CheckoutLease {
@@ -306,6 +344,7 @@ impl MemoryGuard {
             closure: None,
             requests: Requests::default(),
             ack_budget,
+            abandoned: false,
         }
     }
 
@@ -494,6 +533,12 @@ impl MemoryGuard {
             .ok_or_else(|| io::Error::other("foreground guard output missing"))?;
         read_acknowledgement(output, request, cx.operation())
     }
+    /// Leave this guard to the owner-death settlement it already owns. The
+    /// pins are released, so the guard sees EOF, keeps its gates and settles
+    /// residue; the owner does not wait (effigy#992).
+    pub(crate) fn abandon(&mut self) {
+        self.abandoned = true;
+    }
     pub(crate) fn close(&mut self, cx: &CleanupContext) -> Result<(), RunError> {
         if self.has_unconfirmed_files() {
             return Err(RunError::unavailable(
@@ -549,13 +594,26 @@ impl MemoryGuard {
 }
 impl Drop for MemoryGuard {
     fn drop(&mut self) {
+        if self.abandoned {
+            // Hand the guard's custody to its own owner-death settlement and
+            // return at once: this process must not spend the remaining
+            // deadline waiting for a custodian it deliberately left alive.
+            self.closure.take();
+            self.input.take();
+            return;
+        }
         self.closure.take();
         self.input.take();
         // EOF starts bounded guard cleanup. Do not kill a custodian or unlock
-        // its gates just because the caller's cleanup budget has expired.
-        let deadline = self
-            .close_deadline
-            .unwrap_or_else(|| Instant::now() + Duration::from_secs(60));
+        // its gates just because the caller's cleanup budget has expired. The
+        // invocation's absolute run deadline caps this fallback too, so no
+        // shutdown tail extends past the ceiling (effigy#992).
+        let fallback = Duration::from_secs(60);
+        let deadline = self.close_deadline.unwrap_or_else(|| {
+            let budget =
+                effigy_core::run_deadline::remaining().map_or(fallback, |left| left.min(fallback));
+            Instant::now() + budget
+        });
         while matches!(self.child.try_wait(), Ok(None)) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(2));
         }
@@ -904,20 +962,37 @@ pub(crate) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
         }
     }
     drop(output);
+    let mut interpolation_incomplete = false;
     if !files.is_empty() || !prelaunch_files.is_empty() {
         // Retain exact descriptions across caller loss and every Unknown. Each
         // retry re-enters identity-qualified kernel settlement; no idle lock,
-        // EOF or remembered PGID grants closure or signal authority.
+        // EOF or remembered PGID grants closure or signal authority. The
+        // owner's original ceiling bounds the retry: past it the guard stops,
+        // records incomplete and never presents the retained files as closed.
         while !prelaunch_files.is_empty() || !finish_interpolations(&effects, &mut files, &config)?
         {
-            std::thread::sleep(Duration::from_millis(100));
+            if config.deadline_passed() {
+                interpolation_incomplete = true;
+                break;
+            }
+            let sleep = config
+                .deadline_left()
+                .map_or(Duration::from_millis(100), |left| {
+                    left.min(Duration::from_millis(100))
+                });
+            if sleep.is_zero() {
+                interpolation_incomplete = true;
+                break;
+            }
+            std::thread::sleep(sleep);
         }
-        retained_completed = true;
+        retained_completed = !interpolation_incomplete;
     }
-    let cleanup = context(CancelToken::default(), Duration::from_secs(60))
-        .cleanup(Duration::from_secs(60))
+    let budget = config.settlement_budget();
+    let cleanup = context(CancelToken::default(), budget)
+        .cleanup(budget)
         .map_err(|_| RunError::broken("foreground cleanup overflow"))?;
-    let mut residue = false;
+    let mut residue = interpolation_incomplete;
     for effect in effects.iter().rev().filter(|_| !retained_completed) {
         // Exact identity and ready-anchor evidence only. Existing custody
         // settlement never treats a remembered PGID as signalling authority.
@@ -941,12 +1016,12 @@ pub(crate) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
         let file = std::fs::File::from(crate::gate::duplicate_custody(gate).ok()?);
         crate::gate::foreground_diag(&file)
     });
-    drop(gates); // positive delegated closure; no numeric replay
-    if closure.owner_lost {
-        // A run whose owner died was never reported by it. Record only what is
-        // true: custody closed (`interrupted`) or it did not (`unknown`, with
-        // residue). Never success, and never a process identity — the row
-        // grants no signal, reclaim or replay.
+    let unproved = residue || !closure.closed;
+    if closure.owner_lost || unproved {
+        // Record only what is true: custody closed (`interrupted`) or it did
+        // not (`unknown`, with residue). This also covers an unproved closure
+        // whose owner has not yet been observed gone: never success, never a
+        // process identity, no signal or reclaim authority.
         record_owner_loss(
             &config,
             coordinates.as_ref(),
@@ -954,9 +1029,18 @@ pub(crate) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
             closure.closed && !residue,
         );
     }
-    if residue || !closure.closed {
-        return Err(RunError::broken("foreground guard left residue"));
+    if unproved {
+        // Retain exclusion with this verified holder. The owner has reached
+        // its own ceiling and abandoned the wait; the guard performs no
+        // further settlement, records nothing as complete, and stays alive
+        // holding the gate descriptions so a new invocation cannot acquire
+        // the task while this run's resources remain. Releasing the holder is
+        // an explicit later action, never an implication of the deadline.
+        loop {
+            std::thread::sleep(Duration::from_millis(250));
+        }
     }
+    drop(gates); // positive delegated closure; no numeric replay
     if let Some(error) = protocol_error {
         return Err(error);
     }
@@ -1006,8 +1090,22 @@ fn wait_for_closure(mut watch: std::fs::File, config: &Config) -> ClosureWait {
                 owner_lost: true,
             };
         }
+        // The owner's original absolute ceiling is this guard's own bound too:
+        // past it the guard stops settling and retains exclusion instead of
+        // minting a fresh window.
+        if config.deadline_passed() {
+            return ClosureWait {
+                closed: false,
+                owner_lost: config.foreground && owner_is_gone(config),
+            };
+        }
         ticks = ticks.wrapping_add(1);
-        std::thread::sleep(Duration::from_millis(5));
+        let sleep = config
+            .deadline_left()
+            .map_or(Duration::from_millis(5), |left| {
+                left.min(Duration::from_millis(5))
+            });
+        std::thread::sleep(sleep);
     }
 }
 
@@ -1051,7 +1149,10 @@ fn record_owner_loss(
     let crate::id::Scope::Checkout(checkout) = coordinates.owner.scope() else {
         return;
     };
-    let op = context(CancelToken::default(), Duration::from_secs(30));
+    let op = context(
+        CancelToken::default(),
+        config.settlement_budget().min(Duration::from_secs(30)),
+    );
     let Ok(cx) = op.effects() else {
         return;
     };
@@ -1203,8 +1304,76 @@ mod tests {
             home: PathBuf::from("/nonexistent"),
             foreground: true,
             strict: false,
+            deadline_nanos: None,
         };
         assert!(!owner_is_gone(&config));
+    }
+
+    #[test]
+    fn a_guard_settlement_budget_never_passes_the_owners_ceiling() {
+        let base = Config {
+            protocol: HELPER_PROTOCOL,
+            memory: true,
+            owner: ProcessIdentity {
+                boot: crate::ident::boot_identity()
+                    .verified()
+                    .cloned()
+                    .expect("this host's boot identity"),
+                pid: 0,
+                start: ident::ProcessStartIdentity::MacOs {
+                    seconds: 1,
+                    microseconds: 0,
+                },
+            },
+            gates: 1,
+            gate_fds: vec![],
+            run: RunId::new(1, [1; 10]).unwrap(),
+            fence: Fence {
+                resource: crate::id::ResourceId::store(crate::id::Scope::Machine, "gate")
+                    .expect("fixed name"),
+                generation: crate::id::Generation::new(0),
+            },
+            watch: 3,
+            descriptors: None,
+            home: PathBuf::from("/nonexistent"),
+            foreground: true,
+            strict: false,
+            deadline_nanos: None,
+        };
+        let now = effigy_core::run_deadline::system_monotonic_nanos();
+        let bounded = Config {
+            deadline_nanos: Some(now + 50_000_000_000),
+            ..base
+        };
+        let budget = bounded.settlement_budget();
+        assert!(
+            budget <= Duration::from_secs(50) && budget > Duration::from_secs(48),
+            "the owner's remaining ceiling binds before the 60 s allowance: {budget:?}"
+        );
+        // Startup/scheduling time is not added back: the absolute nanos are the
+        // ceiling, so a second later the same guard budget has shrunk.
+        std::thread::sleep(Duration::from_secs(1));
+        let later = bounded.settlement_budget();
+        assert!(
+            later <= Duration::from_secs(49) && later > Duration::from_secs(47),
+            "a guard never restarts the owner's remaining duration: {later:?}"
+        );
+        let spent = Config {
+            deadline_nanos: Some(now.saturating_sub(1_000_000_000)),
+            ..bounded
+        };
+        assert_eq!(
+            spent.settlement_budget(),
+            Duration::ZERO,
+            "a spent ceiling mints no fresh window"
+        );
+        assert!(spent.deadline_passed());
+        let off = Config {
+            deadline_nanos: None,
+            ..spent
+        };
+        assert_eq!(off.settlement_budget(), Duration::from_secs(60));
+        assert!(!off.deadline_passed());
     }
 
     #[test]
