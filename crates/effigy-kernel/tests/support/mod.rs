@@ -271,6 +271,28 @@ pub struct Entry {
     mtime: (i64, i64),
     ino: u64,
 }
+/// Assert a read left the tree it found: the same entries, and every one of them
+/// with the same mode, size, mtime and inode.
+///
+/// The state directory's own mtime may move. A read of a checkpointed store
+/// takes one query-only SQLite connection, which materialises the write-ahead
+/// index there and lets the close remove it again, so no file is created, left
+/// behind or changed and the directory entry set is identical (effigy#999).
+pub fn assert_read_left_tree_unchanged(root: &Path, before: &BTreeMap<PathBuf, Entry>) {
+    let after = snapshot(root);
+    assert_eq!(
+        after.keys().collect::<Vec<_>>(),
+        before.keys().collect::<Vec<_>>(),
+        "a read created or removed an entry"
+    );
+    let state = PathBuf::from(".effigy/state");
+    for (path, entry) in before {
+        if *path == state {
+            continue;
+        }
+        assert_eq!(after.get(path), Some(entry), "a read changed {path:?}");
+    }
+}
 /// Every entry under `root` with mode, size, mtime and inode: an empty diff
 /// between two snapshots means nothing was created, changed or replaced.
 pub fn snapshot(root: &Path) -> BTreeMap<PathBuf, Entry> {

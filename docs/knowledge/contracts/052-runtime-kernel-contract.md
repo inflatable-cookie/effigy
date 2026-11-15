@@ -884,7 +884,7 @@ states that contribution and what it excludes. Write-ahead logging is what lets 
 reader and a writer share the store; it replaced the rollback journal in
 effigy#275 after concurrent runs refused each other with `Busy`.
 
-Reads create no files and copy nothing: `Store::read` is one read-only SQLite
+Reads copy nothing and leave nothing behind: `Store::read` is one SQLite
 connection with `PRAGMA query_only` and a short busy timeout (K1, Q-011). A
 store with write-ahead side files is read through SQLite's own WAL with a plain
 read-only connection (`mode=ro`), so a writer beside the read is
@@ -894,11 +894,24 @@ read never asks for a read-only shared-memory index: that left the index
 unwritable and the next write in this process failed. SQLite may update read
 marks in an existing shared-memory index, including its modification time;
 this is WAL synchronization, not a persistent state write. Its type, owner,
-mode, identity and length remain unchanged. No read may create a side file or
-change the database or WAL bytes or metadata. A
-checkpointed store without side files is an immutable open, which needs no lock
-and no index. A read that fails is `Unknown`: the foreground path warns once and
-proceeds, and `runs` reports the journal as unavailable rather than refusing.
+mode, identity and length remain unchanged.
+
+A checkpointed store without side files is read through one query-only
+read-write connection, never an immutable one (effigy#999). An immutable open
+takes no lock and sees no checkpoint, so a writer that opens beside it and
+checkpoints its log into the database mid-read leaves the reader a mixture of
+the old and the new page trees: the reader reported `database disk image is
+malformed` for a store that was never damaged, or answered with a torn row.
+The query-only connection is SQLite's own WAL reader: it sees committed
+records, a checkpoint is a consistent page image, and a writer beside it is no
+obstacle. It materialises the write-ahead index for the length of the read and
+removes it again at close, so it creates no file that survives it and changes
+no database byte, mode, size or identity; only the state directory's own
+modification time moves. A root that cannot be written (a copied or read-only
+checkout) has no writer to race, so it is still an immutable open, which needs
+no lock, no index and no file at all. A read that fails is `Unknown`: the
+foreground path warns once and proceeds, and `runs` reports the journal as
+unavailable rather than refusing.
 
 Every write takes the store's own writer gate (`Store(kernel)`), then one short
 `BEGIN IMMEDIATE` transaction, and commits it. The gate serializes Effigy's

@@ -65,8 +65,11 @@ claims; it never reconstructs ownership from a runtime scan. A record written
 by the port-range build keeps decoding, and its `ports` and separate `loopback`
 assignment documents are dropped on the next write.
 
-`read` is Observe-only and creates no files or gates. An unreadable or corrupt
-store is Unknown; nothing falls back to a legacy file.
+`read` is Observe-only: it creates no Effigy file and no gate, and it leaves
+nothing behind. A checkpointed store's read materialises SQLite's own
+write-ahead index for the length of the read and the close removes it again
+(contract 052, effigy#999). An unreadable or corrupt store is Unknown; nothing
+falls back to a legacy file.
 
 ## Callers and reload
 

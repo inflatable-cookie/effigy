@@ -274,7 +274,7 @@ fn store_reads_are_pure_including_on_a_read_only_root() {
         let reader = reader.verified().unwrap();
         assert!(reader.resource(&task("a")).verified().is_some());
     }
-    assert_eq!(snapshot(home.path()), before, "a read changed state");
+    assert_read_left_tree_unchanged(home.path(), &before);
     // Read-only directory and file: the reader takes an in-memory snapshot of
     // the checkpointed store, which creates nothing at all. SQLite's own
     // write-ahead side files go first, so "creates nothing" is measured.
@@ -1442,6 +1442,63 @@ fn store_read_beside_a_continuous_writer_is_one_plain_read() {
     );
 }
 
+/// A reader that opened a checkpointed store keeps reading whole records while
+/// a writer commits and its close checkpoint rewrites the database pages under
+/// the reader (effigy#999).
+///
+/// An immutable open takes no lock and sees no checkpoint, so it read a mixture
+/// of the old and the new page trees. The flake census saw
+/// `database disk image is malformed` from exactly that mixture; this proof
+/// sees a committed row disappear instead.
+#[test]
+fn store_read_beside_a_checkpointing_writer_sees_whole_records() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .txn(&cx, |txn| {
+            for index in 0..20 {
+                txn.resource(&task(&format!("seed-{index}")), "task")?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    drop(store);
+    assert!(
+        !root.path().join(format!("{DB_NAME}-wal")).exists(),
+        "the writer left a hot log, so the reader never took the checkpointed path"
+    );
+    let observed = reader(home.path());
+    let reader = observed.verified().unwrap();
+    // Warm the root page this reader keeps across the writer's checkpoint.
+    assert!(reader.resource(&task("seed-0")).verified().is_some());
+    let mut writer = Store::open(&cx, &root).unwrap();
+    writer
+        .txn(&cx, |txn| {
+            for index in 0..3000 {
+                txn.resource(&task(&format!("later-{index}")), "task")?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    // Closing the writer checkpoints its log into `kernel.db` while the reader
+    // above still holds the file.
+    drop(writer);
+    for index in 0..20 {
+        match reader.resource(&task(&format!("seed-{index}"))) {
+            Observed::Verified(..) => {}
+            other => panic!(
+                "a read beside a closing writer saw no whole record for seed-{index}: {other:?}"
+            ),
+        }
+    }
+    assert!(
+        reader.resource(&task("later-0")).verified().is_some(),
+        "a read beside a closing writer never saw the record it committed"
+    );
+}
+
 #[test]
 fn store_damaged_journal_reads_unknown_without_a_crash() {
     let home = home();
@@ -1636,7 +1693,7 @@ fn store_observations_preserve_unicode_and_reserved_path_bytes() {
         .resource(&task("unicode"))
         .verified()
         .is_some());
-    assert_eq!(snapshot(&home), before);
+    assert_read_left_tree_unchanged(&home, &before);
 }
 
 #[test]
