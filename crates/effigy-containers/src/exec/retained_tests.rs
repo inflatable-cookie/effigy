@@ -303,29 +303,53 @@ fn walk(root: &Path) -> Vec<PathBuf> {
     found
 }
 
+/// How the fixture's stream must read after redaction, in order: the line that
+/// names the file, the value's own line with the marker in place of the value,
+/// then the runtime's progress. Asserting the order (not just presence) is what
+/// makes a lost or reordered line a failure.
+const REDACTED_STREAM: [&str; 4] = [
+    "read compose-",
+    "DATABASE_URL=[REDACTED]",
+    "creating app",
+    "starting app",
+];
+
 /// The capture's actual shape for a delivered printable value: the projection
 /// redacts in place — the value's own line becomes the marker — and everything
-/// the runtime wrote before and after it survives. (`Redactor::blocked`, the
-/// only stop, needs a secret that contains every printable byte; the fixture's
-/// value is an ordinary printable secret, so the stop is not this path and is
-/// covered by the kernel's own custody tests.)
-fn assert_redacted_in_place(text: &str, before: &str, after: &str) {
+/// the runtime wrote before and after it survives, in order. (`Redactor::blocked`,
+/// the only stop, needs a secret that contains every printable byte; the
+/// fixture's value is an ordinary printable secret, so the stop is not this path
+/// and is covered by the kernel's own custody tests.)
+fn assert_redacted_in_place(text: &str) {
     assert!(
         !text.contains(SENTINEL),
         "the delivered value never appears: {text}"
     );
-    assert!(
-        text.contains("[REDACTED]"),
-        "the value's own line is replaced by the marker: {text}"
-    );
-    assert!(
-        text.contains(before),
-        "the bytes before the value survive: {text}"
-    );
-    assert!(
-        text.contains(after),
-        "the bytes after the value survive: {text}"
-    );
+    let mut cursor = 0;
+    for needle in REDACTED_STREAM {
+        let Some(found) = text[cursor..].find(needle) else {
+            panic!("expected `{needle}` after byte {cursor}, in this order: {text}");
+        };
+        cursor += found + needle.len();
+    }
+}
+
+/// The same order as [`REDACTED_STREAM`], over the lines a streaming launch
+/// reported to its caller.
+fn assert_reported_in_order(lines: &[String]) {
+    let mut cursor = 0;
+    for needle in REDACTED_STREAM {
+        let Some(found) = lines[cursor..]
+            .iter()
+            .position(|line| line.contains(needle))
+        else {
+            panic!(
+                "expected a line containing `{needle}` after line {cursor}; reported lines were: {}",
+                lines.join(" | ")
+            );
+        };
+        cursor += found + 1;
+    }
 }
 
 /// A host backend and a value-free VM invocation keep their current path: no
@@ -390,7 +414,7 @@ fn a_secret_bearing_vm_capture_runs_under_retained_custody() {
         .expect("retained capture");
         assert!(output.status.success(), "{output:?}");
         let stdout = String::from_utf8_lossy(&output.stdout);
-        assert_redacted_in_place(&stdout, "read compose-", "starting app");
+        assert_redacted_in_place(&stdout);
         let record = fs::read_to_string(&observed).expect("the child ran");
         assert!(
             record.contains(&format!("DATABASE_URL=postgres://fixture/{SENTINEL}")),
@@ -431,11 +455,8 @@ fn a_secret_bearing_vm_detached_launch_keeps_its_record_redacted() {
         assert!(output.status.success(), "{output:?}");
         let record_path = crate::exec::retained_backend_log_path(repo, "stack");
         let record = fs::read_to_string(&record_path).expect("retained backend record");
-        assert!(
-            lines.iter().any(|line| line == "starting app"),
-            "the runtime's own lines reach the caller: {lines:?}; record: {record:?}"
-        );
-        assert_redacted_in_place(&record, "read compose-", "starting app");
+        assert_reported_in_order(&lines);
+        assert_redacted_in_place(&record);
         assert_eq!(compose_env_files(state).len(), 1);
     });
     assert_eq!(cleanup, CleanupOutcome::Complete);

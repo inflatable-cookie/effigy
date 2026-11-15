@@ -537,19 +537,32 @@ Effigy ownership:
   retains the original owner and leaves its entry for review
 - a captured launch's output is redacted **in place**: the delivered value's own
   bytes become `[REDACTED]` where they were (`DATABASE_URL=[REDACTED]`), and
-  everything the runtime wrote before and after it is kept. The projection's one
-  stopping case is `Redactor::blocked`: when every printable ASCII byte occurs in
-  some secret, no replacement byte exists that a reader could not re-join, so
-  `sink` emits nothing further for that stream and records the capture as
-  truncated rather than leak. A detached launch feeds its retained record first,
-  so that record is marked failed rather than silently short. Either way the
-  operator keeps the process exit status, and a detached launch keeps its
-  record's bounded tail; the invariant is that no secret is emitted, never that
-  the projection stops at an ordinary printable value
+  everything the runtime wrote before and after it is kept, in order. The one
+  stopping case is `Redactor::blocked`: when every candidate printable ASCII byte
+  occurs in some secret there is no replacement a reader could not re-join, so
+  `ProcessCore::sink` emits nothing further for that stream and records the
+  capture as truncated rather than leak. A caller of the captured path then holds
+  only the bytes emitted before that point; the detached path relays those same
+  bytes, so its retained record also stops there and gains nothing after it, and
+  Effigy does not add a marker to the record. The kernel's separate canonical
+  output consumer (`spawn_logged_auxiliary` and the styled routes) builds its
+  writer failed for a blocked secret set, marks that log truncated and writes no
+  bytes for that launch at all. The invariant in every case is that no secret is emitted, never that the
+  projection stops at an ordinary printable value: an ordinary value loses
+  nothing, and a blocked one keeps the exit status and the bytes captured before
+  the stop
 - limits of this slice: explicit removal borrows the file owner, retaining its
   descriptor and lock after failure, and drop does not retry a failed removal.
   The retained Run's own settlement is the production cleanup authority; a
   direct-child route still refuses rather than approximating it.
+  A captured invocation can also lose trailing bytes the runtime wrote just
+  before it exited: the kernel's capture drains and then observes the exit, and
+  the retained capture path takes the drained queues without a further post-exit
+  drain, so those bytes are dropped rather than kept (output lost, never leaked:
+  a failed Compose capture can therefore miss its diagnostic tail). This is a
+  pre-existing kernel capture limit, unchanged by this slice and named here so it
+  is not mistaken for the redaction behaviour above; planner lead `b80d7f37`
+  dispatches a post-exit drain straight after this merges.
   The live owner retains its quarantine name across a failed cleanup and can
   retry that exact phase. The phase is not durable: there is no durable attempt
   or group binding, no production helper handoff, and no caller-drop Unknown
