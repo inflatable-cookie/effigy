@@ -197,6 +197,32 @@ impl OwnedChild {
         }
     }
 
+    /// Reap the fixture's direct child without waiting for kernel helpers.
+    ///
+    /// Use this only when a fixture must release an escaped process after its
+    /// owner exits. The helpers remain owned by this guard and are still
+    /// observed by `wait_with_output` or `Drop` after the fixture releases the
+    /// escaped process.
+    pub fn wait_for_leader(&mut self) -> io::Result<ExitStatus> {
+        if let Some(status) = self.reaped {
+            return Ok(status);
+        }
+        loop {
+            self.capture_kernel_helpers()?;
+            if let Some(status) = self.try_wait()? {
+                self.capture_kernel_helpers()?;
+                return Ok(status);
+            }
+            if Instant::now() >= self.deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "fixture child deadline",
+                ));
+            }
+            std::thread::sleep(POLL);
+        }
+    }
+
     /// Stop the group within its grace, then escalate, and reap the leader.
     pub fn terminate_and_wait(&mut self) -> io::Result<ExitStatus> {
         self.capture_kernel_helpers()?;
