@@ -33,6 +33,11 @@ pub const RUN_DEADLINE_ENV: &str = "EFFIGY_RUN_DEADLINE_MS";
 /// Charge it against a phase's remaining time, never in addition to it.
 pub const SETTLEMENT_ALLOWANCE: Duration = Duration::from_secs(10);
 
+/// A slice of the allowance reserved for the terminal record and the process
+/// exit itself. The v2 terminal report exchange stops this far before the
+/// ceiling so those final writes still fit inside the original deadline.
+pub const EVIDENCE_RESERVE: Duration = Duration::from_millis(250);
+
 /// The phases whose remaining budget is read back into the run's evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {

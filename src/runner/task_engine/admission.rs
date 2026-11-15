@@ -63,6 +63,11 @@ pub(in crate::runner) const REQUEST_ENV: &str = "EFFIGY_ADMISSION_REQUEST";
 pub(in crate::runner) const ADMITTED_ENV: &str = "EFFIGY_ADMITTED";
 /// The opt-in to the reported custody protocol. Unset or empty keeps v1.
 pub(in crate::runner) const PROTOCOL_ENV: &str = "EFFIGY_ADMISSION_PROTOCOL";
+/// Owned tests drive the late-grant decision branch at the instant the grant
+/// is read, by advancing the injected clock there. Production never sets it.
+#[cfg(test)]
+pub(in crate::runner) static LATE_GRANT_AT_DECISION: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 /// The hook's process label in the run journal; `run logs` never shows it.
 pub(in crate::runner) const HOOK_LABEL: &str = "admission hook";
 const REQUEST_SCHEMA: &str = "effigy.admission-request.v1";
@@ -641,7 +646,16 @@ fn late_grant_error(
     now: Instant,
     deadline: Option<Instant>,
 ) -> Option<RunnerError> {
-    grant_is_late(now, deadline).then(|| deadline_refusal(target, run_id))
+    grant_is_late(now, deadline).then(|| {
+        refusal_with(
+            target,
+            run_id,
+            "deadline",
+            "the admission grant arrived after the run deadline; the task did not run".to_owned(),
+            "raise `EFFIGY_RUN_DEADLINE_MS`, or unset it to run without an invocation deadline"
+                .to_owned(),
+        )
+    })
 }
 
 fn parse_ack(line: &str) -> Option<u64> {
@@ -800,6 +814,12 @@ pub(super) fn admit(
         if let Some(line) = decision_line(&stdout, matches!(exited, Observed::Verified(..))) {
             return match parse_decision(&line) {
                 Decision::Admit => {
+                    #[cfg(test)]
+                    if LATE_GRANT_AT_DECISION.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                        // The grant is buffered and read here; the controlled
+                        // clock crosses the boundary at this exact decision.
+                        effigy_core::run_deadline::advance_clock_for_tests(Duration::from_secs(60));
+                    }
                     // A grant that arrives after the absolute deadline is a
                     // late grant: the workload must not start, even though the
                     // hook finally answered (effigy#992).
@@ -1420,6 +1440,79 @@ mod tests {
         let _ = run.close(WorkloadOutcome::NotStarted);
     }
 
+    /// A real `admit` run: the hook prints `admit`, the decision is read, and
+    /// the controlled clock crosses the boundary at that exact read. The
+    /// actual decision branch must refuse the grant before any workload.
+    #[test]
+    fn a_grant_read_after_the_boundary_is_refused_by_the_decision_branch() {
+        use std::time::Duration;
+
+        let _lock = crate::contract_test_support::lock_test();
+        let root = tempfile::tempdir().expect("root");
+        let hook_path = root.path().join("late-grant.sh");
+        std::fs::write(
+            &hook_path,
+            "#!/bin/sh\ntrap 'exit 0' TERM\necho admit\nwhile :; do sleep 0.1; done\n",
+        )
+        .expect("hook script");
+        let target = TaskTarget {
+            root: root.path().to_path_buf(),
+            catalog: String::new(),
+            task: "heavy".into(),
+            surface: effigy_core::task_selection::TaskSurface::Published,
+            profile: None,
+            shared_lock: None,
+            argument_scope: None,
+            label: "heavy".into(),
+        };
+        let deadline =
+            effigy_core::run_deadline::RunDeadline::from_origin(std::time::Instant::now(), 30_000)
+                .expect("deadline");
+        effigy_core::run_deadline::clear_clock_for_tests();
+        effigy_core::run_deadline::inject_for_tests(Some(deadline));
+        let mut run =
+            super::super::run::TaskRun::begin_foreground(super::super::run::TaskRunRequest {
+                target: &target,
+                lock_wait_ms: 0,
+                custody: false,
+                scratch: false,
+                managed_run_token: None,
+                args: &[],
+                key: None,
+                admission: None,
+                workspace_admission: None,
+                cwd: None,
+            })
+            .expect("foreground run");
+        LATE_GRANT_AT_DECISION.store(true, std::sync::atomic::Ordering::SeqCst);
+        let error = super::admit(
+            &mut run,
+            &target,
+            effigy_manifest::ManifestTaskAdmission::Heavy,
+            &format!("exec /bin/sh '{}'", hook_path.display()),
+            Duration::from_secs(60),
+            root.path(),
+        )
+        .expect_err("a late grant is refused");
+        let RunnerError::AdmissionRefused { details_json, .. } = &error else {
+            panic!("expected the typed admission refusal: {error}");
+        };
+        assert!(
+            details_json.contains("\"decision\":\"deadline\""),
+            "{details_json}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("grant arrived after the run deadline"),
+            "{error}"
+        );
+        effigy_core::run_deadline::clear_injected_for_tests();
+        effigy_core::run_deadline::clear_clock_for_tests();
+        effigy_core::run_deadline::clear_phases();
+        let _ = run.close(WorkloadOutcome::NotStarted);
+    }
+
     #[test]
     fn the_late_grant_branch_refuses_at_and_after_the_boundary() {
         let target = TaskTarget {
@@ -1448,7 +1541,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("expired while admission was waiting"),
+                .contains("grant arrived after the run deadline"),
             "{error}"
         );
         assert!(

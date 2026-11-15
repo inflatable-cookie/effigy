@@ -2976,35 +2976,50 @@ fn check_foreground_owner_loss(pin_held: bool, owner_end: OwnerEnd, strict: bool
     }
     // The owner's own guard close sends its registration EOF.
     drop(owner_pipe);
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while !guard.is_finished() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    assert!(
-        guard.is_finished(),
-        "the guard must settle a run whose owner died (owner pid {owner_pid})"
-    );
-    let settled = guard.join().unwrap();
     if pin_held {
+        // An unproved closure retains exclusion: the guard records the
+        // unknown outcome and stays alive holding the gate. It must not
+        // return or release the descriptions.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !guard.is_finished() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
         assert!(
-            settled.is_err(),
-            "unclosed descendant custody is residue, never a clean close"
+            !guard.is_finished(),
+            "an unproved closure keeps the verified holder alive (owner pid {owner_pid})"
         );
+        assert!(
+            matches!(
+                crate::gate::Gate::probe(&cx.operation().observe().unwrap(), &root, &owner),
+                Observed::Verified(crate::gate::GateState::Held(_), _)
+            ),
+            "an unproved closure retains the checkout gate"
+        );
+    } else {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !guard.is_finished() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            guard.is_finished(),
+            "the guard must settle a run whose owner died (owner pid {owner_pid})"
+        );
+        let settled = guard.join().unwrap();
+        assert!(settled.is_ok(), "closed descendant custody settles cleanly");
+        // A zombie owner is reaped when `owner_child` leaves this scope, after
+        // the guard has observed it.
+        assert!(
+            matches!(
+                crate::gate::Gate::probe(&cx.operation().observe().unwrap(), &root, &owner),
+                Observed::Verified(crate::gate::GateState::Free, _)
+            ),
+            "the settled run releases its checkout gate"
+        );
+        let next =
+            crate::gate::Gate::acquire(&cx, &root, std::slice::from_ref(&owner), Wait::FailFast)
+                .expect("a settled run admits the next invocation");
+        drop(next);
     }
-    // A zombie owner is reaped when `owner_child` leaves this scope, after the
-    // guard has observed it.
-
-    // The gate is released, so the next invocation is admitted.
-    assert!(
-        matches!(
-            crate::gate::Gate::probe(&cx.operation().observe().unwrap(), &root, &owner),
-            Observed::Verified(crate::gate::GateState::Free, _)
-        ),
-        "the settled run releases its checkout gate"
-    );
-    let next = crate::gate::Gate::acquire(&cx, &root, std::slice::from_ref(&owner), Wait::FailFast)
-        .expect("a settled run admits the next invocation");
-    drop(next);
 
     // Its own record is the honest outcome: never success, no identity. A
     // strict run's record waits in the ring, and no store is created for it.

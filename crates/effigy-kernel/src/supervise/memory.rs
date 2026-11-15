@@ -1016,11 +1016,12 @@ pub(crate) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
         let file = std::fs::File::from(crate::gate::duplicate_custody(gate).ok()?);
         crate::gate::foreground_diag(&file)
     });
-    if closure.owner_lost {
-        // A run whose owner died was never reported by it. Record only what is
-        // true: custody closed (`interrupted`) or it did not (`unknown`, with
-        // residue). Never success, and never a process identity — the row
-        // grants no signal, reclaim or replay.
+    let unproved = residue || !closure.closed;
+    if closure.owner_lost || unproved {
+        // Record only what is true: custody closed (`interrupted`) or it did
+        // not (`unknown`, with residue). This also covers an unproved closure
+        // whose owner has not yet been observed gone: never success, never a
+        // process identity, no signal or reclaim authority.
         record_owner_loss(
             &config,
             coordinates.as_ref(),
@@ -1028,16 +1029,18 @@ pub(crate) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
             closure.closed && !residue,
         );
     }
-    // The guard exits by the owner's ceiling and does not settle further. The
-    // exclusion is released with this process; the residue is recorded as
-    // unknown/incomplete (never complete) and the next invocation reconciles
-    // it. This is the planner's bounded-handoff design: a guard that cannot
-    // prove closure records the retained resources and exits, and nothing here
-    // claims closure.
-    drop(gates);
-    if residue || !closure.closed {
-        return Err(RunError::broken("foreground guard left residue"));
+    if unproved {
+        // Retain exclusion with this verified holder. The owner has reached
+        // its own ceiling and abandoned the wait; the guard performs no
+        // further settlement, records nothing as complete, and stays alive
+        // holding the gate descriptions so a new invocation cannot acquire
+        // the task while this run's resources remain. Releasing the holder is
+        // an explicit later action, never an implication of the deadline.
+        loop {
+            std::thread::sleep(Duration::from_millis(250));
+        }
     }
+    drop(gates); // positive delegated closure; no numeric replay
     if let Some(error) = protocol_error {
         return Err(error);
     }

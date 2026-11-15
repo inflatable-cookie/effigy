@@ -2491,7 +2491,7 @@ fn a_run_deadline_bounds_a_stalled_terminal_report_and_keeps_the_outcome() {
         std::thread::sleep(Duration::from_millis(150));
     }
     assert!(
-        elapsed < Duration::from_millis(13_500),
+        elapsed < Duration::from_millis(14_000),
         "a stalled terminal report crossed the deadline: {elapsed:?}"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);

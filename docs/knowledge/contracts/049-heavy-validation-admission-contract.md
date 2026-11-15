@@ -675,11 +675,15 @@ message naming the allowance (`run_deadline.rs:154-170`, `src/bin/effigy.rs`).
   `min(60s, remaining)`, and the closure poll sleeps no longer than the
   remaining time (`supervise/memory.rs`; `settlement_budget`, `deadline_left`,
   `wait_for_closure`). A guard that reaches the ceiling with an unproved
-  closure or residue records `unknown`/`incomplete` (never complete), performs
-  no further settlement and exits; the exclusion is released with that process
-  and the next invocation reconciles the recorded residue. That is the
-  planner's bounded handoff: the guard has receipts, not the owner's
-  direct-child handles, and a handoff is never reported as complete. The task returns
+  closure or residue records `unknown`/`incomplete` (never complete) and
+  **remains alive as the verified holder of the exclusion**: it performs no
+  further settlement, and a new invocation cannot acquire the gate until that
+  holder is explicitly stopped. Releasing the holder is an explicit later
+  action, never an implication of the deadline. The v2 terminal report
+  exchange also stops `EVIDENCE_RESERVE` (250 ms) before the ceiling so the
+  terminal record and the process exit still fit inside the original deadline.
+  The guard has receipts, not the owner's direct-child handles, and a handoff
+  is never reported as complete. The task returns
   `effigy.run-deadline.v1` with `outcome: "incomplete"`, `residue: true`,
   `settlement_notes` naming the retained resources and the deadline evidence,
   and exits 124 (`src/runner/execute/pipeline/standard.rs`;
