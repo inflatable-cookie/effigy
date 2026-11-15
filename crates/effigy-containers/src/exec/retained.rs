@@ -198,6 +198,9 @@ pub(super) fn capture(
         Observed::Verified(exit, _) => exit,
         other => return Err(unresolved(process, &cx, label, &other)),
     };
+    process
+        .finish_capture(cx.operation())
+        .map_err(|error| launch(label, format!("could not finish captured output: {error}")))?;
     finish(&process, owner.run, exit, label)?;
     let (stdout, stderr) = process.take_stream_output();
     Ok(Output {
@@ -282,6 +285,9 @@ pub(super) fn detached(
         }
         std::thread::sleep(RELAY_INTERVAL);
     };
+    process
+        .finish_capture(cx.operation())
+        .map_err(|error| launch(label, format!("could not finish captured output: {error}")))?;
     relay(&process, &mut output, &record, &mut offset, on_line)?;
     finish(&process, owner.run, exit, label)?;
     let retained = record.retain_tail();

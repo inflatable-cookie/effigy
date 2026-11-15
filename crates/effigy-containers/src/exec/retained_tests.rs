@@ -54,10 +54,6 @@ fn fake_colima(root: &Path, name: &str, status: i32) -> PathBuf {
          fi\n\
          echo 'creating app'\n\
          echo 'starting app'\n\
-         # A runtime finishes after it writes, not in the same instant: the pause\n\
-         # keeps this fixture about the projection, not about the launcher's\n\
-         # exit-versus-drain race, which is reported separately (effigy#1003).\n\
-         sleep 0.05\n\
          exit {status}\n",
         log = log.display()
     );
@@ -425,6 +421,44 @@ fn a_secret_bearing_vm_capture_runs_under_retained_custody() {
             1,
             "the file is still held until the group closes"
         );
+    });
+    assert_eq!(cleanup, CleanupOutcome::Complete);
+}
+
+/// A leader can exit while a descendant still owns the output pipe. Capture
+/// keeps draining until EOF so bytes already written by the launch survive the
+/// leader's reaped-exit observation.
+#[test]
+fn a_retained_capture_drains_output_after_the_leader_exits() {
+    let ((), cleanup) = harness(|run, cx, repo, _state| {
+        let bin = repo.join("late-tail");
+        fs::create_dir_all(&bin).expect("fake bin dir");
+        let program = bin.join("colima");
+        fs::write(
+            &program,
+            "#!/bin/sh\nf=\"\"\nprev=\"\"\nfor a in \"$@\"; do if [ \"$prev\" = \"--env-file\" ]; then f=\"$a\"; fi; prev=\"$a\"; done\necho \"read $(basename \"$f\")\"\ncat \"$f\"\necho 'creating app'\necho 'starting app'\nprintf 'first line\\nsecond line\\n'\n(sleep 0.05; printf 'last line\\n') &\nexit 0\n",
+        )
+        .expect("fake colima");
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).expect("fake colima mode");
+        let output = with_helper(|| {
+            retained::capture(
+                repo,
+                program.as_os_str(),
+                &compose_args(),
+                "retained capture tail",
+                &secret_env(),
+                Instant::now() + Duration::from_secs(60),
+                &mut RetainedComposeOwner::new(run, cx),
+            )
+        })
+        .expect("retained capture");
+        assert!(output.status.success(), "{output:?}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("first line\nsecond line\nlast line\n"),
+            "{stdout:?}"
+        );
+        assert_redacted_in_place(&stdout);
     });
     assert_eq!(cleanup, CleanupOutcome::Complete);
 }
