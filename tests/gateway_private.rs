@@ -1092,11 +1092,11 @@ fn private_gateway_cli_serves_verified_https_and_isolates_concurrent_instances()
 fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
     // Text failures retain the original error, which detached JSON deliberately
     // reduces to structural state; each front proves its committed claim once.
-    managed_host_dependent_replacement_proof(false);
-    managed_host_dependent_replacement_proof(true);
+    managed_host_dependent_replacement_proof();
 }
 
-fn managed_host_dependent_replacement_proof(startup_json: bool) {
+fn managed_host_dependent_replacement_proof() {
+    let mut phase_started = Instant::now();
     let fixture = managed_host_fixture();
     let effects = HostEffectSentinels::new(fixture.path());
     let docker_dir = std::env::split_paths(&effects.env_path)
@@ -1268,11 +1268,14 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     println!("dependent replacement: cold managed listener startups");
     let mut children = checkouts
         .iter()
-        .map(|(checkout, ..)| {
-            let args: &[&str] = if startup_json {
-                &["up", "--detach", "--json"]
-            } else {
+        .enumerate()
+        .map(|(index, (checkout, ..))| {
+            // Keep one text-front witness in the same fixture as the complete
+            // JSON replacement proof, avoiding a second cold gateway setup.
+            let args: &[&str] = if index == 0 {
                 &["up", "--detach"]
+            } else {
+                &["up", "--detach", "--json"]
             };
             spawn_container_cli(checkout, &container_cleanup, args)
         })
@@ -1303,56 +1306,28 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
             }
         }
     }
-    if !startup_json {
-        for result in &startup_results {
+    let mut reports = Vec::with_capacity(2);
+    for (index, result) in startup_results.into_iter().enumerate() {
+        if index == 0 {
             assert!(
                 result.status.success(),
                 "cold text startup failed: {result:?}"
             );
+        } else {
+            reports.push(parse_json_success(result));
         }
-        let table = effigy_gateway::routes::RouteTable::load(&private_gateway.join("routes.json"))
-            .expect("committed endpoint routes");
-        for (checkout, profile, _, body) in &checkouts {
-            let route = table
-                .routes
-                .values()
-                .find(|route| {
-                    route.project == checkout.display().to_string()
-                        && route
-                            .managed_listener
-                            .as_ref()
-                            .is_some_and(|owner| owner.owner.ends_with("|app"))
-                })
-                .expect("each cold scope committed its app endpoint");
-            let state = read_json_file(&host_lifecycle::path(checkout, "web", profile, "app"));
-            let response = wait_for_listener_https(
-                https_address,
-                &ca_path,
-                &route.domain,
-                &state,
-                body,
-                Instant::now() + Duration::from_secs(5),
-            );
-            assert!(
-                response.contains("200 OK")
-                    && response
-                        .contains(&format!("{body}@{}", state["process"]["identity"]["pid"])),
-                "cold endpoint did not reach its published listener: {response}"
-            );
-        }
-        assert!(
-            !effects.log.exists() || fs::read(&effects.log).unwrap_or_default().is_empty(),
-            "cold startup invoked a host-global effect"
-        );
-        return;
     }
-    let reports = startup_results
-        .into_iter()
-        .map(parse_json_success)
-        .collect::<Vec<_>>();
-    assert_eq!(reports.len(), 3);
+    assert_eq!(reports.len(), 2);
+    println!(
+        "dependent replacement phase: cold JSON starts {:?}",
+        phase_started.elapsed()
+    );
+    phase_started = Instant::now();
     println!("dependent replacement: cold scopes published");
-    for (index, report) in reports.iter().enumerate() {
+    let table = effigy_gateway::routes::RouteTable::load(&private_gateway.join("routes.json"))
+        .expect("committed endpoint routes");
+    let mut effective_domains = Vec::with_capacity(checkouts.len());
+    for (index, (checkout, profile, declared_domain, _)) in checkouts.iter().enumerate() {
         assert!(
             fixture
                 .path()
@@ -1360,30 +1335,43 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
                 .is_file(),
             "fixture listener should not answer readiness until it is ready"
         );
-        let listener = &report["managed_host_listeners"][0];
-        assert_eq!(listener["status"], "ready");
-        assert_eq!(listener["declared_route_domain"], checkouts[index].2);
+        let state = read_json_file(&host_lifecycle::path(checkout, "web", profile, "app"));
+        assert_eq!(state["status"], "ready");
+        let route = table
+            .routes
+            .values()
+            .find(|route| {
+                route.project == checkout.display().to_string()
+                    && route
+                        .managed_listener
+                        .as_ref()
+                        .is_some_and(|owner| owner.owner.ends_with("|app"))
+            })
+            .expect("each cold scope committed its app endpoint");
+        let domain = route.domain.clone();
         if index == 0 {
-            assert_eq!(listener["route_domain"], checkouts[index].2);
+            assert_eq!(domain, *declared_domain);
         } else {
             // A linked worktree publishes its checkout-scoped name instead.
-            assert_ne!(listener["route_domain"], checkouts[index].2);
-            assert!(listener["route_domain"]
-                .as_str()
-                .is_some_and(|name| name.ends_with(".test")));
+            assert_ne!(domain, *declared_domain);
+            assert!(domain.ends_with(".test"));
+            let listener = &reports[index - 1]["managed_host_listeners"][0];
+            assert_eq!(listener["status"], "ready");
+            assert_eq!(listener["declared_route_domain"], *declared_domain);
+            assert_eq!(listener["route_domain"], domain);
+            assert_eq!(listener["address"], state["address"]);
+            assert_eq!(listener["internal_url"], state["internal_url"]);
+            assert_eq!(listener["public_url"], format!("https://{domain}"));
+            assert_eq!(listener["route_tls"], true);
         }
-        assert_eq!(listener["route_tls"], true);
+        effective_domains.push(domain);
     }
     // The rest of the proof uses each checkout's effective name, so routes,
     // Host headers and dependent URLs are checked against what was published.
     let checkouts = checkouts
         .iter()
-        .zip(&reports)
-        .map(|((checkout, profile, _declared, body), report)| {
-            let effective = report["managed_host_listeners"][0]["route_domain"]
-                .as_str()
-                .expect("reported route domain")
-                .to_owned();
+        .zip(effective_domains)
+        .map(|((checkout, profile, _declared, body), effective)| {
             (checkout.clone(), *profile, effective, *body)
         })
         .collect::<Vec<_>>();
@@ -1424,10 +1412,6 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     for (index, ((checkout, profile, domain, body), state)) in
         checkouts.iter().zip(app_states.iter()).enumerate()
     {
-        let listener_result = &reports[index]["managed_host_listeners"][0];
-        assert_eq!(listener_result["address"], state["address"]);
-        assert_eq!(listener_result["internal_url"], state["internal_url"]);
-        assert_eq!(listener_result["public_url"], format!("https://{domain}"));
         let socket_probe = TcpStream::connect_timeout(&addresses[index], Duration::from_secs(2));
         assert!(
             socket_probe.is_ok(),
@@ -1596,6 +1580,11 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     );
     println!("published dependent replacement: predecessor={} old_child={} successor={} new_child={} dependency_generation={} selected_phase=published native_exit_and_group_settlement=true",
         old_dependent["generation"], old_dependent["process"]["identity"]["pid"], dependent_successor["generation"], dependent_successor["process"]["identity"]["pid"], new_state["generation"]);
+    println!(
+        "dependent replacement phase: app and dependent replacement {:?}",
+        phase_started.elapsed()
+    );
+    phase_started = Instant::now();
     let websocket = curl_websocket_for_hostname(https_address, &ca_path, primary_domain);
     assert!(
         websocket.contains("101 Switching Protocols"),
@@ -1808,6 +1797,11 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     );
     assert!(delayed_state["process"]["identity"]["pid"].is_null());
     println!("dependent replacement: delayed publication settled");
+    println!(
+        "dependent replacement phase: collision and delayed publication {:?}",
+        phase_started.elapsed()
+    );
+    phase_started = Instant::now();
 
     // Another checkout that is still there and still answers owns the domain:
     // its checkout path exists and its target accepts connections, so it is not
@@ -1953,6 +1947,10 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     }
 
     println!("dependent replacement: sibling scopes torn down");
+    println!(
+        "dependent replacement phase: recovery and scope teardown {:?}",
+        phase_started.elapsed()
+    );
     let generation_receipts = [
         (*primary_profile, &new_state),
         (checkouts[1].1, &app_states[1]),

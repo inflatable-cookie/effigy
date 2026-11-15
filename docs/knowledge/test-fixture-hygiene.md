@@ -648,15 +648,16 @@ settle, so the mechanism is checked rather than assumed. nextest gives each test
 its own process, so the seam reaches nothing else. Its sibling,
 `settlements_start_their_own_budget_after_slow_or_failed_activations`, keeps
 `main`'s wall clock and reports the miss a loaded host causes. The same rule
-keeps the run lookup's
-one-second and four-second promptness bounds beside a writer or fifty peer
-worktrees (`tests/run_control_cli.rs`) and the two invoked run-deadline
-ceilings at their original numbers, original measurement and original
-failures. A host slow enough to miss them reports a miss (planner ruling,
-2026-11-15, after reviews 5911198438 and 5911236644), and the doubled-suite
-tail those misses belong to is tracked separately. A fixture's own guard that
-is not a product promise may still keep its floor and stretch with measured
-load, as the observation window's 900ms floor does. Fixture
+replaces the run lookup's host-sensitive promptness bounds with structural
+proofs (`tests/run_control_cli.rs`): a pending SQLite write transaction stays
+open through `effigy runs`, and fifty configured peers include damaged
+journals while local and peer-key lookups retain their ownership assertions.
+The two invoked run-deadline ceilings remain at their original numbers,
+measurement and failures. A host slow enough to miss them reports a miss
+(planner ruling, 2026-11-15, after reviews 5911198438 and 5911236644), and the
+doubled-suite tail those misses belong to is tracked separately. A fixture's
+own guard that is not a product promise may still keep its floor and stretch
+with measured load, as the observation window's 900ms floor does. Fixture
 state that a second process can collide on is isolated rather than waited out:
 the listener fixtures seed their port probe with a per-process nonce, the
 checkout-scoped run lock is waited for like any other caller, and the
