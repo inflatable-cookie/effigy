@@ -447,8 +447,14 @@ fn cli_json_mode_lock_conflict_wraps_runner_failure() {
 #[test]
 fn cli_lock_wait_timeout_keeps_owner_on_status_and_omits_json_from_text_stdout() {
     let root = temp_workspace("cli-lock-wait-timeout-status");
-    fs::write(root.join("effigy.toml"), "[tasks.dev]\nrun = \"sleep 8\"\n")
-        .expect("write manifest");
+    // The owner holds the checkout until this test releases it. A wall clock
+    // here would let a loaded host spend the run the waiters are proved
+    // against, so the holding task waits for an event the test controls.
+    fs::write(
+        root.join("effigy.toml"),
+        "[tasks.dev]\nrun = \"while [ ! -f release ]; do sleep 0.05; done\"\n",
+    )
+    .expect("write manifest");
 
     let mut owner = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("--repo")
@@ -553,6 +559,9 @@ fn cli_lock_wait_timeout_keeps_owner_on_status_and_omits_json_from_text_stdout()
     assert_ne!(status_parsed["result"]["current"]["pid"], Value::Null);
 
     let _sentinels = Sentinels::for_owner(owner.id(), Duration::from_secs(10));
+    // Release the owner now that every assertion above has read the run it
+    // held, rather than letting a timer end the run first.
+    fs::write(root.join("release"), b"released").expect("release the owner");
     let _ = owner.kill();
     let _ = owner.wait();
 }

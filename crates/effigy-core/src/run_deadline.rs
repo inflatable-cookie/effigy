@@ -203,6 +203,11 @@ static CONFIGURED_ENV: OnceLock<Result<(), String>> = OnceLock::new();
 /// A deterministic clock injection for owned tests: milliseconds added to the
 /// real monotonic clock. Zero in production, so [now] is the real clock.
 static CLOCK_OFFSET_MS: AtomicU64 = AtomicU64::new(0);
+/// A held reading for owned tests: while this is set, [now] returns the instant
+/// captured at [freeze_clock_for_tests] instead of a moving clock, so real time
+/// cannot spend a budget a proof is holding still. Never set in production.
+static CLOCK_HELD: AtomicBool = AtomicBool::new(false);
+static CLOCK_HELD_AT: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
 static INJECTED: OnceLock<Mutex<Option<RunDeadline>>> = OnceLock::new();
 /// A settlement that did not finish positively under the run deadline. Process
 /// wide because the footer decision is process wide.
@@ -244,8 +249,18 @@ pub fn system_monotonic_nanos() -> u64 {
 }
 
 /// The monotonic clock every deadline consumer uses. Production is
-/// `Instant::now`; an owned test can advance it without sleeping.
+/// `Instant::now`; an owned test can advance it without sleeping, or hold it
+/// still while it drives work whose own duration is real.
 pub fn now() -> Instant {
+    if CLOCK_HELD.load(Ordering::Acquire) {
+        if let Some(at) = *CLOCK_HELD_AT
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+        {
+            return at;
+        }
+    }
     let offset = CLOCK_OFFSET_MS.load(Ordering::SeqCst);
     if offset == 0 {
         return Instant::now();
@@ -509,9 +524,31 @@ pub fn advance_clock_for_tests(by: Duration) {
     CLOCK_OFFSET_MS.fetch_add(ms, Ordering::SeqCst);
 }
 
-/// Resets the deterministic clock. Test-only.
+/// Holds the deterministic clock at its current reading, so no real time
+/// passes for any deadline consumer until it is cleared. An offset alone moves
+/// with the real clock; a proof that must not spend a budget while it drives
+/// real work needs the reading itself to stand still. Test-only and inert in
+/// production.
+#[doc(hidden)]
+pub fn freeze_clock_for_tests() {
+    let at = now();
+    *CLOCK_HELD_AT
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner) = Some(at);
+    CLOCK_HELD.store(true, Ordering::Release);
+}
+
+/// Resumes the deterministic clock. Test-only.
+#[doc(hidden)]
+pub fn unfreeze_clock_for_tests() {
+    CLOCK_HELD.store(false, Ordering::Release);
+}
+
+/// Resets the deterministic clock: no offset and no held reading. Test-only.
 #[doc(hidden)]
 pub fn clear_clock_for_tests() {
+    unfreeze_clock_for_tests();
     CLOCK_OFFSET_MS.store(0, Ordering::SeqCst);
 }
 

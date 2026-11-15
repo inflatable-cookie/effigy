@@ -1710,7 +1710,12 @@ mod tests {
             .trim()
             .parse::<i32>()
             .expect("pid");
-        let gone_bound = Instant::now() + Duration::from_millis(150);
+        // The descendant is already signalled when the capture returns; the
+        // bound only stops a wait for a process that never goes, so it keeps
+        // its 150ms floor on a quiet host and stretches with measured load
+        // rather than letting the scheduler decide the proof (effigy#998).
+        let gone_bound =
+            Instant::now() + effigy_test_support::load_scaled_guard(Duration::from_millis(150));
         while kill(Pid::from_raw(descendant_pid), None).is_ok() {
             assert!(
                 Instant::now() < gone_bound,

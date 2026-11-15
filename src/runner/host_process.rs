@@ -1638,8 +1638,21 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
 
     /// A fixture listener port outside the OS ephemeral range, seeded by the
     /// test's own checkout so concurrent tests probe different ports.
+    ///
+    /// The probe only proves a port is free at one instant, so two test
+    /// processes in the same checkout would otherwise probe the same first
+    /// port and race the child that binds it. Mixing in a per-process nonce
+    /// keeps two concurrent suites on different addresses; repeated calls in
+    /// one process keep the seed sequence they had.
     fn fixture_listener_bind(seed: &str) -> String {
-        let start = seed.bytes().fold(0u32, |hash, byte| {
+        static NONCE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+        let nonce = *NONCE.get_or_init(|| {
+            let started = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |since| since.subsec_nanos());
+            std::process::id().rotate_left(16) ^ started
+        });
+        let start = seed.bytes().fold(nonce, |hash, byte| {
             hash.wrapping_mul(31).wrapping_add(u32::from(byte))
         });
         for offset in 0..1024 {
@@ -1768,12 +1781,27 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
             .join("routes.json")
     }
 
+    /// The owner of `domain`'s published route, waiting for it to appear: a
+    /// supervisor publishes after its start returns, so reading the table once
+    /// made the caller's own start-up race the publication (effigy#998). The
+    /// bound keeps its floor on a quiet host and stretches with measured load.
     fn published_owner(domain: &str) -> ManagedListenerRouteOwner {
-        RouteTable::load(&route_table_path())
-            .expect("route table")
-            .lookup(domain)
-            .and_then(|route| route.managed_listener.clone())
-            .expect("published managed listener route")
+        let deadline =
+            Instant::now() + effigy_test_support::load_scaled_guard(Duration::from_secs(10));
+        loop {
+            if let Some(owner) = RouteTable::load(&route_table_path())
+                .expect("route table")
+                .lookup(domain)
+                .and_then(|route| route.managed_listener.clone())
+            {
+                return owner;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "published managed listener route"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     /// Kill the recorded run abruptly: the supervisor first, so it cannot

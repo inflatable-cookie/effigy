@@ -3377,8 +3377,15 @@ impl Drop for CloseOwnerWrite {
 fn owner_connection_guard_closes_the_peer_on_panic() {
     use std::sync::atomic::{AtomicBool, Ordering};
     let (client, mut peer) = connection_pair();
-    peer.set_read_timeout(Some(Duration::from_secs(5)))
-        .expect("bounded peer read");
+    // The peer's read is the event this proof asserts: end-of-file once the
+    // owner's guard closes the socket write side. The timeout only stops a
+    // read that never returns, so it keeps its five-second floor on a quiet
+    // host and stretches with measured host load rather than letting a
+    // saturated host decide the result (effigy#998).
+    peer.set_read_timeout(Some(effigy_test_support::load_scaled_guard(
+        Duration::from_secs(5),
+    )))
+    .expect("bounded peer read");
     let saw_eof = AtomicBool::new(false);
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         std::thread::scope(|scope| {

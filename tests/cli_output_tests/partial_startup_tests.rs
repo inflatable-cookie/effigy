@@ -386,7 +386,11 @@ fn private_state_publication_preserves_concurrent_inventory() {
             .unwrap(),
     );
     let ready = fixture.stacks[1].root.join("compose-up-ready");
-    let deadline = Instant::now() + Duration::from_secs(5);
+    // The marker is the event this barrier waits for; the bound only stops a
+    // marker that never appears, so it keeps its five-second floor on a quiet
+    // host and stretches with measured host load instead of the CLI's start-up
+    // paying for it (effigy#998).
+    let deadline = Instant::now() + effigy_test_support::load_scaled_guard(Duration::from_secs(5));
     while !ready.exists() {
         assert!(
             Instant::now() < deadline,

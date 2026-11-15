@@ -1262,6 +1262,10 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         mkcert_calls: effects.mkcert_calls.clone(),
         docker_log: docker_log.clone(),
     };
+    // Each phase below is minutes of bounded work on a loaded host, and the
+    // suite's slow timeout is a *silence* bound: report the phase so a healthy
+    // proof is not mistaken for a hung one.
+    println!("dependent replacement: cold managed listener startups");
     let mut children = checkouts
         .iter()
         .map(|(checkout, ..)| {
@@ -1347,6 +1351,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         .map(parse_json_success)
         .collect::<Vec<_>>();
     assert_eq!(reports.len(), 3);
+    println!("dependent replacement: cold scopes published");
     for (index, report) in reports.iter().enumerate() {
         assert!(
             fixture
@@ -1600,6 +1605,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
 
     // The sibling worktree's published route keeps serving: replacement in one
     // scope never touches another scope's listener.
+    println!("dependent replacement: replacement published and serving");
     let sibling_domain = checkouts[2].2.as_str();
     let sibling_state = &app_states[2];
     let route_path = private_gateway.join("routes.json");
@@ -1657,6 +1663,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
             Instant::now() + Duration::from_secs(5),
         );
     }
+    println!("dependent replacement: scoped stop settled, siblings serving");
 
     container_cleanup.checkouts.push(primary_checkout.clone());
     let control_dir = fixture.path().join("listener-control-0");
@@ -1693,6 +1700,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     let collision_down =
         run_container_cli(primary_checkout, &container_cleanup, &["down", "--json"]);
     assert_success(collision_down);
+    println!("dependent replacement: fixed-port collision refused");
     let collision_stopped = read_json_file(&listener_state_path(
         primary_checkout,
         primary_profile,
@@ -1799,6 +1807,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         String::from_utf8_lossy(&delayed.stderr)
     );
     assert!(delayed_state["process"]["identity"]["pid"].is_null());
+    println!("dependent replacement: delayed publication settled");
 
     // Another checkout that is still there and still answers owns the domain:
     // its checkout path exists and its target accepts connections, so it is not
@@ -1846,6 +1855,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     );
     let routes = effigy_gateway::routes::RouteTable::load(&route_path).unwrap();
     assert_eq!(routes.lookup("claimed.host.test"), Some(&foreign_claim));
+    println!("dependent replacement: foreign route owner kept");
     edit_live_fixture_routes(&route_path, |routes| {
         routes.deregister("claimed.host.test").unwrap();
     });
@@ -1942,6 +1952,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         );
     }
 
+    println!("dependent replacement: sibling scopes torn down");
     let generation_receipts = [
         (*primary_profile, &new_state),
         (checkouts[1].1, &app_states[1]),
@@ -3216,10 +3227,17 @@ fn managed_listener_fixture_child() {
     // opened its readiness answer yet, so it answers nothing and the declared
     // readiness budget continues.
     let never_ready = std::env::var("FIXTURE_NEVER_READY").is_ok();
+    // The delay is what makes the first readiness probe *refused*, not an
+    // assertion about promptness: it must outlast the product's own path to
+    // its first probe, which a loaded host stretches. It keeps its 1500ms floor
+    // on a quiet host and scales with measured load, capped well inside the
+    // declared 20s readiness budget so the window itself never spends that
+    // budget (effigy#998).
     let readiness_delay = if never_ready {
         Duration::from_secs(60 * 60)
     } else {
-        Duration::from_millis(1500)
+        effigy_test_support::load_scaled_guard(Duration::from_millis(1500))
+            .min(Duration::from_secs(5))
     };
     let ready_at = Instant::now() + readiness_delay;
     let previous_port_file = std::env::var("FIXTURE_PREVIOUS_PORT_FILE").unwrap();

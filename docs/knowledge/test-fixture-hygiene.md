@@ -624,6 +624,49 @@ effect. Releasing from the parent and then opening the handle could instead
 race a turn that had already observed a live row. The original no-geometry,
 retirement and post-retirement assertions and existing wait bounds remain.
 
+A five-iteration census (effigy#998) ran the whole suite five times with a
+second full suite beside it, plus sixteen nice-19 CPU hogs for the first ten
+minutes, and recorded every failure and whether it also passes alone. Two
+classes came out of it, and only the first is a test-timing defect. Timing
+bounds a loaded host spent on work that is not the behaviour under test now
+follow one of two rules. A wait for an event keeps its floor on a quiet host
+and stretches with measured load through the shared helper, so the peer's
+end-of-file, a spawned sentinel and the fixture's own record keep their
+original numbers instead of the scheduler's. A budget that is the behaviour
+under test and also a product promise is neither moved nor handed extra room:
+the container settlement budget stays 700ms even though one settle-store commit
+measured 0.7-1.3s at load 30-60 (effigy#955). The proof that the settle starts
+its own budget therefore moves the deterministic monotonic clock past that
+budget and then *holds its reading still* for the settle, so the settle's own
+commit cannot spend the budget it must receive in full, while a settle that
+inherited the activation's deadline is still spent at the held reading
+(`an_interrupted_activation_settles_without_another_effect`). An offset alone is
+not enough: it moves with the real clock, so only a held reading keeps real time
+out of the result (`freeze_clock_for_tests` in effigy-core, `#[doc(hidden)]` and
+inert in production). The test also asserts the reading did not move across the
+settle, so the mechanism is checked rather than assumed. nextest gives each test
+its own process, so the seam reaches nothing else. Its sibling,
+`settlements_start_their_own_budget_after_slow_or_failed_activations`, keeps
+`main`'s wall clock and reports the miss a loaded host causes. The same rule
+keeps the run lookup's
+one-second and four-second promptness bounds beside a writer or fifty peer
+worktrees (`tests/run_control_cli.rs`) and the two invoked run-deadline
+ceilings at their original numbers, original measurement and original
+failures. A host slow enough to miss them reports a miss (planner ruling,
+2026-11-15, after reviews 5911198438 and 5911236644), and the doubled-suite
+tail those misses belong to is tracked separately. A fixture's own guard that
+is not a product promise may still keep its floor and stretch with measured
+load, as the observation window's 900ms floor does. Fixture
+state that a second process can collide on is isolated rather than waited out:
+the listener fixtures seed their port probe with a per-process nonce, the
+checkout-scoped run lock is waited for like any other caller, and the
+hypervisor-dependent dependent-replacement proof reports the phase it is in,
+because the suite's slow timeout is a silence bound and not a runtime bound.
+The one class this census does not own is running two builds of one checkout at
+once: the `builder_recovery` proofs read the checkout's uplifted host-binary
+identity, which each concurrent build necessarily rewrites through the shared
+profile links, so they run outside a doubled suite.
+
 ## Custody descriptor remapping (effigy#814)
 
 The hosted macOS core cohort exposed a missing secret grant in
