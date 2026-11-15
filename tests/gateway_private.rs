@@ -1092,15 +1092,7 @@ fn private_gateway_cli_serves_verified_https_and_isolates_concurrent_instances()
 fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
     // Text failures retain the original error, which detached JSON deliberately
     // reduces to structural state; each front proves its committed claim once.
-    // The two fronts are separate tests because each one is a full cold-start
-    // proof of its own: one test ran both inside a single cold-start budget,
-    // where a loaded host could spend it on the first front alone
-    // (effigy#998). Assertions and deadlines are unchanged.
     managed_host_dependent_replacement_proof(false);
-}
-
-#[test]
-fn managed_host_dependent_replacement_json_front_keeps_the_settled_record() {
     managed_host_dependent_replacement_proof(true);
 }
 
@@ -3238,11 +3230,14 @@ fn managed_listener_fixture_child() {
     // The delay is what makes the first readiness probe *refused*, not an
     // assertion about promptness: it must outlast the product's own path to
     // its first probe, which a loaded host stretches. It keeps its 1500ms floor
-    // on a quiet host and scales with measured load (effigy#998).
+    // on a quiet host and scales with measured load, capped well inside the
+    // declared 20s readiness budget so the window itself never spends that
+    // budget (effigy#998).
     let readiness_delay = if never_ready {
         Duration::from_secs(60 * 60)
     } else {
         effigy_test_support::load_scaled_guard(Duration::from_millis(1500))
+            .min(Duration::from_secs(5))
     };
     let ready_at = Instant::now() + readiness_delay;
     let previous_port_file = std::env::var("FIXTURE_PREVIOUS_PORT_FILE").unwrap();
