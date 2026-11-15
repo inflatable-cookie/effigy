@@ -535,16 +535,17 @@ Effigy ownership:
   open file description until its last duplicate closes, rather than being
   explicitly unlocked when the original owner drops. A failed preparation
   retains the original owner and leaves its entry for review
-- a captured launch's output projection is fail-closed (K12): when it meets a
-  delivered value it cannot redact into a form a reader cannot re-join, it keeps
-  the bytes it already redacted and stops. The consequence is stated plainly: a
-  **failed** Compose capture whose output contains a delivered value loses
-  everything the runtime wrote after that point. The operator still gets the
-  process exit status and the redacted prefix; a detached launch loses nothing
-  from its retained backend record's bounded tail, because the record is a file
-  this side keeps. Later lines are absent rather than shown truncated, and no
-  secret is ever emitted. Redacting in place and keeping the later output is a
-  filed improvement lead, not part of this slice
+- a captured launch's output is redacted **in place**: the delivered value's own
+  bytes become `[REDACTED]` where they were (`DATABASE_URL=[REDACTED]`), and
+  everything the runtime wrote before and after it is kept. The projection's one
+  stopping case is `Redactor::blocked`: when every printable ASCII byte occurs in
+  some secret, no replacement byte exists that a reader could not re-join, so
+  `sink` emits nothing further for that stream and records the capture as
+  truncated rather than leak. A detached launch feeds its retained record first,
+  so that record is marked failed rather than silently short. Either way the
+  operator keeps the process exit status, and a detached launch keeps its
+  record's bounded tail; the invariant is that no secret is emitted, never that
+  the projection stops at an ordinary printable value
 - limits of this slice: explicit removal borrows the file owner, retaining its
   descriptor and lock after failure, and drop does not retry a failed removal.
   The retained Run's own settlement is the production cleanup authority; a

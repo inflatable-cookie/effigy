@@ -54,6 +54,10 @@ fn fake_colima(root: &Path, name: &str, status: i32) -> PathBuf {
          fi\n\
          echo 'creating app'\n\
          echo 'starting app'\n\
+         # A runtime finishes after it writes, not in the same instant: the pause\n\
+         # keeps this fixture about the projection, not about the launcher's\n\
+         # exit-versus-drain race, which is reported separately (effigy#1003).\n\
+         sleep 0.05\n\
          exit {status}\n",
         log = log.display()
     );
@@ -299,31 +303,29 @@ fn walk(root: &Path) -> Vec<PathBuf> {
     found
 }
 
-/// The documented fail-closed capture shape (K12): the value never appears, and
-/// either the projection kept the whole stream — with the value's own line
-/// replaced by the marker — or it stopped at the value, in which case nothing
-/// after it is present. No third shape is acceptable: a stopped projection may
-/// not keep later lines, and a kept projection may not drop them.
-fn assert_fail_closed(text: &str, before: &str, after: &str) {
+/// The capture's actual shape for a delivered printable value: the projection
+/// redacts in place — the value's own line becomes the marker — and everything
+/// the runtime wrote before and after it survives. (`Redactor::blocked`, the
+/// only stop, needs a secret that contains every printable byte; the fixture's
+/// value is an ordinary printable secret, so the stop is not this path and is
+/// covered by the kernel's own custody tests.)
+fn assert_redacted_in_place(text: &str, before: &str, after: &str) {
     assert!(
         !text.contains(SENTINEL),
         "the delivered value never appears: {text}"
     );
     assert!(
+        text.contains("[REDACTED]"),
+        "the value's own line is replaced by the marker: {text}"
+    );
+    assert!(
         text.contains(before),
         "the bytes before the value survive: {text}"
     );
-    if text.contains("[REDACTED]") {
-        assert!(
-            text.contains(after),
-            "a projection that redacted in place keeps later output: {text}"
-        );
-    } else {
-        assert!(
-            !text.contains(after),
-            "a projection that had to stop keeps nothing after the value: {text}"
-        );
-    }
+    assert!(
+        text.contains(after),
+        "the bytes after the value survive: {text}"
+    );
 }
 
 /// A host backend and a value-free VM invocation keep their current path: no
@@ -388,7 +390,7 @@ fn a_secret_bearing_vm_capture_runs_under_retained_custody() {
         .expect("retained capture");
         assert!(output.status.success(), "{output:?}");
         let stdout = String::from_utf8_lossy(&output.stdout);
-        assert_fail_closed(&stdout, "read compose-", "creating app");
+        assert_redacted_in_place(&stdout, "read compose-", "starting app");
         let record = fs::read_to_string(&observed).expect("the child ran");
         assert!(
             record.contains(&format!("DATABASE_URL=postgres://fixture/{SENTINEL}")),
@@ -427,13 +429,13 @@ fn a_secret_bearing_vm_detached_launch_keeps_its_record_redacted() {
         })
         .expect("retained detached launch");
         assert!(output.status.success(), "{output:?}");
-        assert!(
-            lines.iter().any(|line| line.starts_with("read compose-")),
-            "the complete lines before the value reach the caller: {lines:?}"
-        );
         let record_path = crate::exec::retained_backend_log_path(repo, "stack");
         let record = fs::read_to_string(&record_path).expect("retained backend record");
-        assert_fail_closed(&record, "read compose-", "creating app");
+        assert!(
+            lines.iter().any(|line| line == "starting app"),
+            "the runtime's own lines reach the caller: {lines:?}; record: {record:?}"
+        );
+        assert_redacted_in_place(&record, "read compose-", "starting app");
         assert_eq!(compose_env_files(state).len(), 1);
     });
     assert_eq!(cleanup, CleanupOutcome::Complete);
