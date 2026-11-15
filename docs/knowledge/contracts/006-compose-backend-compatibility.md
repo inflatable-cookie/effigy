@@ -514,6 +514,14 @@ Effigy ownership:
 - a Compose launch refusal is one long line whose end names the cause, so the
   one human-output bound keeps both ends of a line rather than its head only
   (effigy#1003)
+- the VM can only read what its Colima profile shares: the checkout and every
+  Compose input, and the state home that holds the interpolation file. A
+  secret-bearing launch whose interpolation directory the named profile does
+  not share refuses before spawn, naming the directory and the profile, instead
+  of failing inside the VM as `couldn't find env file`. This is exact: the file
+  lives under the Effigy state home, which is normally the operator's home and
+  therefore Colima's own default share, so an ordinary host run needs nothing
+  extra
 - the VM can only read a checkout its Colima profile shares. The runtime
   preflight reads the profile's own `colima.yaml`: `$HOME` is the default
   share, `mounts:` adds to it, and a checkout or Compose input outside both

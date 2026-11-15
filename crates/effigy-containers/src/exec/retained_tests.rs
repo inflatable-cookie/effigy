@@ -442,6 +442,76 @@ fn a_refused_custody_admission_names_the_cause_before_any_spawn() {
     assert_eq!(cleanup, CleanupOutcome::Complete);
 }
 
+/// The VM reads the interpolation file itself: a profile that does not share
+/// the state home refuses before spawn instead of failing inside the VM with
+/// `couldn't find env file`.
+#[test]
+fn a_state_home_the_profile_does_not_share_refuses_before_spawn() {
+    let _lock = crate::test_env_lock();
+    let profile_home = tempfile::tempdir().expect("private Colima home");
+    let svm_share = tempfile::tempdir().expect("unrelated share");
+    let profile = profile_home.path().join("rc1003");
+    fs::create_dir_all(&profile).expect("profile directory");
+    fs::write(
+        profile.join("colima.yaml"),
+        format!(
+            "mounts:\n  - location: {}\n    writable: true\n",
+            svm_share.path().display()
+        ),
+    )
+    .expect("profile config");
+    let previous = std::env::var_os("COLIMA_HOME");
+    std::env::set_var("COLIMA_HOME", profile_home.path());
+    let ((), cleanup) = harness(|run, cx, repo, state| {
+        let program = fake_colima(repo, "unshared-state", 0);
+        let observed = repo.join("unshared-state.observed");
+        let env = secret_env();
+        let args = [
+            "nerdctl",
+            "--profile",
+            "rc1003",
+            "--",
+            "compose",
+            "-f",
+            "compose.yml",
+            "up",
+            "-d",
+        ]
+        .into_iter()
+        .map(OsString::from)
+        .collect::<Vec<_>>();
+        let error = with_helper(|| {
+            retained::capture(
+                repo,
+                program.as_os_str(),
+                &args,
+                "unshared state home",
+                &env,
+                Instant::now() + Duration::from_secs(30),
+                &mut RetainedComposeOwner::new(run, cx),
+            )
+        })
+        .expect_err("an unreadable state home refuses");
+        let message = error.to_string();
+        assert!(message.contains("does not share"), "{message}");
+        assert!(message.contains("rc1003"), "{message}");
+        assert!(
+            message.contains(&state.join(".effigy").display().to_string()),
+            "the refusal names the unshared directory: {message}"
+        );
+        assert!(!observed.exists(), "no child runs: {message}");
+        assert!(
+            compose_env_files(state).is_empty(),
+            "the refused launch leaves no interpolation file"
+        );
+    });
+    match previous {
+        Some(value) => std::env::set_var("COLIMA_HOME", value),
+        None => std::env::remove_var("COLIMA_HOME"),
+    }
+    assert_eq!(cleanup, CleanupOutcome::Complete);
+}
+
 /// Settlement removes the file only after verified closure, and no state-home
 /// file keeps the value.
 #[test]

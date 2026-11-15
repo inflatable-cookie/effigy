@@ -92,6 +92,29 @@ fn spawn_retained<'r>(
     deadline: Instant,
     terminal: Terminal,
 ) -> Result<(OwnedProcess, EffectContext), ContainerExecError> {
+    // The VM reads the interpolation file itself, so the profile must share the
+    // directory that holds it. A state home outside those mounts used to fail
+    // inside the VM as `couldn't find env file`; refuse here, naming both.
+    if let Some(profile) = colima_profile_arg(&invocation.args) {
+        if let Some(path) = invocation
+            .interpolation
+            .as_ref()
+            .and_then(|file| file.path().parent())
+        {
+            if !host_path_model_is_escaped()
+                && crate::policy::validation::colima_profile_covers(&profile, path) == Some(false)
+            {
+                return Err(launch(
+                    label,
+                    format!(
+                        "Colima profile `{profile}` does not share `{}` into its VM, so the VM cannot read this Compose invocation's interpolation file; run Effigy with a state home under a shared path, or have the operator add a Colima mount for `{}`. Changing the profile is the operator's host decision",
+                        path.display(),
+                        path.display()
+                    ),
+                ));
+            }
+        }
+    }
     enable_custody(run, label)?;
     let cx = spawn_context(apply, deadline);
     let lifetime = deadline
@@ -351,6 +374,28 @@ fn unresolved(
             }
         ),
     }
+}
+
+/// The Colima profile this invocation names, if it names one.
+fn colima_profile_arg(args: &[OsString]) -> Option<String> {
+    let mut arguments = args.iter();
+    while let Some(argument) = arguments.next() {
+        if argument == "--profile" {
+            return arguments
+                .next()
+                .and_then(|profile| profile.to_str())
+                .map(str::to_owned);
+        }
+    }
+    None
+}
+
+/// A fixture that models no real Colima host path says so, exactly as the
+/// policy preflight does.
+fn host_path_model_is_escaped() -> bool {
+    std::env::var_os("EFFIGY_TEST_COLIMA_ARGS_FILE").is_some()
+        || std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_HOST_PATH_CHECK").is_some()
+        || std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK").is_some()
 }
 
 /// Enable the helper-backed custody a secret-bearing spawn needs, once.

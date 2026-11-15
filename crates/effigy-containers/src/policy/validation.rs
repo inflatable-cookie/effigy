@@ -111,6 +111,13 @@ fn validate_compose_backend_host_paths(
     Ok(())
 }
 
+/// Whether `profile` shares `path` into its VM, read from that profile's own
+/// `colima.yaml`. `None` means there is no profile text to judge, which is not
+/// the same as "not shared": nothing is guessed.
+pub(crate) fn colima_profile_covers(profile: &str, path: &Path) -> Option<bool> {
+    colima_profile_shares(profile).map(|shares| shares.covers(path))
+}
+
 /// The host paths one Colima profile shares into its VM.
 ///
 /// `$HOME` is Colima's own default share and is always present; `mounts:` in
