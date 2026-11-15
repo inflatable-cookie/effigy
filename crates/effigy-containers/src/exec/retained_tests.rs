@@ -43,17 +43,17 @@ fn fake_colima(root: &Path, name: &str, status: i32) -> PathBuf {
            if [ \"$prev\" = \"--env-file\" ]; then f=\"$a\"; fi\n\
            prev=\"$a\"\n\
          done\n\
-         # The value the plan delivered arrives in this child's environment as\n\
-         # well, so it can prove redaction with one complete write first.\n\
-         printf '%s\\n' \"${{DATABASE_URL:-}}\"\n\
-         echo 'creating app'\n\
-         echo 'starting app'\n\
+         # The value is read after a non-secret prefix line, and the runtime's\n\
+         # own progress lines follow it: the fixture keeps the shape a real\n\
+         # Compose run has, where the delivered value sits mid-stream.\n\
          if [ -n \"$f\" ]; then\n\
            echo \"env-file=$f\" >> '{log}'\n\
            {{ ls -ld \"$(dirname \"$f\")\"; ls -l \"$f\"; cat \"$f\"; }} >> '{log}'\n\
            echo \"read $(basename \"$f\")\"\n\
            cat \"$f\"\n\
          fi\n\
+         echo 'creating app'\n\
+         echo 'starting app'\n\
          exit {status}\n",
         log = log.display()
     );
@@ -299,6 +299,33 @@ fn walk(root: &Path) -> Vec<PathBuf> {
     found
 }
 
+/// The documented fail-closed capture shape (K12): the value never appears, and
+/// either the projection kept the whole stream — with the value's own line
+/// replaced by the marker — or it stopped at the value, in which case nothing
+/// after it is present. No third shape is acceptable: a stopped projection may
+/// not keep later lines, and a kept projection may not drop them.
+fn assert_fail_closed(text: &str, before: &str, after: &str) {
+    assert!(
+        !text.contains(SENTINEL),
+        "the delivered value never appears: {text}"
+    );
+    assert!(
+        text.contains(before),
+        "the bytes before the value survive: {text}"
+    );
+    if text.contains("[REDACTED]") {
+        assert!(
+            text.contains(after),
+            "a projection that redacted in place keeps later output: {text}"
+        );
+    } else {
+        assert!(
+            !text.contains(after),
+            "a projection that had to stop keeps nothing after the value: {text}"
+        );
+    }
+}
+
 /// A host backend and a value-free VM invocation keep their current path: no
 /// custody, no interpolation file, no refusal.
 #[test]
@@ -361,16 +388,7 @@ fn a_secret_bearing_vm_capture_runs_under_retained_custody() {
         .expect("retained capture");
         assert!(output.status.success(), "{output:?}");
         let stdout = String::from_utf8_lossy(&output.stdout);
-        // The guarantee is absence. A projection custody cannot redact safely
-        // stops (K12), so a later line may be missing; the child's first
-        // complete write is the value itself, which is the case custody always
-        // replaces, so the marker is asserted from that write and never from
-        // whatever followed it.
-        assert!(
-            !stdout.contains(SENTINEL),
-            "captured output must carry no secret: {stdout}"
-        );
-        assert!(stdout.contains("[REDACTED]"), "{stdout}");
+        assert_fail_closed(&stdout, "read compose-", "creating app");
         let record = fs::read_to_string(&observed).expect("the child ran");
         assert!(
             record.contains(&format!("DATABASE_URL=postgres://fixture/{SENTINEL}")),
@@ -410,20 +428,12 @@ fn a_secret_bearing_vm_detached_launch_keeps_its_record_redacted() {
         .expect("retained detached launch");
         assert!(output.status.success(), "{output:?}");
         assert!(
-            lines.iter().any(|line| line == "starting app"),
-            "the runtime's own lines reach the caller: {lines:?}"
-        );
-        assert!(
-            lines.iter().any(|line| line == "[REDACTED]"),
-            "the delivered value is redacted before it is relayed: {lines:?}"
+            lines.iter().any(|line| line.starts_with("read compose-")),
+            "the complete lines before the value reach the caller: {lines:?}"
         );
         let record_path = crate::exec::retained_backend_log_path(repo, "stack");
         let record = fs::read_to_string(&record_path).expect("retained backend record");
-        assert!(record.contains("creating app"), "{record}");
-        assert!(
-            !record.contains(SENTINEL),
-            "the record holds no secret value: {record}"
-        );
+        assert_fail_closed(&record, "read compose-", "creating app");
         assert_eq!(compose_env_files(state).len(), 1);
     });
     assert_eq!(cleanup, CleanupOutcome::Complete);
@@ -603,8 +613,16 @@ fn an_unproven_end_retains_the_file_until_verified_closure() {
             let marker_deadline = std::time::Instant::now() + Duration::from_secs(30);
             while !marker.exists() {
                 if launcher.is_finished() {
-                    let result = launcher.join().expect("launch thread");
-                    panic!("the launch finished before the child signalled readiness: {result:?}");
+                    // Render the outcome in words: this message is what a
+                    // person reads when the fixture stops being deterministic.
+                    match launcher.join().expect("launch thread") {
+                        Ok(_) => panic!(
+                            "the launch finished before the child signalled readiness, and reported success"
+                        ),
+                        Err(error) => panic!(
+                            "the launch finished before the child signalled readiness: {error}"
+                        ),
+                    }
                 }
                 assert!(
                     std::time::Instant::now() < marker_deadline,

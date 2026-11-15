@@ -535,6 +535,16 @@ Effigy ownership:
   open file description until its last duplicate closes, rather than being
   explicitly unlocked when the original owner drops. A failed preparation
   retains the original owner and leaves its entry for review
+- a captured launch's output projection is fail-closed (K12): when it meets a
+  delivered value it cannot redact into a form a reader cannot re-join, it keeps
+  the bytes it already redacted and stops. The consequence is stated plainly: a
+  **failed** Compose capture whose output contains a delivered value loses
+  everything the runtime wrote after that point. The operator still gets the
+  process exit status and the redacted prefix; a detached launch loses nothing
+  from its retained backend record's bounded tail, because the record is a file
+  this side keeps. Later lines are absent rather than shown truncated, and no
+  secret is ever emitted. Redacting in place and keeping the later output is a
+  filed improvement lead, not part of this slice
 - limits of this slice: explicit removal borrows the file owner, retaining its
   descriptor and lock after failure, and drop does not retry a failed removal.
   The retained Run's own settlement is the production cleanup authority; a
