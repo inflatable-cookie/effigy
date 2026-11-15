@@ -342,10 +342,19 @@ fn builder_fixture_passes_colima_guard_while_os_temp_still_refuses() {
         ("TEMP", Some(unshared.path().display().to_string())),
     ]);
     for (dir, allowed) in [(&shared, true), (&unshared, false)] {
-        let _cache = EnvGuard::set_many(&[(
-            "EFFIGY_TEST_CONTAINERS_HOME",
-            Some(dir.path().join(".effigy").display().to_string()),
-        )]);
+        // The accepted arm models a host path this Colima profile shares; the
+        // refused arm keeps the whole host-path preflight live so the OS
+        // temp-root control is the reason it reports.
+        let _cache = EnvGuard::set_many(&[
+            (
+                "EFFIGY_TEST_CONTAINERS_HOME",
+                Some(dir.path().join(".effigy").display().to_string()),
+            ),
+            (
+                "EFFIGY_TEST_SKIP_COLIMA_HOST_PATH_CHECK",
+                allowed.then_some("1".to_owned()),
+            ),
+        ]);
         std::fs::write(
             dir.path().join("effigy.toml"),
             "[containers.web]\ncompose_file = 'compose.yml'\nprimary_service = 'app'\n",

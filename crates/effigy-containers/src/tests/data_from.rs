@@ -243,16 +243,16 @@ fn borrowed_volume_names(policy: &EffectiveContainerPolicy) -> Vec<String> {
 /// live under a temp directory, so the Colima host-path preflight is skipped
 /// for the same reason the other mount-budget tests skip it.
 pub(super) fn with_colima_nerdctl_preflight<T>(run: impl FnOnce() -> T) -> T {
-    let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK");
+    let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_HOST_PATH_CHECK");
     unsafe {
-        std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1");
+        std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_HOST_PATH_CHECK", "1");
     }
     let result = with_test_compose_backend(ComposeBackend::ColimaNerdctl, run);
     match previous {
         Some(value) => unsafe {
-            std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", value)
+            std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_HOST_PATH_CHECK", value)
         },
-        None => unsafe { std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK") },
+        None => unsafe { std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_HOST_PATH_CHECK") },
     }
     result
 }

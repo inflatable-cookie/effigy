@@ -106,6 +106,52 @@ pub fn reconcile_observing(
     result
 }
 
+/// [`reconcile`] with the apply run's own `Run`, child effect and deadline
+/// handed to `apply`.
+///
+/// A backend effect that must spawn under retained kernel custody (a
+/// secret-bearing VM Compose launch, Tom's #534 ruling) needs the exact Env Run
+/// that already holds `Gate(Env)`: the spawned group belongs to that owner, and
+/// a second admitted run would wait on the gate this one holds. Every other
+/// apply keeps [`reconcile`] and never sees the owner.
+pub fn reconcile_owned(
+    ctx: &EnvContext<'_>,
+    env: &EnvRef,
+    request: Up<'_>,
+    apply: impl FnOnce(
+        &mut effigy_kernel::run::Run<'_>,
+        &effigy_kernel::ctx::EffectContext,
+        Instant,
+    ) -> Result<(), BackendError>,
+) -> Result<BringUp, EnvError> {
+    reconcile_observing_owned(ctx, env, request, apply, |run| run.holders())
+}
+
+/// [`reconcile_owned`] with the holder observation supplied, exactly as
+/// [`reconcile_observing`] does for [`reconcile`].
+pub fn reconcile_observing_owned(
+    ctx: &EnvContext<'_>,
+    env: &EnvRef,
+    request: Up<'_>,
+    apply: impl FnOnce(
+        &mut effigy_kernel::run::Run<'_>,
+        &effigy_kernel::ctx::EffectContext,
+        Instant,
+    ) -> Result<(), BackendError>,
+    observe_holders: impl FnOnce(&EnvRun<'_>) -> Observed<Vec<Holder>>,
+) -> Result<BringUp, EnvError> {
+    let mut run = EnvRun::begin(
+        ctx,
+        env,
+        Operation::Up,
+        Wait::Until(Instant::now() + GATE_WAIT),
+    )?;
+    let result = reconcile_in_owned(&mut run, request, None, apply, observe_holders);
+    let ok = result.is_ok();
+    run.finish(ok)?;
+    result
+}
+
 pub(super) fn reconcile_in(
     run: &mut EnvRun<'_>,
     request: Up<'_>,

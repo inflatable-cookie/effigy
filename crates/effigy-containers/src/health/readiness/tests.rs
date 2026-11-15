@@ -317,10 +317,14 @@ fn a_check_output_is_one_bounded_line() {
     );
     let bounded = bounded_last_output(&output).expect("one line");
     assert_eq!(bounded, "ERROR 2003: cannot connect");
-    let long = "y".repeat(effigy_ui::human::MAX_EVIDENCE_BYTES + 20);
+    let long = format!(
+        "{}cannot connect",
+        "y".repeat(effigy_ui::human::MAX_EVIDENCE_BYTES + 20)
+    );
     let bounded = bounded_last_output(&long).expect("bounded line");
-    assert!(bounded.ends_with("… (truncated)"), "{bounded}");
-    assert!(bounded.len() <= effigy_ui::human::MAX_EVIDENCE_BYTES + "… (truncated)".len());
+    assert!(bounded.ends_with("cannot connect"), "{bounded}");
+    assert!(bounded.contains('…'), "{bounded}");
+    assert!(bounded.len() <= effigy_ui::human::MAX_EVIDENCE_BYTES + "…".len());
     assert_eq!(bounded_last_output("\n  \n"), None);
 }
 

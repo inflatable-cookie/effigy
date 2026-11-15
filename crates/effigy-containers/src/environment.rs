@@ -34,7 +34,10 @@ pub use creation::{
     ImageIdentity, RecordedCreation, StoredCreation, CREATE_EFFECT, CREATION_SCHEMA,
 };
 pub use hold::{hold, mode_for, reap_if_idle, Hold, HoldError, Idle, Session};
-pub use ops::{activate, activate_with, down, reconcile, reset, Applied, BringUp, Up};
+pub use ops::{
+    activate, activate_with, down, reconcile, reconcile_observing, reconcile_observing_owned,
+    reconcile_owned, reset, Applied, BringUp, Up,
+};
 pub use reconcile::{
     EnvContext, EnvError, EnvRef, EnvRun, EnvSettlement, Operation, CLEANUP_BUDGET, GATE_WAIT,
     RUN_BUDGET, STOP_EFFECT,

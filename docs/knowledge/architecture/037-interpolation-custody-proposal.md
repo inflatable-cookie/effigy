@@ -96,9 +96,13 @@ supported platform before enabling cleanup there.
 ## Live retained handoff and recovery boundary
 
 `ComposeInvocation::spawn_retained` moves its prepared interpolation owner into
-`Custody::spawn_interpolated` on the supplied checkout Env Run. Direct-child
-routes still refuse secret-bearing VM Compose. This API does not enable the
-qualified workspace apply or production Discard.
+`Custody::spawn_interpolated` on the supplied checkout Env Run. Production uses
+it: `container up` and the task environment apply borrow the Env Run that holds
+`Gate(Env)` (`environment::reconcile_owned`) and spawn through
+`exec::retained`, which enables the Run's helper-backed custody on first use and
+classifies the delivered values as secrets. Direct-child routes still refuse
+secret-bearing VM Compose, because they cannot prove group closure. This API
+does not enable the qualified workspace apply or production Discard.
 
 The process core holds the prepared file before the handoff. The Run journal
 first records a distinct pending file obligation, so a failed file binding

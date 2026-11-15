@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use effigy_manifest::ManifestContainerDriver;
 
@@ -57,8 +57,11 @@ fn validate_compose_backend_host_paths(
     {
         return Ok(());
     }
-    if std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK").is_some()
-        || std::env::var_os("EFFIGY_TEST_COLIMA_ARGS_FILE").is_some()
+    // A fake runtime exercises the Compose grammar, never a VM's mounts, and
+    // a fixture that models no Colima host path says so instead of borrowing
+    // this host's profile.
+    if std::env::var_os("EFFIGY_TEST_COLIMA_ARGS_FILE").is_some()
+        || std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_HOST_PATH_CHECK").is_some()
     {
         return Ok(());
     }
@@ -66,19 +69,125 @@ fn validate_compose_backend_host_paths(
     // host source, while still checking every Compose input and mount budget.
     let staged_source = crate::artifact_source::policy_stage(policy)?.map(|plan| plan.source);
     let host_source = staged_source.as_deref().unwrap_or(repo_root);
-    if !is_colima_temp_root_path(host_source)
-        && !policy
-            .compose_files
-            .iter()
-            .any(|compose_file| is_colima_temp_root_path(compose_file))
+    // The named escape covers the temp-root guess only; the profile's own
+    // mounts are still read, because they are the exact evidence.
+    if std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK").is_none()
+        && (is_colima_temp_root_path(host_source)
+            || policy
+                .compose_files
+                .iter()
+                .any(|compose_file| is_colima_temp_root_path(compose_file)))
     {
-        return Ok(());
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "container `{}` uses the Colima nerdctl compose fallback, but repo `{}` is under a temp directory that Colima may not share into the VM; move the repo under a shared path like `/Users/...` and retry",
+            policy.name,
+            repo_root.display()
+        )));
     }
-    Err(ContainerPolicyError::TaskInvocation(format!(
-        "container `{}` uses the Colima nerdctl compose fallback, but repo `{}` is under a temp directory that Colima may not share into the VM; move the repo under a shared path like `/Users/...` and retry",
-        policy.name,
-        repo_root.display()
-    )))
+    // The VM resolves every Compose input under its own mounts, so a checkout
+    // the profile does not share can never be read there. This is the exact
+    // mount set the profile names; a profile this host cannot read is not
+    // guessed at, because the guard's evidence is the profile's own text.
+    let Some(shares) = colima_profile_shares(&policy.profile) else {
+        return Ok(());
+    };
+    for path in std::iter::once(host_source)
+        .chain(policy.compose_files.iter().map(std::path::PathBuf::as_path))
+    {
+        if shares.covers(path) {
+            continue;
+        }
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "container `{}` uses Colima profile `{}`, which does not share `{}` into its VM ({}), so the VM cannot read this checkout's Compose inputs; move the checkout under {} or have the operator add a Colima mount for `{}` in `{}`. Changing the profile is the operator's host decision",
+            policy.name,
+            policy.profile,
+            path.display(),
+            shares.describe(),
+            shares.describe_default(),
+            path.display(),
+            shares.config_excerpt(),
+        )));
+    }
+    Ok(())
+}
+
+/// Whether `profile` shares `path` into its VM, read from that profile's own
+/// `colima.yaml`. `None` means there is no profile text to judge, which is not
+/// the same as "not shared": nothing is guessed.
+pub(crate) fn colima_profile_covers(profile: &str, path: &Path) -> Option<bool> {
+    colima_profile_shares(profile).map(|shares| shares.covers(path))
+}
+
+/// The host paths one Colima profile shares into its VM.
+///
+/// `$HOME` is Colima's own default share and is always present; `mounts:` in
+/// the profile's `colima.yaml` adds to it. `None` means this host could not read
+/// the profile, so no share set is claimed.
+struct ColimaProfileShares {
+    home: PathBuf,
+    mounts: Vec<PathBuf>,
+    config: PathBuf,
+}
+
+impl ColimaProfileShares {
+    fn covers(&self, path: &Path) -> bool {
+        let canonical = |candidate: &Path| {
+            std::fs::canonicalize(candidate).unwrap_or_else(|_| candidate.to_path_buf())
+        };
+        let path = canonical(path);
+        std::iter::once(&self.home)
+            .chain(self.mounts.iter())
+            .any(|root| path_is_within(&path, &canonical(root)))
+    }
+
+    fn describe(&self) -> String {
+        let mut described = vec![format!("it shares `{}`", self.home.display())];
+        described.extend(
+            self.mounts
+                .iter()
+                .map(|mount| format!("and `{}`", mount.display())),
+        );
+        described.join(" ")
+    }
+
+    fn describe_default(&self) -> String {
+        format!("a path inside `{}`", self.home.display())
+    }
+
+    fn config_excerpt(&self) -> String {
+        self.config.display().to_string()
+    }
+}
+
+/// The profile's own share set, read from `colima.yaml`. Nothing is inferred
+/// from a default the profile may have overridden.
+fn colima_profile_shares(profile: &str) -> Option<ColimaProfileShares> {
+    let home = std::env::var_os("HOME")
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)?;
+    let colima_home = std::env::var_os("COLIMA_HOME")
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".colima"));
+    let config = colima_home.join(profile).join("colima.yaml");
+    let content = std::fs::read_to_string(&config).ok()?;
+    let parsed: serde_yaml::Value = serde_yaml::from_str(&content).ok()?;
+    let mounts = match parsed.get("mounts") {
+        Some(serde_yaml::Value::Sequence(sequence)) => sequence
+            .iter()
+            .filter_map(|entry| entry.get("location").and_then(serde_yaml::Value::as_str))
+            .map(PathBuf::from)
+            .collect(),
+        // No `mounts:` key (or an empty list) is the default: only `$HOME`.
+        None | Some(serde_yaml::Value::Null) => Vec::new(),
+        // An unreadable shape is not guessed at either.
+        Some(_) => return None,
+    };
+    Some(ColimaProfileShares {
+        home,
+        mounts,
+        config,
+    })
 }
 
 fn validate_compose_backend_mount_budget(
@@ -797,6 +906,118 @@ fn path_is_within(path: &Path, root: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A private `HOME` and the Colima profile under it, restored on drop.
+    struct ProfileFixture {
+        home: tempfile::TempDir,
+        previous_home: Option<std::ffi::OsString>,
+        previous_colima: Option<std::ffi::OsString>,
+    }
+
+    impl ProfileFixture {
+        fn new(mounts: Option<&Path>) -> Self {
+            let home = tempfile::tempdir().expect("private home");
+            let profile = home.path().join(".colima/effigy");
+            std::fs::create_dir_all(&profile).expect("profile directory");
+            let config = match mounts {
+                Some(mount) => format!(
+                    "mounts:\n  - location: {}\n    writable: true\n",
+                    mount.display()
+                ),
+                None => "mounts: []\n".to_owned(),
+            };
+            std::fs::write(profile.join("colima.yaml"), config).expect("profile config");
+            let previous_home = std::env::var_os("HOME");
+            let previous_colima = std::env::var_os("COLIMA_HOME");
+            std::env::set_var("HOME", home.path());
+            std::env::remove_var("COLIMA_HOME");
+            Self {
+                home,
+                previous_home,
+                previous_colima,
+            }
+        }
+
+        fn home(&self) -> &Path {
+            self.home.path()
+        }
+
+        fn remove_profile(&self) {
+            std::fs::remove_file(self.home.path().join(".colima/effigy/colima.yaml"))
+                .expect("profile config removal");
+        }
+    }
+
+    impl Drop for ProfileFixture {
+        fn drop(&mut self) {
+            match self.previous_home.take() {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+            match self.previous_colima.take() {
+                Some(value) => std::env::set_var("COLIMA_HOME", value),
+                None => std::env::remove_var("COLIMA_HOME"),
+            }
+        }
+    }
+
+    /// The formal host-path preflight only. The temp-root guess is escaped so
+    /// the profile's own mounts are the evidence under test.
+    fn host_paths(repo_root: &Path) -> Result<(), ContainerPolicyError> {
+        std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1");
+        let policy = crate::policy::model::test_policy(repo_root);
+        let result =
+            crate::with_test_compose_backend(crate::compose::ComposeBackend::ColimaNerdctl, || {
+                validate_compose_backend_host_paths(repo_root, &policy)
+            });
+        std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK");
+        result
+    }
+
+    #[test]
+    fn a_checkout_outside_the_profile_mounts_refuses_and_names_the_path() {
+        let _lock = crate::test_env_lock();
+        let profile = ProfileFixture::new(None);
+        let checkout = tempfile::tempdir().expect("checkout");
+        let error = host_paths(checkout.path()).expect_err("an unshared checkout refuses");
+        let message = error.to_string();
+        assert!(
+            message.contains(&checkout.path().display().to_string()),
+            "{message}"
+        );
+        assert!(message.contains("does not share"), "{message}");
+        assert!(message.contains("add a Colima mount"), "{message}");
+        assert!(
+            message.contains(&profile.home().display().to_string()),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_checkout_under_a_profile_mount_is_accepted() {
+        let _lock = crate::test_env_lock();
+        let checkout = tempfile::tempdir().expect("checkout");
+        let _profile = ProfileFixture::new(Some(checkout.path()));
+        host_paths(checkout.path()).expect("a shared checkout is accepted");
+    }
+
+    #[test]
+    fn a_checkout_under_home_is_accepted_without_extra_mounts() {
+        let _lock = crate::test_env_lock();
+        let profile = ProfileFixture::new(None);
+        let checkout = profile.home().join("work/checkout");
+        std::fs::create_dir_all(&checkout).expect("checkout");
+        host_paths(&checkout).expect("the default home share covers the checkout");
+    }
+
+    #[test]
+    fn an_unreadable_profile_is_not_guessed_at() {
+        let _lock = crate::test_env_lock();
+        let profile = ProfileFixture::new(None);
+        profile.remove_profile();
+        let checkout = tempfile::tempdir().expect("checkout");
+        host_paths(checkout.path()).expect("no profile evidence is no refusal");
+    }
 
     #[test]
     fn colima_named_volume_definitions_classify_only_supported_identities() {

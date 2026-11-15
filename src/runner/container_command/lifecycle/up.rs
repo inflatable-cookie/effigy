@@ -21,7 +21,7 @@ use crate::runner::container_command::{
 use crate::runner::environment;
 use effigy_containers::environment::{BackendError, Retention};
 use effigy_containers::exec::{
-    parse_compose_step_event, run_compose_invocation_streaming_with_env,
+    parse_compose_step_event, run_compose_invocation_streaming_with_env_owner, RetainedComposeOwner,
 };
 use effigy_containers::{
     ContainerComposeInvocationPlan, EffectiveAttachMode, EffectiveContainerPolicy,
@@ -243,29 +243,44 @@ fn run_container_up_inner(
         let observation = std::cell::Cell::new(None);
         let compose_steps =
             std::cell::RefCell::new(ComposeSteps::new(plan.policy.project_name.clone()));
-        let reconciled = environment::reconcile(repo_root, &plan.policy, retention, || {
-            match run_container_up_compose(&plan, &mut compose_steps.borrow_mut(), &observation) {
-                Ok(None) => {}
-                Ok(Some(end)) => {
-                    let error = match &end {
-                        AttachedComposeEnd::Interrupted => {
-                            BackendError::Uncertain("compose up interrupted".to_owned())
-                        }
-                        AttachedComposeEnd::Failed(status) => {
-                            BackendError::Failed(format!("compose up exited with {status}"))
-                        }
-                    };
-                    *attached_end.borrow_mut() = Some(end);
-                    return Err(error);
+        // The Compose apply runs under this reconcile run's own retained
+        // custody: a value-bearing VM launch is spawned by the Env Run that
+        // holds `Gate(Env)`, never by a direct child (effigy#1003).
+        let reconciled = environment::reconcile_owned(
+            repo_root,
+            &plan.policy,
+            retention,
+            |run, effect, deadline| {
+                match run_container_up_compose(
+                    &plan,
+                    &mut compose_steps.borrow_mut(),
+                    &observation,
+                    run,
+                    effect,
+                    deadline,
+                ) {
+                    Ok(None) => {}
+                    Ok(Some(end)) => {
+                        let error = match &end {
+                            AttachedComposeEnd::Interrupted => {
+                                BackendError::Uncertain("compose up interrupted".to_owned())
+                            }
+                            AttachedComposeEnd::Failed(status) => {
+                                BackendError::Failed(format!("compose up exited with {status}"))
+                            }
+                        };
+                        *attached_end.borrow_mut() = Some(end);
+                        return Err(error);
+                    }
+                    Err(error) => {
+                        let message = error.to_string();
+                        *detached_failure.borrow_mut() = Some(error);
+                        return Err(BackendError::Uncertain(message));
+                    }
                 }
-                Err(error) => {
-                    let message = error.to_string();
-                    *detached_failure.borrow_mut() = Some(error);
-                    return Err(BackendError::Uncertain(message));
-                }
-            }
-            Ok(())
-        });
+                Ok(())
+            },
+        );
         let bring_up = match reconciled {
             Ok(bring_up) => bring_up,
             Err(error) => {
@@ -396,6 +411,9 @@ fn run_container_up_compose(
     plan: &ContainerUpPlan,
     compose_steps: &mut ComposeSteps,
     observation: &std::cell::Cell<Option<std::time::Instant>>,
+    run: &mut effigy_kernel::run::Run<'_>,
+    effect: &effigy_kernel::ctx::EffectContext,
+    deadline: std::time::Instant,
 ) -> Result<Option<AttachedComposeEnd>, RunnerError> {
     // The stack's own step names the Compose call it waits on and the last
     // runtime line it read, so a runtime whose progress this parser does not
@@ -418,7 +436,7 @@ fn run_container_up_compose(
             compose_steps.observe(&event);
         }
     };
-    let output = run_compose_invocation_streaming_with_env(
+    let output = run_compose_invocation_streaming_with_env_owner(
         &plan.policy.repo_root,
         &plan.policy,
         &plan.up_plan.program,
@@ -427,6 +445,8 @@ fn run_container_up_compose(
         &plan.compose_secret_env,
         Some(&plan.stop_flag),
         &mut observe,
+        deadline,
+        &mut RetainedComposeOwner::new(run, effect),
     );
     match output {
         Ok(_) => {

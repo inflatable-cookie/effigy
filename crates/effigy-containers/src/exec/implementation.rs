@@ -832,6 +832,98 @@ pub fn run_compose_invocation_capture_with_env(
     run_command_capture_os_with_env(repo_root, &program, args, label, env)
 }
 
+/// The capture a task's environment ensure runs, under the Env Run that owns
+/// the transition. A value-bearing VM launch moves into retained kernel custody;
+/// every other invocation keeps the direct-child path unchanged (effigy#1003).
+pub fn run_compose_capture_with_env_owner(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    args: &[OsString],
+    label: &str,
+    env: &[(String, OsString)],
+    deadline: Instant,
+    owner: &mut super::retained::RetainedComposeOwner<'_, '_>,
+) -> Result<Output, ContainerExecError> {
+    let (program, args) = compose_invocation_for_repo(repo_root, policy, args);
+    run_compose_invocation_capture_owner(
+        repo_root,
+        OsStr::new(program),
+        &args,
+        label,
+        env,
+        deadline,
+        owner,
+    )
+}
+
+/// [`run_compose_invocation_capture_with_env`] under the owning Env Run.
+pub fn run_compose_invocation_capture_owner(
+    repo_root: &Path,
+    program: &OsStr,
+    args: &[OsString],
+    label: &str,
+    env: &[(String, OsString)],
+    deadline: Instant,
+    owner: &mut super::retained::RetainedComposeOwner<'_, '_>,
+) -> Result<Output, ContainerExecError> {
+    if crate::policy::render::vm_interpolation_required(program, env) {
+        return super::retained::capture(repo_root, program, args, label, env, deadline, owner);
+    }
+    let program = program.to_string_lossy();
+    if args.iter().any(|arg| arg == "up") && args.iter().any(|arg| arg == "-d" || arg == "--detach")
+    {
+        return super::process::run_detached_command_with_env_until(
+            repo_root, &program, args, label, env, deadline,
+        );
+    }
+    super::process::run_command_capture_os_with_env_until(
+        repo_root, &program, args, label, env, deadline,
+    )
+}
+
+/// [`run_compose_invocation_streaming_with_env`] under the owning Env Run.
+///
+/// The attached and detached bring-up both reach Compose here. A value-bearing
+/// VM launch is spawned by retained kernel custody before the interpolation
+/// file can be read; every other invocation is unchanged (effigy#1003).
+#[allow(clippy::too_many_arguments)]
+pub fn run_compose_invocation_streaming_with_env_owner(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    program: &OsStr,
+    args: &[OsString],
+    label: &str,
+    env: &[(String, OsString)],
+    stop_requested: Option<&std::sync::atomic::AtomicBool>,
+    on_line: &mut dyn FnMut(&str),
+    deadline: Instant,
+    owner: &mut super::retained::RetainedComposeOwner<'_, '_>,
+) -> Result<Output, ContainerExecError> {
+    if crate::policy::render::vm_interpolation_required(program, env) {
+        return super::retained::detached(
+            repo_root,
+            program,
+            args,
+            label,
+            env,
+            stop_requested,
+            on_line,
+            deadline,
+            owner,
+        );
+    }
+    run_compose_invocation_streaming_with_env(
+        repo_root,
+        policy,
+        program,
+        args,
+        label,
+        env,
+        stop_requested,
+        on_line,
+    )
+}
+
 /// Run one Compose invocation whose progress a person is watching.
 ///
 /// The command's output still lands in the checkout's retained backend

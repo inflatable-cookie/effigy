@@ -265,14 +265,14 @@ exec "$@"
         // The Colima backend refuses a checkout under a temporary root because
         // the VM may not mount it; this fixture never reaches a real VM, so the
         // repository's own test escape lifts that path rule.
-        let skip_colima_temp_root = (backend == "colima").then_some("1".to_owned());
+        let skip_colima_host_path = (backend == "colima").then_some("1".to_owned());
         EnvGuard::set_many(&[
             ("HOME", Some(self.home.display().to_string())),
             ("PATH", Some(path)),
             ("EFFIGY_COMPOSE_BACKEND", Some(backend.to_owned())),
             (
-                "EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK",
-                skip_colima_temp_root,
+                "EFFIGY_TEST_SKIP_COLIMA_HOST_PATH_CHECK",
+                skip_colima_host_path,
             ),
             ("EFFIGY_TEST_PS_ROW", Some(ps_row.to_owned())),
             ("EFFIGY_TEST_SHARED_PS_ROW", Some(shared_row.to_owned())),

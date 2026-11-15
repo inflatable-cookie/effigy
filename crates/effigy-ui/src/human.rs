@@ -307,14 +307,34 @@ fn floor_char_boundary(text: &str, end: usize) -> usize {
     end
 }
 
-/// Keep a line to a terminal's width, and say that it was cut.
+/// Keep a line to a terminal's width without losing its cause.
+///
+/// A refusal is often one long line whose *end* says why it stopped, so a
+/// head-only cut hid the root cause of a Compose launch refusal on Colima
+/// (effigy#1003). The middle is what goes: the head names what failed and the
+/// tail keeps the reason the line ended with, exactly as [`bound_text`] keeps
+/// both ends of a relayed cause.
 fn bound(text: &str) -> String {
     let text = text.trim();
     if text.len() <= MAX_EVIDENCE_BYTES {
         return text.to_owned();
     }
-    let end = floor_char_boundary(text, MAX_EVIDENCE_BYTES);
-    format!("{}… (truncated)", text[..end].trim_end())
+    let tail_budget = MAX_EVIDENCE_BYTES / 3;
+    let mut tail_start = floor_char_boundary(text, text.len() - tail_budget);
+    if let Some(newline) = text[..tail_start].rfind('\n') {
+        if text.len() - (newline + 1) <= tail_budget * 2 {
+            tail_start = newline + 1;
+        }
+    }
+    let head_end = floor_char_boundary(
+        text,
+        MAX_EVIDENCE_BYTES.saturating_sub(text.len() - tail_start),
+    );
+    format!(
+        "{}…{}",
+        text[..head_end].trim_end(),
+        text[tail_start..].trim_start()
+    )
 }
 
 const SECRET_MARKERS: [&str; 8] = [
@@ -496,12 +516,22 @@ mod tests {
     }
 
     #[test]
-    fn evidence_is_bounded() {
-        let long = "x".repeat(MAX_EVIDENCE_BYTES * 2);
+    fn evidence_is_bounded_and_keeps_the_cause_it_ended_with() {
+        // A long single line is where a backend's reason usually sits: the
+        // head names the command, the tail names why it failed (effigy#1003).
+        let long = format!(
+            "{}VM Compose interpolation requires retained kernel custody",
+            "x".repeat(MAX_EVIDENCE_BYTES * 2)
+        );
         let error = HumanError::new("startup failed").evidence(long);
         let line = &error.evidence_lines()[0];
-        assert!(line.len() <= MAX_EVIDENCE_BYTES + "… (truncated)".len());
-        assert!(line.ends_with("… (truncated)"));
+        assert!(line.len() <= MAX_EVIDENCE_BYTES + "…".len());
+        assert!(
+            line.ends_with("VM Compose interpolation requires retained kernel custody"),
+            "{line}"
+        );
+        assert!(line.starts_with("xxxx"), "{line}");
+        assert!(!line.contains(&"x".repeat(MAX_EVIDENCE_BYTES)), "{line}");
     }
 
     #[test]

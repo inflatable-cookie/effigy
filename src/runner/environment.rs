@@ -349,6 +349,11 @@ pub(in crate::runner) fn task_retention() -> Retention {
 /// The apply run of a bring-up. `apply` performs the one backend effect:
 /// `compose up -d --remove-orphans`, from which Compose recreates only the
 /// services whose rendered configuration changed.
+///
+/// Production bring-ups use [`reconcile_owned`], which hands the apply the Env
+/// Run it must spawn under (effigy#1003). This plain form stays for fixtures
+/// whose apply starts no retained child.
+#[cfg(test)]
 pub(in crate::runner) fn reconcile(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -357,33 +362,86 @@ pub(in crate::runner) fn reconcile(
 ) -> Result<BringUp, RunnerError> {
     let env = env_ref(policy)?;
     let ctx = context(&policy.repo_root)?;
+    prepare_apply(repo_root, policy)?;
+    let backend = backend(repo_root, policy);
+    let outcome = engine::reconcile(
+        &ctx,
+        &env,
+        up(repo_root, policy, &backend, retention),
+        apply,
+    )
+    .map_err(error)?;
+    finish_reconcile(policy, &env, outcome)
+}
+
+/// [`reconcile`] for an apply that must spawn under the reconcile run's own
+/// retained custody: a secret-bearing VM Compose launch (Tom's #534 ruling,
+/// effigy#1003). The closure receives the exact `Run` that holds `Gate(Env)`,
+/// the child effect that bounds the apply and that deadline, so the Compose
+/// child belongs to the same owner as the transition that started it.
+pub(in crate::runner) fn reconcile_owned(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    retention: Retention,
+    apply: impl FnOnce(
+        &mut effigy_kernel::run::Run<'_>,
+        &effigy_kernel::ctx::EffectContext,
+        Instant,
+    ) -> Result<(), BackendError>,
+) -> Result<BringUp, RunnerError> {
+    let env = env_ref(policy)?;
+    let ctx = context(&policy.repo_root)?;
+    prepare_apply(repo_root, policy)?;
+    let backend = backend(repo_root, policy);
+    let outcome = engine::reconcile_owned(
+        &ctx,
+        &env,
+        up(repo_root, policy, &backend, retention),
+        apply,
+    )
+    .map_err(error)?;
+    finish_reconcile(policy, &env, outcome)
+}
+
+/// The one `Up` a bring-up's apply describes, shared by both reconcile paths.
+fn up<'a>(
+    repo_root: &'a Path,
+    policy: &'a EffectiveContainerPolicy,
+    backend: &'a BackendSelection,
+    retention: Retention,
+) -> Up<'a> {
+    Up {
+        render: policy.render.as_ref().map(|render| &render.closure),
+        project: &policy.project_name,
+        backend,
+        retention,
+        workdir: repo_root,
+        primary_service: &policy.primary_service,
+        compose_files: &policy.compose_files,
+    }
+}
+
+/// The pre-apply checks every bring-up runs before the environment is touched.
+fn prepare_apply(repo_root: &Path, policy: &EffectiveContainerPolicy) -> Result<(), RunnerError> {
     // The exact-identity inventory still removes owned containers a profile
     // transition left unusable, so the apply recreates rather than collides.
     let _running = running(repo_root, policy)?;
     // A bind-mounted directory that does not exist yet cannot be mounted.
-    effigy_containers::exec::ensure_isolated_mount_host_points(repo_root, policy).map_err(
-        |error| {
+    effigy_containers::exec::ensure_isolated_mount_host_points(repo_root, policy)
+        .map(|_| ())
+        .map_err(|error| {
             RunnerError::task_invocation(format!(
                 "container `{}` could not prepare its isolated mount points in the checkout: {error}",
                 policy.name
             ))
-        },
-    )?;
-    let outcome = engine::reconcile(
-        &ctx,
-        &env,
-        Up {
-            render: policy.render.as_ref().map(|render| &render.closure),
-            project: &policy.project_name,
-            backend: &backend(repo_root, policy),
-            retention,
-            workdir: repo_root,
-            primary_service: &policy.primary_service,
-            compose_files: &policy.compose_files,
-        },
-        apply,
-    )
-    .map_err(error)?;
+        })
+}
+
+fn finish_reconcile(
+    policy: &EffectiveContainerPolicy,
+    env: &EnvRef,
+    outcome: engine::BringUp,
+) -> Result<BringUp, RunnerError> {
     match &outcome.applied {
         Applied::HeldByRuns(holders) => eprintln!(
             "[warn] environment `{}` is held by {}; the edit applies on the next up. The runs using it stay attached",
@@ -401,7 +459,7 @@ pub(in crate::runner) fn reconcile(
         Applied::Reconciled => {}
     }
     Ok(BringUp {
-        env,
+        env: env.clone(),
         repo_root: policy.repo_root.clone(),
         creation: outcome.creation,
     })

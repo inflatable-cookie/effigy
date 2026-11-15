@@ -1855,7 +1855,10 @@ impl<'a> Run<'a> {
     pub fn verify_custody(&self) -> Result<(), RunError> {
         self.verify_checkout_custody()
     }
-    pub(crate) fn has_sentinel(&self) -> bool {
+    /// Whether this run already has the helper-backed custody a secret-bearing
+    /// spawn needs. A caller that must spawn under custody can enable it once;
+    /// the second attempt is refused rather than replacing a live helper.
+    pub fn has_sentinel(&self) -> bool {
         self.sentinel.is_some()
     }
     pub(crate) fn intend_remote(&mut self, spec: EffectSpec) -> Result<EffectTicket, RunError> {
