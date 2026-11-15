@@ -1287,6 +1287,35 @@ impl OwnedProcess {
     pub fn poll(&mut self) -> Observed<Exit> {
         lock(&self.core).poll()
     }
+    /// Drain captured output through EOF after the leader's exit is verified.
+    ///
+    /// Descendants can keep either pipe open after the leader exits. This waits
+    /// only under the operation and process deadlines already attached to the
+    /// launch, so an inherited writer cannot make capture unbounded.
+    pub fn finish_capture(&self, cx: &OperationContext) -> Result<(), String> {
+        loop {
+            cx.check("process capture")
+                .map_err(|error| error.to_string())?;
+            let mut core = lock(&self.core);
+            if core.exit.is_none() {
+                return Err("process exit is not verified".into());
+            }
+            if core
+                .deadline
+                .is_some_and(|at| effigy_core::run_deadline::now() >= at)
+            {
+                return Err("process capture deadline expired".into());
+            }
+            core.drain();
+            if core.stdout.is_none() && core.stderr.is_none() {
+                cx.check("process capture")
+                    .map_err(|error| error.to_string())?;
+                return Ok(());
+            }
+            drop(core);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
     pub fn wait(&mut self, cx: &OperationContext) -> Observed<Exit> {
         loop {
             if let Err(e) = cx.check("process wait") {
