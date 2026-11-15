@@ -98,12 +98,11 @@ fn validate_compose_backend_host_paths(
             continue;
         }
         return Err(ContainerPolicyError::TaskInvocation(format!(
-            "container `{}` uses Colima profile `{}`, which does not share `{}` into its VM ({}), so the VM cannot read this checkout's Compose inputs; move the checkout under {} or have the operator add a Colima mount for `{}` in `{}`. Changing the profile is the operator's host decision",
+            "container `{}` uses Colima profile `{}`, which does not share `{}` into its VM ({}), so the VM cannot read this checkout's Compose inputs; have the operator add a Colima mount for `{}` in `{}`. Changing the profile is the operator's host decision",
             policy.name,
             policy.profile,
             path.display(),
             shares.describe(),
-            shares.describe_default(),
             path.display(),
             shares.config_excerpt(),
         )));
@@ -120,12 +119,12 @@ pub(crate) fn colima_profile_covers(profile: &str, path: &Path) -> Option<bool> 
 
 /// The host paths one Colima profile shares into its VM.
 ///
-/// `$HOME` is Colima's own default share and is always present; `mounts:` in
-/// the profile's `colima.yaml` adds to it. `None` means this host could not read
-/// the profile, so no share set is claimed.
+/// The paths listed here are the profile's complete share set. An absent or
+/// empty `mounts:` uses Colima's default home share; explicit mounts replace
+/// that default. `None` means this host could not read the profile, so no share
+/// set is claimed.
 struct ColimaProfileShares {
-    home: PathBuf,
-    mounts: Vec<PathBuf>,
+    shares: Vec<PathBuf>,
     config: PathBuf,
 }
 
@@ -135,23 +134,22 @@ impl ColimaProfileShares {
             std::fs::canonicalize(candidate).unwrap_or_else(|_| candidate.to_path_buf())
         };
         let path = canonical(path);
-        std::iter::once(&self.home)
-            .chain(self.mounts.iter())
+        self.shares
+            .iter()
             .any(|root| path_is_within(&path, &canonical(root)))
     }
 
     fn describe(&self) -> String {
-        let mut described = vec![format!("it shares `{}`", self.home.display())];
-        described.extend(
-            self.mounts
-                .iter()
-                .map(|mount| format!("and `{}`", mount.display())),
-        );
-        described.join(" ")
-    }
-
-    fn describe_default(&self) -> String {
-        format!("a path inside `{}`", self.home.display())
+        if self.shares.is_empty() {
+            return "it shares no host paths".to_owned();
+        }
+        let paths = self
+            .shares
+            .iter()
+            .map(|share| format!("`{}`", share.display()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("it shares {paths}")
     }
 
     fn config_excerpt(&self) -> String {
@@ -172,22 +170,28 @@ fn colima_profile_shares(profile: &str) -> Option<ColimaProfileShares> {
     let config = colima_home.join(profile).join("colima.yaml");
     let content = std::fs::read_to_string(&config).ok()?;
     let parsed: serde_yaml::Value = serde_yaml::from_str(&content).ok()?;
-    let mounts = match parsed.get("mounts") {
-        Some(serde_yaml::Value::Sequence(sequence)) => sequence
+    let shares = match parsed.get("mounts") {
+        Some(serde_yaml::Value::Sequence(sequence)) if !sequence.is_empty() => sequence
             .iter()
             .filter_map(|entry| entry.get("location").and_then(serde_yaml::Value::as_str))
-            .map(PathBuf::from)
+            .map(|location| expand_colima_mount_location(location, &home))
             .collect(),
-        // No `mounts:` key (or an empty list) is the default: only `$HOME`.
-        None | Some(serde_yaml::Value::Null) => Vec::new(),
+        // Missing and empty lists use Colima's default home share.
+        None | Some(serde_yaml::Value::Sequence(_)) => vec![home],
+        // Colima treats null as an explicit request to disable all mounts.
+        Some(serde_yaml::Value::Null) => Vec::new(),
         // An unreadable shape is not guessed at either.
         Some(_) => return None,
     };
-    Some(ColimaProfileShares {
-        home,
-        mounts,
-        config,
-    })
+    Some(ColimaProfileShares { shares, config })
+}
+
+fn expand_colima_mount_location(location: &str, home: &Path) -> PathBuf {
+    match location {
+        "~" => home.to_path_buf(),
+        location if location.starts_with("~/") => home.join(&location[2..]),
+        _ => PathBuf::from(location),
+    }
 }
 
 fn validate_compose_backend_mount_budget(
@@ -915,17 +919,10 @@ mod tests {
     }
 
     impl ProfileFixture {
-        fn new(mounts: Option<&Path>) -> Self {
+        fn new(config: &str) -> Self {
             let home = tempfile::tempdir().expect("private home");
             let profile = home.path().join(".colima/effigy");
             std::fs::create_dir_all(&profile).expect("profile directory");
-            let config = match mounts {
-                Some(mount) => format!(
-                    "mounts:\n  - location: {}\n    writable: true\n",
-                    mount.display()
-                ),
-                None => "mounts: []\n".to_owned(),
-            };
             std::fs::write(profile.join("colima.yaml"), config).expect("profile config");
             let previous_home = std::env::var_os("HOME");
             let previous_colima = std::env::var_os("COLIMA_HOME");
@@ -977,7 +974,7 @@ mod tests {
     #[test]
     fn a_checkout_outside_the_profile_mounts_refuses_and_names_the_path() {
         let _lock = crate::test_env_lock();
-        let profile = ProfileFixture::new(None);
+        let profile = ProfileFixture::new("mounts: []\n");
         let checkout = tempfile::tempdir().expect("checkout");
         let error = host_paths(checkout.path()).expect_err("an unshared checkout refuses");
         let message = error.to_string();
@@ -987,6 +984,7 @@ mod tests {
         );
         assert!(message.contains("does not share"), "{message}");
         assert!(message.contains("add a Colima mount"), "{message}");
+        assert!(message.contains("it shares `"), "{message}");
         assert!(
             message.contains(&profile.home().display().to_string()),
             "{message}"
@@ -997,23 +995,61 @@ mod tests {
     fn a_checkout_under_a_profile_mount_is_accepted() {
         let _lock = crate::test_env_lock();
         let checkout = tempfile::tempdir().expect("checkout");
-        let _profile = ProfileFixture::new(Some(checkout.path()));
+        let config = format!(
+            "mounts:\n  - location: {}\n    writable: true\n",
+            checkout.path().display()
+        );
+        let _profile = ProfileFixture::new(&config);
         host_paths(checkout.path()).expect("a shared checkout is accepted");
     }
 
     #[test]
-    fn a_checkout_under_home_is_accepted_without_extra_mounts() {
+    fn a_missing_mounts_key_defaults_to_home_only() {
         let _lock = crate::test_env_lock();
-        let profile = ProfileFixture::new(None);
+        let profile = ProfileFixture::new("runtime: docker\n");
         let checkout = profile.home().join("work/checkout");
         std::fs::create_dir_all(&checkout).expect("checkout");
         host_paths(&checkout).expect("the default home share covers the checkout");
     }
 
     #[test]
+    fn tilde_mount_and_additional_mount_are_the_complete_share_set() {
+        let _lock = crate::test_env_lock();
+        let profile = ProfileFixture::new(
+            "mounts:\n  - location: \"~\"\n  - location: \"~/projects\"\n  - location: /Volumes/Stash\n    writable: true\n",
+        );
+        let checkout = profile.home().join("work/checkout");
+        std::fs::create_dir_all(&checkout).expect("checkout");
+        host_paths(&checkout).expect("the tilde mount expands to the profile home");
+        assert_eq!(
+            colima_profile_covers("effigy", &profile.home().join("projects/demo")),
+            Some(true)
+        );
+        assert_eq!(
+            colima_profile_covers("effigy", Path::new("/Volumes/Stash")),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn explicit_mount_replaces_the_default_home_share() {
+        let _lock = crate::test_env_lock();
+        let profile = ProfileFixture::new("mounts:\n  - location: /Volumes/Stash\n");
+        // Keep the profile file in the owned fixture while giving HOME a
+        // realistic path outside this run's required /Volumes/Stash scratch.
+        std::env::set_var("COLIMA_HOME", profile.home().join(".colima"));
+        std::env::set_var("HOME", "/Users/colima-test-home");
+        assert_eq!(
+            colima_profile_covers("effigy", Path::new("/Users/colima-test-home")),
+            Some(false),
+            "the explicit Stash mount must not imply the home share"
+        );
+    }
+
+    #[test]
     fn an_unreadable_profile_is_not_guessed_at() {
         let _lock = crate::test_env_lock();
-        let profile = ProfileFixture::new(None);
+        let profile = ProfileFixture::new("mounts: []\n");
         profile.remove_profile();
         let checkout = tempfile::tempdir().expect("checkout");
         host_paths(checkout.path()).expect("no profile evidence is no refusal");
