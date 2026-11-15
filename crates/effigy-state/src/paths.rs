@@ -216,7 +216,10 @@ pub fn write_state_report<T: Serialize>(
                 parent.display()
             ))
         })?;
-        fs::write(path, &encoded).map_err(|error| {
+        // Publish one complete generation: `history` parses these reports
+        // while this writer may be replacing them, so a truncate-and-rewrite
+        // would let a concurrent reader see an empty or partial report.
+        crate::atomic::write_atomic(path, encoded.as_bytes()).map_err(|error| {
             StateIoError::new(format!(
                 "failed to write state report {}: {error}",
                 path_display(path, repo_root)
@@ -247,12 +250,14 @@ pub fn write_state_context_file<T: Serialize>(
     })?;
     let encoded = serde_json::to_string_pretty(&context_file.context)
         .map_err(|error| StateIoError::new(error.to_string()))?;
-    fs::write(&absolute_path, format!("{encoded}\n")).map_err(|error| {
-        StateIoError::new(format!(
-            "failed to write {file_label} {}: {error}",
-            path_display(&absolute_path, repo_root)
-        ))
-    })?;
+    crate::atomic::write_atomic(&absolute_path, format!("{encoded}\n").as_bytes()).map_err(
+        |error| {
+            StateIoError::new(format!(
+                "failed to write {file_label} {}: {error}",
+                path_display(&absolute_path, repo_root)
+            ))
+        },
+    )?;
     Ok(path_display(&absolute_path, repo_root))
 }
 
