@@ -1021,7 +1021,10 @@ fn fresh_binding_accepts_only_the_created_workspace_id_never_attached_or_depende
         let workspace = candidate('a');
         fake.inventories
             .push_back(verified(vec![row(PRIMARY, 'a'), row("database", 'b')]));
-        let deadline = Instant::now() + Duration::from_secs(5);
+        // A fixture budget for the fake backend's own observations, not a bound
+        // this proof asserts: it keeps its floor and stretches with host load.
+        let deadline =
+            Instant::now() + effigy_test_support::load_scaled_guard(Duration::from_secs(5));
         assert!(run
             .bind_target_observing(&reservation, dependency, &mut fake, deadline)
             .is_err());
@@ -1038,14 +1041,18 @@ fn parked_activation_fixture<'a>(
     ctx: &EnvContext<'a>,
     stack: &EnvRef,
 ) -> (super::super::ParkedWorkspaceActivation<'a>, Fake) {
-    parked_activation_fixture_with_budget(ctx, stack, Duration::from_secs(60))
+    let (parked, fake, _deadline) =
+        parked_activation_fixture_with_budget(ctx, stack, Duration::from_secs(60));
+    (parked, fake)
 }
 
+/// The parked fixture and the exact deadline its own park minted, so a proof
+/// that needs that deadline to pass can wait for it instead of guessing.
 fn parked_activation_fixture_with_budget<'a>(
     ctx: &EnvContext<'a>,
     stack: &EnvRef,
     budget: Duration,
-) -> (super::super::ParkedWorkspaceActivation<'a>, Fake) {
+) -> (super::super::ParkedWorkspaceActivation<'a>, Fake, Instant) {
     use effigy_kernel::id::{ExecutionTarget, InvocationSpec, Route, Surface, TaskId};
     use effigy_kernel::workspace_session::{
         BoundPlatform, ContainerIdentity, GuestObject, ImagePlatform, LoaderFamily, TargetCandidate,
@@ -1113,7 +1120,7 @@ fn parked_activation_fixture_with_budget<'a>(
             &reservation,
             candidate,
             &mut fake,
-            Instant::now() + Duration::from_secs(5),
+            Instant::now() + effigy_test_support::load_scaled_guard(Duration::from_secs(5)),
         )
         .unwrap();
     let target = ContainerIdentity {
@@ -1145,10 +1152,17 @@ fn parked_activation_fixture_with_budget<'a>(
             }),
         )
         .unwrap();
+    let parked_until = Instant::now() + budget;
     let parked = activation
-        .park(Instant::now() + budget)
+        .park(parked_until)
         .expect("complete activation parks");
-    (parked, fake)
+    // Park clamps its own deadline to the caller's live context, so this is the
+    // exact instant the parked owner refuses at.
+    let deadline = match ctx.cx.operation().deadline() {
+        effigy_kernel::ctx::Deadline::At(at) => parked_until.min(at),
+        effigy_kernel::ctx::Deadline::Open(_) => parked_until,
+    };
+    (parked, fake, deadline)
 }
 
 #[test]
@@ -1161,25 +1175,32 @@ fn parked_abort_uses_fresh_cleanup_after_context_expiry_and_cancel() {
         for attempted in [false, true] {
             let fixture = home();
             let state = root(fixture.path());
+            // The fixture runs under live authority. Only the parked owner's own
+            // deadline expires, and it is minted at the end of the fixture, so a
+            // loaded host can no longer spend it before the proof starts.
             let base = EnvContext::new(&state, CancelToken::default()).unwrap();
-            // The test needs the context to expire, not a ten-second delay.
-            // Leave time for setup before observing the same refusal path.
-            let deadline = Instant::now() + Duration::from_secs(2);
-            let ctx = base.bounded_until(deadline).unwrap();
             let fresh_ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
             let stack = env("stack");
-            let (mut parked, _fake) = parked_activation_fixture(&ctx, &stack);
+            let (mut parked, _fake, parked_until) = parked_activation_fixture_with_budget(
+                &base,
+                &stack,
+                if expired {
+                    Duration::from_secs(2)
+                } else {
+                    Duration::from_secs(60)
+                },
+            );
             if attempted {
                 parked
-                    .record_integration_step(&ctx, Step::Routes, State::Attempted)
+                    .record_integration_step(&base, Step::Routes, State::Attempted)
                     .unwrap();
             }
             if expired {
-                while Instant::now() < deadline {
-                    std::thread::sleep(Duration::from_millis(10));
+                while Instant::now() < parked_until {
+                    std::thread::sleep(Duration::from_millis(5));
                 }
             } else {
-                ctx.cx
+                base.cx
                     .operation()
                     .cancel_token()
                     .cancel(StopCause::Requested);
@@ -1206,6 +1227,19 @@ fn parked_abort_uses_fresh_cleanup_after_context_expiry_and_cancel() {
                 .integration_snapshot()
                 .expect("cleanup snapshot uses fresh authority");
             assert_eq!(snapshot.contains_key(&Step::Routes), attempted);
+            // The abort and cleared-record authority is its own spent window: a
+            // short child this thread waits out, so no fixture work has to fit
+            // inside the budget under test.
+            let ctx = base
+                .bounded_until(Instant::now() + Duration::from_millis(50))
+                .unwrap();
+            let parent_until = match ctx.cx.operation().deadline() {
+                effigy_kernel::ctx::Deadline::At(at) => at,
+                effigy_kernel::ctx::Deadline::Open(_) => Instant::now(),
+            };
+            while Instant::now() < parent_until {
+                std::thread::sleep(Duration::from_millis(5));
+            }
             if attempted {
                 let (error, custody) = parked
                     .abort(&ctx, Wait::FailFast)
@@ -1240,7 +1274,10 @@ fn parked_cleanup_custody_survives_expiry_and_cancellation() {
             let fixture = home();
             let state = root(fixture.path());
             let base = EnvContext::new(&state, CancelToken::default()).unwrap();
-            let deadline = Instant::now() + Duration::from_secs(5);
+            // The window covers the fixture's own admissions before it is spent,
+            // so it keeps its five-second floor and stretches with host load.
+            let deadline =
+                Instant::now() + effigy_test_support::load_scaled_guard(Duration::from_secs(5));
             let ctx = base.bounded_until(deadline).unwrap();
             let stack = env("stack");
             let (mut parked, mut fake) = parked_activation_fixture(&ctx, &stack);
@@ -1319,7 +1356,7 @@ fn parked_cleanup_custody_survives_expiry_and_cancellation() {
         let state = root(fixture.path());
         let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
         let stack = env("stack");
-        let (parked, mut fake) =
+        let (parked, mut fake, _deadline) =
             parked_activation_fixture_with_budget(&ctx, &stack, Duration::from_secs(2));
         let session = parked.session().clone();
         for _ in 0..2 {

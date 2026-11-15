@@ -1,7 +1,50 @@
-use effigy_process::ProcessSpec;
+use effigy_process::{ProcessEvent, ProcessSpec, ProcessSupervisor};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+/// Wait for the next event the caller accepts. The wait ends on the event; the
+/// guard only stops a fixture that never produces one. `floor` is the budget
+/// the fixed-slice loop this replaced used to spend, kept as the quiet-host
+/// bound and stretched by the host's own measured load.
+pub(super) fn wait_for_event(
+    supervisor: &ProcessSupervisor,
+    floor: Duration,
+    mut accept: impl FnMut(&ProcessEvent) -> bool,
+) -> Option<ProcessEvent> {
+    let until = Instant::now() + load_guard(floor);
+    loop {
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return None;
+        }
+        if let Some(event) = supervisor.next_event_timeout(left.min(Duration::from_millis(100))) {
+            if accept(&event) {
+                return Some(event);
+            }
+        }
+    }
+}
+
+/// Wait for the state the caller observes, under the same guard.
+pub(super) fn wait_until(floor: Duration, mut ready: impl FnMut() -> bool) -> bool {
+    let until = Instant::now() + load_guard(floor);
+    loop {
+        if ready() {
+            return true;
+        }
+        if Instant::now() >= until {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// The fixture's own wait guard, scaled by this host's measured load: exactly
+/// the caller's floor on an idle host, longer on a saturated one.
+pub(super) fn load_guard(floor: Duration) -> Duration {
+    effigy_test_support::load_scaled_guard(floor)
+}
 
 #[cfg(unix)]
 use nix::sys::signal::kill;

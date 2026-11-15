@@ -424,7 +424,11 @@ fn private_gateway_shutdown_handles_owned_term_int_and_inherited_ignore() {
     foreign_probe
         .write_all(b"still-owned\n")
         .expect("probe foreign listener");
-    let deadline = Instant::now() + Duration::from_secs(1);
+    // The receipt is written by the fixture's own accept thread, so wait for
+    // that event under a guard that keeps its original floor and stretches with
+    // the host's measured load; a second of wall clock can be spent by the
+    // scheduler alone.
+    let deadline = Instant::now() + effigy_test_support::load_scaled_guard(Duration::from_secs(1));
     while !foreign_listener.received_request() {
         assert!(
             Instant::now() < deadline,

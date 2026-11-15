@@ -90,6 +90,12 @@ fn write_frame(transport: &mut TlsChannelTransport, frame: &Frame) -> io::Result
 }
 
 /// Read one framed host answer, bounded so a wedged host cannot hold the proof.
+///
+/// The socket is non-blocking, so a read that has nothing to hand over yet
+/// reports `WouldBlock` rather than an answer: that is "not now", not a
+/// failing host. The loop keeps polling until the answer arrives or this
+/// caller's own deadline passes, so a loaded host can no longer be mistaken
+/// for a refused enrolment.
 fn read_frame(transport: &mut TlsChannelTransport, until: Instant) -> io::Result<Frame> {
     let mut buffer = Vec::new();
     loop {
@@ -115,7 +121,11 @@ fn read_frame(transport: &mut TlsChannelTransport, until: Instant) -> io::Result
                 ))
             }
             Ok(read) => buffer.extend_from_slice(&chunk[..read]),
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
+                ) => {}
             Err(error) => return Err(error),
         }
     }
@@ -149,7 +159,10 @@ fn guest_enrols(
     write_frame(&mut transport, &enrol).map_err(|e| stage("write Enrol", e))?;
     // Enrol has no success frame. Only an authenticated request's actual
     // observed response proves the host accepted it; silence proves nothing.
-    let until = Instant::now() + Duration::from_millis(400);
+    // The answer is the event under test, so it is awaited under the guest's
+    // existing ten-second hang guard rather than a shorter tail budget that a
+    // loaded host could spend before the host side had answered.
+    let until = deadline;
     let id = effigy_kernel::run::RequestId::new([0x65; 16]);
     let request = Frame::Request(host::Request {
         id,

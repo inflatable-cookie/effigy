@@ -413,8 +413,12 @@ fn probe_permission_denied_roots_git_and_http_leave_empty_filesystem_diff() {
             path: "/".into(),
             method: HttpReadMethod::Get,
             expect: StatusSet::default(),
-            connect_timeout: Duration::from_secs(1),
-            total_timeout: Duration::from_secs(1)
+            // This fixture's own request budgets, not a bound under test: the
+            // proof is the verified HTTP observation inside the two-second
+            // operation budget above, and a loaded host must not spend the
+            // request window before the peer thread has run.
+            connect_timeout: effigy_test_support::load_scaled_guard(Duration::from_secs(1)),
+            total_timeout: effigy_test_support::load_scaled_guard(Duration::from_secs(1))
         }),
         Observed::Verified(ProbeIo::Http { ready: true, .. }, _)
     ));

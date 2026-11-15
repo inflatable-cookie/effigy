@@ -22,6 +22,17 @@ fn cx(budget: Duration) -> ObserveContext {
     .observe()
     .unwrap()
 }
+/// The fixture target's own request budgets. They bound a loopback request made
+/// by this test, not a product bound any proof asserts: the probe tests below
+/// assert HEAD/body/header semantics and the caller's operation deadline, so a
+/// loaded host must not spend the request window before the peer thread has run.
+/// Each keeps its original floor and stretches with the host's measured load.
+fn fixture_connect() -> Duration {
+    effigy_test_support::load_scaled_guard(Duration::from_millis(200))
+}
+fn fixture_total() -> Duration {
+    effigy_test_support::load_scaled_guard(Duration::from_millis(250))
+}
 fn http_target(address: std::net::SocketAddr, expect: StatusSet) -> ObservationTarget {
     ObservationTarget::Http {
         address,
@@ -29,8 +40,8 @@ fn http_target(address: std::net::SocketAddr, expect: StatusSet) -> ObservationT
         path: "/health".into(),
         method: HttpReadMethod::Get,
         expect,
-        connect_timeout: Duration::from_millis(200),
-        total_timeout: Duration::from_millis(250),
+        connect_timeout: fixture_connect(),
+        total_timeout: fixture_total(),
     }
 }
 #[test]
