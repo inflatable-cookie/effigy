@@ -261,7 +261,7 @@ fn v0_2_13_repo_owned_smoke_task_runs_against_the_binary() {
         // surface this proof carries is the task's output, not which process
         // reached the checkout first.
         .arg("--lock-wait-ms")
-        .arg("600000")
+        .arg("60000")
         .arg("smoke:release")
         .arg(binary)
         .env("NO_COLOR", "1")

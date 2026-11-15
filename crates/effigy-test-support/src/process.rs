@@ -14,13 +14,6 @@ use std::time::{Duration, Instant};
 const STOP_GRACE: Duration = Duration::from_millis(300);
 const POLL: Duration = Duration::from_millis(10);
 const OUTPUT_DEADLINE: Duration = Duration::from_secs(180);
-/// How long a launch's kernel helpers get to exit *after* its leader is gone.
-/// The output deadline bounds the child's own life and is spent by the work the
-/// fixture asked for, so a slow-but-correct launch must not also spend the
-/// window its helpers are proved settled in. It is a fixed window: a helper
-/// that never exits is a failure to report promptly, not one to wait out at
-/// length; 60s is twice the longest observed retirement (effigy#998).
-const HELPER_SETTLE: Duration = Duration::from_secs(60);
 
 /// Shell tail for a fixture that must stop when its runner's pipe closes.
 /// The runner owns the pipe writer; its death closes it without polling.
@@ -277,10 +270,6 @@ impl OwnedChild {
     }
 
     fn wait_for_helpers(&mut self) -> io::Result<()> {
-        // Helper settlement starts when the leader is gone. Charging it to the
-        // launch's output deadline made a correct-but-slow run fail teardown on
-        // the very deadline its own work had already spent.
-        let deadline = self.deadline.max(Instant::now() + HELPER_SETTLE);
         loop {
             self.capture_kernel_helpers()?;
             self.helpers.retain(|identity| {
@@ -304,7 +293,7 @@ impl OwnedChild {
             if self.helpers.is_empty() {
                 return Ok(());
             }
-            if Instant::now() >= deadline {
+            if Instant::now() >= self.deadline {
                 let pids = self
                     .helpers
                     .iter()
