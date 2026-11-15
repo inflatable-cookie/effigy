@@ -274,7 +274,7 @@ fn store_reads_are_pure_including_on_a_read_only_root() {
         let reader = reader.verified().unwrap();
         assert!(reader.resource(&task("a")).verified().is_some());
     }
-    assert_eq!(snapshot(home.path()), before, "a read changed state");
+    assert_read_left_tree_unchanged(home.path(), &before);
     // Read-only directory and file: the reader takes an in-memory snapshot of
     // the checkpointed store, which creates nothing at all. SQLite's own
     // write-ahead side files go first, so "creates nothing" is measured.
@@ -1442,6 +1442,113 @@ fn store_read_beside_a_continuous_writer_is_one_plain_read() {
     );
 }
 
+/// A reader that opened a checkpointed store and then reads a tree the writer
+/// grew beside it must read a whole record, never a malformed database
+/// (effigy#999).
+///
+/// The reader warms its cached page count from a small store, and the writer's
+/// close checkpoint grows the resources tree far past it. An immutable read
+/// walks the grown tree with the stale count and reports SQLite's
+/// `database disk image is malformed` for a store that was never damaged.
+#[test]
+fn store_read_of_a_tree_a_writer_grew_beside_it_is_never_malformed() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .txn(&cx, |txn| txn.resource(&task("seed"), "task").map(|_| ()))
+        .unwrap();
+    drop(store);
+    assert!(
+        !root.path().join(format!("{DB_NAME}-wal")).exists(),
+        "the writer left a hot log, so the reader never took the checkpointed path"
+    );
+    let observed = reader(home.path());
+    let reader = observed.verified().unwrap();
+    // Warm the pages of a small store only: `meta`, not the resources tree.
+    assert!(reader.last_written_by().verified().is_some());
+    let mut writer = Store::open(&cx, &root).unwrap();
+    writer
+        .txn(&cx, |txn| {
+            for index in 0..3000 {
+                txn.resource(&task(&format!("later-{index}")), "task")?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    // Closing the writer checkpoints its log into `kernel.db`, under the
+    // reader: the resources tree the reader has not read yet is now much
+    // larger than the page count its cached database header states.
+    drop(writer);
+    for index in 0..3000 {
+        match reader.resource(&task(&format!("later-{index}"))) {
+            Observed::Verified(..) => {}
+            other => panic!(
+                "a read of a tree a writer grew beside it saw no whole record for later-{index}: \
+                 {other:?}"
+            ),
+        }
+    }
+}
+
+/// A reader that opened a checkpointed store keeps reading whole records while
+/// a writer commits and its close checkpoint rewrites the database pages under
+/// the reader (effigy#999).
+///
+/// An immutable open takes no lock and sees no checkpoint, so it read a mixture
+/// of the old and the new page trees. The flake census saw
+/// `database disk image is malformed` from exactly that mixture; this proof
+/// sees a committed row disappear instead.
+#[test]
+fn store_read_beside_a_checkpointing_writer_sees_whole_records() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .txn(&cx, |txn| {
+            for index in 0..20 {
+                txn.resource(&task(&format!("seed-{index}")), "task")?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    drop(store);
+    assert!(
+        !root.path().join(format!("{DB_NAME}-wal")).exists(),
+        "the writer left a hot log, so the reader never took the checkpointed path"
+    );
+    let observed = reader(home.path());
+    let reader = observed.verified().unwrap();
+    // Warm the root page this reader keeps across the writer's checkpoint.
+    assert!(reader.resource(&task("seed-0")).verified().is_some());
+    let mut writer = Store::open(&cx, &root).unwrap();
+    writer
+        .txn(&cx, |txn| {
+            for index in 0..3000 {
+                txn.resource(&task(&format!("later-{index}")), "task")?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    // Closing the writer checkpoints its log into `kernel.db` while the reader
+    // above still holds the file.
+    drop(writer);
+    for index in 0..20 {
+        match reader.resource(&task(&format!("seed-{index}"))) {
+            Observed::Verified(..) => {}
+            other => panic!(
+                "a read beside a closing writer saw no whole record for seed-{index}: {other:?}"
+            ),
+        }
+    }
+    assert!(
+        reader.resource(&task("later-0")).verified().is_some(),
+        "a read beside a closing writer never saw the record it committed"
+    );
+}
+
 #[test]
 fn store_damaged_journal_reads_unknown_without_a_crash() {
     let home = home();
@@ -1488,6 +1595,48 @@ fn store_read_of_a_leftover_empty_log_succeeds() {
     assert!(reader.resource(&task("kept")).verified().is_some());
 }
 
+/// The same tearing across processes: a reader in this process holds a
+/// checkpointed store while another process publishes and its close carries the
+/// log into the database, so the reader's cached page tree is behind the file
+/// (effigy#999).
+#[test]
+fn store_read_beside_a_writer_in_another_process_sees_whole_records() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .txn(&cx, |txn| {
+            for index in 0..400 {
+                txn.resource(&task(&format!("xproc-{index}")), "task")?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    drop(store);
+    let reader = match reader(home.path()) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("a checkpointed store refused its reader: {other:?}"),
+    };
+    // Warm one row only: the rest of the tree is read after the other process
+    // has rewritten it, so a snapshot that ignores the checkpoint is stale.
+    assert!(reader.resource(&task("xproc-0")).verified().is_some());
+    let mut helper = support::Helper::spawn(
+        "store_helper_publish_beside_a_reader",
+        &[("EFFIGY_STORE_STRESS_HOME", home.path().to_str().unwrap())],
+    );
+    helper.expect("PUBLISHED", Duration::from_secs(120));
+    assert!(helper.wait_for_exit().success());
+    for index in 0..400 {
+        match reader.resource(&task(&format!("xproc-{index}"))) {
+            Observed::Verified(..) => {}
+            other => panic!(
+                "a read beside a writing process saw no whole record for xproc-{index}: {other:?}"
+            ),
+        }
+    }
+}
+
 #[test]
 fn store_read_of_a_crashed_writers_log_succeeds() {
     let home = home();
@@ -1524,6 +1673,29 @@ fn store_read_of_a_crashed_writers_log_succeeds() {
         before,
         "a read rewrote the log"
     );
+}
+
+#[test]
+#[ignore]
+fn store_helper_publish_beside_a_reader() {
+    if !support::helper_is("store_helper_publish_beside_a_reader") {
+        return;
+    }
+    let cx = effects(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, &stress_home()).unwrap();
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .txn(&cx, |txn| {
+            for index in 0..3000 {
+                txn.resource(&task(&format!("xproc-0-{index}")), "task")?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    // Closing the writer carries its log into `kernel.db`: the exact write the
+    // other process's reader must never see as a torn page tree.
+    drop(store);
+    println!("PUBLISHED");
 }
 
 #[test]
@@ -1636,7 +1808,7 @@ fn store_observations_preserve_unicode_and_reserved_path_bytes() {
         .resource(&task("unicode"))
         .verified()
         .is_some());
-    assert_eq!(snapshot(&home), before);
+    assert_read_left_tree_unchanged(&home, &before);
 }
 
 #[test]

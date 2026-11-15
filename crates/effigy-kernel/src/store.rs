@@ -818,11 +818,12 @@ impl Store {
         }
         Ok(())
     }
-    /// Read-only open (R2): one plain SQLite read, no copy. A checkpointed
-    /// store is opened immutable; a store with write-ahead side files is read
-    /// through SQLite's own WAL. Nothing is created, locked for writing or
-    /// repaired, and an unreadable journal is `Unknown` for the caller to
-    /// warn about (K1).
+    /// Read-only open (R2): one plain SQLite read, no copy. A store with
+    /// write-ahead side files is read through SQLite's own WAL; a checkpointed
+    /// store on a writable root is read through SQLite's WAL too, so a writer
+    /// that appears beside the read cannot checkpoint torn pages under it
+    /// (effigy#999). Nothing is repaired and no file survives the read, and an
+    /// unreadable journal is `Unknown` for the caller to warn about (K1).
     pub fn read(cx: &ObserveContext, root: &StateRoot) -> Observed<StoreReader> {
         #[cfg(all(test, feature = "fault-injection"))]
         if let Some(injected) = crate::fault::injected() {
@@ -2032,15 +2033,18 @@ fn verify_reader(conn: Connection, busy: Duration) -> Result<Option<StoreReader>
     let version = schema_version(&conn)?;
     Ok(Some(StoreReader { conn, version }))
 }
-/// Open the store for reading without copying it: no lock of Effigy's own,
-/// no file created and nothing repaired. WAL already gives one consistent
-/// snapshot, so a writer beside this read is not an obstacle.
+/// Open the store for reading without copying it and without repairing it.
+/// WAL already gives one consistent snapshot, so a writer beside this read is
+/// not an obstacle — but the read has to be a WAL reader to see that.
 ///
 /// A store with a hot write-ahead log, or the index beside it, is a plain
 /// read-only connection to SQLite's own WAL: its committed frames are visible
-/// and a crashed writer's are not. A checkpointed store is an immutable open —
-/// no lock, no index and no file — which is also the only form that writes
-/// nothing into a read-only or copied checkout (K1, Q-011).
+/// and a crashed writer's are not. A store with nothing beside it has to be
+/// read through SQLite's WAL too, because a writer can appear and checkpoint
+/// its log into the database file while this read is open (effigy#999). An
+/// immutable read takes no lock and sees no checkpoint, so it read a mixture
+/// of the old and the new page trees and reported
+/// `database disk image is malformed` for a store that was never damaged.
 fn open_reading(root: &StateRoot, busy: Duration) -> Result<Option<StoreReader>, StoreError> {
     // A state root whose database is not created yet holds nothing, whatever
     // its side files say.
@@ -2053,15 +2057,91 @@ fn open_reading(root: &StateRoot, busy: Duration) -> Result<Option<StoreReader>,
     }
     let wal = FileName::new(&format!("{}-wal", root.database_name()))?;
     let index = FileName::new(&format!("{}-shm", root.database_name()))?;
+    let journal = FileName::new(&format!("{}-journal", root.database_name()))?;
+    if root
+        .dir()
+        .entry(&journal)?
+        .is_some_and(|stat| stat.st_size > 0)
+    {
+        // A rollback journal is a crashed writer's: only a writer may replay
+        // it, so a read writes nothing here and takes the immutable form.
+        return open_immutable(root, busy);
+    }
     let hot = root.dir().entry(&index)?.is_some()
         || root.dir().entry(&wal)?.is_some_and(|stat| stat.st_size > 0);
     // The plain read-only open takes the write-ahead index writable, so a
     // writer in this process still gets a writable one. `readonly_shm` left
     // the index read-only and the next write failed (K1 follow-up).
-    let query = if hot { "mode=ro" } else { "immutable=1" };
+    let opened = if hot {
+        open_read_only(root, busy)
+    } else {
+        open_checkpointed(root, busy)
+    };
+    match opened {
+        Ok(reader) => Ok(reader),
+        // The log and its index can be released between the decision and the
+        // open. The checkpointed form is safe for either state, so it is also
+        // the retry when the hot form's index is gone.
+        Err(_) if hot => open_checkpointed(root, busy),
+        Err(error) => Err(error),
+    }
+}
+
+/// A plain read-only connection to SQLite's own WAL.
+fn open_read_only(root: &StateRoot, busy: Duration) -> Result<Option<StoreReader>, StoreError> {
     let conn = Connection::open_with_flags(
         format!(
-            "file:{}?{query}",
+            "file:{}?mode=ro",
+            uri_path(root.path().join(root.database_name()))
+        ),
+        OpenFlags::SQLITE_OPEN_READ_ONLY
+            | OpenFlags::SQLITE_OPEN_NOFOLLOW
+            | OpenFlags::SQLITE_OPEN_URI
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    verify_reader(conn, busy)
+}
+
+/// A store with nothing hot beside it, read through SQLite's WAL.
+///
+/// A read-only connection cannot create the write-ahead index a WAL read needs,
+/// and an immutable connection ignores the checkpoint that rewrites database
+/// pages under it. So the read takes one query-only connection instead: it is
+/// a WAL reader (a writer beside it is no obstacle, its committed records are
+/// visible, and a checkpoint is a consistent page image) and it is the form
+/// that may create the index when the store has none.
+///
+/// The read still leaves no file behind: closing the connection SQLite's own
+/// way carries an empty own log into the store and removes the index, exactly
+/// as a writable close does. Nothing here repairs or rewrites the store.
+/// A root that cannot be written (a copied or read-only checkout) has no writer
+/// to race, so the immutable open stays there: it is the only form that writes
+/// nothing at all, and the fallback when a query-only open is refused.
+fn open_checkpointed(root: &StateRoot, busy: Duration) -> Result<Option<StoreReader>, StoreError> {
+    let path = root.dir().join(root.database_name());
+    match Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_NOFOLLOW
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) {
+        Ok(conn) => match verify_reader(conn, busy) {
+            // SQLite opens a database it may not write read-only, and a
+            // read-only connection cannot create the index its WAL read needs.
+            // That is the copied or read-only checkout, where no writer can
+            // appear, so the immutable snapshot is the right form there.
+            Err(StoreError::Io(io)) if io.errno == Some(libc::EACCES) => open_immutable(root, busy),
+            other => other,
+        },
+        Err(_) => open_immutable(root, busy),
+    }
+}
+
+/// A store assumed unchangeable: no lock, no index and no file (K1, Q-011).
+fn open_immutable(root: &StateRoot, busy: Duration) -> Result<Option<StoreReader>, StoreError> {
+    let conn = Connection::open_with_flags(
+        format!(
+            "file:{}?immutable=1",
             uri_path(root.path().join(root.database_name()))
         ),
         OpenFlags::SQLITE_OPEN_READ_ONLY
