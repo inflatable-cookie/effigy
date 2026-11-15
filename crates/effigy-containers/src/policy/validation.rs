@@ -4,7 +4,7 @@ use effigy_manifest::ManifestContainerDriver;
 
 use crate::compose;
 use crate::policy_support::validate_media_mounts;
-use crate::{driver_label, NERDCTL_MOUNTS_LABEL_BUDGET_BYTES};
+use crate::{driver_label, CONTAINERD_LABEL_MAX_BYTES, NERDCTL_MOUNTS_LABEL_BUDGET_BYTES};
 
 use super::model::{ContainerPolicyError, EffectiveContainerPolicy};
 
@@ -100,18 +100,25 @@ fn validate_compose_backend_mount_budget(
         .iter()
         .rev()
         .take(6)
-        .map(|entry| format!("effective mount #{} ({} bytes)", entry.ordinal, entry.bytes))
+        .map(|entry| {
+            format!(
+                "effective mount #{} ({}, {} bytes)",
+                entry.ordinal, entry.kind, entry.bytes
+            )
+        })
         .collect::<Vec<_>>()
         .join(", ");
     Err(ContainerPolicyError::TaskInvocation(format!(
-        "container `{}` uses the Colima nerdctl compose fallback, but primary service `{}` has an estimated nerdctl/mounts label size of {} bytes plus a 2% reserve ({} bytes) = {} bytes across {} effective mounts, exceeding the conservative {}-byte preflight budget (containerd label limit: 4096 bytes); reduce optional mounts or workspace isolation mounts. Largest contributors (paths omitted): {}",
+        "container `{}` uses the Colima nerdctl compose fallback, but primary service `{}` has an estimated nerdctl/mounts label size of {} bytes (label key plus value) plus a 2% reserve ({} bytes) = {} bytes across {} effective mounts ({}), exceeding the conservative {}-byte preflight budget (containerd refuses one label whose key plus value exceeds {} bytes, and nerdctl before 2.3.2 writes every mount row into that single label); reduce optional mounts or workspace isolation mounts - a named volume costs its platform name twice. Largest contributors (paths omitted): {}",
         policy.name,
         policy.primary_service,
         estimate.total_bytes,
         estimate.safety_margin_bytes,
         estimate.guarded_bytes,
         estimate.entries.len(),
+        estimate.kind_tally(),
         NERDCTL_MOUNTS_LABEL_BUDGET_BYTES,
+        CONTAINERD_LABEL_MAX_BYTES,
         heaviest
     )))
 }
@@ -136,7 +143,25 @@ struct PrimaryServiceMountEstimate {
 #[derive(Debug)]
 struct MountBudgetEntry {
     ordinal: usize,
+    /// nerdctl's row type (`bind`, `volume` or `tmpfs`).
+    kind: String,
     bytes: usize,
+}
+
+impl PrimaryServiceMountEstimate {
+    /// A path-free count of the row kinds the label is made of, so a refusal
+    /// says which lever lowers it.
+    fn kind_tally(&self) -> String {
+        let mut counts = std::collections::BTreeMap::<&str, usize>::new();
+        for entry in &self.entries {
+            *counts.entry(entry.kind.as_str()).or_default() += 1;
+        }
+        counts
+            .iter()
+            .map(|(kind, count)| format!("{count} {kind}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
 }
 
 fn estimate_primary_service_mount_label_size(
@@ -339,13 +364,19 @@ fn estimate_primary_service_mount_label_size(
                 ),
             ));
         }
-        // A borrowed volume is the owner's platform volume, mounted under the
-        // name the owner created rather than this project's prefix.
-        if let Some(ModelledNamedVolume::External { platform_name }) =
-            named_volume_sources.get(&name)
-        {
-            mount.source = named_volume_data_path(platform_name);
-        }
+        // Resolve the platform volume name the engine will mount and record:
+        // a borrowed `data_from` volume keeps the owner's name, an explicit
+        // `name:` alias is the key itself, and a bare declaration is named by
+        // Compose from the project and key.
+        let platform_name = match named_volume_sources.get(&name) {
+            Some(ModelledNamedVolume::External { platform_name }) => platform_name.clone(),
+            Some(ModelledNamedVolume::Aliased) => name,
+            Some(ModelledNamedVolume::Composed) | None => {
+                compose_default_volume_name(&policy.project_name, &name)
+            }
+        };
+        mount.source = named_volume_data_path(&platform_name);
+        mount.name = Some(platform_name);
     }
     if effective.is_empty() && tmpfs_mounts.is_empty() {
         return Ok(None);
@@ -357,6 +388,7 @@ fn estimate_primary_service_mount_label_size(
         .enumerate()
         .map(|(index, mount)| MountBudgetEntry {
             ordinal: index + 1,
+            kind: mount.kind.clone(),
             bytes: nerdctl_mount_json_bytes(&mount),
         })
         .collect::<Vec<_>>();
@@ -377,8 +409,11 @@ fn estimate_primary_service_mount_label_size(
 /// primary service's mounts resolve to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ModelledNamedVolume {
-    /// Compose creates the volume and names it from the project and key.
-    Managed,
+    /// Compose creates the volume and names it `{project}_{key}`.
+    Composed,
+    /// The definition repeats its own key as an explicit `name:` alias, so the
+    /// platform volume is created under that key verbatim.
+    Aliased,
     /// `external: true` over a volume Effigy borrows through `data_from`: the
     /// owner already created this platform volume, so this environment never
     /// creates, removes or re-labels it. `platform_name` is the resolved
@@ -408,7 +443,7 @@ fn classify_named_volume_definition(
     borrowed: bool,
 ) -> Result<ModelledNamedVolume, &'static str> {
     if definition.is_null() {
-        return Ok(ModelledNamedVolume::Managed);
+        return Ok(ModelledNamedVolume::Composed);
     }
     let Some(options) = definition.as_mapping() else {
         return Err("unmodelled top-level options");
@@ -432,27 +467,60 @@ fn classify_named_volume_definition(
             platform_name: name.to_owned(),
         });
     }
+    let mut aliased = false;
     let modelled = options.iter().all(|(field, value)| match field.as_str() {
         Some("driver") => value.as_str() == Some("local"),
-        Some("name") => value.as_str() == Some(name),
+        Some("name") => {
+            aliased = value.as_str() == Some(name);
+            aliased
+        }
         Some("labels") => value.as_mapping().is_some(),
         _ => false,
     });
-    if modelled {
-        Ok(ModelledNamedVolume::Managed)
+    if !modelled {
+        return Err("unmodelled top-level options");
+    }
+    // An explicit `name:` that repeats the key is the platform identity; an
+    // omitted one leaves Compose to compose `{project}_{key}`.
+    if aliased {
+        Ok(ModelledNamedVolume::Aliased)
     } else {
-        Err("unmodelled top-level options")
+        Ok(ModelledNamedVolume::Composed)
     }
 }
 
-/// The containerd volume-store path a platform named volume materializes as.
-/// The 64-hex segment reserves the documented containerd namespace identity
-/// width because the exact id is unavailable before runtime.
+/// The containerd volume-store path a platform named volume materializes as
+/// inside the Colima VM.
+///
+/// nerdctl 2.3.1 stores volumes under
+/// `<dataRoot>/<addrHash>/volumes/<namespace>/<name>/_data`, where `addrHash`
+/// is the first eight hex characters of the containerd socket address digest
+/// (`pkg/clientutil.getAddrHash`) and the namespace is `default` unless the
+/// caller overrides it. The digest value is unknown before runtime, so the
+/// same eight-byte width is reserved with zeros: the estimate stays
+/// length-exact for the rootful VM data root Effigy drives.
 fn named_volume_data_path(platform_name: &str) -> String {
     format!(
         "/var/lib/nerdctl/{}/volumes/default/{platform_name}/_data",
-        "0".repeat(64)
+        "0".repeat(NERDCTL_VOLUME_STORE_ADDR_HASH_BYTES)
     )
+}
+
+/// The width of nerdctl's per-socket data-store directory name.
+const NERDCTL_VOLUME_STORE_ADDR_HASH_BYTES: usize = 8;
+
+/// The platform name Compose composes for a declared volume without an
+/// explicit `name:` (`{project}_{key}`, verified with `nerdctl compose
+/// config`). Only its length reaches the estimate.
+fn compose_default_volume_name(project_name: &str, key: &str) -> String {
+    format!("{project_name}_{key}")
+}
+
+/// nerdctl names an anonymous volume with a 64-hex generated id
+/// (`idgen.GenerateID`). Its value is unknown before runtime, so the same
+/// width is reserved with zeros.
+fn anonymous_volume_name() -> String {
+    "0".repeat(64)
 }
 
 fn mount_budget_refusal(
@@ -470,9 +538,15 @@ fn mount_budget_refusal(
 
 #[derive(Debug)]
 struct EffectiveMount {
-    source: String,
-    target: String,
+    /// nerdctl's mount row type: `bind`, `volume` or `tmpfs`.
     kind: String,
+    /// The source nerdctl records in the row: the resolved host bind path, the
+    /// containerd volume-store data path, or the literal `tmpfs`.
+    source: String,
+    /// The platform volume name nerdctl records as `Name`; absent for binds
+    /// and tmpfs rows, whose `Name` is empty and omitted from the JSON.
+    name: Option<String>,
+    target: String,
     read_only: bool,
     named_volume_source: Option<String>,
 }
@@ -511,9 +585,10 @@ fn parse_tmpfs_mounts(value: &serde_yaml::Value) -> Result<Vec<EffectiveMount>, 
             return Err("`tmpfs` entry contains unresolved Compose interpolation");
         }
         mounts.push(EffectiveMount {
-            source: String::new(),
-            target: path.to_owned(),
             kind: "tmpfs".to_owned(),
+            source: "tmpfs".to_owned(),
+            name: None,
+            target: path.to_owned(),
             read_only: false,
             named_volume_source: None,
         });
@@ -608,10 +683,12 @@ fn parse_effective_mount(
         return Err("bind mount source is empty");
     }
     let named_volume_source = (kind == "volume" && !source.is_empty()).then(|| source.to_owned());
-    // Compose/nerdctl materialize named and anonymous volumes as host binds
-    // under containerd's volume store. Reserve the maximum documented source
-    // identity width here; exact VM-local paths are unavailable pre-runtime.
-    let (resolved, resolved_kind) = if kind == "bind" {
+    // Compose and nerdctl materialize named and anonymous volumes as binds of
+    // containerd's volume store. Reserve the documented source identity width
+    // here; exact VM-local paths are unavailable before runtime. The platform
+    // name of a declared volume is re-resolved beside the merged top-level
+    // definitions, where an explicit `name:` or a `data_from` borrow is known.
+    let (resolved, resolved_kind, resolved_name) = if kind == "bind" {
         let path = if source.is_empty() {
             String::new()
         } else if Path::new(source).is_absolute() {
@@ -619,38 +696,74 @@ fn parse_effective_mount(
         } else {
             compose_dir.join(source).to_string_lossy().into_owned()
         };
-        (path, "bind")
+        (path, "bind", None)
+    } else if source.is_empty() {
+        let platform_name = anonymous_volume_name();
+        (
+            named_volume_data_path(&platform_name),
+            "volume",
+            Some(platform_name),
+        )
     } else {
-        let volume_name = if source.is_empty() {
-            "anonymous".to_owned()
-        } else {
-            format!("{project_name}-{source}")
-        };
-        (named_volume_data_path(&volume_name), "bind")
+        let platform_name = compose_default_volume_name(project_name, source);
+        (
+            named_volume_data_path(&platform_name),
+            "volume",
+            Some(platform_name),
+        )
     };
     Ok(EffectiveMount {
-        source: resolved,
-        target: target.to_owned(),
         kind: resolved_kind.to_owned(),
+        source: resolved,
+        name: resolved_name,
+        target: target.to_owned(),
         read_only,
         named_volume_source,
     })
 }
 
 fn nerdctl_mount_json_bytes(mount: &EffectiveMount) -> usize {
-    // nerdctl v2.3.1's `nerdctl/mounts` metadata serializes Type, Source,
-    // Destination, Mode, RW and Propagation. Go's encoder also escapes
-    // HTML-sensitive characters; account for that on both paths.
-    let mode = if mount.read_only { "ro" } else { "" };
-    let rw = !mount.read_only;
-    let encoded = format!(
-        "{{\"Type\":{},\"Source\":{},\"Destination\":{},\"Mode\":{},\"RW\":{rw},\"Propagation\":\"\"}}",
-        go_json_string(&mount.kind),
+    nerdctl_mount_row_json(mount).len()
+}
+
+/// The exact `dockercompat.MountPoint` row nerdctl 2.3.1 records for one mount
+/// inside `nerdctl/mounts`.
+///
+/// nerdctl builds it from `dockercompat.MountPoint`, whose struct order is
+/// Type, Name, Source, Destination, Driver, Mode, RW, Propagation. `Name` and
+/// `Driver` carry `omitempty`: they appear for named and anonymous volume rows
+/// and are absent for binds and tmpfs. Every volume row reports the local
+/// driver. A tmpfs row records the literal `tmpfs` source and the default
+/// `noexec,nosuid,nodev` mode (`pkg/mountutil.ProcessFlagTmpfs`, which Compose
+/// always reaches through `--tmpfs=<target>`); an option-carrying tmpfs entry
+/// is refused before this point. Go's encoder also escapes HTML-sensitive
+/// characters, so every string is escaped the same way.
+fn nerdctl_mount_row_json(mount: &EffectiveMount) -> String {
+    let (mode, read_only) = if mount.kind == "tmpfs" {
+        ("noexec,nosuid,nodev".to_owned(), false)
+    } else if mount.read_only {
+        ("ro".to_owned(), true)
+    } else {
+        (String::new(), false)
+    };
+    let rw = !read_only;
+    let mut encoded = format!("{{\"Type\":{}", go_json_string(&mount.kind));
+    if let Some(name) = mount.name.as_deref() {
+        encoded.push_str(&format!(",\"Name\":{}", go_json_string(name)));
+    }
+    encoded.push_str(&format!(
+        ",\"Source\":{},\"Destination\":{}",
         go_json_string(&mount.source),
-        go_json_string(&mount.target),
-        go_json_string(mode),
-    );
-    encoded.len()
+        go_json_string(&mount.target)
+    ));
+    if mount.kind == "volume" {
+        encoded.push_str(",\"Driver\":\"local\"");
+    }
+    encoded.push_str(&format!(
+        ",\"Mode\":{},\"RW\":{rw},\"Propagation\":\"\"}}",
+        go_json_string(&mode)
+    ));
+    encoded
 }
 
 fn nerdctl_mounts_label_size(entries: &[MountBudgetEntry]) -> usize {
@@ -689,19 +802,26 @@ mod tests {
     fn colima_named_volume_definitions_classify_only_supported_identities() {
         let definition = |text: &str| -> serde_yaml::Value { serde_yaml::from_str(text).unwrap() };
 
-        // The defaults, the generated managed form and the explicit `name`
-        // alias keep Compose creating the volume from the project prefix.
-        for managed in [
-            "null",
-            "{}",
-            "{driver: local}",
+        // A bare declaration leaves Compose to name the platform volume from
+        // the project and key.
+        for composed in ["null", "{}", "{driver: local}"] {
+            assert_eq!(
+                classify_named_volume_definition("cache", &definition(composed), false),
+                Ok(ModelledNamedVolume::Composed),
+                "{composed}"
+            );
+        }
+
+        // An explicit `name:` that repeats the key is the platform identity,
+        // so the volume is created under that key verbatim.
+        for aliased in [
             "{name: cache}",
             "{driver: local, name: cache, labels: {com.effigy.managed: \"true\"}}",
         ] {
             assert_eq!(
-                classify_named_volume_definition("cache", &definition(managed), false),
-                Ok(ModelledNamedVolume::Managed),
-                "{managed}"
+                classify_named_volume_definition("cache", &definition(aliased), false),
+                Ok(ModelledNamedVolume::Aliased),
+                "{aliased}"
             );
         }
 
@@ -779,21 +899,105 @@ mod tests {
     fn colima_borrowed_volume_mounts_use_the_owner_platform_name() {
         // The owner's platform volume name is what nerdctl materializes, so
         // the estimate must not add this project's prefix to a borrowed
-        // volume.
+        // volume. The eight-byte address-hash segment is the width nerdctl's
+        // volume store uses below /var/lib/nerdctl.
         assert_eq!(
             named_volume_data_path("acow-dev-db-data"),
-            format!(
-                "/var/lib/nerdctl/{}/volumes/default/acow-dev-db-data/_data",
-                "0".repeat(64)
-            )
+            "/var/lib/nerdctl/00000000/volumes/default/acow-dev-db-data/_data"
         );
         assert!(!named_volume_data_path("acow-dev-db-data").contains("acow-hybrid"));
+    }
+
+    #[test]
+    fn compose_default_and_alias_volume_names_match_the_engine() {
+        // `nerdctl compose config` resolves an unnamed declaration to
+        // `{project}_{key}` and keeps an explicit `name:` alias verbatim.
+        assert_eq!(compose_default_volume_name("demo", "data"), "demo_data");
+        assert_eq!(anonymous_volume_name().len(), 64);
+        assert_eq!(
+            named_volume_data_path("demo_data"),
+            "/var/lib/nerdctl/00000000/volumes/default/demo_data/_data"
+        );
+    }
+
+    /// The row shapes below are the ones a running nerdctl 2.3.1 engine wrote
+    /// into `nerdctl/mounts`, captured from a Compose-created container with
+    /// one named-volume mount and one read-only config bind. The label value
+    /// the engine stored was 556 bytes and the key-plus-value size 570 bytes.
+    #[test]
+    fn observed_engine_label_rows_match_the_estimate_exactly() {
+        let volume = EffectiveMount {
+            kind: "volume".to_owned(),
+            source:
+                "/var/lib/nerdctl/1935db59/volumes/default/effigy-shared-mariadb-0721de3e-mysql-data/_data"
+                    .to_owned(),
+            name: Some("effigy-shared-mariadb-0721de3e-mysql-data".to_owned()),
+            target: "/var/lib/mysql".to_owned(),
+            read_only: false,
+            named_volume_source: Some("mysql-data".to_owned()),
+        };
+        let config_bind = EffectiveMount {
+            kind: "bind".to_owned(),
+            source: "/Users/tom/.effigy/shared-services/effigy-shared-mariadb-0721de3e/4356adb260ed9652c1b4c547fe8d8e0148cdd0fbfcf1293a0c586c9c50f98e67/.effigy/runtime/compose/mysql.conf".to_owned(),
+            name: None,
+            target: "/docker-entrypoint-initdb.d/10-extra-databases.sql".to_owned(),
+            read_only: true,
+            named_volume_source: None,
+        };
+        let rows = [
+            nerdctl_mount_row_json(&volume),
+            nerdctl_mount_row_json(&config_bind),
+        ];
+        assert_eq!(
+            rows[0],
+            "{\"Type\":\"volume\",\"Name\":\"effigy-shared-mariadb-0721de3e-mysql-data\",\"Source\":\"/var/lib/nerdctl/1935db59/volumes/default/effigy-shared-mariadb-0721de3e-mysql-data/_data\",\"Destination\":\"/var/lib/mysql\",\"Driver\":\"local\",\"Mode\":\"\",\"RW\":true,\"Propagation\":\"\"}"
+        );
+        assert_eq!(
+            rows[1],
+            "{\"Type\":\"bind\",\"Source\":\"/Users/tom/.effigy/shared-services/effigy-shared-mariadb-0721de3e/4356adb260ed9652c1b4c547fe8d8e0148cdd0fbfcf1293a0c586c9c50f98e67/.effigy/runtime/compose/mysql.conf\",\"Destination\":\"/docker-entrypoint-initdb.d/10-extra-databases.sql\",\"Mode\":\"ro\",\"RW\":false,\"Propagation\":\"\"}"
+        );
+        let value = format!("[{}]", rows.join(","));
+        assert_eq!(value.len(), 556);
+
+        let entries = [
+            MountBudgetEntry {
+                ordinal: 1,
+                kind: "volume".to_owned(),
+                bytes: rows[0].len(),
+            },
+            MountBudgetEntry {
+                ordinal: 2,
+                kind: "bind".to_owned(),
+                bytes: rows[1].len(),
+            },
+        ];
+        assert_eq!(nerdctl_mounts_label_size(&entries), 570);
+        assert_eq!(nerdctl_mounts_label_size(&entries), value.len() + 14);
+    }
+
+    /// A `tmpfs` mount row records the literal `tmpfs` source and the default
+    /// option mode nerdctl applies to `--tmpfs=<target>`.
+    #[test]
+    fn observed_engine_tmpfs_row_matches_the_estimate() {
+        let mount = EffectiveMount {
+            kind: "tmpfs".to_owned(),
+            source: "tmpfs".to_owned(),
+            name: None,
+            target: "/run/effigy/secrets".to_owned(),
+            read_only: false,
+            named_volume_source: None,
+        };
+        assert_eq!(
+            nerdctl_mount_row_json(&mount),
+            "{\"Type\":\"tmpfs\",\"Source\":\"tmpfs\",\"Destination\":\"/run/effigy/secrets\",\"Mode\":\"noexec,nosuid,nodev\",\"RW\":true,\"Propagation\":\"\"}"
+        );
     }
 
     #[test]
     fn mount_json_estimate_counts_nerdctl_key_and_json_escaping() {
         let mount = EffectiveMount {
             source: "/workspace/secret<&>\u{2028}".to_owned(),
+            name: None,
             target: "/workspace".to_owned(),
             kind: "bind".to_owned(),
             read_only: true,
@@ -816,6 +1020,7 @@ mod tests {
         let target = format!("/{}", "d".repeat(27));
         let writable = EffectiveMount {
             source: source.clone(),
+            name: None,
             target: target.clone(),
             kind: "bind".to_owned(),
             read_only: false,
@@ -823,6 +1028,7 @@ mod tests {
         };
         let read_only = EffectiveMount {
             source,
+            name: None,
             target,
             kind: "bind".to_owned(),
             read_only: true,
@@ -834,10 +1040,12 @@ mod tests {
         let entries = (0..20)
             .map(|index| MountBudgetEntry {
                 ordinal: index + 1,
+                kind: "bind".to_owned(),
                 bytes: nerdctl_mount_json_bytes(&writable),
             })
             .chain(std::iter::once(MountBudgetEntry {
                 ordinal: 21,
+                kind: "bind".to_owned(),
                 bytes: nerdctl_mount_json_bytes(&read_only),
             }))
             .collect::<Vec<_>>();
@@ -849,7 +1057,7 @@ mod tests {
     }
 
     #[test]
-    fn short_long_and_anonymous_mounts_resolve_into_backend_shapes() {
+    fn short_long_named_and_anonymous_mounts_resolve_into_backend_shapes() {
         let dir = Path::new("/long/queue/path/project/compose");
         let short: serde_yaml::Value = serde_yaml::from_str("'./src:/workspace:ro'").unwrap();
         let named: serde_yaml::Value = serde_yaml::from_str(
@@ -860,20 +1068,37 @@ mod tests {
 
         let short = parse_effective_mount(&short, dir, "example").unwrap();
         assert_eq!(short.source, "/long/queue/path/project/compose/./src");
+        assert_eq!(short.kind, "bind");
+        assert_eq!(short.name, None);
         assert!(short.read_only);
+        // A declared volume without a known top-level definition is named by
+        // Compose from the project and key, and nerdctl records the volume
+        // store data directory as the row source.
         let named = parse_effective_mount(&named, dir, "example").unwrap();
-        assert!(named.source.contains("/var/lib/nerdctl/"));
-        assert!(named.source.ends_with("/example-cache/_data"));
+        assert_eq!(named.kind, "volume");
+        assert_eq!(named.name.as_deref(), Some("example_cache"));
+        assert_eq!(
+            named.source,
+            "/var/lib/nerdctl/00000000/volumes/default/example_cache/_data"
+        );
         assert!(named.read_only);
         let anonymous = parse_effective_mount(&anonymous, dir, "example").unwrap();
         assert_eq!(anonymous.target, "/tmp");
-        assert!(anonymous.source.contains("/anonymous/_data"));
+        assert_eq!(anonymous.kind, "volume");
+        assert_eq!(
+            anonymous.name.as_deref(),
+            Some(anonymous_volume_name().as_str())
+        );
+        assert!(anonymous
+            .source
+            .ends_with("/volumes/default/0000000000000000000000000000000000000000000000000000000000000000/_data"));
     }
 
     #[test]
     fn threshold_refuses_at_budget_and_allows_one_byte_below() {
         let entry = MountBudgetEntry {
             ordinal: 1,
+            kind: "bind".to_owned(),
             bytes: NERDCTL_MOUNTS_LABEL_BUDGET_BYTES - "nerdctl/mounts".len() - 2,
         };
         assert_eq!(

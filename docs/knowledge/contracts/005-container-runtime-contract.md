@@ -85,19 +85,36 @@ Recovery rechecks the exact observed identity immediately before activation.
 For the Colima nerdctl compose fallback, runtime preflight estimates the
 `nerdctl/mounts` label from recognized explicit primary-service bind and volume
 mounts in the ordered Compose files, including target-based overlay merging,
-bind-source resolution, and JSON escaping. Its nerdctl v2.3.1 row estimate
-uses `Type`, `Source`, `Destination`, `Mode`, `RW`, and `Propagation`, plus the
-array delimiters and `nerdctl/mounts` key. The sanitized r13 structure fixture
-measured 21 rows as 20 × 171 bytes plus one 174-byte read-only row; with 22
-array delimiter bytes and the 14-byte key, the modeled key-plus-value size is
-3630 bytes, matching the observed fixture. Preflight adds a 2% reserve rounded
-up, then refuses when the guarded estimate reaches the 3900-byte budget below
-the 4096-byte containerd label value limit. nerdctl owns the label format and
+bind-source resolution, and JSON escaping. The estimate reproduces nerdctl
+v2.3.1's row serialization exactly. nerdctl builds each row from
+`dockercompat.MountPoint`, whose field order is `Type`, `Name`, `Source`,
+`Destination`, `Driver`, `Mode`, `RW`, `Propagation`; `Name` and `Driver` carry
+`omitempty` and `Driver` is `local` for volume rows, so a bind or tmpfs row has
+six fields and a volume row has eight. A bind row's source is the resolved host
+path. A volume row's source is the containerd volume store data directory
+`/var/lib/nerdctl/<8-hex socket digest>/volumes/default/<platform name>/_data`,
+and its platform name is the top-level `name:` alias verbatim, the owner's
+platform name for a `data_from` borrow, or Compose's `{project}_{key}` default
+when a declaration omits `name:` (verified with `nerdctl compose config`). An
+anonymous volume reserves the 64-hex generated-id width nerdctl allocates. The
+sanitized r13 structure fixture measured 21 bind rows as 20 × 171 bytes plus one
+174-byte read-only row; with 22 array delimiter bytes and the 14-byte key, the
+modeled key-plus-value size is 3630 bytes, matching the observed fixture. A
+recorded two-row label from a running nerdctl 2.3.1 container (one named-volume
+row and one read-only config bind) measures 570 bytes key plus value, and the
+estimate reproduces both rows byte for byte. nerdctl owns the label format and
 runtime serialization; this estimate is not a runtime oracle or a universal
-guarantee. An option-less primary-service `tmpfs` list is a modelled mount
-input: each absolute path counts as a writable tmpfs row with an empty source
-beside the merged volume mounts, so Effigy's own generated php-fpm secret
-runtime (`/run/effigy/secrets`) is admissible and its bytes are budgeted. A
+guarantee. Two limits stay separate. containerd refuses one label whose key plus
+value exceeds 4096 bytes (`pkg/labels.Validate`), and nerdctl before 2.3.2
+writes every mount row into that single label, so a set above that size fails at
+container create; 2.3.2 and later chunk the rows across labels. Preflight is
+stricter than the engine: it adds a 2% reserve rounded up and refuses when the
+guarded estimate reaches the 3900-byte budget. An option-less primary-service
+`tmpfs` list is a modelled mount input: each absolute path counts as a
+writable tmpfs row beside the merged volume mounts, with the literal `tmpfs`
+source and the `noexec,nosuid,nodev` mode nerdctl applies to `--tmpfs`, so
+Effigy's own generated php-fpm secret runtime (`/run/effigy/secrets`) is
+admissible and its bytes are budgeted. A
 `tmpfs` mapping form or an option-carrying entry (`/path:size=…`), unsupported
 volume syntax, and the known unmodelled service mount contributors (`extends`,
 `configs`, `secrets`, and `volumes_from`), and referenced top-level
