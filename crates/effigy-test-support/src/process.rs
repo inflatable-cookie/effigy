@@ -17,7 +17,9 @@ const OUTPUT_DEADLINE: Duration = Duration::from_secs(180);
 /// How long a launch's kernel helpers get to exit *after* its leader is gone.
 /// The output deadline bounds the child's own life and is spent by the work the
 /// fixture asked for, so a slow-but-correct launch must not also spend the
-/// window its helpers are proved settled in (effigy#998).
+/// window its helpers are proved settled in. It is a fixed window: a helper
+/// that never exits is a failure to report promptly, not one to wait out at
+/// length (effigy#998).
 const HELPER_SETTLE: Duration = Duration::from_secs(30);
 
 /// Shell tail for a fixture that must stop when its runner's pipe closes.
@@ -278,9 +280,7 @@ impl OwnedChild {
         // Helper settlement starts when the leader is gone. Charging it to the
         // launch's output deadline made a correct-but-slow run fail teardown on
         // the very deadline its own work had already spent.
-        let deadline = self
-            .deadline
-            .max(Instant::now() + crate::load_scaled_guard(HELPER_SETTLE));
+        let deadline = self.deadline.max(Instant::now() + HELPER_SETTLE);
         loop {
             self.capture_kernel_helpers()?;
             self.helpers.retain(|identity| {

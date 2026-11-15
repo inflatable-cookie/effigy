@@ -2483,7 +2483,12 @@ fn a_run_deadline_refuses_a_late_v2_acknowledgement() {
     let hook = v2_hook(
         &fixture,
         "late-ack.sh",
-        "if [ \"$seq\" = \"2\" ]; then sleep 2; fi",
+        // The acknowledgement has to arrive after the phase budget the ceiling
+        // funds and before the ceiling itself. The ceiling is the behaviour
+        // under test and contract 052 §12 charges admission to it, so both
+        // numbers move together: 12s is late against a 10s phase budget on a
+        // 20s ceiling, and admission still fits on a loaded host (effigy#998).
+        "if [ \"$seq\" = \"2\" ]; then sleep 12; fi",
         "",
     );
     let started = Instant::now();
@@ -2491,14 +2496,14 @@ fn a_run_deadline_refuses_a_late_v2_acknowledgement() {
         .effigy(&["--json", "heavy"])
         .env("EFFIGY_ADMISSION_HOOK", hook)
         .env("EFFIGY_ADMISSION_PROTOCOL", "2")
-        .env("EFFIGY_RUN_DEADLINE_MS", "11000")
+        .env("EFFIGY_RUN_DEADLINE_MS", "20000")
         .output_owned()
         .expect("effigy runs");
     let elapsed = started.elapsed();
     let rendered = text(&output);
     assert!(!output.status.success(), "{rendered}");
     assert!(
-        elapsed < Duration::from_millis(11_000),
+        elapsed < Duration::from_millis(20_000),
         "a late acknowledgement outlived the deadline: {elapsed:?}"
     );
     let envelope: serde_json::Value =
