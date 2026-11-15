@@ -117,12 +117,7 @@ fn spawn_retained<'r>(
     }
     // An expired launch budget never spawns a child: the direct-child routes
     // report the same timeout instead of buying the invocation fresh time.
-    if effigy_core::run_deadline::now() >= deadline {
-        return Err(launch(
-            label,
-            "the launch deadline expired before the Compose invocation could start",
-        ));
-    }
+    launch_budget(deadline, label)?;
     enable_custody(run, label)?;
     // Admission (sentinel, checkout backup, durable file binding) runs under
     // the apply's own context; the child's lifetime carries the launch budget.
@@ -130,11 +125,15 @@ fn spawn_retained<'r>(
     // spawn" whenever admission was slow, which is not the same event as a
     // child that outlived its budget.
     let cx = spawn_context(apply);
-    let lifetime = deadline.saturating_duration_since(effigy_core::run_deadline::now());
+    let complete = complete_env(env, label)?;
+    // Admission can consume the budget the early check saw, so the same rule is
+    // applied again before the child exists: a spent budget is a refusal, never
+    // a spawned child whose lifetime is already gone.
+    let lifetime = launch_budget(deadline, label)?;
     let spec = ProcessSpec {
         argv: vec![program],
         cwd: cwd.to_path_buf(),
-        env: complete_env(env, label)?,
+        env: complete,
         grace: Duration::from_millis(800),
         lifetime: Lifetime::Finite(lifetime),
         terminal,
@@ -144,6 +143,27 @@ fn spawn_retained<'r>(
         .spawn_retained(run, spec, &cx)
         .map_err(|error| launch(label, error))?;
     Ok((process, cx))
+}
+
+/// The child's remaining budget, or the refusal a spent one gets.
+///
+/// Applied before admission and again after it: custody work can consume the
+/// launch budget between the two, and the second call is what keeps that window
+/// from spawning a child with a zero lifetime. A refusal here leaves the
+/// interpolation file with its owner, which removes an invocation that never
+/// started.
+pub(super) fn launch_budget(
+    deadline: Instant,
+    label: &str,
+) -> Result<Duration, ContainerExecError> {
+    let now = effigy_core::run_deadline::now();
+    if now >= deadline {
+        return Err(launch(
+            label,
+            "the launch deadline expired before the Compose invocation could start",
+        ));
+    }
+    Ok(deadline.saturating_duration_since(now))
 }
 
 /// A capture of one secret-bearing VM Compose launch, under retained custody.

@@ -43,14 +43,17 @@ fn fake_colima(root: &Path, name: &str, status: i32) -> PathBuf {
            if [ \"$prev\" = \"--env-file\" ]; then f=\"$a\"; fi\n\
            prev=\"$a\"\n\
          done\n\
+         # The value the plan delivered arrives in this child's environment as\n\
+         # well, so it can prove redaction with one complete write first.\n\
+         printf '%s\\n' \"${{DATABASE_URL:-}}\"\n\
+         echo 'creating app'\n\
+         echo 'starting app'\n\
          if [ -n \"$f\" ]; then\n\
            echo \"env-file=$f\" >> '{log}'\n\
            {{ ls -ld \"$(dirname \"$f\")\"; ls -l \"$f\"; cat \"$f\"; }} >> '{log}'\n\
            echo \"read $(basename \"$f\")\"\n\
            cat \"$f\"\n\
          fi\n\
-         echo 'creating app'\n\
-         echo 'starting app'\n\
          exit {status}\n",
         log = log.display()
     );
@@ -358,9 +361,14 @@ fn a_secret_bearing_vm_capture_runs_under_retained_custody() {
         .expect("retained capture");
         assert!(output.status.success(), "{output:?}");
         let stdout = String::from_utf8_lossy(&output.stdout);
+        // The guarantee is absence. A projection custody cannot redact safely
+        // stops (K12), so a later line may be missing; the child's first
+        // complete write is the value itself, which is the case custody always
+        // replaces, so the marker is asserted from that write and never from
+        // whatever followed it.
         assert!(
             !stdout.contains(SENTINEL),
-            "captured output must be redacted: {stdout}"
+            "captured output must carry no secret: {stdout}"
         );
         assert!(stdout.contains("[REDACTED]"), "{stdout}");
         let record = fs::read_to_string(&observed).expect("the child ran");
@@ -404,6 +412,10 @@ fn a_secret_bearing_vm_detached_launch_keeps_its_record_redacted() {
         assert!(
             lines.iter().any(|line| line == "starting app"),
             "the runtime's own lines reach the caller: {lines:?}"
+        );
+        assert!(
+            lines.iter().any(|line| line == "[REDACTED]"),
+            "the delivered value is redacted before it is relayed: {lines:?}"
         );
         let record_path = crate::exec::retained_backend_log_path(repo, "stack");
         let record = fs::read_to_string(&record_path).expect("retained backend record");
@@ -639,6 +651,64 @@ fn an_unproven_end_retains_the_file_until_verified_closure() {
     assert!(
         !retained_path.exists(),
         "verified closure removes the interpolation file"
+    );
+}
+
+/// A launch budget that is already spent refuses before the child exists — at
+/// the early check and again after admission, which is what closes the window
+/// where `Lifetime::Finite(0)` used to spawn a child that expired immediately
+/// (review verdict `spawn-budget-zero-lifetime`).
+#[test]
+fn a_spent_launch_budget_refuses_before_the_child_exists() {
+    let _clock = ClockGuard::advance(Duration::from_secs(30));
+    let spent = effigy_core::run_deadline::now();
+    let refusal = retained::launch_budget(spent, "spent budget")
+        .expect_err("a spent budget refuses before spawn");
+    assert!(
+        refusal
+            .to_string()
+            .contains("the launch deadline expired before the Compose invocation could start"),
+        "{refusal}"
+    );
+    let live = retained::launch_budget(spent + Duration::from_secs(2), "live budget")
+        .expect("a live budget hands the child its remaining time");
+    assert!(
+        live > Duration::from_secs(1) && live <= Duration::from_secs(2),
+        "the remaining budget is what is left, not zero: {live:?}"
+    );
+
+    // The launcher applies the same rule and starts nothing: no child runs and
+    // the never-started invocation's own file is removed by its owner.
+    let ((), cleanup) = harness_settling(|run, cx, repo, state| {
+        let (program, marker) = signalling_colima(repo, "spent", 30);
+        let env = secret_env();
+        let error = with_helper(|| {
+            retained::capture(
+                repo,
+                program.as_os_str(),
+                &compose_args(),
+                "spent budget",
+                &env,
+                effigy_core::run_deadline::now(),
+                &mut RetainedComposeOwner::new(run, cx),
+            )
+        })
+        .expect_err("an expired budget refuses");
+        assert!(
+            error
+                .to_string()
+                .contains("the launch deadline expired before the Compose invocation could start"),
+            "{error}"
+        );
+        assert!(!marker.exists(), "no child ran: {error}");
+        assert!(
+            compose_env_files(state).is_empty(),
+            "the refused launch leaves no interpolation file"
+        );
+    });
+    assert_eq!(
+        cleanup.expect("a refusal settles without residue"),
+        CleanupOutcome::Complete
     );
 }
 
