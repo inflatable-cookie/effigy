@@ -3,6 +3,7 @@ use std::fs;
 use std::process::Command;
 
 use super::support::temp_workspace;
+use effigy_test_support::process::FixtureCommandExt;
 
 #[test]
 fn cli_parse_error_includes_usage_in_stderr() {
@@ -10,7 +11,7 @@ fn cli_parse_error_includes_usage_in_stderr() {
         .arg("tasks")
         .arg("--repo")
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(!output.status.success());
@@ -46,7 +47,7 @@ fn cli_parse_error_json_mode_emits_machine_readable_payload() {
         .arg("tasks")
         .arg("--repo")
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(!output.status.success());
@@ -88,7 +89,7 @@ fn cli_runner_error_json_mode_emits_machine_readable_payload() {
         .arg("--json")
         .arg("missing-task")
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(!output.status.success());
@@ -120,7 +121,7 @@ fn capped_plain_host_task_writes_footer_after_foreground_settlement() {
         .arg("probe")
         .env("NO_COLOR", "1")
         .env("EFFIGY_OUTPUT_CAP_BYTES", "1024")
-        .output()
+        .output_owned()
         .expect("run capped task");
 
     assert!(output.status.success(), "{output:?}");
@@ -157,7 +158,7 @@ fn capped_plain_host_task_omits_footer_when_a_descendant_escapes_custody() {
         .arg("probe")
         .env("NO_COLOR", "1")
         .env("EFFIGY_OUTPUT_CAP_BYTES", "1024")
-        .output();
+        .output_owned();
 
     // The fixture's descendant is deliberately outside the owned process
     // group. Stop only its recorded PID, even if the CLI assertion fails.
@@ -165,18 +166,20 @@ fn capped_plain_host_task_omits_footer_when_a_descendant_escapes_custody() {
         .ok()
         .and_then(|pid| pid.trim().parse::<u32>().ok());
     if let Some(pid) = pid {
-        let alive = Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .status()
-            .expect("check fixture descendant by recorded pid");
         let stopped = Command::new("kill")
             .args(["-KILL", &pid.to_string()])
             .status()
             .expect("stop fixture descendant by recorded pid");
-        assert!(
-            stopped.success() || !alive.success(),
-            "fixture descendant kill failed: {stopped}"
-        );
+        if !stopped.success() {
+            let still_alive = Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .status()
+                .expect("check fixture descendant by recorded pid after kill");
+            assert!(
+                !still_alive.success(),
+                "fixture descendant {pid} survived SIGKILL: {stopped}"
+            );
+        }
     }
     let output = result.expect("run capped task");
     assert!(

@@ -1,3 +1,4 @@
+use effigy_test_support::process::FixtureCommandExt;
 use std::process::Command;
 
 #[test]
@@ -7,7 +8,7 @@ fn worktree_archive_config_distinguishes_root_missing_and_invalid() {
         Command::new(env!("CARGO_BIN_EXE_effigy"))
             .arg("__worktree-archive-scratch-root")
             .env("HOME", home.path())
-            .output()
+            .output_owned()
             .expect("run resolver")
     };
     assert_eq!(invoke().status.code(), Some(2));

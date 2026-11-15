@@ -2,6 +2,7 @@
 //! the vault yet, while every other Rhai secret read keeps refusing missing
 //! required keys.
 
+use effigy_test_support::process::FixtureCommandExt;
 mod support;
 
 use std::fs;
@@ -56,7 +57,7 @@ fn effigy(root: &std::path::Path, args: &[&str]) -> Output {
         .env("EFFIGY_TEST_SECRETS_PASSPHRASE", "vault-passphrase")
         .env_remove("EFFIGY_INTERNAL_TASK_SECRET_GENERATION_ACTIVE")
         .stdin(Stdio::null())
-        .output()
+        .output_owned()
         .expect("run effigy")
 }
 

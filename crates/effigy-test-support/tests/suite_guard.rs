@@ -44,10 +44,11 @@ fn reported(output: &std::process::Output) -> (u32, String) {
 /// A child that leaves the runner's session and refuses cooperative signals.
 /// It is deliberately never waited on: the suite sweep must end it.
 #[allow(clippy::zombie_processes)]
-fn leaked_child() -> u32 {
+fn leaked_child(test_name: &str) -> u32 {
     use std::os::unix::process::CommandExt;
     let mut command = Command::new("/bin/sh");
     command
+        .arg0(format!("suite-guard-child --effigy-suite-test={test_name}"))
         .args(["-c", "trap '' TERM HUP; while :; do /bin/sleep 0.05; done"])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -71,6 +72,7 @@ fn leaked_child() -> u32 {
 fn selector_fails_and_names_a_setsid_child_that_traps_term_and_hup() {
     let output = Command::new("python3")
         .arg(guard())
+        .env("NEXTEST_TEST_NAME", "suite_guard_leaks_and_panics")
         .arg("--")
         .arg(std::env::current_exe().expect("test binary"))
         .args([
@@ -87,6 +89,10 @@ fn selector_fails_and_names_a_setsid_child_that_traps_term_and_hup() {
         stderr.contains(&format!("leaked test process: {pid} (")),
         "the report does not name {pid}: {stderr}"
     );
+    assert!(
+        stderr.contains("test suite_guard_leaks_and_panics;"),
+        "the report does not name the leaking test: {stderr}"
+    );
     assert!(reaped(pid), "{pid} outlived the sweep");
 }
 
@@ -94,6 +100,7 @@ fn selector_fails_and_names_a_setsid_child_that_traps_term_and_hup() {
 fn selector_sweeps_after_the_runner_is_killed_mid_test() {
     let output = Command::new("python3")
         .arg(guard())
+        .env("NEXTEST_TEST_NAME", "suite_guard_child_outlives_runner")
         .args(["--timeout", "5", "--"])
         .arg(std::env::current_exe().expect("test binary"))
         .args([
@@ -109,6 +116,10 @@ fn selector_sweeps_after_the_runner_is_killed_mid_test() {
     assert!(
         stderr.contains(&format!("leaked test process: {pid} (")),
         "the report does not name {pid}: {stderr}"
+    );
+    assert!(
+        stderr.contains("test suite_guard_child_outlives_runner;"),
+        "the report does not name the leaking test: {stderr}"
     );
     assert!(reaped(pid), "{pid} outlived the killed runner");
 }
@@ -194,7 +205,7 @@ fn suite_guard_leaks_and_panics() {
         std::env::var("EFFIGY_TEST_SUITE").is_ok_and(|suite| !suite.is_empty()),
         "the runner must carry the suite marker"
     );
-    leaked_child();
+    leaked_child("suite_guard_leaks_and_panics");
     panic!("controlled runner failure after the child detached");
 }
 
@@ -202,6 +213,6 @@ fn suite_guard_leaks_and_panics() {
 #[test]
 #[ignore = "leaking runner; launched only by the suite sweep proof"]
 fn suite_guard_child_outlives_runner() {
-    leaked_child();
+    leaked_child("suite_guard_child_outlives_runner");
     std::thread::sleep(Duration::from_secs(120));
 }

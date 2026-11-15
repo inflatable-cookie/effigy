@@ -2,6 +2,7 @@
 //! backend reports, deletion is exact, and every leftover is named.
 #![cfg(unix)]
 
+use effigy_test_support::process::FixtureCommandExt;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -118,7 +119,7 @@ impl Fixture {
             .env("EFFIGY_COMPOSE_BACKEND", "docker")
             .env("EFFIGY_TEST_RUNTIME_STATE", &self.state)
             .env("PATH", &self.path)
-            .output()
+            .output_owned()
             .expect("run effigy")
     }
 
@@ -528,7 +529,7 @@ fn the_scripted_runtime_restarts_a_killed_unless_stopped_container() {
         .args(["rm", "-f", "web-1"])
         .env("EFFIGY_TEST_RUNTIME_STATE", &fixture.state)
         .env("PATH", &fixture.path)
-        .output()
+        .output_owned()
         .expect("scripted docker");
     assert!(output.status.success(), "{output:?}");
     assert_eq!(fixture.state_lines("restarts"), vec!["web-1".to_owned()]);

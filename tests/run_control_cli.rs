@@ -177,14 +177,16 @@ impl Fixture {
     }
 
     fn run(&self, args: &[&str]) -> Output {
-        self.effigy(args).output_owned().expect("effigy runs")
+        self.effigy(args)
+            .output_owned()
+            .expect("effigy runs and its helpers exit")
     }
 
     fn with_hook(&self, hook: &str, args: &[&str]) -> Output {
         self.effigy(args)
             .env("EFFIGY_ADMISSION_HOOK", hook)
             .output_owned()
-            .expect("effigy runs")
+            .expect("effigy runs and its helpers exit")
     }
 
     /// The same run under the reported custody protocol (v2).
@@ -193,7 +195,7 @@ impl Fixture {
             .env("EFFIGY_ADMISSION_HOOK", hook)
             .env("EFFIGY_ADMISSION_PROTOCOL", "2")
             .output_owned()
-            .expect("effigy runs")
+            .expect("effigy runs and its helpers exit")
     }
 
     fn has_journal(&self) -> bool {
@@ -2592,7 +2594,7 @@ fn a_run_deadline_owner_loss_is_settled_by_the_surviving_custodian() {
         .parse()
         .expect("leader pid");
     let child: i32 = fixture.read("child.pid").trim().parse().expect("child pid");
-    let mut sentinels = Sentinels::for_owner(owner.id(), Duration::from_secs(10));
+    let _sentinels = Sentinels::for_owner(owner.id(), Duration::from_secs(10));
     owner.kill().expect("the owning process is killed");
     let _ = owner.wait();
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -2618,7 +2620,6 @@ fn a_run_deadline_owner_loss_is_settled_by_the_surviving_custodian() {
         "the surviving custodian did not reap the direct leader {leader}"
     );
     fixture.wait_for("the guard to drain", || gates_drained(&fixture.repo));
-    sentinels.wait_exit(Duration::from_secs(10));
     assert!(
         spawned.elapsed() < Duration::from_secs(13),
         "the guard outlived the run's original ceiling: {:?}",

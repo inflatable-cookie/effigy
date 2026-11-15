@@ -1,4 +1,4 @@
-//! Observe and settle the exact foreground sentinel owned by a test run.
+//! Record the exact foreground sentinel so a failed test can stop its own run.
 
 use effigy_kernel::{
     ident::{self, ProcessIdentity, ProcessState},
@@ -12,7 +12,6 @@ use std::{
 
 pub(super) struct Sentinels {
     identities: Vec<ProcessIdentity>,
-    settled: bool,
 }
 
 impl Sentinels {
@@ -46,43 +45,11 @@ impl Sentinels {
                         ),
                     })
                     .collect();
-                return Self {
-                    identities,
-                    settled: false,
-                };
+                return Self { identities };
             }
             assert!(
                 started.elapsed() < timeout,
                 "owner {owner_pid} did not start its kernel sentinel"
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    }
-
-    pub(super) fn wait_exit(&mut self, timeout: Duration) {
-        let started = Instant::now();
-        loop {
-            self.identities
-                .retain(|identity| match ident::process_identity(identity.pid) {
-                    Observed::Absent(_) => false,
-                    Observed::Verified(current, _) if current != *identity => false,
-                    Observed::Verified(current, _) if current == *identity => !matches!(
-                        ident::process_state(identity.pid),
-                        Observed::Verified(ProcessState::Zombie, _)
-                    ),
-                    Observed::Unknown(_) | Observed::Verified(..) => true,
-                });
-            if self.identities.is_empty() {
-                self.settled = true;
-                return;
-            }
-            assert!(
-                started.elapsed() < timeout,
-                "kernel sentinel PID(s) {:?} did not exit before the fixture deadline",
-                self.identities
-                    .iter()
-                    .map(|identity| identity.pid)
-                    .collect::<Vec<_>>()
             );
             std::thread::sleep(Duration::from_millis(20));
         }
@@ -93,7 +60,7 @@ impl Drop for Sentinels {
     fn drop(&mut self) {
         // A timed-out assertion is the failure path. Stop only the exact
         // process recorded by this fixture; never signal a reused PID.
-        if !std::thread::panicking() || self.settled {
+        if !std::thread::panicking() {
             return;
         }
         for identity in &self.identities {

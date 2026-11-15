@@ -12,6 +12,7 @@
 //! prepared guest. This proves process custody, not container-mode preparation
 //! or native backend qualification; #452 owns those later gates.
 
+use effigy_test_support::process::FixtureCommandExt;
 #[path = "container_up.rs"]
 mod container_up;
 
@@ -241,7 +242,7 @@ fn detached_contender(request: &serde_json::Value) -> serde_json::Value {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_owned()
         .expect("the contender process starts");
     child
         .stdin
@@ -291,7 +292,7 @@ fn initiate(entry: &str, request: &serde_json::Value) -> serde_json::Value {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_owned()
         .expect("the initiating process starts");
     child
         .stdin
@@ -347,7 +348,7 @@ fn a_detached_serving_host_keeps_its_session_after_the_initiating_process_exits(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_owned()
         .expect("the initiating process starts");
     initiator
         .stdin
@@ -842,7 +843,7 @@ fn an_unrecorded_switch_is_refused_not_served() {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_owned()
         .expect("the initiating process starts");
     child
         .stdin
@@ -1003,7 +1004,7 @@ fn startup_honours_the_callers_deadline() {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_owned()
         .expect("the initiating process starts");
     child
         .stdin
@@ -1090,7 +1091,7 @@ fn a_crash_after_the_acknowledgement_keeps_the_session_serving() {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_owned()
         .expect("the initiating process starts");
     child
         .stdin
@@ -1217,7 +1218,7 @@ fn an_interrupted_handoff_claims_nothing_and_stays_recoverable() {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_owned()
         .expect("the initiating process starts");
     child
         .stdin
@@ -1340,7 +1341,7 @@ fn two_commands_in_one_terminal_share_one_client_identity() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .env_remove("EFFIGY_WORKSPACE_CLIENT_ID")
-        .output()
+        .output_owned()
         .expect("the command process runs");
     assert!(
         !bare.status.success(),
@@ -1399,7 +1400,7 @@ fn client_identity_with_redirected_input(env: &[(&str, &str)]) -> String {
     for (key, value) in env {
         command.env(key, value);
     }
-    let output = command.output().expect("the command process runs");
+    let output = command.output_owned().expect("the command process runs");
     assert!(
         output.status.success(),
         "the command reported its client identity: {}",
@@ -1418,7 +1419,7 @@ fn client_identity_of(env: &[(&str, &str)]) -> String {
     for (key, value) in env {
         command.env(key, value);
     }
-    let output = command.output().expect("the command process runs");
+    let output = command.output_owned().expect("the command process runs");
     assert!(
         output.status.success(),
         "the command reported its client identity: {}",

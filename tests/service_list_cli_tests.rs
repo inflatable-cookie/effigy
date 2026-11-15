@@ -1,6 +1,7 @@
 //! Prove `effigy service list` text and JSON advertise only callable baseline
 //! fragments — first-level directories that carry `service.toml`.
 
+use effigy_test_support::process::FixtureCommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -29,7 +30,7 @@ fn effigy(home: &Path, args: &[&str]) -> Run {
         .env("HOME", home)
         .env("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1")
         .stdin(Stdio::null())
-        .output()
+        .output_owned()
         .expect("run effigy");
     Run {
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),

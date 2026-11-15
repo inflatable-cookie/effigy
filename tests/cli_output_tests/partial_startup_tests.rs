@@ -47,7 +47,7 @@ fn private_gateway(root: &Path, subcommand: &str) -> Output {
                 std::env::var("PATH").expect("PATH")
             ),
         )
-        .output()
+        .output_owned()
         .expect("private gateway command")
 }
 
@@ -61,7 +61,7 @@ impl Fixture {
             let path = root.path().join("bin").join(name);
             let python = Command::new("python3")
                 .args(["-c", "import sys;print(sys.executable)"])
-                .output()
+                .output_owned()
                 .expect("Python interpreter");
             assert!(python.status.success());
             let script = format!(
@@ -200,7 +200,7 @@ version = "16"
             let output = Command::new("git")
                 .args(args)
                 .current_dir(&root)
-                .output()
+                .output_owned()
                 .expect("private Git namespace");
             assert!(output.status.success(), "{output:?}");
         }
@@ -276,12 +276,12 @@ version = "16"
     fn run(&self, i: usize, args: &[&str]) -> Output {
         let output = self
             .command(i, args)
-            .output()
+            .output_owned()
             .expect("production CLI and positive reap");
         if !self.stacks[i].root.join("commands.jsonl").exists() {
             let human = self
                 .command(i, &["container", "up", "--detach"])
-                .output()
+                .output_owned()
                 .expect("fixture refusal diagnosis");
             panic!("fixture was refused before the private transport: original={output:?}; human={human:?}");
         }
@@ -889,7 +889,7 @@ fn private_hung_runtime_inventory_is_one_bounded_refusal() {
     let started = Instant::now();
     let output = fixture
         .command(0, &["container", "up", "--detach", "--json"])
-        .output()
+        .output_owned()
         .expect("one bounded detached activation");
     let elapsed = started.elapsed();
     let rendered = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -989,7 +989,7 @@ fn private_translated_scoped_compose_renders_its_own_port() {
     // checkout renders its own port instead of the primary's fixed one.
     let output = fixture
         .command(2, &["container", "render", "--json"])
-        .output()
+        .output_owned()
         .unwrap();
     assert!(output.status.success(), "{output:?}");
     let render: Value = serde_json::from_slice(&output.stdout).unwrap();

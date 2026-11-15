@@ -58,7 +58,7 @@ fn run_skill(cwd: &Path, args: &[&str]) -> Output {
         .current_dir(cwd)
         .env("NO_COLOR", "1")
         .env("HOME", skill_home())
-        .output()
+        .output_owned()
         .expect("run skill command")
 }
 
@@ -69,7 +69,7 @@ fn run_skill_with_env(cwd: &Path, args: &[&str], key: &str, value: &str) -> Outp
         .env("NO_COLOR", "1")
         .env("HOME", skill_home())
         .env(key, value)
-        .output()
+        .output_owned()
         .expect("run skill command")
 }
 
@@ -800,7 +800,7 @@ run_in = "host"
         .current_dir(&consumer)
         .env("NO_COLOR", "1")
         .env("EFFIGY_TEST_SECRETS_PASSPHRASE", SECRET_CONSUMER_PASSPHRASE)
-        .output()
+        .output_owned()
         .expect("init consumer vault");
     assert!(init.status.success(), "{init:?}");
     for (name, value) in [
@@ -813,7 +813,7 @@ run_in = "host"
             .env("NO_COLOR", "1")
             .env("EFFIGY_TEST_SECRETS_PASSPHRASE", SECRET_CONSUMER_PASSPHRASE)
             .env("EFFIGY_TEST_SECRETS_VALUE", value)
-            .output()
+            .output_owned()
             .expect("store consumer secret");
         assert!(output.status.success(), "{output:?}");
     }
@@ -1108,7 +1108,7 @@ fn run_skill_with_home(cwd: &Path, home: &Path, args: &[&str]) -> Output {
         .current_dir(cwd)
         .env("NO_COLOR", "1")
         .env("HOME", home)
-        .output()
+        .output_owned()
         .expect("run skill command with isolated home")
 }
 

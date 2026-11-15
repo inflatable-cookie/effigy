@@ -1,5 +1,6 @@
 //! Detached production-entry refusal control. This does not prove positive
 //! container orchestration or qualify any native backend.
+use effigy_test_support::process::FixtureCommandExt;
 use std::io::Write;
 use std::process::{Command, Stdio};
 
@@ -44,7 +45,7 @@ fn container_up_detached_preflight_refuses_before_any_journal_token_or_mount_eff
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()
+            .spawn_owned()
             .expect("real front end and detached host");
         child
             .stdin
@@ -152,7 +153,7 @@ mounts = ["prepared:/workspace/prepared:ro"]
         .env("HOME", &home)
         .env("PATH", std::env::join_paths(paths).expect("fixture path"))
         .env("EFFIGY_TEST_RUNTIME_MARKER", &marker)
-        .output()
+        .output_owned()
         .expect("real CLI process");
     assert!(
         !output.status.success(),

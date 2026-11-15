@@ -2,6 +2,7 @@
 //! manifest tasks, unowned grouped spellings never reach a child built-in, and
 //! existing selector precedence holds.
 
+use effigy_test_support::process::FixtureCommandExt;
 use serde_json::Value;
 use std::fs;
 use std::time::Duration;
@@ -355,7 +356,7 @@ run = "kill -INT $$"
         .arg(&root)
         .arg("test")
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
     assert_eq!(
         json.status.code(),
@@ -384,7 +385,7 @@ run = "kill -INT $$"
         .arg("qa")
         .env("NO_COLOR", "1")
         .env("EFFIGY_EXECUTABLE", env!("CARGO_BIN_EXE_effigy"))
-        .output()
+        .output_owned()
         .expect("run effigy");
     assert_eq!(step.status.code(), Some(1), "{step:?}");
     let step_payload = parse_stdout_json(&step);
@@ -433,7 +434,7 @@ run = "touch started; exec sleep 30"
         .env("EFFIGY_EXECUTABLE", env!("CARGO_BIN_EXE_effigy"))
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .spawn()
+        .spawn_owned()
         .expect("spawn effigy");
 
     let started = root.join("started");
@@ -449,7 +450,7 @@ run = "touch started; exec sleep 30"
         );
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    let mut sentinels = Sentinels::for_owner(child.id(), Duration::from_secs(10));
+    let _sentinels = Sentinels::for_owner(child.id(), Duration::from_secs(10));
     // Only this proof's own recorded child PID is signalled.
     let signalled = unsafe { libc::kill(child.id() as i32, libc::SIGINT) };
     assert_eq!(signalled, 0, "signal the run this proof started");
@@ -472,5 +473,4 @@ run = "touch started; exec sleep 30"
         !recorded["outcome"]["Cancelled"].is_null(),
         "the stopped step is recorded as cancelled: {recorded}"
     );
-    sentinels.wait_exit(Duration::from_secs(30));
 }

@@ -1,3 +1,4 @@
+use effigy_test_support::process::FixtureCommandExt;
 use serde_json::Value;
 use std::fs;
 use std::process::Command;
@@ -13,7 +14,7 @@ fn cli_help_supports_colorized_sections_when_forced() {
         .arg("--help")
         .env("EFFIGY_COLOR", "always")
         .env_remove("NO_COLOR")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(output.status.success());
@@ -30,7 +31,7 @@ fn cli_version_prints_single_line_version() {
         .arg("--version")
         .env("NO_COLOR", "1")
         .env("EFFIGY_ACTIVE_VERSION", env!("CARGO_PKG_VERSION"))
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(output.status.success());
@@ -45,7 +46,7 @@ fn cli_version_json_mode_emits_machine_readable_payload() {
         .arg("--version")
         .env("NO_COLOR", "1")
         .env("EFFIGY_ACTIVE_VERSION", env!("CARGO_PKG_VERSION"))
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(output.status.success());
@@ -90,7 +91,7 @@ fn cli_json_envelope_flag_is_rejected_after_removal() {
         .arg("--json-envelope")
         .arg("--help")
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(!output.status.success());
@@ -104,7 +105,7 @@ fn cli_json_raw_flag_is_rejected_after_removal() {
         .arg("--json-raw")
         .arg("tasks")
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(!output.status.success());
@@ -124,13 +125,13 @@ fn cli_general_help_json_envelope_is_identical_across_the_flag_and_command_route
         .arg("--json")
         .arg("--help")
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
     let via_command = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("--json")
         .arg("help")
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(via_flag.status.success(), "{via_flag:?}");
@@ -162,7 +163,7 @@ fn cli_tasks_help_is_command_specific() {
         .arg("tasks")
         .arg("--help")
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(output.status.success());
@@ -181,7 +182,7 @@ fn cli_doctor_help_is_command_specific() {
         .arg("doctor")
         .arg("--help")
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(output.status.success());
@@ -198,7 +199,7 @@ fn cli_docs_help_is_command_specific() {
         .arg("docs")
         .arg("--help")
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(output.status.success());
@@ -237,7 +238,7 @@ fn cli_contracts_help_is_command_specific() {
         .arg("contracts")
         .arg("--help")
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(output.status.success());
@@ -258,7 +259,7 @@ fn cli_release_help_includes_distribution_evidence_commands() {
         .arg("release")
         .arg("--help")
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(output.status.success());
@@ -277,7 +278,7 @@ fn cli_container_help_is_command_specific() {
         .arg("container")
         .arg("--help")
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(output.status.success());
@@ -332,7 +333,7 @@ fn cli_repo_pulse_prints_migration_guidance() {
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(!output.status.success());
@@ -376,7 +377,7 @@ fn run_help_cli(root: &std::path::Path, args: &[&str]) -> std::process::Output {
         root,
         args,
     )
-    .output()
+    .output_owned()
     .expect("run effigy")
 }
 
@@ -444,7 +445,7 @@ fn cli_help_parity_is_stable_across_owned_checkout_identity_changes() {
     let unpinned = |args: &[&str]| {
         let output = help_cli_command(&binary, root, args)
             .env_remove("EFFIGY_ACTIVE_VERSION")
-            .output()
+            .output_owned()
             .expect("real default identity CLI");
         assert!(output.status.success(), "{output:?}");
         String::from_utf8(output.stdout).expect("UTF-8 CLI output")
@@ -470,7 +471,7 @@ fn cli_help_parity_is_stable_across_owned_checkout_identity_changes() {
     let clean_help = unpinned(&["help", "docs"]);
     assert!(clean_help.contains(&clean_version));
     let stable_help = help_cli_command(&binary, root, &["help", "docs"])
-        .output()
+        .output_owned()
         .expect("pinned clean help");
     assert!(stable_help.status.success(), "{stable_help:?}");
 
@@ -510,7 +511,7 @@ fn cli_help_parity_is_stable_across_owned_checkout_identity_changes() {
     assert_eq!(help_facts(&clean_help), help_facts(&dirty_help));
 
     let stable_direct = help_cli_command(&binary, root, &["docs", "--help"])
-        .output()
+        .output_owned()
         .expect("pinned dirty help");
     assert!(stable_direct.status.success(), "{stable_direct:?}");
     assert_eq!(stable_help.stdout, stable_direct.stdout);
@@ -602,7 +603,7 @@ exit "$result"
     let output = help_cli_command(&binary, root, &["--json", "--version"])
         .env_remove("EFFIGY_ACTIVE_VERSION")
         .env("PATH", std::env::join_paths(path).expect("private PATH"))
-        .output()
+        .output_owned()
         .expect("actual JSON version command");
     assert!(output.status.success(), "{output:?}");
     let value: Value = serde_json::from_slice(&output.stdout).expect("version JSON");
@@ -624,7 +625,7 @@ exit "$result"
     fs::write(&stamp, format!("{expected}.dirty")).expect("record next identity");
     let dirty = help_cli_command(&binary, root, &["--version"])
         .env_remove("EFFIGY_ACTIVE_VERSION")
-        .output()
+        .output_owned()
         .expect("dirty version command");
     assert!(dirty.status.success());
     assert_eq!(
@@ -938,7 +939,7 @@ fn cli_public_task_help_json_disables_forced_color() {
         .args(["--json", "help"])
         .env("EFFIGY_COLOR", "always")
         .env_remove("NO_COLOR")
-        .output()
+        .output_owned()
         .expect("run help");
     assert!(output.status.success());
     let payload: Value = serde_json::from_slice(&output.stdout).expect("JSON help");

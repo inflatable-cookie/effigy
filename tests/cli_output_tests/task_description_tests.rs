@@ -1,3 +1,4 @@
+use effigy_test_support::process::FixtureCommandExt;
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
@@ -33,7 +34,7 @@ fn run_effigy(root: &Path, args: &[&str]) -> Output {
         .current_dir(root)
         .env("NO_COLOR", "1")
         .env("EFFIGY_ACTIVE_VERSION", env!("CARGO_PKG_VERSION"))
-        .output()
+        .output_owned()
         .expect("run effigy")
 }
 

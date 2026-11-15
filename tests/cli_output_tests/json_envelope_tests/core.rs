@@ -1,4 +1,5 @@
 use super::*;
+use effigy_test_support::process::FixtureCommandExt;
 
 #[test]
 fn cli_json_mode_tasks_wraps_tasks_payload() {
@@ -15,7 +16,7 @@ fn cli_json_mode_tasks_wraps_tasks_payload() {
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(output.status.success());
@@ -43,7 +44,7 @@ fn cli_json_mode_doctor_wraps_doctor_payload() {
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(output.status.success());
@@ -66,7 +67,7 @@ fn cli_json_mode_deps_wraps_read_only_status_payload() {
         .arg("--json")
         .arg("deps")
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     assert!(output.status.success());

@@ -1,3 +1,4 @@
+use effigy_test_support::process::FixtureCommandExt;
 use serde_json::Value;
 use std::fs;
 use std::process::Command;
@@ -17,7 +18,7 @@ fn cli_task_args_after_delimiter_are_forwarded_instead_of_dropped() {
         .current_dir(&root)
         .args(["--json", "test:unit", "--", "src/foo.test.ts"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy");
 
     let stdout = String::from_utf8_lossy(&output.stdout);

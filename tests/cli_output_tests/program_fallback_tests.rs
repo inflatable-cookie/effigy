@@ -5,6 +5,7 @@
 //! the allow list, removes the shim at settle, and refuses a malformed or
 //! repo-declared block.
 
+use effigy_test_support::process::FixtureCommandExt;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -56,7 +57,7 @@ fn run_effigy(root: &Path, home: &Path, bin: &Path, args: &[&str]) -> Output {
         .env("HOME", home)
         .env("PATH", path)
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("run effigy")
 }
 

@@ -10,6 +10,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use effigy_kernel::observe::Observed;
+use effigy_test_support::process::FixtureCommandExt;
 
 struct BackendFixture {
     fixture: effigy_test_support::Fixture,
@@ -399,7 +400,7 @@ fn legacy_bundle_default_workspace_plain_up_applies_once_through_ordinary_compos
     let output = fixture
         .compose_command()
         .args(["container", "up", "--detach", "--json"])
-        .output()
+        .output_owned()
         .expect("actual CLI");
     let diagnostics = format!(
         "{}{}\nengine calls:\n{}",
@@ -442,7 +443,7 @@ fn hybrid_container_plain_up_stays_ordinary_while_explicit_workspace_refuses() {
     let output = fixture
         .compose_command()
         .args(["container", "hybrid", "up", "--detach", "--json"])
-        .output()
+        .output_owned()
         .expect("actual CLI");
     let diagnostics = format!(
         "{}{}\nengine calls:\n{}",
@@ -464,7 +465,7 @@ fn hybrid_container_plain_up_stays_ordinary_while_explicit_workspace_refuses() {
     let refusal = fixture
         .workspace_command()
         .args(["--detach", "--json"])
-        .output()
+        .output_owned()
         .expect("actual CLI");
     assert!(!refusal.status.success());
     let public = format!(
@@ -514,7 +515,7 @@ working_dir = "/other"
     let output = fixture
         .compose_command()
         .args(["container", "up", "--detach", "--json"])
-        .output()
+        .output_owned()
         .expect("actual CLI");
     assert!(
         !output.status.success(),
@@ -545,7 +546,7 @@ working_dir = "/other"
     let refusal = fixture
         .workspace_command()
         .args(["--detach", "--json"])
-        .output()
+        .output_owned()
         .expect("actual CLI");
     assert!(!refusal.status.success());
     let refusal_public = format!(
@@ -570,7 +571,7 @@ fn actual_cli_fake_backend_refuses_before_workspace_effects() {
     let output = fixture
         .workspace_command()
         .args(["--detach", "--json"])
-        .output()
+        .output_owned()
         .expect("actual CLI");
     assert!(!output.status.success());
     let report: serde_json::Value =
@@ -613,7 +614,7 @@ fn assert_fault_refused_before_effects(flags: &[&str]) {
     let output = fixture
         .workspace_command()
         .args(["--detach", "--json"])
-        .output()
+        .output_owned()
         .expect("actual CLI");
     assert!(!output.status.success());
     let public = format!(
@@ -681,7 +682,7 @@ fn actual_selected_handoff_failure_retains_owner_until_fresh_cleanup_recovery() 
     let output = fixture
         .workspace_command()
         .args(["--detach", "--json"])
-        .output()
+        .output_owned()
         .expect("actual CLI");
     assert!(
         !output.status.success(),
@@ -785,7 +786,7 @@ fn guarded_effect_failure_retains_exact_gate_free_custody(case: &str) {
     let output = fixture
         .workspace_command()
         .args(["--detach", "--json"])
-        .output()
+        .output_owned()
         .expect("actual CLI");
     assert!(
         !output.status.success(),
@@ -965,7 +966,7 @@ fn actual_binding_staging_and_liveness_errors_are_private_at_all_diagnostic_sink
         let output = fixture
             .workspace_command()
             .args(["--detach", "--json"])
-            .output()
+            .output_owned()
             .expect("actual CLI");
         assert!(!output.status.success(), "{case}: no Serving");
         for sink in [
@@ -1043,7 +1044,7 @@ fn a_settled_activation_cleanup_never_hides_owned_residue() {
         let output = fixture
             .workspace_command()
             .args(["--detach", "--json"])
-            .output()
+            .output_owned()
             .expect("actual CLI");
         assert!(
             !output.status.success(),
@@ -1084,7 +1085,7 @@ fn actual_cli_refuses_unqualified_private_preparation_before_any_prepare_or_appl
     let output = fixture
         .workspace_command()
         .args(["--detach", "--json"])
-        .output()
+        .output_owned()
         .expect("actual CLI");
     assert!(!output.status.success());
     let public = format!(
@@ -1153,7 +1154,7 @@ fn actual_detached_entry_refuses_valid_prepared_input_before_admission_or_plan()
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = command.spawn().expect("real detached front end");
+    let mut child = command.spawn_owned().expect("real detached front end");
     child
         .stdin
         .take()
@@ -1195,7 +1196,7 @@ fn actual_cli_fake_backend_reaches_committed_workspace() {
     let output = fixture
         .workspace_command()
         .args(["--detach", "--json"])
-        .output()
+        .output_owned()
         .expect("actual CLI");
     let diagnostics = format!(
         "{}{}",
@@ -1295,7 +1296,7 @@ fn qualification_private_preparation_failure_discards_all_backend_diagnostics() 
     let output = fixture
         .workspace_command()
         .args(["--detach", "--json"])
-        .output()
+        .output_owned()
         .expect("actual CLI");
     assert!(!output.status.success());
     let diagnostics = format!(
@@ -1352,7 +1353,7 @@ fn qualification_preparation_entry_refuses_a_forged_process_receipt() {
             "EFFIGY_CUSTODY_NONCE",
             format!("{}:1", effigy_kernel::id::RunId::new(1, [44; 10]).unwrap()),
         )
-        .output()
+        .output_owned()
         .expect("direct forged child");
     assert_eq!(
         output.status.code(),
@@ -1379,7 +1380,7 @@ fn qualification_preparation_receipt_cannot_authorize_a_different_intent() {
         .workspace_command()
         .args(["--detach", "--json"])
         .env("EFFIGY_TEST_PREPARATION_INTENT_FAULT", "1")
-        .output()
+        .output_owned()
         .expect("actual qualified spawn");
     assert!(!output.status.success());
     let diagnostics = String::from_utf8_lossy(&output.stdout);
@@ -1408,7 +1409,7 @@ fn actual_cli_down_then_fresh_up_retires_selected_session_and_commits_a_new_one(
         let output = fixture
             .workspace_command()
             .args(["--detach", "--json"])
-            .output()
+            .output_owned()
             .expect("real up");
         assert!(
             output.status.success(),
@@ -1428,7 +1429,7 @@ fn actual_cli_down_then_fresh_up_retires_selected_session_and_commits_a_new_one(
     let down = fixture
         .command()
         .args(["container", "web", "down", "--json"])
-        .output()
+        .output_owned()
         .expect("real down");
     assert!(
         down.status.success(),
@@ -1487,7 +1488,7 @@ fn actual_cli_crash_recovery_refuses_reuse_then_down_and_fresh_up() {
     let first = fixture
         .workspace_command()
         .args(["--detach", "--json"])
-        .output()
+        .output_owned()
         .expect("first up");
     assert!(first.status.success(), "first up");
     let db = rusqlite::Connection::open_with_flags(
@@ -1526,7 +1527,7 @@ fn actual_cli_crash_recovery_refuses_reuse_then_down_and_fresh_up() {
         .arg(&fixture.project)
         .arg(&supervisor)
         .env("HOME", &fixture.home)
-        .output()
+        .output_owned()
         .expect("exact kernel-verified fixture fault");
     assert!(
         fault.status.success(),
@@ -1537,7 +1538,7 @@ fn actual_cli_crash_recovery_refuses_reuse_then_down_and_fresh_up() {
     let refused = fixture
         .workspace_command()
         .args(["--detach", "--json"])
-        .output()
+        .output_owned()
         .expect("uncertain reuse");
     assert!(
         !refused.status.success(),
@@ -1554,7 +1555,7 @@ fn actual_cli_crash_recovery_refuses_reuse_then_down_and_fresh_up() {
     let down = fixture
         .command()
         .args(["container", "web", "down", "--json"])
-        .output()
+        .output_owned()
         .expect("explicit recovery down");
     assert!(
         down.status.success(),
@@ -1565,7 +1566,7 @@ fn actual_cli_crash_recovery_refuses_reuse_then_down_and_fresh_up() {
     let next = fixture
         .workspace_command()
         .args(["--detach", "--json"])
-        .output()
+        .output_owned()
         .expect("fresh up after down");
     assert!(
         next.status.success(),
@@ -1626,7 +1627,7 @@ fn secret_interpolation_cli(vm: bool) {
         .args(["prepare"])
         .arg(&fixture.project)
         .envs(prepared)
-        .output()
+        .output_owned()
         .expect("real isolated vault producer");
     assert!(
         setup.status.success(),
@@ -1648,7 +1649,7 @@ fn secret_interpolation_cli(vm: bool) {
     }
     let output = command
         .args(["--detach", "--json"])
-        .output()
+        .output_owned()
         .expect("actual secret-bearing up");
     assert!(
         output.status.success(),
@@ -1727,7 +1728,7 @@ fn qualification_preparation_never_starts_or_repairs_a_stopped_or_unknown_vm() {
             .args(["--detach", "--json"])
             .env("EFFIGY_COMPOSE_BACKEND", "containerd")
             .env("TMPDIR", temp)
-            .output()
+            .output_owned()
             .expect("qualified entry");
         assert!(
             !output.status.success(),

@@ -3,6 +3,7 @@
 //! Every fixture is a local git remote under an owned fixture root; no real
 //! project is cloned or bootstrapped.
 
+use effigy_test_support::process::FixtureCommandExt;
 mod support;
 
 use serde_json::Value;
@@ -129,7 +130,7 @@ fn effigy(args: &[&str], cwd: &Path) -> std::process::Output {
         .args(args)
         .env("NO_COLOR", "1")
         .current_dir(cwd)
-        .output()
+        .output_owned()
         .expect("run effigy")
 }
 
@@ -452,7 +453,7 @@ primary_service = "app"
         .env("PATH", &bin)
         .env("HOME", root.join("home"))
         .current_dir(&root)
-        .output()
+        .output_owned()
         .expect("run effigy bootstrap");
 
     assert!(!output.status.success(), "expected a prerequisite failure");

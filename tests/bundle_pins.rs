@@ -1,5 +1,6 @@
 //! End-to-end R2 and checkout source pin proofs. All writable paths belong to
 //! one TempDir; real consumer repositories are never used as fixture targets.
+use effigy_test_support::process::FixtureCommandExt;
 use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::{
@@ -69,7 +70,7 @@ impl Fixture {
         for (name, value) in extra {
             command.env(name, value);
         }
-        let mut child = command.spawn().unwrap();
+        let mut child = command.spawn_owned_preserving_group().unwrap();
         let started = Instant::now();
         let deadline = started + bound;
         eprintln!(
@@ -1520,7 +1521,11 @@ fn two_fresh_worktrees_acquire_one_shared_pinned_destination_at_once() {
             .stderr(Stdio::from(stderr))
             .process_group(0);
         let spawned = Instant::now();
-        running.push((name.clone(), spawned, command.spawn().unwrap()));
+        running.push((
+            name.clone(),
+            spawned,
+            command.spawn_owned_preserving_group().unwrap(),
+        ));
     }
     let deadline = Instant::now() + Duration::from_secs(120);
     let mut results = Vec::new();

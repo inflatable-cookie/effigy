@@ -1,3 +1,4 @@
+use effigy_test_support::process::FixtureCommandExt;
 use std::fs;
 use std::process::Command;
 
@@ -23,7 +24,7 @@ fn retirement_commands_emit_json_errors_without_effects() {
             .arg("--json")
             .args(args)
             .env("NO_COLOR", "1")
-            .output()
+            .output_owned()
             .expect("retirement command");
         assert!(!output.status.success(), "{output:?}");
         let packet: serde_json::Value =
@@ -52,7 +53,7 @@ fn retirement_user_catalog_warns_and_preserves_ignored_fragments() {
         .args(["--json", "service", "list"])
         .env("HOME", &home)
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("service list");
     assert!(output.status.success(), "{output:?}");
     let packet: serde_json::Value =
@@ -142,7 +143,7 @@ fn retired_v015_sections_load_and_list_tasks_with_one_notice_each() {
             .current_dir(fixture.path())
             .args(["tasks", "--all"])
             .env("NO_COLOR", "1")
-            .output()
+            .output_owned()
             .expect("tasks inventory");
         assert!(output.status.success(), "{section}: {output:?}");
         let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
@@ -191,7 +192,7 @@ run = "printf built"
         .current_dir(fixture.path())
         .args(["tasks"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("tasks inventory");
     assert!(output.status.success(), "{output:?}");
     let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
@@ -219,7 +220,7 @@ fn retired_notice_stderr(fixture: &effigy_test_support::Fixture, args: &[&str]) 
         .current_dir(fixture.path())
         .args(args)
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("effigy command");
     String::from_utf8(output.stderr).expect("utf8 stderr")
 }
@@ -231,7 +232,7 @@ fn the_retired_sections_notice_moves_to_the_json_envelope_warnings() {
         .current_dir(fixture.path())
         .args(["--json", "tasks"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("tasks inventory");
     assert!(output.status.success(), "{output:?}");
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
@@ -311,7 +312,7 @@ fn a_nested_effigy_invocation_keeps_the_retired_notice_quiet() {
         .args(["tasks"])
         .env("EFFIGY_INTERNAL_SUPPRESS_HEADER", "1")
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("nested tasks inventory");
     assert!(output.status.success(), "{output:?}");
     let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
@@ -340,7 +341,7 @@ fn retired_demo_command_gives_the_task_recipe() {
         .current_dir(fixture.path())
         .arg("demo")
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("retired demo command");
     assert!(!output.status.success(), "{output:?}");
     let stderr = String::from_utf8(output.stderr).unwrap();
@@ -372,7 +373,7 @@ fn retired_config_target_demos_fails_with_its_explanation() {
         .current_dir(fixture.path())
         .args(["config", "--target", "demos"])
         .env("NO_COLOR", "1")
-        .output()
+        .output_owned()
         .expect("config target demos");
     assert!(!output.status.success(), "{output:?}");
     let stderr = String::from_utf8(output.stderr).unwrap();

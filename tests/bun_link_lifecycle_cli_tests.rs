@@ -12,11 +12,12 @@
 
 #![cfg(unix)]
 
+use effigy_test_support::process::{FixtureCommandExt, OwnedChild};
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 const PACKAGE: &str = "@acme/core";
@@ -155,7 +156,7 @@ impl Machine {
         let args = args.iter().map(String::as_str).collect::<Vec<_>>();
         let output = self
             .command(&args)
-            .output()
+            .output_owned()
             .expect("run the effigy CLI in the fixture");
         (
             output.status.success(),
@@ -387,7 +388,7 @@ fn interrupt_retires_only_the_registration_the_owner_created() {
         machine: &machine,
         child: machine
             .command(&args)
-            .spawn()
+            .spawn_owned()
             .expect("spawn the effigy CLI in the fixture"),
     };
     let registration = machine.registration();
@@ -450,7 +451,7 @@ fn interrupt_stops_an_in_flight_registration_before_it_leaves_residue() {
         machine: &machine,
         child: machine
             .command(&args)
-            .spawn()
+            .spawn_owned()
             .expect("spawn the effigy CLI in the fixture"),
     };
     assert!(
@@ -490,7 +491,7 @@ fn interrupt_stops_a_wrapper_and_its_descendant_before_they_can_register() {
         machine: &machine,
         child: machine
             .command(&args)
-            .spawn()
+            .spawn_owned()
             .expect("spawn the effigy CLI in the fixture"),
     };
     assert!(
@@ -557,7 +558,7 @@ fn a_refused_retirement_keeps_the_claim_for_unlink() {
 /// The running owner, stopped by recorded PID if the proof panics mid-window.
 struct RunningOwner<'a> {
     machine: &'a Machine,
-    child: Child,
+    child: OwnedChild,
 }
 
 impl Drop for RunningOwner<'_> {
@@ -583,13 +584,13 @@ fn wait_until(timeout: Duration, mut ready: impl FnMut() -> bool) -> bool {
     false
 }
 
-fn interrupt(child: &mut Child) {
+fn interrupt(child: &mut OwnedChild) {
     let pid = child.id() as i32;
     let sent = unsafe { libc::kill(pid, libc::SIGINT) };
     assert_eq!(sent, 0, "send SIGINT to the running owner");
 }
 
-fn wait_for_exit(child: &mut Child) -> std::process::ExitStatus {
+fn wait_for_exit(child: &mut OwnedChild) -> std::process::ExitStatus {
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         if let Some(status) = child.try_wait().unwrap() {
