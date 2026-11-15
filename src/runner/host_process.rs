@@ -1781,12 +1781,27 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
             .join("routes.json")
     }
 
+    /// The owner of `domain`'s published route, waiting for it to appear: a
+    /// supervisor publishes after its start returns, so reading the table once
+    /// made the caller's own start-up race the publication (effigy#998). The
+    /// bound keeps its floor on a quiet host and stretches with measured load.
     fn published_owner(domain: &str) -> ManagedListenerRouteOwner {
-        RouteTable::load(&route_table_path())
-            .expect("route table")
-            .lookup(domain)
-            .and_then(|route| route.managed_listener.clone())
-            .expect("published managed listener route")
+        let deadline =
+            Instant::now() + effigy_test_support::load_scaled_guard(Duration::from_secs(10));
+        loop {
+            if let Some(owner) = RouteTable::load(&route_table_path())
+                .expect("route table")
+                .lookup(domain)
+                .and_then(|route| route.managed_listener.clone())
+            {
+                return owner;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "published managed listener route"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     /// Kill the recorded run abruptly: the supervisor first, so it cannot

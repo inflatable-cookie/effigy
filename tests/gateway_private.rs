@@ -3235,10 +3235,14 @@ fn managed_listener_fixture_child() {
     // opened its readiness answer yet, so it answers nothing and the declared
     // readiness budget continues.
     let never_ready = std::env::var("FIXTURE_NEVER_READY").is_ok();
+    // The delay is what makes the first readiness probe *refused*, not an
+    // assertion about promptness: it must outlast the product's own path to
+    // its first probe, which a loaded host stretches. It keeps its 1500ms floor
+    // on a quiet host and scales with measured load (effigy#998).
     let readiness_delay = if never_ready {
         Duration::from_secs(60 * 60)
     } else {
-        Duration::from_millis(1500)
+        effigy_test_support::load_scaled_guard(Duration::from_millis(1500))
     };
     let ready_at = Instant::now() + readiness_delay;
     let previous_port_file = std::env::var("FIXTURE_PREVIOUS_PORT_FILE").unwrap();
