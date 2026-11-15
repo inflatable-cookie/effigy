@@ -139,9 +139,15 @@ const GENERATED_RUNTIME_COMPOSE_DIR: &str = ".effigy/runtime/compose";
 pub(crate) use catalog_sources::PROJECT_LOCAL_CATALOG_DIR;
 pub use catalog_sources::{catalog_resolver, catalog_service_sources, CatalogServiceSource};
 const SHARED_SERVICE_HOST: &str = "host.docker.internal";
-// Keep headroom below containerd's 4096-byte label value limit. nerdctl owns
-// and serializes `nerdctl/mounts`; this is a conservative preflight only.
+// Keep headroom below containerd's hard per-label limit. For the Colima
+// nerdctl compose fallback, nerdctl owns and serializes the whole
+// `nerdctl/mounts` label; this is a conservative preflight only.
 const NERDCTL_MOUNTS_LABEL_BUDGET_BYTES: usize = 3900;
+// containerd refuses one label when `len(key) + len(value)` exceeds this
+// (pkg/labels.Validate: "label key and value length ... greater than maximum
+// size"). nerdctl up to 2.3.1 writes every mount row into that one label;
+// 2.3.2 and later chunk it. The preflight budget above stays below this.
+const CONTAINERD_LABEL_MAX_BYTES: usize = 4096;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CatalogNetworkContract {

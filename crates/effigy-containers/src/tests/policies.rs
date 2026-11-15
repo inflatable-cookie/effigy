@@ -460,6 +460,238 @@ fn colima_mount_budgets_refuse_over_budget_payloads() {
     }
 }
 
+/// The Acowtancy `stack` workspace render recorded in effigy#1002
+/// (`effigy container render stack --json` and the retained
+/// `.effigy/runtime/compose` pair), replayed as an encoded fixture: nine binds
+/// plus twelve named volumes across 21 effective mounts.
+///
+/// The generated input declares the bundle's long platform volume names. The
+/// workspace overlay replaces every one of those targets with the compact
+/// `efv-<16 hex>` name, so only the overlay's names reach the label, and the
+/// two mask volumes are the exception Effigy deliberately leaves to Compose's
+/// `{project}_{key}` default. Volume labels are dropped from this fixture
+/// because Compose-level labels never reach `nerdctl/mounts`; the generated
+/// definitions are empty because that file is also read as a catalog
+/// fragment, and the platform-name aliases belong to the published overlay.
+fn acowtancy_generated_input(omit: &[&str]) -> String {
+    let mounts = [
+        "acowtancy-dev-wt-8bc5e921cbe1-workspace-cargo-registry:/usr/local/cargo/registry".to_owned(),
+        "acowtancy-dev-wt-8bc5e921cbe1-workspace-cargo-git:/usr/local/cargo/git".to_owned(),
+        "acowtancy-dev-wt-8bc5e921cbe1-workspace-workspace-root-acowtancy-apps-farmyard-target:/workspace-root/acowtancy/apps/farmyard/target".to_owned(),
+        "acowtancy-dev-wt-8bc5e921cbe1-workspace-workspace-root-acowtancy-node-modules:/workspace-root/acowtancy/node_modules".to_owned(),
+        "acowtancy-dev-wt-8bc5e921cbe1-workspace-workspace-root-acowtancy-packages-cattle-grid-node-modules:/workspace-root/acowtancy/packages/cattle-grid/node_modules".to_owned(),
+        "acowtancy-dev-wt-8bc5e921cbe1-workspace-workspace-root-acowtancy-packages-froyo-node-modules:/workspace-root/acowtancy/packages/froyo/node_modules".to_owned(),
+        "acowtancy-dev-wt-8bc5e921cbe1-workspace-workspace-root-acowtancy-apps-cream-node-modules:/workspace-root/acowtancy/apps/cream/node_modules".to_owned(),
+        "acowtancy-dev-wt-8bc5e921cbe1-workspace-workspace-root-acowtancy-apps-dairy-node-modules:/workspace-root/acowtancy/apps/dairy/node_modules".to_owned(),
+        "acowtancy-dev-wt-8bc5e921cbe1-workspace-workspace-root-acowtancy-apps-bovine-desktop-node-modules:/workspace-root/acowtancy/apps/bovine-desktop/node_modules".to_owned(),
+        "acowtancy-dev-wt-8bc5e921cbe1-workspace-workspace-root-acowtancy-platform-silo-target:/workspace-root/acowtancy/platform/silo/target".to_owned(),
+    ]
+    .into_iter()
+    .filter(|mount| !omit.contains(&mount_target(mount)))
+    .map(|mount| format!("      - {mount}"))
+    .collect::<Vec<_>>();
+    let definitions = [
+        "acowtancy-dev-wt-8bc5e921cbe1-workspace-cargo-registry:",
+        "acowtancy-dev-wt-8bc5e921cbe1-workspace-cargo-git:",
+        "acowtancy-dev-wt-8bc5e921cbe1-workspace-workspace-root-acowtancy-apps-farmyard-target:",
+        "acowtancy-dev-wt-8bc5e921cbe1-workspace-workspace-root-acowtancy-node-modules:",
+        "acowtancy-dev-wt-8bc5e921cbe1-workspace-workspace-root-acowtancy-packages-cattle-grid-node-modules:",
+        "acowtancy-dev-wt-8bc5e921cbe1-workspace-workspace-root-acowtancy-packages-froyo-node-modules:",
+        "acowtancy-dev-wt-8bc5e921cbe1-workspace-workspace-root-acowtancy-apps-cream-node-modules:",
+        "acowtancy-dev-wt-8bc5e921cbe1-workspace-workspace-root-acowtancy-apps-dairy-node-modules:",
+        "acowtancy-dev-wt-8bc5e921cbe1-workspace-workspace-root-acowtancy-apps-bovine-desktop-node-modules:",
+        "acowtancy-dev-wt-8bc5e921cbe1-workspace-workspace-root-acowtancy-platform-silo-target:",
+    ]
+    .into_iter()
+    .map(|name| format!("  {}: {{}}\n", name.trim_end_matches(':')))
+    .collect::<String>();
+    format!(
+        "services:\n  workspace:\n    image: example.invalid/synthetic\n    volumes:\n{}\nvolumes:\n{}",
+        mounts.join("\n"),
+        definitions
+    )
+}
+
+/// The guest target of a short-form `source:target[:mode]` mount.
+fn mount_target(mount: &str) -> &str {
+    let target = mount
+        .rsplit_once(':')
+        .map(|(_, rest)| rest)
+        .unwrap_or(mount);
+    target.strip_suffix(":ro").unwrap_or(target)
+}
+
+/// The overlay Effigy's workspace rewrite publishes over that input. `omit`
+/// lists guest targets the caller removes, which models dropping declared
+/// isolation mounts.
+fn acowtancy_workspace_overlay(checkout: &str, omit: &[&str]) -> String {
+    let mounts = [
+        format!("{checkout}:/workspace-root/acowtancy"),
+        "/Users/tom/Dev/projects/acowtancy/.git:/Users/tom/Dev/projects/acowtancy/.git".to_owned(),
+        "/Volumes/Stash/scratch/acowtancy/underlay:/workspace-root/underlay".to_owned(),
+        "/Volumes/Stash/scratch/acowtancy/poodle:/workspace-root/poodle".to_owned(),
+        "/Volumes/Stash/scratch/acowtancy/longhorn:/workspace-root/longhorn".to_owned(),
+        "/Users/tom/.gitconfig:/home/dev/.gitconfig:ro".to_owned(),
+        "/Users/tom/.ssh/known_hosts:/home/dev/.ssh/known_hosts:ro".to_owned(),
+        "/run/host-services/ssh-auth.sock:/run/host-services/ssh-auth.sock".to_owned(),
+        "/Users/tom/Library/Application Support/mkcert/rootCA.pem:/usr/local/share/ca-certificates/effigy-mkcert.crt:ro"
+            .to_owned(),
+        "efv-1ab53d7169ab8f45:/workspace-root/acowtancy/.effigy/state:ro".to_owned(),
+        "efv-7ef3592cc2af6ad2:/workspace-root/acowtancy/.effigy/secrets:ro".to_owned(),
+        "efv-47e2b4e8156ca5d1:/usr/local/cargo/registry".to_owned(),
+        "efv-63bdf24e94b6fde2:/usr/local/cargo/git".to_owned(),
+        "efv-2874d12ba2157a92:/workspace-root/acowtancy/apps/farmyard/target".to_owned(),
+        "efv-33abb609e6a0545e:/workspace-root/acowtancy/node_modules".to_owned(),
+        "efv-f19859737f975d65:/workspace-root/acowtancy/packages/cattle-grid/node_modules".to_owned(),
+        "efv-e38f36817a5506c6:/workspace-root/acowtancy/packages/froyo/node_modules".to_owned(),
+        "efv-6d961f186bef8cc5:/workspace-root/acowtancy/apps/cream/node_modules".to_owned(),
+        "efv-0cade27e5292e1f6:/workspace-root/acowtancy/apps/dairy/node_modules".to_owned(),
+        "efv-d91ec90b98590306:/workspace-root/acowtancy/apps/bovine-desktop/node_modules".to_owned(),
+        "efv-09269ec2fc01bb28:/workspace-root/acowtancy/platform/silo/target".to_owned(),
+    ]
+    .into_iter()
+    .filter(|mount| !omit.contains(&mount_target(mount)))
+    .map(|mount| format!("      - {mount}"))
+    .collect::<Vec<_>>();
+    // The masks keep their Compose-composed `{project}_{key}` name; the other
+    // generated volumes repeat their key as an explicit `name:` alias.
+    let aliases = [
+        "efv-63bdf24e94b6fde2",
+        "efv-47e2b4e8156ca5d1",
+        "efv-d91ec90b98590306",
+        "efv-6d961f186bef8cc5",
+        "efv-0cade27e5292e1f6",
+        "efv-2874d12ba2157a92",
+        "efv-33abb609e6a0545e",
+        "efv-f19859737f975d65",
+        "efv-e38f36817a5506c6",
+        "efv-09269ec2fc01bb28",
+    ]
+    .into_iter()
+    .map(|name| format!("  {name}:\n    driver: local\n    name: {name}\n"))
+    .collect::<String>();
+    format!(
+        "services:\n  workspace:\n    volumes:\n{}\nvolumes:\n  efv-7ef3592cc2af6ad2:\n  efv-1ab53d7169ab8f45:\n{aliases}",
+        mounts.join("\n")
+    )
+}
+
+fn acowtancy_mount_budget(checkout: &str, omit: &[&str]) -> Result<(), ContainerPolicyError> {
+    let root = temp_repo("colima-acowtancy-mount-budget");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "stack"
+
+[containers.stack]
+compose_file = "infra/dev/stack.generated.compose.yml"
+primary_service = "workspace"
+project_name = "acowtancy-dev-wt-8bc5e921cbe1"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(
+        root.join("infra/dev/stack.generated.compose.yml"),
+        acowtancy_generated_input(omit),
+    )
+    .expect("write generated compose");
+    let overlay = root.join("infra/dev/stack.workspace.compose.yml");
+    fs::write(&overlay, acowtancy_workspace_overlay(checkout, omit)).expect("write overlay");
+
+    let mut policy = load_container_policy(&root, None).expect("policy");
+    policy.compose_files.push(overlay);
+    super::data_from::with_colima_nerdctl_preflight(|| {
+        crate::validate_compose_backend_runtime(&root, &policy)
+    })
+}
+
+/// The mounted Acowtancy workspace genuinely exceeds containerd's per-label
+/// limit on the pinned engine, so the preflight refuses with the engine's own
+/// measured sizes. Both recorded checkout paths are reproduced: the 93-byte
+/// Nucleus QA checkout and the 37-byte linked worktree. They differ by 56
+/// bytes of bind source, which is 1.3% of the label - the path length is not
+/// the driver.
+#[test]
+fn recorded_acowtancy_render_refuses_against_the_engine_label_limit() {
+    let short = "/Volumes/Stash/scratch/acowtancy/qa-a";
+    let nucleus_qa =
+        "/Volumes/Stash/queue/project-qa/b607a14f7ecb5c1836f9df3c/5ce8cdef-b27d-4d4a-8e3a-aedce1ffd500";
+    assert_eq!(short.len(), 37);
+    assert_eq!(nucleus_qa.len(), 93);
+
+    let short_error = acowtancy_mount_budget(short, &[]).expect_err("the recorded shape is over");
+    let short_message = short_error.to_string();
+    assert!(
+        short_message
+            .contains("estimated nerdctl/mounts label size of 4392 bytes (label key plus value)"),
+        "unexpected refusal: {short_message}"
+    );
+    assert!(
+        short_message.contains(
+            "2% reserve (88 bytes) = 4480 bytes across 21 effective mounts (9 bind, 12 volume)"
+        ),
+        "unexpected refusal: {short_message}"
+    );
+    assert!(
+        short_message
+            .contains("containerd refuses one label whose key plus value exceeds 4096 bytes"),
+        "the refusal must state the engine's hard limit: {short_message}"
+    );
+    assert!(
+        short_message.contains("conservative 3900-byte preflight budget"),
+        "the refusal must state the preflight budget separately: {short_message}"
+    );
+    // The six largest rows are named by kind and size, never by path.
+    assert!(
+        short_message.contains("(volume, 302 bytes)")
+            && short_message.contains("(volume, 300 bytes)"),
+        "the largest contributors must be named by kind and size: {short_message}"
+    );
+    assert!(!short_message.contains("/workspace-root/acowtancy"));
+    assert!(!short_message.contains("/Volumes/Stash"));
+
+    let long_error = acowtancy_mount_budget(nucleus_qa, &[]).expect_err("still over");
+    let long_message = long_error.to_string();
+    let path_growth = nucleus_qa.len() - short.len();
+    assert!(
+        long_message.contains(&format!(
+            "label size of {} bytes (label key plus value)",
+            4392 + path_growth
+        )),
+        "unexpected refusal at the QA checkout length: {long_message}"
+    );
+}
+
+/// Dropping three of the eight declared isolation mounts brings the same
+/// render inside the preflight budget; dropping two does not. That is the
+/// measured margin a consumer needs to reclaim: the removed rows lose their
+/// own bytes plus the JSON comma that separated them.
+#[test]
+fn recorded_acowtancy_render_fits_only_after_three_declared_isolation_mounts_go() {
+    let checkout = "/Volumes/Stash/scratch/acowtancy/qa-a";
+    let two = [
+        "/workspace-root/acowtancy/packages/cattle-grid/node_modules",
+        "/workspace-root/acowtancy/apps/bovine-desktop/node_modules",
+    ];
+    let error = acowtancy_mount_budget(checkout, &two).expect_err("two fewer mounts still refuse");
+    assert!(
+        error
+            .to_string()
+            .contains("label size of 3877 bytes (label key plus value)"),
+        "unexpected refusal: {error}"
+    );
+
+    let three = [
+        "/workspace-root/acowtancy/packages/cattle-grid/node_modules",
+        "/workspace-root/acowtancy/apps/bovine-desktop/node_modules",
+        "/workspace-root/acowtancy/packages/froyo/node_modules",
+    ];
+    acowtancy_mount_budget(checkout, &three)
+        .expect("three fewer named volumes fit the preflight budget");
+}
+
 #[test]
 fn creation_policy_resolves_workspace_mounts_for_creation() {
     // Phase 1: late and absolute extra mounts resolve with decisions.
