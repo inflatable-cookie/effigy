@@ -326,7 +326,10 @@ fn bound(text: &str) -> String {
             tail_start = newline + 1;
         }
     }
-    let head_end = floor_char_boundary(text, MAX_EVIDENCE_BYTES.saturating_sub(text.len() - tail_start));
+    let head_end = floor_char_boundary(
+        text,
+        MAX_EVIDENCE_BYTES.saturating_sub(text.len() - tail_start),
+    );
     format!(
         "{}…{}",
         text[..head_end].trim_end(),

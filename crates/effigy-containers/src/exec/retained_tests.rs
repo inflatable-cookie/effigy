@@ -13,12 +13,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use effigy_kernel::ctx::{
-    CancelToken, CleanupContext, EffectClass, EffectContext, Placement,
-};
+use effigy_kernel::ctx::{CancelToken, CleanupContext, EffectClass, EffectContext, Placement};
 use effigy_kernel::gate::Wait;
 use effigy_kernel::id::{
-    CheckoutId, CheckoutKind, ExecutionTarget, InvocationSpec, ResourceId, ResolvedInvocation,
+    CheckoutId, CheckoutKind, ExecutionTarget, InvocationSpec, ResolvedInvocation, ResourceId,
     Route, RunId, Surface, TaskId,
 };
 use effigy_kernel::observe::{Observed, UnknownReason};
@@ -160,8 +158,9 @@ fn harness<T>(
     );
     let cx = operation.effects().expect("effects capability");
     // The Run borrows this root for the rest of the fixture.
-    let root: &'static StateRoot =
-        Box::leak(Box::new(StateRoot::effects(&cx, state.path()).expect("state root")));
+    let root: &'static StateRoot = Box::leak(Box::new(
+        StateRoot::effects(&cx, state.path()).expect("state root"),
+    ));
     let checkout = CheckoutId::new(CheckoutKind::EphemeralClone, [7; 16]);
     let invocation = ResolvedInvocation::new(InvocationSpec {
         task: TaskId::new(checkout, "", Surface::Published, "container-up", None)
@@ -231,9 +230,7 @@ fn compose_env_files(state: &Path) -> Vec<PathBuf> {
                 .filter(|path| {
                     path.file_name()
                         .and_then(|name| name.to_str())
-                        .is_some_and(|name| {
-                            name.starts_with("compose-") && name.ends_with(".env")
-                        })
+                        .is_some_and(|name| name.starts_with("compose-") && name.ends_with(".env"))
                 })
                 .collect()
         })

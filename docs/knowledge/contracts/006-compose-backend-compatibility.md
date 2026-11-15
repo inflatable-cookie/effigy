@@ -464,9 +464,18 @@ Effigy ownership:
   repaired to 0700; a foreign or symlinked one is refused). The value is written
   only after the invocation holds the file's shared lock and the name still
   names that inode
-- direct-child launchers refuse secret-bearing VM Compose before spawn pending
-  retained kernel custody. The file owner still cleans up an invocation that
-  never started; removal first
+- every secret-bearing VM Compose launch runs in the retained kernel Run that
+  owns its transition. `container up` (attached and detached) and the task
+  environment's apply borrow that Run through
+  `environment::reconcile_owned`, so the Compose child's group, receipts and
+  interpolation file all belong to the one owner `Gate(Env)` serialises. The
+  launcher enables the Run's helper-backed custody the first time a
+  value-bearing launch needs it, passes the complete child environment through
+  the custody spec with the delivered values classified as secrets (so captured
+  bytes are redacted), and records the child's exit with the Run. A launcher
+  with no Run to borrow — a direct-child route, or a private route — refuses
+  before spawn, naming the refusal; the file owner still cleans up an
+  invocation that never started. Removal first
   moves the name to a quarantine name by a no-replace rename (`renameatx_np`
   with `RENAME_EXCL` on macOS, `renameat2` with `RENAME_NOREPLACE` on Linux) and
   unlinks only the inode it created. Before rename, it checks the original
@@ -497,8 +506,20 @@ Effigy ownership:
   across creation, sweep and removal; the per-file lock remains held throughout
   the file owner’s lifetime. The directory lock does not prove group closure
 - Tom’s ruling for #534: every secret-bearing VM Compose invocation moves to a
-  retained kernel Run; if it cannot be admitted, refuse before spawn. Resident
-  Env custody and production Discard remain refused until separately qualified.
+  retained kernel Run; if it cannot be admitted, refuse before spawn. The
+  production launchers that carry values are the task apply and `container up`
+  (attached and detached); a launch whose custody cannot be enabled refuses
+  with that root cause named. Resident Env custody and production Discard
+  remain refused until separately qualified.
+- a Compose launch refusal is one long line whose end names the cause, so the
+  one human-output bound keeps both ends of a line rather than its head only
+  (effigy#1003)
+- the VM can only read a checkout its Colima profile shares. The runtime
+  preflight reads the profile's own `colima.yaml`: `$HOME` is the default
+  share, `mounts:` adds to it, and a checkout or Compose input outside both
+  refuses before any Compose launch, naming the path and the two fixes (move
+  the checkout, or add a Colima mount — the operator's host decision). A
+  profile this host cannot read is not guessed at
 - the live owner can prepare duplicates of its exact locked file and directory
   descriptions, original name and current original/quarantine phase for a
   custody handoff. Preparation disables drop cleanup and refuses ordinary
@@ -508,6 +529,8 @@ Effigy ownership:
   retains the original owner and leaves its entry for review
 - limits of this slice: explicit removal borrows the file owner, retaining its
   descriptor and lock after failure, and drop does not retry a failed removal.
+  The retained Run's own settlement is the production cleanup authority; a
+  direct-child route still refuses rather than approximating it.
   The live owner retains its quarantine name across a failed cleanup and can
   retry that exact phase. The phase is not durable: there is no durable attempt
   or group binding, no production helper handoff, and no caller-drop Unknown

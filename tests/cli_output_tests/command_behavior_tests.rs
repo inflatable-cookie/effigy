@@ -871,13 +871,21 @@ fn cli_contracts_contract_body_refusal_keeps_its_bytes() {
         .as_str()
         .expect("bounded what_failed")
         .to_owned();
+    let message = parsed["error"]["message"]
+        .as_str()
+        .expect("complete refusal message");
     assert!(
         what_failed.starts_with(r#"{"changed_only_base":null"#),
         "{what_failed}"
     );
+    assert!(what_failed.contains('…'), "{what_failed}");
+    let tail = &message[message.len().saturating_sub(96)..];
     assert!(
-        what_failed.ends_with(r#""schema":"effigy.json-contract-body.v1"}"#)
-            || what_failed.ends_with(r#""schema":"effigy.contracts.check-json.v1"}"#),
+        what_failed.ends_with(tail),
+        "the bounded line keeps the reason it ended with: {what_failed}"
+    );
+    assert!(
+        what_failed.len() <= effigy_ui::human::MAX_EVIDENCE_BYTES + "…".len(),
         "{what_failed}"
     );
     assert_eq!(
@@ -912,7 +920,14 @@ fn cli_contracts_contract_body_refusal_keeps_its_bytes() {
   "warnings": []
 }
 "#
-        .replace("__WHAT_FAILED__", &what_failed)
+        .replace(
+            "__WHAT_FAILED__",
+            // The literal is a JSON document, so the field is embedded escaped.
+            &serde_json::to_string(&what_failed).expect("escaped what_failed")[1..]
+                .strip_suffix('"')
+                .map(str::to_owned)
+                .expect("quoted what_failed")
+        )
     );
 }
 
@@ -2718,6 +2733,20 @@ if [ "${1:-}" = "ssh" ]; then
 fi
 case "$*" in
   *"nerdctl --profile "*)
+    if [ -n "${EFFIGY_TEST_COLIMA_ENV_FILE_LOG:-}" ]; then
+      env_pending=0
+      for env_arg in "$@"; do
+        if [ "$env_pending" = 1 ]; then
+          {
+            printf "env-file %s\n" "$env_arg"
+            /bin/cat "$env_arg" 2>/dev/null || true
+          } >> "$EFFIGY_TEST_COLIMA_ENV_FILE_LOG"
+          env_pending=0
+          continue
+        fi
+        if [ "$env_arg" = "--env-file" ]; then env_pending=1; fi
+      done
+    fi
     subcmd=""
     for arg in "$@"; do
       case "$arg" in
@@ -4265,6 +4294,95 @@ fn cli_container_up_detached_starts_colima_and_reports_ready() {
     assert!(
         compose_up.contains(" up -d"),
         "the fallback starts the environment detached: {compose_up}"
+    );
+}
+
+/// A secret-bearing Compose launch on the Colima fallback runs in retained
+/// kernel custody: the VM reader is handed its interpolation file, the value
+/// never reaches Effigy's output, and the file is gone once the group closed
+/// (Tom's #534 ruling, effigy#1003).
+#[test]
+fn cli_container_up_detached_delivers_a_secret_bearing_compose_env_through_custody() {
+    const SENTINEL: &str = "postgres://fixture/effigy-retained-1003";
+    let private = effigy_test_support::Fixture::workspace("effigy-158-private-")
+        .expect("exclusive fake runtime fixture");
+    let root = fs::canonicalize(private.path()).expect("canonical fixture root");
+    fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind health");
+    let port = listener.local_addr().expect("addr").port();
+    write_container_fixture_without_host_ports(
+        &root,
+        Some(&format!("tcp://127.0.0.1:{port}")),
+        "./app:/workspace",
+    );
+    append_required_container_secret(&root);
+    write_locked_test_vault(&root, "vault-passphrase", &[("database_url", SENTINEL)]);
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let env_files = root.join("colima-env-files.log");
+    let log_follow = root.join("log-follow.marker");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("container")
+        .arg("up")
+        .arg("--repo")
+        .arg(&root)
+        .arg("--detach")
+        .arg("--json")
+        .env("NO_COLOR", "1")
+        .env("HOME", private_home(&root))
+        .env(
+            "EFFIGY_TEST_CONTAINERS_HOME",
+            private_home(&root).join(".effigy"),
+        )
+        .env("EFFIGY_SECRET_PASSPHRASE", "vault-passphrase")
+        .env("PATH", path)
+        .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
+        .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
+        .env("EFFIGY_TEST_COLIMA_ENV_FILE_LOG", &env_files)
+        .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+        .env(
+            "EFFIGY_TEST_SERVICE_STATE_FILE",
+            root.join("service-running"),
+        )
+        .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .env("EFFIGY_TEST_CONTAINER_UP_UNBOUNDED_OBSERVATIONS", "1")
+        .output_owned()
+        .expect("run effigy");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "up failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["schema"], "effigy.container.up.v1");
+    assert_eq!(parsed["result"]["health"], "ready");
+    assert!(
+        !stdout.contains(SENTINEL) && !stderr.contains(SENTINEL),
+        "the value never reaches Effigy's own output: {stdout}\n{stderr}"
+    );
+    let handed = fs::read_to_string(&env_files).expect("the fake VM reader ran");
+    assert!(
+        handed.contains(&format!("DATABASE_URL={SENTINEL}")),
+        "the VM reader was handed the value through its env file: {handed}"
+    );
+    let compose_env = private_home(&root).join(".effigy/compose-env");
+    let leftover: Vec<String> = fs::read_dir(&compose_env)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .filter(|name| name.starts_with("compose-") && name.ends_with(".env"))
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        leftover.is_empty(),
+        "verified closure removed the interpolation file: {leftover:?}"
     );
 }
 

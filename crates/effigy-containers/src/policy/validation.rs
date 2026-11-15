@@ -57,8 +57,12 @@ fn validate_compose_backend_host_paths(
     {
         return Ok(());
     }
-    // A fake runtime exercises the Compose grammar, never a VM's mounts.
-    if std::env::var_os("EFFIGY_TEST_COLIMA_ARGS_FILE").is_some() {
+    // A fake runtime exercises the Compose grammar, never a VM's mounts, and
+    // a fixture that models no Colima host path says so instead of borrowing
+    // this host's profile.
+    if std::env::var_os("EFFIGY_TEST_COLIMA_ARGS_FILE").is_some()
+        || std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_HOST_PATH_CHECK").is_some()
+    {
         return Ok(());
     }
     // A declared, resolved stage replaces the checkout bind. Judge that actual
@@ -87,12 +91,9 @@ fn validate_compose_backend_host_paths(
     let Some(shares) = colima_profile_shares(&policy.profile) else {
         return Ok(());
     };
-    for path in std::iter::once(host_source).chain(
-        policy
-            .compose_files
-            .iter()
-            .map(std::path::PathBuf::as_path),
-    ) {
+    for path in std::iter::once(host_source)
+        .chain(policy.compose_files.iter().map(std::path::PathBuf::as_path))
+    {
         if shares.covers(path) {
             continue;
         }
@@ -845,10 +846,10 @@ mod tests {
     fn host_paths(repo_root: &Path) -> Result<(), ContainerPolicyError> {
         std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1");
         let policy = crate::policy::model::test_policy(repo_root);
-        let result = crate::with_test_compose_backend(
-            crate::compose::ComposeBackend::ColimaNerdctl,
-            || validate_compose_backend_host_paths(repo_root, &policy),
-        );
+        let result =
+            crate::with_test_compose_backend(crate::compose::ComposeBackend::ColimaNerdctl, || {
+                validate_compose_backend_host_paths(repo_root, &policy)
+            });
         std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK");
         result
     }
@@ -860,10 +861,16 @@ mod tests {
         let checkout = tempfile::tempdir().expect("checkout");
         let error = host_paths(checkout.path()).expect_err("an unshared checkout refuses");
         let message = error.to_string();
-        assert!(message.contains(&checkout.path().display().to_string()), "{message}");
+        assert!(
+            message.contains(&checkout.path().display().to_string()),
+            "{message}"
+        );
         assert!(message.contains("does not share"), "{message}");
         assert!(message.contains("add a Colima mount"), "{message}");
-        assert!(message.contains(&profile.home().display().to_string()), "{message}");
+        assert!(
+            message.contains(&profile.home().display().to_string()),
+            "{message}"
+        );
     }
 
     #[test]

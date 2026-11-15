@@ -364,18 +364,18 @@ fn colima_mount_budgets_refuse_over_budget_payloads() {
                 "network_mode without applicable DNS or route fields emits a null service: {rendered_overlay}"
             );
 
-            let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK");
+            let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_HOST_PATH_CHECK");
             unsafe {
-                std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1");
+                std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_HOST_PATH_CHECK", "1");
             }
             let result = with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
                 crate::validate_compose_backend_runtime(&root, &policy)
             });
             match previous {
                 Some(value) => unsafe {
-                    std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", value)
+                    std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_HOST_PATH_CHECK", value)
                 },
-                None => unsafe { std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK") },
+                None => unsafe { std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_HOST_PATH_CHECK") },
             }
             result
         };
@@ -1445,18 +1445,18 @@ primary_service = "app"
 
     let refuse = |content: &str| {
         fs::write(&overlay, content).expect("write synthetic Compose overlay");
-        let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK");
+        let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_HOST_PATH_CHECK");
         unsafe {
-            std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1");
+            std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_HOST_PATH_CHECK", "1");
         }
         let result = with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
             crate::validate_compose_backend_runtime(&root, &policy)
         });
         match previous {
             Some(value) => unsafe {
-                std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", value)
+                std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_HOST_PATH_CHECK", value)
             },
-            None => unsafe { std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK") },
+            None => unsafe { std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_HOST_PATH_CHECK") },
         }
         result.expect_err("unmodelled mount input must refuse before apply")
     };
@@ -1507,9 +1507,9 @@ primary_service = "app"
         "services:\n  app:\n    tmpfs:\n      - /run/effigy/secrets\n",
     )
     .expect("write synthetic Compose overlay");
-    let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK");
+    let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_HOST_PATH_CHECK");
     unsafe {
-        std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1");
+        std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_HOST_PATH_CHECK", "1");
     }
     with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
         crate::validate_compose_backend_runtime(&root, &policy)
@@ -1517,9 +1517,9 @@ primary_service = "app"
     });
     match previous {
         Some(value) => unsafe {
-            std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", value)
+            std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_HOST_PATH_CHECK", value)
         },
-        None => unsafe { std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK") },
+        None => unsafe { std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_HOST_PATH_CHECK") },
     }
 
     assert!(malformed_entry.to_string().contains("volumes[1]"));

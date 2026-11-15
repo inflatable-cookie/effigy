@@ -13,8 +13,8 @@ pub(crate) use publication::{checkout, recorded_backend, state_home};
 pub use publication::{prepare, publish_shared_render, reset, verify};
 mod vm;
 pub use vm::{
-    compose_invocation_args, vm_interpolation_required, ComposeInvocation, InterpolationDescriptors,
-    InterpolationFile, InterpolationLocation,
+    compose_invocation_args, vm_interpolation_required, ComposeInvocation,
+    InterpolationDescriptors, InterpolationFile, InterpolationLocation,
 };
 
 pub(crate) mod healthcheck;

@@ -24,10 +24,10 @@ mod retained;
 #[cfg(all(test, unix))]
 #[path = "exec/retained_tests.rs"]
 mod retained_tests;
-pub use retained::RetainedComposeOwner;
 #[cfg(any(test, feature = "test-support"))]
 pub use process::capture_test_clock;
 pub(crate) use process::error_is_timeout;
+pub use retained::RetainedComposeOwner;
 mod ssh_agent_preflight;
 
 pub use colima_runtime::{

@@ -33,8 +33,8 @@ use std::time::{Duration, Instant};
 use effigy_kernel::ctx::{
     CleanupContext, Deadline, EffectClass, EffectContext, Limits, OperationContext, Placement,
 };
-use effigy_kernel::custody::{EnvValue, Exit, Lifetime, OwnedProcess, ProcessSpec, SecretValue};
 use effigy_kernel::custody::Terminal;
+use effigy_kernel::custody::{EnvValue, Exit, Lifetime, OwnedProcess, ProcessSpec, SecretValue};
 use effigy_kernel::observe::Observed;
 use effigy_kernel::run::Run;
 use effigy_kernel::supervise::{Executable, LifecyclePlan, Placement as LifecyclePlacement};
@@ -179,12 +179,9 @@ pub(super) fn detached(
     })?;
     let record = DetachedOutputRecord::for_invocation(repo_root, &invocation.args)
         .map_err(|error| launch(label, error))?;
-    let mut output = record.open_file().map_err(|error| {
-        launch(
-            label,
-            format!("{} ({})", error, record.path.display()),
-        )
-    })?;
+    let mut output = record
+        .open_file()
+        .map_err(|error| launch(label, format!("{} ({})", error, record.path.display())))?;
     let (mut process, cx) = spawn_retained(
         invocation,
         owner.run,
@@ -298,16 +295,14 @@ fn relay(
         output
             .write_all(&bytes)
             .and_then(|()| output.flush())
-            .map_err(|error| {
-                ContainerExecError::Failure {
-                    command: record.path.display().to_string(),
-                    code: None,
-                    stdout: String::new(),
-                    stderr: format!(
-                        "[effigy] writing the retained backend record failed: {error}; its path is {}",
-                        record.path.display()
-                    ),
-                }
+            .map_err(|error| ContainerExecError::Failure {
+                command: record.path.display().to_string(),
+                code: None,
+                stdout: String::new(),
+                stderr: format!(
+                    "[effigy] writing the retained backend record failed: {error}; its path is {}",
+                    record.path.display()
+                ),
             })?;
     }
     record.report_new_lines(offset, on_line);

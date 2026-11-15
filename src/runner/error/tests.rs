@@ -667,9 +667,7 @@ fn a_long_launch_refusal_keeps_its_cause_in_the_human_output() {
     );
     let failure = RunnerError::from(ContainerExecError::Launch {
         command,
-        error: std::io::Error::other(
-            "VM Compose interpolation requires retained kernel custody",
-        ),
+        error: std::io::Error::other("VM Compose interpolation requires retained kernel custody"),
     });
     let human = failure.human_error();
     let rendered = human.render_text();

@@ -21,8 +21,7 @@ use crate::runner::container_command::{
 use crate::runner::environment;
 use effigy_containers::environment::{BackendError, Retention};
 use effigy_containers::exec::{
-    parse_compose_step_event, run_compose_invocation_streaming_with_env_owner,
-    RetainedComposeOwner,
+    parse_compose_step_event, run_compose_invocation_streaming_with_env_owner, RetainedComposeOwner,
 };
 use effigy_containers::{
     ContainerComposeInvocationPlan, EffectiveAttachMode, EffectiveContainerPolicy,
@@ -252,34 +251,34 @@ fn run_container_up_inner(
             &plan.policy,
             retention,
             |run, effect, deadline| {
-            match run_container_up_compose(
-                &plan,
-                &mut compose_steps.borrow_mut(),
-                &observation,
-                run,
-                effect,
-                deadline,
-            ) {
-                Ok(None) => {}
-                Ok(Some(end)) => {
-                    let error = match &end {
-                        AttachedComposeEnd::Interrupted => {
-                            BackendError::Uncertain("compose up interrupted".to_owned())
-                        }
-                        AttachedComposeEnd::Failed(status) => {
-                            BackendError::Failed(format!("compose up exited with {status}"))
-                        }
-                    };
-                    *attached_end.borrow_mut() = Some(end);
-                    return Err(error);
+                match run_container_up_compose(
+                    &plan,
+                    &mut compose_steps.borrow_mut(),
+                    &observation,
+                    run,
+                    effect,
+                    deadline,
+                ) {
+                    Ok(None) => {}
+                    Ok(Some(end)) => {
+                        let error = match &end {
+                            AttachedComposeEnd::Interrupted => {
+                                BackendError::Uncertain("compose up interrupted".to_owned())
+                            }
+                            AttachedComposeEnd::Failed(status) => {
+                                BackendError::Failed(format!("compose up exited with {status}"))
+                            }
+                        };
+                        *attached_end.borrow_mut() = Some(end);
+                        return Err(error);
+                    }
+                    Err(error) => {
+                        let message = error.to_string();
+                        *detached_failure.borrow_mut() = Some(error);
+                        return Err(BackendError::Uncertain(message));
+                    }
                 }
-                Err(error) => {
-                    let message = error.to_string();
-                    *detached_failure.borrow_mut() = Some(error);
-                    return Err(BackendError::Uncertain(message));
-                }
-            }
-            Ok(())
+                Ok(())
             },
         );
         let bring_up = match reconciled {
