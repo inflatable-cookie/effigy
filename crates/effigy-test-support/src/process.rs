@@ -19,8 +19,8 @@ const OUTPUT_DEADLINE: Duration = Duration::from_secs(180);
 /// fixture asked for, so a slow-but-correct launch must not also spend the
 /// window its helpers are proved settled in. It is a fixed window: a helper
 /// that never exits is a failure to report promptly, not one to wait out at
-/// length (effigy#998).
-const HELPER_SETTLE: Duration = Duration::from_secs(30);
+/// length; 60s is twice the longest observed retirement (effigy#998).
+const HELPER_SETTLE: Duration = Duration::from_secs(60);
 
 /// Shell tail for a fixture that must stop when its runner's pipe closes.
 /// The runner owns the pipe writer; its death closes it without polling.
