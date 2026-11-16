@@ -658,20 +658,31 @@ const _: [fn(); 3] = [
     faults_multi_child_test_every_point_and_observation_part_2,
 ];
 
-/// Candidate QA 763eb846's job, replayed alone and deterministically: the
-/// `Unknown` at the second `AnchorStop` with child 2 (spawn sequence 2) held by
-/// an event until the settle stops its groups, not by load.
+/// Candidate QA 763eb846's job replayed alone: the `Unknown` at the second
+/// `AnchorStop`, with child 2 (spawn sequence 2, the child the panic named) held
+/// by an event instead of load. This is the witness that no custody race is
+/// there, and it judges the order the kernel recorded, not only the world it
+/// ended in — from the crossings it made while this process drove the settle, and
+/// from the journal each crossing read:
 ///
-/// O1a must pass here, and the run must hold `Complete` only with every custody
-/// group verified empty and nothing carrying its nonce: an `Unknown` closure
-/// observation is residue, so this run completes through the recovery settle's
-/// fresh closure proof (contract 052 K6; effigy#1011).
+/// 1. the crossing at which the `AnchorStop` `Unknown` is delivered comes first;
+/// 2. child 2's `Released` write follows it. `Released` is closure evidence: the
+///    settle writes it only from a verified or absent closure, and turns an
+///    `Unknown` into residue (`custody::settle_recovery`). At that write the run
+///    still reads open and every recorded group inventories empty;
+/// 3. the close write, the only writer of `Complete`, follows that evidence, and
+///    the first crossing to read `Closed` with `Complete` follows the close;
+/// 4. the captured world has all three custody effects `Released`, no live group
+///    member, no surviving anchor, and O1a accepts it.
+///
+/// The failing-before reproduction for the cause this task found is the separate
+/// collision control, `a_complete_run_owns_no_process_another_drive_minted`; a
+/// race the evidence shows is not there has no failing-before form.
 #[test]
 fn faults_multi_child_anchor_stop_unknown_settles_on_verified_closure() {
     let scenario: &dyn Scenario = &HELD_SECOND;
-    let cx = mutate();
-    let drive = home();
-    let home = drive.home();
+    let mine = home();
+    let home = mine.home();
     let _foreign = super::driver::ForeignGuard;
     crate::fault::set_helper_log(Some(super::driver::helper_log(&home)));
     // The held child leaves on this drive's own event: the settle's first group
@@ -683,20 +694,90 @@ fn faults_multi_child_anchor_stop_unknown_settles_on_verified_closure() {
         .write(true)
         .open(&release)
         .expect("release pipe");
+    // The kernel's own settle order, sampled from its journal: an effect write
+    // crosses before the run's close write, and each crossing's snapshot says
+    // whether the run already read Complete. Reading the journal at the crossing
+    // is safe: the close transaction has not opened yet.
+    let crossings = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let steps = std::sync::Arc::new(std::sync::Mutex::new(Vec::<SettleStep>::new()));
     let settle_started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let armed = settle_started.clone();
+    let counted = crossings.clone();
+    let recorded = steps.clone();
+    let observed = home.clone();
+    let anchors_seen = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let anchor_stops = anchors_seen.clone();
+    let armed_anchor_stop = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let anchor_crossing = armed_anchor_stop.clone();
+    let anchors = super::driver::helper_log(&home);
     let signal = std::os::fd::AsRawFd::as_raw_fd(&pipe);
     crate::fault::hook(Some(Box::new(move |point| {
-        if point == Point::SettleEffectBefore
-            && !armed.swap(true, std::sync::atomic::Ordering::SeqCst)
-        {
-            // The event, not a sleep and not a signal: one byte ends the held
-            // child's read, so the QA job's second child leaves on this drive's
-            // own stopping boundary. `pipe` stays open in this test and the hook
-            // is cleared after the run, so the descriptor is live throughout.
-            // SAFETY: a live write end this test owns; the slice is one byte.
-            let written = unsafe { libc::write(signal, b"\n".as_ptr().cast(), 1) };
-            assert_eq!(written, 1, "release the held child");
+        let index = counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        match point {
+            Point::SettleEffectBefore if !armed.swap(true, std::sync::atomic::Ordering::SeqCst) => {
+                // The event, not a sleep and not a signal: one byte ends the held
+                // child's read, so the QA job's second child leaves on this drive's
+                // own stopping boundary. `pipe` stays open in this test and the hook
+                // is cleared after the run, so the descriptor is live throughout.
+                // SAFETY: a live write end this test owns; the slice is one byte.
+                let written = unsafe { libc::write(signal, b"\n".as_ptr().cast(), 1) };
+                assert_eq!(written, 1, "release the held child");
+            }
+            // The pinned anchor is what makes the required crossing deliverable.
+            // Releasing it here — the recorded evidence this run's end releases
+            // anyway — lets the kernel's own stop loop finish this process's
+            // settle, so its order against the `Complete` record is observable.
+            Point::AnchorStop
+                if anchor_stops.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 1 =>
+            {
+                armed_anchor_stop.store(index, std::sync::atomic::Ordering::SeqCst);
+                release_anchors(&anchors);
+            }
+            Point::SettleBefore
+            | Point::SettleEffectAfter
+            | Point::SettleCloseBefore
+            | Point::SettleCloseAfter => {
+                let world = World::capture(&observed);
+                let Some(run) = world.runs.iter().find(|run| run.id == id(3)) else {
+                    return;
+                };
+                let effect_2 = world.effects[&run.id.to_string()]
+                    .iter()
+                    .find(|effect| effect.sequence == 2)
+                    .map(|effect| effect.state)
+                    .unwrap_or(EffectState::Unknown);
+                let mut live_members = Vec::new();
+                for custody in world.custody.iter().filter(|custody| custody.run == run.id) {
+                    let Some(receipt) = &custody.receipt else {
+                        continue;
+                    };
+                    for pid in
+                        crate::custody::platform::group_pids(receipt.pgid).unwrap_or_default()
+                    {
+                        if !matches!(
+                            crate::ident::process_state(pid),
+                            Observed::Absent(_)
+                                | Observed::Verified(crate::ident::ProcessState::Zombie, _)
+                        ) {
+                            live_members.push((receipt.pgid, pid));
+                        }
+                    }
+                }
+                recorded.lock().expect("settle order").push(SettleStep {
+                    point: match point {
+                        Point::SettleBefore => "SettleBefore",
+                        Point::SettleEffectAfter => "SettleEffectAfter",
+                        Point::SettleCloseBefore => "SettleCloseBefore",
+                        _ => "SettleCloseAfter",
+                    },
+                    crossing: index,
+                    phase: run.phase.clone(),
+                    cleanup: run.cleanup.clone(),
+                    effect_2,
+                    live_members,
+                });
+            }
+            _ => {}
         }
     })));
     scenario.prepare(&home);
@@ -706,11 +787,16 @@ fn faults_multi_child_anchor_stop_unknown_settles_on_verified_closure() {
     let fired = crate::fault::fired();
     let trace = crate::fault::trace();
     crate::fault::arm(None);
-    crate::fault::hook(None);
     assert!(
         fired,
-        "{}: AnchorStop#1 Unknown was not delivered; crossed {trace:?}",
-        scenario.name()
+        "{}: AnchorStop#1 Unknown was not delivered; crossed {trace:?}; effects {:?}",
+        scenario.name(),
+        World::capture(&home)
+            .effects
+            .values()
+            .flatten()
+            .map(|effect| (effect.sequence, effect.state, effect.reason.clone()))
+            .collect::<Vec<_>>()
     );
     assert!(
         settle_started.load(std::sync::atomic::Ordering::SeqCst),
@@ -725,13 +811,15 @@ fn faults_multi_child_anchor_stop_unknown_settles_on_verified_closure() {
         "{}: the held child left on a signal, not on the drive's event",
         scenario.name()
     );
+    let anchor_stop = anchor_crossing.load(std::sync::atomic::Ordering::SeqCst);
+    // The recovery step's own settle, and the run it settled, for the journal
+    // facts below.
     let world = super::driver::recover(
         scenario,
         &home,
         &format!("{}: AnchorStop#1", scenario.name()),
     );
-    // The drive's own run is the one this test names by tag; the recovery step's
-    // successor is a second, effect-free run.
+    crate::fault::hook(None);
     let run = world
         .runs
         .iter()
@@ -747,11 +835,75 @@ fn faults_multi_child_anchor_stop_unknown_settles_on_verified_closure() {
                     .collect::<Vec<_>>()
             )
         });
+    // 2. The kernel's own order, from the crossings it made while this process
+    // settled the run. The `Unknown` observation settles as residue and never as
+    // `Complete`; `Released` is only written from a verified or absent closure
+    // (`custody::settle_recovery` turns `Unknown` into residue), so the later
+    // release is the closure proof itself; and the close write is the only writer
+    // of `Complete` and follows both.
+    let steps = steps.lock().expect("settle order");
+    // 2. The kernel's own order, from the crossings it made in this process.
+    // The observation crosses first; child 2's `Released` write follows it (the
+    // settle records `Released` only from a verified or absent closure —
+    // `custody::settle_recovery` turns `Unknown` into residue), and the close
+    // write, which is the only writer of `Complete`, follows that.
+    let observed = steps
+        .iter()
+        .find(|step| {
+            step.point == "SettleEffectAfter"
+                && step.crossing > anchor_stop
+                && step.effect_2 == EffectState::Released
+        })
+        .unwrap_or_else(|| {
+            panic!("child 2's closure was not recorded after the Unknown observation: {steps:?}")
+        });
+    assert!(
+        observed.live_members.is_empty(),
+        "child 2's closure was recorded while a recorded group held a live member: {observed:?}"
+    );
+    assert_ne!(
+        (observed.phase.as_str(), observed.cleanup.as_deref()),
+        ("closed", Some("complete")),
+        "the run read Complete at child 2's closure write: {observed:?}"
+    );
+    let close = steps
+        .iter()
+        .find(|step| step.point == "SettleCloseBefore" && step.crossing > observed.crossing)
+        .unwrap_or_else(|| panic!("the close write did not follow child 2's closure: {steps:?}"));
+    assert_ne!(
+        (close.phase.as_str(), close.cleanup.as_deref()),
+        ("closed", Some("complete")),
+        "the run read Complete before the close write that records it: {close:?}"
+    );
+    let complete = steps
+        .iter()
+        .find(|step| {
+            step.phase == "closed"
+                && step.cleanup.as_deref() == Some("complete")
+                && step.crossing > close.crossing
+        })
+        .unwrap_or_else(|| {
+            panic!("the close write did not leave the run Closed with Complete: {steps:?}")
+        });
+    assert_eq!(
+        complete.effect_2,
+        EffectState::Released,
+        "the complete run was observed without child 2's closure evidence: {complete:?}"
+    );
+    assert!(
+        complete.live_members.is_empty(),
+        "the complete run was observed beside a live recorded member: {complete:?}"
+    );
     assert_eq!(
         (run.phase.as_str(), run.cleanup.as_deref()),
         ("closed", Some("complete")),
-        "the QA run records Complete"
+        "the run ends Closed with Complete"
     );
+    match Oracle::O1a.check(&world) {
+        // The QA run and the recovery step's effect-free successor.
+        Ok(judged) if judged >= 1 => {}
+        other => panic!("O1a refused the isolated drive: {other:?}"),
+    }
     let effects = &world.effects[&run.id.to_string()];
     let custody: Vec<_> = effects
         .iter()
@@ -800,6 +952,40 @@ fn faults_multi_child_anchor_stop_unknown_settles_on_verified_closure() {
             panic!("{oracle:?} ({judged}) refused the isolated drive: {failure}");
         }
     }
+}
+
+/// Continues the anchors this drive recorded, exactly as dropping the pin does:
+/// the log holds each launch's own generation, and a pid whose generation has
+/// changed is left alone.
+fn release_anchors(log: &Path) {
+    let recorded = std::fs::read_to_string(log).unwrap_or_default();
+    for line in recorded
+        .lines()
+        .filter_map(|line| line.strip_prefix("anchor "))
+    {
+        let Some(identity) = world::identity(line) else {
+            continue;
+        };
+        if crate::ident::process_identity(identity.pid).verified() != Some(&identity) {
+            continue;
+        }
+        // SAFETY: the recorded anchor of this drive's own launch, its generation
+        // just verified; a retirement plus reuse between the two calls is not
+        // excluded, which is the same window the pin's drop has.
+        unsafe { libc::kill(identity.pid as i32, libc::SIGCONT) };
+    }
+}
+
+/// One crossing of the kernel's settle order, with the journal and process world
+/// as they stood there: what turns closure evidence into a terminal record.
+#[derive(Debug)]
+struct SettleStep {
+    point: &'static str,
+    crossing: usize,
+    phase: String,
+    cleanup: Option<String>,
+    effect_2: EffectState,
+    live_members: Vec<(u32, u32)>,
 }
 
 /// A named pipe inside this drive's fixture HOME, for the held child's read.
