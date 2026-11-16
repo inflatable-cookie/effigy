@@ -431,13 +431,7 @@ impl<'a> StagedGuestProbe<'a> {
             None => {}
         }
         if !captured.status.success() {
-            return Observed::Unknown(UnknownReason::Inconsistent(format!(
-                "the bounded staged guest probe ended with {}",
-                captured
-                    .status
-                    .code()
-                    .map_or_else(|| "a signal".to_owned(), |code| code.to_string()),
-            )));
+            return Observed::Unknown(probe_failure_reason(captured.status, &captured.stderr));
         }
         let reply: GuestProbeReply = match serde_json::from_slice(&captured.stdout) {
             Ok(reply) => reply,
@@ -971,6 +965,27 @@ impl effigy_kernel::workspace_session::SelectorReader for GuestSelectionReader<'
         optional_observation(result)
     }
 }
+/// Why a staged guest probe ended without a reply.
+///
+/// The probe's exit status alone says nothing an operator can act on, and the
+/// guest's stream may carry paths, digests or io text. Its refusal *class* is a
+/// closed vocabulary this crate owns ([`ProbeRefusal`]), so the reason names the
+/// class and never the bytes: "context probe version or generation differs"
+/// becomes the sentence a person reads instead of "ended with 1".
+fn probe_failure_reason(status: std::process::ExitStatus, stderr: &[u8]) -> UnknownReason {
+    let code = status
+        .code()
+        .map_or_else(|| "a signal".to_owned(), |code| code.to_string());
+    match crate::runner::workspace_client::guest_probe::ProbeRefusal::classify(stderr).sentence() {
+        Some(sentence) => UnknownReason::Inconsistent(format!(
+            "the staged guest probe ended with {code}: {sentence}"
+        )),
+        None => UnknownReason::Inconsistent(format!(
+            "the staged guest probe ended with {code} and named no refusal this host knows"
+        )),
+    }
+}
+
 fn optional_observation<T>(result: Result<Option<T>, RunnerError>) -> Observed<T> {
     match result {
         Ok(Some(value)) => observation(Ok(value)),
@@ -1094,6 +1109,51 @@ mod tests {
             retry.text(&object.path).as_deref(),
             Some("complete successor context")
         );
+    }
+
+    /// The probe's exit status alone is what an operator used to read. The
+    /// guest's own refusal class is a closed vocabulary this crate owns, so the
+    /// reason names it without echoing a byte the guest printed (effigy#1014).
+    #[test]
+    fn a_failed_staged_probe_names_its_refusal_class_not_its_stream() {
+        use crate::runner::workspace_client::guest_probe::ProbeRefusal;
+        use std::os::unix::process::ExitStatusExt;
+        let failed = std::process::ExitStatus::from_raw(1 << 8);
+
+        let classified = probe_failure_reason(
+            failed,
+            b"[error] context probe version or generation differs\n",
+        );
+        let effigy_kernel::observe::UnknownReason::Inconsistent(detail) = classified else {
+            panic!("a failed probe is an inconsistent observation");
+        };
+        assert!(
+            detail.contains("ended with 1"),
+            "the exit status stays named: {detail}"
+        );
+        assert!(
+            detail.contains(
+                ProbeRefusal::ContextVersion
+                    .sentence()
+                    .expect("class sentence")
+            ),
+            "the guest's refusal class is named: {detail}"
+        );
+        assert!(
+            !detail.contains("adversarial"),
+            "the guest's stream is never echoed: {detail}"
+        );
+
+        let unclassified =
+            probe_failure_reason(failed, b"[error] adversarial-secret-backend-diagnostic\n");
+        let effigy_kernel::observe::UnknownReason::Inconsistent(detail) = unclassified else {
+            panic!("a failed probe is an inconsistent observation");
+        };
+        assert!(
+            detail.contains("named no refusal this host knows"),
+            "{detail}"
+        );
+        assert!(!detail.contains("adversarial"), "{detail}");
     }
 
     /// A locally built artifact records a build stamp (`v0.14.1+local.<sha>`),

@@ -1186,7 +1186,22 @@ fn workspace_reserved_owner_refuses_identity_alias_peer_pin_and_publication_with
             Fault::Identity | Fault::ContextPeer | Fault::ContextPin => "Kernel(Refused(",
             _ => "Kernel(Unavailable(",
         };
-        assert_refusal_class(refusal, class, &format!("{fault:?}"));
+        // The observation's own reason must survive to the refusal: an
+        // operator reads which call failed *and* why, not just that the
+        // activation did (effigy#1014).
+        let reason = match fault {
+            Fault::ContextProbe => Some("context probe interrupted"),
+            Fault::UnknownIdentity => Some("fixture unknown"),
+            _ => None,
+        };
+        assert_refusal_class(refusal.clone(), class, &format!("{fault:?}"));
+        if let Some(reason) = reason {
+            let refusal = refusal.expect("refused");
+            assert!(
+                refusal.contains(reason),
+                "{fault:?} must name its observation's reason `{reason}`: {refusal}"
+            );
+        }
     }
 }
 

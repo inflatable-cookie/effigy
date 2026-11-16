@@ -92,6 +92,26 @@ fn unavailable(message: impl Into<String>) -> EnvError {
 fn refused(message: impl Into<String>) -> EnvError {
     EnvError::Kernel(RunError::refused(message))
 }
+/// The reason an observation could not answer, in the observation layer's own
+/// closed vocabulary, and kept for the journal.
+///
+/// Every uncertain observation this publication reads (the staged probes and
+/// the selector readers) builds its reason from fixed literals in
+/// `staging.rs`; the failing call's classification, such as the guest's own
+/// refusal class, is part of that literal. The adapter's message never is: a
+/// guest write or read failure can carry the bytes it moved.
+fn observed_detail(
+    reason: effigy_kernel::observe::UnknownReason,
+    reported: &mut Option<String>,
+) -> String {
+    let detail = match reason {
+        effigy_kernel::observe::UnknownReason::Inconsistent(detail) => detail,
+        other => other.to_string(),
+    };
+    *reported = Some(detail.clone());
+    detail
+}
+
 /// One call of the publication sequence, in the order it is made.
 ///
 /// A failed publication used to report only that the whole step was uncertain,
@@ -441,9 +461,11 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
             .ok_or_else(|| unavailable("workspace publication deadline expired"))
     };
     // What the journal records when this publication does not finish: the
-    // last call that was entered. Every assignment sits immediately before
-    // its call, so a failure never names a later one.
+    // last call that was entered, plus the fixed reason that call reported when
+    // it reported one. Every step assignment sits immediately before its call,
+    // so a failure never names a later one.
     let mut step = PublicationStep::GuestBinaryStaging;
+    let mut reported: Option<String> = None;
     let result = (|| {
         let object = staging::stage_binary(
             activation.environment_mut(),
@@ -470,7 +492,12 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
         step = PublicationStep::GuestIdentityProbe;
         let observed = match input.probe.identity(&container, &object, remaining()?) {
             Observed::Verified(observed, _) => observed,
-            Observed::Unknown(_) => return Err(unavailable("guest-local identity is unavailable")),
+            Observed::Unknown(reason) => {
+                return Err(unavailable(format!(
+                    "the guest-local identity probe is unavailable ({})",
+                    observed_detail(reason, &mut reported)
+                )))
+            }
             Observed::Absent(_) => return Err(unavailable("guest-local identity is absent")),
         };
         observed
@@ -610,8 +637,11 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
             Observed::Verified(_, _) => {
                 return Err(refused("full-context probe observed another target"))
             }
-            Observed::Unknown(_) => {
-                return Err(unavailable("full guest context probe is unavailable"))
+            Observed::Unknown(reason) => {
+                return Err(unavailable(format!(
+                    "the full guest context probe is unavailable ({})",
+                    observed_detail(reason, &mut reported)
+                )))
             }
             Observed::Absent(_) => return Err(unavailable("full guest context probe is absent")),
         };
@@ -660,8 +690,11 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
                 let expected = match reader.read_selector(path) {
                     Observed::Verified(value, _) => Some(value),
                     Observed::Absent(_) => None,
-                    Observed::Unknown(_) => {
-                        return Err(unavailable("workspace selector observation unavailable"))
+                    Observed::Unknown(reason) => {
+                        return Err(unavailable(format!(
+                            "workspace selector observation is unavailable ({})",
+                            observed_detail(reason, &mut reported)
+                        )))
                     }
                 };
                 let next = if path == CONTEXT_SELECTOR {
@@ -721,16 +754,17 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
     if result.is_err() {
         // Backend/guest failures may include credential bytes, command output
         // or user paths. Persist only this fixed classification and the step
-        // that produced it: both are Effigy's own literals, and the step is
-        // what tells an operator which publication call failed when the
-        // journal holds nothing but the retained ticket.
-        activation.environment_mut().unknown_workspace_publication(
-            &ticket,
-            UnknownReason::Inconsistent(format!(
-                "workspace guest publication failed while {}",
-                step.naming()
-            )),
-        )?;
+        // that produced it: both are Effigy's own literals, and together they
+        // are what tells an operator which publication call failed and why when
+        // the journal holds nothing but the retained ticket.
+        let mut reason = format!("workspace guest publication failed while {}", step.naming());
+        if let Some(reported) = reported {
+            reason.push_str(": ");
+            reason.push_str(&reported);
+        }
+        activation
+            .environment_mut()
+            .unknown_workspace_publication(&ticket, UnknownReason::Inconsistent(reason))?;
     }
     result
 }
