@@ -724,6 +724,27 @@ fn a_production_v1_context_refuses_an_executable_other_than_the_one_it_pinned() 
 }
 
 #[test]
+fn a_production_v1_context_reads_the_pinned_executable_its_self_reported_version_is_not_the_pin() {
+    // Production publishes the artifact's `effigy.active-version` sidecar beside
+    // the stable entry link, while the running process resolves through that
+    // link to the digest-addressed executable, so its own version string is the
+    // artifact's packaged version. The digest is the executable claim.
+    let bytes = production_context().render().expect("render");
+    let mut packaged = running_binary();
+    packaged.version.push_str("-packaged");
+
+    let published = legacy::published_legacy_at(
+        &bytes,
+        GENERATION,
+        &mut ObservedIt(Some(guest_observation())),
+        &packaged,
+    )
+    .expect("the pinned digest is what this container can prove");
+
+    assert_eq!(published.context.binary.digest, packaged.digest);
+}
+
+#[test]
 fn an_unpublished_schema_refuses_instead_of_being_guessed_at() {
     let mut document: serde_json::Value =
         serde_json::from_slice(&production_context().render().expect("render")).expect("json");

@@ -23,8 +23,7 @@
 use super::context::v2::SCHEMA as V2_SCHEMA;
 use super::context::{
     declared_schema, read_published_body, ContextReadError, ContextRefusal, GuestReader,
-    WorkspaceContainerIdentity, WorkspaceContext, CHANNEL_PROTOCOL_VERSION, CONTEXT_SCHEMA,
-    HOST_REPREPARE_COMMAND,
+    WorkspaceContainerIdentity, WorkspaceContext, CONTEXT_SCHEMA, HOST_REPREPARE_COMMAND,
 };
 use super::identity::{GuestIdentity, GuestIdentityRefusal, GuestSelfObservation};
 use super::RunningBinary;
@@ -56,26 +55,20 @@ pub(crate) fn published_legacy_at(
         ))
         .into());
     }
-    // The pinned executable is the one the entry link selects, so a guest
-    // running another build (a manual install inside the container, a stale
-    // entry link) refuses instead of reading another build's context.
-    if binary.version != context.binary.version || binary.digest != context.binary.digest {
+    // The one executable fact a guest can establish: the bytes it is running
+    // are the pinned artifact. Production installs the artifact's own
+    // `effigy.active-version` sidecar beside the stable entry link, not beside
+    // the digest-addressed executable that link resolves to, so the running
+    // binary's self-reported version is the artifact's packaged version and is
+    // never a proxy for the pin. The digest is the exact claim, and the version
+    // and protocol the guest reports are the context's own (checked by
+    // `WorkspaceContext::parse`).
+    if binary.digest != context.binary.digest {
         return Err(ContextRefusal::version_mismatch(format!(
-            "the prepared workspace pins guest effigy {} ({}) but this build runs {} ({}); run \
-             `{HOST_REPREPARE_COMMAND}` on the host to publish the pinned guest binary, or run the \
-             command on the host",
-            context.binary.version, context.binary.digest, binary.version, binary.digest
-        ))
-        .into());
-    }
-    if context.host.protocol != CHANNEL_PROTOCOL_VERSION
-        || context.binary.protocol != CHANNEL_PROTOCOL_VERSION
-    {
-        return Err(ContextRefusal::version_mismatch(format!(
-            "the prepared workspace pins protocol {} (host {}) but this build speaks protocol \
-             {CHANNEL_PROTOCOL_VERSION}; run `{HOST_REPREPARE_COMMAND}` on the host to re-prepare \
-             the workspace",
-            context.binary.protocol, context.host.protocol
+            "the prepared workspace pins guest effigy {} ({}) but the executable running here is \
+             {}; run `{HOST_REPREPARE_COMMAND}` on the host to publish the pinned guest binary, or \
+             run the command on the host",
+            context.binary.version, context.binary.digest, binary.digest
         ))
         .into());
     }
