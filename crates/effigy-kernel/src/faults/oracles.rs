@@ -76,6 +76,18 @@ fn closed(world: &World, complete: bool) -> impl Iterator<Item = &super::world::
 fn survivors(world: &World, run: crate::id::RunId) -> Vec<(Option<i64>, String)> {
     let mut alive = vec![];
     for custody in world.custody.iter().filter(|c| c.run == run) {
+        // A receipt this capture could not read is unproven, never absent: the
+        // run cannot be called clean on evidence nobody could read.
+        if let Some(reason) = &custody.unreadable {
+            alive.push((
+                Some(custody.sequence),
+                format!(
+                    "custody receipt of effect {} unreadable: {reason}",
+                    custody.sequence
+                ),
+            ));
+            continue;
+        }
         let Some(receipt) = &custody.receipt else {
             continue;
         };
@@ -100,7 +112,17 @@ fn survivors(world: &World, run: crate::id::RunId) -> Vec<(Option<i64>, String)>
         let reused =
             matches!(&leader, Observed::Verified(identity, _) if *identity != receipt.identity);
         if !reused {
-            let members = crate::custody::platform::group_pids(receipt.pgid).unwrap_or_default();
+            // An inventory nobody could read is unproven, never empty.
+            let members = match crate::custody::platform::group_pids(receipt.pgid) {
+                Ok(members) => members,
+                Err(error) => {
+                    alive.push((
+                        Some(custody.sequence),
+                        format!("group {} inventory unavailable: {error}", receipt.pgid),
+                    ));
+                    continue;
+                }
+            };
             let members: Vec<u32> = members
                 .into_iter()
                 .filter(|pid| {

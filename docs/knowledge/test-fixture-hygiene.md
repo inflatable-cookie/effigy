@@ -130,33 +130,31 @@ assertions to an unfiltered drive.
 The retained log of candidate QA 763eb846 cannot attribute its pid 75922 to a
 sibling drive: it carries only the shard's panic, and the run id it names is the
 constant identity every drive of that scenario minted, so the nonce string in it
-matched all of them at once. The failing-before proof is the collision control
+matched all of them at once. It says nothing about that pid's group membership, and
+this task makes no claim about it or about the original run's inventory. The
+failing-before proof is the collision control
 `a_complete_run_owns_no_process_another_drive_minted`, which reproduces the QA
 panic's shape before the identity fix and passes after; a race the evidence shows
 is not there has no failing-before form.
-What rules the custody race out is the isolated replay,
+The witness that keeps no custody race is
 `faults_multi_child_anchor_stop_unknown_settles_on_verified_closure`: the QA job
-with its second child (spawn sequence 2, the child the panic named) held by an
+with its second child (spawn sequence 2, the sequence the panic named) held by an
 event — it ignores the first stop signal and blocks on a named pipe in its own
-HOME, leaving only when the settle reaches its first group stop, so no sleep and
-no contention stand in for the QA drive's timing. The replay asserts the kernel's
-own order, from the crossings it made while this process drove the settle and the
-journal each crossing read: the `AnchorStop` `Unknown` crossing comes first; child
-2's `Released` write follows it, with the run still open and every recorded group
-inventoried empty (`Released` is closure evidence — the settle writes it only from
-a verified or absent closure and turns `Unknown` into residue); the close write,
-the only writer of `Complete`, follows that evidence; and the first crossing to
-read `Closed` with `Complete` follows the close. The captured world has all three
-custody effects `Released`, no live group member and no surviving anchor, and O1a
-accepts it.
-Two harness seams make that order observable rather than assumed. The held child
-leaves on a byte this process writes at the settle's first group stop. And the
-pinned anchor — the pin is what makes the required crossing deliverable — is
-continued at the observed crossing, exactly as the run's end continues it, so the
-kernel's own stop loop finishes the settle in this process. With the pin held, that
-settle instead records residue and the run's sentinel completes it from its own
-process, where no harness instrument can see the write order: that is the path the
-QA job itself took, and it is why this proof continues the recorded anchors.
+HOME, leaving on a byte this process writes at the settle's first group stop, so no
+sleep and no load stand in for the QA drive's timing. It judges one thing: the
+world after recovery. Every custody effect of that run reads `Released`, every
+recorded group inventories no live member, every recorded anchor is gone, and O1a
+and O1b accept it. It makes no claim about the order the settle wrote those records
+in: on the pinned path the residue is settled by the run's sentinel in another
+process, where no harness instrument can see the write order, and that ordering is
+follow-up work.
+A custody receipt or group inventory nobody can read is unproven, never absent. The
+driver keeps an unreadable receipt as `Custodied::unreadable`, and both that and a
+failed `group_pids` inventory make `survivors` name the effect, so O1a and O1b fail
+rather than pass on evidence they could not read. The witness reads the same two
+things with `expect`. A workload's unreadable custody nonce stays "not this run's
+process" on purpose: on macOS a platform binary hides its environment, which is why
+lingering workloads exec the custody fixture instead.
 The one pinned proof that has to be positive about its own premise —
 `faults_anchor_retirement_delivery_is_pinned_to_settlement` — holds its workload
 at the launch's own owner-written stdin until the recorded anchor reads
