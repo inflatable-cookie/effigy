@@ -29,12 +29,14 @@
 //! the same placement, and needs none of the host authority a v1 document
 //! cannot carry (planner ruling, 2026-11-16; [`classify_task`]). A task that
 //! needs any host facility refuses by name instead.
+use std::cell::RefCell;
 use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 
 use effigy_cli::TaskInvocation;
 use effigy_manifest::{
     resolve_task_execution_binding, ManifestManagedRun, ManifestManagedRunStep, ManifestTask,
-    ManifestTaskRunIn, ResolvedTaskExecutionBinding, ResolvedWorkspaceBinding, TaskManifest,
+    ManifestTaskRunIn, ResolvedTaskExecutionBinding, ResolvedWorkspaceContainer, TaskManifest,
 };
 
 use super::context::v2::SCHEMA as V2_SCHEMA;
@@ -134,7 +136,11 @@ pub(crate) fn published_legacy_at(
 /// channel, so this is not a re-preparation gap: re-preparing republishes the
 /// same legacy document. The host CLI is what actually serves the command.
 pub(crate) fn host_authority_unavailable(published: &PublishedLegacyGuestContext) -> String {
-    host_authority_refusal(published, None)
+    host_authority_refusal(
+        published.generation,
+        &published.context.paths.host_checkout,
+        None,
+    )
 }
 
 /// [`host_authority_unavailable`] for a declared task, naming the fact that
@@ -143,21 +149,24 @@ pub(crate) fn host_authority_unavailable_for(
     published: &PublishedLegacyGuestContext,
     reason: &str,
 ) -> String {
-    host_authority_refusal(published, Some(reason))
+    host_authority_refusal(
+        published.generation,
+        &published.context.paths.host_checkout,
+        Some(reason),
+    )
 }
 
-fn host_authority_refusal(published: &PublishedLegacyGuestContext, reason: Option<&str>) -> String {
+fn host_authority_refusal(generation: u64, host_checkout: &str, reason: Option<&str>) -> String {
     format!(
         "this container runs the workspace's production context (legacy schema `{CONTEXT_SCHEMA}`, \
          generation {}{}), which pins no admitted workspace session and no host authority channel, \
-         so this command has to run on the host in `{}`. Re-preparing the workspace \
+         so this command has to run on the host in `{host_checkout}`. Re-preparing the workspace \
          (`{HOST_REPREPARE_COMMAND}`) republishes the same legacy document and cannot grant host \
          authority",
-        published.generation,
+        generation,
         reason
             .map(|reason| format!(", and {reason}"))
             .unwrap_or_default(),
-        published.context.paths.host_checkout
     )
 }
 
@@ -192,10 +201,36 @@ pub(crate) fn classify_task(
             task.name
         )));
     };
-    let Some(reason) = host_facility(&manifest, &task.name, declaration) else {
+    let prepared = prepared_container(published)?;
+    let Some(reason) = host_facility(&manifest, &task.name, declaration, prepared) else {
         return Ok(LegacyTask::ContainerLocal);
     };
     Ok(LegacyTask::HostAuthority(reason))
+}
+
+/// The container this context was prepared for, from the environment resource
+/// `env:<policy name>` the publication records. A context that does not name one
+/// cannot be checked against a task's binding, so it refuses rather than guess.
+pub(crate) fn prepared_container(
+    published: &PublishedLegacyGuestContext,
+) -> Result<&str, RunnerError> {
+    published
+        .context
+        .activation
+        .environment
+        .resource_id
+        .strip_prefix("env:")
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| {
+            RunnerError::task_invocation(format!(
+                "the workspace context generation {} names no prepared container \
+                 (`{}`), so this guest cannot tell a container-bound task from a host one; run the \
+                 command on the host in `{}`",
+                published.generation,
+                published.context.activation.environment.resource_id,
+                published.context.paths.host_checkout
+            ))
+        })
 }
 
 /// The manifest the context pins: the rendered composed document when the
@@ -275,6 +310,7 @@ fn host_facility(
     manifest: &TaskManifest,
     root: &str,
     declaration: &ManifestTask,
+    prepared_container: &str,
 ) -> Option<String> {
     let mut pending = Vec::new();
     pending.push((root.to_owned(), declaration.clone()));
@@ -283,7 +319,7 @@ fn host_facility(
         if !seen.insert(name.clone()) {
             continue;
         }
-        if let Some(reason) = declared_host_facility(manifest, &name, &task) {
+        if let Some(reason) = declared_host_facility(manifest, &name, &task, prepared_container) {
             return Some(reason);
         }
         for target in referenced_tasks(&task) {
@@ -305,6 +341,7 @@ fn declared_host_facility(
     manifest: &TaskManifest,
     name: &str,
     task: &ManifestTask,
+    prepared_container: &str,
 ) -> Option<String> {
     if task.run_in == Some(ManifestTaskRunIn::Host) {
         return Some(format!("`{name}` declares `run_in = \"host\"`"));
@@ -343,14 +380,25 @@ fn declared_host_facility(
     }
     match resolve_task_execution_binding(manifest, name, task) {
         Ok(Some(ResolvedTaskExecutionBinding::Workspace(binding))) => {
-            if is_default_workspace(manifest, &binding) {
-                None
-            } else {
-                Some(format!(
-                    "`{name}` is bound to workspace `{}.{}`, not the workspace container this \
-                     guest was prepared for",
+            match binding.container.as_ref() {
+                Some(ResolvedWorkspaceContainer::Named(container))
+                    if container == prepared_container =>
+                {
+                    None
+                }
+                Some(ResolvedWorkspaceContainer::Named(container)) => Some(format!(
+                    "`{name}` is bound to container `{container}`, not the `{prepared_container}` \
+                     container this guest was prepared for"
+                )),
+                Some(ResolvedWorkspaceContainer::Inline(inline)) => Some(format!(
+                    "`{name}` is bound to inline workspace container `{}`, not the \
+                     `{prepared_container}` container this guest was prepared for",
+                    inline.synthetic_name
+                )),
+                None => Some(format!(
+                    "`{name}`'s workspace `{}.{}` declares no backing container",
                     binding.system, binding.workspace
-                ))
+                )),
             }
         }
         Ok(Some(ResolvedTaskExecutionBinding::Host)) => {
@@ -363,33 +411,165 @@ fn declared_host_facility(
     }
 }
 
-/// Whether a binding names the manifest's default system and workspace. The
-/// context was published for the workspace the environment resolved as its
-/// default, so that is the one this container is.
-fn is_default_workspace(manifest: &TaskManifest, binding: &ResolvedWorkspaceBinding) -> bool {
-    let Some(systems) = manifest.systems.as_ref() else {
-        return false;
+/// The one legacy placement this process accepted for a local task run.
+///
+/// The guest classifies from the immutable composed snapshot, then the ordinary
+/// dispatch resolves the definition from the checkout. This record is what lets
+/// the dispatch re-check the definition it actually resolved, so a checkout
+/// manifest that changed after publication, or after classification, cannot
+/// substitute a task (planner ruling 2026-11-16; review finding 1).
+#[derive(Debug, Clone)]
+pub(crate) struct LocalTaskPlacement {
+    /// The container the context was prepared for (the `env:<name>` resource).
+    pub(crate) container: String,
+    /// The context generation the placement was proved under.
+    pub(crate) generation: u64,
+    /// The host checkout the refusal names.
+    pub(crate) host_checkout: String,
+    /// The pinned digest of the checkout manifest, when the context pins one.
+    pub(crate) pinned_manifest_digest: Option<String>,
+    /// The checkout manifest the ordinary dispatch will read.
+    pub(crate) manifest_path: PathBuf,
+}
+
+thread_local! {
+    /// One command runs on one thread, and the dispatch that follows the guest
+    /// entry is the same call stack, so the placement is thread-scoped: a
+    /// parallel test or another command on another thread never inherits it.
+    static LOCAL_TASK_PLACEMENT: RefCell<Option<LocalTaskPlacement>> = const { RefCell::new(None) };
+}
+
+/// Record the placement this process may run a task under, after refusing a
+/// checkout manifest that no longer matches its pin.
+pub(crate) fn remember_local_task_placement(
+    published: &PublishedLegacyGuestContext,
+    checkout: &mut dyn CheckoutReader,
+) -> Result<LocalTaskPlacement, RunnerError> {
+    let placement = LocalTaskPlacement {
+        container: prepared_container(published)?.to_owned(),
+        generation: published.generation,
+        host_checkout: published.context.paths.host_checkout.clone(),
+        pinned_manifest_digest: published
+            .context
+            .sources
+            .iter()
+            .find(|pin| pin.kind == "manifest")
+            .map(|pin| pin.digest.clone()),
+        manifest_path: Path::new(&published.context.paths.guest_checkout).join("effigy.toml"),
     };
-    let default_system = systems.default.as_ref().or_else(|| {
-        // A sole declared system is the implicit default, matching the
-        // manifest's own binding resolution.
-        let mut entries = systems.systems.keys();
-        match (entries.next(), entries.next()) {
-            (Some(only), None) => Some(only),
-            _ => None,
-        }
-    });
-    let Some(default_system) = default_system else {
-        return false;
-    };
-    if binding.system != *default_system {
-        return false;
+    verify_checkout_manifest_through(checkout, &placement)?;
+    LOCAL_TASK_PLACEMENT.with(|slot| *slot.borrow_mut() = Some(placement.clone()));
+    Ok(placement)
+}
+
+/// Forget the recorded placement. The guest entry records one placement per
+/// command; a host that keeps the process alive across commands (and a proof
+/// that shares a thread with another one) clears it here.
+pub(crate) fn forget_local_task_placement() {
+    LOCAL_TASK_PLACEMENT.with(|slot| *slot.borrow_mut() = None);
+}
+
+/// The placement recorded for this process, if it is a production guest running
+/// a container-bound task.
+pub(crate) fn local_task_placement() -> Option<LocalTaskPlacement> {
+    LOCAL_TASK_PLACEMENT.with(|slot| slot.borrow().clone())
+}
+
+/// Refuse before any effect when the checkout inputs the ordinary dispatch reads
+/// are no longer the ones the context pinned. The dispatch runs this again just
+/// before it prepares sources, so a manifest changed after publication refuses
+/// instead of being resolved and run.
+pub(crate) fn verify_checkout_inputs() -> Result<(), RunnerError> {
+    match local_task_placement() {
+        Some(placement) => verify_checkout_manifest(&placement),
+        None => Ok(()),
     }
-    systems
-        .systems
-        .get(default_system)
-        .and_then(|system| system.default_workspace.as_ref())
-        == Some(&binding.workspace)
+}
+
+/// The guest entry's check: the mounted checkout's own manifest is still the
+/// bytes the context pinned. A checkout that changed after Prepare refuses
+/// before the run records a placement.
+fn verify_checkout_manifest_through(
+    checkout: &mut dyn CheckoutReader,
+    placement: &LocalTaskPlacement,
+) -> Result<(), RunnerError> {
+    let Some(pinned) = placement.pinned_manifest_digest.as_deref() else {
+        return Ok(());
+    };
+    let bytes = checkout.read_checkout_file("effigy.toml")?;
+    let Some(bytes) = bytes else {
+        return Err(RunnerError::task_invocation(format!(
+            "the checkout manifest this task would run from is missing at `{}`; run the command on \
+             the host in `{}`",
+            placement.manifest_path.display(),
+            placement.host_checkout
+        )));
+    };
+    if sha256_text(&bytes) != pinned {
+        return Err(RunnerError::task_invocation(format!(
+            "the checkout manifest `{}` is {} but the workspace context generation {} pins {pinned}, \
+             so this container would run a task definition the host never approved; run the \
+             command on the host in `{}`, or re-prepare the workspace on the host",
+            placement.manifest_path.display(),
+            sha256_text(&bytes),
+            placement.generation,
+            placement.host_checkout
+        )));
+    }
+    Ok(())
+}
+
+/// The dispatch's check, on the real mounted path, immediately before it
+/// prepares sources or resolves the task.
+fn verify_checkout_manifest(placement: &LocalTaskPlacement) -> Result<(), RunnerError> {
+    let Some(pinned) = placement.pinned_manifest_digest.as_deref() else {
+        return Ok(());
+    };
+    let bytes = std::fs::read(&placement.manifest_path).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "the checkout manifest `{}` this task would run from cannot be read: {error}; run the \
+             command on the host in `{}`",
+            placement.manifest_path.display(),
+            placement.host_checkout
+        ))
+    })?;
+    let actual = sha256_text(&bytes);
+    if actual != pinned {
+        return Err(RunnerError::task_invocation(format!(
+            "the checkout manifest `{}` is {actual} but the workspace context generation {} pins \
+             {pinned}, so this container would run a task definition the host never approved; run \
+             the command on the host in `{}`, or re-prepare the workspace on the host",
+            placement.manifest_path.display(),
+            placement.generation,
+            placement.host_checkout
+        )));
+    }
+    Ok(())
+}
+
+/// Re-check a task the resolving runner actually loaded, before it runs.
+///
+/// This is the authoritative check: it sees the definition this run resolved
+/// from the checkout, so nothing can be substituted between the guest's
+/// classification and the run. A task whose declaration (or whose referenced
+/// graph) needs a host facility, or that is bound to another container, refuses
+/// here even when the guest's earlier classification allowed it.
+pub(crate) fn verify_local_task(
+    manifest: &TaskManifest,
+    task_name: &str,
+    task: &ManifestTask,
+) -> Result<(), RunnerError> {
+    let Some(placement) = local_task_placement() else {
+        return Ok(());
+    };
+    let Some(reason) = host_facility(manifest, task_name, task, &placement.container) else {
+        return Ok(());
+    };
+    Err(RunnerError::task_invocation(host_authority_refusal(
+        placement.generation,
+        &placement.host_checkout,
+        Some(&reason),
+    )))
 }
 
 /// The tasks this task's own steps call.

@@ -567,7 +567,9 @@ fn production_context_over(manifest: &[u8]) -> WorkspaceContext {
             host_user: "operator".to_owned(),
             checkout_id: "checkout".to_owned(),
             environment: WorkspaceEnvironmentIdentity {
-                resource_id: "env:app".to_owned(),
+                // Production records `env:<policy name>`, the container the
+                // guest was prepared for.
+                resource_id: "env:web".to_owned(),
                 generation: ENVIRONMENT_GENERATION.to_owned(),
             },
             container: container(),
@@ -618,6 +620,11 @@ default_workspace = "app"
 [systems.dev.workspaces.app]
 
 [systems.dev.workspaces.other]
+container = "other"
+
+[containers.other]
+compose_file = "compose.yml"
+primary_service = "app"
 
 [tasks]
 build = "cargo build"
@@ -652,14 +659,42 @@ fn publish_production_with(guest: &mut FakeGuest, context: &WorkspaceContext, ma
 }
 
 /// A production guest placement over one manifest's context.
+///
+/// The context pins the checkout manifest and the rendered composed document,
+/// exactly as `workspace_source_closure` does, and the checkout holds the bytes
+/// the pins name.
 fn production_guest(
     manifest: &[u8],
 ) -> (
     legacy::PublishedLegacyGuestContext,
     FakeGuest,
+    FakeCheckout,
     WorkspaceContext,
 ) {
-    let context = production_context_over(manifest);
+    production_guest_prepared_for(manifest, "env:web")
+}
+
+/// [`production_guest`] for a context prepared for one container policy.
+fn production_guest_prepared_for(
+    manifest: &[u8],
+    prepared: &str,
+) -> (
+    legacy::PublishedLegacyGuestContext,
+    FakeGuest,
+    FakeCheckout,
+    WorkspaceContext,
+) {
+    let mut context = production_context_over(manifest);
+    context.activation.environment.resource_id = prepared.to_owned();
+    context.sources.insert(
+        0,
+        WorkspacePinnedSource {
+            kind: "manifest".to_owned(),
+            name: "effigy.toml".to_owned(),
+            digest: sha256_text(manifest),
+            snapshot: Some(format!("{GUEST_CHECKOUT}/effigy.toml")),
+        },
+    );
     let mut guest = FakeGuest::new();
     publish_production_with(&mut guest, &context, manifest);
     let published = legacy::published_legacy_at(
@@ -669,7 +704,25 @@ fn production_guest(
         &running_binary(),
     )
     .expect("the production context");
-    (published, guest, context)
+    let checkout = FakeCheckout::with_file("effigy.toml", manifest);
+    (published, guest, checkout, context)
+}
+
+/// One command records one placement on its own thread, so a proof clears it
+/// before and after sharing that thread with the next one.
+struct PlacementGuard;
+
+impl PlacementGuard {
+    fn take() -> Self {
+        legacy::forget_local_task_placement();
+        Self
+    }
+}
+
+impl Drop for PlacementGuard {
+    fn drop(&mut self) {
+        legacy::forget_local_task_placement();
+    }
 }
 
 #[test]
@@ -738,8 +791,8 @@ fn a_production_v1_context_refuses_host_authority_and_names_what_serves_it() {
 fn a_container_bound_task_runs_in_the_container_the_context_proved() {
     // The planner's 2026-11-16 ruling: a declared task whose steps are bound to
     // this workspace container runs here, where the process already is.
-    let (published, mut guest, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
-    let mut checkout = FakeCheckout::default();
+    let _placement = PlacementGuard::take();
+    let (published, mut guest, mut checkout, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
 
     let placement = legacy::classify_task(
         &published,
@@ -768,11 +821,121 @@ fn a_container_bound_task_runs_in_the_container_the_context_proved() {
         Some(std::ffi::OsStr::new("1")),
         "the dispatch runs where the verified context says it is"
     );
+    let recorded = legacy::local_task_placement().expect("the placement is recorded");
+    assert_eq!(recorded.container, "web");
+    assert_eq!(recorded.generation, GENERATION);
+    let manifest: effigy_manifest::TaskManifest =
+        toml::from_str(std::str::from_utf8(PRODUCTION_WORKSPACE_MANIFEST).expect("utf-8"))
+            .expect("the pinned manifest parses");
+    assert!(
+        legacy::verify_local_task(
+            &manifest,
+            "build",
+            manifest.tasks.get("build").expect("build")
+        )
+        .is_ok(),
+        "the permitted declaration passes the execution-time check too"
+    );
+}
+
+#[test]
+fn a_task_bound_to_another_container_than_the_prepared_one_refuses() {
+    // A guest prepared for container `web` may only run a task bound to `web`.
+    let _placement = PlacementGuard::take();
+    let (published, mut guest, mut checkout, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
+
+    let error = legacy_command(
+        &parsed(&["elsewhere"]),
+        &published,
+        &mut guest,
+        &mut checkout,
+    )
+    .expect_err("a task bound to another container refuses");
+    let message = error.to_string();
+    assert!(message.contains("container `other`"), "{message}");
+    assert!(message.contains("`web`"), "{message}");
+}
+
+#[test]
+fn a_task_bound_to_the_prepared_non_default_container_runs() {
+    // Production can prepare a selected non-default workspace; the container the
+    // context names decides, not the manifest's default system or workspace.
+    let _placement = PlacementGuard::take();
+    let (published, mut guest, mut checkout, _) =
+        production_guest_prepared_for(PRODUCTION_WORKSPACE_MANIFEST, "env:other");
+
+    assert_eq!(
+        legacy::classify_task(
+            &published,
+            &mut guest,
+            &mut checkout,
+            &TaskInvocation {
+                name: "elsewhere".to_owned(),
+                args: Vec::new(),
+            },
+        )
+        .expect("the pinned manifest"),
+        legacy::LegacyTask::ContainerLocal,
+        "a task bound to the prepared non-default container runs here"
+    );
+
+    let error = legacy_command(&parsed(&["build"]), &published, &mut guest, &mut checkout)
+        .expect_err("a task bound to the default container refuses here");
+    let message = error.to_string();
+    assert!(message.contains("container `web`"), "{message}");
+    assert!(message.contains("`other`"), "{message}");
+}
+
+#[test]
+fn a_checkout_manifest_changed_after_publication_refuses_before_any_effect() {
+    // Review finding 1: the dispatch resolves the task from the checkout, so a
+    // checkout changed after Prepare must refuse instead of running a definition
+    // the host never approved.
+    let _placement = PlacementGuard::take();
+    let (published, mut guest, _, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
+    let changed = b"[containers]\ndefault = \"web\"\n\n[systems]\ndefault = \"dev\"\n\n[systems.dev]\ndefault_workspace = \"app\"\n\n[systems.dev.workspaces.app]\n\n[tasks]\nbuild = { run = \"echo swapped\", secrets = \"required\" }\n";
+    let mut checkout = FakeCheckout::with_file("effigy.toml", changed);
+
+    let error = legacy_command(&parsed(&["build"]), &published, &mut guest, &mut checkout)
+        .expect_err("a changed checkout refuses");
+    let message = error.to_string();
+    assert!(message.contains("never approved"), "{message}");
+    assert!(
+        legacy::local_task_placement().is_none(),
+        "a refused checkout records no placement"
+    );
+
+    // The dispatch re-checks the same inputs before it prepares sources.
+    assert!(legacy::verify_checkout_inputs().is_ok());
+}
+
+#[test]
+fn the_resolved_definition_is_rechecked_before_the_run() {
+    // A swap between the guest's classification and the run is caught here: the
+    // check sees the definition the runner actually resolved.
+    let _placement = PlacementGuard::take();
+    let (published, mut guest, mut checkout, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
+    assert!(
+        legacy_command(&parsed(&["build"]), &published, &mut guest, &mut checkout)
+            .expect("a container-local task")
+            .is_none()
+    );
+    let manifest: effigy_manifest::TaskManifest =
+        toml::from_str(std::str::from_utf8(PRODUCTION_WORKSPACE_MANIFEST).expect("utf-8"))
+            .expect("the pinned manifest parses");
+    let error = legacy::verify_local_task(
+        &manifest,
+        "build",
+        manifest.tasks.get("hosted").expect("hosted"),
+    )
+    .expect_err("a host-bound declaration cannot run here");
+    assert!(error.to_string().contains("run_in = \"host\""), "{error}");
 }
 
 #[test]
 fn a_task_whose_steps_need_host_authority_refuses_by_name() {
-    let (published, mut guest, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
+    let _placement = PlacementGuard::take();
+    let (published, mut guest, _, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
     for (name, reason) in [
         ("hosted", "run_in = \"host\""),
         ("secretive", "secrets"),
@@ -780,7 +943,7 @@ fn a_task_whose_steps_need_host_authority_refuses_by_name() {
         ("lifecycle", "container_lifecycle"),
         ("heavy", "admission"),
         ("durable", "durable"),
-        ("elsewhere", "not the workspace container"),
+        ("elsewhere", "container `other`"),
         ("nested_host", "`hosted`"),
     ] {
         let mut checkout = FakeCheckout::default();
@@ -811,8 +974,8 @@ fn a_task_whose_steps_need_host_authority_refuses_by_name() {
 
 #[test]
 fn a_container_bound_task_through_a_referenced_container_task_runs_here() {
-    let (published, mut guest, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
-    let mut checkout = FakeCheckout::default();
+    let _placement = PlacementGuard::take();
+    let (published, mut guest, mut checkout, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
     assert_eq!(
         legacy::classify_task(
             &published,

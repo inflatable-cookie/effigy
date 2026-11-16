@@ -2522,3 +2522,159 @@ fn concurrent_activation_publications_pin_distinct_immutable_fake_guest_contexts
         );
     });
 }
+
+/// A guest identity for the production-publication proof: the container the
+/// host verified is the container this process observes.
+struct ObservedGuest(WorkspaceContainerIdentity);
+
+impl crate::runner::workspace_client::identity::GuestIdentity for ObservedGuest {
+    fn observe(
+        &mut self,
+    ) -> Result<
+        crate::runner::workspace_client::identity::GuestSelfObservation,
+        crate::runner::workspace_client::identity::GuestIdentityRefusal,
+    > {
+        let observed = &self.0;
+        Ok(
+            crate::runner::workspace_client::identity::GuestSelfObservation {
+                container_id: observed.container_id.clone(),
+                vm_boot_id: observed.vm_boot_id.clone(),
+                platform: observed.platform.clone(),
+                libc: observed.libc.clone(),
+            },
+        )
+    }
+}
+
+/// The mounted checkout, for a proof whose pins are all guest-store snapshots.
+struct EmptyCheckout;
+
+impl CheckoutReader for EmptyCheckout {
+    fn read_checkout_file(
+        &mut self,
+        _relative: &str,
+    ) -> Result<Option<Vec<u8>>, crate::runner::RunnerError> {
+        Ok(None)
+    }
+}
+
+#[test]
+fn production_publication_writes_what_the_legacy_guest_consumes_for_the_same_container() {
+    // The ordinary publication and the guest's legacy reader are two halves of
+    // one contract: this drives the real `prepare_workspace_guest` into a fake
+    // guest (only the container filesystem and the pinned artifact are
+    // fixtures), then reads the published generation with the production
+    // guest's reader and places a task from the pinned manifest.
+    let _lock = crate::contract_test_support::lock_test();
+    let repo = fixture("legacy-production-publication");
+    container_mode_manifest(&repo);
+    let mut manifest = std::fs::read_to_string(repo.join("effigy.toml")).unwrap();
+    manifest.push_str("\n[tasks]\nhello = \"echo hello from the container\"\nhosted = { run = \"echo hosted\", run_in = \"host\" }\n");
+    std::fs::write(repo.join("effigy.toml"), manifest).unwrap();
+    let policy = web_policy(&repo, "dev", "/home/dev");
+    let artifact = artifact(&repo, "production published guest");
+    let mut guest = guest();
+    // The production publisher, over the declared workspace's own policy: only
+    // the container filesystem and the pinned artifact are fixtures.
+    let prepared = prepare_workspace_guest(
+        &mut guest,
+        &artifact,
+        crate::runner::workspace_command::artifact_plan::LinuxWorkspaceTarget::X86_64Gnu,
+        WorkspacePrepareFacts {
+            repo_root: &repo,
+            policy: &policy,
+            operator_workspace: Some(operator_workspace()),
+            session_run_id: Some("run-7".to_owned()),
+            session_generation: Some(7),
+            enrolment: None,
+            channel: WorkspaceChannelLocator::default(),
+            backend: crate::runner::workspace_client::context::WorkspaceBackendDescriptor {
+                kind: "fake".to_owned(),
+                profile: "default".to_owned(),
+                runtime: None,
+                vm_type: None,
+            },
+            container: container_identity(),
+            environment: local_fence(&policy.name),
+            artifact_install_identity: None,
+        },
+    )
+    .expect("the declared workspace publishes a guest")
+    .expect("a production guest");
+
+    let mut identity = ObservedGuest(container_identity());
+    // The guest's own entry routes on the declared schema; this proof reads the
+    // published bytes with that check and then the legacy reader, with the
+    // published artifact standing in for the running executable (a test process
+    // is not that artifact).
+    let body = crate::runner::workspace_client::context::read_published_body(&mut guest)
+        .expect("the published generation reads")
+        .expect("a generation is published");
+    assert_eq!(
+        crate::runner::workspace_client::context::declared_schema(&body.bytes).unwrap(),
+        crate::runner::workspace_client::context::CONTEXT_SCHEMA,
+        "the ordinary publication publishes the legacy document"
+    );
+    let published = crate::runner::workspace_client::legacy::published_legacy_at(
+        &body.bytes,
+        body.generation,
+        &mut identity,
+        &crate::runner::workspace_client::RunningBinary {
+            version: prepared.binary.version.clone(),
+            digest: prepared.binary.digest.clone(),
+        },
+    )
+    .expect("the published generation reads as the production guest's context");
+    assert_eq!(published.generation, prepared.context_generation);
+    assert_eq!(
+        crate::runner::workspace_client::legacy::prepared_container(&published).unwrap(),
+        policy.name,
+        "the context names the container it was prepared for"
+    );
+
+    // The checkout manifest the dispatch would read is the one the publication
+    // pinned, and the container-bound task in that pinned manifest is placed in
+    // this container while the host-bound task is refused.
+    let checkout_pin = published
+        .context
+        .sources
+        .iter()
+        .find(|pin| pin.kind == "manifest")
+        .expect("the publication pins the checkout manifest");
+    assert_eq!(
+        checkout_pin.digest,
+        sha256_text(&std::fs::read(repo.join("effigy.toml")).unwrap())
+    );
+    let mut checkout = EmptyCheckout;
+    let placement = crate::runner::workspace_client::legacy::classify_task(
+        &published,
+        &mut guest,
+        &mut checkout,
+        &effigy_cli::TaskInvocation {
+            name: "hello".to_owned(),
+            args: Vec::new(),
+        },
+    )
+    .expect("the pinned manifest");
+    assert_eq!(
+        placement,
+        crate::runner::workspace_client::legacy::LegacyTask::ContainerLocal
+    );
+    let refusal = crate::runner::workspace_client::legacy::classify_task(
+        &published,
+        &mut guest,
+        &mut checkout,
+        &effigy_cli::TaskInvocation {
+            name: "hosted".to_owned(),
+            args: Vec::new(),
+        },
+    )
+    .expect("the pinned manifest");
+    assert!(
+        matches!(
+            refusal,
+            crate::runner::workspace_client::legacy::LegacyTask::HostAuthority(_)
+        ),
+        "a host-bound task is never run here: {refusal:?}"
+    );
+}

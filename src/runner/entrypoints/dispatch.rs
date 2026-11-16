@@ -61,6 +61,10 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
     let root = crate::runner::command_context::active_runtime_context()
         .map(|context| context.command_root().to_path_buf())
         .unwrap_or_else(|| cwd.into());
+    // A production workspace guest runs only what it proved and classified: a
+    // checkout manifest that no longer matches the pinned one refuses here,
+    // before any source preparation or run can produce an effect.
+    crate::runner::workspace_client::legacy::verify_checkout_inputs()?;
     // A reserved workspace engine must verify its dispatcher-owned selection
     // before any preparation or fallback can produce effects. Its first
     // resolver already observed the sources; missing sources now refuse.

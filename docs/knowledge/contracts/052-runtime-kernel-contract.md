@@ -4518,14 +4518,24 @@ exec into, so the placement is the one the host would choose and it needs none
 of the host authority a v1 document cannot carry. The placement decision reads
 the context's pinned composed manifest (digest-verified, never the writable
 checkout): the task and every task its steps reference must resolve to the
-manifest's default system and workspace, and must declare none of
+context's prepared container — the `env:<policy name>` resource the publication
+records, so a non-default selected workspace is admitted when its binding names
+the prepared container, and a task bound to any other named or inline container
+refuses — and must declare none of
 `run_in = "host"`, `secrets`, `gateway`, `container_lifecycle`,
 `admission = "heavy"`, `durable`, or a managed-session shape (`health_wait`,
 `ready_message`, `stay_in_shell`, `concurrent`). The allowed task is handed to
 the ordinary runner dispatch with `EFFIGY_INTERNAL_CONTAINER_HANDOFF` set — the
 runner's existing "already inside its own workspace container" switch — so
 routing stays local and the run keeps its ordinary gates, custody and
-single-execution rule. Every other Observe, Invoke or Refused command refuses
+single-execution rule. That classification is not the last word: the guest
+records the placement only after the mounted checkout manifest still matches its
+pinned digest, the dispatcher re-checks that digest immediately before it
+prepares sources or resolves anything, and the execution entry re-checks the
+definition it actually resolved (`legacy::verify_local_task`) before the run
+starts. A checkout changed after publication therefore refuses instead of
+running a definition the host never approved. Every other Observe, Invoke or
+Refused command refuses
 before any connection with the honest cause: the production context pins no
 admitted session and no host authority channel, re-preparing republishes the
 same legacy document, and the host CLI in the pinned checkout is what actually

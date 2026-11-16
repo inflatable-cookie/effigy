@@ -1776,18 +1776,20 @@ fn legacy_command(
             legacy::LegacyTask::ContainerLocal => {
                 // This process proved it runs inside the container the context
                 // was prepared for: the container id, VM boot, platform and
-                // libc matched an independent observation of itself. The task's
-                // steps are bound to that same workspace container, so the
-                // placement the host would have chosen is the one this process
-                // already is in.
+                // libc matched an independent observation of itself, and the
+                // task's declaration is bound to that same container. Record
+                // that placement (refusing a checkout manifest that no longer
+                // matches its pin) and let the ordinary dispatch run the steps
+                // here, exactly once.
                 //
                 // `EFFIGY_INTERNAL_CONTAINER_HANDOFF` is the runner's existing
                 // "this process is inside its own workspace container" switch:
                 // it keeps routing local instead of spawning a container client.
-                // The context publication set it by compose exec; here the
-                // verified placement is the same fact, proved rather than
-                // assumed, and the task still runs exactly once, under the same
-                // gates and custody a local handoff run has.
+                // The verified context is a stronger proof of the same fact than
+                // the compose-exec marker it stands in for, and the dispatch
+                // re-checks the definition it actually resolves against the
+                // recorded placement before anything runs.
+                legacy::remember_local_task_placement(published, checkout)?;
                 std::env::set_var(
                     crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_NAME,
                     "1",
