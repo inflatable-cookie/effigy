@@ -2407,9 +2407,12 @@ many it removed.
 Effigy manages the default `effigy` Colima profile for workspace-heavy local
 development. New or recreated profiles use the configured
 `containers.profile_disk_gib` user-global target, falling back to 300GiB, plus
-memory and swap sizing based on host memory. Existing smaller profiles may need
-a manual resize or recreate; Effigy warns when a running managed profile is
-below the target and points at the non-destructive resize path first.
+memory and swap sizing based on host memory. Preparing managed settings and
+ordinary starts never change an existing profile's disk. The explicit resize
+command stops and restarts the profile and passes `--disk` only when the
+existing disk is below target; Colima's disk grow is irreversible. Effigy warns
+when a running managed profile is below target and points at this explicit
+resize path.
 
 Use the profile commands for that workflow:
 
@@ -2417,7 +2420,8 @@ Use the profile commands for that workflow:
 # Inspect actual profile sizing against Effigy's managed targets
 effigy container profile status
 
-# Apply the managed sizing in place by stopping and restarting the profile
+# Apply managed memory sizing by stopping and restarting the profile. If its
+# disk is below target, this explicitly grows it irreversibly to that target.
 effigy container profile resize
 
 # Persist a different managed disk target

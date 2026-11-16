@@ -1205,7 +1205,7 @@ fn map_container_exec_failure(
     }
     if lowered.contains("no space left on device") {
         return RunnerError::TaskInvocation(format!(
-            "Container runtime storage is out of space or inodes while running `{command}`.\nnext: run `effigy container profile resize` to restart the managed Colima profile without deleting runtime data, then retry the Effigy command. If disk pressure remains, inspect `effigy container cache list --global` and prune purge-safe caches with `effigy container cache prune --global --yes`.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+            "Container runtime storage is out of space or inodes while running `{command}`.\nnext: check `effigy container profile status`; `effigy container profile resize` stops and restarts the managed profile and may irreversibly grow a disk below target. Then retry the Effigy command. If disk pressure remains, inspect `effigy container cache list --global` and prune purge-safe caches with `effigy container cache prune --global --yes`.\nstdout:\n{stdout}\nstderr:\n{stderr}"
         ));
     }
 
