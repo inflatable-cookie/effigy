@@ -58,6 +58,14 @@ pub(super) struct Custodied {
     pub run: RunId,
     pub sequence: i64,
     pub receipt: Option<ProcessReceipt>,
+    /// Set when the running row carried a receipt this capture could not read:
+    /// an unreadable receipt is unproven evidence, never an absent one.
+    pub unreadable: Option<String>,
+    /// The effect's own recorded state, which decides what a receipt's absence
+    /// means: the journal records `Released` with no receipt only for an intent
+    /// whose barrier never released, and custody in doubt (`Applied`, `Unknown`,
+    /// `Residue`) must never be read as absent.
+    pub state: crate::run::EffectState,
 }
 /// A process the scenario declared, observed fresh at capture.
 #[derive(Debug, Clone)]
@@ -186,13 +194,19 @@ impl World {
             let effects = crate::run::journal_effects(conn, run.id).expect("effects");
             for effect in &effects {
                 if effect.spec.kind == crate::custody::KIND {
+                    let (receipt, unreadable) = match effect.receipt.clone() {
+                        None => (None, None),
+                        Some(stored) => match serde_json::from_value(stored) {
+                            Ok(receipt) => (Some(receipt), None),
+                            Err(error) => (None, Some(error.to_string())),
+                        },
+                    };
                     world.custody.push(Custodied {
                         run: run.id,
                         sequence: effect.sequence,
-                        receipt: effect
-                            .receipt
-                            .clone()
-                            .and_then(|r| serde_json::from_value(r).ok()),
+                        receipt,
+                        unreadable,
+                        state: effect.state,
                     });
                 }
             }

@@ -87,8 +87,12 @@ pub(super) struct Home(tempfile::TempDir);
 /// The fixture HOME is short enough for the platform's `sun_path` limit and
 /// lives where every other fixture does: the run's temporary directory, which
 /// a `[scratch]` run places on the configured volume. Nothing here pins the
-/// internal `/tmp`.
+/// internal `/tmp`. One HOME is one drive, and each drive mints its own run
+/// identities: the journal's custody nonce is `<run>:<sequence>`, so two drives
+/// that shared an identity would share a nonce and stop being distinguishable to
+/// O1a (effigy#1011).
 pub(super) fn home() -> Home {
+    scenarios::fresh_run_epoch();
     let dir = effigy_test_support::short_tempdir("kf-").expect("fresh temporary directory");
     for child in ["h", "aux"] {
         std::fs::create_dir(dir.path().join(child)).expect("fixture dir");

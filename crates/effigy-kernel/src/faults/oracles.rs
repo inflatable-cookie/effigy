@@ -6,7 +6,7 @@ use super::*;
 use crate::fault::Event;
 use crate::gate::GateState;
 use crate::ident::{self, ProcessState};
-use crate::run::RunStatus;
+use crate::run::{EffectState, RunStatus};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -70,13 +70,69 @@ fn closed(world: &World, complete: bool) -> impl Iterator<Item = &super::world::
         run.phase == "closed" && (run.cleanup.as_deref() == Some("complete")) == complete
     })
 }
+#[cfg(all(test, feature = "fault-injection"))]
+thread_local! {
+    static INVENTORY_UNAVAILABLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+#[cfg(all(test, feature = "fault-injection"))]
+fn set_inventory_unavailable(unavailable: bool) {
+    INVENTORY_UNAVAILABLE.with(|flag| flag.set(unavailable));
+}
+/// The group inventory the survivor scan reads. A test seam lets the controls
+/// exercise an inventory that cannot be read; nothing else overrides it.
+fn group_inventory(pgid: u32) -> std::io::Result<Vec<u32>> {
+    #[cfg(all(test, feature = "fault-injection"))]
+    if INVENTORY_UNAVAILABLE.with(std::cell::Cell::get) {
+        return Err(std::io::Error::other("injected inventory failure"));
+    }
+    crate::custody::platform::group_pids(pgid)
+}
+
 /// Owned processes of `run` that are still alive: a recorded leader with its
 /// start identity, a member of a recorded group whose leader is ours or gone,
 /// or any announced process carrying the run's custody nonce.
-fn survivors(world: &World, run: crate::id::RunId) -> Vec<(Option<i64>, String)> {
+///
+/// `unreadable_is_survivor` decides what unproven evidence does. A run that claims
+/// `Complete` has to have recorded the custody it released, so for that subject a
+/// missing or unreadable receipt and an inventory nobody could read all read as
+/// unproven closure rather than as nothing to check. An incomplete subject names
+/// its residue through its own effects, so it keeps the recorded-only scan and its
+/// residue listing decides.
+fn survivors(
+    world: &World,
+    run: crate::id::RunId,
+    unreadable_is_survivor: bool,
+) -> Vec<(Option<i64>, String)> {
     let mut alive = vec![];
     for custody in world.custody.iter().filter(|c| c.run == run) {
+        // A receipt this capture could not read is unproven, never absent: the
+        // run cannot be called clean on evidence nobody could read.
+        if let Some(reason) = &custody.unreadable {
+            alive.push((
+                Some(custody.sequence),
+                format!(
+                    "custody receipt of effect {} unreadable: {reason}",
+                    custody.sequence
+                ),
+            ));
+            continue;
+        }
         let Some(receipt) = &custody.receipt else {
+            // `custody::settle_effect` releases every effect that has no receipt
+            // except `Unknown` and `Residue`. So once a run reads `Complete`, a
+            // recorded effect without a receipt can only legitimately read
+            // `Released`; any other state means settlement did not resolve it, and
+            // the run is not clean on evidence nobody could read.
+            let released_without_a_process = matches!(custody.state, EffectState::Released);
+            if unreadable_is_survivor && !released_without_a_process {
+                alive.push((
+                    Some(custody.sequence),
+                    format!(
+                        "custody effect {} is {:?} with no receipt, so its closure is unproven",
+                        custody.sequence, custody.state
+                    ),
+                ));
+            }
             continue;
         };
         let leader = ident::process_identity(receipt.identity.pid);
@@ -100,7 +156,17 @@ fn survivors(world: &World, run: crate::id::RunId) -> Vec<(Option<i64>, String)>
         let reused =
             matches!(&leader, Observed::Verified(identity, _) if *identity != receipt.identity);
         if !reused {
-            let members = crate::custody::platform::group_pids(receipt.pgid).unwrap_or_default();
+            // An inventory nobody could read is unproven, never empty.
+            let members = match group_inventory(receipt.pgid) {
+                Ok(members) => members,
+                Err(error) => {
+                    alive.push((
+                        Some(custody.sequence),
+                        format!("group {} inventory unavailable: {error}", receipt.pgid),
+                    ));
+                    continue;
+                }
+            };
             let members: Vec<u32> = members
                 .into_iter()
                 .filter(|pid| {
@@ -137,7 +203,7 @@ fn o1a(world: &World) -> Result<usize, String> {
     let mut judged = 0;
     for run in closed(world, true) {
         judged += 1;
-        let alive = survivors(world, run.id);
+        let alive = survivors(world, run.id, true);
         if !alive.is_empty() {
             return Err(format!(
                 "O1a: complete run {} has live owned processes: {alive:?}",
@@ -161,7 +227,7 @@ fn o1b(world: &World) -> Result<usize, String> {
             other => return Err(format!("O1b: incomplete run {} reads {other:?}", run.id)),
         }
         let effects = &world.effects[&run.id.to_string()];
-        for (sequence, what) in survivors(world, run.id) {
+        for (sequence, what) in survivors(world, run.id, false) {
             let listed = sequence.is_some_and(|sequence| {
                 effects
                     .iter()
@@ -478,6 +544,109 @@ mod controls {
             state,
             receipt: None,
             reason: None,
+        }
+    }
+
+    // Controls for unproven custody evidence: the survivor scan must never read a
+    // receipt it could not read, a receipt the journal never recorded for custody
+    // that was applied or in doubt, or a group inventory it could not take, as
+    // "nothing to check". All three are synthetic worlds: no process is spawned.
+
+    const ABSENT: u32 = 999_999;
+
+    /// A complete run whose one custody effect reads `state`, with this receipt.
+    fn custody_world(
+        state: EffectState,
+        receipt: Option<crate::custody::ProcessReceipt>,
+        unreadable: Option<String>,
+    ) -> World {
+        let mut world = World::default();
+        world.runs.push(row(3, "closed", Some("complete")));
+        world.effects.insert(
+            run_id(3).to_string(),
+            vec![effect(1, crate::custody::KIND, EffectState::Released)],
+        );
+        world.custody.push(Custodied {
+            run: run_id(3),
+            sequence: 1,
+            receipt,
+            unreadable,
+            state,
+        });
+        world
+    }
+
+    /// A receipt for a pid this host does not have, so the scan goes on to read the
+    /// group inventory without a process of its own.
+    fn absent_receipt() -> crate::custody::ProcessReceipt {
+        let own = crate::ident::process_identity(me())
+            .verified()
+            .cloned()
+            .expect("own identity");
+        crate::custody::ProcessReceipt {
+            identity: crate::ident::ProcessIdentity { pid: ABSENT, ..own },
+            pgid: ABSENT,
+            nonce: format!("{}:1", run_id(3)),
+            grace_millis: 20,
+        }
+    }
+
+    #[test]
+    fn oracle_controls_reject_a_complete_run_without_custody_receipt() {
+        // `custody::settle_effect` releases every receipt-less effect except
+        // `Unknown` and `Residue`, so on a `Complete` run only `Released` may lack
+        // a receipt; every other state means settlement did not resolve it.
+        passes(
+            Oracle::O1a,
+            &custody_world(EffectState::Released, None, None),
+        );
+        for state in [
+            EffectState::Intended,
+            EffectState::Applied,
+            EffectState::Failed,
+            EffectState::Unknown,
+            EffectState::Retained,
+            EffectState::Irreversible,
+            EffectState::Residue,
+        ] {
+            let world = custody_world(state, None, None);
+            match Oracle::O1a.check(&world) {
+                Err(failure) => assert!(
+                    failure.contains("no receipt"),
+                    "the refusal names the missing receipt for {state:?}: {failure}"
+                ),
+                Ok(judged) => panic!("{state:?} with no receipt passed O1a ({judged} judged)"),
+            }
+        }
+    }
+
+    #[test]
+    fn oracle_controls_reject_an_unreadable_custody_receipt() {
+        let world = custody_world(EffectState::Released, None, Some("invalid receipt".into()));
+        match Oracle::O1a.check(&world) {
+            Err(failure) => assert!(
+                failure.contains("unreadable"),
+                "the refusal names the unreadable receipt: {failure}"
+            ),
+            Ok(judged) => panic!("an unreadable receipt passed O1a ({judged} judged)"),
+        }
+    }
+
+    #[test]
+    fn oracle_controls_reject_an_unavailable_group_inventory() {
+        let world = custody_world(EffectState::Released, Some(absent_receipt()), None);
+        // An empty group is a clean answer: the pid is absent and its group has
+        // no members.
+        passes(Oracle::O1a, &world);
+        set_inventory_unavailable(true);
+        let refused = Oracle::O1a.check(&world);
+        set_inventory_unavailable(false);
+        match refused {
+            Err(failure) => assert!(
+                failure.contains("inventory unavailable"),
+                "the refusal names the inventory: {failure}"
+            ),
+            Ok(judged) => panic!("an unavailable inventory passed O1a ({judged} judged)"),
         }
     }
 

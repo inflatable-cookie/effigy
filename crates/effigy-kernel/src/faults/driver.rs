@@ -222,6 +222,7 @@ pub(super) fn drive_part(scenario: &dyn Scenario, part: usize, parts: usize) {
         .into_iter()
         .enumerate()
         .filter(|(ordinal, _)| job_part(*ordinal, parts) == part)
+        .filter(|(_, job)| only_runs(scenario, job))
         .collect();
     let expected_ordinals: BTreeSet<_> = expected.iter().map(|(ordinal, _)| *ordinal).collect();
     assert_eq!(measured, expected_ordinals);
@@ -230,6 +231,17 @@ pub(super) fn drive_part(scenario: &dyn Scenario, part: usize, parts: usize) {
         scenario.name(),
         encoded.join(" ")
     );
+    if only_filter().is_some() {
+        // A one-job drive proves that run; the coverage assertions describe the
+        // whole traced plan, so they belong to an unfiltered drive.
+        assert_eq!(expected.len(), 1, "a one-job drive names exactly one run");
+        eprintln!(
+            "fault-suite {} part {part}/{parts}: one isolated run {:?}, {shards} shards",
+            scenario.name(),
+            tally.runs,
+        );
+        return;
+    }
     for (_, job) in &expected {
         if let Job::Point(point, _, fault) = job {
             if scenario.variable().contains(point) {
@@ -266,7 +278,7 @@ pub(super) fn drive_part(scenario: &dyn Scenario, part: usize, parts: usize) {
     );
 }
 /// The foreign fixture ends with its process's drive work, even on panic.
-struct ForeignGuard;
+pub(super) struct ForeignGuard;
 impl Drop for ForeignGuard {
     fn drop(&mut self) {
         super::scenarios::stop_foreign();
@@ -321,6 +333,7 @@ fn fault_shard() {
         .into_iter()
         .enumerate()
         .filter(|(i, _)| job_part(*i, parts) == part && job_shard(*i, count) == index)
+        .filter(|(_, job)| only_runs(scenario, job))
     {
         std::fs::write(plan.join(format!("progress-{index}")), format!("{job:?}\n"))
             .expect("shard progress");
@@ -329,11 +342,26 @@ fn fault_shard() {
     }
     std::fs::write(plan.join(format!("tally-{index}")), tally.encode()).expect("tally");
 }
-fn run_job(scenario: &dyn Scenario, job: Job, baseline: Option<i32>, tally: &mut Tally) {
-    let label = match job {
+/// One run's label: the fault and point it delivers, or its observation.
+fn job_label(scenario: &dyn Scenario, job: &Job) -> String {
+    match job {
         Job::Point(point, n, fault) => format!("{}: {point:?}#{n} {fault:?}", scenario.name()),
         Job::Observation(index) => format!("{}: observation {index} Unknown", scenario.name()),
-    };
+    }
+}
+/// The one-job diagnostic filter: `EFFIGY_KERNEL_FAULT_ONLY` names a substring
+/// of the label a run must carry. It narrows a failing point to one run without
+/// changing any other drive, and never weakens a normal (unfiltered) drive.
+fn only_filter() -> Option<String> {
+    std::env::var("EFFIGY_KERNEL_FAULT_ONLY")
+        .ok()
+        .filter(|only| !only.is_empty())
+}
+fn only_runs(scenario: &dyn Scenario, job: &Job) -> bool {
+    only_filter().is_none_or(|only| job_label(scenario, job).contains(&only))
+}
+fn run_job(scenario: &dyn Scenario, job: Job, baseline: Option<i32>, tally: &mut Tally) {
+    let label = job_label(scenario, &job);
     let home = home();
     fault::set_helper_log(Some(helper_log(&home.home())));
     scenario.prepare(&home.home());
@@ -425,7 +453,7 @@ fn judge(world: &World, label: &str, tally: &mut Tally) {
     }
 }
 
-fn helper_log(home: &Path) -> PathBuf {
+pub(super) fn helper_log(home: &Path) -> PathBuf {
     aux(home).join("helpers")
 }
 /// Waits until every helper spawned for this HOME, registered or not, and
@@ -459,7 +487,7 @@ fn quiesce(home: &Path, label: &str, after_recovery: bool) {
 }
 /// Status reads (O10), the generic settle of every unresolved run, the
 /// scenario's own recovery, then the captured world.
-fn recover(scenario: &dyn Scenario, home: &Path, label: &str) -> World {
+pub(super) fn recover(scenario: &dyn Scenario, home: &Path, label: &str) -> World {
     quiesce(home, label, false);
     let before = world::tree(home);
     observe_everything(home);
@@ -572,6 +600,10 @@ fn child(scenario: &dyn Scenario, home: &Path, point: Point, n: usize, fault: Fa
         .env("EFFIGY_KERNEL_TEST_FAULT", fault::env_spec(point, n, fault))
         .env("EFFIGY_KERNEL_TEST_HELPERS", helper_log(home))
         .env("EFFIGY_KERNEL_TEST_PROGRESS", &progress)
+        .env(
+            super::scenarios::RUN_EPOCH_ENV,
+            super::scenarios::current_run_epoch(),
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())

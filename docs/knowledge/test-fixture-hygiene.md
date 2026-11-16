@@ -114,6 +114,58 @@ records a pid: a bare state observation, like a bare `kill` return, says nothing
 once the anchor has retired and the kernel has given its pid to another process
 (effigy#678). The check and the signal are separate calls, so a retirement plus
 reuse between them is narrowed, not excluded.
+A fault drive's run identity is unique per drive, because the journal's custody
+nonce is `<run>:<effect sequence>` and the nonce is the only evidence a
+non-grouped survivor carries: O1a judges a complete run by the nonce, so one run
+has to own it. A fixed identity gave every concurrent drive of a scenario the
+same nonce, so a pid one drive wrote to `pids` was, after ordinary pid reuse, a
+sibling drive's live process, and O1a named a complete run for a stranger whose
+own groups had all reached verified closure (candidate QA 763eb846, effigy#1011).
+`fresh_run_epoch` mints the namespace from time, process and a counter, and
+`faults::home` gives each drive a fresh one; `id(tag)` stays stable inside a
+drive, so a scenario's later request still names the run it started. The filter
+`EFFIGY_KERNEL_FAULT_ONLY` narrows a drive to one labelled run and is diagnostic
+only: it runs that run and its oracles, and leaves the whole-plan coverage
+assertions to an unfiltered drive.
+The retained log of candidate QA 763eb846 cannot attribute its pid 75922 to a
+sibling drive: it carries only the shard's panic, and the run id it names is the
+constant identity every drive of that scenario minted, so the nonce string in it
+matched all of them at once. It says nothing about that pid's group membership, and
+this task makes no claim about it or about the original run's inventory. The
+failing-before proof is the collision control
+`a_complete_run_owns_no_process_another_drive_minted`, which reproduces the QA
+panic's shape before the identity fix and passes after; a race the evidence shows
+is not there has no failing-before form.
+The post-recovery witness is
+`faults_multi_child_anchor_stop_unknown_recovers_to_a_clean_world`: the QA job
+with its second child (spawn sequence 2, the sequence the panic named) blocking on a
+named pipe in its own HOME until this process writes a byte at the settle's first
+group stop, so no sleep and no load stand in for the QA drive's timing. The child's
+marker shows that the release reached it; it does not show the child alive at any
+instant of the settle, and nothing is claimed about one. It judges one thing: the
+world after recovery. Every custody effect of that run reads `Released`, every
+recorded group inventories no live member, every recorded anchor is gone, and O1a
+and O1b accept it. That is the whole claim: one replay's post-recovery world carries
+no owned survivor; it is not proof that no custody race exists anywhere. It makes no
+claim about the order the settle wrote those records in: on the pinned path the
+residue is settled by the run's sentinel in another process, where no harness
+instrument can see the write order, and that ordering is follow-up work.
+A custody receipt or group inventory nobody can read is unproven, never absent. The
+driver keeps an unreadable receipt as `Custodied::unreadable`, and a failed group
+inventory and an unreadable receipt each make `survivors` name the effect, so O1a
+fails rather than pass on evidence it could not read. A recorded effect with no
+receipt is exempt only when it reads `Released`, because `custody::settle_effect`
+releases every effect that has no receipt except `Unknown` and `Residue`. So once a run
+reads `Complete`, a recorded effect without a receipt can only legitimately read
+`Released`; any other state means settlement did not resolve it, and O1a fails. The
+incomplete-subject scan stays recorded-only, because its residue listing is what
+names its survivors. The witness reads the same evidence with `expect`, and three
+synthetic controls in the oracle controls module pin all three paths — a complete run
+whose effect has no receipt and is not `Released`, an unreadable receipt, and an
+unavailable group inventory — without spawning a process. A workload's unreadable
+custody nonce stays "not this run's process" on purpose: on macOS a platform binary
+hides its environment, which is why lingering workloads exec the custody fixture
+instead.
 The one pinned proof that has to be positive about its own premise —
 `faults_anchor_retirement_delivery_is_pinned_to_settlement` — holds its workload
 at the launch's own owner-written stdin until the recorded anchor reads
