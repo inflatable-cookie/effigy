@@ -292,11 +292,8 @@ mod tests {
             temp.path().join("effigy.active-version")
         );
         assert_eq!(recorded_active_version(&executable), None);
-        std::fs::write(
-            active_version_file(&executable),
-            "v0.14.1+local.fixture\n",
-        )
-        .expect("write sidecar");
+        std::fs::write(active_version_file(&executable), "v0.14.1+local.fixture\n")
+            .expect("write sidecar");
         assert_eq!(
             recorded_active_version(&executable).as_deref(),
             Some("v0.14.1+local.fixture")

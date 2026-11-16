@@ -948,9 +948,10 @@ home = "/home/vscode"
             // digest-addressed object. A guest with no such file falls back to
             // the crate's package version, so a locally stamped artifact could
             // never agree with the context that pins it.
-            let version_path = effigy_core::build_info::active_version_file(Path::new(&object.path))
-                .to_string_lossy()
-                .into_owned();
+            let version_path =
+                effigy_core::build_info::active_version_file(Path::new(&object.path))
+                    .to_string_lossy()
+                    .into_owned();
             assert_eq!(
                 guest.text(&version_path).as_deref(),
                 Some(doc.version.as_str()),

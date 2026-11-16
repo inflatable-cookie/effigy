@@ -73,11 +73,14 @@ impl CleanupResidue {
 /// `diagnosis` is the refusal the failure itself was raised with, so the
 /// sentence names the call that failed even when the cleanup that follows it
 /// settles or retains independently of that cause.
-pub(super) fn message(stage: &'static str, diagnosis: &str, residue: CleanupResidue) -> String {
-    let cause = if diagnosis.is_empty() {
-        String::new()
-    } else {
-        format!(": {diagnosis}")
+pub(super) fn message(
+    stage: &'static str,
+    diagnosis: Option<&str>,
+    residue: CleanupResidue,
+) -> String {
+    let cause = match diagnosis.filter(|diagnosis| !diagnosis.is_empty()) {
+        Some(diagnosis) => format!(": {diagnosis}"),
+        None => String::new(),
     };
     match residue {
         CleanupResidue::Absent => format!(
@@ -137,14 +140,18 @@ mod tests {
             CleanupResidue::of(verified(Vec::new())),
             CleanupResidue::Absent
         );
-        let settled = message("sealed apply", "", CleanupResidue::of(verified(Vec::new())));
+        let settled = message(
+            "sealed apply",
+            None,
+            CleanupResidue::of(verified(Vec::new())),
+        );
         assert_eq!(
             settled,
             "workspace activation failed during sealed apply; exact owner cleanup settled"
         );
         let with_cause = message(
             "publication/selection",
-            "staging the workspace context failed",
+            Some("staging the workspace context failed"),
             CleanupResidue::of(verified(Vec::new())),
         );
         assert_eq!(
@@ -161,7 +168,7 @@ mod tests {
             residue,
             CleanupResidue::Containers(vec!["checkout-dev-ec-746e15dc40d7-app-1".into()])
         );
-        let reported = message("sealed apply", "", residue);
+        let reported = message("sealed apply", None, residue);
         assert!(!reported.contains("cleanup settled"), "{reported}");
         assert!(
             reported.contains("1 owned container(s) remain"),
@@ -180,7 +187,7 @@ mod tests {
             Observed::Unknown(UnknownReason::Inconsistent("unreadable".into())),
             Observed::Absent(effigy_kernel::observe::AbsenceProof::GateFreeRunClosed),
         ] {
-            let reported = message("sealed apply", "", CleanupResidue::of(proof));
+            let reported = message("sealed apply", None, CleanupResidue::of(proof));
             assert!(!reported.contains("cleanup settled"), "{reported}");
             assert!(reported.contains("unproven"), "{reported}");
             assert!(reported.contains("effigy container down"), "{reported}");
@@ -192,7 +199,7 @@ mod tests {
         let rows = (0..9)
             .map(|index| row(&format!("checkout-dev-ec-746e15dc40d7-app-{index}")))
             .collect();
-        let reported = message("sealed apply", "", CleanupResidue::of(verified(rows)));
+        let reported = message("sealed apply", None, CleanupResidue::of(verified(rows)));
         assert!(
             reported.contains("9 owned container(s) remain"),
             "{reported}"
