@@ -658,18 +658,19 @@ const _: [fn(); 3] = [
     faults_multi_child_test_every_point_and_observation_part_2,
 ];
 
-/// Candidate QA 763eb846's job replayed alone, as the witness that keeps no
-/// custody race in its world: child 2 (spawn sequence 2, the sequence the panic
-/// named) ignores the first stop signal and is held by an event, and the run
-/// takes the `Unknown` at `AnchorStop#1` with it alive across the settle. No
-/// load stands in for that timing.
+/// Candidate QA 763eb846's job replayed alone: child 2 (spawn sequence 2, the
+/// sequence the panic named) ignores the first stop signal and is held by an
+/// event, and the run takes the `Unknown` at `AnchorStop#1` with it alive across
+/// the settle. No load stands in for that timing.
 ///
 /// It judges one thing and says so: the world after recovery. Every custody
 /// effect of that run reads `Released`, every recorded group inventories no live
-/// member, every recorded anchor is gone, and O1a and O1b accept it. It makes no
-/// claim about the order the settle wrote those records in: on the pinned path the
-/// residue is settled by the run's sentinel in another process, where no harness
-/// instrument can see the write order (follow-up lead).
+/// member, every recorded anchor is gone, and O1a and O1b accept it. That is all
+/// it shows: one replay's post-recovery world carries no owned survivor. It does
+/// not prove that no custody race exists anywhere, and it makes no claim about the
+/// order the settle wrote those records in: on the pinned path the residue is
+/// settled by the run's sentinel in another process, where no harness instrument
+/// can see the write order (follow-up lead).
 ///
 /// The failing-before proof for the cause this task found is the separate
 /// collision control, `a_complete_run_owns_no_process_another_drive_minted`.

@@ -6,7 +6,7 @@ use super::*;
 use crate::fault::Event;
 use crate::gate::GateState;
 use crate::ident::{self, ProcessState};
-use crate::run::RunStatus;
+use crate::run::{EffectState, RunStatus};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -73,7 +73,18 @@ fn closed(world: &World, complete: bool) -> impl Iterator<Item = &super::world::
 /// Owned processes of `run` that are still alive: a recorded leader with its
 /// start identity, a member of a recorded group whose leader is ours or gone,
 /// or any announced process carrying the run's custody nonce.
-fn survivors(world: &World, run: crate::id::RunId) -> Vec<(Option<i64>, String)> {
+///
+/// `unreadable_is_survivor` decides what unproven evidence does. A run that claims
+/// `Complete` has to have recorded the custody it released, so for that subject a
+/// missing or unreadable receipt and an inventory nobody could read all read as
+/// unproven closure rather than as nothing to check. An incomplete subject names
+/// its residue through its own effects, so it keeps the recorded-only scan and its
+/// residue listing decides.
+fn survivors(
+    world: &World,
+    run: crate::id::RunId,
+    unreadable_is_survivor: bool,
+) -> Vec<(Option<i64>, String)> {
     let mut alive = vec![];
     for custody in world.custody.iter().filter(|c| c.run == run) {
         // A receipt this capture could not read is unproven, never absent: the
@@ -89,6 +100,26 @@ fn survivors(world: &World, run: crate::id::RunId) -> Vec<(Option<i64>, String)>
             continue;
         }
         let Some(receipt) = &custody.receipt else {
+            // The journal records `Released` with no receipt only for an intent
+            // whose barrier never released: the product's own rule, so there is no
+            // process to own. Any other state is custody in doubt, and its absence
+            // of a receipt is unproven closure rather than nothing to check.
+            let released_by_rule = matches!(
+                custody.state,
+                EffectState::Released
+                    | EffectState::Failed
+                    | EffectState::Retained
+                    | EffectState::Irreversible
+            );
+            if unreadable_is_survivor && !released_by_rule {
+                alive.push((
+                    Some(custody.sequence),
+                    format!(
+                        "custody effect {} is {:?} with no receipt, so its closure is unproven",
+                        custody.sequence, custody.state
+                    ),
+                ));
+            }
             continue;
         };
         let leader = ident::process_identity(receipt.identity.pid);
@@ -159,7 +190,7 @@ fn o1a(world: &World) -> Result<usize, String> {
     let mut judged = 0;
     for run in closed(world, true) {
         judged += 1;
-        let alive = survivors(world, run.id);
+        let alive = survivors(world, run.id, true);
         if !alive.is_empty() {
             return Err(format!(
                 "O1a: complete run {} has live owned processes: {alive:?}",
@@ -183,7 +214,7 @@ fn o1b(world: &World) -> Result<usize, String> {
             other => return Err(format!("O1b: incomplete run {} reads {other:?}", run.id)),
         }
         let effects = &world.effects[&run.id.to_string()];
-        for (sequence, what) in survivors(world, run.id) {
+        for (sequence, what) in survivors(world, run.id, false) {
             let listed = sequence.is_some_and(|sequence| {
                 effects
                     .iter()
