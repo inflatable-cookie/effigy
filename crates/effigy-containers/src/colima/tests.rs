@@ -248,8 +248,6 @@ fn colima_start_command_selects_runtime_and_managed_resources() {
             "--ssh-agent",
             "--memory",
             "32",
-            "--disk",
-            "300",
             "--dns",
             "1.1.1.1",
             "--dns",
@@ -276,8 +274,6 @@ fn colima_start_command_selects_runtime_and_managed_resources() {
             "--ssh-agent",
             "--memory",
             "32",
-            "--disk",
-            "300",
             "--dns",
             "1.1.1.1",
             "--dns",
@@ -352,8 +348,7 @@ fn colima_platform_override_cases() {
     }
 }
 
-/// Managed profile resources: memory and swap scale from host memory, the
-/// disk target is 300 GiB unless config or an explicit override sets one.
+/// The development profile keeps its host-derived memory and configured disk.
 #[test]
 fn managed_colima_profile_resource_cases() {
     struct Case {
@@ -442,21 +437,36 @@ fn managed_colima_profile_resource_cases() {
 }
 
 #[test]
-fn release_builder_receives_a_cold_build_sized_plan() {
+fn release_builder_plan_is_fixed_across_host_memory_sizes() {
     let _lock = env_lock();
-    let _env = effigy_test_support::env::ScopedEnv::set(
-        "EFFIGY_INTERNAL_HOST_MEMORY_BYTES",
-        (16 * 1024_u64.pow(3)).to_string(),
-    );
-    let resources =
-        managed_colima_profile_resources("effigy-release").expect("release profile plan");
-    assert_eq!(resources.memory_gib, 8);
-    assert_eq!(resources.swap_gib, 8);
+    let previous_host_memory = std::env::var_os("EFFIGY_INTERNAL_HOST_MEMORY_BYTES");
+    for host_gib in [8, 64, 128] {
+        unsafe {
+            std::env::set_var(
+                "EFFIGY_INTERNAL_HOST_MEMORY_BYTES",
+                (host_gib * 1024_u64.pow(3)).to_string(),
+            );
+        }
+        let resources =
+            managed_colima_profile_resources("effigy-release").expect("release profile plan");
+        assert_eq!(resources.memory_gib, 8, "{host_gib}GiB host");
+        assert_eq!(resources.swap_gib, 8, "{host_gib}GiB host");
+        assert_eq!(resources.disk_gib, 100, "{host_gib}GiB host");
+    }
+    unsafe {
+        if let Some(previous) = previous_host_memory {
+            std::env::set_var("EFFIGY_INTERNAL_HOST_MEMORY_BYTES", previous);
+        } else {
+            std::env::remove_var("EFFIGY_INTERNAL_HOST_MEMORY_BYTES");
+        }
+    }
     let command = colima_start_command_for_profile("effigy-release");
+    assert!(command.args.windows(2).any(|args| args == ["--cpu", "4"]));
     assert!(command
         .args
         .windows(2)
         .any(|args| args == ["--memory", "8"]));
+    assert!(!command.args.iter().any(|arg| arg == "--disk"));
     assert!(managed_colima_profile_resources("unmanaged").is_none());
 }
 
@@ -472,9 +482,11 @@ fn prepare_managed_colima_profile_writes_memory_and_swap_provision() {
     ))
     .expect("fixture directory");
     std::fs::create_dir_all(&root).expect("mkdir home");
-    let previous_home = std::env::var_os("HOME");
+    let colima_home = root.join(".colima");
+    let previous_colima_home = std::env::var_os("COLIMA_HOME");
+    let previous_host_memory = std::env::var_os("EFFIGY_INTERNAL_HOST_MEMORY_BYTES");
     unsafe {
-        std::env::set_var("HOME", &root);
+        std::env::set_var("COLIMA_HOME", &colima_home);
         std::env::set_var(
             "EFFIGY_INTERNAL_HOST_MEMORY_BYTES",
             (128u64 * 1024 * 1024 * 1024).to_string(),
@@ -482,17 +494,20 @@ fn prepare_managed_colima_profile_writes_memory_and_swap_provision() {
     }
 
     prepare_managed_colima_profile(&test_policy("effigy")).expect("prepare profile");
-
     unsafe {
-        std::env::remove_var("EFFIGY_INTERNAL_HOST_MEMORY_BYTES");
-        if let Some(home) = previous_home {
-            std::env::set_var("HOME", home);
-        } else {
-            std::env::remove_var("HOME");
+        for (key, previous) in [
+            ("COLIMA_HOME", previous_colima_home),
+            ("EFFIGY_INTERNAL_HOST_MEMORY_BYTES", previous_host_memory),
+        ] {
+            if let Some(previous) = previous {
+                std::env::set_var(key, previous);
+            } else {
+                std::env::remove_var(key);
+            }
         }
     }
 
-    let rendered = std::fs::read_to_string(root.join(".colima/effigy/colima.yaml"))
+    let rendered = std::fs::read_to_string(colima_home.join("effigy/colima.yaml"))
         .expect("read colima config");
     let parsed = serde_yaml::from_str::<serde_yaml::Value>(&rendered).expect("parse yaml");
     let root = parsed.as_mapping().expect("yaml mapping");
@@ -529,6 +544,112 @@ fn prepare_managed_colima_profile_writes_memory_and_swap_provision() {
     assert!(script.contains("sudo -n sh -eu"));
     assert!(script.contains("swapon /swapfile\n"));
     assert!(!script.contains("swapon /swapfile 2>/dev/null || true"));
+}
+
+#[test]
+fn preparing_existing_profiles_never_changes_their_disk() {
+    let _lock = env_lock();
+    let home = effigy_test_support::Fixture::process_lifetime(&format!(
+        "effigy-colima-existing-disk-test-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    ))
+    .expect("fixture directory");
+    let previous_colima_home = std::env::var_os("COLIMA_HOME");
+    let previous_host_memory = std::env::var_os("EFFIGY_INTERNAL_HOST_MEMORY_BYTES");
+    unsafe {
+        std::env::set_var("COLIMA_HOME", &home);
+        std::env::set_var(
+            "EFFIGY_INTERNAL_HOST_MEMORY_BYTES",
+            (128 * 1024_u64.pow(3)).to_string(),
+        );
+    }
+
+    for (profile, existing_disk) in [("effigy", 175), ("effigy-release", 100)] {
+        let directory = home.join(profile);
+        std::fs::create_dir_all(&directory).expect("create fake profile");
+        std::fs::write(
+            directory.join("colima.yaml"),
+            format!("disk: {existing_disk}\nmemory: 2\n"),
+        )
+        .expect("write fake profile config");
+
+        prepare_managed_colima_profile_name(profile).expect("prepare fake profile");
+
+        let rendered = std::fs::read_to_string(directory.join("colima.yaml")).expect("read config");
+        let parsed = serde_yaml::from_str::<serde_yaml::Value>(&rendered).expect("parse yaml");
+        assert_eq!(
+            parsed
+                .as_mapping()
+                .expect("yaml mapping")
+                .get(serde_yaml::Value::String("disk".to_owned()))
+                .and_then(serde_yaml::Value::as_u64),
+            Some(existing_disk),
+            "profile {profile}"
+        );
+    }
+    unsafe {
+        for (key, previous) in [
+            ("COLIMA_HOME", previous_colima_home),
+            ("EFFIGY_INTERNAL_HOST_MEMORY_BYTES", previous_host_memory),
+        ] {
+            if let Some(previous) = previous {
+                std::env::set_var(key, previous);
+            } else {
+                std::env::remove_var(key);
+            }
+        }
+    }
+}
+
+#[test]
+fn new_release_profile_gets_the_modest_plan_disk() {
+    let _lock = env_lock();
+    let home = effigy_test_support::Fixture::process_lifetime(&format!(
+        "effigy-colima-new-release-disk-test-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    ))
+    .expect("fixture directory");
+    let previous_colima_home = std::env::var_os("COLIMA_HOME");
+    let previous_host_memory = std::env::var_os("EFFIGY_INTERNAL_HOST_MEMORY_BYTES");
+    unsafe {
+        std::env::set_var("COLIMA_HOME", &home);
+        std::env::set_var(
+            "EFFIGY_INTERNAL_HOST_MEMORY_BYTES",
+            (128 * 1024_u64.pow(3)).to_string(),
+        );
+    }
+
+    prepare_managed_colima_profile_name("effigy-release").expect("prepare new profile");
+    unsafe {
+        for (key, previous) in [
+            ("COLIMA_HOME", previous_colima_home),
+            ("EFFIGY_INTERNAL_HOST_MEMORY_BYTES", previous_host_memory),
+        ] {
+            if let Some(previous) = previous {
+                std::env::set_var(key, previous);
+            } else {
+                std::env::remove_var(key);
+            }
+        }
+    }
+
+    let rendered = std::fs::read_to_string(home.join("effigy-release/colima.yaml"))
+        .expect("read generated config");
+    let parsed = serde_yaml::from_str::<serde_yaml::Value>(&rendered).expect("parse yaml");
+    assert_eq!(
+        parsed
+            .as_mapping()
+            .expect("yaml mapping")
+            .get(serde_yaml::Value::String("disk".to_owned()))
+            .and_then(serde_yaml::Value::as_u64),
+        Some(100)
+    );
 }
 
 #[test]

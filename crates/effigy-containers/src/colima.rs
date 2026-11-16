@@ -20,6 +20,8 @@ const FALLBACK_COLIMA_DNS_SERVERS: [&str; 2] = ["1.1.1.1", "8.8.8.8"];
 const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
 const MIN_EFFIGY_MEMORY_GIB: u64 = 4;
 const MIN_EFFIGY_RELEASE_MEMORY_GIB: u64 = 8;
+const EFFIGY_RELEASE_CPU: u64 = 4;
+const EFFIGY_RELEASE_DISK_GIB: u64 = 100;
 const MAX_EFFIGY_MEMORY_GIB: u64 = 32;
 const MIN_EFFIGY_SWAP_GIB: u64 = 4;
 const MAX_EFFIGY_SWAP_GIB: u64 = 16;
@@ -91,10 +93,12 @@ pub fn colima_start_command_for_profile_with_disk(
         "--ssh-agent".to_string(),
     ];
     if let Some(resources) = managed_colima_profile_resources_with_disk(profile, disk_gib) {
+        if profile == "effigy-release" {
+            args.push("--cpu".to_string());
+            args.push(EFFIGY_RELEASE_CPU.to_string());
+        }
         args.push("--memory".to_string());
         args.push(resources.memory_gib.to_string());
-        args.push("--disk".to_string());
-        args.push(resources.disk_gib.to_string());
     }
     for server in FALLBACK_COLIMA_DNS_SERVERS {
         args.push("--dns".to_string());
@@ -220,24 +224,41 @@ fn colima_output_is_explicitly_stopped(stdout: &str, stderr: &str) -> bool {
 }
 
 pub fn managed_colima_profile_resources(profile: &str) -> Option<ColimaResourcePlan> {
-    managed_colima_profile_resources_with_disk(
-        profile,
-        crate::user_global_colima_profile_disk_gib(),
-    )
+    let disk_gib = (profile == DEFAULT_COLIMA_PROFILE)
+        .then(crate::user_global_colima_profile_disk_gib)
+        .flatten();
+    managed_colima_profile_resources_with_disk(profile, disk_gib)
 }
 
 pub fn managed_colima_profile_resources_with_disk(
     profile: &str,
     disk_gib: Option<u64>,
 ) -> Option<ColimaResourcePlan> {
-    let min_memory_gib = match profile {
-        DEFAULT_COLIMA_PROFILE => MIN_EFFIGY_MEMORY_GIB,
-        "effigy-release" => MIN_EFFIGY_RELEASE_MEMORY_GIB,
+    let (min_memory_gib, default_disk_gib) = match profile {
+        DEFAULT_COLIMA_PROFILE => (MIN_EFFIGY_MEMORY_GIB, DEFAULT_EFFIGY_DISK_GIB),
+        "effigy-release" => (MIN_EFFIGY_RELEASE_MEMORY_GIB, EFFIGY_RELEASE_DISK_GIB),
         _ => return None,
     };
     let disk_gib = disk_gib
         .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_EFFIGY_DISK_GIB);
+        .unwrap_or(default_disk_gib);
+    if profile == "effigy-release" {
+        return Some(
+            detect_host_memory_bytes()
+                .map(|bytes| ColimaResourcePlan {
+                    host_memory_gib: Some(bytes_to_gib_floor(bytes).max(1)),
+                    memory_gib: MIN_EFFIGY_RELEASE_MEMORY_GIB,
+                    swap_gib: MIN_EFFIGY_RELEASE_MEMORY_GIB,
+                    disk_gib,
+                })
+                .unwrap_or(ColimaResourcePlan {
+                    host_memory_gib: None,
+                    memory_gib: MIN_EFFIGY_RELEASE_MEMORY_GIB,
+                    swap_gib: MIN_EFFIGY_RELEASE_MEMORY_GIB,
+                    disk_gib,
+                }),
+        );
+    }
     Some(
         detect_host_memory_bytes()
             .map(|bytes| resource_plan_for_host_memory_bytes(bytes, disk_gib, min_memory_gib))
@@ -255,10 +276,10 @@ pub fn prepare_managed_colima_profile(policy: &EffectiveContainerPolicy) -> Resu
 }
 
 pub fn prepare_managed_colima_profile_name(profile: &str) -> Result<(), String> {
-    prepare_managed_colima_profile_name_with_disk(
-        profile,
-        crate::user_global_colima_profile_disk_gib(),
-    )
+    let disk_gib = (profile == DEFAULT_COLIMA_PROFILE)
+        .then(crate::user_global_colima_profile_disk_gib)
+        .flatten();
+    prepare_managed_colima_profile_name_with_disk(profile, disk_gib)
 }
 
 pub fn prepare_managed_colima_profile_name_with_disk(
@@ -272,6 +293,9 @@ pub fn prepare_managed_colima_profile_name_with_disk(
         return Ok(());
     };
     let config_path = colima_profile_config_path(profile)?;
+    let profile_directory_existed = config_path
+        .parent()
+        .is_some_and(|directory| directory.exists());
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
             format!(
@@ -311,10 +335,18 @@ pub fn prepare_managed_colima_profile_name_with_disk(
         Value::String("memory".to_owned()),
         Value::Number(Number::from(resources.memory_gib)),
     );
-    root.insert(
-        Value::String("disk".to_owned()),
-        Value::Number(Number::from(resources.disk_gib)),
-    );
+    if profile == "effigy-release" {
+        root.insert(
+            Value::String("cpu".to_owned()),
+            Value::Number(Number::from(EFFIGY_RELEASE_CPU)),
+        );
+    }
+    if !profile_directory_existed {
+        root.insert(
+            Value::String("disk".to_owned()),
+            Value::Number(Number::from(resources.disk_gib)),
+        );
+    }
     // Forward the host SSH agent into the VM at
     // `/run/host-services/ssh-auth.sock` so the workspace agent-socket bind
     // mount has a real source path. Equivalent to `colima start --ssh-agent`.

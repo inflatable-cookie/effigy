@@ -1251,8 +1251,11 @@ case "$1" in
   list)
     if [ -f "$root/listed" ]; then
       if [ -f "$root/running" ]; then state=Running; else state=Stopped; fi
-      if [ -f "$root/small" ]; then memory=8589934592; disk=1073741824; else memory=34359738368; disk=322122547200; fi
-      printf '{"name":"effigy","status":"%s","cpus":2,"memory":%s,"disk":%s}\n' "$state" "$memory" "$disk"
+      if [ -f "$root/under-floor" ]; then memory=2147483648; disk=1073741824
+      elif [ -f "$root/small" ]; then memory=8589934592; disk=1073741824
+      else memory=34359738368; disk=322122547200; fi
+      if [ -f "$root/release-profile" ]; then profile=effigy-release; else profile=effigy; fi
+      printf '{"name":"%s","status":"%s","cpus":2,"memory":%s,"disk":%s}\n' "$profile" "$state" "$memory" "$disk"
     fi
     ;;
   start) : > "$root/running"; : > "$root/listed"; printf 'started\n' ;;
@@ -1350,6 +1353,12 @@ esac
             policy
         }
 
+        fn release_policy(&self) -> EffectiveContainerPolicy {
+            let mut policy = self.policy();
+            policy.profile = "effigy-release".to_owned();
+            policy
+        }
+
         fn state(&self, name: &str) {
             std::fs::write(self.root.join(name), "").expect("fixture state");
         }
@@ -1359,7 +1368,11 @@ esac
         }
 
         fn write_colima_config(&self, body: &str) {
-            let profile = self.root.join("home/.colima/effigy");
+            self.write_colima_profile_config("effigy", body);
+        }
+
+        fn write_colima_profile_config(&self, name: &str, body: &str) {
+            let profile = self.root.join("home/.colima").join(name);
             std::fs::create_dir_all(&profile).expect("mkdir profile");
             std::fs::write(profile.join("colima.yaml"), body).expect("write colima config");
         }
@@ -1571,7 +1584,7 @@ esac
         let _lock = crate::test_env_lock();
         let fixture = ManagedProfileFixture::new();
         let policy = fixture.policy();
-        const MANAGED_START: &str = "start --profile effigy --runtime containerd --ssh-agent --memory 32 --disk 300 --dns 1.1.1.1 --dns 8.8.8.8";
+        const MANAGED_START: &str = "start --profile effigy --runtime containerd --ssh-agent --memory 32 --dns 1.1.1.1 --dns 8.8.8.8";
 
         // Phase 1: an absent profile is created with the managed arguments.
         let report = ensure_colima_running_report(&policy, &fixture.root).expect("create profile");
@@ -1581,7 +1594,7 @@ esac
         let calls = fixture.calls();
         assert!(
             calls.contains(&MANAGED_START.to_owned()),
-            "the create start carries the managed runtime, memory, disk and dns arguments: {calls:#?}"
+            "the create start carries the managed runtime, memory and dns arguments: {calls:#?}"
         );
         assert!(
             !calls.iter().any(|call| call.starts_with("stop ")),
@@ -1634,6 +1647,35 @@ esac
             !calls.iter().any(|call| call.starts_with("stop ")),
             "the shared profile is never stopped: {calls:#?}"
         );
+    }
+
+    #[test]
+    fn running_release_profile_passes_at_8_gib_and_refuses_at_2_gib() {
+        let _lock = crate::test_env_lock();
+        let fixture = ManagedProfileFixture::new();
+        fixture.state("listed");
+        fixture.state("running");
+        fixture.state("small");
+        fixture.state("release-profile");
+        let policy = fixture.release_policy();
+        fixture.write_colima_profile_config("effigy-release", "memory: 8\nforwardAgent: true\n");
+
+        ensure_running_managed_profile_ready(&policy, &fixture.root)
+            .expect("running release profile meets the 8 GiB floor");
+
+        std::fs::remove_file(fixture.root.join("small")).expect("set below-floor memory");
+        fixture.state("under-floor");
+        fixture.write_colima_profile_config("effigy-release", "memory: 2\nforwardAgent: true\n");
+        let error = ensure_running_managed_profile_ready(&policy, &fixture.root)
+            .expect_err("running release profile below the floor refuses");
+        let message = error.to_string();
+        assert!(message.contains("running with 2GiB RAM"), "{message}");
+        assert!(message.contains("requires 8GiB"), "{message}");
+        assert!(
+            message.contains("colima restart effigy-release"),
+            "{message}"
+        );
+        assert!(message.contains("did not restart"), "{message}");
     }
 
     #[test]
