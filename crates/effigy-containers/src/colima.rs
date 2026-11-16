@@ -19,6 +19,7 @@ use std::process::Command;
 const FALLBACK_COLIMA_DNS_SERVERS: [&str; 2] = ["1.1.1.1", "8.8.8.8"];
 const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
 const MIN_EFFIGY_MEMORY_GIB: u64 = 4;
+const MIN_EFFIGY_RELEASE_MEMORY_GIB: u64 = 8;
 const MAX_EFFIGY_MEMORY_GIB: u64 = 32;
 const MIN_EFFIGY_SWAP_GIB: u64 = 4;
 const MAX_EFFIGY_SWAP_GIB: u64 = 16;
@@ -229,19 +230,21 @@ pub fn managed_colima_profile_resources_with_disk(
     profile: &str,
     disk_gib: Option<u64>,
 ) -> Option<ColimaResourcePlan> {
-    if profile != DEFAULT_COLIMA_PROFILE {
-        return None;
-    }
+    let min_memory_gib = match profile {
+        DEFAULT_COLIMA_PROFILE => MIN_EFFIGY_MEMORY_GIB,
+        "effigy-release" => MIN_EFFIGY_RELEASE_MEMORY_GIB,
+        _ => return None,
+    };
     let disk_gib = disk_gib
         .filter(|value| *value > 0)
         .unwrap_or(DEFAULT_EFFIGY_DISK_GIB);
     Some(
         detect_host_memory_bytes()
-            .map(|bytes| resource_plan_for_host_memory_bytes(bytes, disk_gib))
+            .map(|bytes| resource_plan_for_host_memory_bytes(bytes, disk_gib, min_memory_gib))
             .unwrap_or_else(|| ColimaResourcePlan {
                 host_memory_gib: None,
-                memory_gib: MIN_EFFIGY_MEMORY_GIB,
-                swap_gib: MIN_EFFIGY_SWAP_GIB,
+                memory_gib: min_memory_gib,
+                swap_gib: min_memory_gib.clamp(MIN_EFFIGY_SWAP_GIB, MAX_EFFIGY_SWAP_GIB),
                 disk_gib,
             }),
     )
@@ -262,7 +265,7 @@ pub fn prepare_managed_colima_profile_name_with_disk(
     profile: &str,
     disk_gib: Option<u64>,
 ) -> Result<(), String> {
-    if profile != DEFAULT_COLIMA_PROFILE {
+    if managed_colima_profile_resources_with_disk(profile, disk_gib).is_none() {
         return Ok(());
     }
     let Some(resources) = managed_colima_profile_resources_with_disk(profile, disk_gib) else {
@@ -345,10 +348,11 @@ pub fn prepare_managed_colima_profile_name_with_disk(
 fn resource_plan_for_host_memory_bytes(
     host_memory_bytes: u64,
     disk_gib: u64,
+    min_memory_gib: u64,
 ) -> ColimaResourcePlan {
     let host_memory_gib = bytes_to_gib_floor(host_memory_bytes).max(1);
     let quarter_host_gib = bytes_to_gib_ceil(host_memory_bytes / 4);
-    let memory_gib = quarter_host_gib.clamp(MIN_EFFIGY_MEMORY_GIB, MAX_EFFIGY_MEMORY_GIB);
+    let memory_gib = quarter_host_gib.clamp(min_memory_gib, MAX_EFFIGY_MEMORY_GIB);
     let swap_gib = memory_gib.clamp(MIN_EFFIGY_SWAP_GIB, MAX_EFFIGY_SWAP_GIB);
     ColimaResourcePlan {
         host_memory_gib: Some(host_memory_gib),
@@ -451,6 +455,8 @@ pub enum ManagedColimaProfileDrift {
     /// SSH agent forwarding is disabled, so the workspace agent-socket bind
     /// mount lands on a source path the VM does not provide.
     SshAgentForwardingDisabled,
+    /// The profile config still has less memory than this managed build needs.
+    MemoryBelowPlan { actual_gib: u64, planned_gib: u64 },
 }
 
 impl ManagedColimaProfileDrift {
@@ -461,6 +467,9 @@ impl ManagedColimaProfileDrift {
         match self {
             Self::SshAgentForwardingDisabled => format!(
                 "Colima profile `{profile}` is running without SSH agent forwarding, so workspace `git push` over SSH will fail. Effigy wrote its managed settings to the profile config and did not restart the VM: that stops every stack on the profile. Restart it deliberately with `colima restart {profile}`."
+            ),
+            Self::MemoryBelowPlan { actual_gib, planned_gib } => format!(
+                "Colima profile `{profile}` is running with {actual_gib}GiB RAM; Effigy's managed plan requires {planned_gib}GiB for a cold release build. Effigy wrote the managed settings and did not restart the VM. Restart it deliberately with `colima restart {profile}`."
             ),
         }
     }
@@ -493,10 +502,23 @@ pub fn colima_profile_start_notice(profile: &str) -> String {
 /// Colima has not rewritten yet, and a restart that no observation asked for
 /// would stop every stack on the profile. An unreadable config is never drift.
 pub fn managed_colima_profile_drift_in_config(
+    profile: &str,
     config: Option<&str>,
 ) -> Option<ManagedColimaProfileDrift> {
     let parsed = serde_yaml::from_str::<Value>(config?).ok()?;
     let root = parsed.as_mapping()?;
+    if let (Some(actual), Some(plan)) = (
+        root.get(Value::String("memory".to_owned()))
+            .and_then(Value::as_u64),
+        managed_colima_profile_resources(profile),
+    ) {
+        if actual < plan.memory_gib {
+            return Some(ManagedColimaProfileDrift::MemoryBelowPlan {
+                actual_gib: actual,
+                planned_gib: plan.memory_gib,
+            });
+        }
+    }
     let forwarding = ["forwardAgent", "sshAgent"].iter().find_map(|key| {
         root.get(Value::String((*key).to_owned()))
             .and_then(Value::as_bool)
@@ -509,7 +531,7 @@ pub fn managed_colima_profile_drift_in_config(
 pub fn managed_colima_profile_drift(profile: &str) -> Option<ManagedColimaProfileDrift> {
     let path = colima_profile_config_path(profile).ok()?;
     let config = fs::read_to_string(path).ok()?;
-    managed_colima_profile_drift_in_config(Some(&config))
+    managed_colima_profile_drift_in_config(profile, Some(&config))
 }
 
 fn colima_profile_config_path(profile: &str) -> Result<PathBuf, String> {

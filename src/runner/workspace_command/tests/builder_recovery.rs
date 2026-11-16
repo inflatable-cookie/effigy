@@ -217,7 +217,7 @@ if cmd == 'exec':
                 (cwd / 'cwd').symlink_to(state / 'build-tree')
         status = os.spawnve(os.P_WAIT, '/bin/sh', ['/bin/sh', '-lc', resolved], os.environ)
         sys.exit(status)
-    if not all(part in script for part in ['cargo build --release --bin effigy --target ', 'cd /workspace', 'EFFIGY_ACTIVE_VERSION=', '/var/tmp/effigy-artifact-build']): sys.exit(26)
+    if not all(part in script for part in ['cargo build --release --bin effigy --target ', 'CARGO_BUILD_JOBS=1', 'cd /workspace', 'EFFIGY_ACTIVE_VERSION=', '/var/tmp/effigy-artifact-build']): sys.exit(26)
     (state / 'build-effect').write_text('verified current-source build')
     with (state / 'builds').open('a') as f: f.write('build\n')
     (state / 'build-source').write_text(bound)

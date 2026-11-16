@@ -18,6 +18,7 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::Path;
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use effigy_containers::exec::{
@@ -1040,6 +1041,18 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     )?;
     check_interruption()?;
     if !output.status.success() {
+        if output.status.code() == Some(255)
+            && colima_vm_log_shows_oom_kill(repo_root, &policy.profile)
+        {
+            return Err(RunnerError::task_invocation(format!(
+                "linux workspace artifact build was killed by the Colima VM OOM killer (builder exec returned 255); Effigy requires the managed {}GiB profile plan. Restart `{}` deliberately with `colima restart {}` after Effigy writes its managed settings, then retry; the builder and original admission are retained",
+                effigy_containers::colima::managed_colima_profile_resources(&policy.profile)
+                    .map(|resources| resources.memory_gib)
+                    .unwrap_or(8),
+                policy.profile,
+                policy.profile,
+            )));
+        }
         return Err(RunnerError::task_invocation(format!(
             "linux workspace artifact build failed with status {}; builder and original admission retained for retry, and no boundary record is published",
             output.status
@@ -1107,6 +1120,51 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     Ok(())
 }
 
+fn colima_vm_log_shows_oom_kill(repo_root: &Path, profile: &str) -> bool {
+    let Ok(mut child) = Command::new("colima")
+        .current_dir(repo_root)
+        .args([
+            "ssh",
+            "--profile",
+            profile,
+            "--",
+            "sudo",
+            "dmesg",
+            "--ctime",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                return child.wait_with_output().is_ok_and(|output| {
+                    output.status.success()
+                        && oom_log_contains_kill(&String::from_utf8_lossy(&output.stdout))
+                });
+            }
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
+}
+
+fn oom_log_contains_kill(log: &str) -> bool {
+    let log = log.to_ascii_lowercase();
+    (log.contains("out of memory") || log.contains("global_oom") || log.contains("oom-kill"))
+        && (log.contains("killed process") || log.contains("kill process"))
+}
+
 /// Repeat the inventory and identity observation the transition relies on: one
 /// owned builder, with the same full ID, source and never-started state.
 fn confirm_transition_target(
@@ -1138,10 +1196,24 @@ fn confirm_transition_target(
 #[cfg(test)]
 mod tests {
     use super::{
-        boundary_marker, check_probe, no_change_requested, parse_probe, probe_script, ProbePhase,
-        ARTIFACT_BINARY_CAP_BYTES, BUILD_TREE_CAP_BYTES, BUILD_TREE_HEADROOM_BYTES,
-        BUILD_TREE_ROOT,
+        boundary_marker, check_probe, no_change_requested, oom_log_contains_kill, parse_probe,
+        probe_script, ProbePhase, ARTIFACT_BINARY_CAP_BYTES, BUILD_TREE_CAP_BYTES,
+        BUILD_TREE_HEADROOM_BYTES, BUILD_TREE_ROOT,
     };
+
+    #[test]
+    fn oom_shaped_vm_log_is_named_but_ordinary_failures_are_not() {
+        assert!(oom_log_contains_kill(
+            "Out of memory: Killed process 123 (sshd)"
+        ));
+        assert!(oom_log_contains_kill(
+            "global_oom: Kill process 123 (rustc) score 999"
+        ));
+        assert!(!oom_log_contains_kill("colima is running"));
+        assert!(!oom_log_contains_kill(
+            "Out of memory while checking disk space"
+        ));
+    }
 
     #[test]
     fn no_change_switch_only_narrows_and_refuses_unknown_values() {

@@ -26,6 +26,9 @@ fn workspace_artifact_build_script(release_triple, active_version) {
     build_script += "mkdir -p " + str::shell_quote(target_dir) + "\n";
     build_script += "chmod 700 " + str::shell_quote(build_tree) + " " + str::shell_quote(target_dir) + "\n";
     build_script += "export CARGO_TARGET_DIR=" + str::shell_quote(target_dir) + "\n";
+    // One rustc process keeps the cold release compile within the release
+    // builder's managed memory budget, including its final link.
+    build_script += "export CARGO_BUILD_JOBS=1\n";
     build_script += "export EFFIGY_INTERNAL_SUPPRESS_HEADER=1\n";
     build_script += "export EFFIGY_ACTIVE_VERSION=" + str::shell_quote(active_version) + "\n";
     build_script += "cd /workspace\n";
