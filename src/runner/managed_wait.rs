@@ -23,6 +23,8 @@ use crate::runner::error::RunnerError;
 use crate::runner::task_engine::{self, Lookup, TaskRun};
 
 const WAIT_EFFECT: &str = "managed:waits";
+pub(in crate::runner) const SEQUENCE_GATE_DETAIL: &str = "managed sequence startup gate";
+pub(in crate::runner) const MANAGED_TAB_ENV: &str = "EFFIGY_MANAGED_TAB";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct Snapshot {
@@ -171,6 +173,60 @@ impl WaitLedger {
             _ => None,
         }
     }
+}
+
+/// Read a nested sequence gate from runs sharing this managed run's identity.
+/// Unknown reads return None so a transient observation never ends a focus.
+pub(in crate::runner) fn sequence_gate(
+    root: &effigy_kernel::root::StateRoot,
+    parent: RunId,
+) -> Option<Option<String>> {
+    let cx = task_engine::observe_context(Duration::from_millis(10));
+    let Observed::Verified(reader, _) = Store::read(&cx, root) else {
+        return None;
+    };
+    let Observed::Verified(parent, _) = effigy_kernel::run::summary(&reader, parent) else {
+        return None;
+    };
+    let spec = parent.invocation.as_ref()?.spec();
+    let token = spec
+        .provenance
+        .get(crate::runner::task_engine::MANAGED_RUN_PROVENANCE)?;
+    let Observed::Verified(runs, _) = effigy_kernel::run::unclosed(&reader, spec.owner.scope())
+    else {
+        return None;
+    };
+    for run in runs {
+        if run.id == parent.id
+            || run.invocation.as_ref().and_then(|inv| {
+                inv.spec()
+                    .provenance
+                    .get(crate::runner::task_engine::MANAGED_RUN_PROVENANCE)
+            }) != Some(token)
+        {
+            continue;
+        }
+        let owner = &run.invocation.as_ref()?.spec().owner;
+        match effigy_kernel::gate::Gate::probe(&cx, root, owner) {
+            Observed::Verified(effigy_kernel::gate::GateState::Held(_), _) => {}
+            Observed::Verified(effigy_kernel::gate::GateState::Free, _) | Observed::Absent(_) => {
+                continue
+            }
+            Observed::Unknown(_) => return None,
+        }
+        let Observed::Verified(effects, _) = effigy_kernel::run::effects(&reader, run.id) else {
+            return None;
+        };
+        if let Some(snapshot) = from_effects(&effects) {
+            if let Some(state) = snapshot.entries.values().find(|state| {
+                state.phase == EntryPhase::Starting
+                    && state.detail.as_deref() == Some(SEQUENCE_GATE_DETAIL)
+            }) {
+                return Some(Some(state.entry.clone()));
+            }
+        }
+    }
+    Some(None)
 }
 
 fn from_effects(effects: &[Effect]) -> Option<Snapshot> {
@@ -678,6 +734,62 @@ mod tests {
             detail: Some("observed detail".to_owned()),
             elapsed_ms: 17,
         }
+    }
+
+    #[test]
+    fn sequence_gate_tracks_only_the_matching_managed_run_and_settles() {
+        use crate::runner::task_engine::{TaskRun, TaskRunRequest, TaskTarget};
+        use effigy_kernel::outcome::WorkloadOutcome;
+        let _guard = crate::contract_test_support::lock_test();
+        let repo = tempfile::tempdir().unwrap();
+        let catalog = effigy_manifest::LoadedCatalog::for_test(
+            "root",
+            repo.path().to_owned(),
+            toml::from_str("").unwrap(),
+            0,
+        );
+        let begin = |name: &str, token: &str| {
+            let target = TaskTarget::for_catalog(repo.path(), name, &catalog);
+            TaskRun::begin(TaskRunRequest {
+                target: &target,
+                lock_wait_ms: 0,
+                custody: false,
+                scratch: false,
+                managed_run_token: Some(token),
+                args: &[],
+                key: None,
+                admission: None,
+                workspace_admission: None,
+                cwd: None,
+            })
+            .unwrap()
+        };
+        let parent = begin("dev", "ours");
+        let child = begin("hybrid", "ours");
+        let other = begin("other", "theirs");
+        let root = task_engine::checkout_effects_root(repo.path()).unwrap();
+        let publisher = WaitPublisher::from_run(&child, None).unwrap();
+        let foreign = WaitPublisher::from_run(&other, None).unwrap();
+        let gate = |name: &str| EntryState {
+            entry: name.into(),
+            phase: EntryPhase::Starting,
+            waiting_on: None,
+            not_started_because: None,
+            detail: Some(SEQUENCE_GATE_DETAIL.into()),
+            elapsed_ms: 0,
+        };
+        foreign.publish(&gate("unrelated"));
+        assert_eq!(sequence_gate(root, parent.id()), Some(None));
+        publisher.publish(&gate("services"));
+        assert_eq!(
+            sequence_gate(root, parent.id()),
+            Some(Some("services".into()))
+        );
+        publisher.settle("services");
+        assert_eq!(sequence_gate(root, parent.id()), Some(None));
+        assert!(other.close(WorkloadOutcome::Succeeded).is_empty());
+        assert!(child.close(WorkloadOutcome::Succeeded).is_empty());
+        assert!(parent.close(WorkloadOutcome::Succeeded).is_empty());
     }
 
     #[test]

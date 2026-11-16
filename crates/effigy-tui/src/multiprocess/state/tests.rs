@@ -166,3 +166,34 @@ fn startup_focus_restores_selection_unless_the_user_changes_it() {
     state.apply_startup_focus(None);
     assert_eq!(state.active_process(), "api");
 }
+
+#[test]
+fn focus_follows_a_running_prerequisite_until_the_wait_settles() {
+    use crate::waits::{EntryPhase, EntryState, WaitOn};
+    let mut state = SessionState::new(
+        ".".into(),
+        vec!["front".into(), "services".into()],
+        24,
+        80,
+        100,
+    );
+    let waiting = EntryState {
+        entry: "front".into(),
+        phase: EntryPhase::Waiting,
+        waiting_on: Some(WaitOn::Entry {
+            name: "services".into(),
+            phase: EntryPhase::Starting,
+        }),
+        not_started_because: None,
+        detail: None,
+        elapsed_ms: 2000,
+    };
+    state.apply_entry_waits(vec![waiting]);
+    let focus = state.blocking_tab().map(str::to_owned);
+    state.apply_startup_focus(focus.as_deref());
+    assert_eq!(state.active_process(), "services");
+    state.apply_entry_waits(vec![]);
+    let focus = state.blocking_tab().map(str::to_owned);
+    state.apply_startup_focus(focus.as_deref());
+    assert_eq!(state.active_process(), "front");
+}

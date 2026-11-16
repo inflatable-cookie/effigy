@@ -416,6 +416,12 @@ fn run_steps(
         outcome: WorkloadOutcome::Succeeded,
     };
     let total = planned.len();
+    // A nested task has its own journal, associated with the managed run by
+    // its existing token. Publish pre-workload steps and container activation.
+    let gate = std::env::var(crate::runner::managed_wait::MANAGED_TAB_ENV)
+        .ok()
+        .filter(|name| !name.is_empty())
+        .zip(crate::runner::managed_wait::WaitPublisher::from_run(run, None).ok());
     for (index, (action, env, label, timeout, subject, step_secrets)) in
         planned.into_iter().enumerate()
     {
@@ -439,6 +445,19 @@ fn run_steps(
         // has waited, instead of redrawing one fixed ordinal (effigy#454,
         // Q-017).
         let position = index + 1;
+        let startup_gate = gates_startup(&action, position, total);
+        if startup_gate {
+            if let Some((name, publisher)) = &gate {
+                publisher.publish(&effigy_core::managed_waits::EntryState {
+                    entry: name.clone(),
+                    phase: effigy_core::managed_waits::EntryPhase::Starting,
+                    waiting_on: None,
+                    not_started_because: None,
+                    detail: Some(crate::runner::managed_wait::SEQUENCE_GATE_DETAIL.to_owned()),
+                    elapsed_ms: 0,
+                });
+            }
+        }
         let description = selection
             .task
             .description
@@ -559,6 +578,14 @@ fn run_steps(
                 !relayed.is_empty(),
             );
             stderr.push_str(&format!("\n{retained}\n"));
+        }
+        if startup_gate {
+            if let Some((name, publisher)) = &gate {
+                publisher.settle(name);
+                if let Some(error) = publisher.take_recording_failure() {
+                    eprintln!("warning: startup focus observation could not be recorded: {error}");
+                }
+            }
         }
         let outcome_label = progress.strip_prefix("running ").unwrap_or(&progress);
         if code == 0 {
@@ -832,6 +859,12 @@ enum StepAction {
     },
     Noop,
 }
+fn gates_startup(action: &StepAction, position: usize, total: usize) -> bool {
+    position < total
+        || matches!(action, StepAction::Helper { argv, .. }
+        if argv.iter().any(|arg| arg == "container") && argv.iter().any(|arg| arg == "up"))
+}
+
 fn resolve_step_action(
     step: &ManifestManagedRunStep,
     preflight: &ExecutionPreflight,
@@ -1142,7 +1175,7 @@ fn parse_builtin_step_command(
 #[cfg(test)]
 mod tests {
     use super::parse_builtin_step_command;
-    use super::{resolve_task_step, sequence_step_label, StepAction};
+    use super::{gates_startup, resolve_task_step, sequence_step_label, StepAction};
     use effigy_cli::Command;
     use std::path::{Path, PathBuf};
 
@@ -1317,6 +1350,25 @@ mod tests {
             ),
             "a child without a generate hook is not durable just because the root catalog declares one"
         );
+    }
+
+    #[test]
+    fn startup_gate_covers_pre_workload_and_terminal_container_activation() {
+        let command = StepAction::Command("serve".into());
+        assert!(gates_startup(&command, 1, 2));
+        assert!(!gates_startup(&command, 2, 2));
+        let activation = StepAction::Helper {
+            argv: vec![
+                "effigy".into(),
+                "container".into(),
+                "hybrid".into(),
+                "up".into(),
+                "--detach".into(),
+            ],
+            cwd: PathBuf::from("."),
+            foreground: false,
+        };
+        assert!(gates_startup(&activation, 1, 1));
     }
 
     #[test]

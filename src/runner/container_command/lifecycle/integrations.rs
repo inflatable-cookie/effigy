@@ -36,6 +36,9 @@ const INTEGRATION_STAGES: u64 = 8;
 pub(super) fn integration_stage(progress: &ProgressSource, finished: u64, stage: &str) {
     // A new stage is a new wait: an earlier stage's blocker must not stay on
     // screen for work it no longer describes (effigy#460, Q-017).
+    if effigy_ui::steps::in_managed_pane() {
+        eprintln!("Started: {stage} ({finished}/{INTEGRATION_STAGES})");
+    }
     progress.update(|_| ProgressFrame::new(stage).count(Some((finished, INTEGRATION_STAGES))));
 }
 

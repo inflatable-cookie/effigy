@@ -91,6 +91,21 @@ impl SessionState {
         }
     }
 
+    /// Follow a named prerequisite only while another entry actually waits for it.
+    pub fn blocking_tab(&self) -> Option<&str> {
+        use crate::waits::{EntryPhase, WaitOn};
+        self.process_names.iter().find_map(|name| {
+            self.entry_waits.values().any(|entry| {
+                entry.phase == EntryPhase::Waiting && matches!(
+                    &entry.waiting_on,
+                    Some(WaitOn::Entry { name: dependency, phase: EntryPhase::Starting | EntryPhase::Running })
+                        | Some(WaitOn::Launch { name: dependency, phase: EntryPhase::Starting | EntryPhase::Running })
+                        if dependency == name
+                )
+            }).then_some(name.as_str())
+        })
+    }
+
     pub fn user_selected_tab(&mut self) {
         if self.startup_focus.is_some() {
             self.startup_focus_overridden = true;

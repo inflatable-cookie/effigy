@@ -97,6 +97,21 @@ pub(in crate::runner) fn attributed_environment_failure(
     }
 }
 
+/// Pane logs keep phase transitions, while periodic wait refreshes stay in
+/// the structured snapshot rather than repeating an unchanged line.
+fn changed_host_progress(previous: &[EntryState], states: &[EntryState]) -> Vec<String> {
+    states
+        .iter()
+        .filter(|state| {
+            previous
+                .iter()
+                .find(|old| old.entry == state.entry)
+                .is_none_or(|old| !old.means_the_same_as(state))
+        })
+        .map(|state| format!("[host process] `{}` {}", state.entry, state.status_line()))
+        .collect()
+}
+
 /// The pure host ordering model and its complete run-owned snapshot.
 pub(in crate::runner) struct HostWaitGraph {
     publisher: WaitPublisher,
@@ -187,6 +202,11 @@ impl HostWaitGraph {
             })
         {
             return;
+        }
+        if effigy_ui::steps::in_managed_pane() {
+            for line in changed_host_progress(&self.published, &states) {
+                eprintln!("{line}");
+            }
         }
         self.publisher.publish_hosts(&states);
         self.published = states;
@@ -2002,6 +2022,35 @@ mod environment_tests {
         assert!(
             presented.contains("front [not started: environment"),
             "{presented}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod pane_progress_tests {
+    use super::changed_host_progress;
+    use effigy_core::managed_waits::{EntryPhase, EntryState};
+
+    #[test]
+    fn reports_transitions_but_not_an_elapsed_refresh() {
+        let starting = EntryState {
+            entry: "api".into(),
+            phase: EntryPhase::Starting,
+            waiting_on: None,
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 1_000,
+        };
+        let mut refreshed = starting.clone();
+        refreshed.elapsed_ms = 2_000;
+        assert!(changed_host_progress(std::slice::from_ref(&starting), &[refreshed]).is_empty());
+        let mut ready = starting.clone();
+        ready.phase = EntryPhase::Ready;
+        let lines = changed_host_progress(&[starting], &[ready]);
+        assert_eq!(lines.len(), 1);
+        assert!(
+            lines[0].contains("api") && lines[0].contains("ready"),
+            "{lines:?}"
         );
     }
 }

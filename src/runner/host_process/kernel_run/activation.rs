@@ -3,6 +3,19 @@
 use super::super as host;
 use super::*;
 
+fn report_listener_completion(name: &str, phase: &str, elapsed: Duration, log: &Path) {
+    if !effigy_ui::steps::in_managed_pane() {
+        return;
+    }
+    let tail = host::listener_output_tail(log)
+        .map(|line| format!("; last child output: {line}"))
+        .unwrap_or_default();
+    eprintln!(
+        "[host process] listener `{name}` {phase} after {}s{tail}",
+        elapsed.as_secs()
+    );
+}
+
 /// Starts (or replaces) the environment's host processes in dependency order.
 ///
 /// Each supervisor is a detached kernel run; `up` keeps its owning pipe until
@@ -597,6 +610,7 @@ impl host::HostActivation for KernelActivation<'_> {
             ))
         })?;
         let source = HostLifecycleSource::for_policy(self.repo_root, self.policy, &process.name)?;
+        let started = Instant::now();
         let waited = (|| -> Result<host::ListenerWait, RunnerError> {
             host::wait_for_listener_activation(
                 Some(&source),
@@ -617,6 +631,7 @@ impl host::HostActivation for KernelActivation<'_> {
         })();
         match waited {
             Ok(host::ListenerWait::Ready(state)) => {
+                report_listener_completion(&process.name, "ready", started.elapsed(), &log_file);
                 self.result
                     .listeners
                     .push(listener_result(&process.name, &listener, &state));
@@ -648,6 +663,7 @@ impl host::HostActivation for KernelActivation<'_> {
                 {
                     self.result.started.pop();
                 }
+                report_listener_completion(&process.name, "withheld", started.elapsed(), &log_file);
                 let diagnostic = format!(
                     "{diagnostic}; its generation was settled before this activation returned, so it cannot publish that route later — `effigy container {} restart {}` starts it again",
                     self.policy.name, process.name
