@@ -5,7 +5,7 @@ use crate::{
 };
 use effigy_cli::usage_hint::usage_hint_for;
 use effigy_cli::{
-    apply_global_cli_flags, command_requests_json, parse_command,
+    apply_global_cli_flags, command_requests_json, export_lock_wait_env, parse_command,
     runtime_flag_present_before_passthrough, strip_global_cli_flags, Command, GlobalCliOptions,
     TasksQaCommand,
 };
@@ -141,6 +141,8 @@ pub fn run_cli(raw_args: Vec<String>) {
             exit_process(2);
         }
     };
+    // Before any task spawns: every nested Effigy a step runs inherits the wait.
+    export_lock_wait_env(&global_options);
     let internal_suppress_header = std::env::var("EFFIGY_INTERNAL_SUPPRESS_HEADER")
         .ok()
         .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes"));

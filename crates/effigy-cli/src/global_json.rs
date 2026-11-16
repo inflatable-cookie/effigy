@@ -2,6 +2,13 @@ use std::path::PathBuf;
 
 use crate::{unknown_argument, CliParseError, Command};
 
+/// The environment name a task run reads its lock wait from. `--lock-wait-ms`
+/// is exported under this name so every nested Effigy a task step starts
+/// inherits the same wait (effigy#1018).
+pub const LOCK_WAIT_ENV: &str = "EFFIGY_LOCK_WAIT_MS";
+
+const LOCK_WAIT_SUPPORTED_FORMS: &str = "`--lock-wait-ms` applies to a task or a skill run: `effigy --lock-wait-ms <MS> <task>` or `effigy --lock-wait-ms <MS> skill run <skill>/<task>`";
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct GlobalCliOptions {
     pub json_mode: bool,
@@ -65,10 +72,15 @@ pub fn strip_global_cli_flags(
             }
             "--verbose-root" => options.task_verbose_root = true,
             "--lock-wait-ms" => {
-                options.task_lock_wait_ms =
-                    Some(args.next().ok_or(CliParseError::MissingFlagValue {
-                        flag: "--lock-wait-ms".to_owned(),
-                    })?);
+                let wait = args.next().ok_or(CliParseError::MissingFlagValue {
+                    flag: "--lock-wait-ms".to_owned(),
+                })?;
+                if wait.trim().parse::<u64>().is_err() {
+                    return Err(CliParseError::InvalidArguments(format!(
+                        "`--lock-wait-ms` takes a non-negative integer millisecond count, not `{wait}`"
+                    )));
+                }
+                options.task_lock_wait_ms = Some(wait);
             }
             "--plan" => options.task_plan = true,
             "--help" | "-h" => {
@@ -92,6 +104,19 @@ pub fn strip_global_cli_flags(
     }
 
     Ok((stripped, options))
+}
+
+/// Exports `--lock-wait-ms` as `EFFIGY_LOCK_WAIT_MS` for this process and
+/// every child it spawns, so a nested `effigy <selector>` a task step runs
+/// waits on the same lock as the outer run. Only an explicit flag writes the
+/// variable: an inherited value stays unless the flag names a wait.
+///
+/// The flag's value is validated by `strip_global_cli_flags`. Call once,
+/// before any task runs and while the process is still single-threaded.
+pub fn export_lock_wait_env(options: &GlobalCliOptions) {
+    if let Some(wait) = options.task_lock_wait_ms.as_deref() {
+        std::env::set_var(LOCK_WAIT_ENV, wait.trim());
+    }
 }
 
 pub(super) fn strip_global_json_flags(args: Vec<String>) -> (Vec<String>, bool) {
@@ -165,7 +190,15 @@ pub fn apply_global_cli_options(
                     task.args.insert(0, "--lock-wait-ms".to_owned());
                 }
             }
-            _ => return Err(unknown_argument("--lock-wait-ms")),
+            // A skill run's wait travels in the environment (see
+            // `export_lock_wait_env`), so there is no argument to place.
+            Command::Skill(args)
+                if matches!(args.subcommand, crate::SkillSubcommand::Run { .. }) => {}
+            _ => {
+                return Err(CliParseError::InvalidArguments(
+                    LOCK_WAIT_SUPPORTED_FORMS.to_owned(),
+                ))
+            }
         }
     }
     if options.task_plan {
@@ -454,5 +487,61 @@ mod progress_verbose_tests {
             strip_global_cli_flags(vec!["build".into(), "--verbose".into()]).unwrap();
         assert!(!options.verbose);
         assert_eq!(args, ["build", "--verbose"]);
+    }
+}
+
+#[cfg(test)]
+mod lock_wait_flag_tests {
+    use crate::{parse_command, CliParseError, Command, SkillSubcommand};
+
+    fn argv(items: &[&str]) -> Vec<String> {
+        items.iter().map(|item| (*item).to_owned()).collect()
+    }
+
+    #[test]
+    fn lock_wait_flag_is_accepted_before_a_skill_run() {
+        let command = parse_command(argv(&[
+            "--lock-wait-ms",
+            "600000",
+            "skill",
+            "run",
+            "--path",
+            "/opt/skills/example",
+            "example/check",
+        ]))
+        .expect("skill run takes the lock wait");
+        assert!(
+            matches!(
+                command,
+                Command::Skill(ref args) if matches!(args.subcommand, SkillSubcommand::Run { .. })
+            ),
+            "{command:?}"
+        );
+    }
+
+    #[test]
+    fn lock_wait_flag_is_refused_with_its_supported_forms_where_it_cannot_apply() {
+        let error = parse_command(argv(&[
+            "--lock-wait-ms",
+            "5",
+            "skill",
+            "tasks",
+            "--path",
+            "/opt/skills/example",
+        ]))
+        .expect_err("skill tasks runs no task");
+        let message = error.to_string();
+        assert!(message.contains("skill run"), "{message}");
+        assert!(!message.contains("unknown argument"), "{message}");
+    }
+
+    #[test]
+    fn lock_wait_flag_must_name_a_millisecond_count() {
+        let error = crate::strip_global_cli_flags(argv(&["--lock-wait-ms", "soon", "build"]))
+            .expect_err("a non-numeric wait is refused at parse time");
+        assert!(
+            matches!(error, CliParseError::InvalidArguments(ref message) if message.contains("non-negative")),
+            "{error:?}"
+        );
     }
 }

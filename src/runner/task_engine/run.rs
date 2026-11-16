@@ -33,7 +33,7 @@ use super::kernel::{self, TaskSettlement};
 use super::{checkout, holders};
 use crate::runner::error::RunnerError;
 
-pub(in crate::runner) const LOCK_WAIT_ENV: &str = "EFFIGY_LOCK_WAIT_MS";
+pub(in crate::runner) const LOCK_WAIT_ENV: &str = effigy_cli::LOCK_WAIT_ENV;
 /// How long a key's check waits for a racing invocation's row to commit. The
 /// writer holds the store's own gate and commits in a moment; a key that never
 /// appears is absent, not refused. One cheap read per interval, never a tight
