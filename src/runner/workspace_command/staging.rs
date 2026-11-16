@@ -56,17 +56,18 @@ pub(super) fn stage_binary(
             )?;
             Ok(object)
         }
-        Err(_) => {
+        Err(error) => {
+            // The adapter classified the failure; the adapter's message stays
+            // out of both the journal and the refusal.
+            let class = guest_failure_sentence(&error)
+                .unwrap_or_else(|| "the guest refused the staged binary".to_owned());
+            let reason = format!("workspace guest binary staging failed: {class}");
             run.guest_binary_unknown(
                 &ticket,
-                effigy_kernel::observe::UnknownReason::Inconsistent(
-                    "workspace guest binary staging unavailable".into(),
-                ),
+                effigy_kernel::observe::UnknownReason::Inconsistent(reason.clone()),
             )?;
             Err(EnvError::Backend(
-                effigy_containers::environment::BackendError::Uncertain(
-                    "workspace guest binary staging unavailable".into(),
-                ),
+                effigy_containers::environment::BackendError::Uncertain(reason),
             ))
         }
     }
@@ -133,6 +134,22 @@ fn stage_binary_bytes(
     // pins that version (contract 052 §8.9).
     publish_guest_active_version(guest, &object.path, &binding.artifact_version)?;
     Ok(object.clone())
+}
+
+/// The guest adapter's closed classification of one failure, as a host
+/// sentence: the call it was doing and why the guest refused.
+///
+/// This sentence is safe to show and to journal because it is built from the
+/// adapter's fixed operation name and a closed class. The adapter's own message
+/// is not: it can carry the guest's stream, the paths it touched and the bytes
+/// it moved (effigy#1014).
+pub(in crate::runner) fn guest_failure_sentence(error: &RunnerError) -> Option<String> {
+    match error {
+        RunnerError::WorkspaceGuest {
+            operation, kind, ..
+        } => Some(format!("{operation} ({})", kind.sentence())),
+        _ => None,
+    }
 }
 
 /// Record the authenticated version beside the guest object a selection names.

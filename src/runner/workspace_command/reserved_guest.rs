@@ -166,8 +166,26 @@ impl PublicationStep {
 /// the bytes it moved or the paths it touched (the production refusal test
 /// injects a secret-shaped diagnostic and requires it to stay out of the
 /// refusal). What is safe — and what was missing — is naming the exact call.
-fn io(step: PublicationStep) -> impl FnOnce(RunnerError) -> EnvError {
-    move |_error| unavailable(format!("{} failed", step.naming()))
+/// A guest I/O failure, named by the publication call that made it *and* by the
+/// closed class the adapter reported.
+///
+/// The adapter's own message stays out: it can carry the guest's stream, the
+/// paths it touched and the bytes it moved. What it does carry is the class the
+/// host may show, and the same sentence is kept for the journal (effigy#1014).
+fn io(
+    step: PublicationStep,
+    reported: &mut Option<String>,
+) -> impl FnOnce(RunnerError) -> EnvError + '_ {
+    move |error| {
+        let detail = staging::guest_failure_sentence(&error);
+        if let Some(detail) = &detail {
+            *reported = Some(detail.clone());
+        }
+        match detail {
+            Some(detail) => unavailable(format!("{} failed: {detail}", step.naming())),
+            None => unavailable(format!("{} failed", step.naming())),
+        }
+    }
 }
 fn evidence() -> Evidence {
     Evidence::new("exact reserved guest publication".into(), None).expect("fixed evidence")
@@ -505,7 +523,8 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
             .map_err(|_| refused("guest-local identity differs from the reserved target"))?;
         // No credential is minted or staged until the independent guest agrees.
         step = PublicationStep::ContextGenerationAllocation;
-        let generation = allocate_generation(input.guest.as_mut()).map_err(io(step))?;
+        let generation =
+            allocate_generation(input.guest.as_mut()).map_err(io(step, &mut reported))?;
         step = PublicationStep::EnrolmentCredentialMint;
         let credential = (input.credential)(activation.session(), generation)?;
         if credential.environment_generation != reservation.generation().get().to_string()
@@ -538,7 +557,7 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
         step = PublicationStep::SourceSnapshotStaging;
         for (snapshot, bytes) in &input.snapshots {
             staging::stage_document(input.guest.as_mut(), snapshot, bytes, 0o444)
-                .map_err(io(step))?;
+                .map_err(io(step, &mut reported))?;
         }
         step = PublicationStep::SourceSnapshotVerification;
         for source in &input.context.sources {
@@ -555,7 +574,7 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
                 if input
                     .guest
                     .file_sha256(path)
-                    .map_err(io(step))?
+                    .map_err(io(step, &mut reported))?
                     .as_deref()
                     .and_then(Digest::parse_hex)
                     .as_ref()
@@ -599,7 +618,7 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
         )
         .map_err(|_| refused("workspace context construction refused"))?;
         step = PublicationStep::ContextStaging;
-        let bytes = document.render().map_err(io(step))?;
+        let bytes = document.render().map_err(io(step, &mut reported))?;
         objects.context.digest = Digest::of(&bytes);
         staging::stage_document(
             input.guest.as_mut(),
@@ -607,19 +626,19 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
             &credential_bytes,
             0o600,
         )
-        .map_err(io(step))?;
+        .map_err(io(step, &mut reported))?;
         input
             .guest
             .set_owner(&objects.credential.path, &document.paths.user)
-            .map_err(io(step))?;
+            .map_err(io(step, &mut reported))?;
         staging::stage_document(input.guest.as_mut(), &objects.context, &bytes, 0o444)
-            .map_err(io(step))?;
+            .map_err(io(step, &mut reported))?;
         step = PublicationStep::ContextReadback;
         let parsed = WorkspaceContextV2::parse(
             &input
                 .guest
                 .read_file(&objects.context.path)
-                .map_err(io(step))?
+                .map_err(io(step, &mut reported))?
                 .ok_or_else(|| unavailable("staged full v2 context is absent"))?,
         )
         .map_err(|_| refused("workspace staged context validation refused"))?;

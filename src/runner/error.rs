@@ -283,6 +283,86 @@ pub enum RunnerError {
         depth: u8,
     },
     EnvSchema(EnvSchemaError),
+    /// A workspace guest adapter operation did not complete.
+    ///
+    /// `operation` is the adapter's own fixed name for what it was doing and
+    /// `kind` is a closed classification; `message` is the diagnostic a person
+    /// standing in the container needs. A *host* diagnostic shows `operation`
+    /// and `kind` only: `message` can carry the guest's stream, the paths it
+    /// touched and the bytes it moved (effigy#1014).
+    WorkspaceGuest {
+        operation: &'static str,
+        kind: WorkspaceGuestFailure,
+        message: String,
+    },
+}
+
+/// How a workspace guest adapter operation failed, safely.
+///
+/// The classes mirror `std::io::ErrorKind` where the failure came from a host or
+/// guest file operation, and use the guest command's own exit status where the
+/// call ran through `exec`. The publication sequence's refusal names this class
+/// beside the call it failed in, so an operator learns *why* the guest did not
+/// answer while the guest's bytes (its stream, the paths it touched, the bytes
+/// it moved) never reach a diagnostic or the journal (effigy#1014).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceGuestFailure {
+    NotFound,
+    PermissionDenied,
+    AlreadyExists,
+    ReadOnlyFilesystem,
+    TimedOut,
+    Interrupted,
+    Other,
+}
+
+impl WorkspaceGuestFailure {
+    /// The one fixed sentence a host diagnostic may show for this class.
+    pub fn sentence(self) -> &'static str {
+        match self {
+            Self::NotFound => "the guest has no such path or command",
+            Self::PermissionDenied => "the guest refused permission",
+            Self::AlreadyExists => "the guest already holds another object at that path",
+            Self::ReadOnlyFilesystem => "the guest filesystem refused the write",
+            Self::TimedOut => "the guest command ran out of time",
+            Self::Interrupted => "the guest command was interrupted",
+            Self::Other => "the guest command failed",
+        }
+    }
+
+    /// Classify a file operation's own error kind.
+    pub fn from_io(kind: std::io::ErrorKind) -> Self {
+        match kind {
+            std::io::ErrorKind::NotFound => Self::NotFound,
+            std::io::ErrorKind::PermissionDenied => Self::PermissionDenied,
+            std::io::ErrorKind::AlreadyExists => Self::AlreadyExists,
+            std::io::ErrorKind::TimedOut => Self::TimedOut,
+            std::io::ErrorKind::Interrupted => Self::Interrupted,
+            _ => Self::Other,
+        }
+    }
+
+    /// Classify the status a guest command ran through `exec` left behind.
+    ///
+    /// The shells the adapter runs report a refused command with its own code:
+    /// 126 is "found but not executable", 127 is "no such command", and the
+    /// signal conventions are "interrupted". Everything else is the guest's own
+    /// failure, whose text stays in the adapter's message.
+    pub fn from_exit(status: std::process::ExitStatus) -> Self {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(signal) = status.signal() {
+            return match signal {
+                libc::SIGINT | libc::SIGTERM | libc::SIGHUP => Self::Interrupted,
+                _ => Self::Other,
+            };
+        }
+        match status.code() {
+            Some(126) => Self::PermissionDenied,
+            Some(127) => Self::NotFound,
+            Some(130 | 143) => Self::Interrupted,
+            _ => Self::Other,
+        }
+    }
 }
 
 impl std::fmt::Display for RunnerError {
@@ -430,6 +510,7 @@ impl RunnerError {
             | RunnerError::TaskCommandFailure { .. }
             | RunnerError::EnvironmentUnavailable { .. }
             | RunnerError::BoundedExecFailure { .. }
+            | RunnerError::WorkspaceGuest { .. }
             | RunnerError::DepsOperationNonZero { .. }
             | RunnerError::ManagedProcess(_)
             | RunnerError::TaskManagedNonZeroExit { .. }

@@ -985,3 +985,107 @@ fn tasks_crate_failures_keep_their_class_at_the_runner_edge() {
         "a renderer refusal must not be reported as bad user input"
     );
 }
+
+/// effigy#1014: a guest adapter failure is classified by the call and a closed
+/// class, and the host sentence for that class never carries the adapter's own
+/// message (which can hold the guest's stream and the bytes it moved).
+#[test]
+fn workspace_guest_failures_are_classified_and_never_render_the_adapter_message() {
+    use super::WorkspaceGuestFailure;
+    use std::os::unix::process::ExitStatusExt;
+
+    for (kind, sentence) in [
+        (
+            WorkspaceGuestFailure::NotFound,
+            "the guest has no such path or command",
+        ),
+        (
+            WorkspaceGuestFailure::PermissionDenied,
+            "the guest refused permission",
+        ),
+        (
+            WorkspaceGuestFailure::AlreadyExists,
+            "the guest already holds another object at that path",
+        ),
+        (
+            WorkspaceGuestFailure::ReadOnlyFilesystem,
+            "the guest filesystem refused the write",
+        ),
+        (
+            WorkspaceGuestFailure::TimedOut,
+            "the guest command ran out of time",
+        ),
+        (
+            WorkspaceGuestFailure::Interrupted,
+            "the guest command was interrupted",
+        ),
+        (WorkspaceGuestFailure::Other, "the guest command failed"),
+    ] {
+        assert_eq!(kind.sentence(), sentence);
+        assert!(
+            !kind.sentence().contains("adversarial"),
+            "a class sentence is fixed vocabulary"
+        );
+    }
+
+    // A file operation's own kind, and a guest command's exit status.
+    for (kind, expected) in [
+        (
+            std::io::ErrorKind::NotFound,
+            WorkspaceGuestFailure::NotFound,
+        ),
+        (
+            std::io::ErrorKind::PermissionDenied,
+            WorkspaceGuestFailure::PermissionDenied,
+        ),
+        (
+            std::io::ErrorKind::AlreadyExists,
+            WorkspaceGuestFailure::AlreadyExists,
+        ),
+        (
+            std::io::ErrorKind::TimedOut,
+            WorkspaceGuestFailure::TimedOut,
+        ),
+        (
+            std::io::ErrorKind::Interrupted,
+            WorkspaceGuestFailure::Interrupted,
+        ),
+        (std::io::ErrorKind::WouldBlock, WorkspaceGuestFailure::Other),
+    ] {
+        assert_eq!(WorkspaceGuestFailure::from_io(kind), expected, "{kind:?}");
+    }
+    for (raw, expected) in [
+        (0 << 8, WorkspaceGuestFailure::Other),
+        (1 << 8, WorkspaceGuestFailure::Other),
+        (126 << 8, WorkspaceGuestFailure::PermissionDenied),
+        (127 << 8, WorkspaceGuestFailure::NotFound),
+        (130 << 8, WorkspaceGuestFailure::Interrupted),
+        (143 << 8, WorkspaceGuestFailure::Interrupted),
+        (libc::SIGTERM, WorkspaceGuestFailure::Interrupted),
+        (libc::SIGSEGV, WorkspaceGuestFailure::Other),
+    ] {
+        assert_eq!(
+            WorkspaceGuestFailure::from_exit(std::process::ExitStatus::from_raw(raw)),
+            expected,
+            "raw {raw}"
+        );
+    }
+
+    // Display keeps the adapter's own sentence for a person in the container;
+    // the class is what a host diagnostic renders.
+    let error = RunnerError::WorkspaceGuest {
+        operation: "writing a guest file",
+        kind: WorkspaceGuestFailure::PermissionDenied,
+        message: "cannot publish `x`: adversarial-secret-backend-diagnostic".into(),
+    };
+    assert!(error
+        .to_string()
+        .contains("adversarial-secret-backend-diagnostic"));
+    assert!(!WorkspaceGuestFailure::PermissionDenied
+        .sentence()
+        .contains("adversarial"));
+    assert!(matches!(
+        error.category(),
+        effigy_kernel::human::Category::Unavailable
+    ));
+}
