@@ -1,8 +1,11 @@
 //! Container-mode workspace client: the guest side of contract 052 §8.11.
 //!
-//! A container-mode workspace publishes one immutable context (lane C,
-//! [`context`]). A guest Effigy reads that context, serves its static reads
-//! from it, and sends everything with host authority over the one
+//! A container-mode workspace publishes one context generation (lane C,
+//! [`context`]). Two publications write one today: the qualified path writes the
+//! strict v2 document (`context::v2`), and the ordinary production path still
+//! writes the legacy v1 document (read through [`legacy`], effigy#1015). A guest
+//! Effigy reads whichever schema the generation declares, serves its static
+//! reads from it, and sends everything with host authority over the one
 //! authenticated, per-session channel lane A owns
 //! ([`effigy_kernel::workspace_channel`]). This module is the only place those
 //! lanes meet (contract 052 §8.11, "Owners and coverage"), and it holds no
@@ -39,6 +42,13 @@
 //! 3. The session generation a direct terminal must present when it enrols
 //!    (lane A's `EnrolRequest::session_generation`). The published context
 //!    names the session run and not its generation.
+//!
+//! The ordinary production publication carries none of a session, credential or
+//! channel at all, so a production guest ([`GuestPlacement::Legacy`]) serves its
+//! local reads and refuses every authority-bearing command by name, naming the
+//! host CLI as what actually serves it. Re-preparing cannot change that: it
+//! republishes the same legacy document until the production activation caller
+//! lands (effigy#626).
 
 // The channel client below is exercised by the proofs in `tests.rs` and is
 // opened by the transport integration that is a separate task (lane A's note
@@ -57,6 +67,10 @@ pub(crate) mod coverage_policy;
 pub(crate) mod guest_probe;
 pub(crate) mod host_dispatch;
 pub(crate) mod identity;
+// The production workspace's legacy v1 context: the ordinary publication path
+// still writes it, so the guest has one explicitly named reader for it and
+// never hands it to the strict v2 reader (effigy#1015).
+pub(crate) mod legacy;
 // Tom's 2026-11-01 Level 1 ruling: forwarded commands are non-interactive. This
 // module owns their capture/exit seam, their named Level 2 refusals and the
 // session's Level 1 stream endpoint.
@@ -338,9 +352,16 @@ pub(crate) enum GuestPlacement {
     /// Hybrid mode always lands here, because nothing publishes a context for
     /// it and this path writes nothing.
     Host,
-    /// The workspace is in container mode and prepared for one generation,
-    /// already matched against this guest's own independent observation.
+    /// The workspace is in container mode and prepared for one generation with
+    /// the strict v2 document, already matched against this guest's own
+    /// independent observation.
     Guest(Box<PublishedGuestContext>),
+    /// The workspace is in container mode and prepared for one generation with
+    /// the legacy production document (`effigy.workspace-context.v1`), already
+    /// matched against this guest's own independent observation and the
+    /// executable it runs. It pins no session, credential or channel, so only
+    /// local reads are served from it.
+    Legacy(Box<legacy::PublishedLegacyGuestContext>),
 }
 
 /// Read the published context, or report that this is not a prepared
@@ -353,16 +374,24 @@ pub(crate) fn detect(guest: &mut dyn GuestReader) -> Result<GuestPlacement, Runn
 
 /// [`detect`] with the guest's own identity observation supplied.
 ///
-/// The strict v2 document is selected only after the observation independently
-/// matches the container it claims to be; a v1 document is refused by the v2
-/// parser rather than reinterpreted, and an unmatched observation refuses
-/// before any local read or connection.
+/// The published document is routed by the schema it declares, so it is only
+/// ever read by the reader that owns that schema. A strict v2 document is
+/// selected only after the observation independently matches the container it
+/// claims to be; the legacy production document is read by
+/// [`legacy::read_published`], which checks the identity and executable facts a
+/// v1 document actually carries and infers no v2 field. An unproven or
+/// disagreeing observation refuses before any local read or connection.
 pub(crate) fn detect_with(
     guest: &mut dyn GuestReader,
     identity: &mut dyn GuestIdentity,
 ) -> Result<GuestPlacement, RunnerError> {
-    match context::v2::read_published_guest(guest, identity) {
-        Ok(Some(published)) => Ok(GuestPlacement::Guest(Box::new(published))),
+    match legacy::read_published(guest, identity) {
+        Ok(Some(legacy::PublishedContext::Strict(published))) => {
+            Ok(GuestPlacement::Guest(published))
+        }
+        Ok(Some(legacy::PublishedContext::Legacy(published))) => {
+            Ok(GuestPlacement::Legacy(published))
+        }
         Ok(None) => Ok(GuestPlacement::Host),
         Err(error) => Err(context_read_error(error)),
     }
@@ -1722,6 +1751,39 @@ impl Transport for BoxedTransport {
     }
 }
 
+/// Serve one command from a production workspace's legacy context.
+///
+/// The legacy document carries the pinned checkout, sources, version and
+/// placement, so the local reads every container-mode guest is granted (§8.6)
+/// are served from it. It carries no admitted session, no credential and no
+/// host authority channel, so anything needing host authority refuses here,
+/// naming the host CLI as what actually serves it.
+fn dispatch_legacy(
+    cmd: &Command,
+    published: &legacy::PublishedLegacyGuestContext,
+    guest: &mut dyn GuestReader,
+    checkout: &mut dyn CheckoutReader,
+) -> Result<String, RunnerError> {
+    let wants_json = effigy_cli::command_requests_json(cmd, false);
+    match classify(cmd) {
+        GuestOperation::Local(read) => {
+            let mut reads = GuestLocalReads {
+                context: &published.context,
+                guest,
+                checkout,
+            };
+            let outcome = reads
+                .read(&read, published.generation)
+                .map_err(local_read_error)?;
+            Ok(render_local(outcome, wants_json))
+        }
+        GuestOperation::Refused(message) => Err(RunnerError::task_invocation(message)),
+        GuestOperation::Observe { .. } | GuestOperation::Invoke { .. } => Err(
+            RunnerError::task_invocation(legacy::host_authority_unavailable(published)),
+        ),
+    }
+}
+
 /// Run one command inside a prepared container-mode workspace, from the
 /// working directory the runner resolved for this invocation.
 ///
@@ -2131,6 +2193,10 @@ pub(crate) fn guest_command(
     let published = match detect(&mut guest)? {
         GuestPlacement::Host => return Ok(None),
         GuestPlacement::Guest(published) => published,
+        GuestPlacement::Legacy(published) => {
+            let mut checkout = MountedCheckout::new(&published.context.paths);
+            return dispatch_legacy(cmd, &published, &mut guest, &mut checkout).map(Some);
+        }
     };
     let mut checkout = MountedCheckout::new(&published.document.paths);
     let mut opener = PinnedChannelTransport {
@@ -2161,6 +2227,9 @@ pub(crate) fn guest_passthrough_refusal() -> Result<(), RunnerError> {
              host authority to admit or run one. Run it on the host, or open the terminal with \
              `effigy workspace`; `{HOST_REPREPARE_COMMAND}` on the host re-prepares the workspace"
         ))),
+        GuestPlacement::Legacy(published) => Err(RunnerError::task_invocation(
+            legacy::host_authority_unavailable(&published),
+        )),
     }
 }
 

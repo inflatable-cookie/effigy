@@ -86,16 +86,26 @@ impl PublishedGuestContext {
 /// The guest entry: read the strict v2 document and independently observe the
 /// container this process runs in before selecting it.
 ///
-/// A v1 document is refused by [`WorkspaceContextV2::parse`], never
-/// reinterpreted; an observation that disagrees with the document refuses
-/// before any local read or connection.
+/// A legacy v1 production document is not this function's input: [`Self::parse`]
+/// refuses it rather than reinterpreting it, and
+/// [`crate::runner::workspace_client::legacy`] is the one reader that serves it.
 pub(crate) fn read_published_guest(
     guest: &mut dyn GuestReader,
     identity: &mut dyn GuestIdentity,
 ) -> Result<Option<PublishedGuestContext>, ContextReadError> {
-    let Some(document) = read_published_v2(guest)? else {
+    let Some(published) = read_published_body(guest)? else {
         return Ok(None);
     };
+    published_guest_at(&published.bytes, published.generation, identity).map(Some)
+}
+
+/// Bind one already-read strict v2 document to this guest's own observation.
+pub(crate) fn published_guest_at(
+    bytes: &[u8],
+    generation: u64,
+    identity: &mut dyn GuestIdentity,
+) -> Result<PublishedGuestContext, ContextReadError> {
+    let document = published_v2_at(bytes, generation)?;
     let observed = identity.observe().map_err(|reason| {
         let message =
             format!("guest-local identity is unproven ({reason}); re-prepare on the host");
@@ -116,11 +126,11 @@ pub(crate) fn read_published_guest(
              re-prepare on the host"
         )))
     })?;
-    Ok(Some(PublishedGuestContext {
+    Ok(PublishedGuestContext {
         generation: document.context_generation,
         document,
         observation: observed,
-    }))
+    })
 }
 
 /// Strict v2 guest-reader entry. A legacy v1 document is refused by this
@@ -128,25 +138,23 @@ pub(crate) fn read_published_guest(
 pub(crate) fn read_published_v2(
     guest: &mut dyn GuestReader,
 ) -> Result<Option<WorkspaceContextV2>, ContextReadError> {
-    let Some(generation) = read_published_generation(guest)? else {
+    let Some(published) = read_published_body(guest)? else {
         return Ok(None);
     };
-    let bytes = guest
-        .read_file(&context_path(generation))
-        .map_err(ContextReadError::Guest)?
-        .ok_or_else(|| {
-            ContextRefusal::unavailable(
-                "published v2 document is missing; re-prepare on the host".into(),
-            )
-        })?;
-    let document = WorkspaceContextV2::parse(&bytes)?;
+    published_v2_at(&published.bytes, published.generation).map(Some)
+}
+
+/// Parse one already-read document that the caller routed here by its declared
+/// schema, and check it against the generation `current` names.
+fn published_v2_at(bytes: &[u8], generation: u64) -> Result<WorkspaceContextV2, ContextReadError> {
+    let document = WorkspaceContextV2::parse(bytes)?;
     if document.context_generation != generation {
         return Err(ContextRefusal::unavailable(
             "published v2 context generation differs from its selector".into(),
         )
         .into());
     }
-    Ok(Some(document))
+    Ok(document)
 }
 
 impl WorkspaceContextV2 {
@@ -226,11 +234,8 @@ impl WorkspaceContextV2 {
                 "workspace context exceeds its read budget".into(),
             ));
         }
-        let context: Self = serde_json::from_slice(bytes).map_err(|_| {
-            ContextRefusal::unavailable(
-                "workspace context is not a strict full v2 document; re-prepare on the host".into(),
-            )
-        })?;
+        let context: Self =
+            serde_json::from_slice(bytes).map_err(|_| not_strict_v2_refusal(bytes))?;
         if context.schema != SCHEMA || context.protocol != CHANNEL_PROTOCOL_VERSION {
             return Err(ContextRefusal::version_mismatch(
                 "workspace context schema or protocol differs; re-prepare on the host".into(),
@@ -353,6 +358,27 @@ impl WorkspaceContextV2 {
             },
         });
         context.verify(live)
+    }
+}
+
+/// Why a document that did not parse as the strict v2 document is refused.
+///
+/// The message names what the document actually is: "re-prepare" cannot turn a
+/// legacy production context into a v2 one, so a refusal that only said so
+/// would send the reader into the same failure again (effigy#1015).
+fn not_strict_v2_refusal(bytes: &[u8]) -> ContextRefusal {
+    match declared_schema(bytes) {
+        Ok(schema) if schema == CONTEXT_SCHEMA => ContextRefusal::unavailable(format!(
+            "the published workspace context is the legacy production document `{schema}`; this \
+             reader takes the strict `{SCHEMA}` document only and never reinterprets a legacy \
+             projection. The legacy document pins no admitted session and no host authority \
+             channel, so re-preparing cannot make it a v2 context: run the command on the host"
+        )),
+        Ok(schema) => ContextRefusal::unavailable(format!(
+            "the published workspace context declares schema `{schema}`, which this build does not \
+             read as the strict `{SCHEMA}` document; run the command on the host"
+        )),
+        Err(refusal) => refusal,
     }
 }
 

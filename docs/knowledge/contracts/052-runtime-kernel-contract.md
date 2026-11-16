@@ -3727,7 +3727,10 @@ facts read into `ActivationPlan`; a fresh reservation never guesses them before
 apply, and an absent or uncertain stage cannot validate a context receipt.
 The C full-v2 producer/reader is `workspace_client/context_v2.rs`. Its session block
 comes from `ActivationPlan::session()`, its channel from `QualifiedHostLocator`,
-and it refuses v1 documents and unknown fields. The reserved owner orchestration
+and it refuses v1 documents and unknown fields. The v1 document the ordinary
+production path still publishes is read by the separate
+`workspace_client/legacy.rs` reader (effigy#1015, below in this section); it is
+never fed to the strict v2 reader. The reserved owner orchestration
 is `environment_workspace.rs` over the container engine's `WorkspaceActivation`:
 Task admission precedes claimed Env admission. The admitted Run is adopted once
 before channel construction; its already-adopted `SessionSupervisor` and exact
@@ -4473,6 +4476,42 @@ above at the same call site: `detect` now selects the strict document only after
 `ProcGuestIdentity` observed and compared the container itself, and every
 authority request re-verifies that same document against the retained
 observation before it opens a connection.
+
+**Production guest entry (legacy v1, effigy#1015).** Production enablement of
+the v2 publication is Tom's review gate (effigy#626), so the ordinary
+(non-qualified) `workspace_command::provisioning::publication` path still writes
+`effigy.workspace-context.v1` and every production workspace container carries
+that document. #452 made the guest read v2 only and thereby refused every
+production workspace, including its local reads; re-preparing republished the
+same v1 document, so the refusal's own advice could not clear it. The guest now
+routes one published generation by the `schema` it declares, and v1 is read by
+one explicitly named reader, `workspace_client::legacy`:
+
+- `workspace_client::legacy::read_published` reads `current` and the one
+generation, takes `context::declared_schema`, and dispatches. The strict v2
+schema still goes to `context::v2::published_guest_at` with every check it had;
+the v1 schema goes to `legacy::published_legacy_at`; any other schema refuses
+and names itself. No reader ever sees a document of the other schema.
+- `legacy::published_legacy_at` parses the v1 document with the v1 rules it was
+published under (`WorkspaceContext::parse`: v1 schema, protocol 1, no unknown
+field) and checks exactly the facts v1 carries: the generation `current` names,
+the host and guest version and protocol, the version and SHA-256 of the
+executable actually running, and the container id, VM boot, image platform and
+libc against `ProcGuestIdentity`'s independent observation. It infers no
+session, credential, locator or selection, because the v1 document names none,
+and it grants no `VerifiedWorkspaceContext`. A v1 document is never handed to
+the v2 reader: `WorkspaceContextV2::parse` still refuses it, with a message that
+names it as the legacy production document instead of claiming a re-prepare
+would produce a v2 context.
+- `GuestPlacement` gains `Legacy`: local reads (version, pinned task list, source
+pins, checkout reads) are served from the v1 document exactly as the v2 document
+serves them, and every Observe or Invoke refuses before any connection with the
+honest cause: the production context pins no admitted session and no host
+authority channel, re-preparing republishes the same legacy document, and the
+host CLI in the pinned checkout is what actually serves the command. In-container
+host authority in a production workspace therefore stays unavailable, by name,
+until the production activation caller lands; no guest falls back to guest state
+or guest execution.
 
 The adopted run — not a bare `Run` — is what the entry takes, because a
 `PreparedHostChannel` cannot exist before that adoption: the kernel's

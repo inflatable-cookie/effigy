@@ -9,8 +9,10 @@
 
 use super::context::v2::{PublishedGuestContext, WorkspaceContextV2};
 use super::context::{
-    context_path, sha256_text, snapshot_path, WorkspacePinnedSource, CHANNEL_PROTOCOL_VERSION,
-    COMPOSED_MANIFEST_KIND,
+    context_path, sha256_text, snapshot_path, GuestBinaryIdentity, WorkspaceActivationIdentity,
+    WorkspaceBackendDescriptor, WorkspaceChannelLocator, WorkspaceContext, WorkspaceContextInput,
+    WorkspaceEnvironmentIdentity, WorkspaceHostIdentity, WorkspacePathMap, WorkspacePinnedSource,
+    CHANNEL_PROTOCOL_VERSION, COMPOSED_MANIFEST_KIND,
 };
 use super::*;
 use crate::runner::workspace_client::guest_fake::FakeGuest;
@@ -530,25 +532,217 @@ fn detect_selects_the_strict_document_only_after_the_guest_observes_its_own_cont
             assert_eq!(published.document, document);
             assert_eq!(published.observation, guest_observation());
         }
+        GuestPlacement::Legacy(_) => panic!("a v2 document is never read as a legacy context"),
         GuestPlacement::Host => panic!("a published strict document is a guest"),
     }
 }
 
+/// The legacy production document the ordinary publication path writes
+/// (`workspace_command::provisioning::publication`): the v1 schema with the
+/// pinned binary, paths and sources, and no session, credential or channel.
+fn production_context() -> WorkspaceContext {
+    let binary = running_binary();
+    WorkspaceContext::new(WorkspaceContextInput {
+        generation: GENERATION,
+        host: WorkspaceHostIdentity {
+            version: binary.version.clone(),
+            protocol: CHANNEL_PROTOCOL_VERSION,
+        },
+        binary: GuestBinaryIdentity {
+            version: binary.version,
+            digest: binary.digest,
+            protocol: CHANNEL_PROTOCOL_VERSION,
+        },
+        activation: WorkspaceActivationIdentity {
+            host_user: "operator".to_owned(),
+            checkout_id: "checkout".to_owned(),
+            environment: WorkspaceEnvironmentIdentity {
+                resource_id: "env:app".to_owned(),
+                generation: ENVIRONMENT_GENERATION.to_owned(),
+            },
+            container: container(),
+        },
+        session_run_id: None,
+        session_generation: None,
+        paths: WorkspacePathMap {
+            host_checkout: "/Users/operator/app".to_owned(),
+            guest_checkout: GUEST_CHECKOUT.to_owned(),
+            workdir: GUEST_CHECKOUT.to_owned(),
+            user: "app".to_owned(),
+            home: "/home/app".to_owned(),
+        },
+        backend: WorkspaceBackendDescriptor {
+            kind: "docker".to_owned(),
+            profile: "default".to_owned(),
+            runtime: None,
+            vm_type: None,
+        },
+        sources: vec![manifest_pin()],
+        routes: Vec::new(),
+        channel: WorkspaceChannelLocator::default(),
+    })
+}
+
+/// Publish one production generation exactly as the ordinary path does.
+fn publish_production(guest: &mut FakeGuest, context: &WorkspaceContext) {
+    guest.put_file(
+        context::CONTEXT_CURRENT_PATH,
+        context.generation.to_string(),
+        0o644,
+    );
+    guest.put_file(
+        &context_path(context.generation),
+        context.render().expect("rendered production context"),
+        0o444,
+    );
+    guest.put_file(&snapshot_path(&sha256_text(MANIFEST)), MANIFEST, 0o444);
+}
+
 #[test]
-fn a_v1_document_is_refused_instead_of_being_reinterpreted_as_v2() {
-    let document = workspace_document(Some(session_run()), None);
-    let mut bytes = serde_json::to_value(&*document).expect("json");
-    bytes["generation"] = GENERATION.into();
+fn a_production_v1_context_is_a_guest_and_serves_its_local_reads() {
+    let context = production_context();
+    let mut guest = FakeGuest::new();
+    publish_production(&mut guest, &context);
+    let before = guest.tree_digest();
+    let placement =
+        detect_with(&mut guest, &mut ObservedIt(Some(guest_observation()))).expect("detect");
+    let published = match placement {
+        GuestPlacement::Legacy(published) => published,
+        GuestPlacement::Guest(_) => panic!("a v1 document is never read as the strict v2 document"),
+        GuestPlacement::Host => panic!("a published production document is a guest"),
+    };
+    assert_eq!(published.generation, GENERATION);
+    assert_eq!(published.context, context);
+    let mut checkout = FakeCheckout::default();
+
+    assert_eq!(
+        dispatch_legacy(&parsed(&["tasks"]), &published, &mut guest, &mut checkout)
+            .expect("the pinned task list"),
+        "build\nseed"
+    );
+    assert!(
+        dispatch_legacy(&parsed(&["version"]), &published, &mut guest, &mut checkout)
+            .expect("the pinned version")
+            .contains(&running_binary().version)
+    );
+    assert_eq!(guest.tree_digest(), before, "a local read writes nothing");
+    assert_eq!(checkout.reads, 0, "no checkout read for a pinned snapshot");
+}
+
+#[test]
+fn a_production_v1_context_refuses_host_authority_and_names_what_serves_it() {
+    let context = production_context();
+    let mut guest = FakeGuest::new();
+    publish_production(&mut guest, &context);
+    let before = guest.tree_digest();
+    let published = legacy::published_legacy_at(
+        &context.render().expect("render"),
+        GENERATION,
+        &mut ObservedIt(Some(guest_observation())),
+        &running_binary(),
+    )
+    .expect("the production context");
+    let mut checkout = FakeCheckout::default();
+
+    let error = dispatch_legacy(&parsed(&["build"]), &published, &mut guest, &mut checkout)
+        .expect_err("a task needs host authority");
+    let message = error.to_string();
+    assert!(message.contains("production context"), "{message}");
+    assert!(message.contains("no host authority channel"), "{message}");
+    assert!(message.contains("run on the host"), "{message}");
+    assert!(
+        message.contains("cannot grant host authority"),
+        "the refusal must not claim a re-prepare fixes it: {message}"
+    );
+    assert_eq!(guest.tree_digest(), before, "a refusal writes nothing");
+    assert_eq!(checkout.reads, 0, "a refusal never falls back to a read");
+}
+
+#[test]
+fn a_production_v1_context_is_never_reinterpreted_as_the_strict_v2_document() {
+    let context = production_context();
+    let bytes = context.render().expect("render");
+
+    let refusal = WorkspaceContextV2::parse(&bytes).expect_err("the strict reader refuses v1");
+    assert!(
+        refusal.message.contains("legacy production document"),
+        "the strict reader names the document it refused: {}",
+        refusal.message
+    );
+    assert!(
+        !refusal.message.contains("re-prepare the workspace"),
+        "a re-prepare cannot turn v1 into v2: {}",
+        refusal.message
+    );
+
+    // The strict reader used by the qualified path refuses it too.
+    let mut guest = FakeGuest::new();
+    publish_production(&mut guest, &context);
+    assert!(context::v2::read_published_v2(&mut guest).is_err());
+}
+
+#[test]
+fn a_production_v1_context_refuses_an_unproven_or_replaced_container() {
+    let bytes = production_context().render().expect("render");
+    for observed in [
+        None,
+        Some(GuestSelfObservation {
+            container_id: "b2".repeat(32),
+            ..guest_observation()
+        }),
+        Some(GuestSelfObservation {
+            vm_boot_id: "another-boot".to_owned(),
+            ..guest_observation()
+        }),
+    ] {
+        let error = legacy::published_legacy_at(
+            &bytes,
+            GENERATION,
+            &mut ObservedIt(observed),
+            &running_binary(),
+        )
+        .expect_err("the placement does not match");
+        assert!(error.to_string().contains("identity"), "{error}");
+    }
+}
+
+#[test]
+fn a_production_v1_context_refuses_an_executable_other_than_the_one_it_pinned() {
+    let bytes = production_context().render().expect("render");
+    let mut repacked = running_binary();
+    repacked.digest = "sha256:ff".to_owned();
+
+    let error = legacy::published_legacy_at(
+        &bytes,
+        GENERATION,
+        &mut ObservedIt(Some(guest_observation())),
+        &repacked,
+    )
+    .expect_err("another executable refuses");
+
+    assert!(error.to_string().contains("sha256:ff"), "{error}");
+}
+
+#[test]
+fn an_unpublished_schema_refuses_instead_of_being_guessed_at() {
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&production_context().render().expect("render")).expect("json");
+    document["schema"] = serde_json::Value::String("effigy.workspace-context.v9".to_owned());
     let mut guest = FakeGuest::new();
     guest.put_file(context::CONTEXT_CURRENT_PATH, GENERATION.to_string(), 0o644);
     guest.put_file(
         &context_path(GENERATION),
-        serde_json::to_vec(&bytes).expect("bytes"),
+        serde_json::to_vec(&document).expect("bytes"),
         0o444,
     );
+
     let error =
-        detect_with(&mut guest, &mut ObservedIt(Some(guest_observation()))).expect_err("v1");
-    assert!(error.to_string().contains("strict full v2"), "{error}");
+        detect_with(&mut guest, &mut ObservedIt(Some(guest_observation()))).expect_err("schema");
+
+    assert!(
+        error.to_string().contains("effigy.workspace-context.v9"),
+        "{error}"
+    );
 }
 
 #[test]

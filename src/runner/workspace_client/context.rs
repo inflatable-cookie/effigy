@@ -2,11 +2,15 @@
 //! §8.8, §8.9 and §8.11).
 //!
 //! The host's Prepare publishes one immutable generation of this context
-//! inside a container-mode workspace. A guest reads exactly one generation for
-//! its whole run, checks it against the executable that is running and the
-//! container that is running it, and refuses before any effect when they
-//! disagree. Nothing here downloads, builds, enrols or writes host state: the
-//! publish side is `workspace_command::provisioning`, and reading is pure.
+//! inside a container-mode workspace. Two publications write one: the qualified
+//! (reserved) path writes the strict v2 document in [`v2`], and the ordinary
+//! production path still writes this v1 document, which the guest reads through
+//! the separate `workspace_client::legacy` reader (effigy#1015). A guest reads
+//! exactly one generation for its whole run, checks it against the executable
+//! that is running and the container that is running it, and refuses before any
+//! effect when they disagree. Nothing here downloads, builds, enrols or writes
+//! host state: the publish side is `workspace_command::provisioning`, and
+//! reading is pure.
 //!
 //! Lane A (the host authority channel) binds a grant to
 //! [`VerifiedWorkspaceContext`]; lane B (the workspace session) records
@@ -320,14 +324,14 @@ pub(crate) struct ContextRefusal {
 }
 
 impl ContextRefusal {
-    fn version_mismatch(message: String) -> Self {
+    pub(crate) fn version_mismatch(message: String) -> Self {
         Self {
             code: ContextRefusalCode::VersionMismatch,
             message,
         }
     }
 
-    fn identity_mismatch(message: String) -> Self {
+    pub(crate) fn identity_mismatch(message: String) -> Self {
         Self {
             code: ContextRefusalCode::IdentityMismatch,
             message,
@@ -351,14 +355,16 @@ impl ContextRefusal {
         }
     }
 
-    /// A version, identity or credential refusal tells the client to re-prepare
-    /// (§8.11); a stale generation only asks it to reread `current`.
+    /// A version or identity refusal is the one class a host re-prepare
+    /// actually clears (§8.11), so it is the only one that adds the host
+    /// command. A stale generation asks the client to reread `current`, and an
+    /// `unavailable` refusal already carries the guidance its own cause needs:
+    /// re-preparing cannot grant an absent session, channel or provisioned
+    /// guest, and saying so would send the reader into the same refusal again.
     pub(crate) fn names_reprepare(&self) -> bool {
         matches!(
             self.code,
-            ContextRefusalCode::VersionMismatch
-                | ContextRefusalCode::IdentityMismatch
-                | ContextRefusalCode::Unavailable
+            ContextRefusalCode::VersionMismatch | ContextRefusalCode::IdentityMismatch
         )
     }
 }
@@ -798,15 +804,22 @@ pub(crate) struct PublishedWorkspaceContext {
     pub(crate) context: WorkspaceContext,
 }
 
-/// Read the published context generation, or `None` when the workspace is
-/// unprepared. Reads `current`, then one generation; nothing else.
-pub(crate) fn read_published_context(
+/// One published generation: the number `current` names and the immutable
+/// document bytes it resolves to, read once.
+pub(crate) struct PublishedContextBody {
+    pub(crate) generation: u64,
+    pub(crate) bytes: Vec<u8>,
+}
+
+/// Read the published generation and its document bytes, or `None` when the
+/// workspace is unprepared. Reads `current`, then one generation; nothing else.
+pub(crate) fn read_published_body(
     guest: &mut dyn GuestReader,
-) -> Result<Option<PublishedWorkspaceContext>, ContextReadError> {
+) -> Result<Option<PublishedContextBody>, ContextReadError> {
     let Some(generation) = read_published_generation(guest)? else {
         return Ok(None);
     };
-    let Some(body) = guest
+    let Some(bytes) = guest
         .read_file(&context_path(generation))
         .map_err(ContextReadError::Guest)?
     else {
@@ -818,7 +831,51 @@ pub(crate) fn read_published_context(
             ),
         )));
     };
-    let context = WorkspaceContext::parse(&body)?;
+    // One bound for every reader: a document over it is refused before any
+    // parser or schema peek spends its budget on it.
+    if bytes.len() > 1024 * 1024 {
+        return Err(ContextReadError::refused(ContextRefusal::unavailable(
+            format!(
+                "workspace context generation {generation} exceeds its read budget of 1 MiB; run \
+             `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the workspace"
+            ),
+        )));
+    }
+    Ok(Some(PublishedContextBody { generation, bytes }))
+}
+
+/// The `schema` a published document declares, read without interpreting any
+/// other field. The guest routes on this before it parses, so a document is
+/// never handed to a reader that would guess at its version (§8.11).
+pub(crate) fn declared_schema(bytes: &[u8]) -> Result<String, ContextRefusal> {
+    let document: serde_json::Value = serde_json::from_slice(bytes).map_err(|error| {
+        ContextRefusal::unavailable(format!(
+            "the published workspace context is not readable JSON: {error}; run \
+             `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the workspace"
+        ))
+    })?;
+    document
+        .get("schema")
+        .and_then(serde_json::Value::as_str)
+        .filter(|schema| !schema.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            ContextRefusal::unavailable(format!(
+                "the published workspace context declares no schema; run \
+                 `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the workspace"
+            ))
+        })
+}
+
+/// Read the published legacy (production) context generation, or `None` when
+/// the workspace is unprepared.
+pub(crate) fn read_published_context(
+    guest: &mut dyn GuestReader,
+) -> Result<Option<PublishedWorkspaceContext>, ContextReadError> {
+    let Some(PublishedContextBody { generation, bytes }) = read_published_body(guest)? else {
+        return Ok(None);
+    };
+    let context = WorkspaceContext::parse(&bytes)?;
     if context.generation != generation {
         return Err(ContextReadError::refused(ContextRefusal::unavailable(
             format!(
@@ -1012,9 +1069,10 @@ impl WorkspaceContext {
             .session_generation
             .filter(|generation| *generation > 0)
             .ok_or_else(|| {
-                ContextRefusal::unavailable(
-                    "workspace context has no admitted session generation".to_owned(),
-                )
+                ContextRefusal::unavailable(format!(
+                    "workspace context names no admitted session generation, so host access is \
+                     unavailable; `{HOST_REPREPARE_COMMAND}` on the host re-prepares and admits one"
+                ))
             })?;
         if live.session_generation != Some(session_generation) {
             return Err(ContextRefusal::identity_mismatch(
