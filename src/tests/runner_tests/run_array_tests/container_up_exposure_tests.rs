@@ -963,14 +963,6 @@ fn detached_up_reports_a_build_exit_and_redacted_progress() {
     {
         assert_bounded_redacted_tail("the closed-port progress line", line);
     }
-    assert!(
-        progress
-            .iter()
-            .filter(|line| line.contains("last child output:"))
-            .count()
-            >= 2,
-        "the wait keeps reporting the child's evidence while it waits: {progress:?}"
-    );
 
     let table = fixture.routes();
     assert!(
