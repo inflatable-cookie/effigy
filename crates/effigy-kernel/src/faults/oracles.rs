@@ -118,15 +118,11 @@ fn survivors(
             continue;
         }
         let Some(receipt) = &custody.receipt else {
-            // `custody::settle_effect` settles a receipt-less custody effect as
-            // `Residue` when it reads `Unknown` or `Residue`, and releases it
-            // otherwise: in both cases no barrier opened, so no workload ran. A
-            // `Residue` effect is not terminal, so a run cannot read `Complete`
-            // with one. `Released` is therefore the only state a receipt-less
-            // custody effect can carry in a run that claims `Complete`; any other
-            // state in such a run is custody evidence the journal never recorded or
-            // this capture lost, so it is unproven closure rather than nothing to
-            // check.
+            // `custody::settle_effect` releases every effect that has no receipt
+            // except `Unknown` and `Residue`. So once a run reads `Complete`, a
+            // recorded effect without a receipt can only legitimately read
+            // `Released`; any other state means settlement did not resolve it, and
+            // the run is not clean on evidence nobody could read.
             let released_without_a_process = matches!(custody.state, EffectState::Released);
             if unreadable_is_survivor && !released_without_a_process {
                 alive.push((

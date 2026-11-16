@@ -137,7 +137,7 @@ failing-before proof is the collision control
 panic's shape before the identity fix and passes after; a race the evidence shows
 is not there has no failing-before form.
 The post-recovery witness is
-`faults_multi_child_anchor_stop_unknown_leaves_no_owned_survivor`: the QA job
+`faults_multi_child_anchor_stop_unknown_recovers_to_a_clean_world`: the QA job
 with its second child (spawn sequence 2, the sequence the panic named) blocking on a
 named pipe in its own HOME until this process writes a byte at the settle's first
 group stop, so no sleep and no load stand in for the QA drive's timing. The child's
@@ -154,12 +154,10 @@ A custody receipt or group inventory nobody can read is unproven, never absent. 
 driver keeps an unreadable receipt as `Custodied::unreadable`, and a failed group
 inventory and an unreadable receipt each make `survivors` name the effect, so O1a
 fails rather than pass on evidence it could not read. A recorded effect with no
-receipt is exempt only when it reads `Released`. `custody::settle_effect` settles a
-receipt-less custody effect as `Residue` when it reads `Unknown` or `Residue` and
-releases it otherwise, so `Released` is the only state a receipt-less effect can carry
-in a run that claims `Complete`; a `Residue` effect is not terminal, so that run cannot
-read `Complete` at all. Every other state with no receipt in a complete run is custody
-evidence the journal never recorded or the capture lost, and fails. The
+receipt is exempt only when it reads `Released`, because `custody::settle_effect`
+releases every effect that has no receipt except `Unknown` and `Residue`. So once a run
+reads `Complete`, a recorded effect without a receipt can only legitimately read
+`Released`; any other state means settlement did not resolve it, and O1a fails. The
 incomplete-subject scan stays recorded-only, because its residue listing is what
 names its survivors. The witness reads the same evidence with `expect`, and three
 synthetic controls in the oracle controls module pin all three paths — a complete run
