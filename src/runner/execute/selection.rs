@@ -19,9 +19,19 @@ pub(in crate::runner) fn resolve_task_selection<'a>(
     task: &TaskInvocation,
     preflight: &'a ExecutionPreflight,
 ) -> Result<SelectionResolution<'a>, RunnerError> {
+    // A production workspace guest runs only a declared task of the pinned
+    // manifest, from the checkout its context prepared: a `--repo` override,
+    // another resolver root, or a built-in/exec-alias/defer fallback route is
+    // refused here, before any of it can prepare sources or run a command.
+    crate::runner::workspace_client::legacy::verify_local_repository(
+        &preflight.resolved.resolved_root,
+    )?;
     let route = super::route::resolve_route(task, preflight)?;
     if let Some(expected) = crate::runner::managed_run::workspace_resolution()? {
         validate_workspace_resolution(task, preflight, &route, &expected)?;
+    }
+    if !matches!(route, super::route::Route::Task { .. }) {
+        crate::runner::workspace_client::legacy::verify_local_route(&preflight.selector.task_name)?;
     }
     fallback::run_fallback_route(task, preflight, route)
 }

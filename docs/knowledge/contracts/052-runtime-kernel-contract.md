@@ -4528,17 +4528,26 @@ refuses — and must declare none of
 the ordinary runner dispatch with `EFFIGY_INTERNAL_CONTAINER_HANDOFF` set — the
 runner's existing "already inside its own workspace container" switch — so
 routing stays local and the run keeps its ordinary gates, custody and
-single-execution rule. That classification is not the last word: the guest
-records the placement only after the mounted checkout manifest still matches its
-pinned digest, the dispatcher re-checks that digest immediately before it
-prepares sources or resolves anything, and the execution entry re-checks the
-definition it actually resolved (`legacy::verify_local_task`) before the run
-starts. That last check compares the resolved declaration of the task — and of
-every task its steps reference — with the declaration in the pinned composed
-snapshot, so a changed root manifest **or a changed included task file** refuses
-instead of running a definition the host never approved, while the machine-local
-bundle-input layer (which legitimately differs between host and container) is
-not part of the comparison. Every other Observe, Invoke or
+single-execution rule. The allowlist rule is absolute: the requested selector is resolved **only**
+against the verified pinned composed snapshot, before any routing, repository,
+alias or fallback resolution, source preparation or catalog load. The guest
+hands the runner that one catalogue, rooted at the published checkout
+(`TaskSourceContext`), so the run executes the pinned definition and its pinned
+referenced steps and never re-resolves from the live checkout or another
+catalogue. A selector the snapshot does not declare — a qualified
+`<catalog>/<task>`, another repository's task, a built-in/exec-alias/`[defer]`
+fallback target, or an unknown name — refuses with the host-CLI message before
+any effect, and a workspace whose catalogue composes `[catalog] members` refuses
+for the same reason. The resolved repository is fenced to the published
+checkout, so a `--repo` override pointing at another checkout refuses before the
+dispatcher prepares that repository's sources. Defence in depth remains: the
+guest records the placement only after every pinned checkout file still matches
+its digest, the dispatcher re-checks that closure before it prepares sources,
+and the execution entry compares the resolved declaration of the task — and of
+every task its steps reference — with the pinned snapshot's declaration, so a
+changed root manifest or a changed included task file refuses too. The
+machine-local bundle-input layer (which legitimately differs between host and
+container) is not part of that comparison. Every other Observe, Invoke or
 Refused command refuses
 before any connection with the honest cause: the production context pins no
 admitted session and no host authority channel, re-preparing republishes the

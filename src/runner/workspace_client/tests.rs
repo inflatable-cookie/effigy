@@ -880,6 +880,14 @@ fn a_container_bound_task_runs_in_the_container_the_context_proved() {
     let recorded = legacy::local_task_placement().expect("the placement is recorded");
     assert_eq!(recorded.container, "web");
     assert_eq!(recorded.generation, GENERATION);
+    // The runner resolves this selector only against the pinned snapshot, rooted
+    // at the published checkout.
+    let source = legacy::local_task_source().expect("the pinned catalogue is selected");
+    assert_eq!(source.source_root, std::path::PathBuf::from(GUEST_CHECKOUT));
+    assert_eq!(
+        source.manifest_path, recorded.pinned_manifest_path,
+        "the run loads the pinned composed snapshot, not the checkout's composition"
+    );
     let manifest: effigy_manifest::TaskManifest =
         toml::from_str(std::str::from_utf8(PRODUCTION_WORKSPACE_MANIFEST).expect("utf-8"))
             .expect("the pinned manifest parses");
@@ -991,6 +999,119 @@ fn a_checkout_manifest_changed_after_publication_refuses_before_any_effect() {
     assert!(
         legacy::local_task_placement().is_none(),
         "a refused checkout records no placement"
+    );
+}
+
+/// A prepared placement over one checkout and its pinned snapshot, so a proof
+/// can exercise the fences that run before any task does.
+fn record_placement_for(checkout: &std::path::Path, snapshot: &std::path::Path, pinned: &[u8]) {
+    let manifest: effigy_manifest::TaskManifest =
+        toml::from_str(std::str::from_utf8(pinned).expect("utf-8")).expect("the manifest parses");
+    legacy::record_local_task_placement(legacy::LocalTaskPlacement {
+        container: "web".to_owned(),
+        generation: GENERATION,
+        host_checkout: "/Users/operator/app".to_owned(),
+        checkout_pins: Vec::new(),
+        manifest_path: checkout.join("effigy.toml"),
+        pinned_manifest_path: snapshot.to_path_buf(),
+        pinned_tasks: manifest.tasks,
+    });
+}
+
+#[test]
+fn an_alternate_repository_with_a_deferred_route_never_runs_in_a_guest() {
+    // Review finding: a pinned task name plus `--repo` pointing at another
+    // repository used to let the resolver miss the selector and execute that
+    // repository's `[defer]` command before any task comparison. The resolved
+    // repository is fenced first, and the deferred command never runs.
+    let _placement = PlacementGuard::take();
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture =
+        effigy_test_support::Fixture::new("legacy-alternate-repository-").expect("fixture root");
+    let pinned = fixture.path().join("pinned");
+    let alternate = fixture.path().join("alternate");
+    std::fs::create_dir_all(pinned.join(".git")).expect("pinned checkout");
+    std::fs::create_dir_all(alternate.join(".git")).expect("alternate checkout");
+    std::fs::write(pinned.join("effigy.toml"), PRODUCTION_ROOT_MANIFEST).expect("pinned manifest");
+    let marker = fixture.path().join("deferred-ran");
+    std::fs::write(
+        alternate.join("effigy.toml"),
+        format!(
+            "[defer]\nrun = \"touch {}\"\n\n[containers]\ndefault = \"web\"\n\n[containers.web]\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\n",
+            marker.display()
+        ),
+    )
+    .expect("alternate manifest");
+    let pinned_snapshot = fixture.path().join("pinned-snapshot.toml");
+    std::fs::write(&pinned_snapshot, PRODUCTION_WORKSPACE_MANIFEST).expect("pinned snapshot");
+    record_placement_for(&pinned, &pinned_snapshot, PRODUCTION_WORKSPACE_MANIFEST);
+
+    let error = crate::runner::execute::api::run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "build".to_owned(),
+            args: Vec::new(),
+        },
+        alternate.clone(),
+    )
+    .expect_err("an alternate repository refuses before its deferred route runs");
+    let message = error.to_string();
+    assert!(message.contains("never published"), "{message}");
+    assert!(message.contains("alternate"), "{message}");
+    assert!(
+        !marker.exists(),
+        "the alternate repository's deferred command never ran"
+    );
+
+    // A fallback route in the resolved repository refuses too: the guest
+    // resolves its selector only against the pinned snapshot, which declares no
+    // `build` task for this placement, so no `[defer]`, built-in or exec alias
+    // runs.
+    let fallback_snapshot = fixture.path().join("fallback-snapshot.toml");
+    std::fs::write(
+        &fallback_snapshot,
+        "[containers]\ndefault = \"web\"\n\n[containers.web]\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\n",
+    )
+    .expect("fallback snapshot");
+    record_placement_for(
+        &alternate,
+        &fallback_snapshot,
+        b"[containers]\ndefault = \"web\"\n\n[containers.web]\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\n",
+    );
+    let error = crate::runner::execute::api::run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "build".to_owned(),
+            args: Vec::new(),
+        },
+        alternate.clone(),
+    )
+    .expect_err("a fallback route refuses");
+    let message = error.to_string();
+    assert!(message.contains("not a declared task"), "{message}");
+    assert!(
+        !marker.exists(),
+        "the deferred command never ran for a fallback route either"
+    );
+}
+
+#[test]
+fn a_qualified_selector_is_refused_by_a_production_guest() {
+    // A qualified `<catalog>/<task>` selector is never in the pinned snapshot, so
+    // the guest refuses it before any routing or repository resolution.
+    let _placement = PlacementGuard::take();
+    let (published, mut guest, mut checkout, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
+    for selector in ["catalog_a/build", "../alternate/build", "not-a-pinned-task"] {
+        let error = legacy_command(&parsed(&[selector]), &published, &mut guest, &mut checkout)
+            .expect_err("a selector the pinned manifest does not declare refuses");
+        let message = error.to_string();
+        assert!(
+            message.contains("not a task in the manifest"),
+            "{selector}: {message}"
+        );
+        assert!(message.contains("run on the host"), "{selector}: {message}");
+    }
+    assert!(
+        legacy::local_task_placement().is_none(),
+        "no placement is recorded for a refused selector"
     );
 }
 

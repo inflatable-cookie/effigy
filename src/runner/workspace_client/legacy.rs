@@ -194,7 +194,17 @@ pub(crate) fn classify_task(
     checkout: &mut dyn CheckoutReader,
     task: &TaskInvocation,
 ) -> Result<LegacyTask, RunnerError> {
-    let manifest = pinned_task_manifest(published, guest, checkout)?;
+    let (manifest, _) = pinned_task_manifest(published, guest, checkout)?;
+    if manifest
+        .catalog
+        .as_ref()
+        .is_some_and(|catalog| !catalog.members.is_empty())
+    {
+        return Ok(LegacyTask::HostAuthority(format!(
+            "this workspace composes its task catalogue from `[catalog] members`, which a \
+             production guest resolves only from the pinned snapshot"
+        )));
+    }
     let Some(declaration) = manifest.tasks.get(&task.name) else {
         return Ok(LegacyTask::HostAuthority(format!(
             "`{}` is not a task in the manifest this workspace's context pins",
@@ -241,7 +251,7 @@ fn pinned_task_manifest(
     published: &PublishedLegacyGuestContext,
     guest: &mut dyn GuestReader,
     checkout: &mut dyn CheckoutReader,
-) -> Result<TaskManifest, RunnerError> {
+) -> Result<(TaskManifest, PathBuf), RunnerError> {
     let pin = published
         .context
         .sources
@@ -293,13 +303,19 @@ fn pinned_task_manifest(
              `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the workspace"
         ))
     })?;
-    toml::from_str::<TaskManifest>(&text).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "the pinned manifest is not readable as a task manifest ({error}), so this guest cannot \
-             place a task; run the command on the host in `{}`",
-            published.context.paths.host_checkout
-        ))
-    })
+    // The pinned snapshot is the catalogue this run resolves from: its path is
+    // recorded so the runner loads exactly these bytes and never the checkout's
+    // composition.
+    let snapshot_path = PathBuf::from(snapshot);
+    toml::from_str::<TaskManifest>(&text)
+        .map(|manifest| (manifest, snapshot_path))
+        .map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "the pinned manifest is not readable as a task manifest ({error}), so this guest \
+                 cannot place a task; run the command on the host in `{}`",
+                published.context.paths.host_checkout
+            ))
+        })
 }
 
 /// The first host facility `root` or a task its steps reference needs, phrased
@@ -431,6 +447,8 @@ pub(crate) struct LocalTaskPlacement {
     pub(crate) checkout_pins: Vec<(PathBuf, String)>,
     /// The checkout manifest the ordinary dispatch will read.
     pub(crate) manifest_path: PathBuf,
+    /// The pinned composed snapshot the run must resolve its selector from.
+    pub(crate) pinned_manifest_path: PathBuf,
     /// The task definitions the context pinned, as the runner will compare them.
     pub(crate) pinned_tasks: BTreeMap<String, ManifestTask>,
 }
@@ -449,7 +467,7 @@ pub(crate) fn remember_local_task_placement(
     guest: &mut dyn GuestReader,
     checkout: &mut dyn CheckoutReader,
 ) -> Result<LocalTaskPlacement, RunnerError> {
-    let pinned_manifest = pinned_task_manifest(published, guest, checkout)?;
+    let (pinned_manifest, pinned_manifest_path) = pinned_task_manifest(published, guest, checkout)?;
     let checkout_root = published.context.paths.guest_checkout.trim_end_matches('/');
     let checkout_pins = published
         .context
@@ -469,11 +487,18 @@ pub(crate) fn remember_local_task_placement(
         host_checkout: published.context.paths.host_checkout.clone(),
         checkout_pins,
         manifest_path: Path::new(&published.context.paths.guest_checkout).join("effigy.toml"),
+        pinned_manifest_path,
         pinned_tasks: pinned_manifest.tasks,
     };
     verify_checkout_manifest_through(checkout, &placement)?;
     LOCAL_TASK_PLACEMENT.with(|slot| *slot.borrow_mut() = Some(placement.clone()));
     Ok(placement)
+}
+
+/// Record an already-verified placement. The guest entry calls this after it has
+/// checked the pinned checkout closure; a proof builds one directly.
+pub(crate) fn record_local_task_placement(placement: LocalTaskPlacement) {
+    LOCAL_TASK_PLACEMENT.with(|slot| *slot.borrow_mut() = Some(placement));
 }
 
 /// Forget the recorded placement. The guest entry records one placement per
@@ -552,6 +577,87 @@ pub(crate) fn verify_checkout_inputs() -> Result<(), RunnerError> {
         }
     }
     Ok(())
+}
+
+/// The one catalogue a production guest run resolves from: the pinned composed
+/// snapshot, rooted at the published checkout so steps still run there.
+///
+/// The ordinary resolver would otherwise load the checkout's own composition and
+/// every member catalogue it names; the allowlist rule is that the selector is
+/// resolved only against the verified pinned snapshot.
+pub(crate) fn local_task_source() -> Option<effigy_context::TaskSourceContext> {
+    let placement = local_task_placement()?;
+    let checkout = placement
+        .manifest_path
+        .parent()
+        .unwrap_or(Path::new("/"))
+        .to_path_buf();
+    Some(effigy_context::TaskSourceContext::new(
+        checkout,
+        placement.pinned_manifest_path,
+        vec![format!(
+            "workspace context generation {}",
+            placement.generation
+        )],
+    ))
+}
+
+/// Refuse a repository this container did not prepare.
+///
+/// The guest classifies the requested name from the pinned snapshot, but the
+/// resolver uses the invocation's own root — a `--repo` override or any other
+/// checkout — and a selector miss there can execute a catalog's `[defer]`
+/// command or an exec alias before any task comparison runs. The published
+/// checkout is the only repository a production guest runs, so the resolved
+/// root is fenced here, before selection and before any source preparation.
+pub(crate) fn verify_local_repository(resolved_root: &Path) -> Result<(), RunnerError> {
+    let Some(placement) = local_task_placement() else {
+        return Ok(());
+    };
+    let checkout = placement.manifest_path.parent().unwrap_or(Path::new("/"));
+    let checkout = absolute(checkout);
+    let resolved = absolute(resolved_root);
+    if resolved.starts_with(&checkout) {
+        return Ok(());
+    }
+    Err(RunnerError::task_invocation(format!(
+        "this container runs the workspace prepared at `{}`, but this command resolved `{}` (a \
+         `--repo` override or another checkout), so it would run a repository the host never \
+         published; run the command on the host in `{}`",
+        checkout.display(),
+        resolved.display(),
+        placement.host_checkout
+    )))
+}
+
+/// Refuse a selector route that is not a declared task of the pinned manifest.
+///
+/// A built-in, container exec alias or a catalog `[defer]` command is a route
+/// the host chose for its own checkout; a production guest has no pinned
+/// declaration for it and never executes one.
+pub(crate) fn verify_local_route(selector: &str) -> Result<(), RunnerError> {
+    let Some(placement) = local_task_placement() else {
+        return Ok(());
+    };
+    Err(RunnerError::task_invocation(format!(
+        "`{selector}` is not a declared task in the manifest workspace context generation {} pins, \
+         so this container runs no built-in, exec alias or deferred route for it; run the command \
+         on the host in `{}`",
+        placement.generation, placement.host_checkout
+    )))
+}
+
+/// One path, made absolute without requiring it to exist.
+fn absolute(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| {
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .map(|cwd| cwd.join(path))
+                .unwrap_or_else(|_| path.to_path_buf())
+        }
+    })
 }
 
 /// Re-check a task the resolving runner actually loaded, before it runs.
