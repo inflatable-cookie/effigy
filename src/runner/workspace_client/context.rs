@@ -723,7 +723,7 @@ impl GuestLocalReads<'_> {
 
 /// A pin snapshot's path relative to the guest checkout root, when it names a
 /// path inside the mounted checkout.
-fn checkout_relative<'a>(snapshot: &'a str, checkout_root: &str) -> Option<&'a str> {
+pub(crate) fn checkout_relative<'a>(snapshot: &'a str, checkout_root: &str) -> Option<&'a str> {
     if checkout_root.is_empty() || checkout_root == "/" {
         return snapshot.strip_prefix('/').filter(|value| !value.is_empty());
     }

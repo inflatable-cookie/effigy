@@ -4494,24 +4494,44 @@ the v1 schema goes to `legacy::published_legacy_at`; any other schema refuses
 and names itself. No reader ever sees a document of the other schema.
 - `legacy::published_legacy_at` parses the v1 document with the v1 rules it was
 published under (`WorkspaceContext::parse`: v1 schema, protocol 1, no unknown
-field) and checks exactly the facts v1 carries: the generation `current` names,
-the host and guest version and protocol, the version and SHA-256 of the
-executable actually running, and the container id, VM boot, image platform and
-libc against `ProcGuestIdentity`'s independent observation. It infers no
+field) and checks exactly the facts v1 can evidence: the generation `current`
+names, the SHA-256 of the executable actually running against the pin, and the
+container id, VM boot, image platform and libc against `ProcGuestIdentity`'s
+independent observation. The host and guest version and protocol stay the
+document's own claims, validated by that parser; the running binary's
+*self-reported* version is deliberately not compared, because production writes
+the artifact's `effigy.active-version` sidecar beside the stable entry link while
+the process resolves through the link to the digest-addressed executable, so its
+version string is the artifact's packaged version (`0.14.1`) and never the
+local-install identity the host pins (`0.14.1+local.<hash>`). It infers no
 session, credential, locator or selection, because the v1 document names none,
 and it grants no `VerifiedWorkspaceContext`. A v1 document is never handed to
 the v2 reader: `WorkspaceContextV2::parse` still refuses it, with a message that
 names it as the legacy production document instead of claiming a re-prepare
 would produce a v2 context.
-- `GuestPlacement` gains `Legacy`: local reads (version, pinned task list, source
+- `GuestPlacement` gains `Legacy`. Local reads (version, pinned task list, source
 pins, checkout reads) are served from the v1 document exactly as the v2 document
-serves them, and every Observe or Invoke refuses before any connection with the
-honest cause: the production context pins no admitted session and no host
-authority channel, re-preparing republishes the same legacy document, and the
-host CLI in the pinned checkout is what actually serves the command. In-container
-host authority in a production workspace therefore stays unavailable, by name,
-until the production activation caller lands; no guest falls back to guest state
-or guest execution.
+serves them. A **declared task whose steps are bound to this workspace
+container runs in the container** (planner ruling, 2026-11-16): the verified
+placement already proves this process is inside the container the host would
+exec into, so the placement is the one the host would choose and it needs none
+of the host authority a v1 document cannot carry. The placement decision reads
+the context's pinned composed manifest (digest-verified, never the writable
+checkout): the task and every task its steps reference must resolve to the
+manifest's default system and workspace, and must declare none of
+`run_in = "host"`, `secrets`, `gateway`, `container_lifecycle`,
+`admission = "heavy"`, `durable`, or a managed-session shape (`health_wait`,
+`ready_message`, `stay_in_shell`, `concurrent`). The allowed task is handed to
+the ordinary runner dispatch with `EFFIGY_INTERNAL_CONTAINER_HANDOFF` set — the
+runner's existing "already inside its own workspace container" switch — so
+routing stays local and the run keeps its ordinary gates, custody and
+single-execution rule. Every other Observe, Invoke or Refused command refuses
+before any connection with the honest cause: the production context pins no
+admitted session and no host authority channel, re-preparing republishes the
+same legacy document, and the host CLI in the pinned checkout is what actually
+serves the command. A task that needs a host facility refuses naming that
+declaration. Nothing here creates host authority: no channel, no credential, no
+host run record, and no guest-resolved plan.
 
 The adopted run — not a bare `Run` — is what the entry takes, because a
 `PreparedHostChannel` cannot exist before that adoption: the kernel's

@@ -15,10 +15,13 @@ use super::context::{
     CHANNEL_PROTOCOL_VERSION, COMPOSED_MANIFEST_KIND,
 };
 use super::*;
+use crate::contract_test_support::EnvGuard;
+use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_NAME;
 use crate::runner::workspace_client::guest_fake::FakeGuest;
 use crate::runner::workspace_client::identity::{
     GuestIdentity, GuestIdentityRefusal, GuestSelfObservation,
 };
+use effigy_cli::TaskInvocation;
 use effigy_cli::{parse_command, Command};
 use effigy_test_support::process::FixtureCommandExt;
 use std::collections::{BTreeMap, VecDeque};
@@ -541,7 +544,14 @@ fn detect_selects_the_strict_document_only_after_the_guest_observes_its_own_cont
 /// (`workspace_command::provisioning::publication`): the v1 schema with the
 /// pinned binary, paths and sources, and no session, credential or channel.
 fn production_context() -> WorkspaceContext {
+    production_context_over(MANIFEST)
+}
+
+/// [`production_context`] over one pinned composed manifest, so a placement proof
+/// can publish the manifest it is about.
+fn production_context_over(manifest: &[u8]) -> WorkspaceContext {
     let binary = running_binary();
+    let digest = sha256_text(manifest);
     WorkspaceContext::new(WorkspaceContextInput {
         generation: GENERATION,
         host: WorkspaceHostIdentity {
@@ -577,14 +587,57 @@ fn production_context() -> WorkspaceContext {
             runtime: None,
             vm_type: None,
         },
-        sources: vec![manifest_pin()],
+        sources: vec![WorkspacePinnedSource {
+            kind: COMPOSED_MANIFEST_KIND.to_owned(),
+            name: "effigy.toml".to_owned(),
+            digest: digest.clone(),
+            snapshot: Some(snapshot_path(&digest)),
+        }],
         routes: Vec::new(),
         channel: WorkspaceChannelLocator::default(),
     })
 }
 
+/// The manifest a production workspace fixture publishes: one default system and
+/// workspace backed by one container, so a task is container-bound, plus the
+/// declarations that keep a task on the host.
+const PRODUCTION_WORKSPACE_MANIFEST: &[u8] = br#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "compose.yml"
+primary_service = "app"
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+
+[systems.dev.workspaces.other]
+
+[tasks]
+build = "cargo build"
+hosted = { run = "echo hosted", run_in = "host" }
+secretive = { run = "echo secretive", secrets = "required" }
+gated = { run = "echo gated", gateway = true }
+lifecycle = { run = "echo lifecycle", container_lifecycle = true }
+heavy = { run = "echo heavy", admission = "heavy" }
+durable = { run = "echo durable", durable = true }
+elsewhere = { run = "echo elsewhere", workspace = "other" }
+nested = [{ task = "build" }]
+nested_host = [{ task = "hosted" }]
+"#;
+
 /// Publish one production generation exactly as the ordinary path does.
 fn publish_production(guest: &mut FakeGuest, context: &WorkspaceContext) {
+    publish_production_with(guest, context, MANIFEST);
+}
+
+fn publish_production_with(guest: &mut FakeGuest, context: &WorkspaceContext, manifest: &[u8]) {
     guest.put_file(
         context::CONTEXT_CURRENT_PATH,
         context.generation.to_string(),
@@ -595,7 +648,28 @@ fn publish_production(guest: &mut FakeGuest, context: &WorkspaceContext) {
         context.render().expect("rendered production context"),
         0o444,
     );
-    guest.put_file(&snapshot_path(&sha256_text(MANIFEST)), MANIFEST, 0o444);
+    guest.put_file(&snapshot_path(&sha256_text(manifest)), manifest, 0o444);
+}
+
+/// A production guest placement over one manifest's context.
+fn production_guest(
+    manifest: &[u8],
+) -> (
+    legacy::PublishedLegacyGuestContext,
+    FakeGuest,
+    WorkspaceContext,
+) {
+    let context = production_context_over(manifest);
+    let mut guest = FakeGuest::new();
+    publish_production_with(&mut guest, &context, manifest);
+    let published = legacy::published_legacy_at(
+        &context.render().expect("render"),
+        GENERATION,
+        &mut ObservedIt(Some(guest_observation())),
+        &running_binary(),
+    )
+    .expect("the production context");
+    (published, guest, context)
 }
 
 #[test]
@@ -616,13 +690,15 @@ fn a_production_v1_context_is_a_guest_and_serves_its_local_reads() {
     let mut checkout = FakeCheckout::default();
 
     assert_eq!(
-        dispatch_legacy(&parsed(&["tasks"]), &published, &mut guest, &mut checkout)
-            .expect("the pinned task list"),
+        legacy_command(&parsed(&["tasks"]), &published, &mut guest, &mut checkout)
+            .expect("the pinned task list")
+            .expect("a local read is rendered here"),
         "build\nseed"
     );
     assert!(
-        dispatch_legacy(&parsed(&["version"]), &published, &mut guest, &mut checkout)
+        legacy_command(&parsed(&["version"]), &published, &mut guest, &mut checkout)
             .expect("the pinned version")
+            .expect("a local read is rendered here")
             .contains(&running_binary().version)
     );
     assert_eq!(guest.tree_digest(), before, "a local read writes nothing");
@@ -644,8 +720,8 @@ fn a_production_v1_context_refuses_host_authority_and_names_what_serves_it() {
     .expect("the production context");
     let mut checkout = FakeCheckout::default();
 
-    let error = dispatch_legacy(&parsed(&["build"]), &published, &mut guest, &mut checkout)
-        .expect_err("a task needs host authority");
+    let error = legacy_command(&parsed(&["doctor"]), &published, &mut guest, &mut checkout)
+        .expect_err("a live observation needs host authority");
     let message = error.to_string();
     assert!(message.contains("production context"), "{message}");
     assert!(message.contains("no host authority channel"), "{message}");
@@ -656,6 +732,100 @@ fn a_production_v1_context_refuses_host_authority_and_names_what_serves_it() {
     );
     assert_eq!(guest.tree_digest(), before, "a refusal writes nothing");
     assert_eq!(checkout.reads, 0, "a refusal never falls back to a read");
+}
+
+#[test]
+fn a_container_bound_task_runs_in_the_container_the_context_proved() {
+    // The planner's 2026-11-16 ruling: a declared task whose steps are bound to
+    // this workspace container runs here, where the process already is.
+    let (published, mut guest, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
+    let mut checkout = FakeCheckout::default();
+
+    let placement = legacy::classify_task(
+        &published,
+        &mut guest,
+        &mut checkout,
+        &TaskInvocation {
+            name: "build".to_owned(),
+            args: Vec::new(),
+        },
+    )
+    .expect("the pinned manifest");
+    assert_eq!(placement, legacy::LegacyTask::ContainerLocal);
+
+    // The guest entry hands a container-local task to the ordinary dispatch in
+    // this container, under the runner's existing handoff switch.
+    let _marker = EnvGuard::set_many(&[(CONTAINER_HANDOFF_ENV_NAME, None)]);
+    assert!(std::env::var_os(CONTAINER_HANDOFF_ENV_NAME).is_none());
+    assert!(
+        legacy_command(&parsed(&["build"]), &published, &mut guest, &mut checkout)
+            .expect("a container-local task")
+            .is_none(),
+        "a container-local task is dispatched by the ordinary runner"
+    );
+    assert_eq!(
+        std::env::var_os(CONTAINER_HANDOFF_ENV_NAME).as_deref(),
+        Some(std::ffi::OsStr::new("1")),
+        "the dispatch runs where the verified context says it is"
+    );
+}
+
+#[test]
+fn a_task_whose_steps_need_host_authority_refuses_by_name() {
+    let (published, mut guest, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
+    for (name, reason) in [
+        ("hosted", "run_in = \"host\""),
+        ("secretive", "secrets"),
+        ("gated", "gateway"),
+        ("lifecycle", "container_lifecycle"),
+        ("heavy", "admission"),
+        ("durable", "durable"),
+        ("elsewhere", "not the workspace container"),
+        ("nested_host", "`hosted`"),
+    ] {
+        let mut checkout = FakeCheckout::default();
+        let error = legacy_command(&parsed(&[name]), &published, &mut guest, &mut checkout)
+            .expect_err("a host facility keeps this task off the container");
+        let message = error.to_string();
+        assert!(message.contains(reason), "`{name}`: {message}");
+        assert!(message.contains("run on the host"), "`{name}`: {message}");
+        assert!(
+            message.contains("cannot grant host authority"),
+            "`{name}`: {message}"
+        );
+    }
+    // A task the pinned manifest does not declare is never guessed at.
+    let mut checkout = FakeCheckout::default();
+    let error = legacy_command(
+        &parsed(&["invented"]),
+        &published,
+        &mut guest,
+        &mut checkout,
+    )
+    .expect_err("an unpinned task refuses");
+    assert!(
+        error.to_string().contains("not a task in the manifest"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_container_bound_task_through_a_referenced_container_task_runs_here() {
+    let (published, mut guest, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
+    let mut checkout = FakeCheckout::default();
+    assert_eq!(
+        legacy::classify_task(
+            &published,
+            &mut guest,
+            &mut checkout,
+            &TaskInvocation {
+                name: "nested".to_owned(),
+                args: Vec::new(),
+            },
+        )
+        .expect("the pinned manifest"),
+        legacy::LegacyTask::ContainerLocal
+    );
 }
 
 #[test]

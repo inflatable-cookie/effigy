@@ -45,8 +45,10 @@
 //!
 //! The ordinary production publication carries none of a session, credential or
 //! channel at all, so a production guest ([`GuestPlacement::Legacy`]) serves its
-//! local reads and refuses every authority-bearing command by name, naming the
-//! host CLI as what actually serves it. Re-preparing cannot change that: it
+//! local reads, runs a declared task whose steps are bound to this workspace
+//! container (the verified placement already proves this process is inside it),
+//! and refuses every other authority-bearing command by name, naming the host
+//! CLI as what actually serves it. Re-preparing cannot change that: it
 //! republishes the same legacy document until the production activation caller
 //! lands (effigy#626).
 
@@ -1756,15 +1758,47 @@ impl Transport for BoxedTransport {
 /// The legacy document carries the pinned checkout, sources, version and
 /// placement, so the local reads every container-mode guest is granted (§8.6)
 /// are served from it. It carries no admitted session, no credential and no
-/// host authority channel, so anything needing host authority refuses here,
-/// naming the host CLI as what actually serves it.
-fn dispatch_legacy(
+/// host authority channel, so a command needing host authority refuses here,
+/// naming the host CLI as what actually serves it — except a declared task
+/// whose steps are bound to this workspace container, which runs here because
+/// this process already is that container (planner ruling, 2026-11-16).
+///
+/// `Ok(None)` means the ordinary dispatch runs the command in this container.
+fn legacy_command(
     cmd: &Command,
     published: &legacy::PublishedLegacyGuestContext,
     guest: &mut dyn GuestReader,
     checkout: &mut dyn CheckoutReader,
-) -> Result<String, RunnerError> {
+) -> Result<Option<String>, RunnerError> {
     let wants_json = effigy_cli::command_requests_json(cmd, false);
+    if let Command::Task(task) = cmd {
+        return match legacy::classify_task(published, guest, checkout, task)? {
+            legacy::LegacyTask::ContainerLocal => {
+                // This process proved it runs inside the container the context
+                // was prepared for: the container id, VM boot, platform and
+                // libc matched an independent observation of itself. The task's
+                // steps are bound to that same workspace container, so the
+                // placement the host would have chosen is the one this process
+                // already is in.
+                //
+                // `EFFIGY_INTERNAL_CONTAINER_HANDOFF` is the runner's existing
+                // "this process is inside its own workspace container" switch:
+                // it keeps routing local instead of spawning a container client.
+                // The context publication set it by compose exec; here the
+                // verified placement is the same fact, proved rather than
+                // assumed, and the task still runs exactly once, under the same
+                // gates and custody a local handoff run has.
+                std::env::set_var(
+                    crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_NAME,
+                    "1",
+                );
+                Ok(None)
+            }
+            legacy::LegacyTask::HostAuthority(reason) => Err(RunnerError::task_invocation(
+                legacy::host_authority_unavailable_for(published, &reason),
+            )),
+        };
+    }
     match classify(cmd) {
         GuestOperation::Local(read) => {
             let mut reads = GuestLocalReads {
@@ -1775,7 +1809,7 @@ fn dispatch_legacy(
             let outcome = reads
                 .read(&read, published.generation)
                 .map_err(local_read_error)?;
-            Ok(render_local(outcome, wants_json))
+            Ok(Some(render_local(outcome, wants_json)))
         }
         GuestOperation::Refused(message) => Err(RunnerError::task_invocation(message)),
         GuestOperation::Observe { .. } | GuestOperation::Invoke { .. } => Err(
@@ -2195,7 +2229,7 @@ pub(crate) fn guest_command(
         GuestPlacement::Guest(published) => published,
         GuestPlacement::Legacy(published) => {
             let mut checkout = MountedCheckout::new(&published.context.paths);
-            return dispatch_legacy(cmd, &published, &mut guest, &mut checkout).map(Some);
+            return legacy_command(cmd, &published, &mut guest, &mut checkout);
         }
     };
     let mut checkout = MountedCheckout::new(&published.document.paths);
