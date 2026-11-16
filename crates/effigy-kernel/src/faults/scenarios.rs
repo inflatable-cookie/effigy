@@ -1,6 +1,6 @@
 //! §12.1 scenarios the kernel layer expresses with strict fakes. Engine
 //! scenarios are placeholders at the end, owned by their engine lanes.
-use super::driver::{drive, Scenario};
+use super::driver::{drive, drive_part, Scenario};
 use super::oracles::Oracle;
 use super::world::{self, install_audits, World};
 use super::*;
@@ -565,9 +565,22 @@ fn faults_sequence_every_point_and_observation() {
     drive(by_name("sequence"));
 }
 #[test]
-fn faults_multi_child_test_every_point_and_observation() {
-    drive(by_name("multi-child"));
+fn faults_multi_child_test_every_point_and_observation_part_0() {
+    drive_part(by_name("multi-child"), 0, 3);
 }
+#[test]
+fn faults_multi_child_test_every_point_and_observation_part_1() {
+    drive_part(by_name("multi-child"), 1, 3);
+}
+#[test]
+fn faults_multi_child_test_every_point_and_observation_part_2() {
+    drive_part(by_name("multi-child"), 2, 3);
+}
+const _: [fn(); 3] = [
+    faults_multi_child_test_every_point_and_observation_part_0,
+    faults_multi_child_test_every_point_and_observation_part_1,
+    faults_multi_child_test_every_point_and_observation_part_2,
+];
 
 // --- Detached managed run with an environment attachment. ---
 
@@ -820,21 +833,46 @@ impl Scenario for Environment {
 }
 #[test]
 fn faults_environment_up_down_handover_with_concurrent_attach_part_0() {
-    super::driver::drive_part(&Environment, 0, 3);
+    drive_part(&Environment, 0, 8);
 }
 #[test]
 fn faults_environment_up_down_handover_with_concurrent_attach_part_1() {
-    super::driver::drive_part(&Environment, 1, 3);
+    drive_part(&Environment, 1, 8);
 }
 #[test]
 fn faults_environment_up_down_handover_with_concurrent_attach_part_2() {
-    super::driver::drive_part(&Environment, 2, 3);
+    drive_part(&Environment, 2, 8);
+}
+#[test]
+fn faults_environment_up_down_handover_with_concurrent_attach_part_3() {
+    drive_part(&Environment, 3, 8);
+}
+#[test]
+fn faults_environment_up_down_handover_with_concurrent_attach_part_4() {
+    drive_part(&Environment, 4, 8);
+}
+#[test]
+fn faults_environment_up_down_handover_with_concurrent_attach_part_5() {
+    drive_part(&Environment, 5, 8);
+}
+#[test]
+fn faults_environment_up_down_handover_with_concurrent_attach_part_6() {
+    drive_part(&Environment, 6, 8);
+}
+#[test]
+fn faults_environment_up_down_handover_with_concurrent_attach_part_7() {
+    drive_part(&Environment, 7, 8);
 }
 // Keep every arm selected by the environment selector present at compile time.
-const _: [fn(); 3] = [
+const _: [fn(); 8] = [
     faults_environment_up_down_handover_with_concurrent_attach_part_0,
     faults_environment_up_down_handover_with_concurrent_attach_part_1,
     faults_environment_up_down_handover_with_concurrent_attach_part_2,
+    faults_environment_up_down_handover_with_concurrent_attach_part_3,
+    faults_environment_up_down_handover_with_concurrent_attach_part_4,
+    faults_environment_up_down_handover_with_concurrent_attach_part_5,
+    faults_environment_up_down_handover_with_concurrent_attach_part_6,
+    faults_environment_up_down_handover_with_concurrent_attach_part_7,
 ];
 
 // --- A Closed predecessor with residue, followed by begin. ---
