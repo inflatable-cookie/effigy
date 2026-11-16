@@ -6,7 +6,9 @@ explicitly named legacy reader that checks the placement identity and the
 running executable's SHA-256; the qualified path keeps its strict v2 reader and
 its guarantees. A declared task whose steps are bound to this workspace
 container runs there, because the verified placement proves the process already
-is that container. A command or task that needs host authority refuses by name —
+is that container, and only the task declaration the context pinned is allowed
+to run: a checkout whose manifest, or an included task file, changed after
+publication refuses before any effect. A command or task that needs host authority refuses by name —
 the production context pins no admitted session and no host authority channel,
 and re-preparing republishes the same legacy document — instead of claiming a
 re-prepare would fix it.

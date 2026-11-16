@@ -30,7 +30,7 @@
 //! cannot carry (planner ruling, 2026-11-16; [`classify_task`]). A task that
 //! needs any host facility refuses by name instead.
 use std::cell::RefCell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use effigy_cli::TaskInvocation;
@@ -430,6 +430,8 @@ pub(crate) struct LocalTaskPlacement {
     pub(crate) pinned_manifest_digest: Option<String>,
     /// The checkout manifest the ordinary dispatch will read.
     pub(crate) manifest_path: PathBuf,
+    /// The task definitions the context pinned, as the runner will compare them.
+    pub(crate) pinned_tasks: BTreeMap<String, ManifestTask>,
 }
 
 thread_local! {
@@ -443,8 +445,10 @@ thread_local! {
 /// checkout manifest that no longer matches its pin.
 pub(crate) fn remember_local_task_placement(
     published: &PublishedLegacyGuestContext,
+    guest: &mut dyn GuestReader,
     checkout: &mut dyn CheckoutReader,
 ) -> Result<LocalTaskPlacement, RunnerError> {
+    let pinned_manifest = pinned_task_manifest(published, guest, checkout)?;
     let placement = LocalTaskPlacement {
         container: prepared_container(published)?.to_owned(),
         generation: published.generation,
@@ -456,6 +460,7 @@ pub(crate) fn remember_local_task_placement(
             .find(|pin| pin.kind == "manifest")
             .map(|pin| pin.digest.clone()),
         manifest_path: Path::new(&published.context.paths.guest_checkout).join("effigy.toml"),
+        pinned_tasks: pinned_manifest.tasks,
     };
     verify_checkout_manifest_through(checkout, &placement)?;
     LOCAL_TASK_PLACEMENT.with(|slot| *slot.borrow_mut() = Some(placement.clone()));
@@ -562,6 +567,47 @@ pub(crate) fn verify_local_task(
     let Some(placement) = local_task_placement() else {
         return Ok(());
     };
+    // The definition that runs must be the one the context pinned, task by task
+    // through every referenced task. The comparison is on the resolved
+    // declarations, so a changed root manifest or a changed included file
+    // refuses here instead of running an unapproved command, and the
+    // machine-local bundle-input layer cannot make an unchanged definition look
+    // changed.
+    let mut pending = vec![(task_name.to_owned(), task.clone())];
+    let mut seen = BTreeSet::new();
+    while let Some((name, resolved)) = pending.pop() {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let Some(pinned) = placement.pinned_tasks.get(&name) else {
+            return Err(RunnerError::task_invocation(format!(
+                "`{name}` is not a task in the manifest workspace context generation {} pins, so \
+                 this container will not run it; run the command on the host in `{}`",
+                placement.generation, placement.host_checkout
+            )));
+        };
+        if *pinned != resolved {
+            return Err(RunnerError::task_invocation(format!(
+                "the definition of `{name}` is not the one workspace context generation {} pins: \
+                 the checkout, or a file it includes, changed after publication, so this container \
+                 will not run it — run the command on the host in `{}`, or re-prepare the \
+                 workspace on the host",
+                placement.generation, placement.host_checkout
+            )));
+        }
+        for target in referenced_tasks(&resolved) {
+            match manifest.tasks.get(&target) {
+                Some(referenced) => pending.push((target, referenced.clone())),
+                None => {
+                    return Err(RunnerError::task_invocation(format!(
+                        "`{name}` runs `{target}`, which this checkout no longer declares; run the \
+                         command on the host in `{}`",
+                        placement.host_checkout
+                    )))
+                }
+            }
+        }
+    }
     let Some(reason) = host_facility(manifest, task_name, task, &placement.container) else {
         return Ok(());
     };

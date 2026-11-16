@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, serde::Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestTask {
     #[serde(default)]
@@ -201,7 +201,7 @@ impl ManifestTaskOrReferenceDefinition {
     }
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestManagedConcurrentEntry {
     #[serde(default)]
@@ -326,14 +326,14 @@ pub enum ManifestEnvEntry {
     Profile(Vec<BTreeMap<String, String>>),
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestManagedProfile {
     #[serde(default)]
     pub concurrent: Vec<ManifestManagedConcurrentEntry>,
 }
 
-#[derive(Debug, Clone, serde::Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestTaskCache {
     #[serde(default)]

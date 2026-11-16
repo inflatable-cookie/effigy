@@ -1789,7 +1789,7 @@ fn legacy_command(
                 // the compose-exec marker it stands in for, and the dispatch
                 // re-checks the definition it actually resolves against the
                 // recorded placement before anything runs.
-                legacy::remember_local_task_placement(published, checkout)?;
+                legacy::remember_local_task_placement(published, guest, checkout)?;
                 std::env::set_var(
                     crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_NAME,
                     "1",

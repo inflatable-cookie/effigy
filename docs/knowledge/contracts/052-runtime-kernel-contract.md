@@ -4533,8 +4533,12 @@ records the placement only after the mounted checkout manifest still matches its
 pinned digest, the dispatcher re-checks that digest immediately before it
 prepares sources or resolves anything, and the execution entry re-checks the
 definition it actually resolved (`legacy::verify_local_task`) before the run
-starts. A checkout changed after publication therefore refuses instead of
-running a definition the host never approved. Every other Observe, Invoke or
+starts. That last check compares the resolved declaration of the task — and of
+every task its steps reference — with the declaration in the pinned composed
+snapshot, so a changed root manifest **or a changed included task file** refuses
+instead of running a definition the host never approved, while the machine-local
+bundle-input layer (which legitimately differs between host and container) is
+not part of the comparison. Every other Observe, Invoke or
 Refused command refuses
 before any connection with the honest cause: the production context pins no
 admitted session and no host authority channel, re-preparing republishes the

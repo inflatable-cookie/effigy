@@ -2568,9 +2568,20 @@ fn production_publication_writes_what_the_legacy_guest_consumes_for_the_same_con
     let _lock = crate::contract_test_support::lock_test();
     let repo = fixture("legacy-production-publication");
     container_mode_manifest(&repo);
+    // The task declarations live in an included file, as a real workspace keeps
+    // them: the composed definition is the root plus that file.
     let mut manifest = std::fs::read_to_string(repo.join("effigy.toml")).unwrap();
-    manifest.push_str("\n[tasks]\nhello = \"echo hello from the container\"\nhosted = { run = \"echo hosted\", run_in = \"host\" }\n");
+    manifest = manifest.replace(
+        "[containers]",
+        "[manifest]\ninclude = [\"config/tasks.toml\"]\n\n[containers]",
+    );
     std::fs::write(repo.join("effigy.toml"), manifest).unwrap();
+    std::fs::create_dir_all(repo.join("config")).unwrap();
+    std::fs::write(
+        repo.join("config/tasks.toml"),
+        "[tasks]\nhello = \"echo hello from the container\"\nhosted = { run = \"echo hosted\", run_in = \"host\" }\n",
+    )
+    .unwrap();
     let policy = web_policy(&repo, "dev", "/home/dev");
     let artifact = artifact(&repo, "production published guest");
     let mut guest = guest();
@@ -2645,6 +2656,65 @@ fn production_publication_writes_what_the_legacy_guest_consumes_for_the_same_con
         checkout_pin.digest,
         sha256_text(&std::fs::read(repo.join("effigy.toml")).unwrap())
     );
+    // The definition the publication pinned is the one the runner resolves: the
+    // task declarations of the published composed snapshot and of the checkout
+    // catalog are equal, so binding the run to them binds it to the published
+    // definition.
+    let composed_pin = published
+        .context
+        .sources
+        .iter()
+        .find(|pin| pin.kind == COMPOSED_MANIFEST_KIND)
+        .expect("the publication pins the composed manifest");
+    let pinned_bytes = guest
+        .read_file(
+            composed_pin
+                .snapshot
+                .as_deref()
+                .expect("the composed pin names its snapshot"),
+        )
+        .expect("the composed snapshot reads")
+        .expect("the composed snapshot is published");
+    assert_eq!(
+        sha256_text(&pinned_bytes),
+        composed_pin.digest,
+        "the snapshot is the document the pin names"
+    );
+    let pinned: effigy_manifest::TaskManifest =
+        toml::from_str(std::str::from_utf8(&pinned_bytes).expect("utf-8"))
+            .expect("the pinned composed manifest parses");
+    let catalogs =
+        effigy_routing::load_effective_catalogs_allow_missing(&repo).expect("catalogs load");
+    let workspace = |catalogs: Vec<effigy_manifest::LoadedCatalog>| {
+        catalogs
+            .into_iter()
+            .find(|catalog| catalog.catalog_root == repo)
+            .expect("the workspace catalog")
+    };
+    let resolved = workspace(catalogs);
+    for name in ["hello", "hosted"] {
+        assert_eq!(
+            resolved.manifest.tasks.get(name),
+            pinned.tasks.get(name),
+            "the runner resolves the `{name}` declaration the publisher pinned"
+        );
+    }
+    // A changed included file changes the declaration the run would resolve, so
+    // the execution-entry check refuses instead of running it.
+    std::fs::write(
+        repo.join("config/tasks.toml"),
+        "[tasks]\nhello = \"echo swapped\"\nhosted = { run = \"echo hosted\", run_in = \"host\" }\n",
+    )
+    .expect("the included file changes");
+    let changed = workspace(
+        effigy_routing::load_effective_catalogs_allow_missing(&repo).expect("catalogs load"),
+    );
+    assert_ne!(
+        changed.manifest.tasks.get("hello"),
+        pinned.tasks.get("hello"),
+        "a changed included file changes the resolved declaration"
+    );
+
     let mut checkout = EmptyCheckout;
     let placement = crate::runner::workspace_client::legacy::classify_task(
         &published,

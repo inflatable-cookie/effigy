@@ -910,6 +910,63 @@ fn a_checkout_manifest_changed_after_publication_refuses_before_any_effect() {
 }
 
 #[test]
+fn a_task_declaration_that_differs_from_the_pin_refuses_before_the_run() {
+    // Review finding 4: the dispatch resolves the task from the checkout's
+    // composed manifest, so a changed root manifest *or any file it includes*
+    // can hand the run a different command. The guard compares the definition
+    // the run resolved with the one the context pinned.
+    let _placement = PlacementGuard::take();
+    let (published, mut guest, mut checkout, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
+    assert!(
+        legacy_command(&parsed(&["build"]), &published, &mut guest, &mut checkout)
+            .expect("a container-local task")
+            .is_none()
+    );
+
+    let manifest: effigy_manifest::TaskManifest =
+        toml::from_str(std::str::from_utf8(PRODUCTION_WORKSPACE_MANIFEST).expect("utf-8"))
+            .expect("the pinned manifest parses");
+    // The pinned declaration is what runs.
+    assert!(legacy::verify_local_task(
+        &manifest,
+        "build",
+        manifest.tasks.get("build").expect("build")
+    )
+    .is_ok());
+
+    // A declaration changed after publication refuses, whatever file it came
+    // from: the resolved definition is compared, not just the root manifest.
+    let swapped: effigy_manifest::TaskManifest = toml::from_str(
+        "[containers]\ndefault = \"web\"\n\n[systems]\ndefault = \"dev\"\n\n[systems.dev]\ndefault_workspace = \"app\"\n\n[systems.dev.workspaces.app]\n\n[tasks]\nbuild = \"echo swapped\"\n",
+    )
+    .expect("the swapped manifest parses");
+    let error = legacy::verify_local_task(
+        &swapped,
+        "build",
+        swapped.tasks.get("build").expect("build"),
+    )
+    .expect_err("a changed declaration refuses");
+    let message = error.to_string();
+    assert!(message.contains("changed after publication"), "{message}");
+    assert!(message.contains("build"), "{message}");
+
+    // A task the pinned manifest does not declare is never run either.
+    let extra: effigy_manifest::TaskManifest =
+        toml::from_str("[tasks]\ninvented = \"echo invented\"\n")
+            .expect("the extra manifest parses");
+    let error = legacy::verify_local_task(
+        &extra,
+        "invented",
+        extra.tasks.get("invented").expect("invented"),
+    )
+    .expect_err("an unpinned task refuses");
+    assert!(
+        error.to_string().contains("not a task in the manifest"),
+        "{error}"
+    );
+}
+
+#[test]
 fn the_resolved_definition_is_rechecked_before_the_run() {
     // A swap between the guest's classification and the run is caught here: the
     // check sees the definition the runner actually resolved.
@@ -925,7 +982,7 @@ fn the_resolved_definition_is_rechecked_before_the_run() {
             .expect("the pinned manifest parses");
     let error = legacy::verify_local_task(
         &manifest,
-        "build",
+        "hosted",
         manifest.tasks.get("hosted").expect("hosted"),
     )
     .expect_err("a host-bound declaration cannot run here");
