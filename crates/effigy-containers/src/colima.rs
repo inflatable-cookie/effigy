@@ -99,6 +99,10 @@ pub fn colima_start_command_for_profile_with_disk(
         }
         args.push("--memory".to_string());
         args.push(resources.memory_gib.to_string());
+        if let Some(disk_gib) = disk_gib.filter(|value| *value > 0) {
+            args.push("--disk".to_string());
+            args.push(disk_gib.to_string());
+        }
     }
     for server in FALLBACK_COLIMA_DNS_SERVERS {
         args.push("--dns".to_string());

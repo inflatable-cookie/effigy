@@ -6,9 +6,9 @@ use std::time::Instant;
 
 use effigy_cli::ContainerProfileSubcommand;
 use effigy_containers::colima::{
-    colima_start_command_for_profile, colima_start_command_for_profile_with_disk,
-    managed_colima_profile_resources, managed_colima_profile_resources_with_disk,
-    prepare_managed_colima_profile_name, prepare_managed_colima_profile_name_with_disk,
+    colima_start_command_for_profile_with_disk, managed_colima_profile_resources,
+    managed_colima_profile_resources_with_disk, prepare_managed_colima_profile_name,
+    prepare_managed_colima_profile_name_with_disk,
 };
 use effigy_containers::exec::{
     recover_colima_runtime_with_progress, reset_colima_runtime_with_progress, ColimaRecoveryPhase,
@@ -626,7 +626,11 @@ fn run_container_profile_resize(
             format!("starting Colima profile `{profile}` with the managed sizing"),
             Some(if was_running { (2, 2) } else { (1, 1) }),
         );
-        let start = colima_start_command_for_profile(&profile);
+        let disk_gib = profile_resize_disk_request(
+            before.row.as_ref().map(|row| row.disk),
+            resources.disk_gib,
+        );
+        let start = colima_start_command_for_profile_with_disk(&profile, disk_gib);
         let start_args = start.args.iter().map(String::as_str).collect::<Vec<_>>();
         run_command(&start.program, &start_args, &start.label, false)?;
 
@@ -666,6 +670,16 @@ fn run_container_profile_resize(
         )),
     }
     result
+}
+
+fn profile_resize_disk_request(
+    current_disk_bytes: Option<u64>,
+    target_disk_gib: u64,
+) -> Option<u64> {
+    let target_disk_bytes = target_disk_gib.saturating_mul(BYTES_PER_GIB);
+    current_disk_bytes
+        .filter(|current_disk_bytes| *current_disk_bytes < target_disk_bytes)
+        .map(|_| target_disk_gib)
 }
 
 /// A profile command on a profile Effigy does not manage. The managed profile
@@ -807,7 +821,7 @@ fn render_profile_status(status: &ProfileStatus, output_json: bool) -> String {
         || status_below_target(row.disk, status.target_disk_gib)
     {
         lines.push(format!(
-            "next: `effigy container profile resize` will stop and restart `{}` with the managed sizing without deleting local profile data",
+            "next: `effigy container profile resize` stops and restarts `{}`; it may irreversibly grow disk to the managed target when smaller",
             status.profile
         ));
     }
@@ -1096,7 +1110,26 @@ mod tests {
 
         assert!(rendered.contains("disk: 100GiB (target=300GiB)"));
         assert!(rendered.contains("profile resize"));
+        assert!(rendered.contains("irreversibly grow disk"));
         assert!(!rendered.contains("profile recreate --disk"));
+    }
+
+    #[test]
+    fn profile_resize_requests_disk_only_for_an_existing_disk_below_target() {
+        let target = 300;
+        assert_eq!(profile_resize_disk_request(None, target), None);
+        assert_eq!(
+            profile_resize_disk_request(Some(100 * BYTES_PER_GIB), target),
+            Some(target)
+        );
+        assert_eq!(
+            profile_resize_disk_request(Some(300 * BYTES_PER_GIB), target),
+            None
+        );
+        assert_eq!(
+            profile_resize_disk_request(Some(400 * BYTES_PER_GIB), target),
+            None
+        );
     }
 
     #[test]

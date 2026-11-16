@@ -192,6 +192,9 @@ run Cargo with one build job. A running release profile below 8 GiB is refused
 with the deliberate restart command, and Effigy never restarts it. The
 development `effigy` profile keeps its host-derived memory and configured disk
 plan. The release profile uses a 100 GiB disk plan when it is new. Preparing
-managed settings never changes an existing profile's disk value, and start
-commands do not pass a disk resize. A builder exec exit 255 is named as an OOM
-kill when the Colima VM kernel log confirms an OOM kill.
+managed settings never changes an existing profile's disk value, and ordinary
+managed starts do not pass a disk resize. An explicit `effigy container profile
+resize` passes `--disk` only when the existing disk is below its managed target;
+that grow is irreversible. Explicit `profile recreate --disk` sets the size of
+the replacement profile after deleting its runtime data. A builder exec exit
+255 is named as an OOM kill when the Colima VM kernel log confirms an OOM kill.

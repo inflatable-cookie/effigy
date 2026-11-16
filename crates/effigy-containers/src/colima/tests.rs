@@ -471,6 +471,19 @@ fn release_builder_plan_is_fixed_across_host_memory_sizes() {
 }
 
 #[test]
+fn colima_start_passes_disk_only_for_an_explicit_target() {
+    let _lock = env_lock();
+    let ordinary_start = colima_start_command_for_profile("effigy");
+    assert!(!ordinary_start.args.iter().any(|arg| arg == "--disk"));
+
+    let explicit_resize = colima_start_command_for_profile_with_disk("effigy", Some(220));
+    assert!(explicit_resize
+        .args
+        .windows(2)
+        .any(|args| args == ["--disk", "220"]));
+}
+
+#[test]
 fn prepare_managed_colima_profile_writes_memory_and_swap_provision() {
     let _lock = env_lock();
     let root = effigy_test_support::Fixture::process_lifetime(&format!(

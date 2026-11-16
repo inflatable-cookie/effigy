@@ -1,1 +1,1 @@
-Keep the `effigy-release` Colima plan fixed at 4 CPUs and 8 GiB of memory and swap, preserve every existing managed profile's disk setting, and refuse a running release builder only below its 8 GiB floor (effigy#1016).
+Keep the `effigy-release` Colima plan fixed at 4 CPUs and 8 GiB of memory and swap, preserve existing managed profile disk settings during preparation and ordinary starts, allow an explicit profile resize to irreversibly grow a disk only when it is below target, and refuse a running release builder only below its 8 GiB floor (effigy#1016).
