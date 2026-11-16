@@ -176,6 +176,25 @@ fn ensure_running_managed_profile_ready(
         let _ = prepare_managed_colima_profile(policy);
         eprintln!("[warn] {}", drift.warning(&policy.profile));
     }
+    if let Some(resources) = managed_colima_profile_resources(&policy.profile) {
+        if let Some(entry) = colima_profile_entry(repo_root, &policy.profile) {
+            let planned_bytes = resources.memory_gib.saturating_mul(1024 * 1024 * 1024);
+            if entry.memory < planned_bytes {
+                let actual_gib = (entry.memory / (1024 * 1024 * 1024)).max(1);
+                let warning = crate::colima::ManagedColimaProfileDrift::MemoryBelowPlan {
+                    actual_gib,
+                    planned_gib: resources.memory_gib,
+                }
+                .warning(&policy.profile);
+                return Err(ContainerExecError::Failure {
+                    command: "Colima profile resources".to_owned(),
+                    code: None,
+                    stdout: String::new(),
+                    stderr: warning,
+                });
+            }
+        }
+    }
     ensure_running_profile_runtime_ready(
         policy.profile.as_str(),
         COLIMA_RUNNING_PROFILE_GRACE,

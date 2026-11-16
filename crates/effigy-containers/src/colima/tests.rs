@@ -442,6 +442,25 @@ fn managed_colima_profile_resource_cases() {
 }
 
 #[test]
+fn release_builder_receives_a_cold_build_sized_plan() {
+    let _lock = env_lock();
+    let _env = effigy_test_support::env::ScopedEnv::set(
+        "EFFIGY_INTERNAL_HOST_MEMORY_BYTES",
+        (16 * 1024_u64.pow(3)).to_string(),
+    );
+    let resources =
+        managed_colima_profile_resources("effigy-release").expect("release profile plan");
+    assert_eq!(resources.memory_gib, 8);
+    assert_eq!(resources.swap_gib, 8);
+    let command = colima_start_command_for_profile("effigy-release");
+    assert!(command
+        .args
+        .windows(2)
+        .any(|args| args == ["--memory", "8"]));
+    assert!(managed_colima_profile_resources("unmanaged").is_none());
+}
+
+#[test]
 fn prepare_managed_colima_profile_writes_memory_and_swap_provision() {
     let _lock = env_lock();
     let root = effigy_test_support::Fixture::process_lifetime(&format!(
@@ -533,31 +552,47 @@ fn prepare_managed_colima_profile_writes_macos_arch_and_vm_type_overrides() {
 fn managed_drift_reads_a_disabled_forward_agent() {
     let _lock = env_lock();
     assert_eq!(
-        managed_colima_profile_drift_in_config(Some("forwardAgent: false\n")),
+        managed_colima_profile_drift_in_config("effigy", Some("forwardAgent: false\n")),
         Some(ManagedColimaProfileDrift::SshAgentForwardingDisabled)
     );
     assert_eq!(
-        managed_colima_profile_drift_in_config(Some("sshAgent: false\n")),
+        managed_colima_profile_drift_in_config("effigy", Some("sshAgent: false\n")),
         Some(ManagedColimaProfileDrift::SshAgentForwardingDisabled)
     );
+}
+
+#[test]
+fn below_plan_running_release_profile_gets_deliberate_restart_advisory() {
+    let _lock = env_lock();
+    let _env = effigy_test_support::env::ScopedEnv::set(
+        "EFFIGY_INTERNAL_HOST_MEMORY_BYTES",
+        (16 * 1024_u64.pow(3)).to_string(),
+    );
+    let drift = managed_colima_profile_drift_in_config("effigy-release", Some("memory: 2\n"))
+        .expect("undersized release builder");
+    let advisory = drift.warning("effigy-release");
+    assert!(advisory.contains("running with 2GiB RAM"));
+    assert!(advisory.contains("requires 8GiB"));
+    assert!(advisory.contains("did not restart"));
+    assert!(advisory.contains("colima restart effigy-release"));
 }
 
 #[test]
 fn managed_drift_leaves_a_configured_or_unknown_profile_alone() {
     let _lock = env_lock();
     assert_eq!(
-        managed_colima_profile_drift_in_config(Some("forwardAgent: true\nmemory: 32\n")),
+        managed_colima_profile_drift_in_config("effigy", Some("forwardAgent: true\nmemory: 32\n")),
         None
     );
     // A key Colima has not written yet proves nothing, and a restart no
     // observation asked for would stop every stack on the profile.
     assert_eq!(
-        managed_colima_profile_drift_in_config(Some("memory: 32\n")),
+        managed_colima_profile_drift_in_config("effigy", Some("memory: 32\n")),
         None
     );
-    assert_eq!(managed_colima_profile_drift_in_config(None), None);
+    assert_eq!(managed_colima_profile_drift_in_config("effigy", None), None);
     assert_eq!(
-        managed_colima_profile_drift_in_config(Some(": not yaml :")),
+        managed_colima_profile_drift_in_config("effigy", Some(": not yaml :")),
         None
     );
 }

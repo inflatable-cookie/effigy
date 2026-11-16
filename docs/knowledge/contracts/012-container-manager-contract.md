@@ -185,3 +185,11 @@ cleanup is required to proceed. It does not readmit changed Compose inputs or
 grant general application recovery authority. The
 [backend compatibility contract](006-compose-backend-compatibility.md) owns its
 identity, bind, locking, deadline and refusal rules.
+
+The managed Colima `effigy-release` profile uses the host-derived managed
+resource plan with an 8 GiB memory floor and matching swap, and the cold
+release compile runs Cargo with one build job. If an already-running profile is
+below its plan, Effigy writes the managed config, reports the required
+deliberate restart, and refuses the build without restarting the VM. A builder
+exec exit 255 is named as an OOM kill when the Colima VM kernel log confirms an
+OOM kill.
