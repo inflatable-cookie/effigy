@@ -892,3 +892,55 @@ pub(in crate::runner) fn selection_io<'a>(
 ) -> Box<dyn WorkspaceSelectionIo + 'a> {
     Box::new(OwnedSelectionIo { guest, target })
 }
+
+#[cfg(test)]
+mod published_sentence_tests {
+    use super::*;
+
+    /// The publication sentence names the call and the class it was given, and
+    /// never the adapter's own message. The adapter's classification itself is
+    /// proved against the real adapter in `guest_io`'s tests: a collapsed guest
+    /// exit is only a status, and only host file operations carry a kind.
+    #[test]
+    fn the_publication_sentence_names_the_call_and_the_class_only() {
+        let mut reported = None;
+        let error = RunnerError::WorkspaceGuest {
+            operation: "publishing a guest file",
+            kind: crate::runner::error::WorkspaceGuestFailure::Exit(Some(1)),
+            message: "cannot publish `/x`: adversarial-secret-backend-diagnostic".into(),
+        };
+        let refusal = io(PublicationStep::ContextStaging, &mut reported)(error).to_string();
+        assert!(
+            refusal.contains(
+                "staging the workspace context failed: publishing a guest file \
+                 (the guest command failed (exit 1))"
+            ),
+            "{refusal}"
+        );
+        assert!(
+            !refusal.contains("adversarial"),
+            "the adapter message never enters the sentence: {refusal}"
+        );
+        assert_eq!(
+            reported.as_deref(),
+            Some("publishing a guest file (the guest command failed (exit 1))"),
+            "the journal keeps the same sentence"
+        );
+
+        // An adapter failure the host cannot classify names the call alone.
+        let mut reported = None;
+        let refusal = io(PublicationStep::ContextStaging, &mut reported)(
+            RunnerError::task_invocation("unclassified adapter failure"),
+        )
+        .to_string();
+        assert!(
+            refusal.contains("staging the workspace context failed"),
+            "{refusal}"
+        );
+        assert!(
+            !refusal.contains("unclassified adapter failure"),
+            "{refusal}"
+        );
+        assert!(reported.is_none());
+    }
+}

@@ -986,104 +986,105 @@ fn tasks_crate_failures_keep_their_class_at_the_runner_edge() {
     );
 }
 
-/// effigy#1014: a guest adapter failure is classified by the call and a closed
-/// class, and the host sentence for that class never carries the adapter's own
-/// message (which can hold the guest's stream and the bytes it moved).
+/// effigy#1014: a guest adapter failure is classified by the call and by what
+/// the host can actually observe. A collapsed guest exit is reported as the
+/// status the host saw, never as a semantic cause; a host file operation keeps
+/// its own `ErrorKind`. Neither sentence carries the adapter's message.
 #[test]
-fn workspace_guest_failures_are_classified_and_never_render_the_adapter_message() {
+fn workspace_guest_failures_are_classified_by_what_the_host_observed() {
     use super::WorkspaceGuestFailure;
     use std::os::unix::process::ExitStatusExt;
 
-    for (kind, sentence) in [
-        (
-            WorkspaceGuestFailure::NotFound,
-            "the guest has no such path or command",
-        ),
-        (
-            WorkspaceGuestFailure::PermissionDenied,
-            "the guest refused permission",
-        ),
-        (
-            WorkspaceGuestFailure::AlreadyExists,
-            "the guest already holds another object at that path",
-        ),
-        (
-            WorkspaceGuestFailure::ReadOnlyFilesystem,
-            "the guest filesystem refused the write",
-        ),
-        (
-            WorkspaceGuestFailure::TimedOut,
-            "the guest command ran out of time",
-        ),
-        (
-            WorkspaceGuestFailure::Interrupted,
-            "the guest command was interrupted",
-        ),
-        (WorkspaceGuestFailure::Other, "the guest command failed"),
-    ] {
-        assert_eq!(kind.sentence(), sentence);
+    // A collapsed guest exit is only the status: Colima/nerdctl reports every
+    // non-zero guest exit as host exit 1, so nothing more may be claimed.
+    let collapsed = WorkspaceGuestFailure::from_status(std::process::ExitStatus::from_raw(1 << 8));
+    assert_eq!(collapsed, WorkspaceGuestFailure::Exit(Some(1)));
+    assert_eq!(collapsed.sentence(), "the guest command failed (exit 1)");
+
+    // Even the exit conventions that would look semantic are only a status.
+    for raw in [126 << 8, 127 << 8, 130 << 8, libc::SIGTERM] {
+        let status = std::process::ExitStatus::from_raw(raw);
+        let class = WorkspaceGuestFailure::from_status(status);
+        assert_eq!(class, WorkspaceGuestFailure::Exit(status.code()));
         assert!(
-            !kind.sentence().contains("adversarial"),
-            "a class sentence is fixed vocabulary"
+            class.sentence().starts_with("the guest command failed"),
+            "a collapsed status is never interpreted: {}",
+            class.sentence()
         );
     }
 
-    // A file operation's own kind, and a guest command's exit status.
-    for (kind, expected) in [
-        (
-            std::io::ErrorKind::NotFound,
-            WorkspaceGuestFailure::NotFound,
-        ),
+    // A host file operation keeps its own kind, and each kind has one fixed
+    // sentence.
+    for (kind, sentence) in [
+        (std::io::ErrorKind::NotFound, "the host has no such path"),
         (
             std::io::ErrorKind::PermissionDenied,
-            WorkspaceGuestFailure::PermissionDenied,
+            "the host refused permission",
         ),
         (
             std::io::ErrorKind::AlreadyExists,
-            WorkspaceGuestFailure::AlreadyExists,
+            "the host already holds another object at that path",
+        ),
+        (
+            std::io::ErrorKind::ReadOnlyFilesystem,
+            "the host filesystem refused the write",
         ),
         (
             std::io::ErrorKind::TimedOut,
-            WorkspaceGuestFailure::TimedOut,
+            "the host file operation ran out of time",
         ),
         (
             std::io::ErrorKind::Interrupted,
-            WorkspaceGuestFailure::Interrupted,
+            "the host file operation was interrupted",
         ),
-        (std::io::ErrorKind::WouldBlock, WorkspaceGuestFailure::Other),
+        (
+            std::io::ErrorKind::WouldBlock,
+            "the host file operation failed",
+        ),
     ] {
-        assert_eq!(WorkspaceGuestFailure::from_io(kind), expected, "{kind:?}");
-    }
-    for (raw, expected) in [
-        (0 << 8, WorkspaceGuestFailure::Other),
-        (1 << 8, WorkspaceGuestFailure::Other),
-        (126 << 8, WorkspaceGuestFailure::PermissionDenied),
-        (127 << 8, WorkspaceGuestFailure::NotFound),
-        (130 << 8, WorkspaceGuestFailure::Interrupted),
-        (143 << 8, WorkspaceGuestFailure::Interrupted),
-        (libc::SIGTERM, WorkspaceGuestFailure::Interrupted),
-        (libc::SIGSEGV, WorkspaceGuestFailure::Other),
-    ] {
-        assert_eq!(
-            WorkspaceGuestFailure::from_exit(std::process::ExitStatus::from_raw(raw)),
-            expected,
-            "raw {raw}"
-        );
+        let class = WorkspaceGuestFailure::from_io(kind);
+        assert_eq!(class, WorkspaceGuestFailure::HostIo(kind));
+        assert_eq!(class.sentence(), sentence, "{kind:?}");
     }
 
+    // Every class sentence is fixed vocabulary, never an adapter message.
+    for class in [
+        WorkspaceGuestFailure::HostIo(std::io::ErrorKind::PermissionDenied),
+        WorkspaceGuestFailure::TimedOut,
+        WorkspaceGuestFailure::Exit(Some(1)),
+        WorkspaceGuestFailure::Exit(None),
+        WorkspaceGuestFailure::Unavailable,
+        WorkspaceGuestFailure::NoDigestTool,
+    ] {
+        assert!(!class.sentence().contains("adversarial"), "{class:?}");
+    }
+    assert_eq!(
+        WorkspaceGuestFailure::Exit(None).sentence(),
+        "the guest command failed (status unavailable)"
+    );
+    assert_eq!(
+        WorkspaceGuestFailure::TimedOut.sentence(),
+        "the guest command ran out of time"
+    );
+    assert_eq!(
+        WorkspaceGuestFailure::Unavailable.sentence(),
+        "the guest command could not be started or read"
+    );
+    assert_eq!(
+        WorkspaceGuestFailure::NoDigestTool.sentence(),
+        "the guest image has no SHA-256 utility"
+    );
+
     // Display keeps the adapter's own sentence for a person in the container;
-    // the class is what a host diagnostic renders.
+    // the host diagnostic reads the class.
     let error = RunnerError::WorkspaceGuest {
-        operation: "writing a guest file",
-        kind: WorkspaceGuestFailure::PermissionDenied,
+        operation: "publishing a guest file",
+        kind: WorkspaceGuestFailure::Exit(Some(1)),
         message: "cannot publish `x`: adversarial-secret-backend-diagnostic".into(),
     };
     assert!(error
         .to_string()
         .contains("adversarial-secret-backend-diagnostic"));
-    assert!(!WorkspaceGuestFailure::PermissionDenied
-        .sentence()
-        .contains("adversarial"));
     assert!(matches!(
         error.category(),
         effigy_kernel::human::Category::Unavailable

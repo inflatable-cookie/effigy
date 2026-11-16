@@ -34,7 +34,6 @@ struct Guest(
     Option<(usize, bool)>,
     Rc<Cell<usize>>,
     Rc<Cell<bool>>,
-    Option<usize>,
 );
 impl Guest {
     fn effect<T>(
@@ -43,14 +42,6 @@ impl Guest {
     ) -> Result<T, RunnerError> {
         let index = self.2.get() + 1;
         self.2.set(index);
-        if self.4 == Some(index) {
-            self.3.set(true);
-            return Err(RunnerError::WorkspaceGuest {
-                operation: "writing a guest file",
-                kind: crate::runner::error::WorkspaceGuestFailure::PermissionDenied,
-                message: "adversarial-secret-backend-diagnostic".into(),
-            });
-        }
         let injected = self.1.filter(|(at, _)| *at == index);
         if injected == Some((index, false)) {
             self.3.set(true);
@@ -138,9 +129,6 @@ enum Fault {
     Hybrid,
     /// The apply boundary never starts a backend.
     ApplyRefused,
-    /// One guest write fails with a classified adapter failure whose own
-    /// message carries a secret-shaped string.
-    ClassedIo(usize),
 }
 #[derive(Clone)]
 struct Probe {
@@ -588,10 +576,6 @@ home = "/home/vscode"
             Fault::Io(index, after) => Some((index, after)),
             _ => None,
         };
-        let classed_io = match fault {
-            Fault::ClassedIo(index) => Some(index),
-            _ => None,
-        };
         let request = WorkspaceUpRequest {
             policy: &policy,
             retention: effigy_containers::environment::Retention::Persistent,
@@ -706,7 +690,6 @@ home = "/home/vscode"
                     io_fault,
                     io_count.clone(),
                     fired.clone(),
-                    classed_io,
                 )),
                 artifact: artifact.clone(),
                 reobserve: Box::new({
@@ -1082,34 +1065,6 @@ home = "/home/vscode"
                 ),
                 "a publication that never started leaves no pending selection"
             );
-        } else if let Fault::ClassedIo(_) = fault {
-            // The adapter classified the failure; the host shows the call and
-            // the class, and never the adapter's own message (effigy#1014).
-            let error = match result.expect_err("a refused guest write cannot select") {
-                WorkspaceUpError::Owner { cause, .. } => cause.to_string(),
-                WorkspaceUpError::Finish { cause, .. } => cause.to_string(),
-                WorkspaceUpError::Preparation(error) => error.to_string(),
-            };
-            assert!(
-                fired.get(),
-                "the injected guest I/O boundary was reached: {fault:?}"
-            );
-            assert!(
-                error.contains("the guest refused permission"),
-                "the class is named: {error}"
-            );
-            assert!(
-                error.contains("writing a guest file")
-                    || error.contains("staging the guest binary"),
-                "the failing call is named: {error}"
-            );
-            assert!(
-                !error.contains("adversarial-secret-backend-diagnostic"),
-                "the adapter message never escapes: {error}"
-            );
-            // A closed run's events are removed with it, so the durable
-            // reason is proved where it survives (the retained unknown effect),
-            // not by reading a settled fixture's journal.
         } else if matches!(fault, Fault::Io(..)) {
             assert!(
                 fired.get(),
@@ -1247,15 +1202,6 @@ fn workspace_reserved_owner_refuses_identity_alias_peer_pin_and_publication_with
                 "{fault:?} must name its observation's reason `{reason}`: {refusal}"
             );
         }
-    }
-}
-
-/// One classified guest I/O failure per class in the operator sentence and the
-/// journal, and never the adapter's own message (effigy#1014).
-#[test]
-fn workspace_reserved_classified_guest_failures_never_echo_the_adapter_message() {
-    for index in [1, 6] {
-        run(Fault::ClassedIo(index));
     }
 }
 
@@ -1578,7 +1524,6 @@ pub(in crate::runner) fn creator_guest(shared: Rc<RefCell<FakeGuest>>) -> Box<dy
         None,
         Rc::new(Cell::new(0)),
         Rc::new(Cell::new(false)),
-        None,
     ))
 }
 
