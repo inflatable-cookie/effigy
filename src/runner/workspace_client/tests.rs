@@ -600,14 +600,20 @@ fn production_context_over(manifest: &[u8]) -> WorkspaceContext {
     })
 }
 
-/// The manifest a production workspace fixture publishes: one default system and
-/// workspace backed by one container, so a task is container-bound, plus the
-/// declarations that keep a task on the host.
-const PRODUCTION_WORKSPACE_MANIFEST: &[u8] = br#"
+/// The root manifest a production workspace fixture publishes: one default
+/// system and workspace backed by container `web`, a second container, and an
+/// included task file.
+const PRODUCTION_ROOT_MANIFEST: &[u8] = br#"[manifest]
+include = ["config/tasks.toml"]
+
 [containers]
 default = "web"
 
 [containers.web]
+compose_file = "compose.yml"
+primary_service = "app"
+
+[containers.other]
 compose_file = "compose.yml"
 primary_service = "app"
 
@@ -621,10 +627,45 @@ default_workspace = "app"
 
 [systems.dev.workspaces.other]
 container = "other"
+"#;
+
+/// The included declarations, including the ones that keep a task on the host.
+const PRODUCTION_INCLUDED_TASKS: &[u8] = br#"[tasks]
+build = "cargo build"
+hosted = { run = "echo hosted", run_in = "host" }
+secretive = { run = "echo secretive", secrets = "required" }
+gated = { run = "echo gated", gateway = true }
+lifecycle = { run = "echo lifecycle", container_lifecycle = true }
+heavy = { run = "echo heavy", admission = "heavy" }
+durable = { run = "echo durable", durable = true }
+elsewhere = { run = "echo elsewhere", workspace = "other" }
+nested = [{ task = "build" }]
+nested_host = [{ task = "hosted" }]
+"#;
+
+/// The composed document the publication renders for that root and include:
+/// the merged value, so the consumed include directive is gone.
+const PRODUCTION_WORKSPACE_MANIFEST: &[u8] = br#"[containers]
+default = "web"
+
+[containers.web]
+compose_file = "compose.yml"
+primary_service = "app"
 
 [containers.other]
 compose_file = "compose.yml"
 primary_service = "app"
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+
+[systems.dev.workspaces.other]
+container = "other"
 
 [tasks]
 build = "cargo build"
@@ -686,15 +727,19 @@ fn production_guest_prepared_for(
 ) {
     let mut context = production_context_over(manifest);
     context.activation.environment.resource_id = prepared.to_owned();
-    context.sources.insert(
-        0,
-        WorkspacePinnedSource {
+    // The publication pins the root manifest, each included manifest and the
+    // composed document it rendered.
+    for (relative, bytes) in [
+        ("effigy.toml", PRODUCTION_ROOT_MANIFEST),
+        ("config/tasks.toml", PRODUCTION_INCLUDED_TASKS),
+    ] {
+        context.sources.push(WorkspacePinnedSource {
             kind: "manifest".to_owned(),
-            name: "effigy.toml".to_owned(),
-            digest: sha256_text(manifest),
-            snapshot: Some(format!("{GUEST_CHECKOUT}/effigy.toml")),
-        },
-    );
+            name: relative.to_owned(),
+            digest: sha256_text(bytes),
+            snapshot: Some(format!("{GUEST_CHECKOUT}/{relative}")),
+        });
+    }
     let mut guest = FakeGuest::new();
     publish_production_with(&mut guest, &context, manifest);
     let published = legacy::published_legacy_at(
@@ -704,8 +749,19 @@ fn production_guest_prepared_for(
         &running_binary(),
     )
     .expect("the production context");
-    let checkout = FakeCheckout::with_file("effigy.toml", manifest);
+    let checkout = production_checkout();
     (published, guest, checkout, context)
+}
+
+/// The mounted checkout the publication pinned: the root manifest and the file
+/// it includes.
+fn production_checkout() -> FakeCheckout {
+    let mut checkout = FakeCheckout::with_file("effigy.toml", PRODUCTION_ROOT_MANIFEST);
+    checkout.files.insert(
+        "config/tasks.toml".to_owned(),
+        PRODUCTION_INCLUDED_TASKS.to_vec(),
+    );
+    checkout
 }
 
 /// One command records one placement on its own thread, so a proof clears it
@@ -888,25 +944,54 @@ fn a_task_bound_to_the_prepared_non_default_container_runs() {
 
 #[test]
 fn a_checkout_manifest_changed_after_publication_refuses_before_any_effect() {
-    // Review finding 1: the dispatch resolves the task from the checkout, so a
-    // checkout changed after Prepare must refuse instead of running a definition
-    // the host never approved.
+    // Review findings 1 and 4: the dispatch resolves the task from the checkout,
+    // so a changed root manifest *or a changed included file* must refuse
+    // instead of running a definition the host never approved.
     let _placement = PlacementGuard::take();
     let (published, mut guest, _, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
-    let changed = b"[containers]\ndefault = \"web\"\n\n[systems]\ndefault = \"dev\"\n\n[systems.dev]\ndefault_workspace = \"app\"\n\n[systems.dev.workspaces.app]\n\n[tasks]\nbuild = { run = \"echo swapped\", secrets = \"required\" }\n";
-    let mut checkout = FakeCheckout::with_file("effigy.toml", changed);
 
-    let error = legacy_command(&parsed(&["build"]), &published, &mut guest, &mut checkout)
-        .expect_err("a changed checkout refuses");
-    let message = error.to_string();
-    assert!(message.contains("never approved"), "{message}");
+    let mut changed_root = production_checkout();
+    changed_root.files.insert(
+        "effigy.toml".to_owned(),
+        b"[containers]\ndefault = \"web\"\n\n[systems]\ndefault = \"dev\"\n\n[systems.dev]\ndefault_workspace = \"app\"\n\n[systems.dev.workspaces.app]\n\n[tasks]\nbuild = { run = \"echo swapped\", secrets = \"required\" }\n".to_vec(),
+    );
+    let error = legacy_command(
+        &parsed(&["build"]),
+        &published,
+        &mut guest,
+        &mut changed_root,
+    )
+    .expect_err("a changed root manifest refuses");
+    assert!(error.to_string().contains("never approved"), "{error}");
     assert!(
         legacy::local_task_placement().is_none(),
         "a refused checkout records no placement"
     );
 
-    // The dispatch re-checks the same inputs before it prepares sources.
-    assert!(legacy::verify_checkout_inputs().is_ok());
+    // The root manifest is untouched and only the included file changed.
+    let mut changed_include = production_checkout();
+    changed_include.files.insert(
+        "config/tasks.toml".to_owned(),
+        PRODUCTION_INCLUDED_TASKS.to_vec(),
+    );
+    let swapped = String::from_utf8(PRODUCTION_INCLUDED_TASKS.to_vec())
+        .expect("utf-8")
+        .replace("cargo build", "echo swapped");
+    changed_include
+        .files
+        .insert("config/tasks.toml".to_owned(), swapped.into_bytes());
+    let error = legacy_command(
+        &parsed(&["build"]),
+        &published,
+        &mut guest,
+        &mut changed_include,
+    )
+    .expect_err("a changed included file refuses");
+    assert!(error.to_string().contains("never approved"), "{error}");
+    assert!(
+        legacy::local_task_placement().is_none(),
+        "a refused checkout records no placement"
+    );
 }
 
 #[test]

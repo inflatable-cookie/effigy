@@ -426,8 +426,9 @@ pub(crate) struct LocalTaskPlacement {
     pub(crate) generation: u64,
     /// The host checkout the refusal names.
     pub(crate) host_checkout: String,
-    /// The pinned digest of the checkout manifest, when the context pins one.
-    pub(crate) pinned_manifest_digest: Option<String>,
+    /// Every checkout-visible file the context pins: the root manifest, the
+    /// source lock and each included manifest, with the path it mounts at.
+    pub(crate) checkout_pins: Vec<(PathBuf, String)>,
     /// The checkout manifest the ordinary dispatch will read.
     pub(crate) manifest_path: PathBuf,
     /// The task definitions the context pinned, as the runner will compare them.
@@ -449,16 +450,24 @@ pub(crate) fn remember_local_task_placement(
     checkout: &mut dyn CheckoutReader,
 ) -> Result<LocalTaskPlacement, RunnerError> {
     let pinned_manifest = pinned_task_manifest(published, guest, checkout)?;
+    let checkout_root = published.context.paths.guest_checkout.trim_end_matches('/');
+    let checkout_pins = published
+        .context
+        .sources
+        .iter()
+        .filter_map(|pin| {
+            let relative = checkout_relative(pin.snapshot.as_deref()?, checkout_root)?;
+            Some((
+                Path::new(&published.context.paths.guest_checkout).join(relative),
+                pin.digest.clone(),
+            ))
+        })
+        .collect::<Vec<_>>();
     let placement = LocalTaskPlacement {
         container: prepared_container(published)?.to_owned(),
         generation: published.generation,
         host_checkout: published.context.paths.host_checkout.clone(),
-        pinned_manifest_digest: published
-            .context
-            .sources
-            .iter()
-            .find(|pin| pin.kind == "manifest")
-            .map(|pin| pin.digest.clone()),
+        checkout_pins,
         manifest_path: Path::new(&published.context.paths.guest_checkout).join("effigy.toml"),
         pinned_tasks: pinned_manifest.tasks,
     };
@@ -480,74 +489,67 @@ pub(crate) fn local_task_placement() -> Option<LocalTaskPlacement> {
     LOCAL_TASK_PLACEMENT.with(|slot| slot.borrow().clone())
 }
 
-/// Refuse before any effect when the checkout inputs the ordinary dispatch reads
-/// are no longer the ones the context pinned. The dispatch runs this again just
-/// before it prepares sources, so a manifest changed after publication refuses
-/// instead of being resolved and run.
-pub(crate) fn verify_checkout_inputs() -> Result<(), RunnerError> {
-    match local_task_placement() {
-        Some(placement) => verify_checkout_manifest(&placement),
-        None => Ok(()),
-    }
-}
-
-/// The guest entry's check: the mounted checkout's own manifest is still the
-/// bytes the context pinned. A checkout that changed after Prepare refuses
-/// before the run records a placement.
+/// The guest entry's check: every checkout-visible file the context pinned is
+/// still the bytes that were pinned. A checkout that changed after Prepare
+/// refuses before the run records a placement, whatever file changed.
 fn verify_checkout_manifest_through(
     checkout: &mut dyn CheckoutReader,
     placement: &LocalTaskPlacement,
 ) -> Result<(), RunnerError> {
-    let Some(pinned) = placement.pinned_manifest_digest.as_deref() else {
-        return Ok(());
-    };
-    let bytes = checkout.read_checkout_file("effigy.toml")?;
-    let Some(bytes) = bytes else {
-        return Err(RunnerError::task_invocation(format!(
-            "the checkout manifest this task would run from is missing at `{}`; run the command on \
-             the host in `{}`",
-            placement.manifest_path.display(),
-            placement.host_checkout
-        )));
-    };
-    if sha256_text(&bytes) != pinned {
-        return Err(RunnerError::task_invocation(format!(
-            "the checkout manifest `{}` is {} but the workspace context generation {} pins {pinned}, \
-             so this container would run a task definition the host never approved; run the \
-             command on the host in `{}`, or re-prepare the workspace on the host",
-            placement.manifest_path.display(),
-            sha256_text(&bytes),
-            placement.generation,
-            placement.host_checkout
-        )));
+    let checkout_root = placement.manifest_path.parent().unwrap_or(Path::new("/"));
+    for (path, pinned) in &placement.checkout_pins {
+        let relative = path.strip_prefix(checkout_root).unwrap_or(path);
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        let bytes = checkout.read_checkout_file(&relative)?;
+        let Some(bytes) = bytes else {
+            return Err(RunnerError::task_invocation(format!(
+                "the pinned checkout file `{}` this task would run from is missing; run the command \
+                 on the host in `{}`",
+                path.display(),
+                placement.host_checkout
+            )));
+        };
+        let actual = sha256_text(&bytes);
+        if actual != *pinned {
+            return Err(RunnerError::task_invocation(format!(
+                "the pinned checkout file `{}` is {actual} but workspace context generation {} pins \
+                 {pinned}, so this container would run a task definition the host never approved; \
+                 run the command on the host in `{}`, or re-prepare the workspace on the host",
+                path.display(),
+                placement.generation,
+                placement.host_checkout
+            )));
+        }
     }
     Ok(())
 }
 
-/// The dispatch's check, on the real mounted path, immediately before it
+/// The dispatch's check, on the real mounted paths, immediately before it
 /// prepares sources or resolves the task.
-fn verify_checkout_manifest(placement: &LocalTaskPlacement) -> Result<(), RunnerError> {
-    let Some(pinned) = placement.pinned_manifest_digest.as_deref() else {
+pub(crate) fn verify_checkout_inputs() -> Result<(), RunnerError> {
+    let Some(placement) = local_task_placement() else {
         return Ok(());
     };
-    let bytes = std::fs::read(&placement.manifest_path).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "the checkout manifest `{}` this task would run from cannot be read: {error}; run the \
-             command on the host in `{}`",
-            placement.manifest_path.display(),
-            placement.host_checkout
-        ))
-    })?;
-    let actual = sha256_text(&bytes);
-    if actual != pinned {
-        return Err(RunnerError::task_invocation(format!(
-            "the checkout manifest `{}` is {actual} but the workspace context generation {} pins \
-             {pinned}, so this container would run a task definition the host never approved; run \
-             the command on the host in `{}`, or re-prepare the workspace on the host",
-            placement.manifest_path.display(),
-            placement.generation,
-            placement.host_checkout
-        )));
+    for (path, pinned) in &placement.checkout_pins {
+        let bytes = std::fs::read(path).map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "the pinned checkout file `{}` this task would run from cannot be read: {error}; \
+                 run the command on the host in `{}`",
+                path.display(),
+                placement.host_checkout
+            ))
+        })?;
+        let actual = sha256_text(&bytes);
+        if actual != *pinned {
+            return Err(RunnerError::task_invocation(format!(
+                "the pinned checkout file `{}` is {actual} but workspace context generation {} pins \
+                 {pinned}, so this container would run a task definition the host never approved; \
+                 run the command on the host in `{}`, or re-prepare the workspace on the host",
+                path.display(),
+                placement.generation,
+                placement.host_checkout
+            )));
+        }
     }
     Ok(())
 }
