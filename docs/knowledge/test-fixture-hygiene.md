@@ -127,6 +127,23 @@ drive, so a scenario's later request still names the run it started. The filter
 `EFFIGY_KERNEL_FAULT_ONLY` narrows a drive to one labelled run and is diagnostic
 only: it runs that run and its oracles, and leaves the whole-plan coverage
 assertions to an unfiltered drive.
+The retained log of candidate QA 763eb846 cannot attribute its pid 75922 to a
+sibling drive: it carries only the shard's panic, and the run id it names is the
+constant identity every drive of that scenario minted, so the nonce string in it
+matched all of them at once. What rules the custody race out is the replay, not
+the log record:
+`faults_multi_child_anchor_stop_unknown_settles_on_verified_closure` is the QA
+job with its second child (spawn sequence 2, the child the panic named) held by
+an event — it ignores the first stop signal and blocks on a named pipe in its own
+HOME, and leaves only when the settle reaches its first group stop, so no sleep
+and no contention stand in for the QA drive's timing. On one drive with unique
+ids, the `Unknown` at `AnchorStop#1` is delivered, the held child leaves on the
+drive's own event, the run records `Complete` with all three custody effects
+`Released`, every recorded group inventories empty, every recorded anchor is
+gone, and O1a and O1b accept the world. The `Unknown` observation itself never
+becomes closure: that settle waits out its 30 s stop window (a stopped anchor
+that cannot be positively verified may not be killed), records the effect as
+residue, and only the recovery settle's fresh closure proof records `Complete`.
 The one pinned proof that has to be positive about its own premise —
 `faults_anchor_retirement_delivery_is_pinned_to_settlement` — holds its workload
 at the launch's own owner-written stdin until the recorded anchor reads
