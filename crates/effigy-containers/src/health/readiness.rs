@@ -70,7 +70,7 @@ pub struct ServiceHealth {
     pub health: Option<HealthState>,
     /// Consecutive failed checks. `0` when the container declares no check.
     pub failing_streak: u64,
-    /// The last health check's own output, bounded to one line.
+    /// The last health check's own output, wrapped when it exceeds the evidence limit.
     pub last_output: Option<String>,
     /// `State.ExitCode` for a container that is not running.
     pub exit_code: Option<i64>,
@@ -144,16 +144,17 @@ impl ServiceHealth {
     }
 }
 
-/// The one line of a check's own output the diagnostic keeps: the last line
-/// that names a cause, else the last line the check wrote, through the shared
-/// redactor and bound, and stripped of the control characters that make a
-/// rendered error unreadable.
+/// The check output the diagnostic keeps: the last line that names a cause,
+/// else the last line the check wrote, through the shared redactor and bound,
+/// which wraps long text without losing fields.
 pub fn bounded_last_output(output: &str) -> Option<String> {
     let line = effigy_ui::human::last_output_line(output)?;
     let cleaned = line
         .chars()
         .map(|character| {
-            if character.is_control() {
+            if character == '\n' {
+                character
+            } else if character.is_control() {
                 ' '
             } else {
                 character

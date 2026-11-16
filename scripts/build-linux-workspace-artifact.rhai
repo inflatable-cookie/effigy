@@ -44,7 +44,7 @@ fn workspace_artifact_build_script(release_triple, active_version) {
     build_script += "  echo \"release_triple=" + release_triple + "\"\n";
     build_script += "  echo \"sha256=$artifact_sha256\"\n";
     build_script += "  echo \"build_kind=workspace-artifact\"\n";
-    build_script += "  echo \"completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)\"\n";
+    build_script += "  echo \"completed_at=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)\"\n";
     build_script += "} > " + str::shell_quote(built_receipt) + "\n";
     build_script += "receipt_bytes=$(wc -c < " + str::shell_quote(built_receipt) + " | tr -d ' ')\n";
     build_script += "if [ \"$receipt_bytes\" -gt " + caps["receipt"].to_string() + " ]; then echo \"receipt-over-cap $receipt_bytes\"; exit 61; fi\n";

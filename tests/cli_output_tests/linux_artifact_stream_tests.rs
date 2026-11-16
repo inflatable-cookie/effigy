@@ -45,6 +45,30 @@ mounts = ["./:/workspace:ro"]
     .unwrap();
     fs::write(root.join("tools/docker"), DOCKER_ADAPTER).unwrap();
     fs::set_permissions(root.join("tools/docker"), fs::Permissions::from_mode(0o755)).unwrap();
+    let initialized = Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&root)
+        .status()
+        .expect("initialize artifact fixture checkout");
+    assert!(initialized.success(), "git init failed: {initialized}");
+    let scoped = Command::new("git")
+        .args(["config", "effigy.runtimeScope", "ephemeral"])
+        .current_dir(&root)
+        .status()
+        .expect("mark artifact fixture checkout scope");
+    assert!(scoped.success(), "git config failed: {scoped}");
+    let indexed = Command::new("git")
+        .args([
+            "add",
+            "effigy.toml",
+            "build.rhai",
+            "infra/compose.yml",
+            "tools/docker",
+        ])
+        .current_dir(&root)
+        .status()
+        .expect("index artifact fixture source");
+    assert!(indexed.success(), "git add failed: {indexed}");
     let output = Command::new("python3")
         .args(["-I", "-B", "-c", BUILDER_PTY_PROOF])
         .arg(env!("CARGO_BIN_EXE_effigy"))
@@ -53,14 +77,17 @@ mounts = ["./:/workspace:ro"]
         .expect("artifact builder PTY fixture");
     assert!(
         output.status.success(),
-        "{}\n{}",
+        "{}\n{}\nadapter calls:\n{}\nproject: {}\ninspect: {}",
         String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        String::from_utf8_lossy(&output.stderr),
+        fs::read_to_string(root.join("adapter/calls")).unwrap_or_default(),
+        fs::read_to_string(root.join("adapter/project")).unwrap_or_default(),
+        fs::read_to_string(root.join("adapter/inspect.json")).unwrap_or_default()
     );
 }
 
 const DOCKER_ADAPTER: &str = r#"#!/usr/bin/env python3
-import hashlib, json, os, pathlib, re, shlex, sys, time
+import datetime, hashlib, json, os, pathlib, re, shlex, sys, time
 root = pathlib.Path(os.environ['EFFIGY_BUILDER_FIXTURE_ROOT'])
 state = root / 'adapter'
 args = sys.argv[1:]
@@ -79,7 +106,8 @@ project = (state / 'project').read_text() if (state / 'project').exists() else '
 identity = 'a' * 64
 name = project + '-builder-1'
 if 'inspect' in args:
-    labels = {'com.docker.compose.project': project, 'com.docker.compose.service': 'builder',
+    labels = {'com.docker.compose.project': project, 'com.docker.compose.project.working_dir': str(root),
+              'com.docker.compose.service': 'builder',
               'com.docker.compose.oneoff': 'False', 'com.effigy.checkout': str(root)}
     token = root / '.git/effigy-runtime-scope'
     if token.exists(): labels['com.effigy.scope'] = token.read_text().strip()
@@ -90,6 +118,7 @@ if 'inspect' in args:
                         [{'Type': 'volume', 'Name': project + '-' + suffix, 'Destination': '/root/.cargo/' + dest, 'RW': True}
                          for dest, suffix in [('registry', 'cargo-registry'), ('git', 'cargo-git')]],
               'NetworkSettings': {'Ports': {}}}
+    (state / 'inspect.json').write_text(json.dumps([record]))
     print(json.dumps([record]))
 elif 'ps' in args:
     print(name + '\tUp 1 second\t\t' + project + '\t\tbuilder\tFalse')
@@ -121,7 +150,8 @@ elif 'exec' in args:
             version = shlex.split(re.search(r'export EFFIGY_ACTIVE_VERSION=([^\n]+)', script).group(1))[0]
             (state / 'effigy').write_bytes(binary)
             (state / 'effigy.active-version').write_text(version + '\n')
-            (state / 'effigy.receipt').write_text('binary=/var/tmp/effigy-artifact-build/target/x86_64-unknown-linux-gnu/release/effigy\nrelease_triple=x86_64-unknown-linux-gnu\nsha256=' + ('0' * 64 if mode == 'bad-digest' else hashlib.sha256(binary).hexdigest()) + '\nbuild_kind=workspace-artifact\n')
+            completed_at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='microseconds').replace('+00:00', 'Z')
+            (state / 'effigy.receipt').write_text('binary=/var/tmp/effigy-artifact-build/target/x86_64-unknown-linux-gnu/release/effigy\nrelease_triple=x86_64-unknown-linux-gnu\nsha256=' + ('0' * 64 if mode == 'bad-digest' else hashlib.sha256(binary).hexdigest()) + '\nbuild_kind=workspace-artifact\ncompleted_at=' + completed_at + '\n')
             (state / 'build-done').touch()
         elif 'export_binary_bytes' in script:
             values = {'census':0, 'source_files':0, 'nested_workspace_mounts':0, 'source_bind_ro':1,
@@ -219,7 +249,7 @@ def run(mode):
             assert 'Building Linux effigy fixture' in text and 'finished (' in text, text
             assert (state / 'transfers').read_text().splitlines() == ['effigy', 'effigy.receipt', 'effigy.active-version'], text
             receipt = dict(line.split('=',1) for line in (artifacts / (name+'.receipt')).read_text().splitlines())
-            assert (artifacts / (name+'.receipt')).read_bytes() == (state / 'effigy.receipt').read_bytes()
+            assert receipt['source_closure_sha256'] and len(receipt['source_closure_sha256']) == 64
             assert receipt['release_triple'] == 'x86_64-unknown-linux-gnu'
             assert receipt['sha256'] == hashlib.sha256((artifacts / name).read_bytes()).hexdigest()
             records = [json.loads(line) for line in text.splitlines() if line.startswith('{')]

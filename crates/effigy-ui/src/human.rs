@@ -168,15 +168,24 @@ impl HumanError {
     pub fn render_text_body(&self) -> String {
         let mut text = self.what_failed.clone();
         for (index, line) in self.evidence.iter().enumerate() {
-            text.push('\n');
-            let _ = if index == 0 {
-                write!(text, "  cause: {line}")
-            } else {
-                write!(text, "         {line}")
-            };
+            let indent = if index == 0 { "  cause: " } else { "         " };
+            for (part, wrapped) in line.lines().enumerate() {
+                text.push('\n');
+                let _ = if part == 0 {
+                    write!(text, "{indent}{wrapped}")
+                } else {
+                    write!(text, "         {wrapped}")
+                };
+            }
         }
         if let Some(action) = self.next_action.as_deref() {
-            let _ = write!(text, "\n  next: {action}");
+            for (part, wrapped) in action.lines().enumerate() {
+                let _ = if part == 0 {
+                    write!(text, "\n  next: {wrapped}")
+                } else {
+                    write!(text, "\n         {wrapped}")
+                };
+            }
         }
         text
     }
@@ -307,34 +316,36 @@ fn floor_char_boundary(text: &str, end: usize) -> usize {
     end
 }
 
-/// Keep a line to a terminal's width without losing its cause.
-///
-/// A refusal is often one long line whose *end* says why it stopped, so a
-/// head-only cut hid the root cause of a Compose launch refusal on Colima
-/// (effigy#1003). The middle is what goes: the head names what failed and the
-/// tail keeps the reason the line ended with, exactly as [`bound_text`] keeps
-/// both ends of a relayed cause.
+/// Wrap long text at word boundaries without dropping the cause or its fields.
 fn bound(text: &str) -> String {
     let text = text.trim();
     if text.len() <= MAX_EVIDENCE_BYTES {
         return text.to_owned();
     }
-    let tail_budget = MAX_EVIDENCE_BYTES / 3;
-    let mut tail_start = floor_char_boundary(text, text.len() - tail_budget);
-    if let Some(newline) = text[..tail_start].rfind('\n') {
-        if text.len() - (newline + 1) <= tail_budget * 2 {
-            tail_start = newline + 1;
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        if !line.is_empty() && line.len() + 1 + word.len() > MAX_EVIDENCE_BYTES {
+            lines.push(std::mem::take(&mut line));
+        }
+        if word.len() > MAX_EVIDENCE_BYTES {
+            for character in word.chars() {
+                if line.len() + character.len_utf8() > MAX_EVIDENCE_BYTES {
+                    lines.push(std::mem::take(&mut line));
+                }
+                line.push(character);
+            }
+        } else {
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(word);
         }
     }
-    let head_end = floor_char_boundary(
-        text,
-        MAX_EVIDENCE_BYTES.saturating_sub(text.len() - tail_start),
-    );
-    format!(
-        "{}…{}",
-        text[..head_end].trim_end(),
-        text[tail_start..].trim_start()
-    )
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines.join("\n")
 }
 
 const SECRET_MARKERS: [&str; 8] = [
@@ -517,21 +528,38 @@ mod tests {
 
     #[test]
     fn evidence_is_bounded_and_keeps_the_cause_it_ended_with() {
-        // A long single line is where a backend's reason usually sits: the
-        // head names the command, the tail names why it failed (effigy#1003).
+        // A long single line keeps both the command and the reason intact.
         let long = format!(
             "{}VM Compose interpolation requires retained kernel custody",
             "x".repeat(MAX_EVIDENCE_BYTES * 2)
         );
-        let error = HumanError::new("startup failed").evidence(long);
+        let error = HumanError::new("startup failed").evidence(long.clone());
         let line = &error.evidence_lines()[0];
-        assert!(line.len() <= MAX_EVIDENCE_BYTES + "…".len());
+        assert!(line.lines().all(|part| part.len() <= MAX_EVIDENCE_BYTES));
         assert!(
             line.ends_with("VM Compose interpolation requires retained kernel custody"),
             "{line}"
         );
         assert!(line.starts_with("xxxx"), "{line}");
-        assert!(!line.contains(&"x".repeat(MAX_EVIDENCE_BYTES)), "{line}");
+        assert!(!line.contains('…'), "{line}");
+        assert_eq!(line.replace('\n', ""), long);
+    }
+
+    #[test]
+    fn long_refusal_keeps_every_artifact_identity_field() {
+        let identity = "local:v9.9.9:2:3";
+        let cause = format!(
+            "{} host identity `{identity}`, artifact version `v0.0.0`, artifact identity `{identity}`, rebuild with `effigy workspace:linux:artifact`",
+            "workspace refusal detail ".repeat(24)
+        );
+        let rendered = HumanError::new("workspace artifact is not current")
+            .evidence(cause)
+            .render_text();
+        assert!(
+            rendered.contains(&format!("artifact identity `{identity}`")),
+            "{rendered}"
+        );
+        assert!(rendered.contains("rebuild with `effigy workspace:linux:artifact`"));
     }
 
     #[test]

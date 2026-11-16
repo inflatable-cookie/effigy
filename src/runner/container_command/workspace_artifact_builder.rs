@@ -686,6 +686,7 @@ fn transfer_produced_artifact(
     triple: &str,
     active_version: &str,
     install_identity: &str,
+    source_digest: &str,
 ) -> Result<workspace_artifact_source::ProducedArtifact, RunnerError> {
     let release = format!("{BUILD_TREE_ROOT}/target/{triple}/release");
     let binary = transfer_role(
@@ -704,6 +705,11 @@ fn transfer_produced_artifact(
         ARTIFACT_RECEIPT_CAP_BYTES,
         "receipt",
     )?;
+    let mut receipt = String::from_utf8(receipt).map_err(|error| {
+        RunnerError::task_invocation(format!("producer receipt is not UTF-8: {error}"))
+    })?;
+    receipt.push_str(&format!("source_closure_sha256={source_digest}\n"));
+    let receipt = receipt.into_bytes();
     let sidecar = transfer_role(
         repo_root,
         policy,
@@ -1022,6 +1028,10 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
         .unwrap_or_else(|| "x86_64-unknown-linux-gnu".to_owned());
     let export_name = format!("effigy-{triple}");
     let staged_source = staged.as_ref().map(|(_, staged)| staged);
+    let source_digest = match staged_source {
+        Some(staged) => staged.manifest.closure.clone(),
+        None => workspace_artifact_source::workspace_source_digest(repo_root)?,
+    };
     let source_files = staged_source
         .map(|staged| staged.manifest.files.len())
         .unwrap_or_default();
@@ -1065,6 +1075,10 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     if let Some((plan, staged_source)) = &staged {
         workspace_artifact_source::verify_source_unchanged(plan, staged_source)?;
         check_interruption()?;
+    } else if workspace_artifact_source::workspace_source_digest(repo_root)? != source_digest {
+        return Err(RunnerError::task_invocation(
+            "workspace artifact source changed during the build; no artifact published",
+        ));
     }
     // The source bind is still read-only, the three roles live in the
     // container-local tree within their caps, and the build's writers are
@@ -1097,6 +1111,7 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
         &triple,
         &effigy_core::build_info::active_version(),
         &install_identity,
+        &source_digest,
     )?;
     let copied_bytes = produced.bytes;
     let export_released = match &staged {

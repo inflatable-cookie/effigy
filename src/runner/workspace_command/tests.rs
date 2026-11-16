@@ -272,7 +272,8 @@ const FRESH_X86_BUILD: &str = r#"touch built.marker
 mkdir -p .effigy/linux-release/artifacts
 printf 'fresh-bytes\n' > .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu
 printf '%s\n' "$EFFIGY_FIXTURE_ACTIVE_VERSION" > .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu.active-version
-printf 'release_triple=x86_64-unknown-linux-gnu\ncompleted_at=2026-10-15T00:00:00Z\n' > .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu.receipt"#;
+digest=$(sha256sum .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu | cut -d' ' -f1)
+printf 'release_triple=x86_64-unknown-linux-gnu\nsha256=%s\ncompleted_at=%s\nsource_closure_sha256=%064d\n' "$digest" "$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)" 1 > .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu.receipt"#;
 
 const STALE_IDENTITY: &str = "local:v0.0.0:1:1";
 
@@ -372,23 +373,21 @@ fn linux_artifact_successful_build_without_fresh_output_is_refused() {
 }
 
 #[test]
-fn linux_artifact_no_op_rebuild_of_current_version_bytes_is_bound() {
-    // A direct `workspace:linux:artifact` leaves current-version bytes with a
-    // stale install identity; the no-op rebuild reproduces identical bytes.
+fn linux_artifact_no_op_rebuild_after_version_bump_is_bound() {
+    // A no-op build returns identical bytes but writes a fresh receipt for this
+    // checkout's staged source, even when the prior version label is stale.
     let root = linux_artifact_fixture("noop-current");
     let host = fake_effigy_host(
         &root,
-        r#"touch .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu
-printf '%s\n' "$EFFIGY_FIXTURE_ACTIVE_VERSION" > .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu.active-version
+        r#"artifact=.effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu
+touch "$artifact"
+printf '%s\n' "$EFFIGY_FIXTURE_ACTIVE_VERSION" > "$artifact.active-version"
+digest=$(sha256sum "$artifact" | cut -d' ' -f1)
+printf 'release_triple=x86_64-unknown-linux-gnu\nsha256=%s\ncompleted_at=%s\nsource_closure_sha256=%064d\n' "$digest" "$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)" 1 > "$artifact.receipt"
 exit 0"#,
     );
     let artifact = root.join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
     write_linux_artifact(&artifact, "current-bytes", Some(STALE_IDENTITY));
-    std::fs::write(
-        workspace_effigy_active_version_file(&artifact),
-        format!("{}\n", effigy_core::build_info::active_version()),
-    )
-    .unwrap();
     let bound =
         ensure_local_linux_workspace_effigy_artifact(&host, &root, LinuxWorkspaceTarget::X86_64Gnu)
             .map(|bound| bound.artifact)
@@ -408,6 +407,39 @@ exit 0"#,
         )
     );
     assert_file_text(&artifact, "current-bytes");
+}
+
+#[test]
+fn linux_artifact_unchanged_bytes_without_fresh_producer_evidence_stay_refused_on_retry() {
+    let root = linux_artifact_fixture("unproven-noop-retry");
+    let host = fake_effigy_host(
+        &root,
+        r#"touch built.marker
+artifact=.effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu
+touch "$artifact"
+printf '%s\n' "$EFFIGY_FIXTURE_ACTIVE_VERSION" > "$artifact.active-version"
+exit 0"#,
+    );
+    let artifact = root.join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    write_linux_artifact(&artifact, "same-bytes", Some(STALE_IDENTITY));
+
+    for attempt in 1..=2 {
+        let error = ensure_local_linux_workspace_effigy_artifact(
+            &host,
+            &root,
+            LinuxWorkspaceTarget::X86_64Gnu,
+        )
+        .expect_err("an unchanged artifact without fresh receipt evidence must be refused");
+        assert!(error
+            .to_string()
+            .contains("did not produce a current artifact"));
+        assert!(root.join("built.marker").is_file(), "attempt {attempt} ran");
+    }
+    assert_eq!(
+        read_trimmed_identity_file(&workspace_effigy_install_identity_file(&artifact)).as_deref(),
+        Some(STALE_IDENTITY),
+        "a refusal must not bind the artifact to the new host identity"
+    );
 }
 
 #[test]

@@ -2,7 +2,7 @@
 
 Owner: Platform
 Created: 2026-05-05
-Last Updated: 2026-10-16
+Last Updated: 2026-11-16
 
 ## Purpose
 
@@ -188,13 +188,20 @@ identity, bind, locking, deadline and refusal rules.
 
 The managed Colima `effigy-release` profile has a fixed plan of 4 CPUs, 8 GiB
 memory and 8 GiB swap; it does not scale with host memory. Cold release compiles
-run Cargo with one build job. A running release profile below 8 GiB is refused
-with the deliberate restart command, and Effigy never restarts it. The
-development `effigy` profile keeps its host-derived memory and configured disk
-plan. The release profile uses a 100 GiB disk plan when it is new. Preparing
+run Cargo with one build job. A running profile with an Effigy resource plan is
+refused when its observed memory is below that plan, with the deliberate
+restart command; Effigy never restarts it. This applies to both `effigy-release`
+and the development `effigy` profile, whose memory plan derives from host
+memory. The release profile uses a 100 GiB disk plan when it is new. Preparing
 managed settings never changes an existing profile's disk value, and ordinary
 managed starts do not pass a disk resize. An explicit `effigy container profile
 resize` passes `--disk` only when the existing disk is below its managed target;
 that grow is irreversible. Explicit `profile recreate --disk` sets the size of
 the replacement profile after deleting its runtime data. A builder exec exit
 255 is named as an OOM kill when the Colima VM kernel log confirms an OOM kill.
+
+The artifact producer receipt binds a successful build to its target, binary
+digest, completion time and source closure digest. Acquisition accepts
+unchanged bytes after a version bump only when that receipt proves the producer
+completed after the current build began; version-sidecar writes alone never
+make a refused artifact current.

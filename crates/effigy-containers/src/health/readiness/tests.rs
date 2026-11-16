@@ -310,7 +310,7 @@ fn a_different_failure_resets_the_repetition() {
 }
 
 #[test]
-fn a_check_output_is_one_bounded_line() {
+fn a_check_output_wraps_long_causes_without_eliding_them() {
     let output = format!(
         "warning: using a password on the command line\nERROR 2003: cannot connect\n{}",
         "x".repeat(400)
@@ -323,8 +323,11 @@ fn a_check_output_is_one_bounded_line() {
     );
     let bounded = bounded_last_output(&long).expect("bounded line");
     assert!(bounded.ends_with("cannot connect"), "{bounded}");
-    assert!(bounded.contains('…'), "{bounded}");
-    assert!(bounded.len() <= effigy_ui::human::MAX_EVIDENCE_BYTES + "…".len());
+    assert!(bounded.lines().count() > 1, "{bounded}");
+    assert!(bounded
+        .lines()
+        .all(|line| line.len() <= effigy_ui::human::MAX_EVIDENCE_BYTES));
+    assert_eq!(bounded.replace('\n', ""), long);
     assert_eq!(bounded_last_output("\n  \n"), None);
 }
 
