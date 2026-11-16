@@ -152,7 +152,9 @@ pub fn bounded_last_output(output: &str) -> Option<String> {
     let cleaned = line
         .chars()
         .map(|character| {
-            if character.is_control() {
+            if character == '\n' {
+                character
+            } else if character.is_control() {
                 ' '
             } else {
                 character
