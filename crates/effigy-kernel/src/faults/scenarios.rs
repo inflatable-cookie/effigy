@@ -677,7 +677,7 @@ const _: [fn(); 3] = [
 /// The failing-before proof for the cause this task found is the separate
 /// collision control, `a_complete_run_owns_no_process_another_drive_minted`.
 #[test]
-fn faults_multi_child_anchor_stop_unknown_settles_on_verified_closure() {
+fn faults_multi_child_anchor_stop_unknown_leaves_no_owned_survivor() {
     let scenario: &dyn Scenario = &HELD_SECOND;
     let mine = home();
     let home = mine.home();
