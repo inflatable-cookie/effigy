@@ -113,7 +113,37 @@ impl<E> IntegratedFailure<'_, E> {
             } => "selected finish",
         }
     }
+
+    /// The cause this failure was raised with, as one bounded sentence.
+    ///
+    /// The activation's final refusal is raised much later than the failure
+    /// itself: guarded cleanup usually retains custody, and the settle that
+    /// returns the cleanup's own "effects unsettled" sentence replaces the
+    /// primary cause on the way out. Capturing it here, from the failure in
+    /// hand, is what lets an operator read which call failed instead of only
+    /// that the activation did. Every sentence on this path is Effigy's own
+    /// fixed vocabulary, never a raw backend or guest stream.
+    pub(in crate::runner) fn diagnosis(&self) -> String {
+        let cause = match self {
+            Self::PhaseA(PhaseAFailure::BeforeAdmission(error)) => error.to_string(),
+            Self::PhaseA(PhaseAFailure::Admission(admission)) => admission.failure.error.to_string(),
+            Self::PhaseA(PhaseAFailure::Guarded { cause, .. }) => cause.to_string(),
+            Self::Guarded { cause, .. } => cause.to_string(),
+            Self::Parked { cause, .. } => cause.to_string(),
+            Self::Cleanup(custody) => custody.primary.to_string(),
+            Self::CleanupOnly { cause, .. } => cause.to_string(),
+            Self::ParkedCleanup { cause, .. } => cause.to_string(),
+            Self::Publication { cause, .. } => cause.diagnosis(),
+        };
+        effigy_ui::human::bound_text(
+            &cause.lines().map(str::trim).collect::<Vec<_>>().join("; "),
+            DIAGNOSIS_BYTES,
+        )
+    }
 }
+
+/// Bytes of a failure's own cause the operator-facing refusal keeps.
+const DIAGNOSIS_BYTES: usize = 600;
 
 type Resumed =
     Result<WorkspaceActivation<'static>, (EnvError, Box<ParkedWorkspaceActivation<'static>>)>;

@@ -92,8 +92,62 @@ fn unavailable(message: impl Into<String>) -> EnvError {
 fn refused(message: impl Into<String>) -> EnvError {
     EnvError::Kernel(RunError::refused(message))
 }
-fn io(_error: RunnerError) -> EnvError {
-    unavailable("workspace guest I/O unavailable")
+/// One call of the publication sequence, in the order it is made.
+///
+/// A failed publication used to report only that the whole step was uncertain,
+/// and every guest I/O failure became one sentence that named none of its
+/// calls. The step is Effigy's own literal, so it is safe to journal and to
+/// show: the guest's own message may carry user paths or the bytes it moved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::runner) enum PublicationStep {
+    GuestBinaryStaging,
+    GuestIdentityProbe,
+    ContextGenerationAllocation,
+    EnrolmentCredentialMint,
+    ChannelPreparation,
+    SourceSnapshotStaging,
+    SourceSnapshotVerification,
+    ContextStaging,
+    ContextReadback,
+    ContextProbe,
+    ChannelQualification,
+    SelectorObservation,
+    ServingFacts,
+    SelectionReceipt,
+    PublicationAcknowledgement,
+}
+
+impl PublicationStep {
+    /// The fixed name of this call. No guest text enters it.
+    pub(in crate::runner) fn naming(self) -> &'static str {
+        match self {
+            Self::GuestBinaryStaging => "staging the guest binary",
+            Self::GuestIdentityProbe => "probing the guest's own identity",
+            Self::ContextGenerationAllocation => "allocating a context generation",
+            Self::EnrolmentCredentialMint => "minting the enrolment credential",
+            Self::ChannelPreparation => "preparing the host channel",
+            Self::SourceSnapshotStaging => "staging a source snapshot",
+            Self::SourceSnapshotVerification => "verifying a source snapshot",
+            Self::ContextStaging => "staging the workspace context",
+            Self::ContextReadback => "reading the staged workspace context back",
+            Self::ContextProbe => "probing the staged workspace context",
+            Self::ChannelQualification => "qualifying the guest channel",
+            Self::SelectorObservation => "observing the guest's selectors",
+            Self::ServingFacts => "validating the serving facts",
+            Self::SelectionReceipt => "building the selection receipt",
+            Self::PublicationAcknowledgement => "acknowledging the publication",
+        }
+    }
+}
+
+/// A guest I/O failure, named by the publication call that made it.
+///
+/// The adapter's own text never enters the sentence: a guest failure can carry
+/// the bytes it moved or the paths it touched (the production refusal test
+/// injects a secret-shaped diagnostic and requires it to stay out of the
+/// refusal). What is safe — and what was missing — is naming the exact call.
+fn io(step: PublicationStep) -> impl FnOnce(RunnerError) -> EnvError {
+    move |_error| unavailable(format!("{} failed", step.naming()))
 }
 fn evidence() -> Evidence {
     Evidence::new("exact reserved guest publication".into(), None).expect("fixed evidence")
@@ -386,6 +440,10 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
             .filter(|budget| !budget.is_zero())
             .ok_or_else(|| unavailable("workspace publication deadline expired"))
     };
+    // What the journal records when this publication does not finish: the
+    // last call that was entered. Every assignment sits immediately before
+    // its call, so a failure never names a later one.
+    let mut step = PublicationStep::GuestBinaryStaging;
     let result = (|| {
         let object = staging::stage_binary(
             activation.environment_mut(),
@@ -409,6 +467,7 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
             platform: machine.into(),
             libc: libc.into(),
         };
+        step = PublicationStep::GuestIdentityProbe;
         let observed = match input.probe.identity(&container, &object, remaining()?) {
             Observed::Verified(observed, _) => observed,
             Observed::Unknown(_) => return Err(unavailable("guest-local identity is unavailable")),
@@ -418,7 +477,9 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
             .compare(&container)
             .map_err(|_| refused("guest-local identity differs from the reserved target"))?;
         // No credential is minted or staged until the independent guest agrees.
-        let generation = allocate_generation(input.guest.as_mut()).map_err(io)?;
+        step = PublicationStep::ContextGenerationAllocation;
+        let generation = allocate_generation(input.guest.as_mut()).map_err(io(step))?;
+        step = PublicationStep::EnrolmentCredentialMint;
         let credential = (input.credential)(activation.session(), generation)?;
         if credential.environment_generation != reservation.generation().get().to_string()
             || credential.container_id != target.container_id
@@ -432,6 +493,7 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
         };
         let supervisor_id = activation.supervisor_id().to_owned();
         let session = activation.session().clone();
+        step = PublicationStep::ChannelPreparation;
         let mut channel = prepare_channel(
             ChannelPreparation {
                 container_mode: true,
@@ -446,9 +508,12 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
         )
         .map_err(|_| unavailable("workspace host channel qualification unavailable"))?
         .ok_or_else(|| refused("container-mode publication has no qualified channel"))?;
+        step = PublicationStep::SourceSnapshotStaging;
         for (snapshot, bytes) in &input.snapshots {
-            staging::stage_document(input.guest.as_mut(), snapshot, bytes, 0o444).map_err(io)?;
+            staging::stage_document(input.guest.as_mut(), snapshot, bytes, 0o444)
+                .map_err(io(step))?;
         }
+        step = PublicationStep::SourceSnapshotVerification;
         for source in &input.context.sources {
             if let Some(path) = source
                 .snapshot
@@ -463,7 +528,7 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
                 if input
                     .guest
                     .file_sha256(path)
-                    .map_err(io)?
+                    .map_err(io(step))?
                     .as_deref()
                     .and_then(Digest::parse_hex)
                     .as_ref()
@@ -506,7 +571,8 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
             &channel.locator,
         )
         .map_err(|_| refused("workspace context construction refused"))?;
-        let bytes = document.render().map_err(io)?;
+        step = PublicationStep::ContextStaging;
+        let bytes = document.render().map_err(io(step))?;
         objects.context.digest = Digest::of(&bytes);
         staging::stage_document(
             input.guest.as_mut(),
@@ -514,24 +580,26 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
             &credential_bytes,
             0o600,
         )
-        .map_err(io)?;
+        .map_err(io(step))?;
         input
             .guest
             .set_owner(&objects.credential.path, &document.paths.user)
-            .map_err(io)?;
+            .map_err(io(step))?;
         staging::stage_document(input.guest.as_mut(), &objects.context, &bytes, 0o444)
-            .map_err(io)?;
+            .map_err(io(step))?;
+        step = PublicationStep::ContextReadback;
         let parsed = WorkspaceContextV2::parse(
             &input
                 .guest
                 .read_file(&objects.context.path)
-                .map_err(io)?
+                .map_err(io(step))?
                 .ok_or_else(|| unavailable("staged full v2 context is absent"))?,
         )
         .map_err(|_| refused("workspace staged context validation refused"))?;
         if parsed != document {
             return Err(refused("guest parsed another immutable context"));
         }
+        step = PublicationStep::ContextProbe;
         let full_probe = match input.probe.context_dial(
             channel.locator.target(),
             &objects.binary,
@@ -553,6 +621,7 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
             container_id: full_probe.target.container_id.clone(),
             vm_boot_id: full_probe.target.vm_boot_id.clone(),
         };
+        step = PublicationStep::ChannelQualification;
         channel
             .launch
             .qualify_guest(
@@ -584,6 +653,7 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
             guest: input.guest,
             target,
         };
+        step = PublicationStep::SelectorObservation;
         let switches = [BINARY_SELECTOR, ENTRY_SELECTOR, CONTEXT_SELECTOR]
             .into_iter()
             .map(|path| {
@@ -616,6 +686,7 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
         // Freeze the one serving value this session will serve with, from the
         // exact document, committed receipt, switched selection and qualified
         // locator, before the Env commit and selector switch that follow.
+        step = PublicationStep::ServingFacts;
         let serving = crate::runner::workspace_client::ServingFacts::validated(
             &document,
             &publication,
@@ -624,6 +695,7 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
             &channel.locator,
         )
         .map_err(EnvError::Kernel)?;
+        step = PublicationStep::SelectionReceipt;
         let receipt = SelectionReceipt::new(
             &plan,
             publication.clone(),
@@ -635,6 +707,7 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
         )
         .map_err(EnvError::Kernel)?;
         remaining()?;
+        step = PublicationStep::PublicationAcknowledgement;
         activation
             .environment_mut()
             .acknowledge_workspace_publication(&plan, &ticket, publication)?;
@@ -647,10 +720,16 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
     })();
     if result.is_err() {
         // Backend/guest failures may include credential bytes, command output
-        // or user paths. Persist only this fixed classification.
+        // or user paths. Persist only this fixed classification and the step
+        // that produced it: both are Effigy's own literals, and the step is
+        // what tells an operator which publication call failed when the
+        // journal holds nothing but the retained ticket.
         activation.environment_mut().unknown_workspace_publication(
             &ticket,
-            UnknownReason::Inconsistent("workspace guest publication failed".into()),
+            UnknownReason::Inconsistent(format!(
+                "workspace guest publication failed while {}",
+                step.naming()
+            )),
         )?;
     }
     result

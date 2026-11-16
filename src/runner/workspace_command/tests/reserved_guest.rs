@@ -943,6 +943,20 @@ home = "/home/vscode"
                 owner.channel.locator.channel().endpoint.clone().unwrap()
             );
             assert_eq!(guest.mode(&doc.credential.path), Some(0o600));
+            // Contract 052 §8.9: the client resolves its own version from the
+            // file beside the executable it runs, and that executable is the
+            // digest-addressed object. A guest with no such file falls back to
+            // the crate's package version, so a locally stamped artifact could
+            // never agree with the context that pins it.
+            let version_path = effigy_core::build_info::active_version_file(Path::new(&object.path))
+                .to_string_lossy()
+                .into_owned();
+            assert_eq!(
+                guest.text(&version_path).as_deref(),
+                Some(doc.version.as_str()),
+                "the published object records the version the context pins beside it"
+            );
+            assert_eq!(guest.mode(&version_path), Some(0o444));
             let live = crate::runner::workspace_client::context::LiveGuestRun {
                 binary: GuestBinaryIdentity {
                     version: doc.version.clone(),

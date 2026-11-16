@@ -1,0 +1,1 @@
+Record the pinned guest version beside the executable a container-mode guest runs, so a locally built (stamped) Linux artifact agrees with the context that pins it instead of failing publication with "context probe version or generation differs" (effigy#1014).

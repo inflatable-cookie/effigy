@@ -128,7 +128,55 @@ fn stage_binary_bytes(
             "immutable staged guest bytes differ from the frozen object",
         ));
     }
+    // The object now holds the exact bytes the selection will name; record the
+    // version the host authenticated for them beside it, before any context
+    // pins that version (contract 052 §8.9).
+    publish_guest_active_version(guest, &object.path, &binding.artifact_version)?;
     Ok(object.clone())
+}
+
+/// Record the authenticated version beside the guest object a selection names.
+///
+/// A guest Effigy resolves its own active version from the file beside the
+/// executable it runs (`effigy_core::build_info::active_version`), and the
+/// executable it runs is the digest-addressed object, never the entry link: an
+/// executed symlink resolves to its target. Without this file the guest falls
+/// back to the crate's package version, so a locally built artifact whose
+/// recorded version carries a build stamp can never agree with the context that
+/// pins it, and contract 052 §8.9's client/context/host agreement fails inside
+/// the container instead of at preparation. The bytes are the version the host
+/// already authenticated from the artifact and compared with its own; the
+/// object's digest stays the authority for *which* bytes run.
+pub(in crate::runner) fn publish_guest_active_version(
+    guest: &mut dyn GuestWorkspace,
+    executable: &str,
+    version: &str,
+) -> Result<(), RunnerError> {
+    let version = version.trim();
+    if version.is_empty() {
+        return Err(RunnerError::task_invocation(
+            "the pinned guest artifact records no active version",
+        ));
+    }
+    let path = effigy_core::build_info::active_version_file(Path::new(executable))
+        .to_string_lossy()
+        .into_owned();
+    let bytes = version.as_bytes();
+    if let Some(existing) = guest.read_file(&path)? {
+        if existing == bytes {
+            return Ok(());
+        }
+        return Err(RunnerError::task_invocation(format!(
+            "the guest records another version beside the executable `{executable}` it runs"
+        )));
+    }
+    guest.write_no_replace(&path, bytes, 0o444)?;
+    if guest.read_file(&path)?.as_deref() != Some(bytes) {
+        return Err(RunnerError::task_invocation(format!(
+            "the guest did not record its pinned version beside `{executable}`"
+        )));
+    }
+    Ok(())
 }
 
 /// Credentials and context bytes are addressed by immutable generation paths.
@@ -1045,6 +1093,40 @@ mod tests {
         assert_eq!(
             retry.text(&object.path).as_deref(),
             Some("complete successor context")
+        );
+    }
+
+    /// A locally built artifact records a build stamp (`v0.14.1+local.<sha>`),
+    /// never the crate's package version. The guest can only report a version
+    /// it can read, and it reads the file beside the executable it runs, so
+    /// publication must record the stamped version there (effigy#1014).
+    #[test]
+    fn the_local_build_version_is_recorded_beside_the_object_a_guest_runs() {
+        let mut guest = FakeGuest::new();
+        let executable = format!("/run/effigy/objects/bin/{}", "ab".repeat(32));
+        publish_guest_active_version(&mut guest, &executable, "v0.14.1+local.e6d7ac3")
+            .expect("publish the pinned version");
+        let path = effigy_core::build_info::active_version_file(Path::new(&executable))
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(path, format!("{executable}.active-version"));
+        assert_eq!(
+            guest.text(&path).as_deref(),
+            Some("v0.14.1+local.e6d7ac3"),
+            "a reader beside the executable resolves the authenticated version"
+        );
+        assert_eq!(
+            effigy_core::build_info::recorded_active_version(Path::new(&path)),
+            None,
+            "the guest tree is not this host's filesystem"
+        );
+        // Re-publishing identical bytes is idempotent; another version for the
+        // same object is refused rather than rewritten.
+        publish_guest_active_version(&mut guest, &executable, "v0.14.1+local.e6d7ac3")
+            .expect("identical republication");
+        assert!(
+            publish_guest_active_version(&mut guest, &executable, "v0.14.1+local.other").is_err(),
+            "an object's recorded version is immutable"
         );
     }
 }
