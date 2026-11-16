@@ -1,0 +1,1 @@
+**Linux workspace artifact acquisition now accepts an unchanged no-op rebuild after a version bump only when a fresh producer receipt matches the target, artifact digest, and staged source closure; long human error details wrap without dropping fields.**

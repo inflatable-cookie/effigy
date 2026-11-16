@@ -5,9 +5,8 @@ use super::artifact_plan::{
     LinuxWorkspaceArtifactSource, LinuxWorkspaceTarget,
 };
 use super::artifact_receipt::{
-    describe_linux_workspace_artifact_refusal, linux_workspace_artifact_digest,
-    linux_workspace_artifact_produced_since, linux_workspace_effigy_artifact_is_current,
-    read_trimmed_identity_file, workspace_effigy_active_version_file,
+    describe_linux_workspace_artifact_refusal, linux_workspace_artifact_produced_since,
+    linux_workspace_artifact_producer_receipt_is_fresh, linux_workspace_effigy_artifact_is_current,
     workspace_effigy_local_install_identity, workspace_effigy_release_install_identity,
     write_artifact_identity,
 };
@@ -205,17 +204,6 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact(
     if linux_workspace_effigy_artifact_is_current(&artifact, target, &identity) {
         return bind_verified_linux_workspace_effigy_artifact(target, &artifact, &identity);
     }
-    // Bytes already built for this exact version may come back unchanged from a
-    // no-op rebuild; they are this build's output. Touched bytes from another
-    // version, or unchanged bytes that were not current, are refused.
-    let previous_digest = linux_workspace_artifact_digest(&artifact, || true).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "cannot inspect previous workspace artifact output: {error}"
-        ))
-    })?;
-    let previous_was_current_version =
-        read_trimmed_identity_file(&workspace_effigy_active_version_file(&artifact)).as_deref()
-            == Some(effigy_core::build_info::active_version().as_str());
     emit_workspace_info(
         "building linux effigy artifact for workspace container access",
         false,
@@ -230,9 +218,7 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact(
         )));
     }
     let produced = linux_workspace_artifact_produced_since(&artifact, target, started)
-        && linux_workspace_artifact_digest(&artifact, || true).is_ok_and(|digest| {
-            digest.is_some() && (digest != previous_digest || previous_was_current_version)
-        });
+        && linux_workspace_artifact_producer_receipt_is_fresh(&artifact, target, started);
     if !produced {
         return Err(RunnerError::task_invocation(format!(
             "linux workspace artifact build succeeded but did not produce a current artifact\n{}",

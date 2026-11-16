@@ -2,7 +2,7 @@
 
 Owner: Platform
 Created: 2026-05-05
-Last Updated: 2026-10-16
+Last Updated: 2026-11-16
 
 ## Purpose
 
@@ -193,3 +193,9 @@ below its plan, Effigy writes the managed config, reports the required
 deliberate restart, and refuses the build without restarting the VM. A builder
 exec exit 255 is named as an OOM kill when the Colima VM kernel log confirms an
 OOM kill.
+
+The artifact producer receipt binds a successful build to its target, binary
+digest, completion time and source closure digest. Acquisition accepts
+unchanged bytes after a version bump only when that receipt proves the producer
+completed after the current build began; version-sidecar writes alone never
+make a refused artifact current.

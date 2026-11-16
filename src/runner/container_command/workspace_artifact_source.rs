@@ -601,6 +601,12 @@ struct WorkspaceClosure {
     bytes: u64,
 }
 
+/// Expose the closure digest without making its inventory representation public
+/// to the artifact transfer boundary.
+pub(in crate::runner) fn workspace_source_digest(caller: &Path) -> Result<String, RunnerError> {
+    Ok(workspace_closure(caller)?.digest)
+}
+
 fn workspace_closure(caller: &Path) -> Result<WorkspaceClosure, RunnerError> {
     let output = effigy_core::git_exec::run_git_output(
         Some(caller),
