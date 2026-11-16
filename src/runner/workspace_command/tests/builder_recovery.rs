@@ -258,7 +258,14 @@ if cmd == 'exec':
     binary.write_text('fresh current source output ' + mode)
     version = '0.0.0-other-host' if mode == 'wrong_version' else os.environ['EFFIGY_RECOVERY_VERSION']
     (release / 'effigy.active-version').write_text(version)
-    (release / 'effigy.receipt').write_text('release_triple=' + ('wrong-target' if mode == 'wrong_target' else triple) + '\nsha256=' + __import__('hashlib').sha256(binary.read_bytes()).hexdigest() + '\ncompleted_at=2026-10-16T00:00:00Z\n')
+    completed_ns = time.time_ns()
+    completed_at = time.strftime(
+        '%Y-%m-%dT%H:%M:%S', time.gmtime(completed_ns // 1000000000)
+    ) + '.%09dZ' % (completed_ns % 1000000000)
+    receipt = 'release_triple=' + ('wrong-target' if mode == 'wrong_target' else triple)
+    receipt += '\nsha256=' + __import__('hashlib').sha256(binary.read_bytes()).hexdigest()
+    receipt += '\ncompleted_at=' + completed_at + '\n'
+    (release / 'effigy.receipt').write_text(receipt)
     print('private-build-ok')
     sys.exit(0)
 raise SystemExit('unauthorized backend operation: ' + repr(args))
@@ -1884,6 +1891,13 @@ fn staged_source_is_bound_compiled_and_copied_back_to_the_caller() {
     for backend in ["docker", "colima"] {
         let fixture = Fixture::staged(false, false, backend);
         let plan = fixture.stage().expect("a staged source plan");
+        let started_ns = i64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("current time follows epoch")
+                .as_nanos(),
+        )
+        .expect("start timestamp fits receipt precision");
         fixture
             .task()
             .expect("the automatic build stages and compiles");
@@ -1928,6 +1942,36 @@ fn staged_source_is_bound_compiled_and_copied_back_to_the_caller() {
             &artifact,
             LinuxWorkspaceTarget::X86_64Gnu
         ));
+        let receipt = std::fs::read_to_string(workspace_artifact_receipt_path(&artifact))
+            .expect("producer receipt reaches the caller");
+        let completed_at = receipt
+            .lines()
+            .find_map(|line| line.strip_prefix("completed_at="))
+            .expect("producer records completion time");
+        assert_eq!(
+            completed_at
+                .split_once('.')
+                .map(|(_, fraction)| fraction.trim_end_matches('Z').len()),
+            Some(9),
+            "receipt completion has nanosecond precision: {completed_at}"
+        );
+        let completed_ns = chrono::DateTime::parse_from_rfc3339(completed_at)
+            .expect("receipt time is RFC3339")
+            .timestamp_nanos_opt()
+            .expect("receipt time fits nanosecond precision");
+        assert!(
+            completed_ns >= started_ns,
+            "producer completion {completed_ns} precedes attempt start {started_ns}"
+        );
+        assert!(
+            receipt.contains(&format!("source_closure_sha256={}\n", record.closure)),
+            "receipt binds the exact staged source closure"
+        );
+        crate::runner::workspace_command::artifact_receipt::verify_guest_artifact(
+            &artifact,
+            LinuxWorkspaceTarget::X86_64Gnu,
+        )
+        .expect("producer digest matches artifact bytes");
         assert_eq!(
             std::fs::read_to_string(artifact.with_extension("active-version"))
                 .unwrap()

@@ -1679,6 +1679,37 @@ esac
     }
 
     #[test]
+    fn running_default_profile_passes_at_its_plan_and_refuses_below_it() {
+        let _lock = crate::test_env_lock();
+        let fixture = ManagedProfileFixture::new();
+        fixture.state("listed");
+        fixture.state("running");
+        let policy = fixture.policy();
+        let plan = crate::colima::managed_colima_profile_resources("effigy")
+            .expect("default profile has a managed resource plan");
+        fixture.write_colima_config(&format!(
+            "memory: {}\nforwardAgent: true\n",
+            plan.memory_gib
+        ));
+
+        ensure_running_managed_profile_ready(&policy, &fixture.root)
+            .expect("running default profile meets its host-derived memory plan");
+
+        fixture.state("under-floor");
+        fixture.write_colima_config("memory: 2\nforwardAgent: true\n");
+        let error = ensure_running_managed_profile_ready(&policy, &fixture.root)
+            .expect_err("running default profile below its plan refuses");
+        let message = error.to_string();
+        assert!(message.contains("running with 2GiB RAM"), "{message}");
+        assert!(
+            message.contains(&format!("requires {}GiB", plan.memory_gib)),
+            "{message}"
+        );
+        assert!(message.contains("colima restart effigy"), "{message}");
+        assert!(message.contains("did not restart"), "{message}");
+    }
+
+    #[test]
     fn no_change_verifies_without_touching_anything() {
         use crate::exec::ContainerExecError;
         let _lock = crate::test_env_lock();

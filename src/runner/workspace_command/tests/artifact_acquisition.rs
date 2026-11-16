@@ -192,7 +192,8 @@ out=".effigy/linux-release/artifacts/effigy-$triple"
 printf 'fresh-bytes\n' > "$out"
 printf '%s\n' "$EFFIGY_FIXTURE_ACTIVE_VERSION" > "$out.active-version"
 digest=$( (shasum -a 256 "$out" 2>/dev/null || sha256sum "$out") | cut -d' ' -f1)
-printf 'release_triple=%s\nsha256=%s\nbuild_kind=workspace-artifact\n' "$triple" "$digest" > "$out.receipt""#;
+completed_at=$(python3 -c 'import time; n=time.time_ns(); print(time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(n // 1000000000)) + ".%09dZ" % (n % 1000000000))')
+printf 'release_triple=%s\nsha256=%s\nbuild_kind=workspace-artifact\ncompleted_at=%s\nsource_closure_sha256=%064d\n' "$triple" "$digest" "$completed_at" 1 > "$out.receipt""#;
 
 fn build_count(root: &Path) -> usize {
     std::fs::read_to_string(root.join("builds.log"))
