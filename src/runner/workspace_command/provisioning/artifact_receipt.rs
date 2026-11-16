@@ -207,6 +207,52 @@ pub(super) fn linux_workspace_artifact_produced_since(
         && linux_workspace_effigy_artifact_receipt_matches_target(artifact_path, target)
 }
 
+/// A fresh producer receipt binds a successful build to this checkout's staged
+/// source closure. The timestamp has subsecond precision so a refused attempt
+/// cannot make a same-second retry look fresh from its sidecar writes.
+pub(super) fn linux_workspace_artifact_producer_receipt_is_fresh(
+    artifact_path: &Path,
+    target: LinuxWorkspaceTarget,
+    started: std::time::SystemTime,
+) -> bool {
+    let Ok(receipt) = workspace_artifact_receipt(artifact_path) else {
+        return false;
+    };
+    if receipt.get("release_triple").map(String::as_str) != Some(target.release_triple())
+        || !receipt.get("source_closure_sha256").is_some_and(|digest| {
+            digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+    {
+        return false;
+    }
+    let Some(recorded_digest) = receipt.get("sha256") else {
+        return false;
+    };
+    if !linux_workspace_artifact_digest(artifact_path, || true)
+        .ok()
+        .flatten()
+        .is_some_and(|actual| {
+            render_digest(actual)
+                .strip_prefix("sha256:")
+                .is_some_and(|hex| hex.eq_ignore_ascii_case(recorded_digest))
+        })
+    {
+        return false;
+    }
+    let Some(completed_at) = receipt
+        .get("completed_at")
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .and_then(|value| value.timestamp_nanos_opt())
+    else {
+        return false;
+    };
+    started
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_nanos()).ok())
+        .is_some_and(|started| completed_at >= started)
+}
+
 pub(super) fn read_trimmed_identity_file(path: &Path) -> Option<String> {
     std::fs::read_to_string(path)
         .ok()

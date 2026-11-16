@@ -2,7 +2,7 @@
 
 Owner: Platform
 Created: 2026-05-05
-Last Updated: 2026-10-16
+Last Updated: 2026-11-16
 
 ## Purpose
 
@@ -185,3 +185,9 @@ cleanup is required to proceed. It does not readmit changed Compose inputs or
 grant general application recovery authority. The
 [backend compatibility contract](006-compose-backend-compatibility.md) owns its
 identity, bind, locking, deadline and refusal rules.
+
+The artifact producer receipt binds a successful build to its target, binary
+digest, completion time and source closure digest. Acquisition accepts
+unchanged bytes after a version bump only when that receipt proves the producer
+completed after the current build began; version-sidecar writes alone never
+make a refused artifact current.
