@@ -1359,6 +1359,12 @@ fn managed_workloads(
             );
         let mut plain =
             BTreeMap::from([(effigy_managed::RUN_TOKEN_ENV.to_owned(), token.to_owned())]);
+        if pane_feedback {
+            plain.insert(
+                crate::runner::managed_wait::MANAGED_TAB_ENV.to_owned(),
+                process.name.clone(),
+            );
+        }
         let mut secret = BTreeMap::new();
         let (command, setup, exec_group) = if runs_on_host {
             secret.extend(
@@ -1386,17 +1392,9 @@ fn managed_workloads(
             let (run, setup, names) = if secret.is_empty() {
                 // No task values need a private delivery. The settle token is
                 // public and retains the existing lightweight wrapper.
-                plain.clear();
-                let wrap = |command| {
-                    effigy_managed::wrap_command_with_env(
-                        command,
-                        &BTreeMap::from([(
-                            effigy_managed::RUN_TOKEN_ENV.to_owned(),
-                            token.to_owned(),
-                        )]),
-                        repo,
-                    )
-                };
+                let delivered = std::mem::take(&mut plain);
+                let wrap =
+                    |command| effigy_managed::wrap_command_with_env(command, &delivered, repo);
                 (wrap(run), setup.map(wrap), Vec::new())
             } else {
                 let names = plain

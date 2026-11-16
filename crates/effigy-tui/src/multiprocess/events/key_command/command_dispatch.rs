@@ -29,16 +29,19 @@ pub(super) fn handle_command_key(
             }
         }
         KeyCode::BackTab => {
+            state.user_selected_tab();
             state.shell_capture_mode = false;
             state.input_mode = InputMode::Command;
             state.active_index = prev_index(state.active_index, state.process_names.len());
         }
         KeyCode::Right => {
+            state.user_selected_tab();
             state.shell_capture_mode = false;
             state.input_mode = InputMode::Command;
             state.active_index = next_index(state.active_index, state.process_names.len());
         }
         KeyCode::Left => {
+            state.user_selected_tab();
             state.shell_capture_mode = false;
             state.input_mode = InputMode::Command;
             state.active_index = prev_index(state.active_index, state.process_names.len());

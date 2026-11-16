@@ -54,3 +54,79 @@ fn draining_stops_only_after_an_event_once_the_budget_elapsed() {
         "the first event after the budget stops the drain"
     );
 }
+
+#[test]
+fn fake_hybrid_progress_reaches_the_services_frame_during_startup() {
+    use super::process::handle_stderr_event;
+    use crate::multiprocess::diagnostics::RuntimeDiagnostics;
+    use crate::multiprocess::render::{render_snapshot_frame, FrameSnapshot};
+    use crate::multiprocess::state::SessionState;
+    use effigy_process::{ProcessEvent, ProcessEventKind};
+
+    let names = ["front", "admin", "api", "jobs", "services"].map(str::to_owned);
+    let mut state = SessionState::new(".".into(), names.to_vec(), 40, 140, 500);
+    let mut diagnostics = RuntimeDiagnostics::from_env();
+    let mut emit = |line: &str| {
+        let event = ProcessEvent {
+            process: "services".into(),
+            kind: ProcessEventKind::Stderr,
+            payload: line.into(),
+            chunk: None,
+        };
+        handle_stderr_event(&event, &mut state, &mut diagnostics, false);
+    };
+    emit("Started: running dev:hybrid step 1/2: container hybrid up --detach; waiting for step `1` to exit; 0s elapsed");
+    let before_logs: Vec<_> = state
+        .logs_for("services")
+        .unwrap()
+        .iter()
+        .cloned()
+        .collect();
+    let before = render_snapshot_frame(FrameSnapshot {
+        process_names: &names,
+        active: "services",
+        entry_waits: &[],
+        logs: &before_logs,
+        width: 140,
+        height: 16,
+    })
+    .unwrap();
+    for line in [
+        "Started: resolving container policy",
+        "✓ container config resolved",
+        "Started: applying compose configuration",
+        "✓ containers healthy",
+        "[host process] listener `api` is still starting after 30s; last child output: compiling api",
+        "[host process] listener `api` ready; route published",
+    ] {
+        let event = ProcessEvent { process: "services".into(), kind: ProcessEventKind::Stderr, payload: line.into(), chunk: None };
+        handle_stderr_event(&event, &mut state, &mut diagnostics, false);
+    }
+    let after_logs: Vec<_> = state
+        .logs_for("services")
+        .unwrap()
+        .iter()
+        .cloned()
+        .collect();
+    let after = render_snapshot_frame(FrameSnapshot {
+        process_names: &names,
+        active: "services",
+        entry_waits: &[],
+        logs: &after_logs,
+        width: 140,
+        height: 16,
+    })
+    .unwrap();
+    assert!(after.contains("container config resolved"), "{after}");
+    assert!(after.contains("applying compose"), "{after}");
+    assert!(
+        after.contains("listener `api` is still starting after 30s"),
+        "{after}"
+    );
+    assert!(
+        after.contains("last child output: compiling api"),
+        "{after}"
+    );
+    assert!(after.contains("route published"), "{after}");
+    println!("BEFORE SERVICES FRAME\n{before}\nAFTER SERVICES FRAME\n{after}");
+}

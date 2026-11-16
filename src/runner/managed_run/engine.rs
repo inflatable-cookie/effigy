@@ -351,6 +351,16 @@ pub(in crate::runner) fn own<T>(
         now,
     );
     wait_publisher.publish_entries(&waits.states(now));
+    if environment_name.is_some() {
+        wait_publisher.publish(&EntryState {
+            entry: super::OUTPUT_LOG.to_owned(),
+            phase: EntryPhase::Starting,
+            waiting_on: None,
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 0,
+        });
+    }
     let refused_waits = |detail: &str| {
         let mut states = waits.states(now);
         for state in &mut states {
@@ -600,6 +610,7 @@ impl Owner {
                 }
             }
         }
+        self.wait_publisher.settle(super::OUTPUT_LOG);
         self.lost_while_blocked |= self.watch.as_ref().is_some_and(OwnerWatch::lost);
         // The environment's `up` is itself a Prepare path (contract 020): it
         // can publish a source generation and remove the one an earlier render

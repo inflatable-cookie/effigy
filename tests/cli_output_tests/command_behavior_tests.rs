@@ -6829,3 +6829,87 @@ fn supervised_pid(output: &[u8]) -> Option<u32> {
         .and_then(|rest| rest.split_whitespace().next())
         .and_then(|raw| raw.parse().ok())
 }
+
+#[cfg(unix)]
+#[test]
+fn cli_dev_managed_pane_relays_hybrid_start_before_child_exits() {
+    use std::io::{BufRead, BufReader};
+    let root = temp_execution_workspace("dev-managed-hybrid-progress");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[tasks."dev:hybrid"]
+run = [{ task = "container hybrid up --detach" }, { run = "printf ready" }]
+"#,
+    )
+    .unwrap();
+    let fake = root.join("fake-effigy");
+    let release = root.join("release");
+    fs::write(&fake, format!(r#"#!/bin/sh
+printf '%s\n' 'Started: resolving policy' 'Started: applying compose' '[host process] listener `api` is still starting after 30s; last child output: compiling api' >&2
+n=0
+while [ ! -f '{}' ] && [ "$n" -lt 300 ]; do sleep 0.1; n=$((n+1)); done
+[ -f '{}' ] || exit 1
+printf '%s\n' '✓ listener api ready; route published' >&2
+"#, release.display(), release.display())).unwrap();
+    let mut permissions = fs::metadata(&fake).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&fake, permissions).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .current_dir(&root)
+        .arg("dev:hybrid")
+        .env("EFFIGY_MANAGED_PANE", "1")
+        .env("EFFIGY_EXECUTABLE", &fake)
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn_owned()
+        .expect("start managed-pane sequence");
+    let stderr = child.stderr.take().unwrap();
+    let (send, receive) = mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines() {
+            let Ok(line) = line else { break };
+            if send.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut observed = Vec::new();
+    while Instant::now() < deadline {
+        match receive.recv_timeout(Duration::from_millis(200)) {
+            Ok(line) => {
+                let reached_listener = line.contains("last child output: compiling api");
+                observed.push(line);
+                if reached_listener {
+                    break;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    let live = observed
+        .iter()
+        .any(|line| line.contains("last child output: compiling api"));
+    let still_running = child.try_wait().unwrap().is_none();
+    fs::write(&release, "go").unwrap();
+    let status = child.wait().expect("sequence exits");
+    reader.join().unwrap();
+    assert!(
+        live && still_running,
+        "progress must arrive before release: {observed:?}"
+    );
+    assert!(
+        observed
+            .iter()
+            .any(|line| line.contains("applying compose")),
+        "{observed:?}"
+    );
+    assert!(
+        status.success(),
+        "sequence failed: {status:?}; {observed:?}"
+    );
+}

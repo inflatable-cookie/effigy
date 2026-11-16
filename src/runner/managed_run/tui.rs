@@ -81,6 +81,8 @@ struct RunSource {
     shared: Arc<Mutex<Shared>>,
     shells: Option<ProcessSupervisor>,
     shell_names: Vec<String>,
+    startup_tab: Option<String>,
+    sequence_focus: Mutex<(Instant, Option<String>)>,
     /// Set once the TUI's quit path (the run's stop) has begun.
     ending: Arc<AtomicBool>,
     /// Where the run's workloads publish their waits, and which tabs they
@@ -93,6 +95,24 @@ impl RunSource {
         self.shared
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn sequence_gate(
+        &self,
+        root: &effigy_kernel::root::StateRoot,
+        parent: RunId,
+    ) -> Option<String> {
+        let mut cached = self
+            .sequence_focus
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if cached.0.elapsed() >= Duration::from_millis(500) {
+            if let Some(observed) = crate::runner::managed_wait::sequence_gate(root, parent) {
+                cached.1 = observed;
+            }
+            cached.0 = Instant::now();
+        }
+        cached.1.clone()
     }
 
     fn is_shell(&self, process: &str) -> bool {
@@ -293,6 +313,28 @@ fn event(process: &str, kind: ProcessEventKind, payload: &str) -> ProcessEvent {
 }
 
 impl SessionProcesses for RunSource {
+    fn startup_focus(&self) -> Option<String> {
+        let shared = self.shared();
+        if shared.closed.is_some() {
+            return None;
+        }
+        let parent = shared.run;
+        let root = shared.root.clone();
+        let startup_finished = shared.startup_finished;
+        drop(shared);
+        if let Some(tab) = self.sequence_gate(&root, parent) {
+            return Some(tab);
+        }
+        if startup_finished {
+            return None;
+        }
+        self.wait_ledger.read(super::OUTPUT_LOG).and_then(|state| {
+            (state.phase == effigy_core::managed_waits::EntryPhase::Starting)
+                .then(|| self.startup_tab.clone())
+                .flatten()
+        })
+    }
+
     fn entry_waits(&self) -> Vec<EntryState> {
         self.wait_states()
     }
@@ -531,6 +573,11 @@ pub(in crate::runner) fn attach_tui(
         shells: (!shells.is_empty())
             .then(|| ProcessSupervisor::spawn_progressively(repo_root.clone(), shells)),
         shell_names,
+        sequence_focus: Mutex::new((Instant::now() - Duration::from_secs(1), None)),
+        startup_tab: tabs
+            .iter()
+            .find(|tab| matches!(tab.source, TabSource::Output))
+            .map(|tab| tab.name.clone()),
         ending: ending.clone(),
         wait_ledger: crate::runner::managed_wait::WaitLedger::run(&addressed.target.root, run),
     };

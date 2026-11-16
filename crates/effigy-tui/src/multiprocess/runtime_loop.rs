@@ -42,6 +42,11 @@ pub(super) fn run_event_loop_with_control(
         runtime
             .state
             .apply_entry_waits(runtime.supervisor.entry_waits());
+        let focus = runtime
+            .supervisor
+            .startup_focus()
+            .or_else(|| runtime.state.blocking_tab().map(str::to_owned));
+        runtime.state.apply_startup_focus(focus.as_deref());
         if may_stop_before_drawing(&runtime.state, runtime.supervisor.startup_finished()) {
             break;
         }

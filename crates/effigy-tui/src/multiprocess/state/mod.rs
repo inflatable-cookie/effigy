@@ -42,6 +42,8 @@ pub struct SessionState {
     pub process_started_at: HashMap<String, Instant>,
     pub process_restart_count: HashMap<String, usize>,
     pub active_index: usize,
+    startup_focus: Option<(usize, usize)>,
+    startup_focus_overridden: bool,
     pub input_line: String,
     pub input_mode: InputMode,
     pub shell_capture_mode: bool,
@@ -65,6 +67,51 @@ pub struct SessionState {
 }
 
 impl SessionState {
+    pub fn apply_startup_focus(&mut self, focus: Option<&str>) {
+        let target = focus.and_then(|name| self.process_names.iter().position(|item| item == name));
+        match (self.startup_focus, target) {
+            (Some((previous, _)), None) => {
+                if !self.startup_focus_overridden {
+                    self.active_index = previous;
+                }
+                self.startup_focus = None;
+                self.startup_focus_overridden = false;
+            }
+            (None, Some(index)) => {
+                self.startup_focus = Some((self.active_index, index));
+                self.active_index = index;
+            }
+            (Some((previous, current)), Some(index)) if current != index => {
+                self.startup_focus = Some((previous, index));
+                if !self.startup_focus_overridden {
+                    self.active_index = index;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Follow a named prerequisite only while another entry actually waits for it.
+    pub fn blocking_tab(&self) -> Option<&str> {
+        use crate::waits::{EntryPhase, WaitOn};
+        self.process_names.iter().find_map(|name| {
+            self.entry_waits.values().any(|entry| {
+                entry.phase == EntryPhase::Waiting && matches!(
+                    &entry.waiting_on,
+                    Some(WaitOn::Entry { name: dependency, phase: EntryPhase::Starting | EntryPhase::Running })
+                        | Some(WaitOn::Launch { name: dependency, phase: EntryPhase::Starting | EntryPhase::Running })
+                        if dependency == name
+                )
+            }).then_some(name.as_str())
+        })
+    }
+
+    pub fn user_selected_tab(&mut self) {
+        if self.startup_focus.is_some() {
+            self.startup_focus_overridden = true;
+        }
+    }
+
     /// Replaces the session's entry waits with one snapshot from the process
     /// that supervises them. A wait that is absent from the snapshot has
     /// settled — a listener became ready, a probe answered — so its tab stops

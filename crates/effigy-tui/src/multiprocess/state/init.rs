@@ -40,6 +40,8 @@ impl SessionState {
             process_started_at,
             process_restart_count,
             active_index: 0,
+            startup_focus: None,
+            startup_focus_overridden: false,
             input_line: String::new(),
             input_mode: InputMode::Command,
             shell_capture_mode: false,

@@ -296,6 +296,14 @@ exactly the one a Services tab loses - the pre-fix shape was 110 live frames,
 a repeated wait and a nested `EFFIGY` banner inside one pane log (effigy#729).
 `effigy_ui::steps::LEGACY_MANAGED_PANE_ENV` still counts when present.
 
+In a managed pane, nested sequence helpers relay their output while running.
+The environment phase and a nested sequence's startup steps publish their
+startup state to their owning run journals; the TUI follows the matching
+managed-run identity to focus the blocking tab, then restores the prior tab
+unless the operator selected another. Host state transitions and integration
+stages reach the pane as lines; repeated unchanged wait refreshes stay in the
+structured snapshot.
+
 Evidence: `crates/effigy-ui/src/steps/tests.rs`
 `the_pane_fact_survives_the_names_a_child_can_carry` and
 `pane_mode_writes_one_plain_start_and_finish` (the mode itself), plus the real
