@@ -114,6 +114,19 @@ records a pid: a bare state observation, like a bare `kill` return, says nothing
 once the anchor has retired and the kernel has given its pid to another process
 (effigy#678). The check and the signal are separate calls, so a retirement plus
 reuse between them is narrowed, not excluded.
+A fault drive's run identity is unique per drive, because the journal's custody
+nonce is `<run>:<effect sequence>` and the nonce is the only evidence a
+non-grouped survivor carries: O1a judges a complete run by the nonce, so one run
+has to own it. A fixed identity gave every concurrent drive of a scenario the
+same nonce, so a pid one drive wrote to `pids` was, after ordinary pid reuse, a
+sibling drive's live process, and O1a named a complete run for a stranger whose
+own groups had all reached verified closure (candidate QA 763eb846, effigy#1011).
+`fresh_run_epoch` mints the namespace from time, process and a counter, and
+`faults::home` gives each drive a fresh one; `id(tag)` stays stable inside a
+drive, so a scenario's later request still names the run it started. The filter
+`EFFIGY_KERNEL_FAULT_ONLY` narrows a drive to one labelled run and is diagnostic
+only: it runs that run and its oracles, and leaves the whole-plan coverage
+assertions to an unfiltered drive.
 The one pinned proof that has to be positive about its own premise —
 `faults_anchor_retirement_delivery_is_pinned_to_settlement` — holds its workload
 at the launch's own owner-written stdin until the recorded anchor reads

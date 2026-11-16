@@ -42,8 +42,70 @@ pub(super) fn env() -> ResourceId {
 fn vault() -> ResourceId {
     ResourceId::store(Scope::Machine, "vault").expect("vault id")
 }
-pub(super) fn id(n: u8) -> RunId {
-    RunId::new(1, [n; 10]).expect("run id")
+/// A run identity minted the way production mints one: unique per run. The
+/// journal's custody nonce is `<run>:<effect sequence>` (§5.7), so the nonce is
+/// identity evidence only while one run owns it. A fixed test identity gives
+/// every concurrent drive the same nonce, and O1a would then attribute another
+/// drive's live process to a complete run whose own groups all closed
+/// (effigy#1011). `tag` keeps the ids a drive mints distinct from each other
+/// (an owner's run and the successor its recovery reruns).
+pub(super) fn id(tag: u8) -> RunId {
+    let mut random = [0u8; 10];
+    random[..8].copy_from_slice(&run_epoch().to_be_bytes());
+    random[8] = tag;
+    random[9] = 0x5a;
+    RunId::new(1, random).expect("run id")
+}
+
+/// The identity namespace of the drive in progress: every fixture HOME is one
+/// drive, and each mints its own.
+static RUN_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static RUN_EPOCH_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// A `Kill`/`Stall` run continues in a re-executed child, and the drive it
+/// continues is the one its parent started: `prepare` there records run ids its
+/// `run` names again (a residue predecessor its successor acknowledges).
+pub(super) const RUN_EPOCH_ENV: &str = "EFFIGY_KERNEL_RUN_EPOCH";
+
+/// A fresh namespace for the run identities the next drive mints. Time, the
+/// process and a counter together keep two drives apart even when they start in
+/// the same instant, in different processes or in the same one.
+pub(super) fn fresh_run_epoch() {
+    use std::sync::atomic::Ordering;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    let sequence = RUN_EPOCH_SEQ.fetch_add(1, Ordering::Relaxed);
+    let epoch = now
+        ^ (u64::from(std::process::id()) << 32)
+        ^ sequence.wrapping_mul(0x9e37_79b9_7f4a_7c15)
+        ^ 0x5a5a_5a5a_5a5a_5a5a;
+    RUN_EPOCH.store(epoch, Ordering::Relaxed);
+}
+
+/// The current namespace, or the one this re-executed run continues.
+fn run_epoch() -> u64 {
+    use std::sync::atomic::Ordering;
+    let current = RUN_EPOCH.load(Ordering::Relaxed);
+    if current != 0 {
+        return current;
+    }
+    if let Some(epoch) = std::env::var(RUN_EPOCH_ENV)
+        .ok()
+        .and_then(|text| u64::from_str_radix(&text, 16).ok())
+        .filter(|epoch| *epoch != 0)
+    {
+        RUN_EPOCH.store(epoch, Ordering::Relaxed);
+        return epoch;
+    }
+    // A caller that asked for an identity before any drive existed still gets a
+    // unique one rather than a shared constant.
+    fresh_run_epoch();
+    RUN_EPOCH.load(Ordering::Relaxed)
+}
+/// The namespace a re-executed run of this drive has to continue.
+pub(super) fn current_run_epoch() -> String {
+    format!("{:016x}", run_epoch())
 }
 /// Every owner a scenario uses, so recovery can name a recorded owner.
 pub(super) fn known_owners() -> Vec<ResourceId> {
@@ -581,6 +643,128 @@ const _: [fn(); 3] = [
     faults_multi_child_test_every_point_and_observation_part_1,
     faults_multi_child_test_every_point_and_observation_part_2,
 ];
+
+/// O1a's nonce evidence is identity evidence only because production mints one
+/// run id per run: the journal's custody nonce is `<run>:<effect sequence>`
+/// (§5.7). Two drives that share a run identity share a nonce, so a `pids` pid
+/// one drive recorded is, after ordinary pid reuse, another drive's live
+/// process — and O1a names a complete run for a stranger's process, exactly as
+/// candidate QA 763eb846 reported `AnchorStop#1 Unknown` (effigy#1011). The
+/// product race is not there: this run's own groups all reach verified closure
+/// before it records `Complete`.
+#[test]
+fn a_complete_run_owns_no_process_another_drive_minted() {
+    let cx = mutate();
+    // The other drive: one workload kept alive under the same owner tag, so its
+    // custody nonce and this drive's would be the same string.
+    let other = home();
+    let other_home = other.home();
+    install_audits(&other_home);
+    let other_root = StateRoot::effects(&cx, &other_home).expect("other root");
+    let other_fake = &mut Fake::new(&other_home);
+    let mut other_run = begin(
+        &cx,
+        &other_root,
+        task(3),
+        3,
+        Some(Supervision::Inline),
+        vec![],
+        other_fake,
+    )
+    .expect("other drive run");
+    let other_id = other_run.id();
+    let lingering = Custody::spawn(
+        &mut other_run,
+        ProcessSpec {
+            argv: vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                format!(
+                    "echo $$ >> '{}'; exec '{}' nonce-workload",
+                    other_home.join("pids").display(),
+                    fixture_path().display()
+                )
+                .into(),
+            ],
+            cwd: other_home.clone(),
+            env: BTreeMap::new(),
+            grace: Duration::from_millis(50),
+            lifetime: finite(),
+            terminal: Terminal::None,
+            label: "other-drive".into(),
+        },
+        &cx,
+    )
+    .expect("lingering workload");
+    let lingering_pid = lingering.identity().identity.pid;
+    // The other drive's workload is the only fixture this proof leaves running
+    // while it judges, so its own launch stops it even on the panic path.
+    let _linger = Linger(lingering.identity());
+    // This drive: its own HOME, its own run, one workload that closes cleanly.
+    let mine = home();
+    let home = mine.home();
+    install_audits(&home);
+    let root = StateRoot::effects(&cx, &home).expect("root");
+    let fake = &mut Fake::new(&home);
+    let mut run = begin(
+        &cx,
+        &root,
+        task(3),
+        3,
+        Some(Supervision::Inline),
+        vec![],
+        fake,
+    )
+    .expect("run");
+    assert_ne!(
+        run.id(),
+        other_id,
+        "two drives minted one run identity, so one custody nonce names both"
+    );
+    let mut spec = workload(&home, "exit 0", finite());
+    spec.terminal = Terminal::Pipe;
+    let mut process = Custody::spawn(&mut run, spec, &cx).expect("workload");
+    process
+        .write_stdin(b"\n", Instant::now() + Duration::from_secs(5))
+        .expect("workload stdin");
+    let exit = verified(process.wait(&cx.operation().child(Duration::from_secs(5))));
+    process.complete(&mut run, exit).expect("workload exit");
+    run.finish(WorkloadOutcome::Succeeded).expect("finish");
+    assert!(settle(run, &cx, fake).is_some(), "the run settles complete");
+    // A pid the finished drive wrote is, after ordinary pid reuse, the other
+    // drive's live process: on disk the two are the same string.
+    let mut pids = std::fs::OpenOptions::new()
+        .append(true)
+        .open(home.join("pids"))
+        .expect("pids");
+    writeln!(pids, "{lingering_pid}").expect("pids");
+    drop(pids);
+    let world = World::capture(&home);
+    if let Err(failure) = Oracle::O1a.check(&world) {
+        panic!("O1a named a complete run for another drive's process: {failure}");
+    }
+    // The other drive keeps no residue: its own settle stops the workload.
+    settle(other_run, &cx, other_fake);
+    reap_exited();
+}
+
+/// Stops the other drive's workload by its own recorded generation, so a failed
+/// proof never leaves a fixture running past its process's temporary HOME.
+struct Linger(ProcessReceipt);
+impl Drop for Linger {
+    fn drop(&mut self) {
+        let identity = &self.0.identity;
+        if crate::ident::process_identity(identity.pid).verified() != Some(identity) {
+            return;
+        }
+        crate::custody::signal_verified_process(identity, libc::SIGKILL, || {
+            matches!(
+                crate::ident::process_identity(identity.pid),
+                Observed::Verified(now, _) if now == *identity
+            )
+        });
+    }
+}
 
 // --- Detached managed run with an environment attachment. ---
 
