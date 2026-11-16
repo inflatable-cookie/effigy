@@ -597,11 +597,12 @@ impl Scenario for Steps {
         foreign_facts(world);
     }
 }
-/// The QA job's own step, with its second child held by an event instead of
-/// load: the child ignores the first stop signal and leaves only when this
-/// drive's settle begins to stop its groups, so candidate QA 763eb846's
-/// `AnchorStop#1` `Unknown` is replayed without a sleep and without contention.
-/// `./release` is a named pipe in the drive's own HOME (`workload` runs there).
+/// The QA job's own step, with its second child held by an event instead of load:
+/// the child blocks on a named pipe and leaves when this drive writes a byte at
+/// its settle's first group stop, so candidate QA 763eb846's `AnchorStop#1`
+/// `Unknown` is replayed without a sleep and without contention. `./release` is
+/// that pipe in the drive's own HOME (`workload` runs there); the child also keeps
+/// TERM ignored so a stop that reaches it first cannot retire it silently.
 static HELD_SECOND: Steps = Steps {
     name: "multi-child-held",
     owner: 3,
@@ -659,9 +660,10 @@ const _: [fn(); 3] = [
 ];
 
 /// Candidate QA 763eb846's job replayed alone: child 2 (spawn sequence 2, the
-/// sequence the panic named) ignores the first stop signal and is held by an
-/// event, and the run takes the `Unknown` at `AnchorStop#1` with it alive across
-/// the settle. No load stands in for that timing.
+/// sequence the panic named) blocks on a named pipe in the drive's own HOME until
+/// this process releases it, and the run takes the `Unknown` at `AnchorStop#1`.
+/// What the marker shows is that the release reached the child, not that the child
+/// was alive at any particular instant.
 ///
 /// It judges one thing and says so: the world after recovery. Every custody
 /// effect of that run reads `Released`, every recorded group inventories no live
@@ -719,9 +721,8 @@ fn faults_multi_child_anchor_stop_unknown_settles_on_verified_closure() {
         "{}: AnchorStop#1 Unknown was not delivered; crossed {trace:?}",
         scenario.name()
     );
-    // The hold is the premise: child 2 ignored the first stop signal and left on
-    // this drive's event, so the drive carried a child across the settle rather
-    // than a load-dependent accident.
+    // The drive's own event reached child 2: its blocking read returned and it
+    // left. That is all this proves; no instant of the settle is claimed.
     assert!(
         settle_started.load(std::sync::atomic::Ordering::SeqCst),
         "{}: the settle never reached its first group stop",

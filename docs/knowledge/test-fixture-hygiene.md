@@ -138,10 +138,11 @@ panic's shape before the identity fix and passes after; a race the evidence show
 is not there has no failing-before form.
 The post-recovery witness is
 `faults_multi_child_anchor_stop_unknown_settles_on_verified_closure`: the QA job
-with its second child (spawn sequence 2, the sequence the panic named) held by an
-event — it ignores the first stop signal and blocks on a named pipe in its own
-HOME, leaving on a byte this process writes at the settle's first group stop, so no
-sleep and no load stand in for the QA drive's timing. It judges one thing: the
+with its second child (spawn sequence 2, the sequence the panic named) blocking on a
+named pipe in its own HOME until this process writes a byte at the settle's first
+group stop, so no sleep and no load stand in for the QA drive's timing. The child's
+marker shows that the release reached it; it does not show the child alive at any
+instant of the settle, and nothing is claimed about one. It judges one thing: the
 world after recovery. Every custody effect of that run reads `Released`, every
 recorded group inventories no live member, every recorded anchor is gone, and O1a
 and O1b accept it. That is the whole claim: one replay's post-recovery world carries
@@ -150,17 +151,20 @@ claim about the order the settle wrote those records in: on the pinned path the
 residue is settled by the run's sentinel in another process, where no harness
 instrument can see the write order, and that ordering is follow-up work.
 A custody receipt or group inventory nobody can read is unproven, never absent. The
-driver keeps an unreadable receipt as `Custodied::unreadable`, and a failed
-`group_pids` inventory and an unreadable receipt each make `survivors` name the
-effect, so O1a fails rather than pass on evidence it could not read. A custody effect
-with no receipt is decided by its own recorded state, which is the product's rule
-(`custody::settle_effect`): `Released` with no receipt is an intent whose barrier
-never released, so there is no process to own, while `Applied`, `Intended`, `Unknown`
-or `Residue` with no receipt is custody in doubt and fails. The incomplete-subject
-scan stays recorded-only, because its residue listing is what names its survivors.
-The witness reads the same evidence with `expect`. A workload's unreadable custody nonce stays "not this run's
-process" on purpose: on macOS a platform binary hides its environment, which is why
-lingering workloads exec the custody fixture instead.
+driver keeps an unreadable receipt as `Custodied::unreadable`, and a failed group
+inventory and an unreadable receipt each make `survivors` name the effect, so O1a
+fails rather than pass on evidence it could not read. A recorded effect with no
+receipt is exempt only when it reads `Released`, which is the one case the product
+resolves (`custody::settle_effect`): no barrier opened, so no workload ran. Every
+other state with no receipt fails, as the same product rule implies. The
+incomplete-subject scan stays recorded-only, because its residue listing is what
+names its survivors. The witness reads the same evidence with `expect`, and three
+synthetic controls in the oracle controls module pin all three paths — a complete run
+whose effect has no receipt and is not `Released`, an unreadable receipt, and an
+unavailable group inventory — without spawning a process. A workload's unreadable
+custody nonce stays "not this run's process" on purpose: on macOS a platform binary
+hides its environment, which is why lingering workloads exec the custody fixture
+instead.
 The one pinned proof that has to be positive about its own premise —
 `faults_anchor_retirement_delivery_is_pinned_to_settlement` — holds its workload
 at the launch's own owner-written stdin until the recorded anchor reads
