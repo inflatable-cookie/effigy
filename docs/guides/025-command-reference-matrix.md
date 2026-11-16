@@ -520,6 +520,7 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   as `effigy <task> stop`, and record the lifecycle-bound container
 environment in `session.json` so a whole-environment handover can end
   the live owner bound to the losing environment
+- `--lock-wait-ms` also reaches every nested `effigy` a task step starts, and `effigy --lock-wait-ms <MS> skill run <skill>/<task>` is accepted.
 - `--verbose-root`, `--env-schema`, and `--lock-wait-ms` apply to manifest task
   invocations; `EFFIGY_LOCK_WAIT_MS` is the env fallback when the flag is
   omitted. The default wait is `0` except for `test:focused`, which waits about

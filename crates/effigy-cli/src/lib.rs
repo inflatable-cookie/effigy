@@ -1155,6 +1155,13 @@ pub fn apply_global_cli_flags(
     global_json::apply_global_cli_options(cmd, options)
 }
 
+pub use global_json::LOCK_WAIT_ENV;
+
+/// Exports `--lock-wait-ms` for this process and its children (effigy#1018).
+pub fn export_lock_wait_env(options: &GlobalCliOptions) {
+    global_json::export_lock_wait_env(options)
+}
+
 pub fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bool {
     global_json::command_requests_json(cmd, global_json_mode)
 }

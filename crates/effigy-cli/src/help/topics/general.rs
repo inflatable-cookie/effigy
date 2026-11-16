@@ -47,7 +47,7 @@ pub(crate) fn render_general_help<R: HelpRenderer + ?Sized>(
         ),
         KeyValue::new(
             "--lock-wait-ms <MS> <task>",
-            "Wait up to MS for a live run of the same task to finish",
+            "Wait up to MS for a live run of the same task to finish; nested `effigy` steps inherit the wait",
         ),
     ])?;
     renderer.text("")?;

@@ -75,6 +75,12 @@ or `EFFIGY_LOCK_WAIT_MS`. `0` (the default) fails immediately. For
 invocation waits that long for its peer, while an explicit flag or
 environment value, `0` included, replaces the default.
 
+The flag is exported as `EFFIGY_LOCK_WAIT_MS` to the run's process
+environment, so a nested `effigy <selector>` that a task step starts waits on
+the same terms as the outer run. An explicit flag replaces an inherited
+environment value; without the flag the environment value stands. A skill run
+takes the flag too: `effigy --lock-wait-ms <MS> skill run <skill>/<task>`.
+
 ## Related Guides
 
 - [Manifest cookbook](022-manifest-cookbook.md)
