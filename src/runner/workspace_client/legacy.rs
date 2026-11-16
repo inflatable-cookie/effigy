@@ -200,10 +200,11 @@ pub(crate) fn classify_task(
         .as_ref()
         .is_some_and(|catalog| !catalog.members.is_empty())
     {
-        return Ok(LegacyTask::HostAuthority(format!(
+        return Ok(LegacyTask::HostAuthority(
             "this workspace composes its task catalogue from `[catalog] members`, which a \
              production guest resolves only from the pinned snapshot"
-        )));
+                .to_owned(),
+        ));
     }
     let Some(declaration) = manifest.tasks.get(&task.name) else {
         return Ok(LegacyTask::HostAuthority(format!(
