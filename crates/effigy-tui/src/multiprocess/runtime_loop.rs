@@ -42,6 +42,9 @@ pub(super) fn run_event_loop_with_control(
         runtime
             .state
             .apply_entry_waits(runtime.supervisor.entry_waits());
+        runtime
+            .state
+            .apply_startup_focus(runtime.supervisor.startup_focus().as_deref());
         if may_stop_before_drawing(&runtime.state, runtime.supervisor.startup_finished()) {
             break;
         }

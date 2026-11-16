@@ -81,6 +81,7 @@ struct RunSource {
     shared: Arc<Mutex<Shared>>,
     shells: Option<ProcessSupervisor>,
     shell_names: Vec<String>,
+    startup_tab: Option<String>,
     /// Set once the TUI's quit path (the run's stop) has begun.
     ending: Arc<AtomicBool>,
     /// Where the run's workloads publish their waits, and which tabs they
@@ -293,6 +294,19 @@ fn event(process: &str, kind: ProcessEventKind, payload: &str) -> ProcessEvent {
 }
 
 impl SessionProcesses for RunSource {
+    fn startup_focus(&self) -> Option<String> {
+        let shared = self.shared();
+        if shared.closed.is_some() {
+            return None;
+        }
+        drop(shared);
+        self.wait_ledger.read(super::OUTPUT_LOG).and_then(|state| {
+            (state.phase == effigy_core::managed_waits::EntryPhase::Starting)
+                .then(|| self.startup_tab.clone())
+                .flatten()
+        })
+    }
+
     fn entry_waits(&self) -> Vec<EntryState> {
         self.wait_states()
     }
@@ -531,6 +545,10 @@ pub(in crate::runner) fn attach_tui(
         shells: (!shells.is_empty())
             .then(|| ProcessSupervisor::spawn_progressively(repo_root.clone(), shells)),
         shell_names,
+        startup_tab: tabs
+            .iter()
+            .find(|tab| matches!(tab.source, TabSource::Output))
+            .map(|tab| tab.name.clone()),
         ending: ending.clone(),
         wait_ledger: crate::runner::managed_wait::WaitLedger::run(&addressed.target.root, run),
     };

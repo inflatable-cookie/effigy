@@ -144,3 +144,25 @@ fn a_starting_entry_rebases_its_clock_instead_of_reporting_its_queue_time() {
         .elapsed();
     assert!(started >= Duration::from_secs(30), "{started:?}");
 }
+
+#[test]
+fn startup_focus_restores_selection_unless_the_user_changes_it() {
+    let mut state = SessionState::new(
+        ".".into(),
+        vec!["front".into(), "services".into(), "api".into()],
+        24,
+        80,
+        100,
+    );
+    state.apply_startup_focus(Some("services"));
+    assert_eq!(state.active_process(), "services");
+    state.apply_startup_focus(None);
+    assert_eq!(state.active_process(), "front");
+
+    state.apply_startup_focus(Some("services"));
+    state.user_selected_tab();
+    state.active_index = 2;
+    state.apply_startup_focus(Some("services"));
+    state.apply_startup_focus(None);
+    assert_eq!(state.active_process(), "api");
+}

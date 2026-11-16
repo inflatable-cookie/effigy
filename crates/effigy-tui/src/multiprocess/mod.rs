@@ -130,6 +130,10 @@ pub trait SessionProcesses {
     fn entry_waits(&self) -> Vec<crate::waits::EntryState> {
         Vec::new()
     }
+    /// The tab that owns the currently blocking startup phase.
+    fn startup_focus(&self) -> Option<String> {
+        None
+    }
     fn close_requested(&self) -> bool {
         false
     }

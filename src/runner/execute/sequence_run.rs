@@ -761,18 +761,20 @@ fn execute_step(
             // A builtin or script step is Effigy's own child process: it
             // receives the session grant. A user command is a workload and
             // never does.
+            let relay_helper =
+                !preflight.output_json && (streams_output() || effigy_ui::steps::in_managed_pane());
             let exit = if helper {
                 run_effigy_child(
                     run,
                     plain,
                     argv.into_iter().map(std::ffi::OsString::from).collect(),
                     launch,
-                    !preflight.output_json && streams_output(),
+                    relay_helper,
                 )?
             } else {
                 run_plain(run, plain)?
             };
-            if helper && !preflight.output_json && !streams_output() {
+            if helper && !preflight.output_json && !relay_helper {
                 print!("{}", String::from_utf8_lossy(&exit.stdout));
                 if exit.code == 0 {
                     eprint!("{}", String::from_utf8_lossy(&exit.stderr));
