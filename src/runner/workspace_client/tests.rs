@@ -880,14 +880,6 @@ fn a_container_bound_task_runs_in_the_container_the_context_proved() {
     let recorded = legacy::local_task_placement().expect("the placement is recorded");
     assert_eq!(recorded.container, "web");
     assert_eq!(recorded.generation, GENERATION);
-    // The runner resolves this selector only against the pinned snapshot, rooted
-    // at the published checkout.
-    let source = legacy::local_task_source().expect("the pinned catalogue is selected");
-    assert_eq!(source.source_root, std::path::PathBuf::from(GUEST_CHECKOUT));
-    assert_eq!(
-        source.manifest_path, recorded.pinned_manifest_path,
-        "the run loads the pinned composed snapshot, not the checkout's composition"
-    );
     let manifest: effigy_manifest::TaskManifest =
         toml::from_str(std::str::from_utf8(PRODUCTION_WORKSPACE_MANIFEST).expect("utf-8"))
             .expect("the pinned manifest parses");

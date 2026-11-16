@@ -195,17 +195,6 @@ pub(crate) fn classify_task(
     task: &TaskInvocation,
 ) -> Result<LegacyTask, RunnerError> {
     let (manifest, _) = pinned_task_manifest(published, guest, checkout)?;
-    if manifest
-        .catalog
-        .as_ref()
-        .is_some_and(|catalog| !catalog.members.is_empty())
-    {
-        return Ok(LegacyTask::HostAuthority(
-            "this workspace composes its task catalogue from `[catalog] members`, which a \
-             production guest resolves only from the pinned snapshot"
-                .to_owned(),
-        ));
-    }
     let Some(declaration) = manifest.tasks.get(&task.name) else {
         return Ok(LegacyTask::HostAuthority(format!(
             "`{}` is not a task in the manifest this workspace's context pins",
@@ -578,29 +567,6 @@ pub(crate) fn verify_checkout_inputs() -> Result<(), RunnerError> {
         }
     }
     Ok(())
-}
-
-/// The one catalogue a production guest run resolves from: the pinned composed
-/// snapshot, rooted at the published checkout so steps still run there.
-///
-/// The ordinary resolver would otherwise load the checkout's own composition and
-/// every member catalogue it names; the allowlist rule is that the selector is
-/// resolved only against the verified pinned snapshot.
-pub(crate) fn local_task_source() -> Option<effigy_context::TaskSourceContext> {
-    let placement = local_task_placement()?;
-    let checkout = placement
-        .manifest_path
-        .parent()
-        .unwrap_or(Path::new("/"))
-        .to_path_buf();
-    Some(effigy_context::TaskSourceContext::new(
-        checkout,
-        placement.pinned_manifest_path,
-        vec![format!(
-            "workspace context generation {}",
-            placement.generation
-        )],
-    ))
 }
 
 /// Refuse a repository this container did not prepare.

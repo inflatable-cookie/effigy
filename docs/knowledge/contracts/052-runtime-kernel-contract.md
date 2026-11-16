@@ -4528,26 +4528,37 @@ refuses — and must declare none of
 the ordinary runner dispatch with `EFFIGY_INTERNAL_CONTAINER_HANDOFF` set — the
 runner's existing "already inside its own workspace container" switch — so
 routing stays local and the run keeps its ordinary gates, custody and
-single-execution rule. The allowlist rule is absolute: the requested selector is resolved **only**
-against the verified pinned composed snapshot, before any routing, repository,
-alias or fallback resolution, source preparation or catalog load. The guest
-hands the runner that one catalogue, rooted at the published checkout
-(`TaskSourceContext`), so the run executes the pinned definition and its pinned
-referenced steps and never re-resolves from the live checkout or another
-catalogue. A selector the snapshot does not declare — a qualified
-`<catalog>/<task>`, another repository's task, a built-in/exec-alias/`[defer]`
-fallback target, or an unknown name — refuses with the host-CLI message before
-any effect, and a workspace whose catalogue composes `[catalog] members` refuses
-for the same reason. The resolved repository is fenced to the published
-checkout, so a `--repo` override pointing at another checkout refuses before the
-dispatcher prepares that repository's sources. Defence in depth remains: the
-guest records the placement only after every pinned checkout file still matches
-its digest, the dispatcher re-checks that closure before it prepares sources,
-and the execution entry compares the resolved declaration of the task — and of
-every task its steps reference — with the pinned snapshot's declaration, so a
-changed root manifest or a changed included task file refuses too. The
-machine-local bundle-input layer (which legitimately differs between host and
-container) is not part of that comparison. Every other Observe, Invoke or
+single-execution rule. The allowlist rule is absolute, in this order:
+
+1. **The selector resolves against the verified pinned composed snapshot first**,
+   in the guest entry, before any routing, repository, alias or fallback
+   resolution, source preparation or catalog load. A name the snapshot does not
+   declare — a qualified `<catalog>/<task>`, another repository's task, an
+   unknown name, or a built-in/exec-alias/`[defer]` fallback target — refuses
+   there with the host-CLI message and no effect.
+2. **The resolved repository is fenced to the published checkout.** A `--repo`
+   override or any other resolver root refuses before the dispatcher prepares
+   that repository's sources.
+3. **A non-task route refuses.** A built-in, container exec alias or a catalog
+   `[defer]` command is never executed for a guest selector, even when the route
+   resolution finds one.
+4. **The definition that runs must be the pinned one.** The execution entry
+   compares the resolved declaration of the task, and of every task its steps
+   reference, with the pinned snapshot's declaration; the guest also records a
+   placement only after every pinned checkout file still matches its digest and
+   the dispatcher re-checks that closure before it prepares sources.
+
+The machine-local bundle-input layer (which legitimately differs between host
+and container) is not part of that comparison. The stronger form — handing the
+runner one isolated catalogue built from the pinned snapshot — is not available
+for a workspace run: the isolated loader (`TaskSourceContext`,
+`load_isolated_catalog`) requires the manifest to live inside its source root and
+the runner derives container and compose policy from the catalogue root, so a
+snapshot under the guest store is refused as escaping that root (observed:
+"composed manifest escapes canonical skill source root `/workspace`"). Equality
+binding plus the three fences above is therefore the guest's guarantee: any
+divergence between the pinned and the resolved route, repository or definition
+refuses, and nothing unpinned executes. Every other Observe, Invoke or
 Refused command refuses
 before any connection with the honest cause: the production context pins no
 admitted session and no host authority channel, re-preparing republishes the

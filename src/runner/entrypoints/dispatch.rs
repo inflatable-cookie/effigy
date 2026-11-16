@@ -141,15 +141,6 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
                     EffigyRuntimeContext::capture_lossy(Some(cwd.to_path_buf()), None)
                         .expect("runtime context capture should fall back to cwd")
                 });
-            // A production workspace guest resolves this selector only against
-            // the pinned composed snapshot: the runner loads that one catalogue,
-            // rooted at the published checkout, and never the checkout's own
-            // composition or a member catalogue.
-            let runtime_context = match crate::runner::workspace_client::legacy::local_task_source()
-            {
-                Some(source) => runtime_context.with_task_source(source),
-                None => runtime_context,
-            };
             let request = TaskExecutionRequestBuilder::new()
                 .runtime_context(runtime_context)
                 .task(task.name, task.args)
