@@ -593,8 +593,9 @@ mod controls {
 
     #[test]
     fn oracle_controls_reject_a_complete_run_without_custody_receipt() {
-        // `Released` with no receipt is the one case the product resolves
-        // (`custody::settle_effect`: no barrier opened, so no workload ran).
+        // `custody::settle_effect` releases every receipt-less effect except
+        // `Unknown` and `Residue`, so on a `Complete` run only `Released` may lack
+        // a receipt; every other state means settlement did not resolve it.
         passes(
             Oracle::O1a,
             &custody_world(EffectState::Released, None, None),
