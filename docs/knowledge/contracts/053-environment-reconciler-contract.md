@@ -586,8 +586,8 @@ order, stopped by `down`, `reset` and session settle with a
 when it fails, its own route stays withheld while the environment's published
 routes and the other sidecars' routes remain, and a `depends_on` sidecar of a
 withheld listener withholds its route too, through the whole chain (effigy#455).
-The current dependency decision precedes reconciliation of any previous
-generation. A withheld dependent's old run is settled before the report,
+Each `up` replaces a host process's previous owned generation before launching
+its successor. A withheld dependent's old run is settled before the report,
 including a process without a listener; an incomplete stop remains a refusal.
 Sidecar startup is governed by the listener's own lifecycle, separately from
 the container runtime-observation budget. The activation keeps its owning

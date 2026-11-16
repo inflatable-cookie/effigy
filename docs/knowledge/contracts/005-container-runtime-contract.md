@@ -597,19 +597,12 @@ not this seam. A withheld or failed listener keeps the partial-exposure
 semantics above; this sentence covers the start seam those reports already
 name for listener-bearing environments.
 
-A listener that a later activation does not start is never taken on trust
-either: it is reconciled against its own published generation and route first,
-so a healthy generation this activation never touched stays exposed and is
-named in `exposed_routes`. Reconciliation compares that generation with the
-**current declaration** — route domain, TLS mode, bind and the declared
-readiness request, which is probed live — and withholds the current route when
-they differ, because the declared target is not the one that generation serves.
-A generation that fails those checks is settled under the same fenced stop
-before the report, so a route the report withholds is withdrawn from the
-endpoint store instead of being left served by the generation that failed it;
-a definite status the live probe observed is named in the refusal. Only a
-listener with nothing verified against its current declaration is reported
-withheld.
+On each `up`, declared host processes are started in dependency order. Each
+process's previous owned generation is settled before its successor launches.
+A listener is included in `exposed_routes` only after that successor verifies
+the current readiness request and publishes its declared route. An independent
+listener still starts after another listener fails; a withheld dependent's
+previous generation is settled under the dependency rules above.
 
 The child receives `EFFIGY_MANAGED_HOST_LISTENER_BIND`, `HOST` and `PORT`, and
 the process's own `EFFIGY_HOST_PROCESS_PUBLIC_URL` and
