@@ -243,6 +243,12 @@ pub(super) fn drive_part(scenario: &dyn Scenario, part: usize, parts: usize) {
         }
     }
     for oracle in scenario.oracles() {
+        // O9 only judges runs that deliver a fault at an observability point.
+        // Keep that family-level proof in part 0; later parts may own no such
+        // delivered job after deterministic partitioning.
+        if *oracle == Oracle::O9 && part != 0 {
+            continue;
+        }
         assert!(
             tally.judged.get(oracle).copied().unwrap_or(0) > 0,
             "{}: {oracle:?} judged nothing across {} runs",
@@ -754,22 +760,24 @@ fn rotated_shards_preserve_jobs_and_distribute_each_fault() {
     merged.sort_by_key(|(ordinal, _)| *ordinal);
     assert_eq!(merged, plan.into_iter().enumerate().collect::<Vec<_>>());
     let plan = jobs(&trace, 13);
-    for (ordinal, job) in plan.iter().enumerate() {
-        if let Job::Point(_, crossing, _) = job {
-            assert_eq!(job_part(ordinal, 3), crossing % 3);
+    for parts in 1..=8 {
+        for (ordinal, job) in plan.iter().enumerate() {
+            if let Job::Point(_, crossing, _) = job {
+                assert_eq!(job_part(ordinal, parts), crossing % parts);
+            }
         }
+        let mut partitioned: Vec<_> = (0..parts)
+            .flat_map(|part| {
+                plan.iter()
+                    .copied()
+                    .enumerate()
+                    .filter(move |(i, _)| job_part(*i, parts) == part)
+            })
+            .collect();
+        partitioned.sort_by_key(|(ordinal, _)| *ordinal);
+        assert_eq!(
+            partitioned,
+            plan.iter().copied().enumerate().collect::<Vec<_>>()
+        );
     }
-    let mut partitioned: Vec<_> = (0..3)
-        .flat_map(|part| {
-            plan.iter()
-                .copied()
-                .enumerate()
-                .filter(move |(i, _)| job_part(*i, 3) == part)
-        })
-        .collect();
-    partitioned.sort_by_key(|(ordinal, _)| *ordinal);
-    assert_eq!(
-        partitioned,
-        plan.into_iter().enumerate().collect::<Vec<_>>()
-    );
 }
