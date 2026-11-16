@@ -65,9 +65,7 @@ pub(crate) fn published_legacy_at(
     // `WorkspaceContext::parse`).
     if binary.digest != context.binary.digest {
         return Err(ContextRefusal::version_mismatch(format!(
-            "the prepared workspace pins guest effigy {} ({}) but the executable running here is \
-             {}; run `{HOST_REPREPARE_COMMAND}` on the host to publish the pinned guest binary, or \
-             run the command on the host",
+            "the prepared workspace pins guest effigy {} ({}) but the executable running here is {}",
             context.binary.version, context.binary.digest, binary.digest
         ))
         .into());
@@ -93,8 +91,7 @@ pub(crate) fn published_legacy_at(
     if !claimed.matches(&live) {
         return Err(ContextRefusal::identity_mismatch(format!(
             "the production context generation {generation} belongs to container `{}` on VM boot \
-             `{}` ({}), but this is container `{}` on VM boot `{}` ({}); run \
-             `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the workspace",
+             `{}` ({}), but this is container `{}` on VM boot `{}` ({})",
             claimed.container_id,
             claimed.vm_boot_id,
             claimed.platform,
