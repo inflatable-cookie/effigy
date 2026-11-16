@@ -278,7 +278,7 @@ pub(super) fn drive_part(scenario: &dyn Scenario, part: usize, parts: usize) {
     );
 }
 /// The foreign fixture ends with its process's drive work, even on panic.
-struct ForeignGuard;
+pub(super) struct ForeignGuard;
 impl Drop for ForeignGuard {
     fn drop(&mut self) {
         super::scenarios::stop_foreign();
@@ -453,7 +453,7 @@ fn judge(world: &World, label: &str, tally: &mut Tally) {
     }
 }
 
-fn helper_log(home: &Path) -> PathBuf {
+pub(super) fn helper_log(home: &Path) -> PathBuf {
     aux(home).join("helpers")
 }
 /// Waits until every helper spawned for this HOME, registered or not, and
@@ -487,7 +487,7 @@ fn quiesce(home: &Path, label: &str, after_recovery: bool) {
 }
 /// Status reads (O10), the generic settle of every unresolved run, the
 /// scenario's own recovery, then the captured world.
-fn recover(scenario: &dyn Scenario, home: &Path, label: &str) -> World {
+pub(super) fn recover(scenario: &dyn Scenario, home: &Path, label: &str) -> World {
     quiesce(home, label, false);
     let before = world::tree(home);
     observe_everything(home);

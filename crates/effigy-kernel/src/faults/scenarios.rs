@@ -597,6 +597,20 @@ impl Scenario for Steps {
         foreign_facts(world);
     }
 }
+/// The QA job's own step, with its second child held by an event instead of
+/// load: the child ignores the first stop signal and leaves only when this
+/// drive's settle begins to stop its groups, so candidate QA 763eb846's
+/// `AnchorStop#1` `Unknown` is replayed without a sleep and without contention.
+/// `./release` is a named pipe in the drive's own HOME (`workload` runs there).
+static HELD_SECOND: Steps = Steps {
+    name: "multi-child-held",
+    owner: 3,
+    steps: &[&[
+        "exit 0",
+        "trap '' TERM; read -r _ < ./release; : > ./released; exit 3",
+        "\"$EFFIGY_FAULT_FIXTURE\" nonce-workload & echo $! >> pids; wait",
+    ]],
+};
 static STEPS: [Steps; 3] = [
     Steps {
         name: "plain-task",
@@ -643,6 +657,165 @@ const _: [fn(); 3] = [
     faults_multi_child_test_every_point_and_observation_part_1,
     faults_multi_child_test_every_point_and_observation_part_2,
 ];
+
+/// Candidate QA 763eb846's job, replayed alone and deterministically: the
+/// `Unknown` at the second `AnchorStop` with child 2 (spawn sequence 2) held by
+/// an event until the settle stops its groups, not by load.
+///
+/// O1a must pass here, and the run must hold `Complete` only with every custody
+/// group verified empty and nothing carrying its nonce: an `Unknown` closure
+/// observation is residue, so this run completes through the recovery settle's
+/// fresh closure proof (contract 052 K6; effigy#1011).
+#[test]
+fn faults_multi_child_anchor_stop_unknown_settles_on_verified_closure() {
+    let scenario: &dyn Scenario = &HELD_SECOND;
+    let cx = mutate();
+    let drive = home();
+    let home = drive.home();
+    let _foreign = super::driver::ForeignGuard;
+    crate::fault::set_helper_log(Some(super::driver::helper_log(&home)));
+    // The held child leaves on this drive's own event: the settle's first group
+    // stop. A named pipe this process holds open never lets its read see EOF.
+    let release = home.join("release");
+    named_pipe(&release);
+    let pipe = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&release)
+        .expect("release pipe");
+    let settle_started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let armed = settle_started.clone();
+    let signal = std::os::fd::AsRawFd::as_raw_fd(&pipe);
+    crate::fault::hook(Some(Box::new(move |point| {
+        if point == Point::SettleEffectBefore
+            && !armed.swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            // The event, not a sleep and not a signal: one byte ends the held
+            // child's read, so the QA job's second child leaves on this drive's
+            // own stopping boundary. `pipe` stays open in this test and the hook
+            // is cleared after the run, so the descriptor is live throughout.
+            // SAFETY: a live write end this test owns; the slice is one byte.
+            let written = unsafe { libc::write(signal, b"\n".as_ptr().cast(), 1) };
+            assert_eq!(written, 1, "release the held child");
+        }
+    })));
+    scenario.prepare(&home);
+    scenario.warm();
+    crate::fault::arm_nth(Point::AnchorStop, 1, crate::fault::Fault::Unknown);
+    let _exit = scenario.run(&home);
+    let fired = crate::fault::fired();
+    let trace = crate::fault::trace();
+    crate::fault::arm(None);
+    crate::fault::hook(None);
+    assert!(
+        fired,
+        "{}: AnchorStop#1 Unknown was not delivered; crossed {trace:?}",
+        scenario.name()
+    );
+    assert!(
+        settle_started.load(std::sync::atomic::Ordering::SeqCst),
+        "{}: the settle never reached its first group stop",
+        scenario.name()
+    );
+    // The hold is the premise: child 2 ignored the first stop signal and left on
+    // this drive's event, so the QA trace really had a child alive across the
+    // settle rather than a load-dependent accident.
+    assert!(
+        home.join("released").exists(),
+        "{}: the held child left on a signal, not on the drive's event",
+        scenario.name()
+    );
+    let world = super::driver::recover(
+        scenario,
+        &home,
+        &format!("{}: AnchorStop#1", scenario.name()),
+    );
+    // The drive's own run is the one this test names by tag; the recovery step's
+    // successor is a second, effect-free run.
+    let run = world
+        .runs
+        .iter()
+        .find(|run| run.id == id(3))
+        .unwrap_or_else(|| {
+            panic!(
+                "the drive's run {} is missing: {:?}",
+                id(3),
+                world
+                    .runs
+                    .iter()
+                    .map(|run| (run.id, run.phase.clone(), run.cleanup.clone()))
+                    .collect::<Vec<_>>()
+            )
+        });
+    assert_eq!(
+        (run.phase.as_str(), run.cleanup.as_deref()),
+        ("closed", Some("complete")),
+        "the QA run records Complete"
+    );
+    let effects = &world.effects[&run.id.to_string()];
+    let custody: Vec<_> = effects
+        .iter()
+        .filter(|effect| effect.spec.kind == crate::custody::KIND)
+        .collect();
+    assert_eq!(custody.len(), 3, "three custody effects: {effects:?}");
+    for effect in custody {
+        assert_eq!(
+            effect.state,
+            EffectState::Released,
+            "effect {} of the complete run closed on verified closure",
+            effect.sequence
+        );
+        let stored = effect.receipt.clone().expect("custody receipt");
+        let receipt: ProcessReceipt = serde_json::from_value(stored.clone()).expect("receipt");
+        for pid in crate::custody::platform::group_pids(receipt.pgid).expect("group inventory") {
+            assert!(
+                matches!(
+                    crate::ident::process_state(pid),
+                    Observed::Absent(_) | Observed::Verified(crate::ident::ProcessState::Zombie, _)
+                ),
+                "effect {}: group {} still holds live pid {pid}",
+                effect.sequence,
+                receipt.pgid
+            );
+        }
+        let anchor = stored
+            .get("anchor")
+            .and_then(|anchor| anchor.get("pid"))
+            .and_then(serde_json::Value::as_u64)
+            .expect("recorded anchor") as u32;
+        assert!(
+            matches!(
+                crate::ident::process_state(anchor),
+                Observed::Absent(_) | Observed::Verified(crate::ident::ProcessState::Zombie, _)
+            ),
+            "effect {}: its anchor {anchor} outlives the group it evidences",
+            effect.sequence
+        );
+    }
+    for (oracle, judged) in [
+        (Oracle::O1a, "a complete run owns no survivor"),
+        (Oracle::O1b, "an incomplete run names its residue"),
+    ] {
+        if let Err(failure) = oracle.check(&world) {
+            panic!("{oracle:?} ({judged}) refused the isolated drive: {failure}");
+        }
+    }
+}
+
+/// A named pipe inside this drive's fixture HOME, for the held child's read.
+fn named_pipe(path: &Path) {
+    use std::os::unix::ffi::OsStrExt;
+    let name = std::ffi::CString::new(path.as_os_str().as_bytes()).expect("fifo path");
+    // SAFETY: a NUL-terminated path this test owns, inside its own fixture HOME.
+    let created = unsafe { libc::mkfifo(name.as_ptr(), 0o600) };
+    assert_eq!(
+        created,
+        0,
+        "mkfifo {}: {}",
+        path.display(),
+        std::io::Error::last_os_error()
+    );
+}
 
 /// O1a's nonce evidence is identity evidence only because production mints one
 /// run id per run: the journal's custody nonce is `<run>:<effect sequence>`
