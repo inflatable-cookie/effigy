@@ -541,7 +541,7 @@ status)
   ;;
 list)
   if [ -f "$state/colima-listed" ]; then
-    printf '{"name":"effigy-release","status":"%s","cpus":2,"memory":2147483648,"disk":107374182400}\n' "$( [ -f "$state/colima-running" ] && echo Running || echo Stopped )"
+    printf '{"name":"effigy-release","status":"%s","cpus":4,"memory":8589934592,"disk":107374182400}\n' "$( [ -f "$state/colima-running" ] && echo Running || echo Stopped )"
     printf '{"name":"effigy","status":"%s","cpus":12,"memory":34359738368,"disk":322122547200}\n' "$( [ -f "$state/colima-running" ] && echo Running || echo Stopped )"
   fi
   ;;
@@ -554,26 +554,28 @@ esac
 "#,
         );
         if staged {
-            // A real index: the staged closure is the tracked working tree.
-            // Private state, fixtures and the mount stay untracked, so nothing
-            // ignored is ever a source input.
-            std::fs::write(
-                root.join(".gitignore"),
-                "host-home/\nstate/\nbin/\n.effigy/\nfixture-host\ntmp/\n",
-            )
-            .unwrap();
             // The tracked workspace the builder compiles, so the source probe
             // proves the same build inputs a cargo build reads.
             std::fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
             std::fs::write(root.join("Cargo.lock"), "version = 4\n").unwrap();
-            for args in [vec!["init", "-q"], vec!["add", "-A"]] {
-                let status = std::process::Command::new("git")
-                    .args(&args)
-                    .current_dir(&root)
-                    .status()
-                    .expect("private git fixture");
-                assert!(status.success(), "git {args:?}");
-            }
+        }
+        // Every recovery fixture is a checkout: the receipt binds the
+        // producer to its tracked source closure as well as its output bytes.
+        // Keep backend state and generated paths outside that closure.
+        std::fs::write(
+            root.join(".gitignore"),
+            "host-home/\nstate/\nbin/\n.effigy/\nfixture-host\ntmp/\n",
+        )
+        .unwrap();
+        for args in [vec!["init", "-q"], vec!["add", "-A"]] {
+            let status = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(&root)
+                .status()
+                .expect("private git fixture");
+            assert!(status.success(), "git {args:?}");
+        }
+        if staged {
             let mount = root.join("host-home/release-source");
             std::fs::create_dir_all(&mount).unwrap();
             let profile = root.join("host-home/.colima/effigy-release");
@@ -581,7 +583,7 @@ esac
             std::fs::write(
                 profile.join("colima.yaml"),
                 format!(
-                    "cpu: 2\nmemory: 2\ndisk: 100\nmounts:\n  - location: {}\n    writable: true\n",
+                    "cpu: 4\nmemory: 8\ndisk: 100\nmounts:\n  - location: {}\n    writable: true\n",
                     mount.display()
                 ),
             )
@@ -1179,7 +1181,7 @@ fn unchanged_partial_completed_and_absent_builders_use_supported_task() {
 #[test]
 fn deleted_managed_colima_profile_is_recreated_before_the_next_artifact_build() {
     let _lock = crate::contract_test_support::lock_test();
-    let fixture = Fixture::new(false, false, "colima");
+    let fixture = Fixture::staged(false, false, "colima");
     // The user deleted the profile: `colima list` no longer names it, its VM is
     // not running, and the builder container went with it.
     for name in ["colima-running", "colima-listed", "identity.json"] {
