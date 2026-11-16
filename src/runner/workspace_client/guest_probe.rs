@@ -33,7 +33,7 @@ pub(crate) fn run(args: GuestProbeArgs) -> Result<String, RunnerError> {
     let invalid = |message| RunnerError::task_invocation(message);
     let identity = ProcGuestIdentity::process()
         .observe()
-        .map_err(|reason| invalid(format!("guest-local identity is unproven ({reason})")))?;
+        .map_err(|reason| invalid(format!("{REFUSAL_IDENTITY_UNPROVEN} ({reason})")))?;
     // Hash the running executable once, before any observation, so every reply
     // names the exact bytes that produced it.
     let executable = executable_digest()?;
@@ -56,7 +56,7 @@ pub(crate) fn run(args: GuestProbeArgs) -> Result<String, RunnerError> {
             let remaining = Duration::from_millis(timeout_ms)
                 .checked_sub(started.elapsed())
                 .filter(|left| !left.is_zero())
-                .ok_or_else(|| invalid("context probe deadline expired".into()))?;
+                .ok_or_else(|| invalid(REFUSAL_CONTEXT_DEADLINE.into()))?;
             GuestProbeArgs::Dial {
                 endpoint: document.locator.endpoint.clone(),
                 pin: document.locator.pin.clone(),
@@ -138,6 +138,98 @@ fn address() -> Result<IpAddr, RunnerError> {
         .map_err(|error| RunnerError::task_invocation(format!("guest alias is unproven: {error}")))
 }
 
+/// One refusal class a staged guest probe can name.
+///
+/// The guest writes exactly one fixed sentence per class (the `REFUSAL_*`
+/// constants below are their single owner), and the host classifies a failed
+/// probe by those prefixes. That keeps a refusal *specific* — "the guest
+/// refused the staged context because its version or generation differs" —
+/// while the guest's own remaining bytes (paths, digests, the document, io
+/// errors) never enter a diagnostic. The guest and the classifier read the
+/// same constants, so a sentence cannot be renamed on one side only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProbeRefusal {
+    ContextPath,
+    ContextUnreadable,
+    ContextBytes,
+    ContextDocument,
+    ContextIdentity,
+    ContextVersion,
+    ContextExecutable,
+    ContextDeadline,
+    IdentityUnproven,
+    DialDeadline,
+    Unclassified,
+}
+
+pub(crate) const REFUSAL_CONTEXT_PATH: &str = "context probe requires an immutable context path";
+pub(crate) const REFUSAL_CONTEXT_READ: &str = "context probe read failed";
+pub(crate) const REFUSAL_CONTEXT_BYTES: &str = "context probe bytes differ from staged document";
+pub(crate) const REFUSAL_CONTEXT_DOCUMENT: &str = "context probe refused the staged document";
+pub(crate) const REFUSAL_CONTEXT_IDENTITY: &str = "context probe guest identity differs";
+pub(crate) const REFUSAL_CONTEXT_VERSION: &str = "context probe version or generation differs";
+pub(crate) const REFUSAL_CONTEXT_EXECUTABLE: &str =
+    "context probe executable differs from pinned artifact";
+pub(crate) const REFUSAL_CONTEXT_DEADLINE: &str = "context probe deadline expired";
+pub(crate) const REFUSAL_IDENTITY_UNPROVEN: &str = "guest-local identity is unproven";
+pub(crate) const REFUSAL_DIAL_DEADLINE: &str = "guest probe deadline expired";
+
+/// Every class, in the order the classifier tries them.
+const REFUSAL_PREFIXES: &[(&str, ProbeRefusal)] = &[
+    (REFUSAL_CONTEXT_PATH, ProbeRefusal::ContextPath),
+    (REFUSAL_CONTEXT_READ, ProbeRefusal::ContextUnreadable),
+    (REFUSAL_CONTEXT_BYTES, ProbeRefusal::ContextBytes),
+    (REFUSAL_CONTEXT_DOCUMENT, ProbeRefusal::ContextDocument),
+    (REFUSAL_CONTEXT_IDENTITY, ProbeRefusal::ContextIdentity),
+    (REFUSAL_CONTEXT_VERSION, ProbeRefusal::ContextVersion),
+    (REFUSAL_CONTEXT_EXECUTABLE, ProbeRefusal::ContextExecutable),
+    (REFUSAL_CONTEXT_DEADLINE, ProbeRefusal::ContextDeadline),
+    (REFUSAL_IDENTITY_UNPROVEN, ProbeRefusal::IdentityUnproven),
+    (REFUSAL_DIAL_DEADLINE, ProbeRefusal::DialDeadline),
+];
+
+impl ProbeRefusal {
+    /// What a failed staged probe refused, from the guest's own closed
+    /// vocabulary. Anything else is `Unclassified`: the host then says only that
+    /// the guest refused, never the bytes it printed.
+    pub(crate) fn classify(stderr: &[u8]) -> Self {
+        for line in String::from_utf8_lossy(stderr).lines() {
+            let line = line.trim();
+            let line = line.strip_prefix("[error] ").unwrap_or(line);
+            for (prefix, class) in REFUSAL_PREFIXES {
+                if line.starts_with(prefix) {
+                    return *class;
+                }
+            }
+        }
+        Self::Unclassified
+    }
+
+    /// The host's sentence for this class, or `None` when the guest named no
+    /// class the host knows.
+    pub(crate) fn sentence(self) -> Option<&'static str> {
+        Some(match self {
+            Self::ContextPath => {
+                "the guest refused the staged context path, which is not an immutable context path"
+            }
+            Self::ContextUnreadable => "the guest could not read the staged context",
+            Self::ContextBytes => {
+                "the staged context bytes differ from the document this publication pinned"
+            }
+            Self::ContextDocument => "the guest refused the staged context document",
+            Self::ContextIdentity => "the staged guest's own identity differs from the context",
+            Self::ContextVersion => {
+                "the guest refused the staged context because its version or generation differs"
+            }
+            Self::ContextExecutable => "the guest is not running the pinned executable",
+            Self::ContextDeadline => "the guest's context probe ran out of time",
+            Self::IdentityUnproven => "the guest could not prove its own identity",
+            Self::DialDeadline => "the guest's channel dial ran out of time",
+            Self::Unclassified => return None,
+        })
+    }
+}
+
 /// Integrity plus independently observed placement, never a session-authority
 /// proof. The owner separately seals these same bytes against its admitted Run.
 fn read_context(
@@ -154,18 +246,16 @@ fn read_context(
         .and_then(|number| number.parse::<u64>().ok())
         .filter(|g| *g > 0)
         .filter(|g| context_path(*g) == path)
-        .ok_or_else(|| refused("context probe requires an immutable context path".into()))?;
+        .ok_or_else(|| refused(REFUSAL_CONTEXT_PATH.into()))?;
     let mut bytes = Vec::new();
     std::fs::File::open(path)
         .and_then(|file| file.take(1_048_577).read_to_end(&mut bytes))
-        .map_err(|error| refused(format!("context probe read failed: {error}")))?;
+        .map_err(|error| refused(format!("{REFUSAL_CONTEXT_READ}: {error}")))?;
     if Digest::parse_hex(expected).as_ref() != Some(&Digest::of(&bytes)) {
-        return Err(refused(
-            "context probe bytes differ from staged document".into(),
-        ));
+        return Err(refused(REFUSAL_CONTEXT_BYTES.into()));
     }
     let document = super::context::v2::WorkspaceContextV2::parse(&bytes)
-        .map_err(|error| refused(error.to_string()))?;
+        .map_err(|error| refused(format!("{REFUSAL_CONTEXT_DOCUMENT}: {error}")))?;
     identity
         .compare(&WorkspaceContainerIdentity {
             container_id: document.container_id.clone(),
@@ -173,21 +263,17 @@ fn read_context(
             platform: document.platform.clone(),
             libc: document.libc.clone(),
         })
-        .map_err(|error| refused(error.to_string()))?;
+        .map_err(|error| refused(format!("{REFUSAL_CONTEXT_IDENTITY}: {error}")))?;
     if document.context_generation != generation
         || document.version != effigy_core::build_info::active_version()
         || document.protocol != super::context::CHANNEL_PROTOCOL_VERSION
     {
-        return Err(refused(
-            "context probe version or generation differs".into(),
-        ));
+        return Err(refused(REFUSAL_CONTEXT_VERSION.into()));
     }
     // The running executable was hashed once for this whole reply; the
     // document must pin those same bytes, not a mutable entry link.
     if document.artifact_digest != format!("sha256:{}", executable.hex()) {
-        return Err(refused(
-            "context probe executable differs from pinned artifact".into(),
-        ));
+        return Err(refused(REFUSAL_CONTEXT_EXECUTABLE.into()));
     }
     Ok(document)
 }
@@ -212,4 +298,60 @@ fn executable_digest() -> Result<Digest, RunnerError> {
         hash.update(&buffer[..count]);
     }
     Ok(Digest(hash.finalize().into()))
+}
+
+#[cfg(test)]
+mod refusal_tests {
+    use super::*;
+
+    #[test]
+    fn each_refusal_class_is_recognised_from_the_guest_line() {
+        for (line, class, sentence) in [
+            (
+                "[error] context probe version or generation differs",
+                ProbeRefusal::ContextVersion,
+                "the guest refused the staged context because its version or generation differs",
+            ),
+            (
+                "[error] context probe bytes differ from staged document",
+                ProbeRefusal::ContextBytes,
+                "the staged context bytes differ from the document this publication pinned",
+            ),
+            (
+                "[error] context probe read failed: No such file or directory (os error 2)",
+                ProbeRefusal::ContextUnreadable,
+                "the guest could not read the staged context",
+            ),
+            (
+                "[error] guest-local identity is unproven (boot id missing)",
+                ProbeRefusal::IdentityUnproven,
+                "the guest could not prove its own identity",
+            ),
+            (
+                "[error] context probe executable differs from pinned artifact",
+                ProbeRefusal::ContextExecutable,
+                "the guest is not running the pinned executable",
+            ),
+        ] {
+            let classified = ProbeRefusal::classify(line.as_bytes());
+            assert_eq!(classified, class, "{line}");
+            assert_eq!(classified.sentence(), Some(sentence), "{line}");
+        }
+    }
+
+    #[test]
+    fn an_unrecognised_line_is_unclassified_and_never_echoed() {
+        let secret = "[error] adversarial-secret-backend-diagnostic";
+        let classified = ProbeRefusal::classify(secret.as_bytes());
+        assert_eq!(classified, ProbeRefusal::Unclassified);
+        let detail = classified.sentence().unwrap_or("no class").to_owned();
+        assert!(!detail.contains("adversarial"), "{detail}");
+    }
+
+    #[test]
+    fn a_refusal_is_read_from_any_line_of_a_bounded_stream() {
+        let stream = b"time=\"...\" level=info msg=starting\n[error] context probe requires an immutable context path\n";
+        assert_eq!(ProbeRefusal::classify(stream), ProbeRefusal::ContextPath);
+        assert_eq!(ProbeRefusal::classify(b""), ProbeRefusal::Unclassified);
+    }
 }

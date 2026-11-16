@@ -283,6 +283,88 @@ pub enum RunnerError {
         depth: u8,
     },
     EnvSchema(EnvSchemaError),
+    /// A workspace guest adapter operation did not complete.
+    ///
+    /// `operation` is the adapter's own fixed name for what it was doing and
+    /// `kind` is a closed classification; `message` is the diagnostic a person
+    /// standing in the container needs. A *host* diagnostic shows `operation`
+    /// and `kind` only: `message` can carry the guest's stream, the paths it
+    /// touched and the bytes it moved (effigy#1014).
+    WorkspaceGuest {
+        operation: &'static str,
+        kind: WorkspaceGuestFailure,
+        message: String,
+    },
+}
+
+/// How a workspace guest adapter operation failed, and what the host can
+/// actually observe of it (effigy#1014).
+///
+/// A class is asserted only where it is really observable. Colima/nerdctl
+/// collapses a non-zero guest exit to host exit 1, so a guest command's
+/// semantic cause (permission, read-only, missing path) never crosses that
+/// boundary: for those calls this reports the *status the host saw* and says
+/// exactly that. Only the host's own file operations and the bounded deadline
+/// carry a real class.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspaceGuestFailure {
+    /// A host-side file operation's own error kind. Staging bytes for the guest
+    /// is the one publication step that runs on the host, so this class is
+    /// asserted only there.
+    HostIo(std::io::ErrorKind),
+    /// The bounded command ran to the caller's deadline.
+    TimedOut,
+    /// The guest command answered with the status the host could read. `None`
+    /// is a status the host could not read.
+    Exit(Option<i32>),
+    /// The command could not be started, or its output could not be read.
+    Unavailable,
+    /// The guest image provides no SHA-256 utility. Observable because the
+    /// adapter's own guest script selects this exit for it.
+    NoDigestTool,
+}
+
+impl WorkspaceGuestFailure {
+    /// The one fixed sentence a host diagnostic may show for this class.
+    ///
+    /// Every sentence is Effigy's own vocabulary, and an `Exit` sentence states
+    /// only the status the host observed.
+    pub fn sentence(&self) -> String {
+        match self {
+            Self::HostIo(kind) => {
+                let detail = match kind {
+                    std::io::ErrorKind::NotFound => "the host has no such path",
+                    std::io::ErrorKind::PermissionDenied => "the host refused permission",
+                    std::io::ErrorKind::AlreadyExists => {
+                        "the host already holds another object at that path"
+                    }
+                    std::io::ErrorKind::ReadOnlyFilesystem => {
+                        "the host filesystem refused the write"
+                    }
+                    std::io::ErrorKind::TimedOut => "the host file operation ran out of time",
+                    std::io::ErrorKind::Interrupted => "the host file operation was interrupted",
+                    _ => "the host file operation failed",
+                };
+                detail.to_owned()
+            }
+            Self::TimedOut => "the guest command ran out of time".to_owned(),
+            Self::Exit(Some(code)) => format!("the guest command failed (exit {code})"),
+            Self::Exit(None) => "the guest command failed (status unavailable)".to_owned(),
+            Self::Unavailable => "the guest command could not be started or read".to_owned(),
+            Self::NoDigestTool => "the guest image has no SHA-256 utility".to_owned(),
+        }
+    }
+
+    /// A host-side file operation's own kind, carried verbatim.
+    pub fn from_io(kind: std::io::ErrorKind) -> Self {
+        Self::HostIo(kind)
+    }
+
+    /// The status a guest command left behind, carried verbatim. A collapsed
+    /// status is reported as the status it is, never interpreted.
+    pub fn from_status(status: std::process::ExitStatus) -> Self {
+        Self::Exit(status.code())
+    }
 }
 
 impl std::fmt::Display for RunnerError {
@@ -430,6 +512,7 @@ impl RunnerError {
             | RunnerError::TaskCommandFailure { .. }
             | RunnerError::EnvironmentUnavailable { .. }
             | RunnerError::BoundedExecFailure { .. }
+            | RunnerError::WorkspaceGuest { .. }
             | RunnerError::DepsOperationNonZero { .. }
             | RunnerError::ManagedProcess(_)
             | RunnerError::TaskManagedNonZeroExit { .. }

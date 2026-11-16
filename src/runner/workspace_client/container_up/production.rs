@@ -136,6 +136,12 @@ pub(super) fn activate_with(
                 super::fake_io::activation_failure(&failure);
             }
             let stage = failure.stage();
+            // The publication sequence's own refusal, kept here because the
+            // recovery below reports its settle instead. Without it the operator
+            // learns only that publication/selection failed, never which call
+            // did. No other stage's cause is shown: those may carry backend or
+            // guest text verbatim.
+            let diagnosis = failure.diagnosis();
             let mut failure = failure;
             let mut owner_loss_handled = false;
             loop {
@@ -143,13 +149,18 @@ pub(super) fn activate_with(
                     Ok(()) => {
                         return Err(RunError::unavailable(super::residue::message(
                             stage,
+                            diagnosis.as_deref(),
                             super::residue::CleanupResidue::observe(&residue_plan),
                         )))
                     }
                     Err(retained) => failure = retained,
                 }
+                let cause = match diagnosis.as_deref() {
+                    Some(diagnosis) => format!(": {diagnosis}"),
+                    None => String::new(),
+                };
                 session.refused_message(effigy_kernel::human::Category::Unavailable,
-                    format!("workspace activation failed during {stage}; integration effects unsettled; re-run up; exact owner retained (supervisor_run={}); request stop to retry cleanup", host_run.id()));
+                    format!("workspace activation failed during {stage}{cause}; integration effects unsettled; re-run up; exact owner retained (supervisor_run={}); request stop to retry cleanup", host_run.id()));
                 serving_host::await_cleanup_recovery(session, host_run, &mut owner_loss_handled);
             }
         }

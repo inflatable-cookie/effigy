@@ -115,8 +115,25 @@ pub fn display_version() -> String {
     }
 }
 
-fn active_version_file_for(executable: &Path) -> PathBuf {
+/// The file that records a build's active version beside its executable.
+///
+/// [`active_version`] reads exactly this path for the process it runs in, so a
+/// publisher that installs an executable somewhere else (a container's pinned
+/// guest object, an installed copy) must write this file beside it. Exposing
+/// the convention is what keeps one owner for it: a publisher cannot invent a
+/// sidecar name the reader never looks at.
+pub fn active_version_file(executable: &Path) -> PathBuf {
     executable.with_extension(LOCAL_ACTIVE_VERSION_EXTENSION)
+}
+
+/// The active version recorded beside one executable, if any.
+///
+pub fn recorded_active_version(executable: &Path) -> Option<String> {
+    read_active_version_file_for(executable)
+}
+
+fn active_version_file_for(executable: &Path) -> PathBuf {
+    active_version_file(executable)
 }
 
 /// Pure form of the active-version env reader over an injected value.
@@ -263,6 +280,25 @@ mod tests {
         read_active_version_env_value, read_active_version_file_for, stale_repo_local_install_for,
         ACTIVE_VERSION_ENV,
     };
+
+    #[test]
+    fn the_public_sidecar_path_is_what_a_publisher_and_a_reader_share() {
+        use super::{active_version_file, recorded_active_version};
+        let temp = tempfile::tempdir().expect("tempdir");
+        let executable = temp.path().join("effigy");
+        std::fs::write(&executable, "").expect("write exe");
+        assert_eq!(
+            active_version_file(&executable),
+            temp.path().join("effigy.active-version")
+        );
+        assert_eq!(recorded_active_version(&executable), None);
+        std::fs::write(active_version_file(&executable), "v0.14.1+local.fixture\n")
+            .expect("write sidecar");
+        assert_eq!(
+            recorded_active_version(&executable).as_deref(),
+            Some("v0.14.1+local.fixture")
+        );
+    }
 
     #[test]
     fn read_active_version_file_trims_and_ignores_empty_values() {

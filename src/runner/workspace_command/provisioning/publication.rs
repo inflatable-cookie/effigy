@@ -7,6 +7,7 @@ use super::artifact_plan::LinuxWorkspaceTarget;
 use super::artifact_receipt::{digest_matches, verify_guest_artifact};
 use super::guest_io::{render_workspace_effigy_staging_path, ComposeWorkspaceGuest};
 use super::permission_prep::ensure_workspace_permissions_ready;
+use super::provisioning::staging::publish_guest_active_version;
 use super::sources::{
     environment_generation, host_user, operator_workspace_for_policy, workspace_path_map,
     workspace_routes, workspace_source_closure, OperatorWorkspace,
@@ -585,6 +586,12 @@ fn install_pinned_guest_binary(
         CONTAINER_WORKSPACE_EFFIGY_ACTIVE_VERSION_PATH,
         &binary.version,
     )?;
+    // The guest resolves its own active version from the file beside the
+    // executable it runs, and that executable is the digest-addressed object,
+    // not the entry link (an executed symlink resolves to its target). Record
+    // the authenticated version there so the client, the context and this host
+    // can agree on it (contract 052 §8.9).
+    publish_guest_active_version(guest, &executable, &binary.version)?;
     if let Some(install_identity) = install_identity {
         guest.replace_pointer(
             CONTAINER_WORKSPACE_EFFIGY_INSTALL_IDENTITY_PATH,

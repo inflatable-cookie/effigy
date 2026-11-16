@@ -27,6 +27,17 @@ pub(in crate::runner) enum PublicationFailure {
     },
 }
 
+impl PublicationFailure {
+    /// The refusal this publication or selection step raised, as one sentence.
+    /// The caller keeps it for its final report: the cleanup that runs after
+    /// this failure reports its own settle, not this cause.
+    pub(in crate::runner) fn diagnosis(&self) -> String {
+        match self {
+            Self::Guarded { cause, .. } | Self::Finishing { cause, .. } => cause.to_string(),
+        }
+    }
+}
+
 pub(in crate::runner) fn publish_and_select(
     mut owner: GuardedPhaseA,
     bound: BoundReservedGuest<'_>,

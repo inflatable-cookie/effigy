@@ -1,9 +1,10 @@
 //! Perform filesystem and identity I/O against the exact verified guest.
 
 use crate::runner::container_command::{bounded_failure_error, bounded_phase_error};
+use crate::runner::error::WorkspaceGuestFailure;
 use crate::runner::exec_command::{
     copy_file_into_service, copy_file_into_service_bounded, run_command_capture_until,
-    BoundedCapture, BoundedCommandBudget, BoundedCommandPhase,
+    BoundedCapture, BoundedCaptureFailure, BoundedCommandBudget, BoundedCommandPhase,
 };
 use crate::runner::workspace_client::context::{
     GuestReader, GuestWorkspace, WorkspaceContainerIdentity, HOST_REPREPARE_COMMAND,
@@ -57,7 +58,16 @@ fn run_workspace_compose_capture_bounded(
             BoundedCommandPhase::WorkspacePreparation,
         )
         .map_err(|failure| {
-            bounded_failure_error(policy, policy.primary_service.as_str(), budget, failure)
+            let class = match &failure.failure {
+                BoundedCaptureFailure::Deadline => WorkspaceGuestFailure::TimedOut,
+                _ => WorkspaceGuestFailure::Unavailable,
+            };
+            guest_failure(
+                "running a guest command",
+                class,
+                bounded_failure_error(policy, policy.primary_service.as_str(), budget, failure)
+                    .to_string(),
+            )
         })
 }
 
@@ -178,7 +188,14 @@ impl<'a> ComposeWorkspaceGuest<'a> {
                     &plan.args,
                     None,
                     None,
-                )?;
+                )
+                .map_err(|error| {
+                    guest_failure(
+                        "running a guest command",
+                        WorkspaceGuestFailure::Unavailable,
+                        error.to_string(),
+                    )
+                })?;
                 Ok(BoundedCapture {
                     status: output.status,
                     stdout: output.stdout,
@@ -196,6 +213,18 @@ impl<'a> ComposeWorkspaceGuest<'a> {
     }
 
     fn stage(&mut self, host_path: &Path, guest_path: &str) -> Result<(), RunnerError> {
+        self.copy_into_host(host_path, guest_path).map_err(|error| {
+            guest_failure(
+                "copying a file into the guest",
+                WorkspaceGuestFailure::Unavailable,
+                error.to_string(),
+            )
+        })
+    }
+}
+
+impl<'a> ComposeWorkspaceGuest<'a> {
+    fn copy_into_host(&mut self, host_path: &Path, guest_path: &str) -> Result<(), RunnerError> {
         match &mut self.command {
             GuestCommand::Unbounded { target_id } => copy_file_into_service(
                 self.repo_root,
@@ -214,6 +243,25 @@ impl<'a> ComposeWorkspaceGuest<'a> {
                 budget,
             ),
         }
+    }
+}
+
+/// One guest adapter failure, classified by the call and a closed class.
+///
+/// `operation` is this adapter's own fixed name for what it was doing; `class`
+/// is the closed classification a *host* diagnostic may show. `message` is kept
+/// for a person standing in the container and never rendered by a host
+/// diagnostic: it can carry the guest's stream, the paths it touched and the
+/// bytes it moved (effigy#1014).
+fn guest_failure(
+    operation: &'static str,
+    class: WorkspaceGuestFailure,
+    message: impl Into<String>,
+) -> RunnerError {
+    RunnerError::WorkspaceGuest {
+        operation,
+        kind: class,
+        message: message.into(),
     }
 }
 
@@ -305,6 +353,137 @@ exec "$@"
         }
     }
 
+    /// A real adapter exec that fails is classified by the status the host
+    /// observed — never by a semantic cause the collapsed status cannot prove —
+    /// and the guest's own stderr stays in the adapter message only.
+    #[test]
+    fn a_failed_guest_exec_is_classified_by_the_observed_status() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::{Duration, Instant};
+        let _lock = crate::contract_test_support::lock_test();
+        let fixture = effigy_test_support::Fixture::new("guest-exec-status-").unwrap();
+        let root = fixture.path().canonicalize().unwrap();
+        let bin = root.join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let home = root.join("home");
+        std::fs::create_dir(&home).unwrap();
+        // The engine double runs the guest script for real, so an `install`
+        // into an unwritable path fails in the guest shell and the *host* sees
+        // the collapsed non-zero status.
+        let executable = bin.join("colima");
+        std::fs::write(
+            &executable,
+            r#"#!/bin/sh
+set -e
+[ "$1" = nerdctl ] && [ "$2" = --profile ] && [ "$3" = fixture ] && [ "$4" = -- ]
+shift 4
+[ "$1" = exec ]
+previous=''
+while [ "$#" -gt 0 ] && [ "$1" != sh ]; do previous="$1"; shift; done
+[ "$previous" = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ]
+exec "$@"
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let _env = crate::contract_test_support::EnvGuard::set_many(&[
+            ("PATH", Some(format!("{}:/usr/bin:/bin", bin.display()))),
+            ("HOME", Some(home.display().to_string())),
+            ("COLIMA_HOME", Some(root.join("c").display().to_string())),
+            ("EFFIGY_COMPOSE_BACKEND", Some("colima".into())),
+            ("TMPDIR", Some(root.join("t").display().to_string())),
+        ]);
+        std::fs::create_dir(root.join("t")).unwrap();
+        std::fs::write(
+            root.join("effigy.toml"),
+            "[containers.web]\ncompose_file='compose.yml'\nprimary_service='app'\nprofile='fixture'\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("compose.yml"),
+            "services:\n  app:\n    image: fixture:one\n",
+        )
+        .unwrap();
+        let policy = effigy_containers::load_container_policy(&root, Some("web")).unwrap();
+        let now = Instant::now();
+        let mut budget =
+            BoundedCommandBudget::new(now, now + Duration::from_secs(10), 65536, 65536);
+        let id = "a".repeat(64);
+        let mut guest = ComposeWorkspaceGuest::bounded(&root, &policy, &id, &mut budget);
+        // The guest refuses this write inside this fixture's own temporary
+        // storage: an ancestor of the target's parent is a regular file, so the
+        // guest shell's `mkdir -p` cannot create the directory. Nothing is
+        // written outside the fixture.
+        let blocker = root.join("blocker");
+        std::fs::write(&blocker, b"not a directory").unwrap();
+        let target = blocker.join("bin/current");
+        let error = guest
+            .replace_pointer(target.to_str().unwrap(), "42")
+            .expect_err("the guest shell must refuse");
+        let classified = match &error {
+            RunnerError::WorkspaceGuest {
+                operation,
+                kind,
+                message,
+            } => (operation, kind, message),
+            other => panic!("a guest exec failure is a classified adapter failure: {other}"),
+        };
+        assert_eq!(*classified.0, "switch a guest pointer");
+        assert!(
+            matches!(classified.1, WorkspaceGuestFailure::Exit(Some(1))),
+            "the collapsed host status is reported as it is: {}",
+            classified.1.sentence()
+        );
+        assert_eq!(
+            classified.1.sentence(),
+            "the guest command failed (exit 1)",
+            "no semantic class is claimed from a collapsed status"
+        );
+        assert!(
+            !classified.2.is_empty(),
+            "the adapter keeps its own message for a person in the container"
+        );
+    }
+
+    /// A host file operation keeps its own error kind, because that one is
+    /// really observable.
+    #[test]
+    fn host_staging_failures_keep_their_own_io_kind() {
+        use std::os::unix::fs::PermissionsExt;
+        let _lock = crate::contract_test_support::lock_test();
+        let fixture = effigy_test_support::Fixture::new("guest-host-staging-").unwrap();
+        let root = fixture.path().canonicalize().unwrap();
+        let read_only = root.join("read-only");
+        std::fs::create_dir(&read_only).unwrap();
+        std::fs::set_permissions(&read_only, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let _env = crate::contract_test_support::EnvGuard::set_many(&[(
+            "TMPDIR",
+            Some(read_only.display().to_string()),
+        )]);
+        let error = match stage_host_bytes(b"adversarial-secret-backend-diagnostic") {
+            Ok(_) => panic!("a read-only staging directory must refuse"),
+            Err(error) => error,
+        };
+        match error {
+            RunnerError::WorkspaceGuest {
+                operation, kind, ..
+            } => {
+                assert_eq!(operation, "staging the guest bytes on the host");
+                assert!(
+                    matches!(
+                        kind,
+                        WorkspaceGuestFailure::HostIo(std::io::ErrorKind::PermissionDenied)
+                    ),
+                    "the host's own kind is kept: {}",
+                    kind.sentence()
+                );
+                assert_eq!(kind.sentence(), "the host refused permission");
+            }
+            other => panic!("a host staging failure is a classified adapter failure: {other}"),
+        }
+        std::fs::set_permissions(&read_only, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
     #[test]
     fn presence_framing_distinguishes_absence_empty_and_binary_contents() {
         assert_eq!(optional_guest_read(b"A\n").unwrap(), None);
@@ -330,11 +509,15 @@ impl GuestReader for ComposeWorkspaceGuest<'_> {
         if output.status.success() {
             return optional_guest_read(&output.stdout).map(|value| value.map(<[u8]>::to_vec));
         }
-        Err(RunnerError::task_invocation(format!(
-            "cannot read `{path}` in workspace container `{}`: {}",
-            self.policy.name,
-            String::from_utf8_lossy(&output.stderr).trim()
-        )))
+        Err(guest_failure(
+            "reading a guest file",
+            WorkspaceGuestFailure::from_status(output.status),
+            format!(
+                "cannot read `{path}` in workspace container `{}`: {}",
+                self.policy.name,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        ))
     }
 
     fn file_sha256(&mut self, path: &str) -> Result<Option<String>, RunnerError> {
@@ -353,19 +536,27 @@ impl GuestReader for ComposeWorkspaceGuest<'_> {
         match output.status.code() {
             Some(0) => {}
             Some(4) => {
-                return Err(RunnerError::task_invocation(format!(
-                    "workspace container `{}` has no SHA-256 utility, so the pinned guest \
-                     executable cannot be authenticated; run `{HOST_REPREPARE_COMMAND}` with an \
-                     image that provides sha256sum, shasum or openssl",
-                    self.policy.name
-                )))
+                return Err(guest_failure(
+                    "hashing a guest file",
+                    WorkspaceGuestFailure::NoDigestTool,
+                    format!(
+                        "workspace container `{}` has no SHA-256 utility, so the pinned guest \
+                         executable cannot be authenticated; run `{HOST_REPREPARE_COMMAND}` with \
+                         an image that provides sha256sum, shasum or openssl",
+                        self.policy.name
+                    ),
+                ))
             }
             _ => {
-                return Err(RunnerError::task_invocation(format!(
-                    "cannot hash `{path}` in workspace container `{}`: {}",
-                    self.policy.name,
-                    String::from_utf8_lossy(&output.stderr).trim()
-                )))
+                return Err(guest_failure(
+                    "hashing a guest file",
+                    WorkspaceGuestFailure::from_status(output.status),
+                    format!(
+                        "cannot hash `{path}` in workspace container `{}`: {}",
+                        self.policy.name,
+                        String::from_utf8_lossy(&output.stderr).trim()
+                    ),
+                ))
             }
         }
         let Some(bytes) = optional_guest_read(&output.stdout)? else {
@@ -378,10 +569,14 @@ impl GuestReader for ComposeWorkspaceGuest<'_> {
             .map(|token| token.to_ascii_lowercase())
             .map(Some)
             .ok_or_else(|| {
-                RunnerError::task_invocation(format!(
-                    "SHA-256 tool in workspace container `{}` returned no digest for `{path}`",
-                    self.policy.name
-                ))
+                guest_failure(
+                    "hashing a guest file",
+                    WorkspaceGuestFailure::Unavailable,
+                    format!(
+                        "SHA-256 tool in workspace container `{}` returned no digest for `{path}`",
+                        self.policy.name
+                    ),
+                )
             })
     }
 }
@@ -397,12 +592,20 @@ impl GuestWorkspace for ComposeWorkspaceGuest<'_> {
             Some(0) => optional_guest_read(&output.stdout)?
                 .map(|bytes| String::from_utf8(bytes.to_vec())
                     .map(|target| target.trim_end_matches('\n').to_owned())
-                    .map_err(|_| RunnerError::task_invocation("guest link read returned invalid UTF-8")))
+                    .map_err(|_| guest_failure(
+                        "reading the guest entry link",
+                        WorkspaceGuestFailure::Unavailable,
+                        "guest link read returned invalid UTF-8",
+                    )))
                 .transpose(),
-            _ => Err(RunnerError::task_invocation(format!(
-                "cannot read workspace entry `{path}`: {}; run `{HOST_REPREPARE_COMMAND}` on the host",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ))),
+            _ => Err(guest_failure(
+                "reading the guest entry link",
+                WorkspaceGuestFailure::from_status(output.status),
+                format!(
+                    "cannot read workspace entry `{path}`: {}; run `{HOST_REPREPARE_COMMAND}` on the host",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ),
+            )),
         }
     }
 
@@ -491,19 +694,27 @@ impl GuestWorkspace for ComposeWorkspaceGuest<'_> {
             false,
         )?;
         if !output.status.success() {
-            return Err(RunnerError::task_invocation(format!(
-                "cannot read the workspace container identity for `{}`: {}",
-                self.policy.name,
-                String::from_utf8_lossy(&output.stderr).trim()
-            )));
+            return Err(guest_failure(
+                "probing the guest identity",
+                WorkspaceGuestFailure::from_status(output.status),
+                format!(
+                    "cannot read the workspace container identity for `{}`: {}",
+                    self.policy.name,
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ),
+            ));
         }
         parse_container_identity(&String::from_utf8_lossy(&output.stdout), self.target_id())
             .map_err(|_| {
-                RunnerError::task_invocation(format!(
-                    "workspace container `{}` did not report its identity; run \
-                 `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the workspace",
-                    self.policy.name
-                ))
+                guest_failure(
+                    "probing the guest identity",
+                    WorkspaceGuestFailure::Unavailable,
+                    format!(
+                        "workspace container `{}` did not report its identity; run \
+                         `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the workspace",
+                        self.policy.name
+                    ),
+                )
             })
     }
 }
@@ -524,16 +735,20 @@ impl ComposeWorkspaceGuest<'_> {
         self.run_root(&script, "create an immutable guest object")
     }
 
-    fn run_root(&mut self, script: &str, what: &str) -> Result<(), RunnerError> {
+    fn run_root(&mut self, script: &str, what: &'static str) -> Result<(), RunnerError> {
         let output = self.run_script(script, true)?;
         if output.status.success() {
             return Ok(());
         }
-        Err(RunnerError::task_invocation(format!(
-            "cannot {what} in workspace container `{}`: {}",
-            self.policy.name,
-            String::from_utf8_lossy(&output.stderr).trim()
-        )))
+        Err(guest_failure(
+            what,
+            WorkspaceGuestFailure::from_status(output.status),
+            format!(
+                "cannot {what} in workspace container `{}`: {}",
+                self.policy.name,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        ))
     }
 }
 
@@ -676,10 +891,14 @@ pub(super) fn stage_host_bytes(bytes: &[u8]) -> Result<StagedHostFile, RunnerErr
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
             let metadata = std::fs::symlink_metadata(&directory).map_err(|error| {
-                RunnerError::task_invocation(format!(
-                    "cannot inspect workspace staging directory `{}`: {error}",
-                    directory.display()
-                ))
+                guest_failure(
+                    "staging the guest bytes on the host",
+                    WorkspaceGuestFailure::from_io(error.kind()),
+                    format!(
+                        "cannot inspect workspace staging directory `{}`: {error}",
+                        directory.display()
+                    ),
+                )
             })?;
             if !metadata.is_dir() || metadata.permissions().mode() & 0o077 != 0 {
                 return Err(RunnerError::task_invocation(format!(
@@ -689,10 +908,14 @@ pub(super) fn stage_host_bytes(bytes: &[u8]) -> Result<StagedHostFile, RunnerErr
             }
         }
         Err(error) => {
-            return Err(RunnerError::task_invocation(format!(
-                "cannot create workspace staging directory `{}`: {error}",
-                directory.display()
-            )))
+            return Err(guest_failure(
+                "staging the guest bytes on the host",
+                WorkspaceGuestFailure::from_io(error.kind()),
+                format!(
+                    "cannot create workspace staging directory `{}`: {error}",
+                    directory.display()
+                ),
+            ))
         }
     }
     let path = directory.join(format!(
@@ -708,16 +931,24 @@ pub(super) fn stage_host_bytes(bytes: &[u8]) -> Result<StagedHostFile, RunnerErr
         .custom_flags(libc::O_NOFOLLOW)
         .open(&path)
         .map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "cannot stage workspace bytes at `{}`: {error}",
-                path.display()
-            ))
+            guest_failure(
+                "staging the guest bytes on the host",
+                WorkspaceGuestFailure::from_io(error.kind()),
+                format!(
+                    "cannot stage workspace bytes at `{}`: {error}",
+                    path.display()
+                ),
+            )
         })?;
     file.write_all(bytes).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "cannot write staged workspace bytes at `{}`: {error}",
-            path.display()
-        ))
+        guest_failure(
+            "staging the guest bytes on the host",
+            WorkspaceGuestFailure::from_io(error.kind()),
+            format!(
+                "cannot write staged workspace bytes at `{}`: {error}",
+                path.display()
+            ),
+        )
     })?;
     drop(file);
     Ok(StagedHostFile { path, directory })

@@ -943,6 +943,21 @@ home = "/home/vscode"
                 owner.channel.locator.channel().endpoint.clone().unwrap()
             );
             assert_eq!(guest.mode(&doc.credential.path), Some(0o600));
+            // Contract 052 §8.9: the client resolves its own version from the
+            // file beside the executable it runs, and that executable is the
+            // digest-addressed object. A guest with no such file falls back to
+            // the crate's package version, so a locally stamped artifact could
+            // never agree with the context that pins it.
+            let version_path =
+                effigy_core::build_info::active_version_file(Path::new(&object.path))
+                    .to_string_lossy()
+                    .into_owned();
+            assert_eq!(
+                guest.text(&version_path).as_deref(),
+                Some(doc.version.as_str()),
+                "the published object records the version the context pins beside it"
+            );
+            assert_eq!(guest.mode(&version_path), Some(0o444));
             let live = crate::runner::workspace_client::context::LiveGuestRun {
                 binary: GuestBinaryIdentity {
                     version: doc.version.clone(),
@@ -1171,7 +1186,22 @@ fn workspace_reserved_owner_refuses_identity_alias_peer_pin_and_publication_with
             Fault::Identity | Fault::ContextPeer | Fault::ContextPin => "Kernel(Refused(",
             _ => "Kernel(Unavailable(",
         };
-        assert_refusal_class(refusal, class, &format!("{fault:?}"));
+        // The observation's own reason must survive to the refusal: an
+        // operator reads which call failed *and* why, not just that the
+        // activation did (effigy#1014).
+        let reason = match fault {
+            Fault::ContextProbe => Some("context probe interrupted"),
+            Fault::UnknownIdentity => Some("fixture unknown"),
+            _ => None,
+        };
+        assert_refusal_class(refusal.clone(), class, &format!("{fault:?}"));
+        if let Some(reason) = reason {
+            let refusal = refusal.expect("refused");
+            assert!(
+                refusal.contains(reason),
+                "{fault:?} must name its observation's reason `{reason}`: {refusal}"
+            );
+        }
     }
 }
 

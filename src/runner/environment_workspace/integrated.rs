@@ -113,7 +113,45 @@ impl<E> IntegratedFailure<'_, E> {
             } => "selected finish",
         }
     }
+
+    /// The cause this failure was raised with, as one bounded sentence, when
+    /// that sentence is Effigy's own fixed vocabulary.
+    ///
+    /// The activation's final refusal is raised much later than the failure
+    /// itself: guarded cleanup usually retains custody, and the settle that
+    /// returns the cleanup's own "effects unsettled" sentence replaces the
+    /// primary cause on the way out. Capturing the publication sequence's own
+    /// refusal here is what lets an operator read which call failed instead of
+    /// only that the activation did.
+    ///
+    /// Only the publication/selection sequence qualifies: every refusal it
+    /// raises is this crate's own fixed classification, because its guest I/O
+    /// is already reduced to the call that failed. Every other stage may carry
+    /// a backend or guest stream verbatim (a guest adapter's error can contain
+    /// the bytes it moved), and those sink the activation only to its stage.
+    pub(in crate::runner) fn diagnosis(&self) -> Option<String> {
+        match self {
+            Self::Publication { cause, .. } => Some(effigy_ui::human::bound_text(
+                &cause
+                    .diagnosis()
+                    .lines()
+                    .map(str::trim)
+                    .collect::<Vec<_>>()
+                    .join("; "),
+                DIAGNOSIS_BYTES,
+            )),
+            Self::PhaseA(_)
+            | Self::Guarded { .. }
+            | Self::Parked { .. }
+            | Self::Cleanup(_)
+            | Self::CleanupOnly { .. }
+            | Self::ParkedCleanup { .. } => None,
+        }
+    }
 }
+
+/// Bytes of a failure's own cause the operator-facing refusal keeps.
+const DIAGNOSIS_BYTES: usize = 600;
 
 type Resumed =
     Result<WorkspaceActivation<'static>, (EnvError, Box<ParkedWorkspaceActivation<'static>>)>;
