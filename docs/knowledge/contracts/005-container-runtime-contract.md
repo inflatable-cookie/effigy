@@ -473,14 +473,13 @@ tls = true
 
 `readiness.timeout_secs` bounds only the wait after the listener's port first
 answers; a child still building has not opened its port, and the supervisor's
-own readiness budget starts when it does. The `up` that waits on it is bounded
-by that bring-up's runtime-observation budget instead (see
-[Per-route exposure](#per-route-exposure)): a port that never opens withholds
-that listener's route and never holds the activation open. The wait still
-reports what it observed: while the
-port is closed it prints progress at a fixed interval and carries the child's
-own output tail, bounded and with secret-shaped values redacted, so a long
-start is never a silent count. Progress and activation-budget refusals use the
+own readiness budget starts when it does. The container runtime-observation budget
+does not bound host listener startup. The activation keeps its
+owning supervisor clients and waits for each listener's verified readiness or
+actual failure before returning; it starts dependents only after readiness.
+While the port is closed it prints progress at a fixed interval and carries
+the child's own output tail, bounded and with secret-shaped values redacted,
+so a long build is never a silent count. Progress uses the
 supervisor's last probe observation. A socket that accepted a connection but supplied no HTTP status is
 reported as waiting for the declared HTTP status, with its readiness clock
 running. A later connection failure does not reset that clock. A record with no
@@ -559,24 +558,23 @@ owner, so a retry never duplicates another target's route. An uncertain
 container identity still publishes no route at all, because the readiness wait
 refuses before any route write.
 
-The current dependency declaration takes precedence over reconciliation of a
-previous generation, including after the activation budget expires. If this
-activation withholds a dependency, it settles the dependent's exact owned run
-before reporting its route withheld, even when that run started without the
-dependency. A dependent without a listener also has its previous run stopped.
-An incomplete stop remains a settlement refusal; it cannot become a claim that
-the route was withheld.
+The current dependency declaration takes precedence over a previous generation.
+If this activation withholds a dependency, it settles the dependent's exact
+owned run before reporting its route withheld, even when that run started
+without the dependency. A dependent without a listener also has its previous
+run stopped. An incomplete stop remains a settlement refusal; it cannot become
+a claim that the route was withheld.
 
-The wait itself is bounded by the activation, not by the child's build. Host
-listener startup shares the bring-up's one runtime-observation budget
-(effigy#411). A listener still starting when that budget is spent withholds its
-own route and the command stops waiting for the remaining declared listeners,
-so `up` cannot hang on a listener that never binds. The timed-out generation is
-**settled before the command returns**, under the same fenced kernel stop `down`
-uses, so no route can be published after the activation reported that route
-withheld. `effigy container <NAME> restart <process>` starts it again, and
-`readiness.timeout_secs` still bounds only the wait after a listener's port
-first opens.
+The container runtime-observation budget bounds container observations, not a
+host child's build or readiness. Host startup remains synchronous: the
+activation retains custody while a child builds, then its declared
+`readiness.timeout_secs` bounds the wait from the first accepted connection.
+A child that never opens its port keeps waiting while it is alive;
+`effigy container <NAME> down` can interrupt it because the readiness wait
+holds no environment gate. There is no pending success or late route claim:
+only verified listeners are reported exposed, and every actually failed or
+withheld generation is **settled before the command returns**, under the same
+fenced kernel stop `down` uses. An explicit restart or later `up` retries it.
 
 This settlement also applies to definite listener failures with a restart
 policy. A supervisor that failed before spawning its first child cannot be
@@ -599,19 +597,12 @@ not this seam. A withheld or failed listener keeps the partial-exposure
 semantics above; this sentence covers the start seam those reports already
 name for listener-bearing environments.
 
-A listener that a later activation does not start is never taken on trust
-either: it is reconciled against its own published generation and route first,
-so a healthy generation this activation never touched stays exposed and is
-named in `exposed_routes`. Reconciliation compares that generation with the
-**current declaration** — route domain, TLS mode, bind and the declared
-readiness request, which is probed live — and withholds the current route when
-they differ, because the declared target is not the one that generation serves.
-A generation that fails those checks is settled under the same fenced stop
-before the report, so a route the report withholds is withdrawn from the
-endpoint store instead of being left served by the generation that failed it;
-a definite status the live probe observed is named in the refusal. Only a
-listener with nothing verified against its current declaration is reported
-withheld.
+On each `up`, declared host processes are started in dependency order. Each
+process's previous owned generation is settled before its successor launches.
+A listener is included in `exposed_routes` only after that successor verifies
+the current readiness request and publishes its declared route. An independent
+listener still starts after another listener fails; a withheld dependent's
+previous generation is settled under the dependency rules above.
 
 The child receives `EFFIGY_MANAGED_HOST_LISTENER_BIND`, `HOST` and `PORT`, and
 the process's own `EFFIGY_HOST_PROCESS_PUBLIC_URL` and

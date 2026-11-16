@@ -2218,11 +2218,9 @@ while True:
         );
     }
 
-    /// The enclosing activation's observation budget ends a wait on a port
-    /// that never opens: the listener keeps its own route withheld, the command
-    /// returns at the budget rather than at the build's end, and the supervisor
-    /// keeps its own readiness semantics so a slow child is not killed
-    /// (effigy#455).
+    /// An explicitly bounded observation still settles its generation before
+    /// reporting a route withheld. Container startup does not impose this
+    /// bound on a listener's build or readiness (effigy#1019).
     #[test]
     fn host_process_listener_activation_budget_bounds_a_closed_port_wait() {
         let fixture = fixture();

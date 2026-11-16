@@ -69,6 +69,16 @@ Runner code must not:
 Temporary wrappers are allowed only while a card is actively migrating callers
 or when they are named adapter boundaries in the package map and drift guard.
 
+## Hybrid startup observation
+
+The manager's container observation budget does not limit managed host
+listener builds or readiness. Hybrid `up --detach` retains supervisor custody
+and waits for verified listeners before reporting success and starting their
+dependents. Actual listener failure is settled before reporting withheld
+exposure, so a failed activation cannot publish a route late. The listener's
+two startup phases and per-route reporting are owned by
+[contract 005](005-container-runtime-contract.md#managed-host-listener-routes).
+
 ## Shipped Migration State
 
 `g03.031` shipped the manager facade and moved runner-level backend selection

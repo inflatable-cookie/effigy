@@ -1,0 +1,1 @@
+Hybrid startup now keeps managed host listeners under supervision while cold builds finish, then waits for their declared readiness before starting dependents. The container observation budget no longer terminates a still-starting listener; progress shows its probe state and recent output, while real failures still settle and withhold their routes.

@@ -11,10 +11,10 @@
 //! container service plus a listener that answers 500 keeps only the container
 //! route, the withheld listener's status and bounded redacted child-output tail
 //! appear in both detached failure formats, the definite status is refused
-//! without spending the declared readiness budget, a closed port is bounded by
-//! the activation's observation budget and its actual progress emits the same
-//! bounded redacted evidence, a second activation reconciles a healthy listener
-//! the previous activation published, an uncertain container identity publishes
+//! without spending the declared readiness budget, a cold build outlives the
+//! container observation budget and its actual progress emits the same bounded
+//! redacted evidence, actual exit and readiness timeout still withhold routes,
+//! a second activation replaces a healthy listener, an uncertain identity publishes
 //! no route, and a retry after the listener recovers publishes its own route
 //! without duplicating the container route.
 
@@ -30,10 +30,8 @@ use crate::contract_test_support::{clean_fixture_environment, EnvGuard};
 use crate::runner::container_command::run_container_command;
 use crate::runner::host_process::take_listener_progress;
 
-// Leave room for runtime verification and cold child startup before expiring
-// the enclosing activation budget. Nextest reserves this fixture's runner
-// capacity; expiry proofs still require the listener phase, and the closed-port
-// command retains its original 60-second upper bound.
+// Leave room for runtime verification before the host phase. A cold listener
+// deliberately builds longer than this container-only observation window.
 const LISTENER_OBSERVATION_BUDGET_SECS: u64 = 15;
 
 /// A listener child that answers every request with 500. Its output also
@@ -88,16 +86,15 @@ while True:
     connection.close()
 "#;
 
-/// A listener child that never binds its port, and whose output carries a
-/// secret-shaped value behind far more text than a report may keep: the
-/// activation's observation budget must end the command's wait and its progress
-/// must carry the bounded, redacted tail.
+/// A build that exits before binding. Progress and the eventual failure carry
+/// a bounded, redacted tail of its output.
 const CLOSED_PORT_CHILD: &str = r#"
 import time
 print("noise " * 300, flush=True)
 print("vite: still booting", flush=True)
 print("EFFIGY_TOKEN=abcd1234", flush=True)
-time.sleep(120)
+time.sleep(2)
+raise SystemExit(17)
 "#;
 
 /// A listener child that answers the declared `/health` with 200 and any other
@@ -117,13 +114,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
 http.server.HTTPServer((host, int(port)), Handler).serve_forever()
 "#;
 
-/// A listener child that may bind only after the test releases its barrier,
-/// after the activation has already reported its route withheld.
+/// A listener child that exits if its bind barrier is not released. Releasing
+/// the barrier after failure must not let a settled generation publish late.
 const LATE_BIND_CHILD: &str = r#"
 import http.server, os, pathlib, time
 pathlib.Path("listener-started.tmp").write_text(str(os.getpid()))
 os.replace("listener-started.tmp", "listener-started")
+deadline = time.monotonic() + 2
 while not pathlib.Path("allow-listener-bind").exists():
+    if time.monotonic() >= deadline:
+        raise SystemExit(17)
     time.sleep(0.05)
 bind = os.environ["EFFIGY_MANAGED_HOST_LISTENER_BIND"]
 host, port = bind.rsplit(":", 1)
@@ -163,7 +163,8 @@ const LONG_SECRET_CLOSED_CHILD: &str = r#"
 import time
 print("vite: still booting", flush=True)
 print("EFFIGY_TOKEN=" + "s3cr3tvalue" * 2000, flush=True)
-time.sleep(120)
+time.sleep(2)
+raise SystemExit(17)
 "#;
 
 // Fully captured values straddling the 320-byte suffix boundary.
@@ -869,11 +870,58 @@ fn detached_up_settles_retrying_failures_before_detaching_healthy_listeners() {
     }
 }
 
-/// A closed port does not hold the activation open: the command returns at the
-/// bring-up's observation budget, its actual progress carries the child's own
-/// bounded, redacted output, and the listener's route stays withheld.
+/// Cold builds outlive the container observation window without losing custody.
+/// The dependent starts only after the slow listener publishes verified readiness.
 #[test]
-fn detached_up_bounds_a_closed_port_and_reports_redacted_progress() {
+fn detached_up_waits_for_a_cold_listener_and_starts_its_dependent() {
+    let slow = format!(
+        "import time\nprint('Compiling fixture-api', flush=True)\ntime.sleep(18)\n{READY_CHILD}"
+    );
+    let mut fixture = ExposureFixture::new(
+        "cold-listener",
+        &[
+            FixtureListener {
+                name: "front",
+                domain: FRONT_DOMAIN,
+                child: READY_CHILD,
+            },
+            FixtureListener {
+                name: "api",
+                domain: API_DOMAIN,
+                child: READY_CHILD,
+            },
+        ],
+        LISTENER_OBSERVATION_BUDGET_SECS,
+    );
+    fixture.set_listener_dependency("api", &["front"]);
+    fixture.set_listener_child("front", &slow);
+    let _ = take_listener_progress();
+    let started = Instant::now();
+    let result = fixture.up(false);
+    let progress = take_listener_progress();
+    let table = fixture.routes();
+    fixture.down();
+    result.expect("a listener building past the container budget becomes ready");
+    assert!(started.elapsed() > Duration::from_secs(LISTENER_OBSERVATION_BUDGET_SECS));
+    assert!(table.lookup(FRONT_DOMAIN).is_some(), "{table:?}");
+    assert!(
+        table.lookup(API_DOMAIN).is_some(),
+        "the dependent publishes too: {table:?}"
+    );
+    assert!(table.lookup(CONTAINER_DOMAIN).is_some(), "{table:?}");
+    assert!(
+        progress
+            .iter()
+            .any(|line| line.contains("Compiling fixture-api")
+                && line.contains("timeout has not started")),
+        "{progress:?}"
+    );
+}
+
+/// A child that exits before binding fails honestly, with bounded, redacted
+/// progress and no listener route.
+#[test]
+fn detached_up_reports_a_build_exit_and_redacted_progress() {
     let fixture = ExposureFixture::new(
         "closed-port",
         &one_listener(CLOSED_PORT_CHILD),
@@ -887,12 +935,12 @@ fn detached_up_bounds_a_closed_port_and_reports_redacted_progress() {
     let elapsed = started.elapsed();
     assert!(
         elapsed < Duration::from_secs(60),
-        "the activation's observation budget ends the wait: {elapsed:?}"
+        "the child exit ends the wait: {elapsed:?}"
     );
     let text = error.to_string();
     assert!(
-        text.contains("observation budget expired"),
-        "the failure names the bounded wait it ended on: {text}"
+        text.contains("exited with code 17"),
+        "the failure names the child's exit: {text}"
     );
 
     // The wait itself printed the child's evidence, not just a formatter.
@@ -915,14 +963,6 @@ fn detached_up_bounds_a_closed_port_and_reports_redacted_progress() {
     {
         assert_bounded_redacted_tail("the closed-port progress line", line);
     }
-    assert!(
-        progress
-            .iter()
-            .filter(|line| line.contains("last child output:"))
-            .count()
-            >= 2,
-        "the wait keeps reporting the child's evidence while it waits: {progress:?}"
-    );
 
     let table = fixture.routes();
     assert!(
@@ -936,16 +976,22 @@ fn detached_up_bounds_a_closed_port_and_reports_redacted_progress() {
     fixture.down();
 }
 
-/// An open socket without a status is waiting on HTTP readiness, not a build
-/// whose port is still closed. Both progress and budget refusal use the
-/// supervisor's observation, and route state is checked after failed detach.
+/// An open socket without a status spends its own readiness timeout even past
+/// the container observation window. Progress names the supervisor's probe.
 #[test]
-fn detached_up_reports_the_observed_open_port_when_the_activation_budget_expires() {
+fn detached_up_honors_the_listeners_own_readiness_timeout() {
     let fixture = ExposureFixture::new(
         "open-no-status",
         &one_listener(NO_STATUS_CHILD),
         LISTENER_OBSERVATION_BUDGET_SECS,
     );
+    let manifest = fixture.repo().join("effigy.toml");
+    let contents = std::fs::read_to_string(&manifest).expect("fixture manifest");
+    std::fs::write(
+        &manifest,
+        contents.replace("timeout_secs = 300", "timeout_secs = 18"),
+    )
+    .expect("declare the listener's own timeout");
     let _ = take_listener_progress();
     let started = Instant::now();
     let error = fixture
@@ -953,9 +999,10 @@ fn detached_up_reports_the_observed_open_port_when_the_activation_budget_expires
         .expect_err("no HTTP status means no route");
     assert!(started.elapsed() < Duration::from_secs(60));
     let text = error.to_string();
-    assert!(text.contains("observation budget expired"), "{text}");
+    assert!(text.contains("timed out after 18s"), "{text}");
+    assert!(!text.contains("observation budget expired"), "{text}");
     assert!(text.contains("no_status_line"), "{text}");
-    assert!(text.contains("readiness timeout is running"), "{text}");
+    assert!(text.contains("once its port opened"), "{text}");
     assert!(!text.contains("port is closed"), "{text}");
     assert!(!text.contains("had not opened its port"), "{text}");
     assert!(!text.contains("timeout has not started"), "{text}");
@@ -976,12 +1023,10 @@ fn detached_up_reports_the_observed_open_port_when_the_activation_budget_expires
     fixture.down();
 }
 
-/// A spent observation budget reconciles what the previous activation
-/// published: an untouched later listener whose own generation still serves
-/// keeps its route and stays exposed, and only the listener that never opened
-/// its port is withheld (effigy#455).
+/// An actual sibling failure does not prevent a later independent listener
+/// from restarting and publishing its new generation.
 #[test]
-fn detached_up_second_activation_keeps_a_healthy_listener_past_the_budget() {
+fn detached_up_second_activation_restarts_a_healthy_listener_after_sibling_failure() {
     let mut fixture = ExposureFixture::new(
         "reconcile",
         &[
@@ -1010,8 +1055,8 @@ fn detached_up_second_activation_keeps_a_healthy_listener_past_the_budget() {
         .clone();
     assert!(published.is_some(), "the api route names its generation");
 
-    // The next activation: the first listener never opens its port under a
-    // short budget, and the second is never restarted.
+    // The next activation: the first child exits, and the independent api
+    // still restarts rather than being skipped by a spent container budget.
     fixture.set_listener_child("front", CLOSED_PORT_CHILD);
     fixture.set_health_budget(LISTENER_OBSERVATION_BUDGET_SECS);
     let error = fixture
@@ -1043,9 +1088,9 @@ fn detached_up_second_activation_keeps_a_healthy_listener_past_the_budget() {
     let api = table
         .lookup(API_DOMAIN)
         .unwrap_or_else(|| panic!("the healthy listener keeps its route: {table:?}"));
-    assert_eq!(
+    assert_ne!(
         api.managed_listener, published,
-        "the reconciled route is the generation the previous activation published"
+        "the independent listener publishes its replacement generation"
     );
     assert!(
         table.lookup(FRONT_DOMAIN).is_none(),
@@ -1054,12 +1099,10 @@ fn detached_up_second_activation_keeps_a_healthy_listener_past_the_budget() {
     fixture.down();
 }
 
-/// A listener the activation stopped waiting for is settled before the command
-/// returns, so it cannot publish a route after the activation reported that
-/// route withheld: release the child's bind barrier only after the command
-/// returns, and verify its stopped process cannot publish (effigy#455).
+/// A listener that actually exits is settled before the command returns.
+/// Releasing its bind barrier after the failure cannot publish a late route.
 #[test]
-fn detached_up_never_publishes_a_timed_out_listener_after_return() {
+fn detached_up_never_publishes_a_failed_listener_after_return() {
     let fixture = ExposureFixture::new(
         "late-bind",
         &one_listener(LATE_BIND_CHILD),
@@ -1068,22 +1111,22 @@ fn detached_up_never_publishes_a_timed_out_listener_after_return() {
     let started = Instant::now();
     let error = fixture
         .up(false)
-        .expect_err("a listener that has not bound at the budget withholds its route");
+        .expect_err("a listener that exits before binding withholds its route");
     let text = error.to_string();
     assert!(
         started.elapsed() < Duration::from_secs(60),
-        "the activation's observation budget ends the wait"
+        "the child's exit ends the wait"
     );
     assert!(
-        text.contains("observation budget expired"),
-        "the failure names the bounded wait: {text}"
+        text.contains("exited with code 17"),
+        "the failure names the child's exit: {text}"
     );
     assert!(
         text.contains("settled before this activation returned"),
-        "the failure says the timed-out generation was settled: {text}"
+        "the failure says the failed generation was settled: {text}"
     );
     let child_pid: u32 = std::fs::read_to_string(fixture.repo().join("listener-started"))
-        .expect("the activation reached its listener child before expiring")
+        .expect("the failed listener recorded its child")
         .parse()
         .expect("recorded fixture child PID");
     // If the generation survived settlement, it is now permitted to bind. Its
@@ -1108,16 +1151,28 @@ fn detached_up_never_publishes_a_timed_out_listener_after_return() {
             .join(".effigy/runtime/host-processes/e2e/effigy/front.listener.json"),
     );
     assert_eq!(
-        state["status"], "stopped",
-        "the timed-out generation settled as stopped: {state}"
+        state["status"], "failed",
+        "the settled generation retains its actual failure: {state}"
+    );
+    let run = state["run"]
+        .as_str()
+        .expect("failed run")
+        .parse()
+        .expect("run id");
+    let crate::runner::task_engine::Lookup::Found(record) =
+        crate::runner::task_engine::lookup_checkout(&fixture.repo(), run)
+    else {
+        panic!("the failed run is retained");
+    };
+    assert!(
+        record.closed(),
+        "the failed run is settled before reporting"
     );
     fixture.down();
 }
 
-/// A spent budget reconciles only the current declaration: a listener whose
-/// route domain changed since its published generation started is withheld for
-/// the newly declared target, and the previous generation's own route keeps its
-/// own owner instead of being reported as the new one (effigy#455).
+/// A replacement publishes the current domain and withdraws the old one even
+/// when an independent sibling failed during the same activation.
 #[test]
 fn detached_up_reconciles_only_the_current_declaration() {
     let mut fixture = ExposureFixture::new(
@@ -1141,37 +1196,25 @@ fn detached_up_reconciles_only_the_current_declaration() {
         .expect("the first activation exposes both listeners");
     assert!(fixture.routes().lookup(API_DOMAIN).is_some());
 
-    // Only the second listener's declared domain changes; the first now never
-    // binds, so the budget expires before it is reached.
+    // The second listener's declared domain changes; the first child exits.
+    // The second listener still replaces its old generation.
     fixture.set_listener_domain("api", CHANGED_API_DOMAIN);
     fixture.set_listener_child("front", CLOSED_PORT_CHILD);
     fixture.set_health_budget(LISTENER_OBSERVATION_BUDGET_SECS);
     let error = fixture
         .up(false)
-        .expect_err("the changed declaration has no verified route");
+        .expect_err("the sibling failure is reported with partial exposure");
     let text = error.to_string();
     assert!(
         text.contains(&format!("`front` kept route {FRONT_DOMAIN} withheld")),
         "the listener that never bound is withheld: {text}"
     );
     assert!(
-        text.contains(&format!("`api` kept route {CHANGED_API_DOMAIN} withheld")),
-        "a changed declaration is not counted as exposed: {text}"
+        !text.contains(&format!("`api` kept route {CHANGED_API_DOMAIN} withheld")),
+        "the replacement is exposed: {text}"
     );
-    assert!(
-        text.contains("not the current declaration"),
-        "the refusal names the mismatch: {text}"
-    );
-    assert!(
-        text.contains("settled so it no longer serves"),
-        "the stale generation is settled rather than left serving: {text}"
-    );
-
     let table = fixture.routes();
-    assert!(
-        table.lookup(CHANGED_API_DOMAIN).is_none(),
-        "the newly declared domain has no route: {table:?}"
-    );
+    assert!(table.lookup(CHANGED_API_DOMAIN).is_some(), "{table:?}");
     assert!(
         table.lookup(API_DOMAIN).is_none(),
         "the settled generation no longer serves the route it published: {table:?}"
@@ -1179,10 +1222,8 @@ fn detached_up_reconciles_only_the_current_declaration() {
     fixture.down();
 }
 
-/// An untouched listener whose published generation no longer answers the
-/// **current** declared readiness request is withheld and settled, so its
-/// route is withdrawn instead of staying published behind an untruthful
-/// report; the observed status is named (effigy#455).
+/// A replacement that fails its current readiness is withheld and settled,
+/// withdrawing its previous route and naming the observed status.
 #[test]
 fn detached_up_withholds_a_listener_that_fails_its_current_readiness() {
     let mut fixture = ExposureFixture::new(
@@ -1206,8 +1247,8 @@ fn detached_up_withholds_a_listener_that_fails_its_current_readiness() {
         .expect("the first activation exposes both listeners");
     assert!(fixture.routes().lookup(API_DOMAIN).is_some());
 
-    // The second listener still runs, but its declared readiness path now
-    // answers 503; the first listener never binds, so the budget expires.
+    // The second listener's new readiness path answers 503; the first child
+    // exits. The second listener must still verify its current declaration.
     fixture.set_listener_readiness_path("api", "/health-broken");
     fixture.set_listener_child("front", CLOSED_PORT_CHILD);
     fixture.set_health_budget(LISTENER_OBSERVATION_BUDGET_SECS);
@@ -1228,7 +1269,7 @@ fn detached_up_withholds_a_listener_that_fails_its_current_readiness() {
         "the refusal carries the status it observed: {text}"
     );
     assert!(
-        text.contains("settled so it no longer serves"),
+        text.contains("settled before this activation returned"),
         "the generation that failed the current readiness is settled: {text}"
     );
 
@@ -1462,12 +1503,10 @@ fn detached_up_stops_a_previous_process_when_its_new_dependency_is_withheld() {
     fixture.down();
 }
 
-/// When the activation budget is spent, a dependent whose newly declared
-/// dependency was withheld is **not** reconciled as exposed from the healthy
-/// generation it ran before: the declared chain decides first, that generation
-/// is settled, and the report names the route withheld (effigy#455).
+/// An actual prerequisite exit withholds a newly declared dependent and
+/// settles the independent generation it ran before.
 #[test]
-fn detached_up_budget_does_not_reconcile_a_withheld_dependents_old_generation() {
+fn detached_up_build_exit_settles_a_withheld_dependents_old_generation() {
     let mut fixture = ExposureFixture::new(
         "dependent-budget",
         &[
@@ -1489,9 +1528,8 @@ fn detached_up_budget_does_not_reconcile_a_withheld_dependents_old_generation() 
         .expect("the first activation exposes both listeners independently");
     assert!(fixture.routes().lookup(API_DOMAIN).is_some());
 
-    // The next declaration chains api on front, front never opens its port and
-    // the budget is short: front's expiry spends the budget before api is
-    // reached.
+    // The next declaration chains api on front, whose build now exits before
+    // binding. The dependent's previous generation must be settled too.
     fixture.set_listener_dependency("api", &["front"]);
     fixture.set_listener_child("front", CLOSED_PORT_CHILD);
     fixture.set_health_budget(LISTENER_OBSERVATION_BUDGET_SECS);
@@ -1512,7 +1550,7 @@ fn detached_up_budget_does_not_reconcile_a_withheld_dependents_old_generation() 
         "the dependent is never reported exposed: {text}"
     );
     assert!(
-        text.contains("its dependency `front` was withheld"),
+        text.contains("its dependency `front` did not become ready"),
         "the dependent names the withheld dependency: {text}"
     );
 

@@ -207,13 +207,17 @@ impl RuntimeIntegrationContext<'_> {
                 self.stage(6, "reconciling tcp alias hosts");
                 state.report.tcp_alias_host_notes =
                     reconcile_primary_service_tcp_alias_hosts(root, policy, binding, deadline)?;
-                // A late listener withholds only its own route. A supervisor
-                // start failure is fatal in every mode, including non-listeners.
+                // Host startup has its own lifecycle: a live child may still
+                // be building when the container observation window ends.
+                // Keep custody until verified readiness or actual failure;
+                // the supervisor starts its timeout when the port first opens.
+                // A failed listener still settles before reporting its route
+                // withheld. Supervisor start failures remain fatal in all modes.
                 self.stage(7, "starting host listeners");
                 let report = crate::runner::host_process::start_host_processes_in_activation(
                     root,
                     policy,
-                    deadline,
+                    None,
                     self.publisher,
                 )?;
                 state.report.managed_host_listeners = report.ready;

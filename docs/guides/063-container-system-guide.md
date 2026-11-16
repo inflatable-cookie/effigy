@@ -1142,17 +1142,13 @@ names each failed listener with its `route_domain`, `status`,
 `restart` recovery. The text form names the same published and withheld routes.
 A listener that answers the wrong status is refused as soon as that answer is
 seen, and a still-closed port's progress line carries the child's own bounded,
-redacted output tail. A port that never opens cannot hold the activation open:
-listener startup shares the bring-up's observation budget, so `up` returns with
-that listener's route withheld when the budget is spent, settling that
-generation before the command returns so it cannot publish after the report.
-A listener the activation did not start is reconciled against its own published
-generation first: a healthy generation the previous activation published stays
-exposed when it still matches the current declaration (route domain, TLS, bind
-and the live declared readiness request), and a generation that serves an older
-declaration, or no longer answers the declared readiness request, is settled so
-its route is withdrawn before the report withholds the declared one. A dependent of
-a withheld listener withholds its own route too, through a whole `depends_on`
+redacted output tail. Host builds and listener readiness are separate from the
+container observation budget: `up --detach` keeps waiting while a child builds,
+then uses its declared readiness timeout once the port accepts a connection.
+Only verified listeners publish routes and start dependents. A child that exits
+or fails readiness is settled before the command reports its route withheld.
+Use `effigy container <NAME> down` to stop a build that is still running.
+A dependent of a withheld listener withholds its own route too, through a whole `depends_on`
 chain, instead of waiting for a record that process never wrote.
 Fresh full-ID inspect must match project, service, non-oneoff running state and
 checkout ownership; bindings come from current inspect published ports. An

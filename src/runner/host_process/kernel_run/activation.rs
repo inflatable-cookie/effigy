@@ -30,9 +30,9 @@ fn report_listener_completion(name: &str, phase: &str, elapsed: Duration, log: &
 /// failure that is not the listener's own - a start, a state record or a stop
 /// request - still ends the whole start.
 ///
-/// `deadline` is the enclosing activation's observation budget. A listener
-/// still starting when it is spent withholds its own route; a caller with no
-/// enclosing budget passes `None` (a restart waits on its own readiness).
+/// Container startup and restart wait on the supervisor's own readiness and
+/// pass no deadline. Tests may impose an explicit observation bound to exercise
+/// settlement: a bounded wait must settle before reporting a route withheld.
 #[cfg(test)]
 pub(in crate::runner) fn start_host_processes_for_container(
     repo_root: &Path,
