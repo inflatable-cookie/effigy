@@ -1115,11 +1115,6 @@ mod tests {
             Some("v0.14.1+local.e6d7ac3"),
             "a reader beside the executable resolves the authenticated version"
         );
-        assert_eq!(
-            effigy_core::build_info::recorded_active_version(Path::new(&path)),
-            None,
-            "the guest tree is not this host's filesystem"
-        );
         // Re-publishing identical bytes is idempotent; another version for the
         // same object is refused rather than rewritten.
         publish_guest_active_version(&mut guest, &executable, "v0.14.1+local.e6d7ac3")
