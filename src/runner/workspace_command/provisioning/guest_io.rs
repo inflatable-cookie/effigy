@@ -410,9 +410,15 @@ exec "$@"
             BoundedCommandBudget::new(now, now + Duration::from_secs(10), 65536, 65536);
         let id = "a".repeat(64);
         let mut guest = ComposeWorkspaceGuest::bounded(&root, &policy, &id, &mut budget);
-        // The guest refuses this write: its parent cannot be created under `/`.
+        // The guest refuses this write inside this fixture's own temporary
+        // storage: an ancestor of the target's parent is a regular file, so the
+        // guest shell's `mkdir -p` cannot create the directory. Nothing is
+        // written outside the fixture.
+        let blocker = root.join("blocker");
+        std::fs::write(&blocker, b"not a directory").unwrap();
+        let target = blocker.join("bin/current");
         let error = guest
-            .replace_pointer("/effigy-no-such-root/x/bin/current", "42")
+            .replace_pointer(target.to_str().unwrap(), "42")
             .expect_err("the guest shell must refuse");
         let classified = match &error {
             RunnerError::WorkspaceGuest {
