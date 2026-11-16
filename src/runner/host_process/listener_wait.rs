@@ -223,12 +223,12 @@ pub(super) enum ListenerWait {
 ///
 /// The listener's own readiness is never the caller's deadline: a child that is
 /// still building has not opened its port, and the supervisor's readiness
-/// budget starts when it does. The caller's `deadline` is the enclosing
-/// activation's observation budget, the same one the bring-up's other runtime
-/// observations share (effigy#411). A listener still starting when that budget
-/// is spent withholds only its own route: the caller gets `Withheld` instead of
-/// waiting for a build that outlasts the activation (effigy#455). A supervisor
-/// that exited without publishing is still the failure this wait names.
+/// budget starts when it does. Container startup passes no `deadline`: its
+/// runtime-observation budget cannot settle a listener still building or
+/// waiting within its own readiness timeout. Explicitly bounded callers get
+/// `Withheld` when their deadline expires and must settle the generation before
+/// reporting it withheld. A supervisor that exited without publishing is
+/// still the failure this wait names.
 ///
 /// `on_wait` runs about once a second while the wait continues, so the caller
 /// can publish what it waits for: the entry's own tab names the probe and its

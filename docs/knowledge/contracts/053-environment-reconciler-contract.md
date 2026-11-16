@@ -589,10 +589,13 @@ withheld listener withholds its route too, through the whole chain (effigy#455).
 The current dependency decision precedes reconciliation of any previous
 generation. A withheld dependent's old run is settled before the report,
 including a process without a listener; an incomplete stop remains a refusal.
-Sidecar startup shares the bring-up's one runtime-observation budget: a listener
-still starting when it is spent withholds its route and ends the command's wait
-rather than holding the activation open, while the supervisor keeps its own
-readiness semantics.
+Sidecar startup is governed by the listener's own lifecycle, separately from
+the container runtime-observation budget. The activation keeps its owning
+supervisor clients while a child builds and until its listener is verified or
+fails; dependents start only after readiness. A closed port while the child is
+alive has no readiness deadline. Once it accepts a connection, the declared
+readiness timeout applies. Progress names the probe and bounded child output,
+and `down` can interrupt the wait without taking the activation's gate.
 Every withheld listener start is settled before the command returns, including
 a retrying failure before its first child. Only successful starts are detached;
 the withheld supervisor cannot publish a late route.
