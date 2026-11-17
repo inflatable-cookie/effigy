@@ -6,6 +6,7 @@ new inputs, a new fixture and a new service; earlier failed attempts stay intact
 import hashlib
 import json
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import sys
@@ -21,6 +22,111 @@ import linux_native_support as setup
 import linux_native_lifecycle as lifecycle
 
 FILES = ('common.py', 'runtime.py', 'probe.py', 'linux_native_session.py', 'linux_native_window.py', 'linux_native_storage.py', 'linux_loop_bound.py', 'linux_capacity_contract.py')
+REMOTE_ROLES = ('inputs', 'go_bindings', 'selected_go')
+UNIT_NAME = re.compile(r'effigy-829-[a-z0-9-]+')
+# The dedicated resident engine is host-preparation state, never a packet unit.
+ENGINE_UNIT = 'effigy-829-rootful'
+ABSENT_UNIT = dict(LoadState='not-found', ActiveState='inactive', MainPID='0', ControlGroup='', kernel_pids=[])
+
+
+def attempt_tag(attempt):
+    """This attempt's own retained identity; every per-attempt remote path uses it."""
+    tag = attempt.root.name.rsplit('-', 1)[-1]
+    common.require(re.fullmatch(r'[0-9a-f]{32}', tag), 'attempt evidence identity required')
+    return tag
+
+
+def scoped_remote(remote, tag):
+    """Scope each frozen remote metadata path to this attempt.
+
+    Phase P names one path per activation, so a second attempt would collide with
+    the previous attempt's published file and its retained `.pending-<id>`
+    sibling. The exclusive-create destination gains the attempt suffix and stays
+    inside the same bounded metadata root."""
+    scoped = {}
+    for role in REMOTE_ROLES:
+        path = Path(remote[role])
+        common.require(path.is_relative_to(session.BASE / 'metadata'),
+                       'proof authority transfer is outside its bounded metadata root')
+        scoped[role] = str(path.with_name(path.name + '.' + tag))
+    return scoped
+
+
+def stage_proof_driver(attempt, ssh, files):
+    """Stage this runner's own driver bytes into a fresh per-attempt directory.
+
+    A driver prepared by another packet head is not authority for this runner:
+    the measured source-immutable checkout is. Every attempt stages its own
+    `FILES` over the authenticated channel and verifies the guest readback, so a
+    docs-equivalent phase-P head never leaves a stale driver behind and a second
+    attempt never collides with the first attempt's names."""
+    driver = str(session.BASE / ('proof-driver-' + attempt_tag(attempt)))
+    channel_directory(attempt, driver)
+    for name in FILES:
+        channel_receive(attempt, ssh, driver + '/' + name, (Path(__file__).parent / name).read_bytes())
+    for name, digest in files.items():
+        data = channel_read(attempt, ssh, driver + '/' + name, limit=1024 ** 2)
+        common.require(hashlib.sha256(data).hexdigest() == digest, 'transferred proof driver differs')
+    common.exclusive(attempt.root / 'driver.json', {'directory': driver, 'files': files})
+    return driver
+
+
+def plan_unit_names(plan):
+    """This packet's own frozen plan units; never the dedicated engine's group."""
+    import linux_capacity_contract as capacity
+    units = set()
+    for expected in plan['phases'].values():
+        units.add(expected['observer_unit'].removesuffix('.service'))
+        for group in expected['cgroups']:
+            if group != capacity.ENGINE_GROUP:
+                units.add(group.rsplit('/', 1)[-1].removesuffix('.service'))
+    units |= {name.removesuffix('.service') for name in plan['live_observers']}
+    return frozenset(units)
+
+
+def observe_unit(attempt, unit, *, deadline=None):
+    """One packet-owned unit's load state and its kernel cgroup membership."""
+    code = ('import json,subprocess; from pathlib import Path; '
+            's=dict(line.split("=",1) for line in subprocess.check_output('
+            + repr(['systemctl', 'show', '--all', unit + '.service',
+                    '--property=LoadState,ActiveState,MainPID,ControlGroup'])
+            + ',text=True,timeout=10).splitlines()); '
+            'p=Path(' + repr('/sys/fs/cgroup/system.slice/' + unit + '.service') + '); '
+            's["kernel_pids"]=[int(n) for f in p.rglob("cgroup.procs") for n in f.read_text().split()]; '
+            'print(json.dumps(s))')
+    try:
+        return json.loads(attempt.admin('python3 -I -B -c ' + shlex.quote(code),
+                                        read_only=True, deadline=deadline))
+    except ValueError as error:
+        raise RuntimeError('unit custody is unknown') from error
+
+
+def reset_owned_unit(attempt, unit, *, deadline=None):
+    """Reset only this packet's own plan-named transient so an attempt can reuse it.
+
+    `RemainAfterExit` keeps a returned or failed controller and observer unit
+    loaded, so a second attempt cannot reuse its frozen plan name. A unit that
+    still owns a main PID, a control group or a kernel member refuses: it may
+    belong to a live cohort. Only a process-free unit is stopped (a returned
+    RemainAfterExit unit observes as active) and then reset-failed."""
+    common.require(UNIT_NAME.fullmatch(unit) and unit != ENGINE_UNIT, 'packet-owned unit identifier required')
+    state = observe_unit(attempt, unit, deadline=deadline)
+    if state == ABSENT_UNIT:
+        return
+    common.require(state.get('LoadState') == 'loaded' and state.get('MainPID') == '0'
+                   and state.get('ControlGroup') == '' and state.get('kernel_pids') == []
+                   and state.get('ActiveState') in ('active', 'inactive', 'failed'),
+                   'packet-owned unit still owns a live cohort; refusing reuse')
+    record = attempt.root / (unit + '.reuse.json')
+    if not record.exists():
+        common.exclusive(record, state)
+    if state['ActiveState'] == 'active':
+        attempt.admin('systemctl stop ' + shlex.quote(unit + '.service'),
+                      repeatable=True, deadline=deadline)
+    attempt.admin('systemctl reset-failed ' + shlex.quote(unit + '.service'),
+                  repeatable=True, deadline=deadline)
+    common.require(observe_unit(attempt, unit, deadline=deadline) == ABSENT_UNIT,
+                   'packet-owned unit remained loaded after reset-failed')
 
 
 def bootstrap_preparation(attempt):
@@ -67,10 +173,9 @@ def admin_operation(attempt, payload, *, seconds=45, memory='256M', file_limit='
                          memory=memory, file_limit=file_limit, unit=unit)
 
 
-def admin_program(attempt, command, *, seconds=45, memory='256M', file_limit='8M', unit=None):
+def admin_program(attempt, command, *, seconds=45, memory='256M', file_limit='8M', unit=None, owned=None):
     """Run a prepared fixed program and retain its independently closed unit."""
     unit = unit or ('effigy-829-resume-' + uuid.uuid4().hex)
-    import re
     common.require(re.fullmatch(r'effigy-829-resume-[0-9a-f]{32}', unit), 'fresh observer unit required')
     output = '/var/lib/effigy-829/helpers/' + unit
     argv = ['systemd-run', '--unit=' + unit, '--slice=system.slice', '--no-block', '--service-type=exec',
@@ -79,14 +184,16 @@ def admin_program(attempt, command, *, seconds=45, memory='256M', file_limit='8M
             '--property=RuntimeMaxSec=' + str(seconds), '--property=TimeoutStopSec=5',
             '--property=MemoryMax=' + memory, '--property=MemorySwapMax=0', '--property=TasksMax=64',
             '--property=LimitFSIZE=' + file_limit, '--property=LimitCORE=0', '--property=UMask=0077',
-            '--property=StandardOutput=append:' + output + '.stdout',
-            '--property=StandardError=append:' + output + '.stderr',
+            # Truncate, never append: a plan-named unit is reused by a second
+            # attempt, and appended streams would concatenate two JSON documents.
+            '--property=StandardOutput=truncate:' + output + '.stdout',
+            '--property=StandardError=truncate:' + output + '.stderr',
             '--', *command]
-    submit_unit(attempt, argv, unit)
+    submit_unit(attempt, argv, unit, owned=owned)
     deadline = time.monotonic() + seconds + 20
     while True:
         raw = attempt.admin('systemctl show --all ' + unit + '.service '
-                            '--property=MainPID,ControlGroup,SubState,Result,ExecMainStatus,InvocationID,ExecMainExitTimestampMonotonic', read_only=True)
+                            '--property=MainPID,ControlGroup,SubState,ActiveState,Result,ExecMainStatus,InvocationID,ExecMainExitTimestampMonotonic', read_only=True)
         state = dict(line.split('=', 1) for line in raw.decode().splitlines())
         if (state['MainPID'] == '0' and state['ControlGroup'] == ''
                 and (int(state['ExecMainExitTimestampMonotonic']) > 0 or state['SubState'] == 'failed')):
@@ -106,6 +213,10 @@ def admin_program(attempt, command, *, seconds=45, memory='256M', file_limit='8M
         common.require(len(data) <= 8388608, 'root operation stream exceeded its retained cap')
     common.require(state['Result'] == 'success' and state['ExecMainStatus'] == '0',
                    'root operation failed; retained exact unit and streams')
+    if owned is not None and unit in owned:
+        # A returned RemainAfterExit plan unit must not stay active under its
+        # frozen name; retire this packet's own unit after its evidence is read.
+        retire_owned_controller(attempt, unit, state, '/var/lib/effigy-829/helpers')
     return streams['stdout'], streams['stderr'], state, unit
 
 
@@ -255,32 +366,28 @@ def channel_directory(attempt, path):
     return result
 
 
-def submit_unit(attempt, argv, unit):
-    """Retry one retained name only after positive absence, inside one window."""
+def submit_unit(attempt, argv, unit, *, owned=None):
+    """Retry one retained name only after positive absence, inside one window.
+
+    `owned` names this packet's own frozen plan units. Only those may reuse a
+    previous attempt's name: a process-free leftover is stopped when active and
+    then reset-failed. Every other name still requires positive absence and never
+    touches a unit this packet did not create."""
     deadline = time.monotonic() + 120
-    code = ('import json,subprocess; from pathlib import Path; '
-            's=dict(line.split("=",1) for line in subprocess.check_output('
-            + repr(['systemctl', 'show', '--all', unit + '.service',
-                    '--property=LoadState,ActiveState,MainPID,ControlGroup'])
-            + ',text=True,timeout=10).splitlines()); '
-            'p=Path(' + repr('/sys/fs/cgroup/system.slice/' + unit + '.service') + '); '
-            's["kernel_pids"]=[int(n) for f in p.rglob("cgroup.procs") for n in f.read_text().split()]; '
-            'print(json.dumps(s))')
-    absent = dict(LoadState='not-found', ActiveState='inactive', MainPID='0', ControlGroup='', kernel_pids=[])
+    if owned is not None and unit in owned:
+        reset_owned_unit(attempt, unit, deadline=deadline)
     def observe():
-        try:
-            return json.loads(attempt.admin('python3 -I -B -c ' + shlex.quote(code),
-                                            read_only=True, deadline=deadline))
-        except ValueError as error:
-            raise RuntimeError('unit submission custody is unknown') from error
-    common.require(observe() == absent, 'fresh unit is not positively absent')
+        return observe_unit(attempt, unit, deadline=deadline)
+    common.require(observe() == ABSENT_UNIT, 'fresh unit is not positively absent')
     if lifecycle.ACTIVE:
-        if __import__('re').fullmatch(r'effigy-829-[0-9a-f]{32}', unit):
+        if re.fullmatch(r'effigy-829-[0-9a-f]{32}', unit):
             lifecycle.ACTIVE.units.append(unit)
         for arg in argv:
-            for prefix in ('--property=StandardOutput=append:', '--property=StandardError=append:'):
-                if arg.startswith(prefix) and Path(arg[len(prefix):]).is_relative_to(lifecycle.BASE):
-                    lifecycle.ACTIVE.record(arg[len(prefix):], uid=0)
+            for prefix in ('--property=StandardOutput=', '--property=StandardError='):
+                if arg.startswith(prefix):
+                    path = arg[len(prefix):].partition(':')[2]
+                    if path and Path(path).is_relative_to(lifecycle.BASE):
+                        lifecycle.ACTIVE.record(path, uid=0)
     while True:
         try:
             attempt.admin(shlex.join(argv), deadline=deadline)
@@ -289,7 +396,7 @@ def submit_unit(attempt, argv, unit):
             state = observe()
             if isinstance(state, dict) and state.get('LoadState') == 'loaded':
                 return
-            if state != absent:
+            if state != ABSENT_UNIT:
                 raise TransportUnavailable('transport-unavailable: unit custody unknown; refusing resubmission')
             if time.monotonic() + 5 >= deadline:
                 raise TransportUnavailable('transport-unavailable: unit remained absent through submission window')
@@ -298,9 +405,18 @@ def submit_unit(attempt, argv, unit):
             time.sleep(5)
 
 
+def retire_owned_controller(attempt, unit, terminal, output_root):
+    """Stop this attempt's own controller when RemainAfterExit left it active.
+
+    A returned controller observes as active with no control group, so nothing
+    else closes it; the next attempt would then collide with a loaded name."""
+    if terminal.get('ActiveState') == 'active':
+        stop_owned_unit(attempt, unit, output_root)
+    return terminal
+
+
 def stop_owned_unit(attempt, target, output_root):
     """Latch one caller-owned unit stop; independently require empty custody."""
-    import re
     common.require(re.fullmatch(r'effigy-829-[a-z0-9-]+', target), 'invalid owned unit identifier')
     unit = 'effigy-829-quiesce-' + uuid.uuid4().hex
     streams = {name: str(Path(output_root) / (unit + '.' + name)) for name in ('stdout', 'stderr')}
@@ -309,8 +425,8 @@ def stop_owned_unit(attempt, target, output_root):
             '--property=RuntimeMaxSec=45', '--property=TimeoutStopSec=5',
             '--property=MemoryMax=64M', '--property=MemorySwapMax=0', '--property=TasksMax=16',
             '--property=LimitFSIZE=1M', '--property=LimitCORE=0',
-            '--property=StandardOutput=append:' + streams['stdout'],
-            '--property=StandardError=append:' + streams['stderr'],
+            '--property=StandardOutput=truncate:' + streams['stdout'],
+            '--property=StandardError=truncate:' + streams['stderr'],
             '--', '/usr/bin/systemctl', 'stop', target + '.service']
     submit_unit(attempt, argv, unit)
     deadline = time.monotonic() + 65
@@ -478,7 +594,10 @@ def execute_proof(root, inputs, inputs_hash, go_index, go_hash):
     allowed=common.allowed_source_heads(value,head)
     cell=next(cell for cell in value['backends'] if cell['backend']=='linux')
     go=common.load(common.artifact(common.load(go_index)['linux']))
-    common.validate_go(go,inputs_hash,cell,head)
+    # One reference head on both sides: the frozen inputs head the GO names. The
+    # guest has no checkout, so this host entry must compare the same value and
+    # leave the checkout head to the frozen equivalence record above.
+    common.validate_go(go,inputs_hash,cell,value['source_head'])
     preparation=common.load(common.artifact(cell['linux_preparation']))
     common.require(preparation['schema']=='effigy.linux-physical-preparation-complete.v1'
                    and preparation['source_head'] in allowed and preparation['qualification_credit'] is False,
@@ -533,16 +652,17 @@ def execute(root, seed, mode, *, proof=None):
         physical = value['cell'].get('linux_capacity_preparation') if mode == 'full' else None
     else:
         remote = value['cell']['remote']
-        driver = remote['packet']
-        common.require(Path(driver).is_relative_to(session.BASE), 'prepared driver is outside the native base')
-        for name,digest in files.items():
-            data = channel_read(attempt,ssh,driver+'/'+name,limit=1024**2)
-            common.require(hashlib.sha256(data).hexdigest()==digest,'prepared proof driver differs')
+        prepared = Path(remote['packet'])
+        common.require(prepared.is_relative_to(session.BASE), 'prepared driver is outside the native base')
+        # The prepared driver is phase-P evidence only. This runner stages its own
+        # measured FILES and verifies them, so a docs-equivalent packet head cannot
+        # leave a stale driver and a second attempt gets its own directory.
+        driver = stage_proof_driver(attempt, ssh, files)
+        tag = attempt_tag(attempt)
+        remote = scoped_remote(remote, tag)
         transfers=[('inputs',seed.read_bytes()),('go_bindings',Path(proof['go_index']).read_bytes()),
                    ('selected_go',common.artifact(common.load(proof['go_index'])['linux']).read_bytes())]
         for role,data in transfers:
-            common.require(Path(remote[role]).is_relative_to(session.BASE/'metadata'),
-                           'proof authority transfer is outside its bounded metadata root')
             channel_receive(attempt,ssh,remote[role],data)
         binding = dict(path=remote['inputs'],sha256=proof['inputs_sha256'],fixture=value['cell']['qualification_root']['path'])
         main = [driver+'/runtime.py','--inputs',remote['inputs'],'--sha256',proof['inputs_sha256'],
@@ -560,15 +680,20 @@ def execute(root, seed, mode, *, proof=None):
                                     allowed=allowed)
         groups = capacity_packet['plan']['phases']['live']['cgroups']
         unit = next(group for group in groups if group != capacity.ENGINE_GROUP).rsplit('/',1)[-1].removesuffix('.service')
-        common.require(__import__('re').fullmatch(r'effigy-829-[0-9a-f]{32}', unit), 'frozen controller identity differs')
+        common.require(re.fullmatch(r'effigy-829-[0-9a-f]{32}', unit), 'frozen controller identity differs')
+        owned = plan_unit_names(capacity_packet['plan'])
         capacity_originals['before'] = contract.observe(root, attempt, ssh, capacity_packet['plan'], 'before')
     else:
         unit = 'effigy-829-' + uuid.uuid4().hex
+        owned = frozenset()
+    # Every remote path this attempt creates is scoped by its own identity: the
+    # release gate, its retained `.pending` siblings and the controller streams
+    # must never collide with a previous attempt of the same frozen plan.
+    release = str(session.BASE / 'qualification' / ('ssh-release-' + attempt_tag(attempt) + '-' + unit))
     # The controller's retained stream is a writer too: keep its pre-opened
     # output descriptor on the same physically capped workspace filesystem.
     log = str(session.BASE / 'qualification' / (unit + '.log'))
     writable = str(session.BASE if mode in ('acquire', 'preflight') else Path(binding['fixture']))
-    release = str(session.BASE / 'qualification' / ('ssh-release-' + unit))
     if lifecycle.ACTIVE:
         lifecycle.ACTIVE.record(release)
         lifecycle.ACTIVE.record(str(session.BASE / 'metadata' / (attempt.root.name + '.tar')))
@@ -598,14 +723,14 @@ def execute(root, seed, mode, *, proof=None):
             '--property=ProtectKernelTunables=yes', '--property=ProtectKernelModules=yes',
             '--property=ProtectKernelLogs=yes', '--property=ReadWritePaths=' + writable,
             '--property=MemoryMax=3G', '--property=MemorySwapMax=0', '--property=LimitCORE=0',
-            '--property=StandardOutput=append:' + log + '.stdout', '--property=StandardError=append:' + log + '.stderr',
+            '--property=StandardOutput=truncate:' + log + '.stdout', '--property=StandardError=truncate:' + log + '.stderr',
             '--setenv=PATH=' + str(session.BASE / 'tools/bin') + ':/usr/bin:/bin',
             '--setenv=HOME=/home/effigy531', '--', '/usr/bin/python3', '-I', '-B',
             '-c', script]
     binding.update(unit=unit, log=log, driver=driver, files=files, unit_argv=argv,
                    exploratory=proof is None, qualification_credit=False, mode=mode)
     common.exclusive(attempt.root / 'binding.json', binding)
-    submit_unit(attempt, argv, unit)
+    submit_unit(attempt, argv, unit, owned=owned)
     relay = None
     try:
         identifier, _ = channel_request(attempt, 'run', release, data=token, limit=len(token),
@@ -668,6 +793,10 @@ def execute(root, seed, mode, *, proof=None):
             raise RuntimeError('owned native service exceeded deadline; stopped exact unit, no success claim')
         transport = relay.finish()
         common.exclusive(attempt.root / 'terminal.json', terminal)
+        # RemainAfterExit keeps a returned controller loaded and active. Stop
+        # this attempt's exact unit so a second attempt can reset-fail and reuse
+        # the frozen plan name instead of colliding with it.
+        retire_owned_controller(attempt, unit, terminal, session.BASE / 'qualification')
         log_data = b''
         for name in ('stdout','stderr'):
             data = channel_read(attempt, ssh, log+'.'+name, limit=8 * 1024 ** 2)

@@ -842,6 +842,8 @@ def main():
         require(args.backend=='linux','only Linux may map its bound authority bytes into the guest')
         go_item=dict(path=args.selected_go_path,sha256=go_item['sha256'])
     go=load(artifact(go_item))
+    # The frozen inputs head is the one reference head on both sides: this guest
+    # route has no checkout, and the host launcher compares the same value.
     validate_go(go, args.sha256, cell, value['source_head'])
     require((sys.platform == 'linux') == (cell['backend'] == 'linux'), 'wrong native operating system')
     # Backend replay is refused even if someone directly invokes this module.

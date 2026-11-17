@@ -849,7 +849,8 @@ class Boundaries(unittest.TestCase):
                              json.loads((base / 'go-index-evidence.json').read_text())['desktop'])
             self.assertEqual(binding['programs']['launch.py'], digest(PACKET / 'launch.py'))
             self.assertTrue(binding['one_shot_marker'].endswith('-desktop.started.json'))
-            self.assertFalse((base / 'evidence' / 'complete.json').exists(),
+            entry_dir = Path(payload['invocation']).parent
+            self.assertFalse((entry_dir / 'complete.json').exists(),
                              'one backend entry cannot imply aggregate qualification')
 
             # A source change after the backend refuses and yields honest,
@@ -860,7 +861,9 @@ class Boundaries(unittest.TestCase):
                  patch.object(launch, 'run', return_value=result):
                 with self.assertRaisesRegex(RuntimeError, 'proof source changed'):
                     launch.main()
-            retained = json.loads((base / 'evidence-2' / 'desktop.json').read_text())
+            retained_dirs = list(base.glob('evidence-2-*'))
+            self.assertEqual(len(retained_dirs), 1, 'one attempt writes one evidence directory')
+            retained = json.loads((retained_dirs[0] / 'desktop.json').read_text())
             self.assertEqual(retained['exit_code'], 0)
             self.assertIs(retained['source_unchanged'], False)
             self.assertIs(retained['positive'], False)
@@ -1048,7 +1051,9 @@ class Boundaries(unittest.TestCase):
 
     def test_linux_export_uses_the_prepared_native_facade_and_checks_original_bytes(self):
         import hashlib
+        import io
         import launch,linux_native_run
+        from contextlib import redirect_stdout
         from types import SimpleNamespace
         with tempfile.TemporaryDirectory(prefix='531-export-',dir=os.environ['TMPDIR']) as directory:
             base=Path(directory)
@@ -1070,19 +1075,21 @@ class Boundaries(unittest.TestCase):
                 result=dict(receipt=receipt_path,receipt_bytes=transported,receipt_sha256=original_hash,
                     stdout=json.dumps({'receipt':receipt_path}).encode(),stderr=b'',linux_allocation={},
                     linux_capacity_originals={'path':str(base/'originals.json'),'sha256':'a'*64})
+                printed=io.StringIO()
                 with patch.object(sys,'argv',argv),patch.object(launch,'source_head',return_value=HEAD), \
                      patch.object(launch,'ssh_prefix',return_value=['prepared-ssh']), \
                      patch.object(linux_native_run,'execute_proof',return_value=result) as execute, \
-                     patch.object(launch,'run') as raw:
+                     patch.object(launch,'run') as raw,redirect_stdout(printed):
                     launch.main()
                     execute.assert_called_once()
                     raw.assert_not_called()
-            drive(fixture('evidence'),payload,hashlib.sha256(payload).hexdigest())
-            record=json.loads((base/'evidence/linux.json').read_text())
+                return json.loads(printed.getvalue())
+            first=drive(fixture('evidence'),payload,hashlib.sha256(payload).hexdigest())
+            record=json.loads(Path(first['invocation']).read_text())
             self.assertTrue(record['positive'])
             self.assertEqual(Path(record['receipt_export']['path']).read_bytes(),payload)
             self.assertIn('linux_capacity_originals',record)
-            self.assertFalse((base/'evidence/complete.json').exists())
+            self.assertFalse((Path(first['invocation']).parent/'complete.json').exists())
             with self.assertRaisesRegex(RuntimeError,'transported original receipt differs'):
                 drive(fixture('evidence-2'),payload+b' ',hashlib.sha256(payload).hexdigest())
             oversize=b'x'*(launch.MAX_EXPORT_BYTES+1)
@@ -1113,7 +1120,351 @@ class Boundaries(unittest.TestCase):
                  patch.object(launch, 'run', return_value=local_result):
                 with self.assertRaisesRegex(RuntimeError, 'exceeds its retained size bound'):
                     launch.main()
-            self.assertFalse((base / 'evidence-4' / 'desktop.json').exists())
+            self.assertFalse([path for path in base.glob('evidence-4-*') if (path / 'desktop.json').exists()])
+
+    def test_launcher_derives_a_fresh_evidence_directory_per_attempt(self):
+        import io
+        import launch
+        from contextlib import redirect_stdout
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory(prefix='531-attempt-', dir=os.environ['TMPDIR']) as directory:
+            base = Path(directory)
+            cells = {cell['backend']: cell for cell in inputs()['backends']}
+            root = base / 'attempt-root'
+            root.mkdir(mode=0o700)
+            identity = root.stat()
+            cells['desktop']['qualification_root'] = dict(path=str(root), device=identity.st_dev,
+                                                         inode=identity.st_ino, uid=identity.st_uid)
+            complete = root / 'complete.json'
+            exclusive(complete, {'cells': [], 'native': True})
+            value = inputs()
+            # The same frozen base name is reused on purpose: the launcher, not
+            # an operator, must derive a fresh directory for each attempt.
+            value['evidence'] = str(base / 'attempts')
+            value['backends'] = [cells[cell['backend']] for cell in value['backends']]
+            approved_path, approved = write_bound(base, 'inputs.json', value)
+            index = {}
+            for backend, cell in cells.items():
+                path, bound = write_bound(base, backend + '-go.json', entry_go(cell, approved))
+                index[backend] = {'path': str(path), 'sha256': bound}
+            index_path, index_hash = write_bound(base, 'go-index.json', index)
+            argv = ['launch.py', '--inputs', str(approved_path), '--sha256', approved,
+                    '--go-bindings', str(index_path), '--go-sha256', index_hash, '--backend', 'desktop']
+            result = SimpleNamespace(returncode=0, stderr=b'',
+                                     stdout=json.dumps({'receipt': str(complete)}).encode())
+            entries = []
+            for _ in range(2):
+                printed = io.StringIO()
+                with patch.object(sys, 'argv', argv), patch.object(launch, 'source_head', return_value=HEAD), \
+                     patch.object(launch, 'run', return_value=result), redirect_stdout(printed):
+                    launch.main()
+                entries.append(Path(json.loads(printed.getvalue())['invocation']))
+            self.assertEqual(len({entry.parent for entry in entries}), 2,
+                             'a second attempt reused the first evidence directory')
+            self.assertFalse((base / 'attempts').exists(), 'the frozen base is not itself created')
+            for entry in entries:
+                attempt_dir = entry.parent
+                self.assertEqual(attempt_dir.parent, base)
+                self.assertTrue(attempt_dir.name.startswith('attempts-' + approved + '-'))
+                started = json.loads((attempt_dir / 'started.json').read_text())
+                self.assertEqual(started['inputs_sha256'], approved)
+                self.assertEqual(started['evidence'], str(attempt_dir))
+                self.assertEqual(started['attempt'], attempt_dir.name.rsplit('-', 1)[-1])
+                self.assertTrue(entry.is_file())
+                self.assertFalse((attempt_dir / 'complete.json').exists())
+
+    def test_go_binds_the_frozen_inputs_head_on_host_and_guest(self):
+        import io
+        import common
+        import launch
+        from contextlib import redirect_stdout
+        from types import SimpleNamespace
+        checkout = '4' * 40
+        with tempfile.TemporaryDirectory(prefix='531-go-head-', dir=os.environ['TMPDIR']) as directory:
+            base = Path(directory)
+            cells = {cell['backend']: cell for cell in inputs()['backends']}
+            root = base / 'head-root'
+            root.mkdir(mode=0o700)
+            identity = root.stat()
+            cells['desktop']['qualification_root'] = dict(path=str(root), device=identity.st_dev,
+                                                         inode=identity.st_ino, uid=identity.st_uid)
+            complete = root / 'complete.json'
+            exclusive(complete, {'cells': [], 'native': True})
+            value = inputs()
+            value['evidence'] = str(base / 'head-evidence')
+            # The guest route has no checkout, so the only reference head both
+            # sides can compare is the frozen inputs head this GO names. The live
+            # checkout head is accepted through the frozen equivalence record.
+            value['source_equivalence'] = {'baseline': HEAD, 'alternates': {checkout: ['docs/knowledge/contracts/release.md']}}
+            value['backends'] = [cells[cell['backend']] for cell in value['backends']]
+            inputs_path, approved = write_bound(base, 'inputs.json', value)
+            index = {}
+            for backend, cell in cells.items():
+                path, bound = write_bound(base, backend + '-go.json', entry_go(cell, approved))
+                index[backend] = {'path': str(path), 'sha256': bound}
+            index_path, index_hash = write_bound(base, 'go-index.json', index)
+            argv = ['launch.py', '--inputs', str(inputs_path), '--sha256', approved,
+                    '--go-bindings', str(index_path), '--go-sha256', index_hash, '--backend', 'desktop']
+            result = SimpleNamespace(returncode=0, stderr=b'',
+                                     stdout=json.dumps({'receipt': str(complete)}).encode())
+            printed = io.StringIO()
+            with patch.object(sys, 'argv', argv), patch.object(launch, 'source_head', return_value=checkout), \
+                 patch.object(common, 'diff_names', return_value=['docs/knowledge/contracts/release.md']), \
+                 patch.object(launch, 'run', return_value=result), redirect_stdout(printed):
+                launch.main()
+            record = json.loads(Path(json.loads(printed.getvalue())['invocation']).read_text())
+            self.assertEqual(record['binding']['source_head'], checkout)
+            self.assertTrue(record['positive'])
+            # The guest compares the same frozen value; a GO naming the checkout
+            # head instead refuses on both sides.
+            go_value = json.loads((base / 'desktop-go.json').read_text())
+            validate_go(go_value, approved, cells['desktop'], HEAD)
+            with self.assertRaisesRegex(RuntimeError, 'GO candidate/input binding mismatch'):
+                validate_go(go_value, approved, cells['desktop'], checkout)
+            (base / 'desktop-go.json').unlink()
+            wrong_path, wrong = write_bound(base, 'desktop-go.json',
+                                            dict(go_value, source_head=checkout))
+            wrong_index = dict(index, desktop={'path': str(wrong_path), 'sha256': wrong})
+            wrong_index_path, wrong_index_hash = write_bound(base, 'go-index-wrong.json', wrong_index)
+            with patch.object(sys, 'argv', ['launch.py', '--inputs', str(inputs_path), '--sha256', approved,
+                              '--go-bindings', str(wrong_index_path), '--go-sha256', wrong_index_hash,
+                              '--backend', 'desktop']), \
+                 patch.object(launch, 'source_head', return_value=checkout), \
+                 patch.object(common, 'diff_names', return_value=['docs/knowledge/contracts/release.md']), \
+                 patch.object(launch, 'run', side_effect=AssertionError('native run for a foreign GO head')):
+                with self.assertRaisesRegex(RuntimeError, 'GO candidate/input binding mismatch'):
+                    launch.main()
+            # The guest entry names the same single reference head.
+            self.assertIn("validate_go(go, args.sha256, cell, value['source_head'])",
+                          (PACKET / 'runtime.py').read_text())
+
+    def test_only_a_packets_own_process_free_plan_unit_is_reset(self):
+        from uuid import uuid4
+        import linux_native_run as native
+        plan = inputs()['backends'][2]['linux_capacity']['plan']
+        units = native.plan_unit_names(plan)
+        controller = next(group for group in plan['phases']['live']['cgroups']
+                          if group != '/system.slice/effigy-829-rootful.service')
+        self.assertIn(controller.rsplit('/', 1)[-1].removesuffix('.service'), units)
+        for phase in plan['phases'].values():
+            self.assertIn(phase['observer_unit'].removesuffix('.service'), units)
+        self.assertTrue({name.removesuffix('.service') for name in plan['live_observers']} <= units)
+        self.assertNotIn('effigy-829-rootful', units, 'the resident engine is never a packet unit')
+        # The frozen plan's real identities: controller, phase observers and the
+        # three live observers, with the resident engine group excluded.
+        shaped = {'phases': {'live': {
+                      'observer_unit': 'effigy-829-resume-' + 'b' * 32 + '.service',
+                      'cgroups': {'/system.slice/effigy-829-' + 'c' * 32 + '.service': 1,
+                                  '/system.slice/effigy-829-rootful.service': 3}}},
+                  'live_observers': ['effigy-829-resume-' + 'd' * 32 + '.service']}
+        self.assertEqual(native.plan_unit_names(shaped),
+                         frozenset({'effigy-829-resume-' + 'b' * 32, 'effigy-829-' + 'c' * 32,
+                                    'effigy-829-resume-' + 'd' * 32}))
+
+        with tempfile.TemporaryDirectory(prefix='531-plan-unit-', dir=os.environ['TMPDIR']) as directory:
+            def drive(stale):
+                attempt = type('Attempt', (), {'root': Path(directory) / ('attempt-' + uuid4().hex)})()
+                attempt.root.mkdir()
+                state = {'value': dict(stale)}
+                calls = []
+                def admin(script, *, read_only=False, repeatable=False, deadline=None):
+                    calls.append(script)
+                    if script.startswith('systemctl reset-failed'):
+                        state['value'] = dict(native.ABSENT_UNIT)
+                        return b''
+                    return json.dumps(state['value']).encode()
+                attempt.admin = admin
+                return attempt, state, calls
+            unit = 'effigy-829-resume-' + 'a' * 32
+            attempt, state, calls = drive(native.ABSENT_UNIT)
+            native.reset_owned_unit(attempt, unit)
+            self.assertEqual(len(calls), 1, 'an absent unit needs no reset')
+            for stale, steps in ((dict(native.ABSENT_UNIT, LoadState='loaded', ActiveState='inactive'),
+                                  [False, True, False]),
+                                 (dict(native.ABSENT_UNIT, LoadState='loaded', ActiveState='failed',
+                                       SubState='failed'), [False, True, False]),
+                                 (dict(native.ABSENT_UNIT, LoadState='loaded', ActiveState='active',
+                                       SubState='exited'), [False, False, True, False])):
+                attempt, state, calls = drive(stale)
+                native.reset_owned_unit(attempt, unit)
+                self.assertEqual([script.startswith('systemctl reset-failed') for script in calls], steps)
+                self.assertEqual(state['value'], native.ABSENT_UNIT)
+            for refused in (dict(native.ABSENT_UNIT, LoadState='loaded', ActiveState='active', MainPID='123'),
+                            dict(native.ABSENT_UNIT, LoadState='loaded', ActiveState='active',
+                                 ControlGroup='/system.slice/' + unit + '.service'),
+                            dict(native.ABSENT_UNIT, LoadState='loaded', ActiveState='inactive',
+                                 kernel_pids=[42]),
+                            dict(native.ABSENT_UNIT, LoadState='masked', ActiveState='inactive')):
+                attempt, state, calls = drive(refused)
+                with self.assertRaisesRegex(RuntimeError, 'packet-owned unit'):
+                    native.reset_owned_unit(attempt, unit)
+                self.assertEqual(len(calls), 1, 'a live or unknown unit is never reset')
+            attempt, state, calls = drive(native.ABSENT_UNIT)
+            with self.assertRaisesRegex(RuntimeError, 'packet-owned unit identifier required'):
+                native.reset_owned_unit(attempt, 'effigy-829-rootful')
+
+    def test_helper_streams_truncate_across_a_simulated_second_attempt(self):
+        import re as regex
+        import shlex
+        from uuid import uuid4
+        import linux_native_run as native
+
+        class Guest:
+            """One guest's transient unit table and its retained helper streams."""
+            def __init__(self, root):
+                self.root = Path(root)
+                self.units, self.streams, self.calls = {}, {}, []
+                self.programs, self.kernel_pids, self.stopped = 0, [], []
+            def unit_of(self, script):
+                found = set(regex.findall(r'effigy-829-[a-z0-9-]+', script))
+                if len(found) != 1:
+                    raise AssertionError('expected exactly one unit name: %r' % (sorted(found),))
+                return found.pop()
+            def admin(self, script, *, read_only=False, repeatable=False, deadline=None):
+                self.calls.append(script)
+                if script.startswith('systemd-run'):
+                    argv = shlex.split(script)
+                    unit = next(arg[len('--unit='):] for arg in argv if arg.startswith('--unit='))
+                    if unit in self.units:
+                        raise RuntimeError('native command failed: unit already exists: ' + unit)
+                    written = []
+                    for arg in argv:
+                        for prefix in ('--property=StandardOutput=', '--property=StandardError='):
+                            if not arg.startswith(prefix):
+                                continue
+                            mode, _, path = arg[len(prefix):].partition(':')
+                            if mode == 'truncate':
+                                self.streams[path] = b''
+                            elif mode != 'append':
+                                raise AssertionError('unmodelled stream mode: ' + mode)
+                            written.append(path)
+                    self.units[unit] = dict(LoadState='loaded', ActiveState='active', SubState='exited',
+                                            MainPID='0', ControlGroup='', Result='success', ExecMainStatus='0',
+                                            InvocationID='a' * 32, ExecMainExitTimestampMonotonic='12345')
+                    command = argv[argv.index('--') + 1:]
+                    if command[:2] == ['/usr/bin/systemctl', 'stop']:
+                        target = command[2].removesuffix('.service')
+                        self.stopped.append(target)
+                        self.units[target].update(ActiveState='inactive', SubState='dead')
+                    else:
+                        self.programs += 1
+                        for path in written:
+                            self.streams[path] += json.dumps({'attempt': self.programs}).encode()
+                    return b''
+                if script.startswith('systemctl reset-failed'):
+                    unit = self.unit_of(script)
+                    if self.units.get(unit, {}).get('ActiveState') not in ('inactive', 'failed'):
+                        raise RuntimeError('native command failed: unit is not inactive or failed')
+                    del self.units[unit]
+                    return b''
+                if 'kernel_pids' in script:
+                    unit = self.unit_of(script)
+                    state = dict(self.units.get(unit, dict(LoadState='not-found', ActiveState='inactive',
+                                                           MainPID='0', ControlGroup='')), kernel_pids=self.kernel_pids)
+                    return json.dumps(state).encode()
+                if 'cgroup.procs' in script:
+                    return b'[]'
+                if 'systemctl show' in script:
+                    unit = self.unit_of(script)
+                    state = self.units.get(unit, dict(LoadState='not-found', ActiveState='inactive',
+                                                      MainPID='0', ControlGroup=''))
+                    return '\n'.join('{}={}'.format(key, value) for key, value in state.items()).encode()
+                if 'head -c' in script or script.startswith('cat '):
+                    return self.streams.get(script.split('-- ', 1)[-1].strip().split()[-1], b'')
+                raise AssertionError('unmodelled guest command: ' + script)
+
+        with tempfile.TemporaryDirectory(prefix='531-second-attempt-', dir=os.environ['TMPDIR']) as directory:
+            # Two attempts share one guest and one old plan unit name; each keeps
+            # its own local evidence root.
+            guest = Guest(directory)
+            def attempt_root(name):
+                root = Path(directory) / (name + '-' + uuid4().hex)
+                root.mkdir()
+                attempt = type('Attempt', (), {'root': root})()
+                attempt.admin = guest.admin
+                return attempt
+            one, two, three = attempt_root('attempt'), attempt_root('attempt'), attempt_root('attempt')
+            unit = 'effigy-829-resume-' + 'a' * 32
+            command = ['/usr/bin/python3', '-I', '-B', '/helpers/owned-observer']
+            first = native.admin_program(one, command, unit=unit, owned=frozenset({unit}))
+            self.assertEqual(json.loads(first[0]), {'attempt': 1})
+            self.assertEqual(guest.stopped, [unit], 'the returned observer is retired')
+            # The second attempt must work without hand cleanup, and its retained
+            # stream must hold exactly one JSON document, never two appended ones.
+            second = native.admin_program(two, command, unit=unit, owned=frozenset({unit}))
+            self.assertEqual(json.loads(second[0]), {'attempt': 2})
+            self.assertEqual(guest.streams['/var/lib/effigy-829/helpers/' + unit + '.stdout'],
+                             json.dumps({'attempt': 2}).encode())
+            resets = [script for script in guest.calls if script.startswith('systemctl reset-failed')]
+            self.assertEqual(len(resets), 1, 'exactly one reset between the two attempts')
+            # Without ownership the same name still requires positive absence.
+            with self.assertRaisesRegex(RuntimeError, 'not positively absent'):
+                native.admin_program(three, command, unit=unit)
+
+    def test_proof_driver_and_remote_metadata_are_scoped_per_attempt(self):
+        import linux_native_run as native
+        remote = {'packet': str(native.session.BASE / 'proof-driver-p1'),
+                  'inputs': str(native.session.BASE / 'metadata/full-p1.inputs.json'),
+                  'go_bindings': str(native.session.BASE / 'metadata/full-p1.go-index.json'),
+                  'selected_go': str(native.session.BASE / 'metadata/full-p1.go.json')}
+        first = native.scoped_remote(remote, 'a' * 32)
+        second = native.scoped_remote(remote, 'b' * 32)
+        self.assertEqual(remote['inputs'], str(native.session.BASE / 'metadata/full-p1.inputs.json'))
+        self.assertFalse(set(first.values()) & set(second.values()))
+        for role in native.REMOTE_ROLES:
+            self.assertEqual(first[role], remote[role] + '.' + 'a' * 32)
+            self.assertTrue(Path(first[role]).is_relative_to(native.session.BASE / 'metadata'))
+        with self.assertRaisesRegex(RuntimeError, 'bounded metadata root'):
+            native.scoped_remote(dict(remote, inputs='/elsewhere/full-p1.inputs.json'), 'a' * 32)
+
+        with tempfile.TemporaryDirectory(prefix='531-driver-', dir=os.environ['TMPDIR']) as directory:
+            files = {name: digest(PACKET / name) for name in native.FILES}
+            created, received = [], {}
+            def make_directory(attempt, path):
+                created.append(path)
+                return {'path': path}
+            def receive(attempt, ssh, path, data, **kwargs):
+                received[path] = data
+                return {'operation': 'receive'}
+            def read(attempt, ssh, path, **kwargs):
+                return received[path]
+            attempts = [type('Attempt', (), {'root': Path(directory) / ('native-session-' + tag)})()
+                        for tag in ('c' * 32, 'd' * 32)]
+            for attempt in attempts:
+                attempt.root.mkdir()
+            with patch.object(native, 'channel_directory', side_effect=make_directory), \
+                 patch.object(native, 'channel_receive', side_effect=receive), \
+                 patch.object(native, 'channel_read', side_effect=read):
+                drivers = [native.stage_proof_driver(attempt, ['ssh'], files) for attempt in attempts]
+            self.assertNotEqual(drivers[0], drivers[1])
+            self.assertEqual(created, drivers)
+            for driver, tag in zip(drivers, ('c' * 32, 'd' * 32)):
+                self.assertEqual(driver, str(native.session.BASE / ('proof-driver-' + tag)))
+            # A guest readback that differs from this runner's own bytes refuses.
+            with patch.object(native, 'channel_directory', side_effect=make_directory), \
+                 patch.object(native, 'channel_receive', side_effect=receive), \
+                 patch.object(native, 'channel_read', return_value=b'foreign driver'):
+                with self.assertRaisesRegex(RuntimeError, 'transferred proof driver differs'):
+                    native.stage_proof_driver(attempts[0], ['ssh'], files)
+
+    def test_no_packet_stream_appends_and_a_returned_controller_is_retired(self):
+        import linux_native_run as native
+        source = (PACKET / 'linux_native_run.py').read_text()
+        self.assertNotIn('StandardOutput=append:', source, 'appended streams concatenate JSON documents')
+        self.assertNotIn('StandardError=append:', source)
+        self.assertEqual(source.count('StandardOutput=truncate:'), 3)
+        self.assertEqual(source.count('StandardError=truncate:'), 3)
+        with tempfile.TemporaryDirectory(prefix='531-retire-', dir=os.environ['TMPDIR']) as directory:
+            attempt = type('Attempt', (), {'root': Path(directory)})()
+            unit = 'effigy-829-' + 'e' * 32
+            stopped = []
+            with patch.object(native, 'stop_owned_unit', side_effect=lambda *args: stopped.append(args)):
+                terminal = {'ActiveState': 'active', 'SubState': 'exited', 'MainPID': '0'}
+                self.assertIs(native.retire_owned_controller(attempt, unit, terminal, Path(directory)), terminal)
+                self.assertEqual(stopped, [(attempt, unit, Path(directory))])
+                stopped.clear()
+                native.retire_owned_controller(attempt, unit, {'ActiveState': 'inactive'}, Path(directory))
+                self.assertEqual(stopped, [], 'an already inactive controller needs no stop')
 
     def test_one_shot_marker_consumes_replay_at_the_runtime_entry(self):
         import runtime
