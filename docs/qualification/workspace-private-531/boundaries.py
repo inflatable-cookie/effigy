@@ -504,7 +504,11 @@ class Boundaries(unittest.TestCase):
     def test_packet_only_source_difference_accepted_across_cells(self):
         import common
         alternate = '3' * 40
-        changed = ['docs/qualification/workspace-private-531/common.py']
+        changed = ['docs/knowledge/contracts/release.md']
+        self.assertTrue(common.packet_only_paths(changed))
+        for path in ('src/runner/mod.rs', 'crates/effigy-kernel/src/lib.rs',
+                     'config/tasks.toml', 'Cargo.toml', 'Cargo.lock'):
+            self.assertFalse(common.packet_only_paths([path]), path)
         value = inputs()
         value['backends'][0].update(source_head=alternate,
                                      candidate_receipt=dict(value['backends'][0]['candidate_receipt'],

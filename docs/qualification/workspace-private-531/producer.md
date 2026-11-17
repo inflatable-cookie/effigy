@@ -8,6 +8,9 @@ runs through the installed Effigy selectors named below — never raw Cargo —
 and every build happens at a recorded head in an explicitly authorized
 preparation window, never inside a proof execution.
 
+Docs-only differences are packet-equivalent: docs are not compiled into the
+shipped binary, and the only `include_str!` of a docs path is a test fixture.
+
 ## Binding principles
 
 - One frozen head `H`: the exact reviewed source head Queue records for the
