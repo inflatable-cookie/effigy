@@ -189,8 +189,10 @@ is unchanged when the switch is absent. Any other switch value refuses.
 
 The observed `effigy-release` row must be `Running` (arch aarch64/arm64, runtime
 `containerd`) before the producer. It is observed again after the producer, and any
-change refuses before the artifact is checked. Uncertain closure stays Unknown and
-spent: no retry, no shared-profile stop. Toolchain identity is SO-4 missing until a
+change refuses before the artifact is checked. Uncertain closure stays Unknown:
+diagnose the failure, fix if needed, and re-run with fresh inputs; acceptance
+is a green run. The same inputs digest keeps its one-shot marker as replay
+protection, so a re-run needs no code change. No shared-profile stop. Toolchain identity is SO-4 missing until a
 supported owned-builder exec exists.
 
 Stage2 budget is pinned in the request as `budget`: `e9_reserved_bytes` and

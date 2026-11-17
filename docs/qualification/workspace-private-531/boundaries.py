@@ -21,6 +21,7 @@ def inputs():
     cells = []
     for backend in BACKENDS:
         cells.append(dict(backend=backend, source_head=HEAD, old_source_head='2' * 40,
+            candidate_helper_protocol=5, old_helper_protocol=5,
             old_source_receipt=dict(source_head='2' * 40, sha256='c' * 64),
             candidate_receipt=dict(source_head=HEAD, features=['workspace-private-qualification'], sha256='a' * 64),
             production_receipt=dict(source_head=HEAD, features=[], sha256='b' * 64),
@@ -81,7 +82,7 @@ def complete_cells():
 
 
 def invocation_record(backend, cell, base, source_head=HEAD, inputs_sha256='f' * 64, complete=None,
-                      label=None):
+                      label=None, equivalence=None):
     # An owned, original-shaped invocation receipt over real fixture files; the
     # original complete receipt lives in a real pinned root whose identity is
     # observed, never asserted, and its exact bytes are retained as an export.
@@ -130,6 +131,8 @@ def invocation_record(backend, cell, base, source_head=HEAD, inputs_sha256='f' *
     if cell['driver'] == 'ssh':
         binding.update(ssh_alias=cell.get('ssh_alias', 'effigy-531-vault'), ssh_config=cell['ssh_config'],
                        ssh_known_hosts=cell['ssh_known_hosts'], linux_capacity=cell['linux_capacity'],linux_preparation=cell['linux_preparation'])
+    if equivalence is not None:
+        binding['source_equivalence'] = equivalence
     record = {'schema': 'effigy.workspace-private-backend-invocation.v1', 'backend': backend, 'exit_code': 0,
               'source_unchanged': True, 'positive': True,
               'host': binding.get('ssh_alias', 'local'), 'receipt': str(complete_path),
@@ -439,14 +442,78 @@ class Boundaries(unittest.TestCase):
         for cell in value['backends']:
             validate_go(go(cell), 'f' * 64, cell, HEAD)
 
-    def test_helper_protocol_admission_requires_matching_old_source(self):
+    def test_frozen_protocols_guard_without_git_on_ssh_route(self):
         import common
         value = inputs()
-        with patch.object(common, 'helper_protocol', side_effect=lambda revision: 5 if revision == HEAD else 4):
-            with self.assertRaisesRegex(RuntimeError, r'old source speaks protocol 4; candidate speaks protocol 5'):
+        with tempfile.TemporaryDirectory(prefix='531-ssh-route-', dir=os.environ['TMPDIR']) as directory:
+            # The SSH route's driver parent is not a git repository: guest-side
+            # validation must never shell out, and still enforces the guard.
+            driver_parent = Path(directory) / 'proof-driver-1'
+            driver_parent.mkdir()
+            with patch.object(common, 'REPOSITORY', driver_parent), \
+                 patch.object(common, 'run', side_effect=AssertionError('guest-side validation ran a command')):
+                self.assertEqual(validate_inputs(value, HEAD), value)
+                mismatch = copy.deepcopy(value)
+                mismatch['backends'][0]['old_helper_protocol'] = 4
+                with self.assertRaisesRegex(RuntimeError, r'old source speaks protocol 4; candidate speaks protocol 5'):
+                    validate_inputs(mismatch, HEAD)
+                missing = copy.deepcopy(value)
+                del missing['backends'][0]['candidate_helper_protocol']
+                with self.assertRaisesRegex(RuntimeError, 'frozen helper protocols required'):
+                    validate_inputs(missing, HEAD)
+
+    def test_pinned_tree_protocol_must_match_when_readable(self):
+        value = inputs()
+        with tempfile.TemporaryDirectory(prefix='531-pinned-tree-', dir=os.environ['TMPDIR']) as directory:
+            tree = Path(directory) / 'source'
+            supervise = tree / 'crates/effigy-kernel/src'
+            supervise.mkdir(parents=True)
+            (supervise / 'supervise.rs').write_text('pub const HELPER_PROTOCOL: u32 = 6;\n')
+            value['backends'][1]['source_root'] = str(tree)
+            with self.assertRaisesRegex(RuntimeError, 'pinned source tree speaks another helper protocol'):
                 validate_inputs(value, HEAD)
-        with patch.object(common, 'helper_protocol', return_value=5):
+            (supervise / 'supervise.rs').write_text('pub const HELPER_PROTOCOL: u32 = 5;\n')
             self.assertEqual(validate_inputs(value, HEAD), value)
+
+    def test_host_verifies_frozen_protocols_and_equivalence(self):
+        import common
+        value = inputs()
+        protocols = {HEAD: 5, '2' * 40: 5}
+        with patch.object(common, 'helper_protocol', side_effect=lambda revision: protocols[revision]):
+            self.assertEqual(common.verify_host_inputs(value, HEAD), value)
+            protocols['2' * 40] = 4
+            with self.assertRaisesRegex(RuntimeError, 'frozen old protocol differs'):
+                common.verify_host_inputs(value, HEAD)
+        alternate = '3' * 40
+        changed = ['docs/qualification/workspace-private-531/common.py', 'changelog.d/1027-packet.added.md']
+        value['source_equivalence'] = {'baseline': HEAD, 'alternates': {alternate: changed}}
+        with patch.object(common, 'helper_protocol', return_value=5), \
+             patch.object(common, 'diff_names', return_value=list(reversed(changed))):
+            self.assertEqual(common.verify_host_inputs(value, HEAD), value)
+            with patch.object(common, 'diff_names',
+                              return_value=['docs/qualification/workspace-private-531/other.py']), \
+                 self.assertRaisesRegex(RuntimeError, 'frozen changed-file list differs'):
+                common.verify_host_inputs(value, HEAD)
+            with self.assertRaisesRegex(RuntimeError, 'host inputs do not bind the live source head'):
+                common.verify_host_inputs(value, '4' * 40)
+
+    def test_packet_only_source_difference_accepted_across_cells(self):
+        import common
+        alternate = '3' * 40
+        changed = ['docs/qualification/workspace-private-531/common.py']
+        value = inputs()
+        value['backends'][0]['source_head'] = alternate
+        value['source_equivalence'] = {'baseline': HEAD, 'alternates': {alternate: changed}}
+        with patch.object(common, 'run', side_effect=AssertionError('guest-side validation ran a command')):
+            self.assertEqual(validate_inputs(value, HEAD), value)
+            unrecorded = copy.deepcopy(value)
+            del unrecorded['source_equivalence']
+            with self.assertRaisesRegex(RuntimeError, 'backend candidate source differs'):
+                validate_inputs(unrecorded, HEAD)
+            foreign = copy.deepcopy(value)
+            foreign['source_equivalence'] = {'baseline': HEAD, 'alternates': {alternate: ['src/runner/mod.rs']}}
+            with self.assertRaisesRegex(RuntimeError, 'packet-only scope'):
+                validate_inputs(foreign, HEAD)
 
     def test_subset_old_source_or_fake_candidate_never_qualifies(self):
         for mutate in (
@@ -462,6 +529,8 @@ class Boundaries(unittest.TestCase):
             lambda v: v['backends'][0].pop('guest_install_identity'),
             lambda v: v['backends'][0]['guest_install_identity'].update(sha256='invalid'),
             lambda v: v['backends'][0]['old_binary'].update(sha256='a' * 64),
+            lambda v: v['backends'][0].update(old_helper_protocol=4),
+            lambda v: v['backends'][0].update(candidate_helper_protocol=6),
         ):
             value = inputs()
             mutate(value)
@@ -1125,6 +1194,64 @@ class Boundaries(unittest.TestCase):
                 self.assertFalse(hasattr(aggregate, symbol), 'aggregate verifier imports ' + symbol)
             self.assertEqual(sorted(str(p) for p in base.rglob('*')), before,
                              'the aggregate verifier must not write or mutate anything')
+
+    def test_aggregate_accepts_packet_only_mixed_source(self):
+        import io
+        import aggregate
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory(prefix='531-mixed-source-', dir=os.environ['TMPDIR']) as directory:
+            base = Path(directory)
+            cells = inputs()['backends']
+            cells[2]['ssh_alias'] = 'effigy-531-vault'
+            alternate = '3' * 40
+            changed = ['docs/qualification/workspace-private-531/common.py',
+                       'changelog.d/1027-packet.added.md']
+            equivalence = {'baseline': HEAD, 'alternates': {alternate: changed}}
+            linux_cell = copy.deepcopy(cells[2])
+            linux_cell.update(source_head=alternate,
+                              candidate_receipt=dict(linux_cell['candidate_receipt'], source_head=alternate),
+                              production_receipt=dict(linux_cell['production_receipt'], source_head=alternate))
+            paths = {}
+            for backend, cell in zip(BACKENDS, cells):
+                if backend == 'linux':
+                    path, _ = invocation_record('linux', linux_cell, base, source_head=alternate,
+                                               equivalence=equivalence)
+                else:
+                    path, _ = invocation_record(backend, cell, base)
+                paths[backend] = path
+
+            def invoke(source_head=HEAD, overrides=None):
+                table = dict(paths)
+                if overrides:
+                    table.update(overrides)
+                argv = ['aggregate.py', '--source-head', source_head]
+                for backend in BACKENDS:
+                    argv += ['--receipt', '{}={}'.format(backend, table[backend]),
+                             '--receipt-sha256', '{}={}'.format(backend, digest(table[backend]))]
+                with patch.object(sys, 'argv', argv), redirect_stdout(io.StringIO()) as printed:
+                    aggregate.main()
+                return json.loads(printed.getvalue())
+
+            verdict = invoke()
+            self.assertTrue(verdict['qualified'])
+            self.assertEqual(verdict['source_equivalence'],
+                             {'baseline_head': HEAD, 'equivalent_heads': [alternate],
+                              'changed_files': sorted(changed)})
+
+            # An unrecorded different head still refuses, as does a non-packet diff.
+            stray = copy.deepcopy(linux_cell)
+            stray.update(source_head='4' * 40,
+                         candidate_receipt=dict(linux_cell['candidate_receipt'], source_head='4' * 40),
+                         production_receipt=dict(linux_cell['production_receipt'], source_head='4' * 40))
+            stray_path, _ = invocation_record('linux', stray, base, source_head='4' * 40, label='linux-stray')
+            with self.assertRaisesRegex(RuntimeError, 'stale or mixed-source receipt'):
+                invoke(overrides={'linux': stray_path})
+            foreign_cell = copy.deepcopy(linux_cell)
+            foreign_equivalence = {'baseline': HEAD, 'alternates': {alternate: ['src/runner/mod.rs']}}
+            foreign_path, _ = invocation_record('linux', foreign_cell, base, source_head=alternate,
+                                               label='linux-foreign', equivalence=foreign_equivalence)
+            with self.assertRaisesRegex(RuntimeError, 'packet-only scope'):
+                invoke(overrides={'linux': foreign_path})
 
 # This route also selects the new owned-child recovery boundaries.
 from recovery_boundaries import RecoveryBoundaries

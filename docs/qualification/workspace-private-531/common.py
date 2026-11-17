@@ -16,6 +16,90 @@ SSH_CONTROL = SCRATCH / '531-linux-control'
 PACKET = Path(__file__).resolve().parent
 REPOSITORY = PACKET.parents[2]
 HEX = re.compile(r'[0-9a-f]{64}')
+HELPER_PROTOCOL_RE = re.compile(r'^pub const HELPER_PROTOCOL: u32 = (\d+);$', re.MULTILINE)
+PACKET_ONLY_PREFIXES = ('docs/qualification/', 'changelog.d/')
+SUPERVISE_RELATIVE = Path('crates/effigy-kernel/src/supervise.rs')
+
+
+def packet_only_paths(files):
+    """True when every changed file stays inside the packet/docs scopes allowed to drift between frozen heads."""
+    return (isinstance(files, list) and len(files) > 0
+            and all(isinstance(name, str) and name and name == name.strip()
+                    and not name.startswith('/') and '..' not in name.split('/')
+                    and any(name.startswith(prefix) for prefix in PACKET_ONLY_PREFIXES)
+                    for name in files))
+
+
+def check_equivalence_record(holder):
+    """Validate the frozen packet-only source-equivalence record on inputs or an invocation binding.
+
+    Shape: {'baseline': <40-hex>, 'alternates': {<40-hex>: [changed files]}}.
+    Pure data check: no git runs here, on either route."""
+    record = holder.get('source_equivalence')
+    if record is None:
+        return None
+    require(isinstance(record, dict) and set(record) == {'baseline', 'alternates'},
+            'frozen source equivalence must name a baseline and its alternates')
+    require(re.fullmatch(r'[0-9a-f]{40}', record['baseline']),
+            'frozen equivalence baseline is not a source head')
+    alternates = record['alternates']
+    require(isinstance(alternates, dict) and alternates,
+            'frozen equivalence names no alternate source')
+    for head, files in alternates.items():
+        require(re.fullmatch(r'[0-9a-f]{40}', head) and head != record['baseline'],
+                'frozen equivalence alternate is not a distinct source head')
+        require(packet_only_paths(files) and len(set(files)) == len(files),
+                'frozen equivalence files escape the packet-only scope')
+    return record
+
+
+def allowed_source_heads(holder, head):
+    """Every head the frozen record accepts alongside the reference head. No git runs here."""
+    require(re.fullmatch(r'[0-9a-f]{40}', head), 'reference source head required')
+    record = check_equivalence_record(holder)
+    if record is None:
+        return frozenset({head})
+    return frozenset({head, record['baseline'], *record['alternates']})
+
+
+def diff_names(a, b, *, root=None):
+    """Host-only source diff: the exact changed-file list between two frozen heads. Never call on the guest route."""
+    for revision in (a, b):
+        require(re.fullmatch(r'[0-9a-f]{40}', revision), 'source diff needs two full commits')
+    return [line for line in run(['git', 'diff', '--name-only', a, b],
+                                 cwd=REPOSITORY if root is None else root).stdout.decode().splitlines()
+            if line]
+
+
+def pinned_tree_protocol(root):
+    """Read the helper protocol from a pinned source tree when it is readable. No git runs here."""
+    if not isinstance(root, str) or not root:
+        return None
+    try:
+        source = (Path(root) / SUPERVISE_RELATIVE).read_bytes().decode('utf-8')
+    except (OSError, UnicodeDecodeError):
+        return None
+    match = HELPER_PROTOCOL_RE.search(source)
+    return int(match.group(1)) if match else None
+
+
+def verify_host_inputs(value, head, *, root=None):
+    """Host-only truth check before GO: frozen protocols and equivalence lists must match the git checkout."""
+    for cell in value['backends']:
+        for key in ('candidate_helper_protocol', 'old_helper_protocol'):
+            require(type(cell.get(key)) is int, 'frozen helper protocol required before GO')
+        require(helper_protocol(cell['source_head']) == cell['candidate_helper_protocol'],
+                'frozen candidate protocol differs from source ' + cell['source_head'])
+        require(helper_protocol(cell['old_source_head']) == cell['old_helper_protocol'],
+                'frozen old protocol differs from source ' + cell['old_source_head'])
+    record = check_equivalence_record(value)
+    if record is not None:
+        require(head == record['baseline'] or head in record['alternates'],
+                'host inputs do not bind the live source head')
+        for alternate, files in record['alternates'].items():
+            require(sorted(diff_names(record['baseline'], alternate, root=root)) == sorted(files),
+                    'frozen changed-file list differs from the source diff')
+    return value
 
 
 def require(condition, message):
@@ -185,21 +269,31 @@ def isolated_ssh_prefix(alias, config_item, known_item, control_root, excluded_r
 
 
 def validate_inputs(value, head):
+    # Guest-safe: frozen values only. Host truth is checked separately by
+    # verify_host_inputs where a git checkout exists; this path never runs git,
+    # so the SSH route's driver parent need not be a repository.
     require(value['schema'] == 'effigy.workspace-private-proof.v1', 'unknown input schema')
-    require(value['source_head'] == head, 'candidate is not the immutable proof head')
+    allowed = allowed_source_heads(value, head)
+    require(value['source_head'] in allowed, 'candidate is not the immutable proof head')
     require(tuple(cell['backend'] for cell in value['backends']) == BACKENDS,
             'all three native backends are required, in order')
-    candidate_protocol = helper_protocol(head)
     for cell in value['backends']:
         root = qualification_path(cell.get('qualification_root'))
         require(not root.is_relative_to(SSH_CONTROL) and not SSH_CONTROL.is_relative_to(root),
                 'qualification root must exclude SSH control')
-        require(cell['source_head'] == head, 'backend candidate source differs')
-        require(cell['old_source_head'] != head and re.fullmatch(r'[0-9a-f]{40}', cell['old_source_head']),
+        require(cell['source_head'] in allowed, 'backend candidate source differs')
+        require(cell['old_source_head'] not in allowed
+                and re.fullmatch(r'[0-9a-f]{40}', cell['old_source_head']),
                 'genuine old source identity required')
-        old_protocol = helper_protocol(cell['old_source_head'])
+        candidate_protocol = cell.get('candidate_helper_protocol')
+        old_protocol = cell.get('old_helper_protocol')
+        require(type(candidate_protocol) is int and type(old_protocol) is int,
+                'frozen helper protocols required')
         require(old_protocol == candidate_protocol,
                 f'helper protocol mismatch: old source speaks protocol {old_protocol}; candidate speaks protocol {candidate_protocol}')
+        tree_protocol = pinned_tree_protocol(cell.get('source_root'))
+        require(tree_protocol is None or tree_protocol == candidate_protocol,
+                'pinned source tree speaks another helper protocol')
         require(cell['old_source_receipt']['source_head'] == cell['old_source_head'], 'old receipt source mismatch')
         require(cell['candidate_receipt']['source_head'] == head, 'candidate build receipt source mismatch')
         require(cell['candidate_receipt']['features'] == ['workspace-private-qualification'],
@@ -225,7 +319,7 @@ def validate_inputs(value, head):
                 'Linux must execute natively in its separately approved Linux host')
         if cell['driver'] == 'ssh':
             import linux_capacity_contract as capacity
-            capacity.verify_preparation(cell.get('linux_capacity'), head)
+            capacity.verify_preparation(cell.get('linux_capacity'), head, allowed=allowed)
             pins = cell['linux_capacity']['plan']['phases']['activation']['images']
             native_root = Path(pins['preparation']['mountpoint'])
             workspace = Path(pins['workspace']['mountpoint'])

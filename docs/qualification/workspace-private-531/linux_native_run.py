@@ -472,19 +472,23 @@ def execute_proof(root, inputs, inputs_hash, go_index, go_hash):
                    'proof authority bytes changed')
     head=common.source_head(Path(__file__).resolve().parents[3])
     value=common.validate_inputs(common.load(inputs),head)
+    # Host-side truth where this checkout exists: frozen protocols and the
+    # frozen packet-only equivalence must match git history before effects.
+    common.verify_host_inputs(value,head)
+    allowed=common.allowed_source_heads(value,head)
     cell=next(cell for cell in value['backends'] if cell['backend']=='linux')
     go=common.load(common.artifact(common.load(go_index)['linux']))
     common.validate_go(go,inputs_hash,cell,head)
     preparation=common.load(common.artifact(cell['linux_preparation']))
     common.require(preparation['schema']=='effigy.linux-physical-preparation-complete.v1'
-                   and preparation['source_head']==head and preparation['qualification_credit'] is False,
+                   and preparation['source_head'] in allowed and preparation['qualification_credit'] is False,
                    'Linux preparation is not the frozen candidate')
     for name,item in preparation['cell'].items():
         common.require(cell.get(name)==item,'Linux full inputs change a prepared field: '+name)
     common.require(cell['native_writer_gate']==cell['linux_capacity']['plan']['phases']['live']['origin']['nonce'],
                    'proof writer gate is outside its frozen physical plan')
     return execute(root,inputs,'full',proof=dict(cell=cell,inputs_sha256=inputs_hash,go_sha256=go_hash,go_index=str(go_index),
-                   deadline=time.monotonic()+cell['budget_seconds']))
+                   allowed_sources=sorted(allowed),deadline=time.monotonic()+cell['budget_seconds']))
 
 
 def execute(root, seed, mode, *, proof=None):
@@ -551,7 +555,9 @@ def execute(root, seed, mode, *, proof=None):
         import linux_native_contract as contract
         import linux_capacity_contract as capacity
         capacity_packet = common.load(common.artifact(physical)) if proof is None else physical
-        capacity.verify_preparation(capacity_packet, value['cell']['source_head'], evidence_kind=evidence_kind)
+        allowed = set(proof['allowed_sources']) if proof is not None and proof.get('allowed_sources') else None
+        capacity.verify_preparation(capacity_packet, value['cell']['source_head'], evidence_kind=evidence_kind,
+                                    allowed=allowed)
         groups = capacity_packet['plan']['phases']['live']['cgroups']
         unit = next(group for group in groups if group != capacity.ENGINE_GROUP).rsplit('/',1)[-1].removesuffix('.service')
         common.require(__import__('re').fullmatch(r'effigy-829-[0-9a-f]{32}', unit), 'frozen controller identity differs')
@@ -692,7 +698,9 @@ def execute(root, seed, mode, *, proof=None):
             (attempt.root / 'fixture.tar').write_bytes(archive)
         if passed and capacity_packet is not None:
             capacity_originals['after'] = contract.observe(root, attempt, ssh, capacity_packet['plan'], 'after')
-            capacity.verify_full(capacity_packet, capacity_originals, value['cell']['source_head'], evidence_kind=evidence_kind)
+            proof_allowed = set(proof['allowed_sources']) if proof is not None and proof.get('allowed_sources') else None
+            capacity.verify_full(capacity_packet, capacity_originals, value['cell']['source_head'],
+                                 evidence_kind=evidence_kind, allowed=proof_allowed)
             common.exclusive(attempt.root / 'capacity-originals.json', capacity_originals)
         result = dict(binding, passed=passed, terminal=terminal, observation_failure=observation_failure)
         common.exclusive(attempt.root / 'outcome.json', result)

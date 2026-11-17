@@ -190,11 +190,16 @@ def verify_observation(witness, expected):
         raise ValueError('loop originals or independently frozen facts are malformed') from error
 
 
-def validate_plan(plan, head, *, evidence_kind='proof'):
-    """The input/GO hash freezes every observation's expectations before effects."""
+def validate_plan(plan, head, *, evidence_kind='proof', allowed=None):
+    """The input/GO hash freezes every observation's expectations before effects.
+
+    `allowed` is the frozen packet-only head set the caller accepts alongside
+    `head`; without it only `head` itself is accepted."""
+    accepted = {head} if allowed is None else set(allowed)
+    require(head in accepted, 'reference source head is outside the accepted set')
     require(isinstance(plan, dict) and set(plan) == {'schema', 'source_head', 'mechanism', 'phases', 'live_observers'}
             and plan['schema'] == 'effigy.linux-capacity-plan.v1'
-            and plan['source_head'] == head and plan['mechanism'] == MECHANISM
+            and plan['source_head'] in accepted and plan['mechanism'] == MECHANISM
             and set(plan['phases']) == PHASES, 'complete frozen Linux capacity plan required')
     observers = plan['live_observers']
     require(isinstance(observers,list) and len(observers) == len(set(observers)) == 3
@@ -204,7 +209,7 @@ def validate_plan(plan, head, *, evidence_kind='proof'):
     nonces, observers = set(), set()
     for phase, expected in plan['phases'].items():
         origin = expected['origin']
-        require(origin['source_head'] == head and origin['phase'] == phase
+        require(origin['source_head'] in accepted and origin['phase'] == phase
                 and origin['evidence_kind'] == evidence_kind, 'capacity phase source or authority differs')
         identity = {key: expected[key] for key in ('images', 'executables', 'engine_configs')}
         identity['programs'] = origin['programs']
@@ -220,17 +225,17 @@ def validate_plan(plan, head, *, evidence_kind='proof'):
     return plan
 
 
-def verify_preparation(packet, head, *, evidence_kind='proof'):
+def verify_preparation(packet, head, *, evidence_kind='proof', allowed=None):
     require(isinstance(packet, dict) and set(packet) == {'plan', 'originals'},
             'source-bound Linux preparation originals required')
-    plan = validate_plan(packet['plan'], head, evidence_kind=evidence_kind)
+    plan = validate_plan(packet['plan'], head, evidence_kind=evidence_kind, allowed=allowed)
     require(set(packet['originals']) == {'setup', 'activation'}, 'setup and activation originals required')
     return {phase: verify_observation(packet['originals'][phase], plan['phases'][phase])
             for phase in ('setup', 'activation')}
 
 
-def verify_full(packet, observations, head, *, evidence_kind='proof'):
-    verify_preparation(packet, head, evidence_kind=evidence_kind)
+def verify_full(packet, observations, head, *, evidence_kind='proof', allowed=None):
+    verify_preparation(packet, head, evidence_kind=evidence_kind, allowed=allowed)
     require(isinstance(observations, dict) and set(observations) == {'before', 'live', 'after'},
             'fresh before/live/after Linux writer originals required')
     import copy

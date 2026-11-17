@@ -8,7 +8,8 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (BACKENDS, PACKET, SCRATCH, artifact, digest, exclusive, exclusive_bytes, load, require, run,
-                    open_qualification_root, qualification_path, source_head, ssh_prefix, validate_go, validate_inputs)
+                    open_qualification_root, qualification_path, source_head, ssh_prefix, validate_go, validate_inputs,
+                    verify_host_inputs)
 
 # Receipt exports are small bounded JSON documents; anything larger refuses
 # before retention on every driver.
@@ -32,6 +33,8 @@ def main():
             'input must be a scratch artifact')
     require(digest(inputs) == args.sha256, 'Queue-bound input hash mismatch')
     value = validate_inputs(load(inputs), head)
+    # Host-side truth before GO: frozen protocols and equivalence lists must match this checkout's git history.
+    verify_host_inputs(value, head)
     # Each entry validates exactly its own scoped authority.
     go_bindings = Path(args.go_bindings)
     require(digest(go_bindings) == args.go_sha256, 'Queue-bound GO receipt index differs')
@@ -97,6 +100,7 @@ def main():
                    'source_head': head, 'programs': programs, 'contract': value['schema'],
                    'candidate': cell['candidate'], 'candidate_receipt': cell['candidate_receipt'],
                    'production': cell['production'], 'production_receipt': cell['production_receipt'],
+                   'source_equivalence': value.get('source_equivalence'),
                    'old_source_head': cell['old_source_head'], 'old_binary': cell['old_binary'],
                    'old_source_receipt': cell['old_source_receipt'],
                    'inputs': {'path': str(inputs), 'sha256': args.sha256},
