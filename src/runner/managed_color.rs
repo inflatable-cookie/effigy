@@ -5,32 +5,62 @@ use std::ffi::{OsStr, OsString};
 
 use effigy_kernel::custody::EnvValue;
 
+const FORCED_COLOR: [(&str, &str); 3] = [
+    ("CARGO_TERM_COLOR", "always"),
+    ("CLICOLOR_FORCE", "1"),
+    ("FORCE_COLOR", "1"),
+];
+const PREFERENCES: [&str; 8] = [
+    "NO_COLOR",
+    "CARGO_TERM_COLOR",
+    "CLICOLOR",
+    "CLICOLOR_FORCE",
+    "FORCE_COLOR",
+    "EFFIGY_COLOR",
+    "ANSI_COLORS_DISABLED",
+    "NODE_DISABLE_COLORS",
+];
+
+pub(super) fn ambient_preferences() -> BTreeMap<OsString, EnvValue> {
+    PREFERENCES
+        .into_iter()
+        .chain(["CI", "TERM"])
+        .filter_map(|key| std::env::var_os(key).map(|value| (key.into(), EnvValue::Plain(value))))
+        .collect()
+}
+
 pub(super) fn apply(env: &mut BTreeMap<OsString, EnvValue>, ansi: bool) {
-    const PREFERENCES: [&str; 8] = [
-        "NO_COLOR",
-        "CARGO_TERM_COLOR",
-        "CLICOLOR",
-        "CLICOLOR_FORCE",
-        "FORCE_COLOR",
-        "EFFIGY_COLOR",
-        "ANSI_COLORS_DISABLED",
-        "NODE_DISABLE_COLORS",
-    ];
+    if !should_apply(env, ansi) {
+        return;
+    }
+    for (key, value) in FORCED_COLOR {
+        env.insert(key.into(), EnvValue::Plain(value.into()));
+    }
+}
+
+pub(super) fn container_env_names(env: &BTreeMap<OsString, EnvValue>, ansi: bool) -> Vec<String> {
+    if should_apply(env, ansi) {
+        FORCED_COLOR
+            .iter()
+            .map(|(key, _)| (*key).to_owned())
+            .collect()
+    } else {
+        Vec::new()
+    }
+}
+
+fn should_apply(env: &BTreeMap<OsString, EnvValue>, ansi: bool) -> bool {
     if !ansi
         || env.contains_key(OsStr::new("CI"))
         || PREFERENCES
             .iter()
             .any(|key| env.contains_key(OsStr::new(key)))
-    {
-        return;
-    }
-    if matches!(env.get(OsStr::new("TERM")), Some(EnvValue::Plain(term)) if term == "dumb")
+        || matches!(env.get(OsStr::new("TERM")), Some(EnvValue::Plain(term)) if term == "dumb")
         || matches!(env.get(OsStr::new("TERM")), Some(EnvValue::Secret(_)))
     {
-        return;
+        return false;
     }
-    env.insert("CARGO_TERM_COLOR".into(), EnvValue::Plain("always".into()));
-    env.insert("CLICOLOR_FORCE".into(), EnvValue::Plain("1".into()));
+    true
 }
 
 /// Non-secret presentation capability, fixed before a detached host handoff.
@@ -98,7 +128,10 @@ mod tests {
         assert!(
             matches!(enabled.env.get(OsStr::new("CLICOLOR_FORCE")), Some(EnvValue::Plain(v)) if v == "1")
         );
-        assert_eq!(enabled.env.len(), 2);
+        assert!(
+            matches!(enabled.env.get(OsStr::new("FORCE_COLOR")), Some(EnvValue::Plain(v)) if v == "1")
+        );
+        assert_eq!(enabled.env.len(), 3);
         assert!(fake_spec(false, None).env.is_empty());
         for (key, value) in [
             ("NO_COLOR", ""),
@@ -119,5 +152,32 @@ mod tests {
                 matches!(spec.env.get(OsStr::new(key)), Some(EnvValue::Plain(v)) if v == value)
             );
         }
+    }
+
+    #[test]
+    fn container_color_env_is_forwarded_only_when_the_front_allows_forcing() {
+        let expected = [
+            "CARGO_TERM_COLOR".to_owned(),
+            "CLICOLOR_FORCE".to_owned(),
+            "FORCE_COLOR".to_owned(),
+        ];
+        assert_eq!(container_env_names(&BTreeMap::new(), true), expected);
+        assert!(container_env_names(&BTreeMap::new(), false).is_empty());
+        for key in [
+            "NO_COLOR",
+            "CARGO_TERM_COLOR",
+            "CLICOLOR",
+            "CLICOLOR_FORCE",
+            "FORCE_COLOR",
+            "EFFIGY_COLOR",
+            "ANSI_COLORS_DISABLED",
+            "NODE_DISABLE_COLORS",
+            "CI",
+        ] {
+            let env = BTreeMap::from([(key.into(), EnvValue::Plain("1".into()))]);
+            assert!(container_env_names(&env, true).is_empty(), "{key}");
+        }
+        let term = BTreeMap::from([("TERM".into(), EnvValue::Plain("dumb".into()))]);
+        assert!(container_env_names(&term, true).is_empty());
     }
 }
