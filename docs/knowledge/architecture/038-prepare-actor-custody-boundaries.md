@@ -6,6 +6,12 @@ Effigy owns, what it deliberately does not, and the exact interfaces a bounded
 implementation tranche would have to supply. Envelope, holds and evidence stay
 as Oxide stated them.
 
+Revision: effigy#1023 corrects this document so it composes with Oxide's merged
+design half (Oxide #313, `b069e923`). It changes the publisher name, the clock
+payload and origin rules, the wait and owner-loss graph, the receipt shape, and
+the first-effect claim. Where this revision and the earlier text disagree, this
+revision governs.
+
 Owner: Effigy runtime kernel and runner maintainers for the interfaces and
 lifecycle; Oxide's owner for the consumer graph, oracle set and accounting
 decision.
@@ -34,16 +40,25 @@ Three things this document is not:
 
 ## Evidence base
 
-Claims here were re-checked at `522c939e` against the pinned head
-`dc6f5abf` that the effigy#1017 report used. Two of that report's cited files
-changed between the two heads: `src/cli/entrypoint.rs` gained the nested
-lock-wait export at `:144-145`, after the deadline configuration at `:23-27`;
-and `docs/knowledge/contracts/052-runtime-kernel-contract.md` changed in two
-hunks, one line re-expanded to four at `:3730` and 90 new lines at `:4480-4569`.
-Both 052 hunks sit after every 052 line this document cites, so the cited text
-and its line numbers are unchanged. Every custody, clock, admission, gate, ring
-and store seam below therefore keeps both its shape and its line numbers,
-including the corrections the independent review recorded:
+Claims here were first checked at `522c939e` against the pinned head `dc6f5abf`
+that the effigy#1017 report used. Two of that report's cited files changed
+between the two heads: `src/cli/entrypoint.rs` gained the nested lock-wait
+export at `:144-145`, after the deadline configuration at `:23-27`; and
+`docs/knowledge/contracts/052-runtime-kernel-contract.md` changed in two hunks,
+one line re-expanded to four at `:3730` and 90 new lines at `:4480-4569`. Both
+052 hunks sit after every 052 line this document cites.
+
+Effigy#1023 re-read the seams it changes at `50a9462d` (the main head that
+carries #1022 at `c4d33736`). Those reads are cited inline. Other citations
+keep the `522c939e` evidence base. Oxide's design at `b069e923` is not reachable
+from this checkout; its interface names below come from the Oxide planner's
+provisional proposal as quoted in the effigy#1023 brief, and this document does
+not treat them as agreed.
+
+Review history: the first review of this document (5935018539) failed and is
+kept as history. Review 5935123400 is the review of the `50a9462d` text.
+
+Verified corrections the independent review recorded earlier still hold:
 
 - the deadline is wired, not dormant: `src/cli/entrypoint.rs:23-27` configures
   it and `src/runner/task_engine/kernel.rs:113-116` reaches `capped()`
@@ -55,6 +70,13 @@ including the corrections the independent review recorded:
   (`crates/effigy-kernel/src/supervise/memory.rs:28`) and
   `ForegroundRun::closure_pin`
   (`crates/effigy-kernel/src/run/foreground.rs:198`).
+
+## Naming
+
+The memory sentinel in this document is **memory sentinel MS**. Earlier text
+called it "S". In Oxide's composition S is the Nucleus retained
+supervisor/publisher, so the letter is retired here. Nothing below uses "S" for
+the sentinel.
 
 ## Scope 1: opt-in prepare custody and the direct-parent graph
 
@@ -86,7 +108,7 @@ nothing outlives the process if it is killed mid-write.
 ### Proposal: `effigy_prepare_custody`
 
 One explicit, opt-in maintenance attempt with a named owner, a bounded worker
-and the existing sentinel as the only independent holder. Opt-in is a flag on
+and memory sentinel MS as the only independent holder. Opt-in is a flag on
 `run prepare` plus a required caller-supplied attempt label, not an environment
 variable: environment variables are inherited by nested invocations
 (`src/cli/entrypoint.rs:144-145` shows that inheritance is deliberate for the
@@ -94,49 +116,81 @@ lock wait), and a silently inherited custody mode would change nested runs.
 
 Shape:
 
-1. **Refusal before the first effect.** `run prepare --custody --attempt <label>`
-   refuses at `src/runner/run_control.rs:95` when the label is absent, already
-   holds a live attempt, or the sentinel below cannot start. Refusal precedes
-   the effects-root open at `:101`, so a refused attempt allocates nothing.
+1. **Refusal, and what it does and does not claim.** `run prepare --custody
+   --attempt <label>` refuses at `src/runner/run_control.rs:95` when the label is
+   absent, already holds a live attempt, carries no inherited ceiling (Scope 2),
+   or MS cannot start. Every refusal precedes the effects-root open at `:101`,
+   which is the first prepare-root write (`root.rs:65` creates `.effigy/state`).
+   So a refusal makes **no prepare-root writes**. That is the whole claim;
+   source does not support "allocates nothing". Process spawn for MS, gate
+   descriptor duplication (`crates/effigy-kernel/src/supervise/memory.rs:170-215`)
+   and any attempt record are effects. They are charged from the original origin
+   (Scope 2), and a sentinel-unavailable refusal cannot retroactively declare
+   them absent.
 2. **Owner E** is the invoking `effigy` process.
-3. **Worker W** is one `Command`-spawned helper in the same style as the sentinel
+3. **Worker W** is one `Command`-spawned helper in the same style as MS
    (`crates/effigy-kernel/src/supervise/memory.rs:239-252`), and performs the
    whole first-effect sequence of the step list above. E holds a
    `std::process::Child` for W. Moving the effects into a child is what makes a
    total bound possible at all: E's clock loop is no longer blocked by W's
    `fsync`, SQLite busy wait or rename.
-4. **Publisher S** is the existing memory sentinel, started before W, holding the
-   effect and task gates plus one absolute deadline instant. It is the same
-   helper, not a new controller: it clears its environment, runs `setsid`
-   (`crates/effigy-kernel/src/supervise.rs:435-465`), reads
-   `deadline_nanos` from its config (`crates/effigy-kernel/src/supervise/memory.rs:140,224`)
-   and evaluates it locally (`:145-159`).
-5. **Disposition.** E writes the attempt disposition only after it has reaped W.
-   If E dies first, S takes settlement over exactly as it already does for a
-   foreground run: `wait_for_closure` ends on a verifiably gone owner
-   (`supervise/memory.rs:1064-1108`), `record_owner_loss` writes
-   `interrupted`/`unknown` (`:1140-1181`), and `drop(gates)` is the positive
-   delegated closure (`:1043`). An unproved closure parks holding the gates and
-   records nothing as complete (`:1019-1043`).
+4. **Memory sentinel MS** is the existing memory sentinel, started before W,
+   holding the effect and task gates plus one absolute deadline instant. It is
+   the same helper, not a new controller: it clears its environment, runs
+   `setsid` (`crates/effigy-kernel/src/supervise.rs:435-465`), reads
+   `deadline_nanos` from its config (`crates/effigy-kernel/src/supervise/memory.rs:93,140`)
+   and evaluates it locally (`:145-159`). MS holds no handle to W. W is E's
+   child, not MS's.
+5. **Disposition and loss.** The rules below are the whole of it.
+   - **E→W wait receipt first.** E writes an attempt disposition only after it
+     holds a positive wait receipt for W: the `ExitStatus` returned by
+     `Child::wait()`, or a `waitid` peek followed by reap, recorded with W's
+     `ProcessIdentity`. A kill that returns no status is not a receipt. If E's
+     bounded wait on W expires, or E leaves before reaping, W's state is
+     `unknown`.
+   - **E's wait on MS is not positive.** E's `Drop` for `MemoryGuard` polls
+     `try_wait` on MS only up to a bound, and returns without reaping when the
+     bound expires or the guard was abandoned
+     (`crates/effigy-kernel/src/supervise/memory.rs:540,582,595-620`). When that
+     happens E records `unknown` for MS and does not claim MS was reaped.
+   - **E loss.** If E dies first, MS takes settlement over as it already does for
+     a foreground run. `wait_for_closure` ends on a verifiably gone owner
+     (`owner_is_gone`, `supervise/memory.rs:1116`; `wait_for_closure` at
+     `:1064-1108`), `record_owner_loss` writes `interrupted`/`unknown`
+     (`:1140-1181`), and `drop(gates)` at `:1043` runs only when the cleanup pin
+     is closed (`ClosureWait.closed`). That closure is MS's settlement of its own
+     guard. It is **not** E's direct wait or reap of W or A, and it is **not**
+     proof that W or A completed. MS holds no handle to either, so after E loss
+     their state is `unknown` unless the pin closure shows them gone, and the pin
+     is not a census.
+   - **Retained states stay retained.** An unproved closure parks MS holding the
+     gates and records nothing as complete (`:1039-1041`). `unknown`, retained
+     and any Oxide-defined terminal state (SPENT is Oxide's term; Effigy source
+     has no SPENT state and this document gives it no meaning) are preserved even
+     if exclusion settles later. Settlement does not transfer custody, and it
+     does not create a new custodian.
 
 ### The real creator and wait graph, named
 
-`E` = invoking effigy owner, `W` = prepare worker, `S` = memory sentinel,
+`E` = invoking effigy owner, `W` = prepare worker, `MS` = memory sentinel,
 `H` = admission hook, `A` = selector workload leader, `K` = anchor.
 
 | Creator | Child it holds | Positive obligation | Source |
 | --- | --- | --- | --- |
-| E | W (prepare worker) | deadline-bounded TERM/CONT→KILL, then `wait()` reap before any disposition | proposal; the sibling pattern is `supervise/memory.rs:239-252` |
-| E | S (sentinel) | bounded `try_wait` in `Drop`, capped by the remaining run deadline | `supervise/memory.rs:596-620` |
-| E | H (admission hook, heavy runs only) | run settle stops it through its `OwnedProcess` | `src/runner/task_engine/admission.rs:744-771`, `:295-300` |
+| E | W (prepare worker) | deadline-bounded TERM/CONT→KILL, then `wait()` reap, with the `ExitStatus` as the receipt, before any disposition | proposal; the sibling pattern is `supervise/memory.rs:239-252` |
+| E | MS (memory sentinel) | bounded `try_wait` in `Drop`; not positive: expiry or abandonment records `unknown` | `supervise/memory.rs:540,582,595-620` |
+| E | H (admission hook, heavy runs only) | run settle stops it through its `OwnedProcess` | `src/runner/task_engine/admission.rs:299` (`hook`), `:744-771`, `:295-300` |
 | E | A (selector leader) | peek with `waitid(WNOWAIT)`, reap with `waitpid` only after group closure, capture drain and anchor retirement | `crates/effigy-kernel/src/custody/spawn.rs:400-414,741-757,770`; `crates/effigy-kernel/src/custody.rs:1724-1822` |
 | A | middle, then K (anchor) | waits the middle before workload exec; K deliberately leaves A's child set | `custody/spawn.rs:467-480,525-532` |
-| S | its own workloads, in the managed route only | `Custody::spawn_all` under `__kernel-supervise` | `supervise.rs:2133` |
+| MS | its own workloads, in the managed route only | `Custody::spawn_all` under `__kernel-supervise` | `supervise.rs:2133` |
 
-S is A's **sibling**, not its parent: Effigy hands S a receipt, its own gate
+MS is A's **sibling**, not its parent: Effigy hands MS a receipt, its own gate
 descriptors and the closure pin, never a child handle. Nothing in the foreground
-or prepare route gives S a handle to E's children, and no receipt, EOF or census
+or prepare route gives MS a handle to E's children, and no receipt, EOF or census
 converts one into the other.
+
+Every creator's wait is a separate record (Scope 3). A terminal report or EOF
+from a different process never satisfies a creator's own wait.
 
 ### Reuse and removable duplication
 
@@ -166,12 +220,13 @@ Removable duplication once the attempt exists:
 ### Focused controls and budgets
 
 - `crates/effigy-kernel/tests/prepare_custody.rs` (new): attempt identity and
-  the refusal table — missing label, duplicate live attempt, sentinel
-  unavailable; each refuses before any filesystem effect.
-- `src/runner/run_control/tests.rs`: the production route — E starts S, then W;
+  the refusal table — missing label, duplicate live attempt, missing inherited
+  ceiling, sentinel unavailable; each refuses before the first prepare-root
+  write.
+- `src/runner/run_control/tests.rs`: the production route — E starts MS, then W;
   W is reaped before the disposition is written; a W that blocks in a syscall is
-  killed at the attempt deadline and reaped; killing E leaves S holding the gates
-  and writing `unknown`.
+  killed at the attempt deadline and reaped; killing E leaves MS holding the
+  gates and writing `unknown`.
 - Selectors: `effigy test:focused -- prepare_custody` and
   `effigy test:focused -- run_control::prepare`, plus `effigy qa:docs` for this
   document. Budget: per-test wall clock ≤ 60 s, no fixture longer than the
@@ -179,10 +234,11 @@ Removable duplication once the attempt exists:
 
 ### Refused here
 
-Claimed handle transfer from W or S to the consumer or to the later selector; a
+Claimed handle transfer from W or MS to the consumer or to the later selector; a
 subreaper or a new controller; a hard blocked-I/O completion bound; any physical
 allocation guarantee; maintenance prepare treated as admission; a prepare
-receipt treated as a resource ledger.
+receipt treated as a resource ledger; a "refusal allocates nothing" claim beyond
+the no-prepare-root-write claim above.
 
 ## Scope 2: the common elapsed clock
 
@@ -193,34 +249,89 @@ One opt-in absolute deadline per invocation (`EFFIGY_RUN_DEADLINE_MS`,
 (`src/cli/entrypoint.rs:23-27`). Its origin is sampled once at process start,
 before any capture, staging or admission, on the monotonic clock, and is never
 restarted (`run_deadline.rs:1-8`). The ceiling is stored as absolute
-`CLOCK_MONOTONIC` nanoseconds (`:82,110,239-249`), a settlement allowance of 10 s
+`CLOCK_MONOTONIC` nanoseconds (`:80-89,110`), a settlement allowance of 10 s
 is reserved inside it (`:34`), and the evidence reserves are 1 s each (`:39,43`).
+`parse` (`:398-406`) and `configure_env_once` (`:427-438`) build the deadline
+from the process-start sample.
 
-The clock already crosses one process boundary: the owner passes
-`ceiling_nanos()` as `deadline_nanos` when it starts the guard
-(`crates/effigy-kernel/src/run/foreground.rs:167-169`;
-`crates/effigy-kernel/src/run/checkout_custody.rs:63`), and the guard evaluates
-`deadline_left`/`deadline_passed` against the same monotonic source in its own
-process (`supervise/memory.rs:145-159`). That is the shape `common_elapsed_clock`
-needs; what it lacks is a target.
+The environment variable is a **duration from this process's own start**. It
+carries no absolute reference, so no predecessor can pass an earlier origin
+through it.
+
+### Supported host-clock payload (today)
+
+This is what source supports for a value that crosses a process boundary:
+
+- **One field:** `deadline_nanos: u64`, an absolute instant on the host-wide
+  monotonic clock. Produced as `RunDeadline::ceiling_nanos()`
+  (`crates/effigy-core/src/run_deadline.rs:110`) at
+  `crates/effigy-kernel/src/run/foreground.rs:167-169` and
+  `crates/effigy-kernel/src/run/checkout_custody.rs:63`. Carried as
+  `MemoryStart.deadline_nanos` (`crates/effigy-kernel/src/supervise/memory.rs:140`)
+  and `Config.deadline_nanos` (`:93`). Evaluated by `deadline_left` and
+  `deadline_passed` (`:145-159`) against `system_monotonic_nanos()`
+  (`crates/effigy-core/src/run_deadline.rs:239-246`).
+- **Units:** nanoseconds. **Domain:** `libc::CLOCK_MONOTONIC` through
+  `system_monotonic_nanos`. This is the same host clock for every same-host
+  process, and it does not restart while the host runs.
+- **Origin identity:** none. The value carries no origin id, no boot id and no
+  sample time. The owner's identity travels separately in `Config.owner`
+  (`memory.rs:64`), not in the clock value.
+- **Producer caveat.** `from_origin` (`run_deadline.rs:80-89`) computes
+  `ceiling_nanos` by sampling `system_monotonic_nanos()` at **its own call**, plus
+  `ms`. Production calls it from `configure_env_once` immediately after the
+  `Instant::now()` origin sample, so the two anchors agree to the gap between two
+  adjacent reads. Test call sites inject an origin instead
+  (`src/runner/task_engine/run/foreground.rs:433`,
+  `src/runner/task_engine/spawn_env.rs:126,155`,
+  `src/runner/task_engine/admission.rs:1477`, all in `#[cfg(test)]` code). For those,
+  the nanos ceiling is anchored to the call, not to the injected origin.
+- **Diagnostic only.** `PhaseReadback.since_origin_ms`
+  (`crates/effigy-core/src/run_deadline.rs:229-231`, `:306`) is an evidence
+  readback. It is not a payload and not authority.
+
+Neither the monotonic-domain equivalence stated above nor `from_origin` proves a
+cross-process binding. Both sample the clock in the process that holds them.
+
+### Qualification origin and predecessor effects
+
+The qualification origin starts before Nucleus reservation persistence, source
+capture and the other predecessor effects. Sentinel startup, worker spawn,
+prepare and the later real selector must all fall under **the same original
+allowance**. Source does not support that today:
+
+- Effigy's only inherited input is the duration above, measured from its own
+  process start. Predecessor effects that run before that start sit outside any
+  allowance Effigy can see.
+- A consumer that needs one allowance across the sequence needs a same-timebase
+  control that Oxide has not resolved. Until one exists, the **consumer binding
+  is UNSUPPORTED, refuse**. Effigy does not establish one from the monotonic
+  equivalence or from `from_origin`.
+- If the finite allowance cannot fit the sequence, that is a **blocker** for the
+  consumer to decide. Effigy does not reset, shorten or extend the allowance.
+
+### Attempt rule: narrow only
+
+- An attempt never establishes a full allowance. Its bound is
+  `min(inherited ceiling_nanos, attempt_origin + attempt_ceiling)`. The local
+  sub-origin can only lower the inherited ceiling. It cannot raise it.
+- An attempt with no inherited ceiling (`run_deadline::current()` is `None`, that
+  is `EFFIGY_RUN_DEADLINE_MS` unset) refuses. It does not mint a ceiling.
+- The attempt's local origin is the first effect the attempt owns: the sample
+  taken before MS spawn, before the effects-root open at
+  `src/runner/run_control.rs:101`.
 
 ### Remaining target
 
-1. **An attempt origin, not only an invocation origin.** Today the only origin is
-   process start. A prepare attempt that begins late inherits a partly spent
-   budget and cannot state its own bound. The attempt must take its origin at its
-   first mandatory effect — before the effects-root open at
-   `src/runner/run_control.rs:101` — and its bound must be
-   `min(attempt_origin + attempt_ceiling, invocation_ceiling)`.
-2. **Exactly one absolute instant across the boundary.** The attempt publishes
-   the absolute instant, never a duration and never an elapsed reading, so no
-   holder reconstructs time. One conversion point exists and stays unique:
-   `Instant` in the owner, `ceiling_nanos` at the send
-   (`run/foreground.rs:167-169`).
-3. **Phase remainders inside the attempt.** Store open, ring publication, gate
+1. **One absolute instant across the boundary.** The attempt publishes the
+   absolute instant, never a duration and never an elapsed reading, so no holder
+   reconstructs time. One conversion point exists and stays unique: `Instant` in
+   the owner, `ceiling_nanos` at the send (`run/foreground.rs:167-169`). No
+   conversion service and no new inner clock.
+2. **Phase remainders inside the attempt.** Store open, ring publication, gate
    preparation, disposition write and delivery each read their remainder from the
-   same clock through the existing phase names
-   (`run_deadline.rs:52-58`). No second timer is introduced for any of them.
+   same clock through the existing phase names (`run_deadline.rs:52-58`). No
+   second timer is introduced for any of them.
 
 ### Semantics the interface must state
 
@@ -231,24 +342,25 @@ needs; what it lacks is a target.
   runs in W so that E's loop can escalate and reap. Whether a kill lands inside a
   blocked syscall and whether the wait returns promptly are **not** guaranteed;
   the interface must say so rather than imply a total bound.
-- **Owner loss.** S is the only clock holder that survives E. It evaluates the
+- **Owner loss.** MS is the only clock holder that survives E. It evaluates the
   same absolute instant, and on expiry or observed owner loss it finishes
   settlement, records `unknown`/`interrupted` (`supervise/memory.rs:1140-1181`)
-  and either closes (`:1043`) or parks holding the gates (`:1019-1043`). Deadline
-  expiry never releases retained state: release is an explicit later action
-  (`:1035-1042`).
+  and either closes (`:1043`) or parks holding the gates (`:1039-1041`).
+  Deadline expiry never releases retained state: release is an explicit later
+  action.
 - **One clock, one domain.** Both readings used today — `Instant::now` and
-  `system_monotonic_nanos` — are the same host monotonic domain, and the design
-  permits exactly one conversion between them, at owner→guard. No new inner
-  clock, no wall-clock reading, no cross-clock or RAW conversion.
+  `system_monotonic_nanos` — are the same host monotonic domain. That is a
+  statement about one process's two readings. It is not a cross-process binding.
 
 ### Focused controls and budgets
 
 - `crates/effigy-core/src/run_deadline.rs`'s owned injectable clock
   (`:251-254`) drives attempt-origin and phase-remainder tests with no sleeping.
-- `src/runner/run_control/tests.rs`: the attempt refuses a ceiling that cannot fit
-  the 10 s settlement allowance; the attempt bound is the minimum of the two
-  ceilings; an expired attempt parks retained state instead of releasing it.
+- `src/runner/run_control/tests.rs`: the attempt refuses with no inherited
+  ceiling; the attempt bound is the minimum of the two ceilings and never exceeds
+  the inherited one; an expired attempt parks retained state instead of releasing
+  it; a ceiling that cannot fit the 10 s settlement allowance is refused before
+  anything starts.
 - Selectors: `effigy test:focused -- run_deadline`, `effigy test:focused --
   prepare`, `effigy qa:docs`. Budget: the owned-clock tests are sub-second; the
   route tests need the workspace runner timeout only for their hostile-fixture
@@ -258,8 +370,11 @@ needs; what it lacks is a target.
 
 A hard blocked-I/O guarantee; a clock supplied to and read by the consumer as
 authority over its own elapsed accounting; deriving elapsed time from a duration
-or from the journal; a second clock for prepare; any RAW conversion; using the
-deadline as authority to release, evict or reuse a retained attempt.
+or from the journal; a duration, `sinceStartMs` or `elapsedAtSpawnMs` payload as
+the binding; a second clock for prepare; any RAW conversion; a conversion
+service; a consumer binding without a same-timebase control; a local sub-origin
+used as a new full allowance; resetting or reusing an inherited ceiling; using
+the deadline as authority to release, evict or reuse a retained attempt.
 
 ## Scope 3: exact-selector admission and attributable completion
 
@@ -277,14 +392,18 @@ lifetime = the smaller of the local timeout and the remaining workload ceiling
 
 Under admission protocol v2 the workload event carries the leader identity and
 pgid and is acknowledged before `go`
-(`src/runner/task_engine/admission.rs:442-467`;
+(`src/runner/task_engine/admission.rs:442-467`, `before_go` at `:443`;
 `crates/effigy-kernel/src/custody.rs:1137-1175`). A refused or blocked pre-exec
-leader is killed and waited by its actual parent
-(`custody/spawn.rs:710-738`). Completion evidence is the terminal report
-(`admission.rs:1044-1090`), which stops at the acknowledged prefix
-(`:481-500`), plus the narrow Q-010 row bound to run, checkout and boot but
-carrying no process identity (`:1099-1163,1164-1190`). Report failure is a warning and a
+leader is killed and waited by its actual parent (`custody/spawn.rs:710-738`).
+Completion evidence is the terminal report (`admission.rs:1044-1090`), which
+stops at the acknowledged prefix (`:481-500`), plus the narrow Q-010 row bound
+to run, checkout and boot but carrying no process identity
+(`:1099-1163,1164-1190`). Report failure is a warning and a
 `settlement_incomplete` flag, not a retry (`:1074-1090`).
+
+Without a hook, `WorkloadGate::for_spawn` returns `None` when the admission does
+not report (`admission.rs:414-422`), so today's non-v2 spawn has no gate and
+produces no receipt.
 
 ### Proposal: `effigy_admission`
 
@@ -298,15 +417,43 @@ An interface with three fields and no new authority:
   disposition. `unreported` when no hook is configured — never `admitted`.
 - **Rule:** admission exists only as the pre-`go` gate of a real spawn.
   Completion is attributable only when the receipt is bound to that spawn's
-  leader identity, the acknowledged prefix is gap-free
-  (`admission.rs:296-320`) and the terminal disposition came from a settled
-  outcome. Otherwise the disposition is `unknown`.
+  leader identity, the acknowledged prefix is gap-free (`admission.rs:296-320`,
+  `seq` at `:309`) and the terminal disposition came from a settled outcome.
+  Otherwise the disposition is `unknown`.
+
+`unreported` is design vocabulary. Source emits no such token; the no-hook state
+is `reporting() == false` (`admission.rs:385-387`). That state must **not** pass
+genuine-admission readiness. A no-hook `unreported` correctly fails that
+readiness, and this document keeps that rule.
 
 The prepare attempt of scope 1 never produces an admission receipt. Its
 resolution and the later selector's resolution both call
 `build_execution_preflight` (`run_control.rs:224`), so the digest is the only
 addition needed to show both describe the same selector — the second resolver is
 not duplicated.
+
+### Receipt shape: what each Effigy-created edge must carry
+
+For each Effigy-created required edge the receipt names the fields below. Where
+source has no field, the row says **MISSING** and names the seam. Nothing here
+is claimed that source lacks.
+
+| Field | Source today | Seam |
+| --- | --- | --- |
+| Parent PID and start token | Present where the parent is verified: `ProcessIdentity { boot, pid, start }` with `start: ProcessStartIdentity` (`crates/effigy-kernel/src/ident.rs:12-16,36-40`). For MS, the owner identity is `Config.owner` (`supervise/memory.rs:64`). | none |
+| Child PID and start token | Present where verified: `ident::process_identity(child.id()).verified()` (`supervise/memory.rs:259`), and `ProcessReceipt.identity` (`crates/effigy-kernel/src/custody.rs:188-193`). The field is `None` when verification fails, so that edge reads as unknown. | none |
+| Observed or unknown | Partial. `verified()` returns `Option`, so absence is representable. No edge records an explicit observed/unknown field. | `supervise/memory.rs:259,330`; `custody.rs:188` |
+| Exit code or signal | Workload: present in the terminal report (`exit_code`, `signal` from `outcome_code` at `admission.rs:1238`; event fields at `:1048-1058`). E→MS: **MISSING**. The bounded `try_wait` in `Drop` discards its status (`supervise/memory.rs:595-620`). E→W: MISSING (proposal). | `supervise/memory.rs:595-620` for E→MS; `admission.rs:1044-1056` for workload |
+| Time and source binding | Start time is in `ProcessStartIdentity` (`ident.rs:12-16`). No event or receipt records when it was observed or which reporter wrote it. **MISSING**. | `admission.rs:1048-1058` (terminal event fields) |
+| Subject, run and attempt binding | `run_id` lives in `Delivery` (`admission.rs:306`), but the workload event body carries only `pgid` and `leader` (`admission.rs:443-453`). Attempt binding: **MISSING** everywhere. | `admission.rs:443-453`; attempt has no source |
+| Resolved-selector digest | **MISSING**. `admission.rs` has no digest field. | `admit` (`admission.rs:671`) request body; `run_control.rs:224` resolver |
+| Gap-free pre-`go` admission terminal | Partial. The acknowledged prefix is gap-free (`admission.rs:296-320`). The terminal report is sent at settle (`:1044-1090`) and does not distinguish a pre-`go` refusal. **MISSING** as a named pre-`go` record. | `admission.rs:1044-1058`; `before_go` at `:443` |
+| Hook identity | **MISSING** from the terminal report. The hook is `AdmissionCore.hook` (`admission.rs:299`). | `admission.rs:1044-1058` |
+
+Creator-wait records follow the same rule per creator. The publisher's own
+creator wait stays a separate required record. A sibling's terminal or EOF
+cannot fill it. The E→MS wait stays **not positive** (Scope 1) until its status
+is recorded.
 
 ### Focused controls and budgets
 
@@ -325,13 +472,21 @@ not duplicated.
 Maintenance treated as admission; a report, receipt or exit code treated as
 custody; completion inferred from a group census or a leader identity; a third
 party deriving signal or reclaim authority from a receipt; a protocol downgrade
-to make completion look attributable.
+to make completion look attributable; a `MISSING` field described as present.
+
+## Oxide and Nucleus boundary
+
+Census, image attachment, complete RAW and fit stay with their named Oxide and
+Nucleus providers. Effigy supplies no census, image or fit verdict in this
+document, and this document designs none of those parts. The rows for them in the
+table below record Effigy's position only. Oxide and Nucleus own the consumer
+graph, the oracle set and the accounting decision.
 
 ## The rest of the Spec064 list
 
-| Interface | Effigy's position at `522c939e` |
+| Interface | Effigy's position at `522c939e`, updated at `50a9462d` |
 | --- | --- |
-| `creator_waits` | Effigy-owned **witness** only: the obligation table above, plus a receipt field naming which waits completed. No API for a third party to register waits. |
+| `creator_waits` | Effigy-owned **witness** only: the obligation table above, plus the per-edge receipt fields in Scope 3. No API for a third party to register waits. |
 | `deciding_census` | Not supplied. Membership is best-effort observation (`custody/platform.rs:529-555,595-618,629-681`) and contract 052:1282-1287 says a scan can miss a fork/orphan race. A deciding census is a consumer decision over an `Unknown`-capable observation. |
 | `final_census` | Not supplied, same source. Group closure accepts accounted identities and zombies rather than an empty inventory (`custody/platform.rs:37-51,108-168,595-618`), so it is not a final census. |
 | `image_attachment_evidence` | Not supplied in production. Image identity observations exist only under the `workspace-private-qualification` compile-time route (`custody.rs:1163-1176`; `supervise/image_identity.rs:1-8,12-38`), and the birth-hash scaffolding grants no capability (`supervise/birth_hash.rs:1-9`). |
@@ -347,10 +502,10 @@ files it would touch, in this order:
 | --- | --- |
 | `docs/knowledge/architecture/038-prepare-actor-custody-boundaries.md` | This scope; status moves only when code lands. |
 | `crates/effigy-kernel/src/prepare_custody.rs` (new), `lib.rs` | Attempt identity, opt-in gate, refusal table, disposition writer. |
-| `crates/effigy-kernel/src/prepare_custody/worker.rs` (new) | W: the helper that performs the first effect, and E's reap obligation. |
+| `crates/effigy-kernel/src/prepare_custody/worker.rs` (new) | W: the helper that performs the first effect, and E's positive wait-receipt obligation. |
 | `src/runner/run_control.rs` | Route `run prepare --custody` through the attempt; keep `--check` as a mode of it. |
-| `crates/effigy-core/src/run_deadline.rs` | Attempt origin and the minimum-of-ceilings rule; one conversion point. |
-| `src/runner/task_engine/admission.rs` | The receipt fields and the `unreported` disposition. |
+| `crates/effigy-core/src/run_deadline.rs` | Attempt origin and the narrow-only minimum-of-ceilings rule; one conversion point. |
+| `src/runner/task_engine/admission.rs` | The receipt fields in the table above, the selector digest and the `unreported` disposition. |
 | `crates/effigy-kernel/tests/prepare_custody.rs` (new), `src/runner/run_control/tests.rs` | The focused controls named above. |
 | `changelog.d/<task>-<slug>.<type>.md` | One paragraph describing the actual landed level. |
 
@@ -363,16 +518,25 @@ must refuse rather than exempt:
 - a subreaper or a new controller;
 - maintenance treated as admission;
 - assumed cross-clock or RAW conversion;
-- a new inner clock;
+- a new inner clock, and a clock conversion service;
+- **consumer binding of the host clock across processes: UNSUPPORTED, refuse**,
+  until a same-timebase control exists;
+- predecessor-effect coverage by an inherited allowance: UNSUPPORTED, refuse;
+- a duration, elapsed or `sinceStartMs` payload as the binding;
+- a local prepare sub-origin used as a new full allowance, or a reset of an
+  inherited ceiling;
 - group or escapee signals treated as custody;
 - any hard blocked-I/O or physical-allocation guarantee;
 - a decide/fit verdict issued by Effigy as authority;
 - production image-attachment evidence;
-- a final census treated as positive reap.
+- a final census treated as positive reap;
+- a field the receipt marks MISSING, reported as present.
 
 ## Proof of this document
 
-Source inspection at `522c939e` with the changed-seam diff against `dc6f5abf`,
-`effigy qa:docs`, and independent exact-head review that every file:line claim
-holds at the PR head. No build, probe, fixture, native or resource run was part
-of this design task, and no runtime behaviour is claimed.
+Source inspection at `522c939e` for the original evidence base, and at
+`50a9462d` for the seams this revision changes, with the changed-seam diff
+against `c4d33736`. Verification: `effigy qa:docs`, and independent exact-head
+review that every file:line claim holds at the PR head. No build, probe,
+fixture, native or resource run was part of this design task, and no runtime
+behaviour is claimed.
