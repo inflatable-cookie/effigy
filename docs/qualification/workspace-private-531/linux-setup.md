@@ -1066,6 +1066,9 @@ preparation; it is **not** the sealed E6 forced-command credential.
 Native Rust 1.97.1 and pinned Nextest 0.9.145 build ordinary and qualification
 binaries, real helper/test binaries, and genuine old source
 `3808b4fabfbcca59475a63071eee01b1de3b5492` (protocol 5, task 1024 rebind).
+This dated 2026-11-10 session record is superseded for the current Recipe D
+pin `8460f38ed9a797571a6763b044f586584ec6198b` by task 1031; its observed
+source and run evidence remain unchanged.
 The guest-only missing-Oxide
 selector route is recorded in [cargo-routes.md](../../knowledge/cargo-routes.md#task-829-interactive-guest-bootstrap).
 The GNU producer targets ARM64 GNU 2.31, verifies ELF/loader requirements and

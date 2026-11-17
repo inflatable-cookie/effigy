@@ -95,11 +95,12 @@ Do not infer that a managed output remains after its lease or cleanup: freeze
 the copy before anything else builds in that fixture.
 
 What the sentinel control actually checks. The provisional `d7c3c93b` speaks
-helper protocol 2, so a protocol-5 handshake refuses it at ordinary admission.
-That is a fact about that commit only. The selected older source is the #986
-merge `3808b4fabfbcca59475a63071eee01b1de3b5492`, whose
-`HELPER_PROTOCOL = 5` matches this candidate's handshake. It is an ancestor of
-`main` and distinct from the candidate; `validate_inputs` checks this source
+helper protocol 2; that is a fact about that commit only. #992 changed the
+guard handshake, so pre-#1030 protocol-5 helpers are now refused at the
+handshake. The genuine old helper must therefore come from a protocol-6 commit
+older than the candidate. The selected source is the #1030 merge
+`8460f38ed9a797571a6763b044f586584ec6198b`, whose `HELPER_PROTOCOL = 6`.
+It is distinct from the later candidate; `validate_inputs` checks this source
 fact before a sealed command. Only the run decides actual binary admission. For
 `custody::tests::discard_old_sentinel_refuses_before_child_exec`:
 
@@ -129,7 +130,7 @@ so admission failure retains its diagnostics and cannot count as refusal credit.
 Recipe D therefore needs one genuine older binary that this source's handshake
 admits and that is built by its own source's covering selector. The
 source-ancestry search does not decide it; the admission and refusal results
-do. `3808b4fabf` is the bound old source for this cell. Nothing here claims it
+do. `8460f38e` is the bound old source for this cell. Nothing here claims it
 predates `discard_v1`. The cell is not artifact-ready and carries no native
 credit until the frozen binary and its proof are recorded. Do not build the
 provisional commit again, and do not substitute a stand-in.

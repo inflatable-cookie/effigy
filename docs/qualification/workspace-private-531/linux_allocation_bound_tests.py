@@ -34,7 +34,7 @@ BOOT = 'boot-1234'
 UID = 1001
 ROOT = '/Volumes/Stash/scratch/effigy/linux-4f6a5ed3'
 HISTORICAL_BASE_DIRS = ('source', 'qual-root', 'driver', 'inputs', 'inputs/go', 'frozen', 'metadata',
-                        'docker-config', 'toolchain', 'old-3808b4fabf', 'docker-build-ctx')
+                        'docker-config', 'toolchain', 'old-8460f38e', 'docker-build-ctx')
 LIMIT = bound.ROW_RESERVATIONS['E9a']
 MECH = bound.MECHANISM
 # Retained 747 root dumpe2fs features line (observation-filesystem.raw), unchanged.

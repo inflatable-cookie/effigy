@@ -288,7 +288,7 @@
     },
     {
       "id": "E13b-old",
-      "cwd": "/Volumes/Stash/scratch/effigy/linux-4f6a5ed3/old-3808b4fabf/source",
+      "cwd": "/Volumes/Stash/scratch/effigy/linux-4f6a5ed3/old-8460f38e/source",
       "argv": [
         "sh",
         "scripts/oxide-selector.sh",
