@@ -1,0 +1,1 @@
+Recorded the source-bound Effigy design scope for Oxide #309: the opt-in prepare attempt and its direct-parent graph, the common elapsed clock's remaining target, and exact-selector admission with attributable completion, each mapped to current source with its reuse, proposed controls and explicitly refused interfaces.
