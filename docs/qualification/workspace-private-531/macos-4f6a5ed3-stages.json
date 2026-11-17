@@ -1,4 +1,7 @@
 {
+  "superseded_by_task": 1024,
+  "superseded_note": "Historical 627 baseline D used protocol-4 source 823d859d; do not reuse for protocol-5 candidate. Receipt values are preserved as history.",
+  "current_old_source_head": "3808b4fabfbcca59475a63071eee01b1de3b5492",
   "binding_inputs": {
     "base_image": "docker.io/library/ubuntu@sha256:076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11",
     "check_source_sha256": "5fcd965f2339afd885895d4e75684503d6077371089e3025f6c434e2536bdb28",

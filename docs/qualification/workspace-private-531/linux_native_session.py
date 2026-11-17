@@ -15,7 +15,7 @@ from linux_native_window import Window
 
 TASK = '06fa2bbb-55f5-4f02-84c9-069e3a179946'
 BASE = Path('/Volumes/Stash/scratch/effigy/linux-native-829')
-OLD = '823d859dace2cbaa848c8ad5a0b5bdfd8959fdf1'
+OLD = '3808b4fabfbcca59475a63071eee01b1de3b5492'
 
 
 class Peak:

@@ -1,5 +1,10 @@
 # Linux producer and native readiness kit for candidate 4f6a5ed3 — planning only
 
+**Recipe D pin superseded by task 1024.** The old source is now
+`3808b4fabfbcca59475a63071eee01b1de3b5492` (protocol 5, #1017 merge).
+References below to the prior `823d859d` binding have been rebound to this
+source; the historical 627 receipt in the macOS packet remains unchanged.
+
 Status: **preparation only**. Nothing in this document has been executed beyond
 the Stage0 host reads listed in §2. No guest command, VM start/stop, SSH, copy,
 install, image pull, build, account, key, share, snapshot or config change has
@@ -24,7 +29,7 @@ and roots) is retained as history. Nothing here adopts it.
 | Input | Value | Check |
 | --- | --- | --- |
 | Candidate H | `4f6a5ed3078bc6e354c8a7738ea5663c8ffefa02` | fullQA `5449c102` green (627 host handoff) |
-| Old source (Recipe D) | `823d859dace2cbaa848c8ad5a0b5bdfd8959fdf1` | Full SHA resolved in this repository. Its own tree carries the same selector names |
+| Old source (Recipe D) | `3808b4fabfbcca59475a63071eee01b1de3b5492` | Full SHA resolved in this repository. Its own tree carries the same selector names |
 | 627 host index | `/Volumes/Stash/scratch/effigy/627-artifact-preparation.6mazyj9u/627-evidence-index.r5.json` | sha256 `a451d6c40783cb3d268534f7b4d84d1d3c9e116892a10248ed6a360cba040198`, re-hashed 2026-11-07 19:27 UTC, matches |
 | 627 lane artifact | v79 | sha256 `c606bdb92ff18e48c420fff4758651a37e892046eecf481208bb71e8b34f59e5` (Queue-held; not re-read here) |
 | 627 planner verification | `/Volumes/Stash/scratch/effigy/milestone-qualification-fixture-integrated.h39f1dw8/627-planner-host-delivery-verification.json` | Not reopened here |
@@ -167,9 +172,9 @@ that need code are listed as source-owner proposals in §6.4.
   explicit effect (E13k) with its own GO. It is not hidden inside a build step.
   A build-only route would replace it (SO-5).
 - **G12 Recipe D needs a native old-source build.** Commit
-  `823d859dace2cbaa848c8ad5a0b5bdfd8959fdf1` is the bound old source. Its binary
+  `3808b4fabfbcca59475a63071eee01b1de3b5492` is the bound old source. Its binary
   must be built natively in a guest fixture by its own covering selector (G9
-  escape applies). Its protocol-4 admission is a source fact, not a run result.
+  escape applies). Its protocol-5 admission is a source fact, not a run result.
   A Darwin binary cannot stand in.
 - **G13 Runtime image.** `runtime.Dockerfile` is pinned to
   `ubuntu:22.04@sha256:076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11`
@@ -204,7 +209,7 @@ that need code are listed as source-owner proposals in §6.4.
 | A — production binary | `build:runtime-storage` → `oxide build --bin effigy` | Guest build from frozen source archive, via the sanctioned per-selector escape (D-7) | Ready after Stage2 E13a. Blocked only on the GO |
 | B — candidate and utility | `build:workspace:private-qualification` | Guest build, same escape | Same as A |
 | C — test executables, nextest, metadata | `build:workspace:private-qualification:test-inputs`, `…:cargo-metadata` (builds), `test:workspace:private-qualification:kernel` (builds helper and runs tests) | Guest build and native metadata (E13a, E17). Helper through E13k with its own GO | E13k is a native test run. Its GO must name it. Metadata per SO-6 |
-| D — genuine old baseline `823d859da` | That commit's own covering selector (`build:runtime-storage`) | Native guest fixture at `823d859da`, its own tree and its own selector text | Launcher question (SO-5a). Default: that commit's own script, no H code |
+| D — genuine old baseline `3808b4fabf` | That commit's own covering selector (`build:runtime-storage`) | Native guest fixture at `3808b4fabf`, its own tree and its own selector text | Launcher question (SO-5a). Default: that commit's own script, no H code |
 | E — guest artifact | `workspace:linux:artifact` (Darwin host, Colima `effigy-release`) | Same route with `EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-gnu`, copied into the guest source at `.effigy/linux-release/artifacts/` | Source proof entry binds the current checkout (not H). ELF/size/SHA predicates live in that entry (§4.1). Native E14 still GO-gated. Frozen H/627 stay historical |
 
 ### 4.1 Recipe E predicates
@@ -476,14 +481,14 @@ E13a → E13k → E13b → E16 → E17 → E19 → E18.
 | E4 | Guest: add `effigy531` to `docker` only. Verify `id -nG effigy531` shows exactly `effigy531` and `docker` | **root-equivalent**; explicit GO | Retained. Removal needs separate disposition |
 | E5 | Guest: sshd drop-in for `Match User effigy531` (`PasswordAuthentication no`, `AllowTcpForwarding no`, `X11Forwarding no`, `PermitTTY no`), then `systemctl reload ssh` after `sshd -t` passes | 1 file, 1 reload | Retained. Revert needs separate disposition |
 | E6 | Guest: `authorized_keys` with `restrict,expiry-time=<≤24 h>` only if the Stage1 `sshd_man_expiry_time_mentions` count is non-zero. Otherwise refuse, with no weaker auth | 1 file | Expires. Removal needs separate disposition |
-| E7 | Guest: create `/Volumes/Stash/scratch/effigy` (if absent) on the **native root ext4**, then `B` (mode `0700`, owner `effigy531`). No mount, no fstab edit, no share. Inside `B`, create `source`, `qual-root`, `driver`, `inputs/go`, `frozen`, `metadata`, `docker-config`, `toolchain`, `old-823d859d`, `docker-build-ctx`, all `0700` and owned by `effigy531`. `qual-root` and `docker-config` stay empty | ≤ 13 dirs | Retained |
+| E7 | Guest: create `/Volumes/Stash/scratch/effigy` (if absent) on the **native root ext4**, then `B` (mode `0700`, owner `effigy531`). No mount, no fstab edit, no share. Inside `B`, create `source`, `qual-root`, `driver`, `inputs/go`, `frozen`, `metadata`, `docker-config`, `toolchain`, `old-3808b4fabf`, `docker-build-ctx`, all `0700` and owned by `effigy531`. `qual-root` and `docker-config` stay empty | ≤ 13 dirs | Retained |
 | E8 | Guest: placement and filesystem controls: Unix sockets, descriptor transfer, locks, atomic no-clobber publication, fsync/readback under `B`. Helper per SO-2 | ≤ 60 s, ≤ 64 MiB writes | Faults retained |
 | E9 | Host → guest: `git archive 4f6a5ed3078bc6e354c8a7738ea5663c8ffefa02`, pinned sha256, sent over the pinned SSH stdin per SO-1. Guest extracts into `B/source` and verifies a tree manifest against H | Archive ≤ 40 MiB (measured 31,559,680 bytes, 2,134 files); extracted ≤ 500 MiB | Retained as the frozen source root. Not a Queue checkout |
 | E10 | Guest: Rust `1.97.1` (repo pin) with `rustup`, with `RUSTUP_HOME`/`CARGO_HOME` under `B/toolchain` | Download ≤ 1.5 GiB, installed ≤ 4 GiB, network allowlist (§6.3) | Retained |
 | E11 | Guest: no Oxide install (cargo-routes forbids it). Every selector in E13a and E13k runs as `EFFIGY_OXIDE_ESCAPE=cargo <E15 effigy launcher> <selector>` from `B/source`. E13b is **not** covered by E11; its route is SO-5a. Recorded need: Stage1 `oxide` absent. A contrary Stage1 record stops before E9 | 0 bytes | Recorded in the Stage2 receipt per selector |
 | E12 | Guest: runtime image. `docker pull ubuntu:22.04@sha256:076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11`, then `docker build --pull=false -f B/source/docs/qualification/workspace-private-531/runtime.Dockerfile B/docker-build-ctx`, where `B/docker-build-ctx` is an empty directory (the Dockerfile has no `COPY`). Verify `/lib/ld-linux-aarch64.so.1`, `python3`, arm64. Record the image ID and the baseline inventory (`ps -a`, networks, volumes) | Pull ≤ 1 GiB; apt ≤ 300 MiB; engine disk ≤ 2 GiB | Image retained. Removal needs disposition |
 | E13a | Guest builds at H, each through E11: `build:runtime-storage` (A), `build:workspace:private-qualification` (B, utility), `build:workspace:private-qualification:test-inputs` (test executables, listed only), `build:workspace:private-qualification:cargo-metadata` (metadata). Each stays inside its `tasks.toml` timeout (900 s) | ≤ 3,600 s total (4 × 900 s); target dir ≤ 25 GiB; cargo registry ≤ 4 GiB under `B/toolchain` | Frozen copies (E16) kept; `target` kept as evidence |
-| E13b | Guest build of D at `823d859dace2cbaa848c8ad5a0b5bdfd8959fdf1` in `B/old-823d859d/source` (separate tree, never inside `B/source`). **Blocked until SO-5a is ruled.** The route must not use any binary built from H. Its selector text is read from that commit's own `config/tasks.toml` first | ≤ 1,800 s | Frozen copy kept; tree kept as evidence |
+| E13b | Guest build of D at `3808b4fabfbcca59475a63071eee01b1de3b5492` in `B/old-3808b4fabf/source` (separate tree, never inside `B/source`). **Blocked until SO-5a is ruled.** The route must not use any binary built from H. Its selector text is read from that commit's own `config/tasks.toml` first | ≤ 1,800 s | Frozen copy kept; tree kept as evidence |
 | E13k | Guest native test run: `test:workspace:private-qualification:kernel` through E11. It builds the helper (600 s) and runs nextest (900 s). **This is a native test execution with its own GO** (G11). Its test results are retained as evidence and are not proof cells | ≤ 1,500 s | Retained. A build-only route, if ruled, replaces it (SO-5b) |
 | E14 | Host: Recipe E `EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-gnu effigy workspace:linux:artifact` at the later bound candidate C (not frozen H), Colima `effigy-release`. Separate builder GO. Exact-bound source entry `linux_recipe_e_proof.py`. Verify §4.1 predicates | ≤ 1,800 s; artifact ≤ 200 MiB. Host writes bounded per writer: staged closure ≤ 512 MiB pre-write, export and copy-back ≤ 200 MiB + 64 KiB + 4 KiB, evidence ≤ 2 MiB + 256 KiB, carried under kit §6.3's 5 GiB with E9. Cargo tree ≤ 25 GiB retained on the builder's writable layer (VM disk, disclosed, not a host-bind write) with a 30 GiB free-space floor | Producer receipt and `effigy.builder-write-boundary.v1` record kept |
 | E15 | Host → guest: copy E's artifact `effigy-aarch64-unknown-linux-gnu` with its `.receipt` and `.active-version` into `B/source/.effigy/linux-release/artifacts/`, byte-for-byte. Verify sha256 on both sides. The copy is also the guest `effigy` launcher for E11 (D-7) | ≤ 200 MiB | Retained |
@@ -520,7 +525,7 @@ that must match exactly.
 | `docker_config` | `B/docker-config` | `effigy531`, `0700`, empty | Runtime sets `DOCKER_CONFIG` to it |
 | `runtime_image` | `sha256:<image ID>` | — | Present by ID after E12 |
 | `baseline` | `ps -a`, networks, volumes | — | Captured immediately before the first window. Runtime refuses drift |
-| `old_source_head` | `823d859dace2cbaa848c8ad5a0b5bdfd8959fdf1` | — | Distinct from H |
+| `old_source_head` | `3808b4fabfbcca59475a63071eee01b1de3b5492` | — | Distinct from H |
 | `budget_seconds` | ≤ 1,800 | — | Equal to the GO budget |
 | `ssh_alias`, `ssh_config`, `ssh_known_hosts` | host, under E1 | host `tom` `0600` | Pinned per SO-1/common `ssh_prefix`. Host key read from Parallels and pinned, not scanned. Numeric `HostName` |
 
@@ -616,7 +621,7 @@ archive arrives through an already allowed, authenticated route, provisioning
 remains blocked; neither the Darwin binary nor an unpinned installer is a
 substitute.
 
-The B source at `823d859dace2cbaa848c8ad5a0b5bdfd8959fdf1` declares
+The B source at `3808b4fabfbcca59475a63071eee01b1de3b5492` declares
 `sh scripts/oxide-selector.sh build --bin effigy` with a 900-second timeout;
 its own script SHA-256 is
 `0688176241ce10156533084399ab45ca233ff27749c2fb630432ddb3afae8455`.
@@ -789,7 +794,7 @@ metadata derivation remains separately limited to 60 seconds.
 ```
 
 The E13b payload is `sh scripts/oxide-selector.sh build --bin effigy` at
-`/Volumes/Stash/scratch/effigy/linux-4f6a5ed3/old-823d859d/source`, with
+`/Volumes/Stash/scratch/effigy/linux-4f6a5ed3/old-3808b4fabf/source`, with
 `EFFIGY_OXIDE_ESCAPE=cargo`, using B's own verified script and source-defined
 900-second bound. It requires the freshly verified missing-Oxide condition and
 its own stage and genuine producer receipt. E14's held payload is
@@ -834,7 +839,7 @@ The originals under `source-transfer-inputs` are retained; both manifests name
   old tree has no built `effigy`, and H's binary is excluded. The proposed route
   is the old commit's own `scripts/oxide-selector.sh` with
   `EFFIGY_OXIDE_ESCAPE=cargo`, given the arguments of that commit's
-  `build:runtime-storage` text, run from `B/old-823d859d/source`. That is not the
+  `build:runtime-storage` text, run from `B/old-3808b4fabf/source`. That is not the
   `effigy <selector>` form `cargo-routes.md` names, so it needs a ruling before
   E13b. Until ruled, E13b does not run and Stage2 stops before E16.
 - **SO-5b Kernel helper (owner ruling).** E13k is a native test run with its own

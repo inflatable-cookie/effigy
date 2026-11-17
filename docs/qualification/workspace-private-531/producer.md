@@ -92,11 +92,12 @@ Do not infer that a managed output remains after its lease or cleanup: freeze
 the copy before anything else builds in that fixture.
 
 What the sentinel control actually checks. The provisional `d7c3c93b` speaks
-helper protocol 2, so this source's protocol-4 handshake refuses it at ordinary
-admission. That is a fact about that commit only. It does not show that no
-ancestor can satisfy the control: a protocol-4 ancestor such as `823d859da`
-(`HELPER_PROTOCOL = 4`) is admitted
-by the same handshake at source level; only the run decides admission. For
+helper protocol 2, so a protocol-5 handshake refuses it at ordinary admission.
+That is a fact about that commit only. The selected older source is the #986
+merge `3808b4fabfbcca59475a63071eee01b1de3b5492`, whose
+`HELPER_PROTOCOL = 5` matches this candidate's handshake. It is an ancestor of
+`main` and distinct from the candidate; `validate_inputs` checks this source
+fact before a sealed command. Only the run decides actual binary admission. For
 `custody::tests::discard_old_sentinel_refuses_before_child_exec`:
 
 - It admits the named older executable as the run's sentinel through
@@ -125,7 +126,7 @@ so admission failure retains its diagnostics and cannot count as refusal credit.
 Recipe D therefore needs one genuine older binary that this source's handshake
 admits and that is built by its own source's covering selector. The
 source-ancestry search does not decide it; the admission and refusal results
-do. `823d859da` is the bound old source for this cell. Nothing here claims it
+do. `3808b4fabf` is the bound old source for this cell. Nothing here claims it
 predates `discard_v1`. The cell is not artifact-ready and carries no native
 credit until the frozen binary and its proof are recorded. Do not build the
 provisional commit again, and do not substitute a stand-in.

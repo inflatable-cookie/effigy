@@ -158,6 +158,14 @@ def write_bound(base, name, value):
 
 
 class Boundaries(unittest.TestCase):
+    def setUp(self):
+        # Most packet fixtures use synthetic commit IDs and do not exercise git.
+        # The protocol-specific admission test below replaces this with both
+        # matching and mismatched source observations.
+        patcher = patch('common.helper_protocol', return_value=5)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_historical_531_recipe_stays_on_the_image_context_pin(self):
         import image_context as context
         historical = PACKET / 'runtime.Dockerfile.531'
@@ -430,6 +438,15 @@ class Boundaries(unittest.TestCase):
         self.assertEqual(validate_inputs(value, HEAD), value)
         for cell in value['backends']:
             validate_go(go(cell), 'f' * 64, cell, HEAD)
+
+    def test_helper_protocol_admission_requires_matching_old_source(self):
+        import common
+        value = inputs()
+        with patch.object(common, 'helper_protocol', side_effect=lambda revision: 5 if revision == HEAD else 4):
+            with self.assertRaisesRegex(RuntimeError, r'old source speaks protocol 4; candidate speaks protocol 5'):
+                validate_inputs(value, HEAD)
+        with patch.object(common, 'helper_protocol', return_value=5):
+            self.assertEqual(validate_inputs(value, HEAD), value)
 
     def test_subset_old_source_or_fake_candidate_never_qualifies(self):
         for mutate in (
