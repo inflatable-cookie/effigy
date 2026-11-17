@@ -1452,7 +1452,7 @@ fn managed_workloads(
                     }),
                 );
             }
-            let color_env_names = crate::runner::managed_color::container_env_names(
+            let color_env = crate::runner::managed_color::container_env(
                 &color_env,
                 crate::runner::managed_color::initiating_ansi(),
             );
@@ -1467,7 +1467,7 @@ fn managed_workloads(
                     command,
                     exec_group,
                     env_names: &names,
-                    color_env_names: &color_env_names,
+                    color_env: &color_env,
                 }),
                 None => managed_exec_command(ManagedExecRequest {
                     repo_root: repo,

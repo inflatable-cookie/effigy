@@ -80,7 +80,7 @@ pub(crate) struct InlineManagedExecRequest<'a> {
     /// Container-side marker path and run nonce; `None` records no group.
     pub exec_group: Option<(&'a Path, &'a str)>,
     pub env_names: &'a [String],
-    pub color_env_names: &'a [String],
+    pub color_env: &'a [String],
 }
 
 /// An inline workspace's exec workload: Compose exec once the run has
@@ -95,7 +95,7 @@ pub(crate) fn render_inline_managed_exec_command(request: InlineManagedExecReque
         command,
         exec_group,
         env_names,
-        color_env_names,
+        color_env,
     } = request;
     let cwd = shell_quote(&process_cwd.display().to_string());
     let rewritten = container_exec_command(command, repo_root, process_cwd, container_repo_root);
@@ -106,8 +106,14 @@ pub(crate) fn render_inline_managed_exec_command(request: InlineManagedExecReque
         None => rewritten,
     };
     let mut tail = vec!["exec".into(), "-T".into()];
-    for name in env_names.iter().chain(color_env_names) {
+    for name in env_names {
         tail.extend([std::ffi::OsString::from("-e"), name.into()]);
+    }
+    for assignment in color_env {
+        tail.extend([
+            std::ffi::OsString::from("-e"),
+            std::ffi::OsString::from(assignment),
+        ]);
     }
     tail.extend(
         [
@@ -120,16 +126,11 @@ pub(crate) fn render_inline_managed_exec_command(request: InlineManagedExecReque
     );
     let args = effigy_containers::compose::normalize_compose_command_args(policy, &tail);
     let (program, args) = compose_invocation_for_repo(repo_root, policy, &args);
-    let relay_names = env_names
-        .iter()
-        .chain(color_env_names)
-        .cloned()
-        .collect::<Vec<_>>();
-    let attach = if relay_names.is_empty() {
+    let attach = if env_names.is_empty() {
         render_inline_compose_command(repo_root, policy, &args)
     } else {
         let program = resolve_host_cli_program(program);
-        crate::runner::managed_secrets::relay(&program, &args, &relay_names)
+        crate::runner::managed_secrets::relay(&program, &args, env_names)
     };
     let setup_sequence = setup_command
         .map(|setup_command| {
@@ -201,7 +202,7 @@ mod tests {
             root.join("compose.yaml"),
         );
         let render = |ansi: bool, env: BTreeMap<std::ffi::OsString, EnvValue>| {
-            let names = crate::runner::managed_color::container_env_names(&env, ansi);
+            let color_env = crate::runner::managed_color::container_env(&env, ansi);
             render_inline_managed_exec_command(InlineManagedExecRequest {
                 repo_root: root,
                 policy: &policy,
@@ -211,14 +212,14 @@ mod tests {
                 command: "printf service-output",
                 exec_group: None,
                 env_names: &[],
-                color_env_names: &names,
+                color_env: &color_env,
             })
         };
 
         let ansi = render(true, BTreeMap::new());
-        assert!(ansi.contains("CARGO_TERM_COLOR"), "{ansi}");
-        assert!(ansi.contains("CLICOLOR_FORCE"), "{ansi}");
-        assert!(ansi.contains("FORCE_COLOR"), "{ansi}");
+        assert!(ansi.contains("CARGO_TERM_COLOR=always"), "{ansi}");
+        assert!(ansi.contains("CLICOLOR_FORCE=1"), "{ansi}");
+        assert!(ansi.contains("FORCE_COLOR=1"), "{ansi}");
         assert!(
             ansi.contains("-T"),
             "the service exec remains non-interactive: {ansi}"

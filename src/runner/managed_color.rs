@@ -38,11 +38,11 @@ pub(super) fn apply(env: &mut BTreeMap<OsString, EnvValue>, ansi: bool) {
     }
 }
 
-pub(super) fn container_env_names(env: &BTreeMap<OsString, EnvValue>, ansi: bool) -> Vec<String> {
+pub(super) fn container_env(env: &BTreeMap<OsString, EnvValue>, ansi: bool) -> Vec<String> {
     if should_apply(env, ansi) {
         FORCED_COLOR
             .iter()
-            .map(|(key, _)| (*key).to_owned())
+            .map(|(key, value)| format!("{key}={value}"))
             .collect()
     } else {
         Vec::new()
@@ -155,14 +155,14 @@ mod tests {
     }
 
     #[test]
-    fn container_color_env_is_forwarded_only_when_the_front_allows_forcing() {
+    fn container_color_env_assignments_require_an_ansi_front_without_opt_out() {
         let expected = [
-            "CARGO_TERM_COLOR".to_owned(),
-            "CLICOLOR_FORCE".to_owned(),
-            "FORCE_COLOR".to_owned(),
+            "CARGO_TERM_COLOR=always".to_owned(),
+            "CLICOLOR_FORCE=1".to_owned(),
+            "FORCE_COLOR=1".to_owned(),
         ];
-        assert_eq!(container_env_names(&BTreeMap::new(), true), expected);
-        assert!(container_env_names(&BTreeMap::new(), false).is_empty());
+        assert_eq!(container_env(&BTreeMap::new(), true), expected);
+        assert!(container_env(&BTreeMap::new(), false).is_empty());
         for key in [
             "NO_COLOR",
             "CARGO_TERM_COLOR",
@@ -175,9 +175,9 @@ mod tests {
             "CI",
         ] {
             let env = BTreeMap::from([(key.into(), EnvValue::Plain("1".into()))]);
-            assert!(container_env_names(&env, true).is_empty(), "{key}");
+            assert!(container_env(&env, true).is_empty(), "{key}");
         }
         let term = BTreeMap::from([("TERM".into(), EnvValue::Plain("dumb".into()))]);
-        assert!(container_env_names(&term, true).is_empty());
+        assert!(container_env(&term, true).is_empty());
     }
 }
