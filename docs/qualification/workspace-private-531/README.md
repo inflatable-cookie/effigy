@@ -121,7 +121,8 @@ Each backend's input pins:
   plus `alternates` naming each accepted head with its changed-file list,
   every file under `docs/qualification/**` or `changelog.d/**`). The host
   checks each list against `git diff --name-only` before GO; the guest and
-  the offline aggregate accept only recorded packet-only heads and carry the
+  the offline aggregate accept only recorded packet-only heads connected to
+  the reference baseline through the recorded pairs, and carry the
   equivalence into the verdict. Any other diff still refuses;
 - the uninstalled qualification fixture utility, kernel helper, kernel library
   tests and custody integration tests, each by absolute path and SHA-256;

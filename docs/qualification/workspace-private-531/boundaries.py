@@ -862,6 +862,86 @@ class Boundaries(unittest.TestCase):
             self.assertIs(retained['positive'], False)
             self.assertEqual(digest(Path(retained['receipt_export']['path'])), retained['receipt_sha256'])
 
+    def test_aggregate_refuses_disconnected_equivalence_component(self):
+        # Two honestly frozen disjoint pairs: only the baseline's component admits.
+        import aggregate
+        with tempfile.TemporaryDirectory(prefix='531-disjoint-', dir=os.environ['TMPDIR']) as directory:
+            base = Path(directory)
+            cells = inputs()['backends']
+            cells[2]['ssh_alias'] = 'effigy-531-vault'
+            connected, far, farther = '3' * 40, '4' * 40, '5' * 40
+            linux_cell = copy.deepcopy(cells[2])
+            linux_cell.update(source_head=connected,
+                              candidate_receipt=dict(linux_cell['candidate_receipt'], source_head=connected),
+                              production_receipt=dict(linux_cell['production_receipt'], source_head=connected))
+            desktop_cell = copy.deepcopy(cells[1])
+            desktop_cell.update(source_head=far,
+                                candidate_receipt=dict(desktop_cell['candidate_receipt'], source_head=far),
+                                production_receipt=dict(desktop_cell['production_receipt'], source_head=far))
+            paths = {}
+            path, _ = invocation_record('colima', cells[0], base)
+            paths['colima'] = path
+            path, _ = invocation_record('linux', linux_cell, base,
+                                        equivalence={'baseline': HEAD,
+                                                     'alternates': {connected: ['docs/qualification/workspace-private-531/common.py']}})
+            paths['linux'] = path
+            path, _ = invocation_record('desktop', desktop_cell, base, label='desktop-disjoint',
+                                        source_head=far,
+                                        equivalence={'baseline': far,
+                                                     'alternates': {farther: ['changelog.d/1027-packet.added.md']}})
+            paths['desktop'] = path
+            argv = ['aggregate.py', '--source-head', HEAD]
+            for backend in BACKENDS:
+                argv += ['--receipt', '{}={}'.format(backend, paths[backend]),
+                         '--receipt-sha256', '{}={}'.format(backend, digest(paths[backend]))]
+            with patch.object(sys, 'argv', argv):
+                with self.assertRaisesRegex(RuntimeError, 'stale or mixed-source receipt'):
+                    aggregate.main()
+
+    def test_aggregate_accepts_chained_equivalence_through_a_shared_head(self):
+        # H0->H1 and H1->H2: the H2 cell connects to the baseline through H1.
+        import io
+        import aggregate
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory(prefix='531-chained-', dir=os.environ['TMPDIR']) as directory:
+            base = Path(directory)
+            cells = inputs()['backends']
+            cells[2]['ssh_alias'] = 'effigy-531-vault'
+            middle, leaf = '3' * 40, '4' * 40
+            first_changed = ['docs/qualification/workspace-private-531/common.py']
+            second_changed = ['changelog.d/1027-packet.added.md']
+            linux_cell = copy.deepcopy(cells[2])
+            linux_cell.update(source_head=middle,
+                              candidate_receipt=dict(linux_cell['candidate_receipt'], source_head=middle),
+                              production_receipt=dict(linux_cell['production_receipt'], source_head=middle))
+            desktop_cell = copy.deepcopy(cells[1])
+            desktop_cell.update(source_head=leaf,
+                                candidate_receipt=dict(desktop_cell['candidate_receipt'], source_head=leaf),
+                                production_receipt=dict(desktop_cell['production_receipt'], source_head=leaf))
+            paths = {}
+            path, _ = invocation_record('colima', cells[0], base)
+            paths['colima'] = path
+            path, _ = invocation_record('linux', linux_cell, base,
+                                        equivalence={'baseline': HEAD, 'alternates': {middle: first_changed}})
+            paths['linux'] = path
+            path, _ = invocation_record('desktop', desktop_cell, base, label='desktop-chained',
+                                        source_head=middle,
+                                        equivalence={'baseline': middle, 'alternates': {leaf: second_changed}})
+            paths['desktop'] = path
+            argv = ['aggregate.py', '--source-head', HEAD]
+            for backend in BACKENDS:
+                argv += ['--receipt', '{}={}'.format(backend, paths[backend]),
+                         '--receipt-sha256', '{}={}'.format(backend, digest(paths[backend]))]
+            with patch.object(sys, 'argv', argv), redirect_stdout(io.StringIO()) as printed:
+                aggregate.main()
+            verdict = json.loads(printed.getvalue())
+            self.assertTrue(verdict['qualified'])
+            self.assertEqual(verdict['source_equivalence'],
+                             {'baseline_head': HEAD, 'equivalent_heads': [middle, leaf],
+                              'changed_files': sorted(first_changed + second_changed),
+                              'support': {middle: sorted(first_changed),
+                                          leaf: sorted(first_changed + second_changed)}})
+
     def test_launch_binds_mixed_source_cell_for_aggregate(self):
         import io
         import aggregate
@@ -937,7 +1017,7 @@ class Boundaries(unittest.TestCase):
             self.assertTrue(verdict['qualified'])
             self.assertEqual(verdict['source_equivalence'],
                              {'baseline_head': HEAD, 'equivalent_heads': [alternate],
-                              'changed_files': sorted(changed)})
+                              'changed_files': sorted(changed), 'support': {alternate: sorted(changed)}})
             # A cell head outside any recorded equivalence never launches.
             uncovered = copy.deepcopy(desktop)
             uncovered.update(source_head='4' * 40,
@@ -1359,7 +1439,7 @@ class Boundaries(unittest.TestCase):
             self.assertTrue(verdict['qualified'])
             self.assertEqual(verdict['source_equivalence'],
                              {'baseline_head': HEAD, 'equivalent_heads': [alternate],
-                              'changed_files': sorted(changed)})
+                              'changed_files': sorted(changed), 'support': {alternate: sorted(changed)}})
 
             # An unrecorded different runner head still refuses, as does a non-packet diff
             # or a cell head outside the recorded equivalence.

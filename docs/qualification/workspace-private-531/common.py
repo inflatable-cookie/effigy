@@ -54,12 +54,17 @@ def check_equivalence_record(holder):
 
 
 def allowed_source_heads(holder, head):
-    """Every head the frozen record accepts alongside the reference head. No git runs here."""
+    """Every head the frozen record accepts alongside the reference head. No git runs here.
+
+    A present record must cover the reference head itself, so a stale or
+    unrelated reference cannot borrow another pair's alternates."""
     require(re.fullmatch(r'[0-9a-f]{40}', head), 'reference source head required')
     record = check_equivalence_record(holder)
     if record is None:
         return frozenset({head})
-    return frozenset({head, record['baseline'], *record['alternates']})
+    covered = {record['baseline'], *record['alternates']}
+    require(head in covered, 'reference source head is not covered by the frozen source equivalence')
+    return frozenset(covered)
 
 
 def diff_names(a, b, *, root=None):

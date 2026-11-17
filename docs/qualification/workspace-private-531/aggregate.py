@@ -142,20 +142,35 @@ def verify_receipt_semantics(record):
 
 
 def equivalence_union(bindings, head):
-    """Offline head set: the baseline plus every frozen packet-only alternate the receipts record.
+    """Offline head set: the aggregate baseline plus every frozen packet-only alternate connected to it.
 
     Each record is shape- and scope-checked here; the host checked the actual
-    diffs against git when the inputs were frozen. No SSH, runtime or git runs here."""
-    allowed = {head}
-    files = set()
+    diffs against git when the inputs were frozen. Only the connected
+    component containing the baseline is admitted: a head from a disjoint
+    pair is not packet-only equivalent to this baseline even when its own
+    pair was honestly frozen. Each admitted head carries the packet-only
+    file list supporting its admission path. No SSH, runtime or git runs here."""
+    from collections import deque
+    adjacency = {}
     for binding in bindings:
         record = check_equivalence_record(binding)
         if record is not None:
-            allowed.add(record['baseline'])
             for alternate, changed in record['alternates'].items():
-                allowed.add(alternate)
-                files.update(changed)
-    return frozenset(allowed), sorted(files)
+                adjacency.setdefault(record['baseline'], []).append((alternate, list(changed)))
+                adjacency.setdefault(alternate, []).append((record['baseline'], list(changed)))
+    allowed = {head}
+    support = {}
+    queue = deque([(head, [])])
+    while queue:
+        node, path_files = queue.popleft()
+        for neighbor, files in adjacency.get(node, ()):
+            if neighbor not in allowed:
+                allowed.add(neighbor)
+                merged = sorted(set(path_files) | set(files))
+                support[neighbor] = merged
+                queue.append((neighbor, merged))
+    changed_files = sorted({name for files in support.values() for name in files})
+    return frozenset(allowed), changed_files, support
 
 
 def verify_record(backend, record, head, allowed):
@@ -234,7 +249,7 @@ def aggregate(args):
         require(re.fullmatch(r'[0-9a-f]{64}', hashes[backend]), 'bound invocation receipt hash required')
         require(digest(path) == hashes[backend], 'invocation receipt differs from its bound hash')
         records[backend] = load(path)
-    allowed, changed_files = equivalence_union(
+    allowed, changed_files, support = equivalence_union(
         [records[backend]['binding'] for backend in BACKENDS], args.source_head)
     for backend in BACKENDS:
         verify_record(backend, records[backend], args.source_head, allowed)
@@ -245,7 +260,8 @@ def aggregate(args):
             'source_head': args.source_head, 'contract': CONTRACT,
             'source_equivalence': {'baseline_head': args.source_head,
                                    'equivalent_heads': sorted(allowed - {args.source_head}),
-                                   'changed_files': changed_files},
+                                   'changed_files': changed_files,
+                                   'support': support},
             'candidate_features': first['candidate_receipt']['features'],
             'production_features': first['production_receipt']['features'],
             'old_source_head': first['old_source_head'],
