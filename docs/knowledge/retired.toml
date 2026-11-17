@@ -10,7 +10,7 @@ replacement = "Tom 2026-11-17. oxide#309 runs the plain way: an ordinary Effigy 
 owner = "docs/knowledge/retired.toml"
 terms = [
   "effigy_prepare_custody",
-  "effigy_admission",
+  "Oxide supplier interface effigy_admission",
   "common_elapsed_clock",
   "EFFIGY_INHERITED_CLOCK",
   "MS sentinel",
