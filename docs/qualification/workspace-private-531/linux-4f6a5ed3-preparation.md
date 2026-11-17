@@ -209,7 +209,7 @@ that need code are listed as source-owner proposals in §6.4.
 | A — production binary | `build:runtime-storage` → `oxide build --bin effigy` | Guest build from frozen source archive, via the sanctioned per-selector escape (D-7) | Ready after Stage2 E13a. Blocked only on the GO |
 | B — candidate and utility | `build:workspace:private-qualification` | Guest build, same escape | Same as A |
 | C — test executables, nextest, metadata | `build:workspace:private-qualification:test-inputs`, `…:cargo-metadata` (builds), `test:workspace:private-qualification:kernel` (builds helper and runs tests) | Guest build and native metadata (E13a, E17). Helper through E13k with its own GO | E13k is a native test run. Its GO must name it. Metadata per SO-6 |
-| D — genuine old baseline `3808b4fabf` | That commit's own covering selector (`build:runtime-storage`) | Native guest fixture at `3808b4fabf`, its own tree and its own selector text | Launcher question (SO-5a). Default: that commit's own script, no H code |
+| D — genuine old baseline `8460f38e` | That commit's own covering selector (`build:runtime-storage`) | Native guest fixture at `8460f38e`, its own tree and its own selector text | Launcher question (SO-5a). Default: that commit's own script, no H code |
 | E — guest artifact | `workspace:linux:artifact` (Darwin host, Colima `effigy-release`) | Same route with `EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-gnu`, copied into the guest source at `.effigy/linux-release/artifacts/` | Source proof entry binds the current checkout (not H). ELF/size/SHA predicates live in that entry (§4.1). Native E14 still GO-gated. Frozen H/627 stay historical |
 
 ### 4.1 Recipe E predicates
