@@ -144,7 +144,9 @@ Each backend's input pins:
   artifacts, prepositioned reviewed driver directory, and exact
   input/GO-index paths on its native Linux host. Linux executes the candidate
   there against its local engine. A macOS candidate talking to remote Docker
-  cannot substitute for native Linux custody.
+  cannot substitute for native Linux custody. The prepositioned driver is
+  preparation evidence: each attempt stages this runner's own driver bytes into
+  its own guest directory and verifies the readback before execution.
 
 The prepared root is the window's exact base, not an allocation in global
 scratch. Its descriptor stays held until completion; initial layout and receipts
@@ -407,6 +409,35 @@ there is no tree deletion in the launcher. Fixture removal/retention must be
 covered by that GO and a verified exact manifest, not inferred from this source
 or from Queue's older cleanup records. No process or runtime may be described
 as absent just because an output directory is missing.
+
+### Attempt-scoped state: a second attempt needs no hand cleanup (effigy#1032)
+
+Re-runs are the norm: a failed attempt is diagnosed, fixed and re-run with fresh
+inputs. Nothing in the packet may require an operator to clean up the previous
+attempt, so every per-attempt identity is derived from the attempt itself:
+
+- The launcher derives a fresh evidence directory from the inputs digest plus an
+  attempt suffix below the frozen parent; a reused base name never refuses and a
+  failed attempt's evidence stays intact.
+- The GO is compared with one reference head on both sides — the frozen inputs
+  head it names. The host entry and the guest runtime read the same value; the
+  live checkout head is accepted only through the frozen packet-only
+  equivalence record, so a docs-equivalent head cannot shift what the GO binds.
+- The Linux runner stages its own `FILES` into a fresh per-attempt driver
+  directory and verifies the guest readback. A driver prepared by another
+  packet head is preparation evidence, never the executed code.
+- Phase P's remote metadata paths gain the attempt suffix, so each attempt keeps
+  exclusive creation inside itself instead of colliding with the previous
+  attempt's file and its retained `.pending-<id>` sibling; the SSH release gate
+  is per attempt for the same reason.
+- Before launch, only this packet's own frozen plan units are considered, and a
+  unit that still owns a main PID, control group or kernel member refuses. A
+  process-free leftover is stopped if it is `active` and then `reset-failed`;
+  every plan unit is retired after its evidence is read, so a normal attempt
+  leaves none active.
+- Helper and controller streams use `truncate:`, never `append:`; a reused plan
+  unit's stream therefore holds exactly one document instead of two concatenated
+  JSON results.
 
 ## Source/fixture evidence and remaining release gates
 

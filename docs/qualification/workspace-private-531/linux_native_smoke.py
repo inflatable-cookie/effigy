@@ -304,7 +304,9 @@ def root_collect(root, attempt, ssh, controller=None, expected=None):
         arguments = [controller or '-',json.dumps(expected['origin'],sort_keys=True)]
     output,errors,state,unit = native_run.admin_program(attempt,
         ['/usr/bin/python3','-I','-B',directory+'/linux_native_collect.py',*arguments],
-        unit=expected['observer_unit'].removesuffix('.service') if expected else None)
+        unit=expected['observer_unit'].removesuffix('.service') if expected else None,
+        owned=(frozenset({expected['observer_unit'].removesuffix('.service')})
+               if expected is not None else None))
     result = json.loads(output)
     if expected is not None:
         import linux_capacity_contract as capacity

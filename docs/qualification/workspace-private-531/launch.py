@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import uuid
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (BACKENDS, PACKET, SCRATCH, artifact, digest, exclusive, exclusive_bytes, load, require, run,
                     open_qualification_root, qualification_path, source_head, ssh_prefix, validate_go, validate_inputs,
@@ -45,17 +46,29 @@ def main():
     for cell in selected:
         go = artifact(go_index[cell['backend']])
         goes[cell['backend']] = load(go)
-        validate_go(goes[cell['backend']], args.sha256, cell, head)
+        # One reference head on both sides: the frozen inputs head this GO names.
+        # The guest route has no checkout, so it compares this same value; the
+        # live checkout head is checked against the frozen equivalence record.
+        validate_go(goes[cell['backend']], args.sha256, cell, value['source_head'])
     # Every local config is pinned/private and checked before creating evidence or
     # starting any backend. -F avoids the user's global SSH configuration.
     for cell in selected:
         if cell['driver'] == 'ssh':
             ssh_prefix(cell)
-    evidence = Path(value['evidence'])
-    require(evidence.parent.resolve().is_relative_to(SCRATCH.resolve()) and not evidence.exists(),
-            'evidence must be a fresh scratch directory')
+    # A failed attempt retains its evidence directory, so the launcher derives a
+    # fresh per-attempt directory instead of asking an operator to invent one:
+    # the inputs digest plus this attempt's own suffix, below the frozen parent.
+    base_evidence = Path(value['evidence'])
+    require(base_evidence.parent.resolve().is_relative_to(SCRATCH.resolve()),
+            'evidence parent must be removable scratch')
+    suffix = uuid.uuid4().hex
+    name = '{}-{}-{}'.format(base_evidence.name, args.sha256, suffix)
+    require(base_evidence.name and len(name) <= 200, 'evidence directory name exceeds its bound')
+    evidence = base_evidence.parent / name
+    require(not evidence.exists(), 'attempt evidence directory already exists')
     evidence.mkdir(mode=0o700)
     exclusive(evidence / 'started.json', {'source_head': head, 'inputs_sha256': args.sha256,
+                                         'attempt': suffix, 'evidence': str(evidence),
                                          'backends': [cell['backend'] for cell in selected]})
     for cell in selected:
         command = ['python3', '-I', '-B', str(PACKET / 'runtime.py'), '--inputs', str(inputs),
