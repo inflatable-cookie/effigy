@@ -341,8 +341,10 @@ impl Run<'_> {
     ) -> Result<(), RunError> {
         if let Some(custody) = self.checkout_custody.as_mut() {
             if let Some(backup) = custody.partial_backup.as_mut() {
-                backup.close(cleanup).map_err(|_| {
-                    RunError::unavailable("checkout backup cleanup remains unsettled")
+                backup.close(cleanup).map_err(|error| {
+                    RunError::unavailable(format!(
+                        "checkout backup cleanup remains unsettled: {error}"
+                    ))
                 })?;
             }
             custody.partial_backup.take();

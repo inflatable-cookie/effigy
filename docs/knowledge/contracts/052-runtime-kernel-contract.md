@@ -77,10 +77,11 @@ matrix are implemented (`test:kernel:faults`, `test:kernel:matrix`);
 engine-specific §12.1 scenarios are placeholders owned by their engine lanes.
 Fault points inside helper processes (sentinel settle, guard acknowledgement)
 are not yet armed; architecture 032 records the limit. Every helper frame names
-the handshake protocol version it speaks, which is 3 since effigy#529; an older
-or newer helper binary refuses the mismatched frame by name and exits before it
-runs anything, so a mixed-version helper pair never exchanges a frame it cannot
-interpret. The managed-run
+the handshake protocol version it speaks, which is 6 since effigy#992. Protocol
+6 carries the owner's absolute deadline in the guard's start frame and bounds
+the guard's closure wait by that deadline; older helper binaries refuse the
+mismatched frame by name and exit before running anything, so a mixed-version
+helper pair never exchanges a frame it cannot interpret. The managed-run
 supervisor is armed at every kernel crossing (`test:supervisor:faults`). That
 proof traces one immutable crossing list, assigns each entry once across six
 owned fixture workers, and reaps every worker before aggregation; per-run

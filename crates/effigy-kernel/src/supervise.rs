@@ -97,8 +97,10 @@ impl Executable {
 /// backup's acknowledgement names the exact receipt request (effigy#529), so a
 /// late answer to an earlier frame can never answer the frame just written.
 /// 4: the frame carries no checkout, so a guard that outlives its owner cannot
-/// record the run it settles (effigy#986).
-pub const HELPER_PROTOCOL: u32 = 5;
+/// record the run it settles (effigy#986). 6: the guard's start frame carries
+/// the owner's absolute deadline and its closure wait is bounded by it
+/// (effigy#992), so a pre-992 guard cannot settle a post-992 owner's run.
+pub const HELPER_PROTOCOL: u32 = 6;
 /// Refuse a helper frame this binary cannot read, naming both versions.
 fn check_protocol(version: u32) -> Result<(), RunError> {
     if version == HELPER_PROTOCOL {
