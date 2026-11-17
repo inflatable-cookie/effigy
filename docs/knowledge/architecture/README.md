@@ -23,5 +23,6 @@ Current technical authority for Effigy.
 | Gateway endpoint storage API | [035-gateway-endpoint-store.md](035-gateway-endpoint-store.md) |
 | Live progress sites (Q-017) | [036-live-progress-sites.md](036-live-progress-sites.md) |
 | Interpolation custody and recovery (proposed) | [037-interpolation-custody-proposal.md](037-interpolation-custody-proposal.md) |
+| Prepare and direct-parent custody scope for Oxide #309 (proposed) | [038-prepare-actor-custody-boundaries.md](038-prepare-actor-custody-boundaries.md) |
 | Effigy Product Guardrails | [product-guardrails.md](product-guardrails.md) |
 | Codebase sweep procedure | [codebase-sweep.md](codebase-sweep.md) |
