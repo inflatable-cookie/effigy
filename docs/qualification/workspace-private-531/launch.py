@@ -92,12 +92,14 @@ def main():
         exclusive_bytes(export, transported)
         require(digest(export) == receipt_hash, 'retained receipt copy differs from the original hash')
         # The binding record fixes the exact selected authority and immutable
-        # context of this invocation: source, executed programs, contract,
-        # candidate, inputs, pinned root, old baseline, window and one-use marker.
+        # context of this invocation: runner source, cell candidate source,
+        # executed programs, contract, candidate, inputs, pinned root, old
+        # baseline, window and one-use marker.
         # Digests are read after execution; the bytes on disk are what ran.
         programs = {name: digest(PACKET / name) for name in ('launch.py', 'runtime.py', 'common.py', 'probe.py')}
         binding = {'schema': 'effigy.workspace-private-backend-invocation.v1', 'backend': cell['backend'],
-                   'source_head': head, 'programs': programs, 'contract': value['schema'],
+                   'source_head': head, 'cell_source_head': cell['source_head'],
+                   'programs': programs, 'contract': value['schema'],
                    'candidate': cell['candidate'], 'candidate_receipt': cell['candidate_receipt'],
                    'production': cell['production'], 'production_receipt': cell['production_receipt'],
                    'source_equivalence': value.get('source_equivalence'),
@@ -118,7 +120,8 @@ def main():
         # The post-run source check gates positivity: a mid-window source edit
         # yields honest, nonqualifying evidence, never a positive receipt.
         unchanged = source_head(root) == head
-        receipt = {'backend': cell['backend'], 'exit_code': result.returncode, 'receipt': receipt_path,
+        receipt = {'schema': 'effigy.workspace-private-backend-invocation.v1', 'backend': cell['backend'],
+                   'exit_code': result.returncode, 'receipt': receipt_path,
                    'receipt_sha256': receipt_hash,
                    'receipt_export': {'path': str(export), 'sha256': receipt_hash},
                    'source_unchanged': unchanged,
