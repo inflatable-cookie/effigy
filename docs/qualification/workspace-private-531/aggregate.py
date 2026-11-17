@@ -22,7 +22,7 @@ from pathlib import Path
 import re
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import BACKENDS, SCRATCH, digest, load, qualification_path, require
+from common import BACKENDS, SCRATCH, check_equivalence_record, digest, load, qualification_path, require
 
 CONTRACT = 'effigy.workspace-private-proof.v1'
 INVOCATION = 'effigy.workspace-private-backend-invocation.v1'
@@ -68,12 +68,13 @@ def receipt_file(raw, label):
     return path
 
 
-def common_contract(record):
+def common_contract(record, head):
     # The shared contract is source, features, contract schema, executed driver
     # bytes and old source identity. Actual artifact bytes are per-platform and
-    # are never compared across Darwin and native Linux.
+    # are never compared across Darwin and native Linux. The source is the
+    # aggregate baseline: every accepted head is packet-only equivalent to it.
     binding = record['binding']
-    return (binding['source_head'], binding['contract'],
+    return (head, binding['contract'],
             tuple(binding['candidate_receipt']['features']), tuple(binding['production_receipt']['features']),
             binding['old_source_head'], json.dumps(binding['programs'], sort_keys=True))
 
@@ -140,7 +141,39 @@ def verify_receipt_semantics(record):
             'recorded baseline/cleanup/fixture-retention differs')
 
 
-def verify_record(backend, record, head):
+def equivalence_union(bindings, head):
+    """Offline head set: the aggregate baseline plus every frozen packet-only alternate connected to it.
+
+    Each record is shape- and scope-checked here; the host checked the actual
+    diffs against git when the inputs were frozen. Only the connected
+    component containing the baseline is admitted: a head from a disjoint
+    pair is not packet-only equivalent to this baseline even when its own
+    pair was honestly frozen. Each admitted head carries the packet-only
+    file list supporting its admission path. No SSH, runtime or git runs here."""
+    from collections import deque
+    adjacency = {}
+    for binding in bindings:
+        record = check_equivalence_record(binding)
+        if record is not None:
+            for alternate, changed in record['alternates'].items():
+                adjacency.setdefault(record['baseline'], []).append((alternate, list(changed)))
+                adjacency.setdefault(alternate, []).append((record['baseline'], list(changed)))
+    allowed = {head}
+    support = {}
+    queue = deque([(head, [])])
+    while queue:
+        node, path_files = queue.popleft()
+        for neighbor, files in adjacency.get(node, ()):
+            if neighbor not in allowed:
+                allowed.add(neighbor)
+                merged = sorted(set(path_files) | set(files))
+                support[neighbor] = merged
+                queue.append((neighbor, merged))
+    changed_files = sorted({name for files in support.values() for name in files})
+    return frozenset(allowed), changed_files, support
+
+
+def verify_record(backend, record, head, allowed):
     require(record['schema'] == INVOCATION and record['backend'] == backend
             and record['binding']['backend'] == backend, 'unknown or misbound invocation receipt')
     require(record['exit_code'] == 0 and record['source_unchanged'] is True
@@ -148,17 +181,19 @@ def verify_record(backend, record, head):
             'a failed, refused, diagnostic or source-changed backend cannot qualify the packet')
     binding = record['binding']
     require(binding['contract'] == CONTRACT, 'receipt contract differs')
-    require(binding['source_head'] == head, 'stale or mixed-source receipt')
-    require(binding['candidate_receipt']['source_head'] == head
+    require(binding['source_head'] in allowed, 'stale or mixed-source receipt')
+    cell_head = binding.get('cell_source_head', binding['source_head'])
+    require(cell_head in allowed, 'cell candidate head is not an accepted packet source')
+    require(binding['candidate_receipt']['source_head'] == cell_head
             and binding['candidate_receipt']['features'] == QUALIFICATION_FEATURES
             and binding['candidate_receipt']['sha256'] == binding['candidate']['sha256'],
             'receipt does not carry the exact qualification candidate contract')
-    require(binding['production_receipt']['source_head'] == head
+    require(binding['production_receipt']['source_head'] == cell_head
             and binding['production_receipt']['features'] == []
             and binding['production_receipt']['sha256'] == binding['production']['sha256'],
             'receipt does not carry the exact ordinary production contract')
     old = binding['old_source_head']
-    require(old != head and re.fullmatch(r'[0-9a-f]{40}', old)
+    require(old not in allowed and re.fullmatch(r'[0-9a-f]{40}', old)
             and binding['old_source_receipt']['source_head'] == old
             and binding['old_source_receipt']['sha256'] == binding['old_binary']['sha256'],
             'receipt does not carry the genuine old-baseline contract')
@@ -183,12 +218,12 @@ def verify_record(backend, record, head):
         require(digest(prepared_path)==preparation['sha256'],'Linux preparation bytes changed')
         prepared=load(prepared_path)
         require(prepared['schema']=='effigy.linux-physical-preparation-complete.v1'
-                and prepared['source_head']==head and prepared['cell']['linux_capacity']==binding['linux_capacity'],
+                and prepared['source_head'] in allowed and prepared['cell']['linux_capacity']==binding['linux_capacity'],
                 'Linux full receipt does not carry its frozen preparation')
         original = record['linux_capacity_originals']
         path = receipt_file(original['path'], 'Linux physical originals')
         require(digest(path) == original['sha256'], 'Linux physical originals changed')
-        capacity.verify_full(binding['linux_capacity'], load(path), head)
+        capacity.verify_full(binding['linux_capacity'], load(path), head, allowed=allowed)
         limits=binding['linux_capacity']['plan']['phases']['activation']['images']
         allocation=record['linux_allocation']
         peak=allocation['sampled_peak_bytes'][limits['engine']['mountpoint']]
@@ -214,13 +249,19 @@ def aggregate(args):
         require(re.fullmatch(r'[0-9a-f]{64}', hashes[backend]), 'bound invocation receipt hash required')
         require(digest(path) == hashes[backend], 'invocation receipt differs from its bound hash')
         records[backend] = load(path)
+    allowed, changed_files, support = equivalence_union(
+        [records[backend]['binding'] for backend in BACKENDS], args.source_head)
     for backend in BACKENDS:
-        verify_record(backend, records[backend], args.source_head)
-    require(len({common_contract(record) for record in records.values()}) == 1,
+        verify_record(backend, records[backend], args.source_head, allowed)
+    require(len({common_contract(record, args.source_head) for record in records.values()}) == 1,
             'receipts do not match the SAME final source, features and common contract')
     first = records['colima']['binding']
     return {'schema': 'effigy.workspace-private-aggregate.v1', 'qualified': True,
             'source_head': args.source_head, 'contract': CONTRACT,
+            'source_equivalence': {'baseline_head': args.source_head,
+                                   'equivalent_heads': sorted(allowed - {args.source_head}),
+                                   'changed_files': changed_files,
+                                   'support': support},
             'candidate_features': first['candidate_receipt']['features'],
             'production_features': first['production_receipt']['features'],
             'old_source_head': first['old_source_head'],

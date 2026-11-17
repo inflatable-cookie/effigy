@@ -107,8 +107,23 @@ reviewer must inspect the build receipts and input binding before activation.
 
 Each backend's input pins:
 
-- exact source head; default production binary and its feature-free build
-  receipt; qualification binary and its single-feature build receipt;
+- exact source head for that cell; default production binary and its feature-free build
+  receipt; qualification binary and its single-feature build receipt. Both binary
+  receipts must name the cell's own source head;
+- the frozen helper protocols for that head and the genuine old head
+  (`candidate_helper_protocol`, `old_helper_protocol` per cell), computed on
+  the host launcher where a git checkout exists and frozen into the inputs.
+  The guest-side check compares the frozen values — and the cell's pinned
+  source tree when readable — and never runs git, so the SSH route needs no
+  repository at the driver's parent path. A mismatched pin still refuses
+  before any cell;
+- optionally, one frozen packet-only `source_equivalence` record (`baseline`
+  plus `alternates` naming each accepted head with its changed-file list,
+  every file under `docs/qualification/**` or `changelog.d/**`). The host
+  checks each list against `git diff --name-only` before GO; the guest and
+  the offline aggregate accept only recorded packet-only heads connected to
+  the reference baseline through the recorded pairs, and carry the
+  equivalence into the verdict. Any other diff still refuses;
 - the uninstalled qualification fixture utility, kernel helper, kernel library
   tests and custody integration tests, each by absolute path and SHA-256;
 - a genuine older Effigy executable from the recorded different source commit,
@@ -382,8 +397,11 @@ container is resolved from that checkout's exact scope and service labels.
    run closed with complete cleanup. Missing/unknown evidence fails the packet.
 
 Each backend first claims an exclusive input-hash-bound one-shot marker, including when invoked directly. Each cell writes an exclusive, fsynced bounded receipt. A failure keeps all
-prior receipts and exact unresolved resources; there is no retry, pattern kill,
-forced cleanup, guessed absence or invented success. A passing run retains its
+prior receipts and exact unresolved resources; there is no pattern kill,
+forced cleanup, guessed absence or invented success. A failed run is diagnosed,
+fixed if needed, and re-run with fresh inputs; acceptance is a green run. The
+input-hash one-shot marker stays as replay protection for the same inputs
+digest: new inputs get a new marker, so a re-run needs no code change. A passing run retains its
 private fixture and receipts as evidence under its explicit GO disposition;
 there is no tree deletion in the launcher. Fixture removal/retention must be
 covered by that GO and a verified exact manifest, not inferred from this source

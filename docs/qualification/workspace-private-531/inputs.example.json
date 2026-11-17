@@ -8,6 +8,8 @@
       "source_head": "EXACT_PUBLISHED_PR_HEAD",
       "source_root": "/Volumes/Stash/scratch/effigy/531-approved-source-colima",
       "old_source_head": "GENUINE_OLD_SOURCE_COMMIT",
+      "candidate_helper_protocol": "RECORD_ACTUAL_PROTOCOL",
+      "old_helper_protocol": "RECORD_ACTUAL_PROTOCOL",
       "candidate_receipt": {
         "source_head": "EXACT_PUBLISHED_PR_HEAD",
         "features": [
@@ -112,6 +114,8 @@
       "source_head": "EXACT_PUBLISHED_PR_HEAD",
       "source_root": "/Volumes/Stash/scratch/effigy/531-approved-source-desktop",
       "old_source_head": "GENUINE_OLD_SOURCE_COMMIT",
+      "candidate_helper_protocol": "RECORD_ACTUAL_PROTOCOL",
+      "old_helper_protocol": "RECORD_ACTUAL_PROTOCOL",
       "candidate_receipt": {
         "source_head": "EXACT_PUBLISHED_PR_HEAD",
         "features": [
@@ -216,6 +220,8 @@
       "source_head": "EXACT_PUBLISHED_PR_HEAD",
       "source_root": "/Volumes/Stash/scratch/effigy/531-approved-source-linux",
       "old_source_head": "GENUINE_OLD_SOURCE_COMMIT",
+      "candidate_helper_protocol": "RECORD_ACTUAL_PROTOCOL",
+      "old_helper_protocol": "RECORD_ACTUAL_PROTOCOL",
       "candidate_receipt": {
         "source_head": "EXACT_PUBLISHED_PR_HEAD",
         "features": [

@@ -21,6 +21,7 @@ def inputs():
     cells = []
     for backend in BACKENDS:
         cells.append(dict(backend=backend, source_head=HEAD, old_source_head='2' * 40,
+            candidate_helper_protocol=5, old_helper_protocol=5,
             old_source_receipt=dict(source_head='2' * 40, sha256='c' * 64),
             candidate_receipt=dict(source_head=HEAD, features=['workspace-private-qualification'], sha256='a' * 64),
             production_receipt=dict(source_head=HEAD, features=[], sha256='b' * 64),
@@ -81,7 +82,7 @@ def complete_cells():
 
 
 def invocation_record(backend, cell, base, source_head=HEAD, inputs_sha256='f' * 64, complete=None,
-                      label=None):
+                      label=None, equivalence=None):
     # An owned, original-shaped invocation receipt over real fixture files; the
     # original complete receipt lives in a real pinned root whose identity is
     # observed, never asserted, and its exact bytes are retained as an export.
@@ -130,6 +131,9 @@ def invocation_record(backend, cell, base, source_head=HEAD, inputs_sha256='f' *
     if cell['driver'] == 'ssh':
         binding.update(ssh_alias=cell.get('ssh_alias', 'effigy-531-vault'), ssh_config=cell['ssh_config'],
                        ssh_known_hosts=cell['ssh_known_hosts'], linux_capacity=cell['linux_capacity'],linux_preparation=cell['linux_preparation'])
+    binding['cell_source_head'] = cell['source_head']
+    if equivalence is not None:
+        binding['source_equivalence'] = equivalence
     record = {'schema': 'effigy.workspace-private-backend-invocation.v1', 'backend': backend, 'exit_code': 0,
               'source_unchanged': True, 'positive': True,
               'host': binding.get('ssh_alias', 'local'), 'receipt': str(complete_path),
@@ -439,14 +443,93 @@ class Boundaries(unittest.TestCase):
         for cell in value['backends']:
             validate_go(go(cell), 'f' * 64, cell, HEAD)
 
-    def test_helper_protocol_admission_requires_matching_old_source(self):
+    def test_frozen_protocols_guard_without_git_on_ssh_route(self):
         import common
         value = inputs()
-        with patch.object(common, 'helper_protocol', side_effect=lambda revision: 5 if revision == HEAD else 4):
-            with self.assertRaisesRegex(RuntimeError, r'old source speaks protocol 4; candidate speaks protocol 5'):
+        with tempfile.TemporaryDirectory(prefix='531-ssh-route-', dir=os.environ['TMPDIR']) as directory:
+            # The SSH route's driver parent is not a git repository: guest-side
+            # validation must never shell out, and still enforces the guard.
+            driver_parent = Path(directory) / 'proof-driver-1'
+            driver_parent.mkdir()
+            with patch.object(common, 'REPOSITORY', driver_parent), \
+                 patch.object(common, 'run', side_effect=AssertionError('guest-side validation ran a command')):
+                self.assertEqual(validate_inputs(value, HEAD), value)
+                mismatch = copy.deepcopy(value)
+                mismatch['backends'][0]['old_helper_protocol'] = 4
+                with self.assertRaisesRegex(RuntimeError, r'old source speaks protocol 4; candidate speaks protocol 5'):
+                    validate_inputs(mismatch, HEAD)
+                missing = copy.deepcopy(value)
+                del missing['backends'][0]['candidate_helper_protocol']
+                with self.assertRaisesRegex(RuntimeError, 'frozen helper protocols required'):
+                    validate_inputs(missing, HEAD)
+
+    def test_pinned_tree_protocol_must_match_when_readable(self):
+        value = inputs()
+        with tempfile.TemporaryDirectory(prefix='531-pinned-tree-', dir=os.environ['TMPDIR']) as directory:
+            tree = Path(directory) / 'source'
+            supervise = tree / 'crates/effigy-kernel/src'
+            supervise.mkdir(parents=True)
+            (supervise / 'supervise.rs').write_text('pub const HELPER_PROTOCOL: u32 = 6;\n')
+            value['backends'][1]['source_root'] = str(tree)
+            with self.assertRaisesRegex(RuntimeError, 'pinned source tree speaks another helper protocol'):
                 validate_inputs(value, HEAD)
-        with patch.object(common, 'helper_protocol', return_value=5):
+            (supervise / 'supervise.rs').write_text('pub const HELPER_PROTOCOL: u32 = 5;\n')
             self.assertEqual(validate_inputs(value, HEAD), value)
+            (supervise / 'supervise.rs').write_text('// readable, but the immutable handshake is absent\n')
+            with self.assertRaisesRegex(RuntimeError, 'no helper protocol declaration'):
+                validate_inputs(value, HEAD)
+
+    def test_host_verifies_frozen_protocols_and_equivalence(self):
+        import common
+        value = inputs()
+        protocols = {HEAD: 5, '2' * 40: 5}
+        with patch.object(common, 'helper_protocol', side_effect=lambda revision: protocols[revision]):
+            self.assertEqual(common.verify_host_inputs(value, HEAD), value)
+            protocols['2' * 40] = 4
+            with self.assertRaisesRegex(RuntimeError, 'frozen old protocol differs'):
+                common.verify_host_inputs(value, HEAD)
+        alternate = '3' * 40
+        changed = ['docs/qualification/workspace-private-531/common.py', 'changelog.d/1027-packet.added.md']
+        value['source_equivalence'] = {'baseline': HEAD, 'alternates': {alternate: changed}}
+        with patch.object(common, 'helper_protocol', return_value=5), \
+             patch.object(common, 'diff_names', return_value=list(reversed(changed))):
+            self.assertEqual(common.verify_host_inputs(value, HEAD), value)
+            with patch.object(common, 'diff_names',
+                              return_value=['docs/qualification/workspace-private-531/other.py']), \
+                 self.assertRaisesRegex(RuntimeError, 'frozen changed-file list differs'):
+                common.verify_host_inputs(value, HEAD)
+            with self.assertRaisesRegex(RuntimeError, 'host inputs do not bind the live source head'):
+                common.verify_host_inputs(value, '4' * 40)
+
+    def test_packet_only_source_difference_accepted_across_cells(self):
+        import common
+        alternate = '3' * 40
+        changed = ['docs/qualification/workspace-private-531/common.py']
+        value = inputs()
+        value['backends'][0].update(source_head=alternate,
+                                     candidate_receipt=dict(value['backends'][0]['candidate_receipt'],
+                                                            source_head=alternate),
+                                     production_receipt=dict(value['backends'][0]['production_receipt'],
+                                                             source_head=alternate))
+        value['source_equivalence'] = {'baseline': HEAD, 'alternates': {alternate: changed}}
+        with patch.object(common, 'run', side_effect=AssertionError('guest-side validation ran a command')):
+            self.assertEqual(validate_inputs(value, HEAD), value)
+            candidate_mismatch = copy.deepcopy(value)
+            candidate_mismatch['backends'][0]['candidate_receipt']['source_head'] = HEAD
+            with self.assertRaisesRegex(RuntimeError, 'candidate build receipt source mismatch'):
+                validate_inputs(candidate_mismatch, HEAD)
+            production_mismatch = copy.deepcopy(value)
+            production_mismatch['backends'][0]['production_receipt']['source_head'] = HEAD
+            with self.assertRaisesRegex(RuntimeError, 'ordinary production build receipt mismatch'):
+                validate_inputs(production_mismatch, HEAD)
+            unrecorded = copy.deepcopy(value)
+            del unrecorded['source_equivalence']
+            with self.assertRaisesRegex(RuntimeError, 'backend candidate source differs'):
+                validate_inputs(unrecorded, HEAD)
+            foreign = copy.deepcopy(value)
+            foreign['source_equivalence'] = {'baseline': HEAD, 'alternates': {alternate: ['src/runner/mod.rs']}}
+            with self.assertRaisesRegex(RuntimeError, 'packet-only scope'):
+                validate_inputs(foreign, HEAD)
 
     def test_subset_old_source_or_fake_candidate_never_qualifies(self):
         for mutate in (
@@ -455,6 +538,8 @@ class Boundaries(unittest.TestCase):
             lambda v: v['backends'][0].update(old_source_head=HEAD),
             lambda v: v['backends'][0]['candidate_receipt'].update(features=['workspace-private-qualification', 'workspace-serving-fixture']),
             lambda v: v['backends'][0]['candidate_receipt'].update(sha256='e' * 64),
+            lambda v: v['backends'][0]['candidate_receipt'].update(source_head='3' * 40),
+            lambda v: v['backends'][0]['production_receipt'].update(source_head='3' * 40),
             lambda v: v['backends'][0]['production_receipt'].update(features=['workspace-private-qualification']),
             lambda v: v['backends'][2].update(driver='local'),
             lambda v: v['backends'][0].update(environment={'EFFIGY_WORKSPACE_ACTIVATION_FAKE': 'anything'}),
@@ -462,6 +547,8 @@ class Boundaries(unittest.TestCase):
             lambda v: v['backends'][0].pop('guest_install_identity'),
             lambda v: v['backends'][0]['guest_install_identity'].update(sha256='invalid'),
             lambda v: v['backends'][0]['old_binary'].update(sha256='a' * 64),
+            lambda v: v['backends'][0].update(old_helper_protocol=4),
+            lambda v: v['backends'][0].update(candidate_helper_protocol=6),
         ):
             value = inputs()
             mutate(value)
@@ -745,8 +832,8 @@ class Boundaries(unittest.TestCase):
             export = record['receipt_export']
             self.assertEqual(digest(Path(export['path'])), record['receipt_sha256'])
             binding = record['binding']
-            for key in ('source_head', 'programs', 'contract', 'candidate', 'candidate_receipt', 'production',
-                        'production_receipt', 'old_source_head', 'old_binary', 'old_source_receipt', 'inputs',
+            for key in ('source_head', 'cell_source_head', 'programs', 'contract', 'candidate', 'candidate_receipt', 'production',
+                        'production_receipt', 'source_equivalence', 'old_source_head', 'old_binary', 'old_source_receipt', 'inputs',
                         'go_bindings', 'go_receipt', 'go_decision_id', 'qualification_root', 'driver',
                         'engine_kind', 'engine_identity', 'runtime_image', 'budget_seconds', 'one_shot_marker'):
                 self.assertIn(key, binding)
@@ -774,6 +861,186 @@ class Boundaries(unittest.TestCase):
             self.assertIs(retained['source_unchanged'], False)
             self.assertIs(retained['positive'], False)
             self.assertEqual(digest(Path(retained['receipt_export']['path'])), retained['receipt_sha256'])
+
+    def test_aggregate_refuses_disconnected_equivalence_component(self):
+        # Two honestly frozen disjoint pairs: only the baseline's component admits.
+        import aggregate
+        with tempfile.TemporaryDirectory(prefix='531-disjoint-', dir=os.environ['TMPDIR']) as directory:
+            base = Path(directory)
+            cells = inputs()['backends']
+            cells[2]['ssh_alias'] = 'effigy-531-vault'
+            connected, far, farther = '3' * 40, '4' * 40, '5' * 40
+            linux_cell = copy.deepcopy(cells[2])
+            linux_cell.update(source_head=connected,
+                              candidate_receipt=dict(linux_cell['candidate_receipt'], source_head=connected),
+                              production_receipt=dict(linux_cell['production_receipt'], source_head=connected))
+            desktop_cell = copy.deepcopy(cells[1])
+            desktop_cell.update(source_head=far,
+                                candidate_receipt=dict(desktop_cell['candidate_receipt'], source_head=far),
+                                production_receipt=dict(desktop_cell['production_receipt'], source_head=far))
+            paths = {}
+            path, _ = invocation_record('colima', cells[0], base)
+            paths['colima'] = path
+            path, _ = invocation_record('linux', linux_cell, base,
+                                        equivalence={'baseline': HEAD,
+                                                     'alternates': {connected: ['docs/qualification/workspace-private-531/common.py']}})
+            paths['linux'] = path
+            path, _ = invocation_record('desktop', desktop_cell, base, label='desktop-disjoint',
+                                        source_head=far,
+                                        equivalence={'baseline': far,
+                                                     'alternates': {farther: ['changelog.d/1027-packet.added.md']}})
+            paths['desktop'] = path
+            argv = ['aggregate.py', '--source-head', HEAD]
+            for backend in BACKENDS:
+                argv += ['--receipt', '{}={}'.format(backend, paths[backend]),
+                         '--receipt-sha256', '{}={}'.format(backend, digest(paths[backend]))]
+            with patch.object(sys, 'argv', argv):
+                with self.assertRaisesRegex(RuntimeError, 'stale or mixed-source receipt'):
+                    aggregate.main()
+
+    def test_aggregate_accepts_chained_equivalence_through_a_shared_head(self):
+        # H0->H1 and H1->H2: the H2 cell connects to the baseline through H1.
+        import io
+        import aggregate
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory(prefix='531-chained-', dir=os.environ['TMPDIR']) as directory:
+            base = Path(directory)
+            cells = inputs()['backends']
+            cells[2]['ssh_alias'] = 'effigy-531-vault'
+            middle, leaf = '3' * 40, '4' * 40
+            first_changed = ['docs/qualification/workspace-private-531/common.py']
+            second_changed = ['changelog.d/1027-packet.added.md']
+            linux_cell = copy.deepcopy(cells[2])
+            linux_cell.update(source_head=middle,
+                              candidate_receipt=dict(linux_cell['candidate_receipt'], source_head=middle),
+                              production_receipt=dict(linux_cell['production_receipt'], source_head=middle))
+            desktop_cell = copy.deepcopy(cells[1])
+            desktop_cell.update(source_head=leaf,
+                                candidate_receipt=dict(desktop_cell['candidate_receipt'], source_head=leaf),
+                                production_receipt=dict(desktop_cell['production_receipt'], source_head=leaf))
+            paths = {}
+            path, _ = invocation_record('colima', cells[0], base)
+            paths['colima'] = path
+            path, _ = invocation_record('linux', linux_cell, base,
+                                        equivalence={'baseline': HEAD, 'alternates': {middle: first_changed}})
+            paths['linux'] = path
+            path, _ = invocation_record('desktop', desktop_cell, base, label='desktop-chained',
+                                        source_head=middle,
+                                        equivalence={'baseline': middle, 'alternates': {leaf: second_changed}})
+            paths['desktop'] = path
+            argv = ['aggregate.py', '--source-head', HEAD]
+            for backend in BACKENDS:
+                argv += ['--receipt', '{}={}'.format(backend, paths[backend]),
+                         '--receipt-sha256', '{}={}'.format(backend, digest(paths[backend]))]
+            with patch.object(sys, 'argv', argv), redirect_stdout(io.StringIO()) as printed:
+                aggregate.main()
+            verdict = json.loads(printed.getvalue())
+            self.assertTrue(verdict['qualified'])
+            self.assertEqual(verdict['source_equivalence'],
+                             {'baseline_head': HEAD, 'equivalent_heads': [middle, leaf],
+                              'changed_files': sorted(first_changed + second_changed),
+                              'support': {middle: sorted(first_changed),
+                                          leaf: sorted(first_changed + second_changed)}})
+
+    def test_launch_binds_mixed_source_cell_for_aggregate(self):
+        import io
+        import aggregate
+        import common
+        import launch
+        from contextlib import redirect_stdout
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory(prefix='531-mixed-launch-', dir=os.environ['TMPDIR']) as directory:
+            base = Path(directory)
+            alternate = '3' * 40
+            changed = ['docs/qualification/workspace-private-531/common.py']
+            cells = {cell['backend']: cell for cell in inputs()['backends']}
+            cells['linux']['ssh_alias'] = 'effigy-531-vault'
+            desktop = copy.deepcopy(cells['desktop'])
+            desktop.update(source_head=alternate,
+                           candidate_receipt=dict(desktop['candidate_receipt'], source_head=alternate),
+                           production_receipt=dict(desktop['production_receipt'], source_head=alternate))
+            qual = base / 'mixed-root'
+            qual.mkdir(mode=0o700)
+            identity = qual.stat()
+            desktop['qualification_root'] = dict(path=str(qual), device=identity.st_dev,
+                                                 inode=identity.st_ino, uid=identity.st_uid)
+            complete = qual / 'complete.json'
+            exclusive(complete, {'cells': complete_cells(), 'native': True, 'production_enabled': False})
+            value = inputs()
+            value['evidence'] = str(base / 'mixed-evidence')
+            value['source_equivalence'] = {'baseline': HEAD, 'alternates': {alternate: changed}}
+            value['backends'] = [desktop if cell['backend'] == 'desktop' else cells[cell['backend']]
+                                 for cell in value['backends']]
+            inputs_path, approved = write_bound(base, 'mixed-inputs.json', value)
+            index = {}
+            for backend, cell in cells.items():
+                target = desktop if backend == 'desktop' else cell
+                go_path, _ = write_bound(base, backend + '-mixed-go.json', entry_go(target, approved))
+                index[backend] = {'path': str(go_path), 'sha256': digest(go_path)}
+            index_path, index_hash = write_bound(base, 'mixed-go-index.json', index)
+            for backend in ('colima', 'linux'):
+                (base / (backend + '-mixed-go.json')).write_bytes(b'not a go receipt')
+            result = SimpleNamespace(returncode=0, stderr=b'',
+                                     stdout=json.dumps({'receipt': str(complete)}).encode())
+            printed = io.StringIO()
+            with patch.object(sys, 'argv', ['launch.py', '--inputs', str(inputs_path), '--sha256', approved,
+                              '--go-bindings', str(index_path), '--go-sha256', index_hash,
+                              '--backend', 'desktop']), \
+                 patch.object(launch, 'source_head', return_value=HEAD), \
+                 patch.object(common, 'diff_names', return_value=list(changed)), \
+                 patch.object(launch, 'run', return_value=result), \
+                 redirect_stdout(printed):
+                launch.main()
+            desktop_invocation = Path(json.loads(printed.getvalue())['invocation'])
+            record = json.loads(desktop_invocation.read_text())
+            binding = record['binding']
+            self.assertEqual(record['positive'], True)
+            self.assertEqual(binding['source_head'], HEAD)
+            self.assertEqual(binding['cell_source_head'], alternate)
+            self.assertEqual(binding['candidate_receipt']['source_head'], alternate)
+            self.assertEqual(binding['production_receipt']['source_head'], alternate)
+            # The produced invocation joins strict colima/linux receipts and qualifies.
+            programs = {name: digest(PACKET / name) for name in ('launch.py', 'runtime.py', 'common.py', 'probe.py')}
+            table = {'desktop': desktop_invocation}
+            for backend in ('colima', 'linux'):
+                path, stored = invocation_record(backend, cells[backend], base, label='mixed-' + backend)
+                stored['binding']['programs'] = programs
+                path.write_text(json.dumps(stored))
+                table[backend] = path
+            argv = ['aggregate.py', '--source-head', HEAD]
+            for backend in BACKENDS:
+                argv += ['--receipt', '{}={}'.format(backend, table[backend]),
+                         '--receipt-sha256', '{}={}'.format(backend, digest(table[backend]))]
+            with patch.object(sys, 'argv', argv), redirect_stdout(io.StringIO()) as verdict_printed:
+                aggregate.main()
+            verdict = json.loads(verdict_printed.getvalue())
+            self.assertTrue(verdict['qualified'])
+            self.assertEqual(verdict['source_equivalence'],
+                             {'baseline_head': HEAD, 'equivalent_heads': [alternate],
+                              'changed_files': sorted(changed), 'support': {alternate: sorted(changed)}})
+            # A cell head outside any recorded equivalence never launches.
+            uncovered = copy.deepcopy(desktop)
+            uncovered.update(source_head='4' * 40,
+                             candidate_receipt=dict(desktop['candidate_receipt'], source_head='4' * 40),
+                             production_receipt=dict(desktop['production_receipt'], source_head='4' * 40))
+            refused = inputs()
+            refused['evidence'] = str(base / 'mixed-evidence-refused')
+            refused['backends'] = [uncovered if cell['backend'] == 'desktop' else cells[cell['backend']]
+                                   for cell in refused['backends']]
+            refused_path, refused_hash = write_bound(base, 'mixed-inputs-refused.json', refused)
+            refused_index = {}
+            for backend, cell in cells.items():
+                target = uncovered if backend == 'desktop' else cell
+                go_path, _ = write_bound(base, backend + '-mixed-refused-go.json', entry_go(target, refused_hash))
+                refused_index[backend] = {'path': str(go_path), 'sha256': digest(go_path)}
+            refused_index_path, refused_index_hash = write_bound(base, 'mixed-refused-go-index.json', refused_index)
+            with patch.object(sys, 'argv', ['launch.py', '--inputs', str(refused_path), '--sha256', refused_hash,
+                              '--go-bindings', str(refused_index_path), '--go-sha256', refused_index_hash,
+                              '--backend', 'desktop']), \
+                 patch.object(launch, 'source_head', return_value=HEAD), \
+                 patch.object(launch, 'run', side_effect=AssertionError('native run for uncovered head')):
+                with self.assertRaisesRegex(RuntimeError, 'backend candidate source differs'):
+                    launch.main()
 
     def test_linux_export_uses_the_prepared_native_facade_and_checks_original_bytes(self):
         import hashlib
@@ -1125,6 +1392,89 @@ class Boundaries(unittest.TestCase):
                 self.assertFalse(hasattr(aggregate, symbol), 'aggregate verifier imports ' + symbol)
             self.assertEqual(sorted(str(p) for p in base.rglob('*')), before,
                              'the aggregate verifier must not write or mutate anything')
+
+    def test_aggregate_accepts_packet_only_mixed_source(self):
+        import io
+        import aggregate
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory(prefix='531-mixed-source-', dir=os.environ['TMPDIR']) as directory:
+            base = Path(directory)
+            cells = inputs()['backends']
+            cells[2]['ssh_alias'] = 'effigy-531-vault'
+            alternate = '3' * 40
+            changed = ['docs/qualification/workspace-private-531/common.py',
+                       'changelog.d/1027-packet.added.md']
+            equivalence = {'baseline': HEAD, 'alternates': {alternate: changed}}
+            linux_cell = copy.deepcopy(cells[2])
+            linux_cell.update(source_head=alternate,
+                              candidate_receipt=dict(linux_cell['candidate_receipt'], source_head=alternate),
+                              production_receipt=dict(linux_cell['production_receipt'], source_head=alternate))
+            paths, produced = {}, {}
+            for backend, cell in zip(BACKENDS, cells):
+                if backend == 'linux':
+                    # The runner checkout stays on the baseline while the cell's
+                    # binaries bind the packet-equivalent alternate head.
+                    path, record = invocation_record('linux', linux_cell, base,
+                                                    equivalence=equivalence)
+                else:
+                    path, record = invocation_record(backend, cell, base)
+                paths[backend] = path
+                produced[backend] = record
+            self.assertEqual(produced['linux']['binding']['source_head'], HEAD)
+            self.assertEqual(produced['linux']['binding']['cell_source_head'], alternate)
+
+            def invoke(source_head=HEAD, overrides=None):
+                table = dict(paths)
+                if overrides:
+                    table.update(overrides)
+                argv = ['aggregate.py', '--source-head', source_head]
+                for backend in BACKENDS:
+                    argv += ['--receipt', '{}={}'.format(backend, table[backend]),
+                             '--receipt-sha256', '{}={}'.format(backend, digest(table[backend]))]
+                with patch.object(sys, 'argv', argv), redirect_stdout(io.StringIO()) as printed:
+                    aggregate.main()
+                return json.loads(printed.getvalue())
+
+            verdict = invoke()
+            self.assertTrue(verdict['qualified'])
+            self.assertEqual(verdict['source_equivalence'],
+                             {'baseline_head': HEAD, 'equivalent_heads': [alternate],
+                              'changed_files': sorted(changed), 'support': {alternate: sorted(changed)}})
+
+            # An unrecorded different runner head still refuses, as does a non-packet diff
+            # or a cell head outside the recorded equivalence.
+            stray = copy.deepcopy(linux_cell)
+            stray.update(source_head='4' * 40,
+                         candidate_receipt=dict(linux_cell['candidate_receipt'], source_head='4' * 40),
+                         production_receipt=dict(linux_cell['production_receipt'], source_head='4' * 40))
+            stray_path, _ = invocation_record('linux', stray, base, source_head='4' * 40, label='linux-stray')
+            with self.assertRaisesRegex(RuntimeError, 'stale or mixed-source receipt'):
+                invoke(overrides={'linux': stray_path})
+            uncovered = copy.deepcopy(linux_cell)
+            uncovered.update(source_head='4' * 40,
+                             candidate_receipt=dict(linux_cell['candidate_receipt'], source_head='4' * 40),
+                             production_receipt=dict(linux_cell['production_receipt'], source_head='4' * 40))
+            uncovered_path, _ = invocation_record('linux', uncovered, base, label='linux-uncovered')
+            with self.assertRaisesRegex(RuntimeError, 'cell candidate head'):
+                invoke(overrides={'linux': uncovered_path})
+            foreign_cell = copy.deepcopy(linux_cell)
+            foreign_equivalence = {'baseline': HEAD, 'alternates': {alternate: ['src/runner/mod.rs']}}
+            foreign_path, _ = invocation_record('linux', foreign_cell, base, source_head=alternate,
+                                               label='linux-foreign', equivalence=foreign_equivalence)
+            with self.assertRaisesRegex(RuntimeError, 'packet-only scope'):
+                invoke(overrides={'linux': foreign_path})
+            candidate_mismatch = copy.deepcopy(linux_cell)
+            candidate_mismatch.update(candidate_receipt=dict(linux_cell['candidate_receipt'], source_head=HEAD))
+            candidate_path, _ = invocation_record('linux', candidate_mismatch, base, source_head=alternate,
+                                                  label='linux-candidate-mismatch', equivalence=equivalence)
+            with self.assertRaisesRegex(RuntimeError, 'exact qualification candidate contract'):
+                invoke(overrides={'linux': candidate_path})
+            production_mismatch = copy.deepcopy(linux_cell)
+            production_mismatch.update(production_receipt=dict(linux_cell['production_receipt'], source_head=HEAD))
+            production_path, _ = invocation_record('linux', production_mismatch, base, source_head=alternate,
+                                                   label='linux-production-mismatch', equivalence=equivalence)
+            with self.assertRaisesRegex(RuntimeError, 'exact ordinary production contract'):
+                invoke(overrides={'linux': production_path})
 
 # This route also selects the new owned-child recovery boundaries.
 from recovery_boundaries import RecoveryBoundaries
