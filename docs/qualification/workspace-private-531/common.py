@@ -17,7 +17,8 @@ PACKET = Path(__file__).resolve().parent
 REPOSITORY = PACKET.parents[2]
 HEX = re.compile(r'[0-9a-f]{64}')
 HELPER_PROTOCOL_RE = re.compile(r'^pub const HELPER_PROTOCOL: u32 = (\d+);$', re.MULTILINE)
-PACKET_ONLY_PREFIXES = ('docs/qualification/', 'changelog.d/')
+# Docs are not compiled into the shipped binary; the only docs include_str! is a test fixture.
+PACKET_ONLY_PREFIXES = ('docs/', 'changelog.d/')
 SUPERVISE_RELATIVE = Path('crates/effigy-kernel/src/supervise.rs')
 
 
