@@ -26,6 +26,11 @@ from common import (PACKET, SCRATCH, artifact, digest, exclusive, exclusive_byte
                     validate_go, validate_inputs)
 
 
+SEALED_COMMAND_PHASE_SECONDS = 60
+SEALED_ACTIVATION_PHASE_SECONDS = 300
+EXPLORATORY_ACTIVATION_PHASE_SECONDS = 300
+
+
 def network_configuration(row, *, identity=None):
     stable = {key: row.get(key) for key in ('Name', 'Id', 'Driver', 'IPAM', 'Options', 'Labels', 'Internal')}
     if identity is not None:
@@ -313,10 +318,16 @@ class Window:
         self.verify_root()
         remaining = self.end - time.monotonic()
         require(remaining > 0, 'native window deadline expired')
-        # Exploration may observe a slow complete activation without spending
-        # a sealed occurrence. Sealed commands retain their reviewed 60-second
-        # bound; neither route can exceed the original backend window.
-        phase_seconds = timeout if timeout is not None else (300 if self.exploratory and activation else 60)
+        # Activation has a measured 300-second allowance on both routes. Other
+        # commands retain 60 seconds; every phase is clipped to the original
+        # backend window.
+        if timeout is not None:
+            phase_seconds = timeout
+        elif activation:
+            phase_seconds = (EXPLORATORY_ACTIVATION_PHASE_SECONDS if self.exploratory
+                             else SEALED_ACTIVATION_PHASE_SECONDS)
+        else:
+            phase_seconds = SEALED_COMMAND_PHASE_SECONDS
         try:
             result = run(args, cwd=cwd or self.root, env=self.env if env is None else env, timeout=min(phase_seconds, remaining), check=False, data=data)
         except subprocess.TimeoutExpired as exc:

@@ -50,6 +50,25 @@ snapshot proposal remains UNAPPLIED. No consumed allowance is reusable, and
 `noAutomaticRetry` remains in force. This integration grants no new observation,
 signal, cleanup, install, consumer or release authority.
 
+## Sealed activation bound
+
+The sealed driver allows 300 seconds for each activation command, clipped to
+the remaining backend window. Other sealed commands remain limited to 60
+seconds. The chosen activation bound is at least twice the slowest retained
+healthy activation measurement:
+
+| Evidence | Backend and result | Measured activation |
+| --- | --- | ---: |
+| `621-0edcb97f-e73a84c7`, same-fixture unsealed run | Colima; complete activation | 69.0 s workspace + 12.0 s host = 81.0 s |
+| `965-80452a574`, three positive unsealed sessions | Colima; reservation through committed session | 129.7 s, 141.1 s, 144.8 s |
+| `623-phase-p-*` | Linux; preparation-only occurrence, no sealed cells started | No full-session activation measurement |
+| `622` retained evidence | No retained evidence directory was present for review | No comparable Desktop measurement |
+
+The slowest healthy timing is 144.8 seconds; twice that is 289.6 seconds.
+The 300-second cap is 2.07 times the slowest measurement and remains below the
+1,800-second backend window. The older 965 sessions are timing evidence only;
+they do not grant qualification credit or substitute for the current fixture.
+
 ## Launch-mode retirement inventory (effigy#879)
 
 The 2026-11-11 read-only inventory found no unspent request for all-backend
