@@ -1671,11 +1671,11 @@ fn check_backup_start_fault(point: crate::fault::Point) {
         Observed::Verified(crate::gate::GateState::Held(_), _)
     ));
     if let Err((error, owner)) = cleanup {
+        let detail = error.to_string();
         assert!(
-            error
-                .to_string()
-                .contains("checkout backup cleanup remains unsettled"),
-            "partial cleanup must report a named unresolved outcome: {error}"
+            detail.contains("checkout backup cleanup remains unsettled:")
+                && detail.contains("Effigy is broken: foreground guard left residue"),
+            "partial cleanup must preserve the underlying close error: {detail}"
         );
         assert!(
             owner.has_partial_checkout_backup(),

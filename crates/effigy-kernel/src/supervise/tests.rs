@@ -491,6 +491,19 @@ fn a_helper_protocol_mismatch_reaches_the_parent_stderr_tail() {
     assert!(detail.contains(&message), "{detail:?}");
 }
 
+/// A pre-#992 protocol-5 frame refuses cleanly before its now-incompatible
+/// shape can be read, and tells the operator to rerun the command.
+#[test]
+fn a_protocol_five_frame_is_refused_with_the_update_message() {
+    let error = frame_protocol(br#"{"protocol":5,"obsolete_guard_shape":true}"#)
+        .expect_err("a protocol-5 helper must not enter the protocol-6 handshake");
+    let detail = error.to_string();
+    assert!(
+        detail.contains("Effigy was updated: this helper speaks protocol 5 and this binary speaks 6, so rerun the command"),
+        "{detail:?}"
+    );
+}
+
 /// The version is read before the frame's shape, so an update that changed a
 /// field still reads as a version mismatch instead of as a broken store value
 /// (F8).
