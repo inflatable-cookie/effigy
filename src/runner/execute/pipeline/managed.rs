@@ -1435,6 +1435,27 @@ fn managed_workloads(
                 Some(_) => None,
                 None => Some(resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd)?),
             };
+            let mut color_env = crate::runner::managed_color::ambient_preferences();
+            for (key, value) in &plain {
+                color_env.insert(
+                    key.into(),
+                    effigy_kernel::custody::EnvValue::Plain(value.into()),
+                );
+            }
+            for key in secret.keys() {
+                color_env.insert(
+                    key.into(),
+                    effigy_kernel::custody::EnvValue::Plain(if key == "TERM" {
+                        "dumb".into()
+                    } else {
+                        std::ffi::OsString::new()
+                    }),
+                );
+            }
+            let color_env = crate::runner::managed_color::container_env(
+                &color_env,
+                crate::runner::managed_color::initiating_ansi(),
+            );
             let render = |command: &str, exec_group: Option<(&std::path::Path, &str)>| match &inline
             {
                 Some(policy) => render_inline_managed_exec_command(InlineManagedExecRequest {
@@ -1446,6 +1467,7 @@ fn managed_workloads(
                     command,
                     exec_group,
                     env_names: &names,
+                    color_env: &color_env,
                 }),
                 None => managed_exec_command(ManagedExecRequest {
                     repo_root: repo,

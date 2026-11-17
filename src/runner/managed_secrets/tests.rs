@@ -195,6 +195,7 @@ fn managed_delivery_fake_runtime_matrix_keeps_host_guest_and_wrapper_argv_clean(
                             command,
                             exec_group: None,
                             env_names: &["DATABASE_URL".into()],
+                            color_env: &[],
                         },
                     )
                 } else {
