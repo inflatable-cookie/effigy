@@ -1065,7 +1065,8 @@ are outside guest shares. The current expiring exploratory key permits interacti
 preparation; it is **not** the sealed E6 forced-command credential.
 Native Rust 1.97.1 and pinned Nextest 0.9.145 build ordinary and qualification
 binaries, real helper/test binaries, and genuine old source
-`823d859dace2cbaa848c8ad5a0b5bdfd8959fdf1`. The guest-only missing-Oxide
+`3808b4fabfbcca59475a63071eee01b1de3b5492` (protocol 5, task 1024 rebind).
+The guest-only missing-Oxide
 selector route is recorded in [cargo-routes.md](../../knowledge/cargo-routes.md#task-829-interactive-guest-bootstrap).
 The GNU producer targets ARM64 GNU 2.31, verifies ELF/loader requirements and
 publishes actual source/version/hash and freshness-anchor identity. The ordinary

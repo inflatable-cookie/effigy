@@ -730,6 +730,9 @@ Each file was verified present with its index sha256 on 2026-11-07. Bound, not r
 - Source: head `4f6a5ed3`, tree `dcb4c791`, candidate
   `/Volumes/Stash/scratch/effigy/release-source/candidate-4f6a5ed3.xwm4pr7j`, and
   the E14 binding file sha. Identity is dev `16777245`, inode `156037736`, uid 501, 0700.
+- **Superseded by task 1024:** Baseline D below is the historical 627
+  `baseline_D` receipt bound to protocol-4 source `823d859d`; do not reuse it
+  for a protocol-5 candidate. Its receipt details remain unchanged as history.
 - Baseline D (627 `baseline_D`, reused not rebuilt): `old_binary` at
   `/Volumes/Stash/scratch/effigy/627-baseline-correction.f_43nyce/producer-replacement-823d859d-r1/frozen/effigy-old-823d859d-r1`,
   sha256 `a603c82a…`, `old_source_head` `823d859d`, and the `old_source_receipt` hash

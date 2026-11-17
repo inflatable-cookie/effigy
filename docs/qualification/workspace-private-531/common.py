@@ -14,6 +14,7 @@ BACKENDS = ('colima', 'desktop', 'linux')
 SCRATCH = Path('/Volumes/Stash/scratch/effigy')
 SSH_CONTROL = SCRATCH / '531-linux-control'
 PACKET = Path(__file__).resolve().parent
+REPOSITORY = PACKET.parents[2]
 HEX = re.compile(r'[0-9a-f]{64}')
 
 
@@ -73,6 +74,17 @@ def source_head(root):
     require(not run(['git', 'status', '--porcelain', '--untracked-files=no'], cwd=root).stdout,
             'proof requires unchanged tracked source and index')
     return head
+
+
+def helper_protocol(revision):
+    """Read the helper handshake version directly from an immutable source revision."""
+    require(re.fullmatch(r'[0-9a-f]{40}', revision) is not None,
+            'helper protocol source must be a full commit')
+    source = run(['git', 'show', f'{revision}:crates/effigy-kernel/src/supervise.rs'],
+                 cwd=REPOSITORY).stdout.decode('utf-8')
+    match = re.search(r'^pub const HELPER_PROTOCOL: u32 = (\d+);$', source, re.MULTILINE)
+    require(match is not None, f'HELPER_PROTOCOL not found at source {revision}')
+    return int(match.group(1))
 
 
 def qualification_path(binding):
@@ -177,6 +189,7 @@ def validate_inputs(value, head):
     require(value['source_head'] == head, 'candidate is not the immutable proof head')
     require(tuple(cell['backend'] for cell in value['backends']) == BACKENDS,
             'all three native backends are required, in order')
+    candidate_protocol = helper_protocol(head)
     for cell in value['backends']:
         root = qualification_path(cell.get('qualification_root'))
         require(not root.is_relative_to(SSH_CONTROL) and not SSH_CONTROL.is_relative_to(root),
@@ -184,6 +197,9 @@ def validate_inputs(value, head):
         require(cell['source_head'] == head, 'backend candidate source differs')
         require(cell['old_source_head'] != head and re.fullmatch(r'[0-9a-f]{40}', cell['old_source_head']),
                 'genuine old source identity required')
+        old_protocol = helper_protocol(cell['old_source_head'])
+        require(old_protocol == candidate_protocol,
+                f'helper protocol mismatch: old source speaks protocol {old_protocol}; candidate speaks protocol {candidate_protocol}')
         require(cell['old_source_receipt']['source_head'] == cell['old_source_head'], 'old receipt source mismatch')
         require(cell['candidate_receipt']['source_head'] == head, 'candidate build receipt source mismatch')
         require(cell['candidate_receipt']['features'] == ['workspace-private-qualification'],
