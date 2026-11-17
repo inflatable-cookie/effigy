@@ -35,12 +35,15 @@ Three things this document is not:
 ## Evidence base
 
 Claims here were re-checked at `522c939e` against the pinned head
-`dc6f5abf` that the effigy#1017 report used. Only one of that report's cited
-files changed between the two heads: `src/cli/entrypoint.rs` gained the nested
-lock-wait export at `:144-145`, after the deadline configuration at `:23-27`.
-Every custody, clock, admission, gate, ring and store seam below therefore keeps
-both its shape and its line numbers, including the corrections the independent
-review recorded:
+`dc6f5abf` that the effigy#1017 report used. Two of that report's cited files
+changed between the two heads: `src/cli/entrypoint.rs` gained the nested
+lock-wait export at `:144-145`, after the deadline configuration at `:23-27`;
+and `docs/knowledge/contracts/052-runtime-kernel-contract.md` changed in two
+hunks, one line re-expanded to four at `:3730` and 90 new lines at `:4480-4569`.
+Both 052 hunks sit after every 052 line this document cites, so the cited text
+and its line numbers are unchanged. Every custody, clock, admission, gate, ring
+and store seam below therefore keeps both its shape and its line numbers,
+including the corrections the independent review recorded:
 
 - the deadline is wired, not dormant: `src/cli/entrypoint.rs:23-27` configures
   it and `src/runner/task_engine/kernel.rs:113-116` reaches `capped()`
@@ -147,9 +150,15 @@ Removable duplication once the attempt exists:
   (`src/runner/run_control.rs:104-138`) collapse into one mode on a single
   attempt entry, because both are now steps of one recorded attempt;
 - `prepare_foreground_gates` and `verify_prepared_foreground_gates`
-  (`crates/effigy-kernel/src/run/mod.rs:57-72`) are one-line wrappers over
-  `Gate::prepare_foreground` and its verifier; the attempt can call the gate
-  layer directly and the wrapper pair loses its reason to exist;
+  (`crates/effigy-kernel/src/run/mod.rs:57-72`) are load-bearing and stay: they
+  first re-spell the ids through `aliases::gates`
+  (`crates/effigy-kernel/src/run/aliases.rs:7-35`) so a path-derived identity and
+  a journal-recorded token take the same gate, then call
+  `Gate::prepare_foreground` (`crates/effigy-kernel/src/gate.rs:410`) or its
+  verifier (`:475`). Calling the gate layer directly would skip the checkout
+  re-spelling. What the attempt removes is the repeated re-spelling: one
+  resolution recorded on the attempt, reused by the later selector's admission,
+  which takes the same spelling;
 - `PREPARE_WAIT` (`src/runner/run_control.rs:36`) and the store's own busy wait
   become two applications of one attempt deadline instead of two independent
   bounds.
