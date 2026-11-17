@@ -107,8 +107,9 @@ reviewer must inspect the build receipts and input binding before activation.
 
 Each backend's input pins:
 
-- exact source head; default production binary and its feature-free build
-  receipt; qualification binary and its single-feature build receipt;
+- exact source head for that cell; default production binary and its feature-free build
+  receipt; qualification binary and its single-feature build receipt. Both binary
+  receipts must name the cell's own source head;
 - the frozen helper protocols for that head and the genuine old head
   (`candidate_helper_protocol`, `old_helper_protocol` per cell), computed on
   the host launcher where a git checkout exists and frozen into the inputs.

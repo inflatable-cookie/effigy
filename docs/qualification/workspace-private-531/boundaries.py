@@ -474,6 +474,9 @@ class Boundaries(unittest.TestCase):
                 validate_inputs(value, HEAD)
             (supervise / 'supervise.rs').write_text('pub const HELPER_PROTOCOL: u32 = 5;\n')
             self.assertEqual(validate_inputs(value, HEAD), value)
+            (supervise / 'supervise.rs').write_text('// readable, but the immutable handshake is absent\n')
+            with self.assertRaisesRegex(RuntimeError, 'no helper protocol declaration'):
+                validate_inputs(value, HEAD)
 
     def test_host_verifies_frozen_protocols_and_equivalence(self):
         import common
@@ -502,10 +505,22 @@ class Boundaries(unittest.TestCase):
         alternate = '3' * 40
         changed = ['docs/qualification/workspace-private-531/common.py']
         value = inputs()
-        value['backends'][0]['source_head'] = alternate
+        value['backends'][0].update(source_head=alternate,
+                                     candidate_receipt=dict(value['backends'][0]['candidate_receipt'],
+                                                            source_head=alternate),
+                                     production_receipt=dict(value['backends'][0]['production_receipt'],
+                                                             source_head=alternate))
         value['source_equivalence'] = {'baseline': HEAD, 'alternates': {alternate: changed}}
         with patch.object(common, 'run', side_effect=AssertionError('guest-side validation ran a command')):
             self.assertEqual(validate_inputs(value, HEAD), value)
+            candidate_mismatch = copy.deepcopy(value)
+            candidate_mismatch['backends'][0]['candidate_receipt']['source_head'] = HEAD
+            with self.assertRaisesRegex(RuntimeError, 'candidate build receipt source mismatch'):
+                validate_inputs(candidate_mismatch, HEAD)
+            production_mismatch = copy.deepcopy(value)
+            production_mismatch['backends'][0]['production_receipt']['source_head'] = HEAD
+            with self.assertRaisesRegex(RuntimeError, 'ordinary production build receipt mismatch'):
+                validate_inputs(production_mismatch, HEAD)
             unrecorded = copy.deepcopy(value)
             del unrecorded['source_equivalence']
             with self.assertRaisesRegex(RuntimeError, 'backend candidate source differs'):
@@ -522,6 +537,8 @@ class Boundaries(unittest.TestCase):
             lambda v: v['backends'][0].update(old_source_head=HEAD),
             lambda v: v['backends'][0]['candidate_receipt'].update(features=['workspace-private-qualification', 'workspace-serving-fixture']),
             lambda v: v['backends'][0]['candidate_receipt'].update(sha256='e' * 64),
+            lambda v: v['backends'][0]['candidate_receipt'].update(source_head='3' * 40),
+            lambda v: v['backends'][0]['production_receipt'].update(source_head='3' * 40),
             lambda v: v['backends'][0]['production_receipt'].update(features=['workspace-private-qualification']),
             lambda v: v['backends'][2].update(driver='local'),
             lambda v: v['backends'][0].update(environment={'EFFIGY_WORKSPACE_ACTIVATION_FAKE': 'anything'}),
@@ -1252,6 +1269,18 @@ class Boundaries(unittest.TestCase):
                                                label='linux-foreign', equivalence=foreign_equivalence)
             with self.assertRaisesRegex(RuntimeError, 'packet-only scope'):
                 invoke(overrides={'linux': foreign_path})
+            candidate_mismatch = copy.deepcopy(linux_cell)
+            candidate_mismatch.update(candidate_receipt=dict(linux_cell['candidate_receipt'], source_head=HEAD))
+            candidate_path, _ = invocation_record('linux', candidate_mismatch, base, source_head=alternate,
+                                                  label='linux-candidate-mismatch', equivalence=equivalence)
+            with self.assertRaisesRegex(RuntimeError, 'exact qualification candidate contract'):
+                invoke(overrides={'linux': candidate_path})
+            production_mismatch = copy.deepcopy(linux_cell)
+            production_mismatch.update(production_receipt=dict(linux_cell['production_receipt'], source_head=HEAD))
+            production_path, _ = invocation_record('linux', production_mismatch, base, source_head=alternate,
+                                                   label='linux-production-mismatch', equivalence=equivalence)
+            with self.assertRaisesRegex(RuntimeError, 'exact ordinary production contract'):
+                invoke(overrides={'linux': production_path})
 
 # This route also selects the new owned-child recovery boundaries.
 from recovery_boundaries import RecoveryBoundaries

@@ -72,15 +72,24 @@ def diff_names(a, b, *, root=None):
 
 
 def pinned_tree_protocol(root):
-    """Read the helper protocol from a pinned source tree when it is readable. No git runs here."""
+    """Read the helper protocol from a pinned source tree when that exact file is available.
+
+    Unreadable or unavailable trees return None so the guest can skip this
+    comparison. A readable tree whose decoded bytes contain no helper-protocol
+    declaration refuses instead of being treated as unavailable. No git runs here."""
     if not isinstance(root, str) or not root:
         return None
     try:
-        source = (Path(root) / SUPERVISE_RELATIVE).read_bytes().decode('utf-8')
-    except (OSError, UnicodeDecodeError):
+        raw = (Path(root) / SUPERVISE_RELATIVE).read_bytes()
+    except OSError:
+        return None
+    try:
+        source = raw.decode('utf-8')
+    except UnicodeDecodeError:
         return None
     match = HELPER_PROTOCOL_RE.search(source)
-    return int(match.group(1)) if match else None
+    require(match is not None, 'pinned source tree has no helper protocol declaration')
+    return int(match.group(1))
 
 
 def verify_host_inputs(value, head, *, root=None):
@@ -295,14 +304,14 @@ def validate_inputs(value, head):
         require(tree_protocol is None or tree_protocol == candidate_protocol,
                 'pinned source tree speaks another helper protocol')
         require(cell['old_source_receipt']['source_head'] == cell['old_source_head'], 'old receipt source mismatch')
-        require(cell['candidate_receipt']['source_head'] == head, 'candidate build receipt source mismatch')
+        require(cell['candidate_receipt']['source_head'] == cell['source_head'], 'candidate build receipt source mismatch')
         require(cell['candidate_receipt']['features'] == ['workspace-private-qualification'],
                 'native candidate must exclude external-I/O doubles and fault injection')
         require(len({cell['candidate']['sha256'], cell['production']['sha256'], cell['old_binary']['sha256']}) == 3,
                 'distinct qualification, ordinary and genuine old binaries required')
         require(cell['candidate_receipt']['sha256'] == cell['candidate']['sha256'], 'candidate receipt mismatch')
         require(cell['old_source_receipt']['sha256'] == cell['old_binary']['sha256'], 'old receipt mismatch')
-        require(cell['production_receipt']['source_head'] == head and cell['production_receipt']['features'] == []
+        require(cell['production_receipt']['source_head'] == cell['source_head'] and cell['production_receipt']['features'] == []
                 and cell['production_receipt']['sha256'] == cell['production']['sha256'], 'ordinary production build receipt mismatch')
         require(not cell.get('environment'), 'ambient environment overrides prohibited')
         require(cell['runtime_image'].startswith('sha256:') and HEX.fullmatch(cell['runtime_image'][7:]),

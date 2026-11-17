@@ -167,11 +167,11 @@ def verify_record(backend, record, head, allowed):
     binding = record['binding']
     require(binding['contract'] == CONTRACT, 'receipt contract differs')
     require(binding['source_head'] in allowed, 'stale or mixed-source receipt')
-    require(binding['candidate_receipt']['source_head'] in allowed
+    require(binding['candidate_receipt']['source_head'] == binding['source_head']
             and binding['candidate_receipt']['features'] == QUALIFICATION_FEATURES
             and binding['candidate_receipt']['sha256'] == binding['candidate']['sha256'],
             'receipt does not carry the exact qualification candidate contract')
-    require(binding['production_receipt']['source_head'] in allowed
+    require(binding['production_receipt']['source_head'] == binding['source_head']
             and binding['production_receipt']['features'] == []
             and binding['production_receipt']['sha256'] == binding['production']['sha256'],
             'receipt does not carry the exact ordinary production contract')
