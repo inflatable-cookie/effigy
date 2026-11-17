@@ -347,8 +347,11 @@ class ExplorationTests(unittest.TestCase):
             self.assertEqual(len(events), 1 if exploratory else 0)
             self.assertNotIn('531-private-compose-canary', json.dumps(events))
 
-    def test_only_exploration_activation_gets_larger_phase_within_original_window(self):
-        for exploratory, activation, remaining, expected in [(False, True, 500, 60), (True, False, 500, 60), (True, True, 500, 300), (True, True, 30, 30)]:
+    def test_activation_phase_bound_is_measured_and_clipped_to_original_window(self):
+        for exploratory, activation, remaining, expected in [
+                (False, True, 500, 300), (False, True, 30, 30),
+                (False, False, 500, 60), (True, False, 500, 60),
+                (True, True, 500, 300), (True, True, 30, 30)]:
             window = smoke.runtime.Window.__new__(smoke.runtime.Window)
             window.exploratory, window.candidate, window.root, window.env = exploratory, Path('/pinned'), self.control, {}
             window.cell = dict(backend='colima')

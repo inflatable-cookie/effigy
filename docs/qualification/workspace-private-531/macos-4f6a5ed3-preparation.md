@@ -138,11 +138,11 @@ removed, so retirement can identify the two masks after the container disappears
 The 1800-second cell bound remains. Exploratory activation/down/retirement
 commands may spend at most 300 seconds each, clipped to that original window;
 other commands keep 60 seconds. The exploratory receipt records these limits.
-The sealed driver retains its reviewed 60-second command bound. A debug host
-activation exceeded that bound after genuine publication reached a pending
-selection, so the later candidate freeze must measure the optimized artifacts
-against it or explicitly review a new phase bound before sealing. This task
-neither changes the sealed bound nor claims that timing proof.
+Sealed activation commands have a 300-second phase bound; other sealed commands
+retain 60 seconds. The activation allowance is sized from retained healthy
+Colima timings in the [packet record](README.md#sealed-activation-bound): twice
+the slowest measured activation is 289.6 seconds. Both values remain clipped to
+the original backend window.
 The full-session gap control throttles the real client's stdout inside the guest,
 before engine/SSH buffering, while leaving channel polling live. Its fixture utility
 reads typed retained extents without output payloads; actual expiry and truncation
@@ -1345,9 +1345,9 @@ owner completes the session using its pinned image.
 Before freezing a candidate, resolve the Desktop bind-start failure and run the
 complete unsealed cell successfully. Then freeze coherent reviewed Recipe A–E
 artifacts, genuine guest sidecars, engine/tool hashes, a fresh qualification-root
-identity and complete stable foreign inventories. Measure optimized commands
-against the sealed 60-second command bound; the exploratory 300-second activation
-allowance does not change it. Reuse retained successful preparation where valid;
+identity and complete stable foreign inventories. Measure optimized non-activation
+commands against the sealed 60-second bound and activations against the sealed
+300-second bound. Reuse retained successful preparation where valid;
 if new preparation is needed, freeze one D1–D3 chain after its fresh D0. The owner
 then launches the separately authorized #622 full-session occurrence. Only after
 that session closes does the owner launch the already prepared historical D4.
