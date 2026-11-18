@@ -20,6 +20,5 @@ Current product truth is owned by topic. User documentation remains in [guides](
 | Test and code quality ratings | [Quality tables](quality/README.md) |
 | Cargo routing and its recorded exceptions | [Cargo routes](cargo-routes.md) |
 | Domain vocabulary | [Domain](domain/README.md) |
-| Retired concepts | [Retirements](retired.toml) |
 | Open questions | [Questions](questions.md) |
 | v0.15 completion gates and sequence | [v0.15 roadmap](v015-roadmap.md) |

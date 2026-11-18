@@ -48,13 +48,13 @@ fn parse_skill_run_and_tasks_map_paths_selectors_and_stdio() {
             },
         ),
         (
-            &["skill", "run", "northstar/retired-concepts"],
+            &["skill", "run", "northstar/check-links"],
             SkillArgs {
                 subcommand: SkillSubcommand::Run {
                     path: None,
                     stdio: SkillStdioMode::Default,
                     task: TaskInvocation {
-                        name: "northstar/retired-concepts".to_owned(),
+                        name: "northstar/check-links".to_owned(),
                         args: Vec::new(),
                     },
                     repo_override: None,
@@ -66,7 +66,7 @@ fn parse_skill_run_and_tasks_map_paths_selectors_and_stdio() {
             &[
                 "skill",
                 "run",
-                "northstar/retired-concepts",
+                "northstar/check-links",
                 "--stdio",
                 "passthrough",
             ],
@@ -75,7 +75,7 @@ fn parse_skill_run_and_tasks_map_paths_selectors_and_stdio() {
                     path: None,
                     stdio: SkillStdioMode::Passthrough,
                     task: TaskInvocation {
-                        name: "northstar/retired-concepts".to_owned(),
+                        name: "northstar/check-links".to_owned(),
                         args: Vec::new(),
                     },
                     repo_override: None,
@@ -139,7 +139,7 @@ fn parse_skill_refuses_unqualified_selectors_and_missing_arguments() {
     let invalid_stdio = parse_command(vec![
         "skill".to_owned(),
         "run".to_owned(),
-        "northstar/retired-concepts".to_owned(),
+        "northstar/check-links".to_owned(),
         "--stdio".to_owned(),
         "raw".to_owned(),
     ])
@@ -152,7 +152,7 @@ fn parse_skill_refuses_unqualified_selectors_and_missing_arguments() {
     let local = parse_command(vec![
         "skill".to_owned(),
         "run".to_owned(),
-        "northstar/retired-concepts".to_owned(),
+        "northstar/check-links".to_owned(),
         "--stdio".to_owned(),
         "passthrough".to_owned(),
         "--json".to_owned(),
@@ -164,7 +164,7 @@ fn parse_skill_refuses_unqualified_selectors_and_missing_arguments() {
         "--json".to_owned(),
         "skill".to_owned(),
         "run".to_owned(),
-        "northstar/retired-concepts".to_owned(),
+        "northstar/check-links".to_owned(),
         "--stdio".to_owned(),
         "passthrough".to_owned(),
     ])

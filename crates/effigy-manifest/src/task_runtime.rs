@@ -237,7 +237,7 @@ pub struct ManifestManagedConcurrentEntry {
     /// host processes is `depends_on` on the container's declaration.
     #[serde(default)]
     pub after: Vec<String>,
-    /// Retired ordering timer (see `docs/knowledge/retired.toml`): a
+    /// Retired ordering timer: a
     /// managed session starts workloads after observed readiness, never on a
     /// fixed delay. It still delays the entry for the v0.15 line and warns
     /// towards `after`/`depends_on`.

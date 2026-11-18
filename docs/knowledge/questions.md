@@ -192,8 +192,7 @@ client obligations.
 
 Implemented by effigy#227 (2026-10-19): contract
 [049](contracts/049-heavy-validation-admission-contract.md) holds the hook
-protocol and run control, and `retired.toml` `effigy-host-run-client` the
-retirement.
+protocol and run control, and records the host-run client's retirement.
 
 ## Q-007 — Dev session shape
 
@@ -304,8 +303,8 @@ Asked: 2026-10-21 (planner, from the weight map and consumer usage scans)
 Answered: 2026-10-21 by Tom, item by item; final "Confirm"
 
 Breaking changes land in v0.15, the release that carries built-in migration
-from v0.14.1, so that v0.16 doesn't need a second migration. Each retirement adds a
-`retired.toml` entry and an actionable error.
+from v0.14.1, so that v0.16 doesn't need a second migration. Each retirement adds an
+actionable error.
 
 - **Cut:**
   - `demo` and `[demos]`. The planner's usage scan only matched a literal `[demos]` header and reported one user, but Jetstream (90), Signal (8), Keepsake (6), Poodle (3) and Monkey (3) declare `[demos.<name>]` tables. Agents ran `effigy demo` 0 times in 60 days. Every demo is a command or step sequence, so Tom, 2026-10-22 ("Agreed"), kept the cut and ruled that demos convert to public tasks: `[tasks."demo:<name>"]` with the same `run`, the title and summary merged into the task `description` (added by effigy#271, Tom 2026-10-22), and `group = "Demos"` added once the project runs v0.15 (v0.14.1 rejects `group`). The retirement error and migration guide give that recipe, and each project converts before the v0.15 install;

@@ -904,11 +904,11 @@ retention.
 
 ## Retired
 
-The host-run client and everything Q-006 lists went on 2026-10-19
-(`retired.toml` `effigy-host-run-client`): `src/runner/host_scheduler`, the
-`effigy-host-run` crate, parent tokens (`HOST_RUN_TOKEN`, `HOST_RUN_ID`), the
-scheduler override and setting variables, exit codes 75 (`scheduler_unreachable`)
-and 77 (`invalid_parent_token`) as scheduler results, `--host-run-request-id`,
+The host-run client and everything Q-006 lists went on 2026-10-19:
+`src/runner/host_scheduler`, the `effigy-host-run` crate, parent tokens
+(`HOST_RUN_TOKEN`, `HOST_RUN_ID`), the scheduler override and setting
+variables, exit codes 75 (`scheduler_unreachable`) and 77
+(`invalid_parent_token`) as scheduler results, `--host-run-request-id`,
 `effigy tasks request status|follow`, the `qa`/`ci`/`ci:fresh` name rule, the
 private-parent fixture harness, and every Effigy-side client obligation this
 contract held. Exit 75 now means only a held task gate. The retired flag and

@@ -1,7 +1,7 @@
 [tasks]
 "qa:docs" = [
   "effigy docs check links",
-  "effigy docs check paths README.md AGENTS.md docs/README.md docs/knowledge/README.md docs/knowledge/vision.md docs/knowledge/architecture.md docs/knowledge/contracts/release.md docs/knowledge/retired.toml docs/knowledge/questions.md",
+  "effigy docs check paths README.md AGENTS.md docs/README.md docs/knowledge/README.md docs/knowledge/vision.md docs/knowledge/architecture.md docs/knowledge/contracts/release.md docs/knowledge/questions.md",
 ]
 qa = [{ task = "qa:docs" }]
 

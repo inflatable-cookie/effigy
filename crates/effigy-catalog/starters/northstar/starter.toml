@@ -30,9 +30,6 @@ target = "docs/knowledge/domain/README.md"
 target = "docs/knowledge/questions.md"
 
 [[files]]
-target = "docs/knowledge/retired.toml"
-
-[[files]]
 target = "docs/knowledge/vision.md"
 
 [[files]]

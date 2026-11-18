@@ -30,7 +30,7 @@ const SKILL_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     ],
     examples: &[
         "effigy skill tasks --path ~/.agents/skills/northstar",
-        "effigy skill run northstar/retired-concepts --stdio passthrough < payload.json",
+        "effigy skill run <skill>/<task> --stdio passthrough < payload.json",
         "effigy skill run --path ~/.agents/skills/northstar northstar/check-links",
         "effigy skill run --path /opt/skills/northstar/effigy.toml northstar/setup --repo /work/consumer -- apply",
     ],

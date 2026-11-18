@@ -194,7 +194,7 @@ GLIBC and Homebrew checks) become Effigy repo tasks, wired as gates or as
 
 `effigy changelog validate|format|analyze|extract` stays as it is.
 
-**Retired** (with actionable errors and `retired.toml` entries):
+**Retired** (with actionable errors):
 - `prepare` and `execute` → `run`;
 - `simulate` → `--plan`;
 - `validate`, `preflight`, `proof`, `check-binary`, `verify-install`, and `evidence validate|closeout|summary` → Effigy repo tasks, or `receipt`;
@@ -361,8 +361,7 @@ surface and the choices §4 left open; §12 records the Run.
   every unfinished Run, including a failed one that can still resume.
 - **`release prepare`, `release execute` and the prepared-state `release
   resume` are retired.** `release run` replaces the first two and `release
-  resume <run>` the third; each refuses with that replacement
-  (`retired.toml`, `effigy-release-prepare-execute`). The repo selector
+  resume <run>` the third; each refuses with that replacement. The repo selector
   `release:prepare` becomes `release:run`, which runs `release run --to
   certify` under the same heavy admission.
 - **`--plan --version` applies to the single `semver` identity.** It is the

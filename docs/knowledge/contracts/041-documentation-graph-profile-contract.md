@@ -17,8 +17,7 @@ and validated by `effigy-manifest` and rendered by `effigy config --schema`, so
 an existing committed profile keeps working, but no v0.15 command reads it.
 `docs check` is unchanged. `effigy docs context`, `--sources` routing, the
 `effigy.graph.*`/`effigy.docs.context.*` payloads, the retrieval pipeline, the
-graph freshness lifecycle and `EFFIGY_GRAPH_TIMEOUT_MS` are retired; see
-`docs/knowledge/retired.toml` (`effigy-code-graph`). A later decision retires or
+graph freshness lifecycle and `EFFIGY_GRAPH_TIMEOUT_MS` are retired. A later decision retires or
 replaces the profile itself.
 
 ## Manifest Grammar

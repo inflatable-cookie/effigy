@@ -20,8 +20,8 @@ checkout in place.
 
 Everything else the old bootstrap did is gone. There is no child-repo clone, no
 dependency installer, no database-dump prompting, no fresh-session teardown and
-no per-invocation backend override. The ruling is Q-009; the retired spellings
-are listed in [retired concepts](../knowledge/retired.toml).
+no per-invocation backend override. The ruling is Q-009, and each retired spelling
+refuses with its replacement.
 
 ## Vision Alignment
 
