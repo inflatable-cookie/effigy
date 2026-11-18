@@ -27,7 +27,9 @@ def inputs():
             production_receipt=dict(source_head=HEAD, features=[], sha256='b' * 64),
             candidate=dict(path=str(SCRATCH / 'unarmed-candidate'), sha256='a' * 64),
             candidate_active_version=dict(path=str(SCRATCH / 'unarmed-candidate.active-version'), sha256='d' * 64),
-            production=dict(sha256='b' * 64), old_binary=dict(sha256='c' * 64),
+            production=dict(path=str(SCRATCH / 'unarmed-production'), sha256='b' * 64),
+            production_active_version=dict(path=str(SCRATCH / 'unarmed-production.active-version'), sha256='d' * 64),
+            old_binary=dict(sha256='c' * 64),
             guest_install_identity=dict(path=str(SCRATCH / 'unarmed-guest.install-identity'), sha256='e' * 64),
             runtime_image='sha256:' + 'd' * 64, budget_seconds=600,
             qualification_root=dict(path=str(SCRATCH / ('531-unarmed-' + backend)),
@@ -121,7 +123,9 @@ def invocation_record(backend, cell, base, source_head=HEAD, inputs_sha256='f' *
                'candidate': dict(cell['candidate']),
                'candidate_active_version': dict(cell['candidate_active_version']),
                'candidate_receipt': dict(cell['candidate_receipt']),
-               'production': dict(cell['production']), 'production_receipt': dict(cell['production_receipt']),
+               'production': dict(cell['production']),
+               'production_active_version': dict(cell['production_active_version']),
+               'production_receipt': dict(cell['production_receipt']),
                'old_source_head': cell['old_source_head'], 'old_binary': dict(cell['old_binary']),
                'old_source_receipt': dict(cell['old_source_receipt']),
                'inputs': {'path': str(base / (backend + '-inputs.json')), 'sha256': inputs_sha256},
@@ -457,6 +461,61 @@ class Boundaries(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'belongs to another artifact'):
             validate_inputs(value, HEAD)
 
+    def test_production_requires_its_pinned_active_version_sidecar(self):
+        value = inputs()
+        del value['backends'][0]['production_active_version']
+        with self.assertRaisesRegex(RuntimeError, 'pinned production active-version sidecar required'):
+            validate_inputs(value, HEAD)
+        value = inputs()
+        value['backends'][0]['production_active_version']['path'] = str(SCRATCH / 'other.active-version')
+        with self.assertRaisesRegex(RuntimeError, 'belongs to another artifact'):
+            validate_inputs(value, HEAD)
+
+    def test_phase_p_installs_production_with_the_frozen_sidecar(self):
+        import linux_native_assets as assets
+        import linux_native_build as build
+        head = 'b' * 40
+        binding = {'guest_source': build.BASE + '/builds/example/source', 'source_pin': head}
+        roles = build.BASE + '/artifacts/example'
+        seed = {'cell': {'source_head': head, 'baseline': {}}}
+        rendered = assets.script(binding, roles, seed)
+        install = 'install -m 700 "$source/target/debug/effigy" "$roles/effigy-production"'
+        first_use = '"$roles/effigy-production" build:workspace:private-qualification'
+        self.assertIn(install, rendered)
+        self.assertIn(first_use, rendered)
+        sidecar_argv = '"$roles/effigy-production" %s ' % head[:7] + "<<'SIDECAR'"
+        self.assertIn(sidecar_argv, rendered)
+        sidecar_at = rendered.index(sidecar_argv)
+        self.assertLess(rendered.index(install), sidecar_at)
+        self.assertLess(sidecar_at, rendered.index(first_use))
+        self.assertIn('os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600', rendered)
+        finish = rendered.split("python3 -I -B - <<'FINISH'\n")[1].removesuffix('FINISH\n')
+        compile(finish, 'native-asset-binder', 'exec')
+        self.assertIn("cell['production_active_version']=bind(production_sidecar)", finish)
+        self.assertIn('in-guest production lacks the frozen active-version sidecar', finish)
+        body = rendered.split("<<'SIDECAR'\n")[1].split('\nSIDECAR\n')[0]
+        compile(body, 'phase-p-sidecar', 'exec')
+        with tempfile.TemporaryDirectory(prefix='531-phase-p-', dir=os.environ['TMPDIR']) as directory:
+            root = Path(directory)
+            (root / 'Cargo.toml').write_text('[workspace.package]\nversion = "9.9.9"\n')
+            binary = root / 'effigy-production'
+            binary.write_bytes(b'unarmed fixture binary; never executed')
+            namespace = {}
+            with patch.object(sys, 'argv', ['phase-p-sidecar', str(root), str(binary), head[:7]]):
+                exec(compile(body, 'phase-p-sidecar', 'exec'), namespace)
+            sidecar = Path(str(binary) + '.active-version')
+            self.assertEqual(sidecar.read_bytes(), ('v9.9.9+local.' + head[:7] + '\n').encode())
+            self.assertEqual(sidecar.stat().st_mode & 0o777, 0o600)
+            with self.assertRaises(FileExistsError):
+                with patch.object(sys, 'argv', ['phase-p-sidecar', str(root), str(binary), head[:7]]):
+                    exec(compile(body, 'phase-p-sidecar', 'exec'), {})
+            (root / 'Cargo.toml').write_text('[workspace.package]\nversion = "9.9.9"\n')
+            stray = root / 'other'
+            stray.write_bytes(b'unarmed')
+            with self.assertRaises(SystemExit):
+                with patch.object(sys, 'argv', ['phase-p-sidecar', str(root), str(stray), 'not-hex!']):
+                    exec(compile(body, 'phase-p-sidecar', 'exec'), {})
+
     def test_linux_live_writer_ack_uses_activation_allowance_and_window_cap(self):
         import linux_native_window
         import runtime
@@ -633,10 +692,17 @@ class Boundaries(unittest.TestCase):
             cell['candidate'] = dict(path=str(candidate), sha256=digest(candidate))
             cell['candidate_active_version'] = dict(path=str(candidate_active_version),
                                                    sha256=digest(candidate_active_version))
-            for name in ('production', 'utility', 'kernel_fixture', 'old_binary',
+            for name in ('utility', 'kernel_fixture', 'old_binary',
                          'kernel_tests', 'custody_tests', 'nextest_binary', 'nextest_config',
                          'guest_producer_receipt', 'guest_active_version', 'engine_binary'):
                 cell[name] = item.copy()
+            production = parent / 'production'
+            production.write_bytes(b'unarmed production; never executed')
+            production_active_version = Path(str(production) + '.active-version')
+            production_active_version.write_bytes(b'v0.14.1+local.fixture\n')
+            cell['production'] = dict(path=str(production), sha256=digest(production))
+            cell['production_active_version'] = dict(path=str(production_active_version),
+                                                     sha256=digest(production_active_version))
             metadata = parent / 'binaries.json'
             metadata.write_text(json.dumps({'binary-path': str(file)}))
             cell['binaries_metadata'] = dict(path=str(metadata), sha256=digest(metadata))
@@ -867,7 +933,7 @@ class Boundaries(unittest.TestCase):
             binding = record['binding']
             for key in ('source_head', 'cell_source_head', 'programs', 'contract', 'candidate',
                         'candidate_active_version', 'candidate_receipt', 'production',
-                        'production_receipt', 'source_equivalence', 'old_source_head', 'old_binary', 'old_source_receipt', 'inputs',
+                        'production_active_version', 'production_receipt', 'source_equivalence', 'old_source_head', 'old_binary', 'old_source_receipt', 'inputs',
                         'go_bindings', 'go_receipt', 'go_decision_id', 'qualification_root', 'driver',
                         'engine_kind', 'engine_identity', 'runtime_image', 'budget_seconds', 'one_shot_marker'):
                 self.assertIn(key, binding)
