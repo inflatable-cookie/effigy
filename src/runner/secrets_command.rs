@@ -1297,10 +1297,8 @@ fn read_secret_input(prompt: &str, test_env: &str) -> Result<SecretValue, Runner
             "`{test_env}` is not set and secret input requires an interactive TTY"
         )));
     }
-    let value = rpassword::prompt_password(prompt).map_err(|error| {
-        RunnerError::task_invocation(format!("failed to read secret input: {error}"))
-    })?;
-    Ok(SecretValue::new(value))
+    crate::runner::secret_session::prompt_secret_on_terminal(prompt)?
+        .ok_or_else(|| RunnerError::task_invocation("failed to read secret input"))
 }
 
 fn read_confirmed_new_passphrase() -> Result<SecretValue, RunnerError> {
@@ -1317,12 +1315,15 @@ fn read_confirmed_new_passphrase() -> Result<SecretValue, RunnerError> {
             "`EFFIGY_TEST_SECRETS_NEW_PASSPHRASE` is not set and passphrase input requires an interactive TTY",
         ));
     }
-    let first = rpassword::prompt_password("New vault passphrase: ").map_err(|error| {
-        RunnerError::task_invocation(format!("failed to read new passphrase: {error}"))
-    })?;
-    let second = rpassword::prompt_password("Confirm new vault passphrase: ").map_err(|error| {
-        RunnerError::task_invocation(format!("failed to confirm new passphrase: {error}"))
-    })?;
+    let first = crate::runner::secret_session::prompt_secret_on_terminal("New vault passphrase: ")?
+        .ok_or_else(|| RunnerError::task_invocation("failed to read new passphrase"))?
+        .expose()
+        .to_owned();
+    let second =
+        crate::runner::secret_session::prompt_secret_on_terminal("Confirm new vault passphrase: ")?
+            .ok_or_else(|| RunnerError::task_invocation("failed to confirm new passphrase"))?
+            .expose()
+            .to_owned();
     if first != second {
         return Err(RunnerError::task_invocation(
             "new vault passphrase confirmation did not match",
@@ -1638,10 +1639,7 @@ fn read_optional_vault_passphrase(
     if !std::io::stdin().is_terminal() {
         return Ok(None);
     }
-    let value = rpassword::prompt_password(prompt).map_err(|error| {
-        RunnerError::task_invocation(format!("failed to read secret input: {error}"))
-    })?;
-    Ok(Some(SecretValue::new(value)))
+    crate::runner::secret_session::prompt_secret_on_terminal(prompt)
 }
 
 fn render_secrets_list_text(repo_root: &Path, secrets: Option<&ManifestSecretsConfig>) -> String {

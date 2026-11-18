@@ -26,7 +26,9 @@
 //! process-wide sink, which serialises finish lines and never interleaves a
 //! spinner with them. While the managed-run TUI owns the terminal,
 //! [`suspend_terminal`] silences the sink so the two never draw over each
-//! other. A process whose output Effigy captures and renders as plain lines -
+//! other, and [`prompt_terminal`] clears the step lines for a passphrase or
+//! secret prompt so the question is visible while it waits (effigy#1036). A
+//! process whose output Effigy captures and renders as plain lines -
 //! a managed pane, or any captured run log - carries
 //! [`MANAGED_PANE_ENV`] instead and writes bounded plain start and finish
 //! lines, never spinner frames or the CLI banner (effigy#729).
@@ -675,7 +677,7 @@ mod terminal;
 
 pub use live::{live_output, LiveOutput};
 pub use source::{ProgressFrame, ProgressSource};
-pub use terminal::{suspend_terminal, TerminalGuard};
+pub use terminal::{prompt_terminal, suspend_terminal, TerminalGuard};
 
 pub(in crate::steps) use live::{StreamingGuard, Window};
 

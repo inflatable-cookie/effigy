@@ -65,7 +65,7 @@ use compose_hash::{
     compose_service_config_hashes, parse_service_config_hashes, verify_frozen_compose_reads,
 };
 #[cfg(test)]
-use exec_prep::run_task_apply;
+use exec_prep::{deliver_applied_runtime_secret_files_with, run_task_apply};
 #[cfg(test)]
 use gateway::ensure_runtime_gateway_readiness_stage_using;
 #[cfg(test)]

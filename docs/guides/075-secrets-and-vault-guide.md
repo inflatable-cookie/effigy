@@ -140,6 +140,13 @@ doctor` and `effigy secrets get` read the vault on this machine: doctor reports
 `vault: unlocked (local-dev key)` with the stored key names, and `get` prints
 one declared value. Nothing else prints a value.
 
+A prompt is always visible. Whenever Effigy needs a passphrase and a progress
+display is running — a `dev` session's apply, a task that prepares its stack —
+the step lines are cleared, the prompt is shown on the terminal, and the steps
+resume once it is answered. Inside a managed pane, whose output is captured,
+Effigy never prompts: it names the command that unlocks instead, because a
+question written into a captured pane is one nobody can see.
+
 Existing vaults prompt once on their next `effigy dev` run, then add the
 local-dev payload and key in place. Delete the adjacent
 `local.vault.local-dev-key` file to revoke unattended dev unlock; the next dev
@@ -343,6 +350,20 @@ vault is missing, or the local-dev key cannot read it — is reported once:
 [warn] container secret `openai_api_key` was not delivered: the vault is locked and this run has no terminal to ask for its passphrase; run `effigy secrets unlock` at a terminal, or rerun `effigy dev` on one
 ```
 
+When this machine holds a local-dev key but the command is not a `dev` session,
+the warning says exactly that instead, because the key is a `dev` factor and the
+vault is not locked for a machine that can read it:
+
+```text
+[warn] container secret `openai_api_key` was not delivered: the local-dev key only unlocks `effigy dev`, and this run is not a dev session; for direct commands run `effigy secrets unlock` once at a terminal
+```
+
+Only keys declared `required = true` are ever asked for: a resolution whose
+container keys are all optional never blocks on a prompt, so an interactive
+`effigy workspace` or `effigy dev` cannot wait on a question it did not
+promise. What this session already holds — its own passphrase, or the sealed
+`effigy secrets unlock` credential — is still delivered.
+
 The same lines appear under `warnings` in `effigy container up --json`. An
 empty `runtime.env`/`runtime.json` is never written silently: a bring-up that
 delivered nothing leaves the files alone instead of replacing them with an
@@ -390,7 +411,15 @@ In that mode, Effigy writes:
 - `runtime.env`
 - `runtime.json`
 
-under the configured `runtime_dir` inside the running primary service. Core
+under the configured `runtime_dir` inside the running primary service.
+
+The files are written on every apply that resolves values, not only on first
+creation. A `dev` session that borrows an environment a direct `container up`
+started — which cannot resolve that session's optional keys — therefore
+rewrites both files with what the session resolves, instead of reusing a stack
+that is missing them. Values are read when a process starts (a request-time
+bootstrap, a deferred spawn), so which values a consumer sees is decided by
+these files, not by when its container was created. Core
 Effigy treats those as generic runtime files. The bundle/catalog can then wire
 them into the app runtime however it needs. A legacy PHP bundle, for example,
 can mount `runtime_dir` as tmpfs, auto-prepend a PHP bootstrap that reads

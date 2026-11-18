@@ -16,7 +16,7 @@ const SECRETS_REQUIRED_ENV: &str = "EFFIGY_SECRETS_REQUIRED";
 use crate::runner::exec_command::run_verified_compose_exec_plan;
 use crate::runner::manifest::{load_task_manifest, TASK_MANIFEST_FILE};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(in crate::runner) struct ResolvedContainerSecretRuntime {
     pub delivery: ManifestContainerSecretDelivery,
     pub env: Vec<(String, SecretString)>,
@@ -63,6 +63,14 @@ impl ResolvedContainerSecretRuntime {
 // user can act on.
 const UNLOCK_FIX: &str = "run `effigy secrets unlock` at a terminal, or rerun `effigy dev` on one";
 
+/// The reason line for a run that holds a local-dev key but is not a `dev`
+/// session: the key is a `dev` factor, so a direct command's warning says so
+/// instead of claiming the vault is locked (effigy#1036).
+const LOCAL_DEV_SCOPE_REASON: &str =
+    "the local-dev key only unlocks `effigy dev`, and this run is not a dev session";
+const LOCAL_DEV_SCOPE_FIX: &str =
+    "for direct commands run `effigy secrets unlock` once at a terminal";
+
 /// The environment variables the one apply delivers through `--env-file`.
 /// Both `container up` and a task's environment ensure pass exactly these, so
 /// the rendered config hash never flips between the two paths (effigy#371).
@@ -79,17 +87,20 @@ pub(in crate::runner) fn compose_env(
     }
 }
 
-/// Resolve the secrets a task's environment ensure delivers, and report keys
-/// it could not deliver instead of failing the task.
-pub(in crate::runner) fn compose_secret_env_for_apply(
+/// Resolve the secrets a task's environment apply delivers, reporting keys it
+/// could not deliver instead of failing the task. The resolved runtime is
+/// returned whole: the activation writes its runtime files once the primary
+/// service is verified, so a stack reused from a bring-up that delivered less
+/// still receives what this session can resolve (effigy#1036).
+pub(in crate::runner) fn resolve_secret_runtime_for_apply(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-) -> Result<Vec<(String, OsString)>, RunnerError> {
+) -> Result<ResolvedContainerSecretRuntime, RunnerError> {
     let runtime = resolve_container_secret_runtime(repo_root, policy, secrets_required())?;
     for warning in &runtime.warnings {
         eprintln!("[warn] {warning}");
     }
-    Ok(compose_env(&runtime))
+    Ok(runtime)
 }
 
 pub(super) fn secrets_required() -> bool {
@@ -98,7 +109,7 @@ pub(super) fn secrets_required() -> bool {
         .unwrap_or(false)
 }
 
-pub(super) fn resolve_container_secret_runtime(
+pub(in crate::runner) fn resolve_container_secret_runtime(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     force_unlock: bool,
@@ -202,10 +213,21 @@ pub(super) fn resolve_container_secret_runtime(
                 Some(payload)
             }
         }
+    } else if optional_only {
+        // Optional keys never block an interactive session on a prompt: what
+        // this run already holds is delivered, and anything else is reported
+        // instead of waiting on input nobody asked for (effigy#1036).
+        match crate::runner::secret_session::held_vault_passphrase(&vault_path)? {
+            Some(passphrase) => Some(crate::runner::secret_vault::read_effigy_vault_payload(
+                &vault_path,
+                passphrase.expose(),
+            )?),
+            None => None,
+        }
     } else {
         match crate::runner::secret_session::read_vault_passphrase(
             &vault_path,
-            optional_only,
+            false,
             "Vault passphrase: ",
             "container secrets require an unlocked vault passphrase and secret input requires an interactive TTY",
         )? {
@@ -217,6 +239,14 @@ pub(super) fn resolve_container_secret_runtime(
         }
     };
     let Some(payload) = payload else {
+        if crate::runner::secret_session::local_dev_key_present(&vault_path) {
+            return Ok(ResolvedContainerSecretRuntime::undelivered(
+                delivery,
+                &container_keys,
+                LOCAL_DEV_SCOPE_REASON,
+                LOCAL_DEV_SCOPE_FIX,
+            ));
+        }
         return Ok(ResolvedContainerSecretRuntime::undelivered(
             delivery,
             &container_keys,
@@ -255,11 +285,13 @@ pub(super) fn resolve_container_secret_runtime(
 /// already produced its own warning in [`resolve_container_secret_runtime`],
 /// and writing `runtime.env` empty (or `runtime.json` as `{}`) would leave the
 /// service reading "no secrets configured" with nothing said about it.
-fn writes_runtime_secret_files(runtime: &ResolvedContainerSecretRuntime) -> bool {
+pub(in crate::runner) fn writes_runtime_secret_files(
+    runtime: &ResolvedContainerSecretRuntime,
+) -> bool {
     runtime.delivery == ManifestContainerSecretDelivery::RuntimeFiles && !runtime.env.is_empty()
 }
 
-pub(super) fn materialize_container_secret_runtime(
+pub(in crate::runner) fn materialize_container_secret_runtime(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     runtime: &ResolvedContainerSecretRuntime,
@@ -710,6 +742,50 @@ catalog = "php-fpm"
             assert!(warning.contains("was not delivered"), "{warning}");
             assert!(warning.contains("locked"), "{warning}");
             assert!(warning.contains("effigy secrets unlock"), "{warning}");
+        }
+    }
+
+    /// A machine that holds the local-dev key but is running a direct command
+    /// says exactly that: the key unlocks `effigy dev`, not this run, and
+    /// `effigy secrets unlock` is the fix. The vault is not "locked" for a
+    /// machine that can read it (effigy#1036).
+    #[test]
+    fn container_secret_runtime_names_the_local_dev_scope_for_a_direct_command() {
+        let root = temp_repo("container-secret-local-dev-scope");
+        write_optional_only_container_manifest(&root);
+        write_dev_key_vault(&root, &[("openai_api_key", "sk-dev-value")]);
+        let _test_passphrase = ScopedEnvVar::remove("EFFIGY_TEST_SECRETS_PASSPHRASE");
+        let _public_passphrase = ScopedEnvVar::remove("EFFIGY_SECRET_PASSPHRASE");
+        crate::runner::secret_session::forget_session_passphrase_for_tests();
+        assert!(
+            crate::runner::secret_session::local_dev_key_present(
+                &root.join(".effigy/secrets/local.vault")
+            ),
+            "the fixture holds a local-dev key"
+        );
+
+        let runtime = resolve_container_secret_runtime(&root, &test_runtime_files_policy(), false)
+            .expect("optional keys must not fail a direct command");
+
+        assert!(runtime.env.is_empty());
+        assert!(!writes_runtime_secret_files(&runtime));
+        assert!(
+            !runtime.warnings.is_empty(),
+            "a direct command reports what it could not deliver"
+        );
+        for warning in &runtime.warnings {
+            assert!(
+                warning.contains("the local-dev key only unlocks `effigy dev`"),
+                "{warning}"
+            );
+            assert!(
+                warning.contains("run `effigy secrets unlock` once at a terminal"),
+                "{warning}"
+            );
+            assert!(
+                !warning.contains("the vault is locked"),
+                "a vault this machine can read is not reported locked: {warning}"
+            );
         }
     }
 

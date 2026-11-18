@@ -419,8 +419,11 @@ pub(crate) fn read_rhai_secret_passphrase(
             "Rhai secrets require an unlocked vault passphrase and secret input requires an interactive TTY",
         ));
     }
-    let value = rpassword::prompt_password("Vault passphrase: ")
-        .map_err(|error| RhaiHostError::new(format!("failed to read secret input: {error}")))?;
+    // The progress display is cleared for the prompt: a question hidden under
+    // a live spinner is a question nobody answers (effigy#1036).
+    let value =
+        effigy_ui::steps::prompt_terminal(|| rpassword::prompt_password("Vault passphrase: "))
+            .map_err(|error| RhaiHostError::new(format!("failed to read secret input: {error}")))?;
     Ok(Some(SecretValue::new(value)))
 }
 

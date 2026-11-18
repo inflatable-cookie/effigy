@@ -386,6 +386,38 @@ fn a_suspended_terminal_silences_steps_and_restores_them() {
     assert_eq!(buffer.text(), "✓ web is healthy\n");
 }
 
+/// A passphrase prompt under a live spinner clears the spinner line first and
+/// the spinner returns afterwards: the question is the only thing on the
+/// terminal while it waits (effigy#1036).
+#[test]
+fn a_terminal_prompt_clears_the_running_step_and_redraws_it() {
+    let (sink, buffer, terminal) = window_sink();
+    let (step, bar) = terminal_step(&sink);
+    bar.tick();
+    assert!(
+        last_frame(&terminal).contains("Starting web stack"),
+        "the spinner drew a frame before the prompt"
+    );
+
+    let cleared = std::cell::Cell::new(None);
+    let answer = terminal::prompt_terminal_with(&sink, || {
+        cleared.set(Some(last_frame(&terminal)));
+        "the-passphrase"
+    });
+    assert_eq!(answer, "the-passphrase");
+    let cleared = cleared.into_inner().expect("the prompt ran");
+    assert!(
+        !cleared.contains("Starting web stack"),
+        "the step line must be cleared before the prompt is written: {cleared:?}"
+    );
+    assert!(
+        last_frame(&terminal).contains("Starting web stack"),
+        "the step comes back after the prompt"
+    );
+    step.succeed("web is healthy");
+    assert!(buffer.text().contains("web is healthy"));
+}
+
 /// A fake terminal records each draw; manual ticks stand in for the clock.
 #[derive(Debug, Clone, Default)]
 struct FrameTerminal(Arc<Mutex<(String, Vec<String>)>>);
