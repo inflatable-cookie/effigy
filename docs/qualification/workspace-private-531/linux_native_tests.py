@@ -701,7 +701,10 @@ class SharedLinuxWindowTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError,'one execution authority'):
                     linux_native_window.Window(cell,'a'*64,go,exploration_authority=authority)
 
-    def test_proof_activation_keeps_the_shared_command_deadline(self):
+    def test_proof_activation_uses_the_sized_activation_allowance(self):
+        # The packet sizes an activation command at the 300-second allowance that
+        # #1021 derived from retained timings (README, sealed activation bound);
+        # every other sealed command keeps the shared 60-second phase.
         window=object.__new__(linux_native_window.Window)
         window.verify_root=lambda:None
         window.end=time.monotonic()+1000
@@ -709,7 +712,9 @@ class SharedLinuxWindowTests(unittest.TestCase):
         window.root=Path('/owned/root');window.env={}
         with patch.object(runtime,'run',return_value=subprocess.CompletedProcess(['fixture'],0,b'',b'')) as run:
             window.command(['fixture'],activation=True)
-            self.assertEqual(run.call_args.kwargs['timeout'],60)
+            self.assertEqual(run.call_args.kwargs['timeout'],runtime.SEALED_ACTIVATION_PHASE_SECONDS)
+            window.command(['fixture'])
+            self.assertEqual(run.call_args.kwargs['timeout'],runtime.SEALED_COMMAND_PHASE_SECONDS)
 
 
 class RetainedStreamTests(unittest.TestCase):
