@@ -2210,18 +2210,23 @@ fn a_task_apply_delivers_runtime_files_it_resolved_and_never_writes_empty_ones()
     };
 
     let delivered = std::cell::Cell::new(0usize);
-    deliver_applied_runtime_secret_files_with(
+    let warnings = deliver_applied_runtime_secret_files_with(
         &resolved_runtime(
             vec![("MAILCHIMP_API_KEY".to_owned(), OsString::from("mc-value"))],
             RuntimeFiles,
         ),
         |secrets| {
             delivered.set(secrets.env.len());
-            Ok(())
+            Ok(vec!["a restart names MAILCHIMP_API_KEY".to_owned()])
         },
     )
     .expect("a resolved runtime-file delivery writes");
     assert_eq!(delivered.get(), 1, "the resolved key is delivered");
+    assert_eq!(
+        warnings,
+        vec!["a restart names MAILCHIMP_API_KEY".to_owned()],
+        "the delivery's refresh warnings reach its caller"
+    );
 
     // An empty delivery is never written: the undelivered keys already warned,
     // and an empty runtime file reads as "no secrets configured".

@@ -158,18 +158,11 @@ pub(in crate::runner) fn read_secret_passphrase(
     if let Some(secret) = cached_secret_passphrase() {
         return Ok(Some(secret));
     }
-    // A managed pane captures this process's output: a prompt written into it
-    // is a question nobody can see, and the read would wait forever
-    // (effigy#1036). An optional resolution simply delivers nothing, and a
-    // required one says which command unlocks the vault instead.
-    if effigy_ui::steps::in_managed_pane() {
+    if prompt_unavailable() {
         if optional_only {
             return Ok(None);
         }
-        return Err(RunnerError::task_invocation(format!(
-            "this run's output is captured by a managed pane, so Effigy cannot show a secret prompt; \
-             {missing_tty_error}"
-        )));
+        return Err(no_prompt_error(missing_tty_error));
     }
     if !std::io::stdin().is_terminal() {
         if optional_only {
@@ -177,22 +170,57 @@ pub(in crate::runner) fn read_secret_passphrase(
         }
         return Err(RunnerError::task_invocation(missing_tty_error));
     }
-    prompt_secret_on_terminal(prompt)
+    let passphrase = prompt_secret_on_terminal(prompt)?;
+    cache_secret_passphrase(&passphrase);
+    Ok(Some(passphrase))
 }
+
+/// Whether a prompt cannot be shown to a human at all.
+///
+/// A managed pane captures this process's output: a question written into it
+/// is one nobody can see, and the read waits forever (effigy#1036). Every
+/// caller that can proceed without its value asks this first, and every caller
+/// that cannot is refused by [`prompt_secret_on_terminal`] itself.
+pub(in crate::runner) fn prompt_unavailable() -> bool {
+    effigy_ui::steps::in_managed_pane()
+}
+
+/// The refusal a caller names when a prompt that must be answered cannot be
+/// shown: the pane fact, then the caller's own remedy.
+pub(in crate::runner) fn no_prompt_error(missing_tty_error: &str) -> RunnerError {
+    RunnerError::task_invocation(format!(
+        "this run's output is captured by a managed pane, so Effigy cannot show a secret prompt; \
+         {missing_tty_error}"
+    ))
+}
+
+/// The standard remedy when a pane or a pipe leaves no way to ask: the sealed
+/// unlock credential answers every later run without a terminal.
+pub(in crate::runner) const UNLOCK_AT_A_TERMINAL: &str =
+    "run `effigy secrets unlock` once at a terminal";
 
 /// Read one prompt on the terminal with the progress display cleared for its
 /// duration. An active spinner draws over the prompt, so the operator never
 /// sees what to answer and the read waits on input nobody knew to type
 /// (effigy#1036).
+///
+/// This is the one seam every runner prompt uses, and it refuses inside a
+/// managed pane instead of asking a question nobody can see. It returns the
+/// answer as the caller's own secret: not every prompt is the vault passphrase
+/// (`secrets set` reads a value), so nothing is cached here. A caller that did
+/// read the vault passphrase caches it explicitly.
 pub(in crate::runner) fn prompt_secret_on_terminal(
     prompt: &str,
-) -> Result<Option<SecretValue>, RunnerError> {
+) -> Result<SecretValue, RunnerError> {
+    if prompt_unavailable() {
+        return Err(no_prompt_error(&format!(
+            "answer it outside the pane, or {UNLOCK_AT_A_TERMINAL}"
+        )));
+    }
     let value = effigy_ui::steps::prompt_terminal(|| rpassword::prompt_password(prompt)).map_err(
         |error| RunnerError::task_invocation(format!("failed to read secret input: {error}")),
     )?;
-    let secret = SecretValue::new(value);
-    cache_secret_passphrase(&secret);
-    Ok(Some(secret))
+    Ok(SecretValue::new(value))
 }
 
 /// The vault passphrase this session already holds: its own grant, a caller
@@ -253,13 +281,21 @@ pub(in crate::runner) fn read_local_dev_upgrade_passphrase(
     if let Some(secret) = session_passphrase() {
         return Ok(Some(secret));
     }
+    if prompt_unavailable() {
+        if optional_only {
+            return Ok(None);
+        }
+        return Err(no_prompt_error(missing_tty_error));
+    }
     if !std::io::stdin().is_terminal() {
         if optional_only {
             return Ok(None);
         }
         return Err(RunnerError::task_invocation(missing_tty_error));
     }
-    prompt_secret_on_terminal(prompt)
+    let passphrase = prompt_secret_on_terminal(prompt)?;
+    cache_secret_passphrase(&passphrase);
+    Ok(Some(passphrase))
 }
 
 // ---- One-shot session grants -----------------------------------------------
@@ -926,6 +962,40 @@ mod tests {
             Some("sealed-passphrase")
         );
         assert!(super::local_dev_key_present(&vault_path));
+        forget_session_passphrase_for_tests();
+    }
+
+    /// The one-time local-dev upgrade prompt obeys the same pane rule: a pane
+    /// cannot show a question, so a required upgrade refuses and an optional
+    /// one delivers nothing (effigy#1036).
+    #[test]
+    fn a_managed_pane_never_prompts_for_the_local_dev_upgrade() {
+        let _test_passphrase = ScopedEnv::set("EFFIGY_TEST_SECRETS_PASSPHRASE", None);
+        let _public_passphrase = ScopedEnv::set("EFFIGY_SECRET_PASSPHRASE", None);
+        let _pane = ScopedEnv::set("EFFIGY_MANAGED_PANE", Some("1"));
+        forget_session_passphrase_for_tests();
+
+        let error = super::read_local_dev_upgrade_passphrase(
+            false,
+            "Vault passphrase (one-time local-dev setup): ",
+            "needs an interactive TTY",
+        )
+        .expect_err("a required upgrade cannot be read into a captured pane");
+        assert!(
+            error.to_string().contains("managed pane")
+                && error.to_string().contains("needs an interactive TTY"),
+            "{error}"
+        );
+        assert!(
+            super::read_local_dev_upgrade_passphrase(
+                true,
+                "Vault passphrase (one-time local-dev setup): ",
+                "needs an interactive TTY",
+            )
+            .expect("an optional upgrade is simply not read")
+            .is_none(),
+            "an optional upgrade is simply not read"
+        );
         forget_session_passphrase_for_tests();
     }
 

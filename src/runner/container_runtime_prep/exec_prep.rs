@@ -148,16 +148,18 @@ pub(super) fn run_task_apply(
 }
 
 /// Write the runtime files this apply resolved, now that the primary service
-/// binding is verified.
+/// binding is verified, and report what a running service will not pick up.
 ///
 /// A stack this session started already received them from its `container up`.
 /// A stack this session *reused* did not: a direct `container up` outside a
 /// `dev` session cannot resolve the session's optional keys, so an `effigy dev`
 /// that borrows that stack would otherwise run with the keys it just resolved
-/// missing and nothing said about it (effigy#1036). Delivery is the fix rather
-/// than a warning because the consumers of these files read them when a
-/// process starts - a PHP bootstrap per request, a deferral at spawn - so a
-/// rewritten file is what they read next, with no service to restart.
+/// missing and nothing said about it (effigy#1036). Writing the files delivers
+/// them to every process that starts next; a service already running keeps the
+/// values it read, so the delivery names those keys and the restart that loads
+/// them. Restarting a live service from inside the apply would stop the very
+/// stack this task is about to run in, so the warning is the safe half of
+/// "rewrite and refresh" here.
 pub(super) fn deliver_applied_runtime_secret_files(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -167,11 +169,15 @@ pub(super) fn deliver_applied_runtime_secret_files(
     let Some(secrets) = secrets else {
         return Ok(());
     };
-    deliver_applied_runtime_secret_files_with(secrets, |secrets| {
+    let warnings = deliver_applied_runtime_secret_files_with(secrets, |secrets| {
         crate::runner::container_command::secret_env::materialize_container_secret_runtime(
             repo_root, policy, secrets, binding,
         )
-    })
+    })?;
+    for warning in warnings {
+        eprintln!("[warn] {warning}");
+    }
+    Ok(())
 }
 
 /// The delivery decision, testable without a container: only a runtime-file
@@ -179,10 +185,10 @@ pub(super) fn deliver_applied_runtime_secret_files(
 /// never written (the undelivered keys already warned).
 pub(super) fn deliver_applied_runtime_secret_files_with(
     secrets: &ResolvedContainerSecretRuntime,
-    write: impl FnOnce(&ResolvedContainerSecretRuntime) -> Result<(), RunnerError>,
-) -> Result<(), RunnerError> {
+    write: impl FnOnce(&ResolvedContainerSecretRuntime) -> Result<Vec<String>, RunnerError>,
+) -> Result<Vec<String>, RunnerError> {
     if !crate::runner::container_command::secret_env::writes_runtime_secret_files(secrets) {
-        return Ok(());
+        return Ok(Vec::new());
     }
     write(secrets)
 }

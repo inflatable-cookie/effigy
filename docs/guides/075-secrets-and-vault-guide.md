@@ -143,9 +143,14 @@ one declared value. Nothing else prints a value.
 A prompt is always visible. Whenever Effigy needs a passphrase and a progress
 display is running — a `dev` session's apply, a task that prepares its stack —
 the step lines are cleared, the prompt is shown on the terminal, and the steps
-resume once it is answered. Inside a managed pane, whose output is captured,
-Effigy never prompts: it names the command that unlocks instead, because a
-question written into a captured pane is one nobody can see.
+resume once it is answered.
+
+Inside a managed pane, whose output is captured, no prompt is ever shown: the
+container and task secret readers, the one-time local-dev upgrade, `effigy
+secrets` prompts and Rhai secret access each refuse or deliver nothing and name
+`effigy secrets unlock` instead, because a question written into a captured pane
+is one nobody can see. A value read for `effigy secrets set` is that command's
+own input: it never becomes the session's vault passphrase.
 
 Existing vaults prompt once on their next `effigy dev` run, then add the
 local-dev payload and key in place. Delete the adjacent
@@ -417,9 +422,22 @@ The files are written on every apply that resolves values, not only on first
 creation. A `dev` session that borrows an environment a direct `container up`
 started — which cannot resolve that session's optional keys — therefore
 rewrites both files with what the session resolves, instead of reusing a stack
-that is missing them. Values are read when a process starts (a request-time
-bootstrap, a deferred spawn), so which values a consumer sees is decided by
-these files, not by when its container was created. Core
+that is missing them.
+
+A service that is already running keeps the values it read when it started. The
+delivery reads the files back before rewriting them and, when a delivered value
+differs from what the service holds (including a service that holds no file at
+all), names the changed keys once and the restart that loads them:
+
+```text
+[warn] container secret(s) mailchimp_api_key were written to /run/effigy/secrets/runtime.json after `app` started, so a service that read them at startup keeps the old values until it restarts (effigy container web down, then effigy container web up)
+```
+
+Nothing restarts a live service on its own: the apply is the preparation the
+task is about to run in, so stopping it there would break the run. Consumers
+that read these files when a process starts — a request-time bootstrap, a
+deferred spawn — see the new values on their next start and need no restart;
+the warning names the keys for those that do. Core
 Effigy treats those as generic runtime files. The bundle/catalog can then wire
 them into the app runtime however it needs. A legacy PHP bundle, for example,
 can mount `runtime_dir` as tmpfs, auto-prepend a PHP bootstrap that reads

@@ -514,6 +514,36 @@ fn rhai_secret_passphrase_in_the_process_environment_belongs_to_the_whole_proces
     }
 }
 
+/// A managed pane captures this script's output, so the Rhai secret reader
+/// never asks for a passphrase there: a required read refuses with the pane
+/// fact, and an optional one delivers nothing (effigy#1036).
+#[test]
+fn a_managed_pane_never_prompts_for_a_rhai_secret_passphrase() {
+    let root = temp_root("rhai-secret-pane");
+    let vault_path = root.join(".effigy/secrets/local.vault");
+    // One guard owns the environment for this proof: the crate's lock is not
+    // reentrant, so a second scope would deadlock itself.
+    let _pane = ScopedTestEnv::set_many(&[("EFFIGY_MANAGED_PANE", "1".to_owned())]);
+    assert!(
+        std::env::var_os(TEST_SECRET_PASSPHRASE_ENV).is_none(),
+        "this proof needs an invocation with no ambient test passphrase"
+    );
+
+    let error = read_rhai_secret_passphrase(&vault_path, false)
+        .expect_err("a required secret cannot be read into a captured pane");
+    assert!(error.to_string().contains("managed pane"), "{error}");
+    assert!(
+        error.to_string().contains("effigy secrets unlock"),
+        "the refusal names the fix: {error}"
+    );
+    assert!(
+        read_rhai_secret_passphrase(&vault_path, true)
+            .expect("an optional secret is simply not delivered")
+            .is_none(),
+        "an optional secret is simply not delivered"
+    );
+}
+
 /// The linked worktree fixture: one version-controlled manifest in both
 /// checkouts, and a vault only the primary checkout has.
 fn linked_worktree_secret_fixture(root: &Path) -> (PathBuf, PathBuf) {

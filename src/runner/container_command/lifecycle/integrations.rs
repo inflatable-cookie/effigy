@@ -182,7 +182,13 @@ impl RuntimeIntegrationContext<'_> {
             }
             Step::Secrets => {
                 self.stage(2, "materializing secrets");
-                materialize_container_secret_runtime(root, policy, secrets, binding)?;
+                let delivered =
+                    materialize_container_secret_runtime(root, policy, secrets, binding)?;
+                // A service this bring-up started read nothing yet: the
+                // delivery names the keys it would have to restart for.
+                for warning in delivered {
+                    eprintln!("[warn] {warning}");
+                }
             }
             Step::Routes => {
                 self.stage(3, "checking pinned host ports");

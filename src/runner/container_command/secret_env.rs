@@ -291,14 +291,22 @@ pub(in crate::runner) fn writes_runtime_secret_files(
     runtime.delivery == ManifestContainerSecretDelivery::RuntimeFiles && !runtime.env.is_empty()
 }
 
+/// Write this delivery's runtime files, and say what a service that is
+/// already running will not pick up.
+///
+/// These files are read when a process starts, so a delivery that changes a
+/// value under a live service leaves that service on the old one. The files are
+/// read back first, so the returned warnings name only the keys whose value
+/// actually changed and give the restart that fixes it (effigy#1036). They name
+/// keys, never values.
 pub(in crate::runner) fn materialize_container_secret_runtime(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     runtime: &ResolvedContainerSecretRuntime,
     binding: &effigy_containers::exec::VerifiedComposeContainer,
-) -> Result<(), RunnerError> {
+) -> Result<Vec<String>, RunnerError> {
     if !writes_runtime_secret_files(runtime) {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let Some(runtime_dir) = policy.secret_runtime_dir.as_deref() else {
         return Err(RunnerError::task_invocation(format!(
@@ -308,6 +316,12 @@ pub(in crate::runner) fn materialize_container_secret_runtime(
     };
     let runtime_env_path = format!("{runtime_dir}/runtime.env");
     let runtime_json_path = format!("{runtime_dir}/runtime.json");
+
+    // Read before rewriting: this is what the running service reads, and the
+    // difference is what it must be told to reload.
+    let previous = read_primary_service_file(repo_root, policy, &runtime_json_path, binding)?;
+    let refresh_warnings =
+        runtime_secret_refresh_warnings(policy, runtime_dir, previous.as_deref(), runtime);
 
     run_primary_service_shell_command(
         repo_root,
@@ -361,7 +375,81 @@ pub(in crate::runner) fn materialize_container_secret_runtime(
         binding,
     )?;
 
-    Ok(())
+    Ok(refresh_warnings)
+}
+
+/// The runtime file the primary service holds, read without failing when it is
+/// absent: an unreadable file is "nothing delivered yet", which is what a
+/// reused stack that never received this session's keys looks like.
+fn read_primary_service_file(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    container_path: &str,
+    binding: &effigy_containers::exec::VerifiedComposeContainer,
+) -> Result<Option<String>, RunnerError> {
+    let command = format!("cat {} 2>/dev/null || true", shell_quote(container_path));
+    let plan = effigy_runtime::container_manager::compose_invocation_plan_from_tail_args(
+        repo_root,
+        policy,
+        vec![
+            OsString::from("exec"),
+            OsString::from("-T"),
+            OsString::from(policy.primary_service.as_str()),
+            OsString::from("sh"),
+            OsString::from("-lc"),
+            OsString::from(command.clone()),
+        ],
+        ContainerAction::Exec,
+        "read container secret runtime",
+    )
+    .map_err(RunnerError::from)?;
+    let output = run_verified_compose_exec_plan(policy, &plan, binding, true, None, None)?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let document = String::from_utf8_lossy(&output.stdout).into_owned();
+    Ok((!document.trim().is_empty()).then_some(document))
+}
+
+/// The keys a runtime-file delivery changes under a service that is already
+/// running.
+///
+/// `previous` is the `runtime.json` the primary service holds, or `None` when
+/// it holds none. A key is reported when its value differs, or when the
+/// service holds no file at all; a delivery that writes exactly what the
+/// service already reads reports nothing. The lines name keys and the restart
+/// that loads them, never a value.
+pub(in crate::runner) fn runtime_secret_refresh_warnings(
+    policy: &EffectiveContainerPolicy,
+    runtime_dir: &str,
+    previous: Option<&str>,
+    runtime: &ResolvedContainerSecretRuntime,
+) -> Vec<String> {
+    if runtime.env.is_empty() {
+        return Vec::new();
+    }
+    let held: serde_json::Map<String, serde_json::Value> = previous
+        .and_then(|document| serde_json::from_str(document).ok())
+        .unwrap_or_default();
+    let changed = runtime
+        .env
+        .iter()
+        .filter(|(key, value)| {
+            held.get(key)
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(|held| held != value.expose())
+        })
+        .map(|(key, _)| key.clone())
+        .collect::<Vec<_>>();
+    if changed.is_empty() {
+        return Vec::new();
+    }
+    vec![format!(
+        "container secret(s) {} were written to {runtime_dir}/runtime.json after `{service}` started, so a service that read them at startup keeps the old values until it restarts (effigy container {container} down, then effigy container {container} up)",
+        changed.join(", "),
+        service = policy.primary_service,
+        container = policy.name,
+    )]
 }
 
 pub(in crate::runner) fn container_secret_runtime_env_path(
@@ -501,8 +589,10 @@ impl TempSecretFile {
 #[cfg(test)]
 mod tests {
     use super::{
-        container_secret_runtime_env_path, render_runtime_env_file, render_runtime_json_file,
-        resolve_container_secret_runtime, writes_runtime_secret_files,
+        container_secret_runtime_env_path, materialize_container_secret_runtime,
+        render_runtime_env_file, render_runtime_json_file, resolve_container_secret_runtime,
+        runtime_secret_refresh_warnings, writes_runtime_secret_files,
+        ResolvedContainerSecretRuntime,
     };
     use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
     use effigy_env::secret::SecretString;
@@ -855,6 +945,333 @@ catalog = "php-fpm"
         )]);
 
         assert!(rendered.contains("\"API_TOKEN\": \"tok'en\\\\value\""));
+    }
+
+    /// A delivery that writes exactly what the running service already reads is
+    /// silent; a delivery that changes a value names that key and the restart
+    /// that loads it, and never a value (effigy#1036).
+    #[test]
+    fn a_runtime_file_delivery_names_only_the_keys_a_running_service_must_reload() {
+        let policy = test_runtime_files_policy();
+        let runtime = ResolvedContainerSecretRuntime {
+            delivery: ManifestContainerSecretDelivery::RuntimeFiles,
+            env: vec![
+                (
+                    "OPENAI_API_KEY".to_owned(),
+                    SecretString::new("sk-new-value".to_owned()),
+                ),
+                (
+                    "UNCHANGED_KEY".to_owned(),
+                    SecretString::new("kept-value".to_owned()),
+                ),
+            ],
+            warnings: Vec::new(),
+        };
+
+        // The service holds the same unchanged value and a stale openai key.
+        let held = r#"{"OPENAI_API_KEY":"sk-old-value","UNCHANGED_KEY":"kept-value"}"#;
+        let warnings =
+            runtime_secret_refresh_warnings(&policy, "/run/effigy/secrets", Some(held), &runtime);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("OPENAI_API_KEY"), "{}", warnings[0]);
+        assert!(!warnings[0].contains("sk-new-value"), "{}", warnings[0]);
+        assert!(!warnings[0].contains("sk-old-value"), "{}", warnings[0]);
+        assert!(
+            !warnings[0].contains("UNCHANGED_KEY"),
+            "a value the service already reads is not reported: {}",
+            warnings[0]
+        );
+        assert!(
+            warnings[0].contains("effigy container web down"),
+            "the fix is named: {}",
+            warnings[0]
+        );
+
+        // The same values the service already reads report nothing: a clean
+        // bring-up that delivers identical files stays quiet.
+        let matching = r#"{"OPENAI_API_KEY":"sk-new-value","UNCHANGED_KEY":"kept-value"}"#;
+        assert!(runtime_secret_refresh_warnings(
+            &policy,
+            "/run/effigy/secrets",
+            Some(matching),
+            &runtime
+        )
+        .is_empty());
+
+        // A service holding no file at all is told about every delivered key.
+        let absent =
+            runtime_secret_refresh_warnings(&policy, "/run/effigy/secrets", None, &runtime);
+        assert_eq!(absent.len(), 1, "{absent:?}");
+        assert!(absent[0].contains("OPENAI_API_KEY"), "{}", absent[0]);
+        assert!(absent[0].contains("UNCHANGED_KEY"), "{}", absent[0]);
+
+        // An empty delivery has nothing to say.
+        let empty = ResolvedContainerSecretRuntime {
+            delivery: ManifestContainerSecretDelivery::RuntimeFiles,
+            env: Vec::new(),
+            warnings: Vec::new(),
+        };
+        assert!(
+            runtime_secret_refresh_warnings(&policy, "/run/effigy/secrets", None, &empty)
+                .is_empty()
+        );
+    }
+
+    /// A `dev` session that borrows a stack a direct `container up` started
+    /// writes the keys it resolved into the running service's runtime files,
+    /// and tells that service which of them it must reload: the reused service
+    /// here is a real container inventory with an exec that lands on disk
+    /// (effigy#1036).
+    #[test]
+    fn a_reused_running_service_receives_the_resolved_keys_and_is_told_to_reload() {
+        let _test = crate::contract_test_support::lock_test();
+        let fixture = RunningServiceFixture::new("reused-runtime-files");
+        let policy = fixture.policy();
+        let runtime_dir = fixture.runtime_dir();
+        assert_eq!(
+            policy.secret_delivery,
+            ManifestContainerSecretDelivery::RuntimeFiles
+        );
+        assert_eq!(
+            policy.secret_runtime_dir.as_deref(),
+            Some(runtime_dir.as_str())
+        );
+
+        // The stack a direct `container up` started holds an unrelated key and
+        // none of this session's optional ones.
+        fs::write(
+            format!("{runtime_dir}/runtime.json"),
+            r#"{"OTHER_KEY":"other-value"}"#,
+        )
+        .expect("seed the reused service's runtime file");
+
+        let runtime = ResolvedContainerSecretRuntime {
+            delivery: ManifestContainerSecretDelivery::RuntimeFiles,
+            env: vec![(
+                "MAILCHIMP_API_KEY".to_owned(),
+                SecretString::new("mc-session-value".to_owned()),
+            )],
+            warnings: Vec::new(),
+        };
+
+        let binding = crate::runner::container_runtime_prep::ensure_primary_service_binding(
+            &fixture.repo_root,
+            &policy,
+            None,
+        )
+        .expect("the running service binds");
+        let warnings =
+            materialize_container_secret_runtime(&fixture.repo_root, &policy, &runtime, &binding)
+                .expect("the reused service receives the delivery");
+
+        let delivered = fs::read_to_string(format!("{runtime_dir}/runtime.json"))
+            .expect("the service's runtime file");
+        assert!(
+            delivered.contains("MAILCHIMP_API_KEY"),
+            "the reused service received the session's key: {delivered}"
+        );
+        let env_file =
+            fs::read_to_string(format!("{runtime_dir}/runtime.env")).expect("runtime env file");
+        assert!(env_file.contains("MAILCHIMP_API_KEY="), "{env_file}");
+
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("MAILCHIMP_API_KEY"), "{}", warnings[0]);
+        assert!(
+            warnings[0].contains("effigy container web down"),
+            "the reload fix is named: {}",
+            warnings[0]
+        );
+        assert!(
+            !warnings[0].contains("mc-session-value"),
+            "a warning never carries a value: {}",
+            warnings[0]
+        );
+
+        // A second delivery of the same values says nothing: the service
+        // already reads them.
+        let again =
+            materialize_container_secret_runtime(&fixture.repo_root, &policy, &runtime, &binding)
+                .expect("the same delivery again");
+        assert!(again.is_empty(), "{again:?}");
+    }
+
+    /// A running container this checkout owns, with a docker that proves the
+    /// inventory and an exec that runs against the fixture on disk.
+    struct RunningServiceFixture {
+        repo_root: PathBuf,
+        runtime_dir: String,
+        _env: crate::contract_test_support::EnvGuard,
+    }
+
+    impl RunningServiceFixture {
+        fn new(name: &str) -> Self {
+            let root = temp_repo(name);
+            let repo_root = root.join("repo");
+            fs::create_dir_all(&repo_root).expect("mkdir repo");
+            let runtime_dir = root.join("container/secrets");
+            fs::create_dir_all(&runtime_dir).expect("mkdir container runtime dir");
+            fs::write(
+                repo_root.join("effigy.toml"),
+                format!(
+                    r#"
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+
+[secrets.keys.mailchimp_api_key]
+required = false
+targets = ["containers"]
+
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "docker-compose.yml"
+primary_service = "app"
+project_name = "started-web"
+working_dir = "/workspace"
+
+[containers.web.secrets]
+delivery = "runtime-files"
+runtime_dir = "{runtime}"
+"#,
+                    runtime = runtime_dir.display()
+                ),
+            )
+            .expect("write manifest");
+            fs::write(
+                repo_root.join("docker-compose.yml"),
+                "services:
+  app:
+    image: alpine:latest
+",
+            )
+            .expect("write compose");
+
+            let bin = root.join("bin");
+            fs::create_dir_all(&bin).expect("mkdir bin");
+            let log = root.join("docker.log");
+            let docker = bin.join("docker");
+            fs::write(
+                &docker,
+                r#"#!/bin/sh
+printf '%s
+' "$*" >> "$EFFIGY_TEST_DOCKER_LOG"
+for arg in "$@"; do
+  if [ "$arg" = "--format" ]; then
+    printf '%s	Up 1 minute		%s	%s	app	False
+' "$EFFIGY_TEST_CONTAINER" "$EFFIGY_TEST_PROJECT" "$EFFIGY_TEST_WORKDIR"
+    exit 0
+  fi
+done
+case "$1" in
+  inspect)
+    printf '[{"Id":"%s","Name":"/%s","State":{"Status":"running","Running":true,"ExitCode":0},"Config":{"Labels":{"com.docker.compose.project":"%s","com.docker.compose.service":"app","com.docker.compose.oneoff":"False","com.docker.compose.project.working_dir":"%s"}},"Mounts":[],"NetworkSettings":{"Ports":{}}}]
+' "$EFFIGY_TEST_ID" "$EFFIGY_TEST_CONTAINER" "$EFFIGY_TEST_PROJECT" "$EFFIGY_TEST_WORKDIR"
+    exit 0
+    ;;
+esac
+# The exec part of a compose invocation runs on this host, against the
+# fixture's own files: a delivered runtime file really lands on disk.
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -f|-p|-e|--env) shift 2 ;;
+    -T|-i|-t) shift ;;
+    exec) shift; break ;;
+    *) shift ;;
+  esac
+done
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -T|-i|-t|--) shift ;;
+    -w|--workdir|-u|--user) shift 2 ;;
+    *) break ;;
+  esac
+done
+shift || exit 1
+if [ "$1" = sh ] && [ "$2" = -lc ]; then
+  cmd="$3"
+  case "$cmd" in
+    *chown*)
+      # The image's workspace user is `dev`; on this host the fixture runs as
+      # the login user, so the one name is mapped the way the container would
+      # resolve it.
+      cmd=$(printf '%s' "$cmd" | sed "s/dev/$EFFIGY_FAKE_WORKSPACE_USER/g")
+      ;;
+  esac
+  sh -lc "$cmd"
+  exit $?
+fi
+exit 1
+"#,
+            )
+            .expect("write fake docker");
+            let colima = bin.join("colima");
+            fs::write(
+                &colima,
+                "#!/bin/sh
+case \"$1\" in status) echo 'status: Running';; esac
+exit 0
+",
+            )
+            .expect("write fake colima");
+            for program in [&docker, &colima] {
+                let mut perms = fs::metadata(program).expect("stat fake").permissions();
+                use std::os::unix::fs::PermissionsExt;
+                perms.set_mode(0o755);
+                fs::set_permissions(program, perms).expect("chmod fake");
+            }
+
+            let home = root.join("home");
+            fs::create_dir_all(&home).expect("mkdir fake home");
+            let env = crate::contract_test_support::EnvGuard::set_many(&[
+                ("PATH", Some(format!("{}:/bin:/usr/bin", bin.display()))),
+                ("HOME", Some(home.display().to_string())),
+                ("DOCKER_HOST", Some("tcp://127.0.0.1:1".to_owned())),
+                ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
+                (
+                    "EFFIGY_TEST_CONTAINERS_HOME",
+                    Some(root.join(".effigy").display().to_string()),
+                ),
+                ("EFFIGY_TEST_DOCKER_LOG", Some(log.display().to_string())),
+                ("EFFIGY_TEST_ID", Some("c".repeat(64))),
+                (
+                    "EFFIGY_TEST_CONTAINER",
+                    Some("started-web-app-1".to_owned()),
+                ),
+                ("EFFIGY_TEST_PROJECT", Some("started-web".to_owned())),
+                ("EFFIGY_TEST_WORKDIR", Some(repo_root.display().to_string())),
+                ("EFFIGY_FAKE_WORKSPACE_USER", Some(current_user())),
+            ]);
+            Self {
+                repo_root,
+                runtime_dir: runtime_dir.display().to_string(),
+                _env: env,
+            }
+        }
+
+        fn policy(&self) -> EffectiveContainerPolicy {
+            effigy_containers::load_container_policy(&self.repo_root, None).expect("fixture policy")
+        }
+
+        fn runtime_dir(&self) -> String {
+            self.runtime_dir.clone()
+        }
+    }
+
+    /// The login user owns this test process, so the fake container's `chown`
+    /// to the workspace user is the same owner and needs no privilege.
+    fn current_user() -> String {
+        std::process::Command::new("id")
+            .arg("-un")
+            .output()
+            .ok()
+            .and_then(|output| String::from_utf8(output.stdout).ok())
+            .map(|name| name.trim().to_owned())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "dev".to_owned())
     }
 
     fn temp_repo(name: &str) -> PathBuf {

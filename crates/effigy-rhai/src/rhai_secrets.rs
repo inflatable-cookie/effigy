@@ -411,6 +411,18 @@ pub(crate) fn read_rhai_secret_passphrase(
     {
         return Ok(Some(passphrase));
     }
+    // A managed pane captures this script's output: a prompt written into it
+    // is a question nobody can see, and the read waits forever (effigy#1036).
+    if effigy_ui::steps::in_managed_pane() {
+        if optional_only {
+            return Ok(None);
+        }
+        return Err(RhaiHostError::new(format!(
+            "Rhai secrets require an unlocked vault passphrase, and this run's output is captured \
+             by a managed pane so Effigy cannot show a prompt; {}",
+            "run `effigy secrets unlock` once at a terminal"
+        )));
+    }
     if !std::io::stdin().is_terminal() {
         if optional_only {
             return Ok(None);
