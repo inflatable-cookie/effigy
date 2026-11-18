@@ -485,8 +485,8 @@ fn stop_foreground(record: &RunRecord, wait: Duration, json: bool) -> Result<Str
     // The only foreground signal target is a freshly verified live owner.
     if record.view.state == "running" {
         if !signal_owner(record) {
-            return Err(unknown(
-                &record.id.to_string(),
+            return Err(parked_or_unknown(
+                record,
                 "foreground owner is no longer verified; no signal was sent",
             ));
         }
@@ -519,9 +519,11 @@ fn stop_foreground(record: &RunRecord, wait: Duration, json: bool) -> Result<Str
     }
     if record.view.state != "interrupted" {
         // Nothing was verified about the owner, so nothing may be signalled and
-        // no settlement can be claimed.
-        return Err(unknown(
-            &record.id.to_string(),
+        // no settlement can be claimed. A parked snapshot still names the
+        // holder and the release command (effigy#1034): Unknown owner
+        // observation used to skip parked_or_unknown and omit both.
+        return Err(parked_or_unknown(
+            record,
             "foreground owner is no longer verified; no signal was sent",
         ));
     }

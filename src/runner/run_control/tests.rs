@@ -1347,16 +1347,22 @@ fn a_held_foreground_run_with_a_gone_owner_is_not_reported_as_running() {
 }
 
 /// Replace the one held gate body this fixture's run wrote with the same body
-/// naming a process that cannot exist. The writer's own shape is preserved.
-fn rewrite_holder_as_gone(checkout: &Path, run: RunId) {
+/// naming `pid`. The writer's own shape is preserved.
+fn rewrite_holder_pid(checkout: &Path, run: RunId, pid: u32) {
     let path = held_gate_path(checkout, run);
     let body = std::fs::read_to_string(&path).expect("gate body");
     let mut value: serde_json::Value = serde_json::from_str(&body).expect("gate body json");
     assert_eq!(value["run"], run.to_string());
+    value["pid"] = serde_json::json!(pid);
+    std::fs::write(&path, serde_json::to_vec(&value).unwrap()).expect("rewritten gate body");
+}
+
+/// Replace the one held gate body this fixture's run wrote with the same body
+/// naming a process that cannot exist. The writer's own shape is preserved.
+fn rewrite_holder_as_gone(checkout: &Path, run: RunId) {
     // Beyond every platform's pid range: the identity observation is a proven
     // absence, never a numeric guess.
-    value["pid"] = serde_json::json!(i32::MAX as u32 - 1);
-    std::fs::write(&path, serde_json::to_vec(&value).unwrap()).expect("rewritten gate body");
+    rewrite_holder_pid(checkout, run, i32::MAX as u32 - 1);
 }
 
 /// The exact `.gate` inode whose body records `run`, found inside this
@@ -1553,6 +1559,60 @@ fn run_stop_names_a_parked_holder_when_custody_stays() {
         "{detail}"
     );
     assert!(detail.contains("parked-stop"), "{detail}");
+    let warnings = memory.close(effigy_kernel::outcome::WorkloadOutcome::Interrupted);
+    assert!(warnings.is_empty(), "{warnings:?}");
+}
+
+/// `run stop` names the parked holder when the owner's process identity is
+/// unverifiable (pid 0 is outside the process range), not only when it is gone.
+#[test]
+fn run_stop_names_a_parked_holder_when_the_owner_is_unverified() {
+    let directory = tempfile::tempdir().expect("checkout");
+    let target = target(directory.path(), "parked-unknown");
+    let memory = TaskRun::begin_foreground(TaskRunRequest {
+        target: &target,
+        lock_wait_ms: 0,
+        custody: false,
+        scratch: false,
+        managed_run_token: None,
+        args: &[],
+        key: None,
+        admission: None,
+        workspace_admission: None,
+        cwd: None,
+    })
+    .expect("foreground admitted");
+    let id = memory.id();
+    // pid 0 is Observed::Unknown, so view.state is `unknown` and stop takes
+    // the state != "interrupted" early return (effigy#1034).
+    rewrite_holder_pid(directory.path(), id, 0);
+    write_parked_snapshot(
+        directory.path(),
+        &id.to_string(),
+        "parked-unknown",
+        Vec::new(),
+        Vec::new(),
+    );
+    let error = stop(
+        directory.path(),
+        &id.to_string(),
+        Duration::from_millis(50),
+        false,
+    )
+    .expect_err("still held");
+    let crate::runner::error::RunnerError::RunControl { detail, .. } = error else {
+        panic!("expected run-control unknown, got {error:?}");
+    };
+    assert!(
+        detail.contains("no longer verified"),
+        "unknown owner must take the early return, not the interrupted wait: {detail}"
+    );
+    assert!(detail.contains("sentinel pid"), "{detail}");
+    assert!(
+        detail.contains(&format!("effigy run release {id}")),
+        "{detail}"
+    );
+    assert!(detail.contains("parked-unknown"), "{detail}");
     let warnings = memory.close(effigy_kernel::outcome::WorkloadOutcome::Interrupted);
     assert!(warnings.is_empty(), "{warnings:?}");
 }

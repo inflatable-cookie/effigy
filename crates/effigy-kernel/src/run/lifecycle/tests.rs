@@ -2857,6 +2857,14 @@ fn run_a_foreground_guard_settles_closed_custody_as_interrupted() {
     check_foreground_owner_loss(false, OwnerEnd::Reaped, false, ParkFollowup::KeepHeld);
 }
 
+/// Owner SIGKILL with a proved-empty group from the start: the sentinel
+/// settles as interrupted and never writes a parked snapshot (effigy#1034).
+/// Distinct from `releases_after_the_empty_group_closes`, which parks first.
+#[test]
+fn run_a_foreground_guard_does_not_park_when_owner_dies_with_an_empty_group() {
+    check_foreground_owner_loss(false, OwnerEnd::Reaped, false, ParkFollowup::KeepHeld);
+}
+
 /// An owner that has exited but whose parent has not reaped it is a zombie: it
 /// can never settle or report the run again, so waiting for it would hold the
 /// gate forever (effigy#986).
@@ -3145,6 +3153,21 @@ fn check_foreground_owner_loss(
                 Observed::Verified(crate::gate::GateState::Free, _)
             ),
             "a settled parked run releases its checkout gate"
+        );
+        assert!(
+            crate::supervise::park::read_snapshot(&root, &run.to_string())
+                .ok()
+                .flatten()
+                .is_none(),
+            "a proved-empty group settles without leaving a parked snapshot"
+        );
+    } else {
+        assert!(
+            crate::supervise::park::read_snapshot(&root, &run.to_string())
+                .ok()
+                .flatten()
+                .is_some(),
+            "an unproved closure writes a parked snapshot"
         );
     }
     stop_owned(&mut residue);
