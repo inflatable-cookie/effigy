@@ -140,6 +140,18 @@ doctor` and `effigy secrets get` read the vault on this machine: doctor reports
 `vault: unlocked (local-dev key)` with the stored key names, and `get` prints
 one declared value. Nothing else prints a value.
 
+A prompt is always visible. Whenever Effigy needs a passphrase and a progress
+display is running — a `dev` session's apply, a task that prepares its stack —
+the step lines are cleared, the prompt is shown on the terminal, and the steps
+resume once it is answered.
+
+Inside a managed pane, whose output is captured, no prompt is ever shown: the
+container and task secret readers, the one-time local-dev upgrade, `effigy
+secrets` prompts and Rhai secret access each refuse or deliver nothing and name
+`effigy secrets unlock` instead, because a question written into a captured pane
+is one nobody can see. A value read for `effigy secrets set` is that command's
+own input: it never becomes the session's vault passphrase.
+
 Existing vaults prompt once on their next `effigy dev` run, then add the
 local-dev payload and key in place. Delete the adjacent
 `local.vault.local-dev-key` file to revoke unattended dev unlock; the next dev
@@ -343,6 +355,20 @@ vault is missing, or the local-dev key cannot read it — is reported once:
 [warn] container secret `openai_api_key` was not delivered: the vault is locked and this run has no terminal to ask for its passphrase; run `effigy secrets unlock` at a terminal, or rerun `effigy dev` on one
 ```
 
+When this machine holds a local-dev key but the command is not a `dev` session,
+the warning says exactly that instead, because the key is a `dev` factor and the
+vault is not locked for a machine that can read it:
+
+```text
+[warn] container secret `openai_api_key` was not delivered: the local-dev key only unlocks `effigy dev`, and this run is not a dev session; for direct commands run `effigy secrets unlock` once at a terminal
+```
+
+Only keys declared `required = true` are ever asked for: a resolution whose
+container keys are all optional never blocks on a prompt, so an interactive
+`effigy workspace` or `effigy dev` cannot wait on a question it did not
+promise. What this session already holds — its own passphrase, or the sealed
+`effigy secrets unlock` credential — is still delivered.
+
 The same lines appear under `warnings` in `effigy container up --json`. An
 empty `runtime.env`/`runtime.json` is never written silently: a bring-up that
 delivered nothing leaves the files alone instead of replacing them with an
@@ -390,7 +416,47 @@ In that mode, Effigy writes:
 - `runtime.env`
 - `runtime.json`
 
-under the configured `runtime_dir` inside the running primary service. Core
+under the configured `runtime_dir` inside the running primary service.
+
+The files are written on every apply that resolves values, not only on first
+creation. A `dev` session that borrows an environment a direct `container up`
+started — which cannot resolve that session's optional keys — therefore
+rewrites both files with what the session resolves, instead of reusing a stack
+that is missing them.
+
+A service that is already running keeps the values it read when it started. The
+delivery reads the files back before rewriting them and, when a delivered value
+differs from what the service holds (including a service that holds no file at
+all), reports the changed keys once in that apply:
+
+```text
+[warn] container secret(s) mailchimp_api_key were written to /run/effigy/secrets/runtime.json after `app` started; services that read this file per request see them now; a service that reads it only at startup needs its process restarted to see them
+```
+
+That is one apply's report, not a record: nothing is persisted between applies
+and nothing retires it. An apply that writes exactly what the service already
+holds says nothing, and an apply that changes a key says so again because it
+changed it again. The line states facts and prescribes nothing: it does not
+recommend a container restart, which may clear a tmpfs `runtime_dir`.
+
+Nothing restarts a live service on its own: the apply is the preparation the
+task is about to run in, so stopping it there would break the run. Consumers
+that read these files when a process starts — a request-time bootstrap, a
+deferred spawn — see the new values on their next start and need no restart.
+
+**Known limitation: delivery timing for startup-only readers.** These files are
+written into a container that is already running, so a process that reads them
+exactly once at container start does not see a delivery that arrives afterwards
+— on any path, including a clean `effigy dev`. This is a pre-existing
+limitation of runtime-file delivery, not something this change introduces or
+fixes; the planner tracks it as its own lead. Until it is addressed, a consumer
+that must have the values at process start either reads the files per request
+(as the PHP bootstrap example below does), sources `runtime.env` for the
+process it starts, or gets its process restarted after a delivery — with the
+caveat that a restart clears a tmpfs `runtime_dir`, so a delivery into a tmpfs
+has to be repeated afterwards.
+
+Core
 Effigy treats those as generic runtime files. The bundle/catalog can then wire
 them into the app runtime however it needs. A legacy PHP bundle, for example,
 can mount `runtime_dir` as tmpfs, auto-prepend a PHP bootstrap that reads

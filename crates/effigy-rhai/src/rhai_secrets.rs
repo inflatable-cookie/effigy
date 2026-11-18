@@ -411,6 +411,18 @@ pub(crate) fn read_rhai_secret_passphrase(
     {
         return Ok(Some(passphrase));
     }
+    // A managed pane captures this script's output: a prompt written into it
+    // is a question nobody can see, and the read waits forever (effigy#1036).
+    if effigy_ui::steps::in_managed_pane() {
+        if optional_only {
+            return Ok(None);
+        }
+        return Err(RhaiHostError::new(format!(
+            "Rhai secrets require an unlocked vault passphrase, and this run's output is captured \
+             by a managed pane so Effigy cannot show a prompt; {}",
+            "run `effigy secrets unlock` once at a terminal"
+        )));
+    }
     if !std::io::stdin().is_terminal() {
         if optional_only {
             return Ok(None);
@@ -419,8 +431,11 @@ pub(crate) fn read_rhai_secret_passphrase(
             "Rhai secrets require an unlocked vault passphrase and secret input requires an interactive TTY",
         ));
     }
-    let value = rpassword::prompt_password("Vault passphrase: ")
-        .map_err(|error| RhaiHostError::new(format!("failed to read secret input: {error}")))?;
+    // The progress display is cleared for the prompt: a question hidden under
+    // a live spinner is a question nobody answers (effigy#1036).
+    let value =
+        effigy_ui::steps::prompt_terminal(|| rpassword::prompt_password("Vault passphrase: "))
+            .map_err(|error| RhaiHostError::new(format!("failed to read secret input: {error}")))?;
     Ok(Some(SecretValue::new(value)))
 }
 

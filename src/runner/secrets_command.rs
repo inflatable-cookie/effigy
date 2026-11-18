@@ -1292,15 +1292,17 @@ fn read_secret_input(prompt: &str, test_env: &str) -> Result<SecretValue, Runner
     if let Ok(value) = std::env::var(test_env) {
         return Ok(SecretValue::new(value));
     }
+    if crate::runner::secret_session::prompt_unavailable() {
+        return Err(crate::runner::secret_session::no_prompt_error(&format!(
+            "`{test_env}` is not set, and this value has to be entered outside a managed pane"
+        )));
+    }
     if !std::io::stdin().is_terminal() {
         return Err(RunnerError::task_invocation(format!(
             "`{test_env}` is not set and secret input requires an interactive TTY"
         )));
     }
-    let value = rpassword::prompt_password(prompt).map_err(|error| {
-        RunnerError::task_invocation(format!("failed to read secret input: {error}"))
-    })?;
-    Ok(SecretValue::new(value))
+    crate::runner::secret_session::prompt_secret_on_terminal(prompt)
 }
 
 fn read_confirmed_new_passphrase() -> Result<SecretValue, RunnerError> {
@@ -1312,17 +1314,23 @@ fn read_confirmed_new_passphrase() -> Result<SecretValue, RunnerError> {
         }
         return Ok(SecretValue::new(value));
     }
+    if crate::runner::secret_session::prompt_unavailable() {
+        return Err(crate::runner::secret_session::no_prompt_error(
+            "`EFFIGY_TEST_SECRETS_NEW_PASSPHRASE` is not set, and a new passphrase has to be entered outside a managed pane",
+        ));
+    }
     if !std::io::stdin().is_terminal() {
         return Err(RunnerError::task_invocation(
             "`EFFIGY_TEST_SECRETS_NEW_PASSPHRASE` is not set and passphrase input requires an interactive TTY",
         ));
     }
-    let first = rpassword::prompt_password("New vault passphrase: ").map_err(|error| {
-        RunnerError::task_invocation(format!("failed to read new passphrase: {error}"))
-    })?;
-    let second = rpassword::prompt_password("Confirm new vault passphrase: ").map_err(|error| {
-        RunnerError::task_invocation(format!("failed to confirm new passphrase: {error}"))
-    })?;
+    let first = crate::runner::secret_session::prompt_secret_on_terminal("New vault passphrase: ")?
+        .expose()
+        .to_owned();
+    let second =
+        crate::runner::secret_session::prompt_secret_on_terminal("Confirm new vault passphrase: ")?
+            .expose()
+            .to_owned();
     if first != second {
         return Err(RunnerError::task_invocation(
             "new vault passphrase confirmation did not match",
@@ -1635,13 +1643,12 @@ fn read_optional_vault_passphrase(
     {
         return Ok(Some(passphrase));
     }
-    if !std::io::stdin().is_terminal() {
+    if crate::runner::secret_session::prompt_unavailable() || !std::io::stdin().is_terminal() {
+        // Nothing can show a question: the caller reports what it could not
+        // read rather than asking into a pane or a pipe (effigy#1036).
         return Ok(None);
     }
-    let value = rpassword::prompt_password(prompt).map_err(|error| {
-        RunnerError::task_invocation(format!("failed to read secret input: {error}"))
-    })?;
-    Ok(Some(SecretValue::new(value)))
+    crate::runner::secret_session::prompt_secret_on_terminal(prompt).map(Some)
 }
 
 fn render_secrets_list_text(repo_root: &Path, secrets: Option<&ManifestSecretsConfig>) -> String {
@@ -2128,5 +2135,45 @@ mod doctor_text_tests {
             json["stored_keys"],
             serde_json::json!(["mailchimp_api_key", "openai_api_key", "recaptcha_secret"])
         );
+    }
+}
+
+#[cfg(test)]
+mod pane_prompt_tests {
+    use super::{read_confirmed_new_passphrase, read_optional_vault_passphrase, read_secret_input};
+
+    /// A managed pane captures this process's output, so no direct secret
+    /// prompt may be taken there: the value, a new passphrase and an optional
+    /// vault passphrase each refuse or deliver nothing instead
+    /// (effigy#1036).
+    #[test]
+    fn a_managed_pane_takes_no_direct_secret_input() {
+        let _pane = crate::contract_test_support::EnvGuard::set_many(&[
+            ("EFFIGY_MANAGED_PANE", Some("1".to_owned())),
+            ("EFFIGY_TEST_SECRETS_VALUE", None),
+            ("EFFIGY_TEST_SECRETS_NEW_PASSPHRASE", None),
+            ("EFFIGY_TEST_SECRETS_PASSPHRASE", None),
+            ("EFFIGY_SECRET_PASSPHRASE", None),
+        ]);
+        crate::runner::secret_session::forget_session_passphrase_for_tests();
+
+        let error = read_secret_input("Secret value: ", "EFFIGY_TEST_SECRETS_VALUE")
+            .expect_err("a value cannot be read into a captured pane");
+        assert!(error.to_string().contains("managed pane"), "{error}");
+
+        let error = read_confirmed_new_passphrase()
+            .expect_err("a new passphrase cannot be read into a captured pane");
+        assert!(error.to_string().contains("managed pane"), "{error}");
+
+        let root = effigy_test_support::Fixture::workspace("secrets-pane-optional-")
+            .expect("fixture workspace");
+        let vault_path = root.path().join(".effigy/secrets/local.vault");
+        assert!(
+            read_optional_vault_passphrase(&vault_path, "Vault passphrase: ")
+                .expect("an optional passphrase is simply not read")
+                .is_none(),
+            "a pane has no way to ask for an optional passphrase"
+        );
+        crate::runner::secret_session::forget_session_passphrase_for_tests();
     }
 }

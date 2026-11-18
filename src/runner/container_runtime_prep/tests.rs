@@ -1,10 +1,12 @@
 use super::{
     activate_container_runtime_plan_for_task_using, candidate_host_mount_paths,
-    ensure_exec_container_running_with, ensure_runtime_gateway_readiness_stage_using,
-    ensure_runtime_running_stage, prepare_host_bind_mount_dirs, run_runtime_compose_up_stage,
-    run_runtime_prep_steps, run_task_apply, runtime_activation_plan_from_request,
-    runtime_activation_report_for_result, validate_policy_runtime, ActivationRequest,
+    deliver_applied_runtime_secret_files_with, ensure_exec_container_running_with,
+    ensure_runtime_gateway_readiness_stage_using, ensure_runtime_running_stage,
+    prepare_host_bind_mount_dirs, run_runtime_compose_up_stage, run_runtime_prep_steps,
+    run_task_apply, runtime_activation_plan_from_request, runtime_activation_report_for_result,
+    validate_policy_runtime, ActivationRequest,
 };
+use crate::runner::container_command::secret_env::ResolvedContainerSecretRuntime;
 use crate::runner::error::RunnerError;
 use crate::runner::runtime_session_context::{LeaseRefreshPolicy, RuntimeSessionContext};
 use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy, EffectiveDnsRoute};
@@ -517,10 +519,10 @@ fn task_apply_starts_shared_services_and_delivers_secrets_before_the_one_apply()
                 .lock()
                 .expect("order lock")
                 .push("secrets".to_owned());
-            Ok(vec![(
-                "DB_PASSWORD".to_owned(),
-                OsString::from("from-the-vault"),
-            )])
+            Ok(resolved_runtime(
+                vec![("DB_PASSWORD".to_owned(), OsString::from("from-the-vault"))],
+                effigy_manifest::ManifestContainerSecretDelivery::ComposeEnv,
+            ))
         },
         {
             let apply_order = Arc::clone(&order);
@@ -2175,4 +2177,71 @@ fn the_apply_compose_input_list_equals_the_frozen_closure() {
         format!("{error:?}").contains("workspace-compose-input-closure-bytes-differ"),
         "{error:?}"
     );
+}
+
+/// One resolved delivery, as the real apply resolves it.
+fn resolved_runtime(
+    env: Vec<(String, OsString)>,
+    delivery: effigy_manifest::ManifestContainerSecretDelivery,
+) -> ResolvedContainerSecretRuntime {
+    ResolvedContainerSecretRuntime {
+        delivery,
+        env: env
+            .into_iter()
+            .map(|(key, value)| {
+                (
+                    key,
+                    effigy_env::secret::SecretString::new(value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect(),
+        warnings: Vec::new(),
+    }
+}
+
+/// A reused stack still receives the runtime files this session resolved: a
+/// direct `container up` outside a `dev` session cannot resolve the session's
+/// optional keys, so the apply's own values are what a borrowed stack must be
+/// given (effigy#1036).
+#[test]
+fn a_task_apply_delivers_runtime_files_it_resolved_and_never_writes_empty_ones() {
+    use effigy_manifest::ManifestContainerSecretDelivery::{
+        ComposeEnv as ComposeEnvDelivery, RuntimeFiles,
+    };
+
+    let delivered = std::cell::Cell::new(0usize);
+    let warnings = deliver_applied_runtime_secret_files_with(
+        &resolved_runtime(
+            vec![("MAILCHIMP_API_KEY".to_owned(), OsString::from("mc-value"))],
+            RuntimeFiles,
+        ),
+        |secrets| {
+            delivered.set(secrets.env.len());
+            Ok(vec!["a restart names MAILCHIMP_API_KEY".to_owned()])
+        },
+    )
+    .expect("a resolved runtime-file delivery writes");
+    assert_eq!(delivered.get(), 1, "the resolved key is delivered");
+    assert_eq!(
+        warnings,
+        vec!["a restart names MAILCHIMP_API_KEY".to_owned()],
+        "the delivery's refresh warnings reach its caller"
+    );
+
+    // An empty delivery is never written: the undelivered keys already warned,
+    // and an empty runtime file reads as "no secrets configured".
+    deliver_applied_runtime_secret_files_with(&resolved_runtime(Vec::new(), RuntimeFiles), |_| {
+        panic!("an empty runtime-file delivery must not write")
+    })
+    .expect("an empty delivery is not a failure");
+
+    // Compose-env delivery reaches the apply itself; there is nothing to write.
+    deliver_applied_runtime_secret_files_with(
+        &resolved_runtime(
+            vec![("DB_PASSWORD".to_owned(), OsString::from("value"))],
+            ComposeEnvDelivery,
+        ),
+        |_| panic!("a compose-env delivery has no runtime files"),
+    )
+    .expect("a compose-env delivery has nothing to write");
 }

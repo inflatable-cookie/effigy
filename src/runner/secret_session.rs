@@ -158,18 +158,98 @@ pub(in crate::runner) fn read_secret_passphrase(
     if let Some(secret) = cached_secret_passphrase() {
         return Ok(Some(secret));
     }
+    if prompt_unavailable() {
+        if optional_only {
+            return Ok(None);
+        }
+        return Err(no_prompt_error(missing_tty_error));
+    }
     if !std::io::stdin().is_terminal() {
         if optional_only {
             return Ok(None);
         }
         return Err(RunnerError::task_invocation(missing_tty_error));
     }
-    let value = rpassword::prompt_password(prompt).map_err(|error| {
-        RunnerError::task_invocation(format!("failed to read secret input: {error}"))
-    })?;
-    let secret = SecretValue::new(value);
-    cache_secret_passphrase(&secret);
-    Ok(Some(secret))
+    let passphrase = prompt_secret_on_terminal(prompt)?;
+    cache_secret_passphrase(&passphrase);
+    Ok(Some(passphrase))
+}
+
+/// Whether a prompt cannot be shown to a human at all.
+///
+/// A managed pane captures this process's output: a question written into it
+/// is one nobody can see, and the read waits forever (effigy#1036). Every
+/// caller that can proceed without its value asks this first, and every caller
+/// that cannot is refused by [`prompt_secret_on_terminal`] itself.
+pub(in crate::runner) fn prompt_unavailable() -> bool {
+    effigy_ui::steps::in_managed_pane()
+}
+
+/// The refusal a caller names when a prompt that must be answered cannot be
+/// shown: the pane fact, then the caller's own remedy.
+pub(in crate::runner) fn no_prompt_error(missing_tty_error: &str) -> RunnerError {
+    RunnerError::task_invocation(format!(
+        "this run's output is captured by a managed pane, so Effigy cannot show a secret prompt; \
+         {missing_tty_error}"
+    ))
+}
+
+/// The standard remedy when a pane or a pipe leaves no way to ask: the sealed
+/// unlock credential answers every later run without a terminal.
+pub(in crate::runner) const UNLOCK_AT_A_TERMINAL: &str =
+    "run `effigy secrets unlock` once at a terminal";
+
+/// Read one prompt on the terminal with the progress display cleared for its
+/// duration. An active spinner draws over the prompt, so the operator never
+/// sees what to answer and the read waits on input nobody knew to type
+/// (effigy#1036).
+///
+/// This is the one seam every runner prompt uses, and it refuses inside a
+/// managed pane instead of asking a question nobody can see. It returns the
+/// answer as the caller's own secret: not every prompt is the vault passphrase
+/// (`secrets set` reads a value), so nothing is cached here. A caller that did
+/// read the vault passphrase caches it explicitly.
+pub(in crate::runner) fn prompt_secret_on_terminal(
+    prompt: &str,
+) -> Result<SecretValue, RunnerError> {
+    if prompt_unavailable() {
+        return Err(no_prompt_error(&format!(
+            "answer it outside the pane, or {UNLOCK_AT_A_TERMINAL}"
+        )));
+    }
+    let value = effigy_ui::steps::prompt_terminal(|| rpassword::prompt_password(prompt)).map_err(
+        |error| RunnerError::task_invocation(format!("failed to read secret input: {error}")),
+    )?;
+    Ok(SecretValue::new(value))
+}
+
+/// The vault passphrase this session already holds: its own grant, a caller
+/// supplied source, or the sealed local unlock credential `effigy secrets
+/// unlock` leaves. Never prompts, so a resolution whose keys are all optional
+/// can report what it could not deliver instead of blocking on input nobody
+/// was promised (effigy#1036).
+pub(in crate::runner) fn held_vault_passphrase(
+    vault_path: &Path,
+) -> Result<Option<SecretValue>, RunnerError> {
+    if std::env::var_os(TEST_SECRET_PASSPHRASE_ENV).is_some() || session_passphrase().is_some() {
+        return Ok(session_passphrase());
+    }
+    let passphrase = effigy_secrets::read_local_unlock_passphrase(vault_path)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    if let Some(passphrase) = &passphrase {
+        // The sealed command credential is this session's factor from here on:
+        // caching it is what lets everything the session starts resolve
+        // without a prompt (032, Q-007).
+        cache_secret_passphrase(passphrase);
+    }
+    Ok(passphrase)
+}
+
+/// Whether this machine holds a local-dev key beside the vault. The key is the
+/// `effigy dev` factor, so its presence is what a direct command's
+/// undelivered-key warning names (effigy#1036).
+pub(in crate::runner) fn local_dev_key_present(vault_path: &Path) -> bool {
+    effigy_secrets::local_dev_unlock_key_path(vault_path).exists()
 }
 
 pub(in crate::runner) fn read_vault_passphrase(
@@ -178,16 +258,8 @@ pub(in crate::runner) fn read_vault_passphrase(
     prompt: &str,
     missing_tty_error: &str,
 ) -> Result<Option<SecretValue>, RunnerError> {
-    if std::env::var_os(TEST_SECRET_PASSPHRASE_ENV).is_none() && session_passphrase().is_none() {
-        if let Some(passphrase) = effigy_secrets::read_local_unlock_passphrase(vault_path)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?
-        {
-            // The sealed command credential is this session's factor from
-            // here on: caching it is what lets everything the session starts
-            // resolve without a prompt (032, Q-007).
-            cache_secret_passphrase(&passphrase);
-            return Ok(Some(passphrase));
-        }
+    if let Some(passphrase) = held_vault_passphrase(vault_path)? {
+        return Ok(Some(passphrase));
     }
     read_secret_passphrase(optional_only, prompt, missing_tty_error)
 }
@@ -209,18 +281,21 @@ pub(in crate::runner) fn read_local_dev_upgrade_passphrase(
     if let Some(secret) = session_passphrase() {
         return Ok(Some(secret));
     }
+    if prompt_unavailable() {
+        if optional_only {
+            return Ok(None);
+        }
+        return Err(no_prompt_error(missing_tty_error));
+    }
     if !std::io::stdin().is_terminal() {
         if optional_only {
             return Ok(None);
         }
         return Err(RunnerError::task_invocation(missing_tty_error));
     }
-    let value = rpassword::prompt_password(prompt).map_err(|error| {
-        RunnerError::task_invocation(format!("failed to read secret input: {error}"))
-    })?;
-    let secret = SecretValue::new(value);
-    cache_secret_passphrase(&secret);
-    Ok(Some(secret))
+    let passphrase = prompt_secret_on_terminal(prompt)?;
+    cache_secret_passphrase(&passphrase);
+    Ok(Some(passphrase))
 }
 
 // ---- One-shot session grants -----------------------------------------------
@@ -819,6 +894,109 @@ mod tests {
             adopt_local_dev_secret_access();
         }
         assert!(local_dev_secret_access_active());
+    }
+
+    /// A managed pane captures this run's output: a prompt written there is a
+    /// question nobody can see, so a required secret refuses with the fact and
+    /// an optional one delivers nothing (effigy#1036).
+    #[test]
+    fn a_managed_pane_never_prompts_for_a_passphrase() {
+        let _test_passphrase = ScopedEnv::set("EFFIGY_TEST_SECRETS_PASSPHRASE", None);
+        let _public_passphrase = ScopedEnv::set("EFFIGY_SECRET_PASSPHRASE", None);
+        let _pane = ScopedEnv::set("EFFIGY_MANAGED_PANE", Some("1"));
+        forget_session_passphrase_for_tests();
+
+        let error = read_secret_passphrase(false, "Vault passphrase: ", "needs an interactive TTY")
+            .expect_err("a required secret cannot be read into a captured pane");
+        assert!(
+            error.to_string().contains("managed pane")
+                && error.to_string().contains("needs an interactive TTY"),
+            "{error}"
+        );
+        assert!(
+            read_secret_passphrase(true, "Vault passphrase: ", "needs an interactive TTY")
+                .expect("an optional secret is simply not delivered")
+                .is_none(),
+            "an optional secret is simply not delivered"
+        );
+        forget_session_passphrase_for_tests();
+    }
+
+    /// The sealed `effigy secrets unlock` credential is this session's access
+    /// without a prompt, and its absence is an absent value (effigy#1036).
+    #[test]
+    fn a_held_vault_passphrase_reads_the_sealed_credential_without_prompting() {
+        let _test_passphrase = ScopedEnv::set("EFFIGY_TEST_SECRETS_PASSPHRASE", None);
+        let _public_passphrase = ScopedEnv::set("EFFIGY_SECRET_PASSPHRASE", None);
+        forget_session_passphrase_for_tests();
+        let fixture = effigy_test_support::Fixture::workspace("held-vault-passphrase-")
+            .expect("fixture workspace");
+        let vault_path = fixture.path().join(".effigy/secrets/local.vault");
+        std::fs::create_dir_all(vault_path.parent().expect("vault dir")).expect("mkdir");
+
+        assert!(
+            super::held_vault_passphrase(&vault_path)
+                .expect("no credential yet")
+                .is_none(),
+            "no sealed credential reads as no passphrase"
+        );
+
+        let key = effigy_secrets::LocalDevUnlockKey::generate().expect("generate key");
+        effigy_test_support::write_private_fixture(
+            &effigy_secrets::local_dev_unlock_key_path(&vault_path),
+            key.expose(),
+        )
+        .expect("write local-dev key");
+        effigy_test_support::write_private_fixture(
+            &effigy_secrets::local_unlock_credential_path(&vault_path),
+            &effigy_secrets::seal_local_unlock_passphrase(&key, "sealed-passphrase")
+                .expect("seal the credential"),
+        )
+        .expect("write credential");
+
+        assert_eq!(
+            super::held_vault_passphrase(&vault_path)
+                .expect("the credential answers")
+                .map(|value| value.expose().to_owned())
+                .as_deref(),
+            Some("sealed-passphrase")
+        );
+        assert!(super::local_dev_key_present(&vault_path));
+        forget_session_passphrase_for_tests();
+    }
+
+    /// The one-time local-dev upgrade prompt obeys the same pane rule: a pane
+    /// cannot show a question, so a required upgrade refuses and an optional
+    /// one delivers nothing (effigy#1036).
+    #[test]
+    fn a_managed_pane_never_prompts_for_the_local_dev_upgrade() {
+        let _test_passphrase = ScopedEnv::set("EFFIGY_TEST_SECRETS_PASSPHRASE", None);
+        let _public_passphrase = ScopedEnv::set("EFFIGY_SECRET_PASSPHRASE", None);
+        let _pane = ScopedEnv::set("EFFIGY_MANAGED_PANE", Some("1"));
+        forget_session_passphrase_for_tests();
+
+        let error = super::read_local_dev_upgrade_passphrase(
+            false,
+            "Vault passphrase (one-time local-dev setup): ",
+            "needs an interactive TTY",
+        )
+        .expect_err("a required upgrade cannot be read into a captured pane");
+        assert!(
+            error.to_string().contains("managed pane")
+                && error.to_string().contains("needs an interactive TTY"),
+            "{error}"
+        );
+        assert!(
+            super::read_local_dev_upgrade_passphrase(
+                true,
+                "Vault passphrase (one-time local-dev setup): ",
+                "needs an interactive TTY",
+            )
+            .expect("an optional upgrade is simply not read")
+            .is_none(),
+            "an optional upgrade is simply not read"
+        );
+        forget_session_passphrase_for_tests();
     }
 
     /// A read passphrase is cached, so everything after it resolves with the

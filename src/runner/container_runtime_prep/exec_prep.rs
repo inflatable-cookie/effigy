@@ -9,6 +9,7 @@ use effigy_containers::exec::{
 };
 use effigy_containers::{load_container_exec_working_dir, EffectiveContainerPolicy};
 
+use crate::runner::container_command::secret_env::ResolvedContainerSecretRuntime;
 use crate::runner::error::RunnerError;
 
 use super::activation::StartPolicy;
@@ -20,6 +21,17 @@ use super::prep::{
 };
 use super::validation::validate_policy_runtime;
 
+/// Prepare the stack a task runs in, on a fresh or a running environment
+/// alike.
+///
+/// A running stack still takes the one apply: it is what reconciles the shared
+/// services, delivers the secrets this session resolves, and lets Compose
+/// recreate only the services whose declared inputs changed (effigy#371). A
+/// skipped apply would be a stack whose delivery is whatever the bring-up that
+/// started it had, which is exactly the borrow `effigy dev` cannot inherit
+/// (effigy#1036). The prompt that used to hide under this apply is what
+/// changed: an optional-only resolution no longer asks for a passphrase, and a
+/// required one asks visibly.
 pub(in crate::runner) fn prepare_container_exec_runtime(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -31,6 +43,9 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
     let working_dir = load_container_exec_working_dir(repo_root, container_name)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let mut bring_up = None;
+    // The runtime this apply resolved, kept for the runtime-file delivery that
+    // follows exec readiness.
+    let applied_secrets = std::cell::RefCell::new(None::<ResolvedContainerSecretRuntime>);
     run_runtime_prep_steps(
         || prepare_runtime_mounts_stage(repo_root, policy),
         || {
@@ -50,7 +65,11 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
                         policy,
                         start.reconcile_shared_services,
                         crate::runner::container_command::support::ensure_shared_services_running,
-                        crate::runner::container_command::secret_env::compose_secret_env_for_apply,
+                        |repo_root, policy| {
+                            let secrets = crate::runner::container_command::secret_env::resolve_secret_runtime_for_apply(repo_root, policy)?;
+                            *applied_secrets.borrow_mut() = Some(secrets.clone());
+                            Ok(secrets)
+                        },
                         |repo_root, policy, args, label, env| {
                             run_compose_capture_with_env_owner(
                                 repo_root,
@@ -74,6 +93,12 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
         },
         || {
             let binding = ensure_runtime_exec_readiness_stage(repo_root, policy)?;
+            deliver_applied_runtime_secret_files(
+                repo_root,
+                policy,
+                applied_secrets.borrow().as_ref(),
+                &binding,
+            )?;
             if effigy_core::worktree_scope::load_or_create(repo_root)
                 .map_err(|error| {
                     RunnerError::task_invocation(format!("cannot identify checkout scope: {error}"))
@@ -107,7 +132,7 @@ pub(super) fn run_task_apply(
     secret_env: impl FnOnce(
         &Path,
         &EffectiveContainerPolicy,
-    ) -> Result<Vec<(String, OsString)>, RunnerError>,
+    ) -> Result<ResolvedContainerSecretRuntime, RunnerError>,
     run_compose: impl FnOnce(
         &Path,
         &EffectiveContainerPolicy,
@@ -117,8 +142,56 @@ pub(super) fn run_task_apply(
     ) -> Result<(), RunnerError>,
 ) -> Result<(), RunnerError> {
     apply_shared_services(policy, reconcile_shared_services, ensure_shared)?;
-    let env = secret_env(repo_root, policy)?;
+    let secrets = secret_env(repo_root, policy)?;
+    let env = crate::runner::container_command::secret_env::compose_env(&secrets);
     run_runtime_compose_up_stage(repo_root, policy, &env, run_compose)
+}
+
+/// Write the runtime files this apply resolved, now that the primary service
+/// binding is verified, and report the keys this apply changed under it.
+///
+/// A stack this session started already received them from its `container up`.
+/// A stack this session *reused* did not: a direct `container up` outside a
+/// `dev` session cannot resolve the session's optional keys, so an `effigy dev`
+/// that borrows that stack would otherwise run with the keys it just resolved
+/// missing and nothing said about it (effigy#1036). Writing the files delivers
+/// them to every process that starts next; a service already running keeps the
+/// values it read, so the delivery names the keys it changed, once, and says
+/// how a startup-only reader gets them. Nothing is carried between applies.
+/// Restarting a live service from inside the apply would stop the very stack
+/// this task is about to run in, so the report is the safe half of "rewrite and
+/// refresh" here.
+pub(super) fn deliver_applied_runtime_secret_files(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    secrets: Option<&ResolvedContainerSecretRuntime>,
+    binding: &effigy_containers::exec::VerifiedComposeContainer,
+) -> Result<(), RunnerError> {
+    let Some(secrets) = secrets else {
+        return Ok(());
+    };
+    let warnings = deliver_applied_runtime_secret_files_with(secrets, |secrets| {
+        crate::runner::container_command::secret_env::materialize_container_secret_runtime(
+            repo_root, policy, secrets, binding,
+        )
+    })?;
+    for warning in warnings {
+        eprintln!("[warn] {warning}");
+    }
+    Ok(())
+}
+
+/// The delivery decision, testable without a container: only a runtime-file
+/// delivery that resolved values writes anything, and an empty delivery is
+/// never written (the undelivered keys already warned).
+pub(super) fn deliver_applied_runtime_secret_files_with(
+    secrets: &ResolvedContainerSecretRuntime,
+    write: impl FnOnce(&ResolvedContainerSecretRuntime) -> Result<Vec<String>, RunnerError>,
+) -> Result<Vec<String>, RunnerError> {
+    if !crate::runner::container_command::secret_env::writes_runtime_secret_files(secrets) {
+        return Ok(Vec::new());
+    }
+    write(secrets)
 }
 
 /// Start the environment's shared services, unless this apply must leave them

@@ -22,6 +22,29 @@ pub fn suspend_terminal() -> TerminalGuard {
     TerminalGuard { sink }
 }
 
+/// Run `work` with the step lines cleared from the terminal and every
+/// spinner held until it returns: a prompt must be the only thing on the
+/// terminal, or nobody knows what to answer (effigy#1036).
+///
+/// The progress display is not merely silenced: [`MultiProgress::suspend`]
+/// erases the lines already drawn, blocks a tick or a finish line from drawing
+/// underneath the prompt while `work` runs, and redraws the live steps
+/// afterwards.
+pub fn prompt_terminal<T>(work: impl FnOnce() -> T) -> T {
+    let sink = Arc::clone(global_sink());
+    prompt_terminal_with(&sink, work)
+}
+
+/// [`prompt_terminal`] for a caller that owns its own sink (tests).
+pub(in crate::steps) fn prompt_terminal_with<T>(sink: &Arc<Sink>, work: impl FnOnce() -> T) -> T {
+    match sink.multi.get() {
+        Some(multi) => multi.suspend(work),
+        // Nothing has ever drawn: there is no line to clear and no lock to
+        // hold, so the prompt runs on its own.
+        None => work(),
+    }
+}
+
 /// Restores step drawing when dropped.
 #[derive(Debug)]
 pub struct TerminalGuard {

@@ -55,6 +55,8 @@ pub(in crate::runner) use predecessor::{
 pub(in crate::runner) use sealed_render::{seal_render_for_preflight, SealedRender};
 
 #[cfg(test)]
+pub(in crate::runner) use activation::StartPolicy;
+#[cfg(test)]
 use activation::{
     activate_container_runtime_plan_for_task_using, ensure_exec_container_running_with,
     runtime_activation_plan_from_request, runtime_activation_report_for_result,
@@ -65,7 +67,9 @@ use compose_hash::{
     compose_service_config_hashes, parse_service_config_hashes, verify_frozen_compose_reads,
 };
 #[cfg(test)]
-use exec_prep::run_task_apply;
+pub(in crate::runner) use exec_prep::prepare_container_exec_runtime;
+#[cfg(test)]
+use exec_prep::{deliver_applied_runtime_secret_files_with, run_task_apply};
 #[cfg(test)]
 use gateway::ensure_runtime_gateway_readiness_stage_using;
 #[cfg(test)]
