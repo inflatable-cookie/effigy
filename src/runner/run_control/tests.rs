@@ -1347,16 +1347,22 @@ fn a_held_foreground_run_with_a_gone_owner_is_not_reported_as_running() {
 }
 
 /// Replace the one held gate body this fixture's run wrote with the same body
-/// naming a process that cannot exist. The writer's own shape is preserved.
-fn rewrite_holder_as_gone(checkout: &Path, run: RunId) {
+/// naming `pid`. The writer's own shape is preserved.
+fn rewrite_holder_pid(checkout: &Path, run: RunId, pid: u32) {
     let path = held_gate_path(checkout, run);
     let body = std::fs::read_to_string(&path).expect("gate body");
     let mut value: serde_json::Value = serde_json::from_str(&body).expect("gate body json");
     assert_eq!(value["run"], run.to_string());
+    value["pid"] = serde_json::json!(pid);
+    std::fs::write(&path, serde_json::to_vec(&value).unwrap()).expect("rewritten gate body");
+}
+
+/// Replace the one held gate body this fixture's run wrote with the same body
+/// naming a process that cannot exist. The writer's own shape is preserved.
+fn rewrite_holder_as_gone(checkout: &Path, run: RunId) {
     // Beyond every platform's pid range: the identity observation is a proven
     // absence, never a numeric guess.
-    value["pid"] = serde_json::json!(i32::MAX as u32 - 1);
-    std::fs::write(&path, serde_json::to_vec(&value).unwrap()).expect("rewritten gate body");
+    rewrite_holder_pid(checkout, run, i32::MAX as u32 - 1);
 }
 
 /// The exact `.gate` inode whose body records `run`, found inside this
@@ -1427,4 +1433,284 @@ fn checkout_identity(checkout: &Path, run: RunId) -> String {
     )
     .expect("the gate body names the owning checkout")
     .text()
+}
+
+fn write_parked_snapshot(
+    checkout: &Path,
+    run: &str,
+    task: &str,
+    pgids: Vec<u32>,
+    live_pids: Vec<u32>,
+) {
+    let root = checkout_effects_root(checkout).expect("checkout journal");
+    effigy_kernel::supervise::park::write_snapshot(
+        root,
+        &effigy_kernel::supervise::park::ParkedHolder {
+            schema: effigy_kernel::supervise::park::PARKED_SCHEMA.into(),
+            run: run.to_owned(),
+            task: task.to_owned(),
+            sentinel_pid: std::process::id(),
+            owner_pid: 1,
+            checkout: checkout.display().to_string(),
+            pgids,
+            live_pids,
+            state: "parked".into(),
+        },
+    )
+    .expect("parked snapshot");
+}
+
+/// `run release` refuses while a named member lives, then succeeds once the
+/// fixture process is gone and a stand-in drops the snapshot.
+#[test]
+fn run_release_refuses_named_live_members_then_releases_once_gone() {
+    use std::os::unix::process::CommandExt;
+    let directory = tempfile::tempdir().expect("checkout");
+    let mut command = std::process::Command::new("/bin/sleep");
+    command.arg("30");
+    // SAFETY: setsid is async-signal-safe and runs only in this child.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut child = command.spawn().expect("setsid sleep");
+    let pid = child.id();
+    let run = "releasefixture0000000001";
+    write_parked_snapshot(
+        directory.path(),
+        run,
+        "validate:release",
+        vec![pid],
+        vec![pid],
+    );
+    let error =
+        release(directory.path(), run, Duration::from_millis(200), false).expect_err("live member");
+    let crate::runner::error::RunnerError::TaskInvocation(detail) = error else {
+        panic!("expected a refusal, got {error:?}");
+    };
+    assert!(detail.contains(&pid.to_string()), "{detail}");
+    assert!(detail.contains("signals nothing"), "{detail}");
+    let _ = child.kill();
+    let _ = child.wait();
+    let root = directory.path().to_path_buf();
+    let dropping = std::thread::spawn(move || {
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_secs(5) {
+            let state = checkout_effects_root(&root).expect("root");
+            if effigy_kernel::supervise::park::release_requested(state, run) {
+                let _ = effigy_kernel::supervise::park::remove_snapshot(state, run);
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        panic!("release file never appeared");
+    });
+    let text = release(directory.path(), run, Duration::from_secs(5), false).expect("released");
+    dropping.join().expect("stand-in sentinel");
+    assert!(text.contains("released"), "{text}");
+    assert!(text.contains("validate:release"), "{text}");
+}
+
+/// `run stop` names the parked holder and the exact release command when the
+/// sentinel has not dropped custody.
+#[test]
+fn run_stop_names_a_parked_holder_when_custody_stays() {
+    let directory = tempfile::tempdir().expect("checkout");
+    let target = target(directory.path(), "parked-stop");
+    let memory = TaskRun::begin_foreground(TaskRunRequest {
+        target: &target,
+        lock_wait_ms: 0,
+        custody: false,
+        scratch: false,
+        managed_run_token: None,
+        args: &[],
+        key: None,
+        admission: None,
+        workspace_admission: None,
+        cwd: None,
+    })
+    .expect("foreground admitted");
+    let id = memory.id();
+    rewrite_holder_as_gone(directory.path(), id);
+    write_parked_snapshot(
+        directory.path(),
+        &id.to_string(),
+        "parked-stop",
+        Vec::new(),
+        Vec::new(),
+    );
+    let error = stop(
+        directory.path(),
+        &id.to_string(),
+        Duration::from_millis(50),
+        false,
+    )
+    .expect_err("still held");
+    let crate::runner::error::RunnerError::RunControl { detail, .. } = error else {
+        panic!("expected run-control unknown, got {error:?}");
+    };
+    assert!(detail.contains("sentinel pid"), "{detail}");
+    assert!(
+        detail.contains(&format!("effigy run release {id}")),
+        "{detail}"
+    );
+    assert!(detail.contains("parked-stop"), "{detail}");
+    let warnings = memory.close(effigy_kernel::outcome::WorkloadOutcome::Interrupted);
+    assert!(warnings.is_empty(), "{warnings:?}");
+}
+
+/// `run stop` names the parked holder when the owner's process identity is
+/// unverifiable (pid 0 is outside the process range), not only when it is gone.
+#[test]
+fn run_stop_names_a_parked_holder_when_the_owner_is_unverified() {
+    let directory = tempfile::tempdir().expect("checkout");
+    let target = target(directory.path(), "parked-unknown");
+    let memory = TaskRun::begin_foreground(TaskRunRequest {
+        target: &target,
+        lock_wait_ms: 0,
+        custody: false,
+        scratch: false,
+        managed_run_token: None,
+        args: &[],
+        key: None,
+        admission: None,
+        workspace_admission: None,
+        cwd: None,
+    })
+    .expect("foreground admitted");
+    let id = memory.id();
+    // pid 0 is Observed::Unknown, so view.state is `unknown` and stop takes
+    // the state != "interrupted" early return (effigy#1034).
+    rewrite_holder_pid(directory.path(), id, 0);
+    write_parked_snapshot(
+        directory.path(),
+        &id.to_string(),
+        "parked-unknown",
+        Vec::new(),
+        Vec::new(),
+    );
+    let error = stop(
+        directory.path(),
+        &id.to_string(),
+        Duration::from_millis(50),
+        false,
+    )
+    .expect_err("still held");
+    let crate::runner::error::RunnerError::RunControl { detail, .. } = error else {
+        panic!("expected run-control unknown, got {error:?}");
+    };
+    assert!(
+        detail.contains("no longer verified"),
+        "unknown owner must take the early return, not the interrupted wait: {detail}"
+    );
+    assert!(detail.contains("sentinel pid"), "{detail}");
+    assert!(
+        detail.contains(&format!("effigy run release {id}")),
+        "{detail}"
+    );
+    assert!(detail.contains("parked-unknown"), "{detail}");
+    let warnings = memory.close(effigy_kernel::outcome::WorkloadOutcome::Interrupted);
+    assert!(warnings.is_empty(), "{warnings:?}");
+}
+
+/// `run status` names the parked holder and `run release` as next.
+#[test]
+fn run_status_names_a_parked_holder() {
+    let directory = tempfile::tempdir().expect("checkout");
+    let target = target(directory.path(), "parked-status");
+    let memory = TaskRun::begin_foreground(TaskRunRequest {
+        target: &target,
+        lock_wait_ms: 0,
+        custody: false,
+        scratch: false,
+        managed_run_token: None,
+        args: &[],
+        key: None,
+        admission: None,
+        workspace_admission: None,
+        cwd: None,
+    })
+    .expect("foreground admitted");
+    let id = memory.id();
+    rewrite_holder_as_gone(directory.path(), id);
+    write_parked_snapshot(
+        directory.path(),
+        &id.to_string(),
+        "parked-status",
+        Vec::new(),
+        Vec::new(),
+    );
+    let text = status(directory.path(), &id.to_string(), false).expect("status");
+    assert!(text.contains("holder   run"), "{text}");
+    assert!(text.contains("sentinel pid"), "{text}");
+    assert!(
+        text.contains(&format!("next     effigy run release {id}")),
+        "{text}"
+    );
+    let warnings = memory.close(effigy_kernel::outcome::WorkloadOutcome::Interrupted);
+    assert!(warnings.is_empty(), "{warnings:?}");
+}
+
+/// A lock wait against a parked sentinel names the holder and `run release`.
+#[test]
+fn a_parked_foreground_holder_names_the_release_command() {
+    let directory = tempfile::tempdir().expect("checkout");
+    let target = target(directory.path(), "parked-lock");
+    let memory = TaskRun::begin_foreground(TaskRunRequest {
+        target: &target,
+        lock_wait_ms: 0,
+        custody: false,
+        scratch: false,
+        managed_run_token: None,
+        args: &[],
+        key: None,
+        admission: None,
+        workspace_admission: None,
+        cwd: None,
+    })
+    .expect("foreground admitted");
+    let id = memory.id();
+    rewrite_holder_as_gone(directory.path(), id);
+    write_parked_snapshot(
+        directory.path(),
+        &id.to_string(),
+        "parked-lock",
+        Vec::new(),
+        Vec::new(),
+    );
+    let error = TaskRun::begin(TaskRunRequest {
+        target: &target,
+        lock_wait_ms: 0,
+        custody: true,
+        scratch: false,
+        managed_run_token: None,
+        args: &[],
+        key: None,
+        admission: None,
+        workspace_admission: None,
+        cwd: None,
+    })
+    .expect_err("held gate");
+    let crate::runner::error::RunnerError::TaskLockConflict(details) = &error else {
+        panic!("expected a lock conflict, got {error:?}");
+    };
+    let remediation = &details.remediation;
+    assert!(remediation.contains("sentinel pid"), "{remediation}");
+    assert!(
+        remediation.contains(&format!("effigy run release {id}")),
+        "{remediation}"
+    );
+    assert!(
+        details
+            .details_json
+            .as_deref()
+            .is_some_and(|json| json.contains("release_command")),
+        "{details:?}"
+    );
+    let warnings = memory.close(effigy_kernel::outcome::WorkloadOutcome::Interrupted);
+    assert!(warnings.is_empty(), "{warnings:?}");
 }

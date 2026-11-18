@@ -28,6 +28,8 @@ use effigy_execution::ExecutionSurface;
 use effigy_manifest::{DeferredCommand, LoadedCatalog, ManifestContainerDriver};
 use effigy_tasks::TaskSelector;
 
+use effigy_kernel::observe::Observed;
+
 use crate::runner::container_command::is_primary_service_running_with_deadline;
 use crate::runner::deferral;
 use crate::runner::error::RunnerError;
@@ -189,6 +191,11 @@ fn collect_runtime_diagnostics(
     // The user-configured scratch root is machine-global: report whether it is
     // in force, or why Effigy fell back to the default temp directory.
     append_scratch_diagnostics(&mut diagnostics);
+
+    // A parked sentinel holds this checkout's gates after owner-loss with an
+    // unproved closure (effigy#1034). Report it before any container-policy
+    // early return so `doctor` still names the holder.
+    append_parked_sentinel_diagnostics(resolved_root, &mut diagnostics);
 
     let policies = match load_all_container_policies(resolved_root) {
         Ok(value) => value,
@@ -496,6 +503,36 @@ fn append_legacy_task_state_diagnostics(
     }
 }
 
+/// Name every parked sentinel in this checkout: run, task, PIDs, path, state,
+/// and the exact `effigy run release` command (effigy#1034).
+fn append_parked_sentinel_diagnostics(
+    resolved_root: &Path,
+    diagnostics: &mut DoctorRuntimeDiagnostics,
+) {
+    use crate::runner::task_engine::{observe_checkout_root, observe_context};
+    let cx = observe_context(Duration::from_secs(5));
+    let Observed::Verified(root, _) = observe_checkout_root(&cx, resolved_root) else {
+        return;
+    };
+    let Ok(holders) = effigy_kernel::supervise::park::list_parked(&root) else {
+        return;
+    };
+    for holder in holders {
+        diagnostics.findings.push(DoctorFinding {
+            check_id: check_id::RUNTIME_PARKED_SENTINEL.to_owned(),
+            severity: DoctorSeverity::Warning,
+            evidence: holder.named(),
+            remediation: format!(
+                "Re-inventory that run's process group and, only if it is empty, `{}`. \
+                 The command never signals task processes. An older sentinel that never \
+                 wrote a parked snapshot cannot handle the request",
+                holder.release_command()
+            ),
+            fixable: false,
+        });
+    }
+}
+
 /// Report the user-configured per-run scratch root: what runs under it, or
 /// why Effigy fell back to the default temp directory. The reason is an
 /// observation, never a failure.
@@ -712,6 +749,48 @@ mod tests {
         assert!(finding.evidence.contains("gid=20"));
         assert!(finding.remediation.contains("isolated_dirs"));
         assert!(finding.remediation.contains("effigy doctor"));
+        assert!(!finding.fixable);
+    }
+
+    #[test]
+    fn doctor_names_a_parked_sentinel_before_container_policy() {
+        let _lock = lock_test();
+        let home = tempfile::tempdir().expect("home");
+        let _env = EnvGuard::set_many(&[("HOME", Some(home.path().display().to_string()))]);
+        let (_temp, root) = fresh_root("parked-sentinel");
+        let cx = crate::runner::task_engine::effect_context(effigy_kernel::ctx::OpenReason::Shell);
+        let state = effigy_kernel::root::StateRoot::effects(&cx, &root).expect("state");
+        let holder = effigy_kernel::supervise::park::ParkedHolder {
+            schema: effigy_kernel::supervise::park::PARKED_SCHEMA.into(),
+            run: "parkedfixture000000000001".into(),
+            task: "test:affected".into(),
+            sentinel_pid: 44839,
+            owner_pid: 44690,
+            checkout: root.display().to_string(),
+            pgids: Vec::new(),
+            live_pids: Vec::new(),
+            state: "parked".into(),
+        };
+        effigy_kernel::supervise::park::write_snapshot(&state, &holder).expect("snapshot");
+        let diagnostics = super::collect_runtime_diagnostics(&root, None).expect("doctor");
+        let finding = diagnostics
+            .findings
+            .iter()
+            .find(|finding| finding.check_id == check_id::RUNTIME_PARKED_SENTINEL)
+            .expect("parked finding");
+        assert_eq!(finding.severity, DoctorSeverity::Warning);
+        assert!(
+            finding.evidence.contains("parkedfixture000000000001"),
+            "{finding:?}"
+        );
+        assert!(finding.evidence.contains("test:affected"), "{finding:?}");
+        assert!(
+            finding.evidence.contains("sentinel pid 44839"),
+            "{finding:?}"
+        );
+        assert!(finding
+            .remediation
+            .contains("effigy run release parkedfixture000000000001"));
         assert!(!finding.fixable);
     }
 

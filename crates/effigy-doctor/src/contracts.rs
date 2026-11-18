@@ -19,6 +19,10 @@ pub mod check_id {
     pub const HEALTH_TASK_EXECUTE: &str = "health.task.execute";
     pub const CONTAINER_WORKSPACE_OWNERSHIP: &str = "container.workspace-ownership";
     pub const CATALOG_PACK_HEALTH: &str = "catalog.pack-health";
+    /// Runtime finding: a memory sentinel is parked holding checkout gates
+    /// (effigy#1034). Not a static doctor check, so it is absent from
+    /// `ALL_CHECK_IDS`.
+    pub const RUNTIME_PARKED_SENTINEL: &str = "runtime.parked-sentinel";
 }
 
 pub const ALL_CHECK_IDS: [&str; 17] = [

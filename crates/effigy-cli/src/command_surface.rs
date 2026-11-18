@@ -241,7 +241,7 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
     GeneralHelpEntry {
         group: HelpGroup::Work,
         command: "effigy runs",
-        description: "List runs; follow, inspect or stop one with `effigy run status|logs|stop <run>`",
+        description: "List runs; follow, inspect, stop or release one with `effigy run status|logs|stop|release <run>`",
         deferred_builtin: Some("runs"),
         help_argument: Some("runs"),
     },

@@ -2,7 +2,7 @@
 
 Effigy runs heavy tasks itself. If you want them to wait for capacity, give
 Effigy an admission hook; Effigy never schedules work on its own. Every run,
-heavy or not, can be named, inspected, followed and stopped.
+heavy or not, can be named, inspected, followed, stopped and released.
 Contract [049](../knowledge/contracts/049-heavy-validation-admission-contract.md)
 is the authority.
 
@@ -151,7 +151,16 @@ effigy runs                               # this checkout's runs
 effigy run status ci-1234                 # by key or run id
 effigy run logs ci-1234 --follow          # output until it settles, then its exit code
 effigy run stop ci-1234                   # stop it and its whole process group
+effigy run release ci-1234                # drop a parked sentinel after proving its group is empty
 ```
+
+A parked sentinel is a foreground memory guard whose owner is gone and whose
+process-group closure is still unproved. `run status`, a lock-wait timeout and
+`doctor` name that holder (run id, task, sentinel or owner PID, checkout, state)
+and print `effigy run release <run>` when a parked snapshot exists. Release
+re-inventories the same membership the sentinel uses; live PIDs are named and
+nothing is signalled. An older sentinel that never wrote a parked snapshot
+cannot handle the request.
 
 A repeat of `--run-id ci-1234` never starts a second run: it attaches to the
 first and exits with that run's result, even when the run already finished.

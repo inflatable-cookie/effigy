@@ -1377,7 +1377,7 @@ where
     Ok((run_id, output_json, override_after))
 }
 
-/// `effigy runs [--limit N] [--all]` and `effigy run status|logs|stop <run>`.
+/// `effigy runs [--limit N] [--all]` and `effigy run status|logs|stop|release <run>`.
 fn parse_runs<I>(action: Option<String>, args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
@@ -1434,7 +1434,7 @@ where
                     stderr_offset = value;
                 }
             }
-            (Some("stop"), "--wait-ms") => {
+            (Some("stop") | Some("release"), "--wait-ms") => {
                 let value = next_required_value(
                     &mut args,
                     CliParseError::MissingFlagValue {
@@ -1482,6 +1482,10 @@ where
             run: required(run)?,
             wait_ms,
         },
+        Some("release") => RunsAction::Release {
+            run: required(run)?,
+            wait_ms,
+        },
         Some("prepare") => {
             if run.is_some() {
                 return Err(CliParseError::InvalidArguments(
@@ -1496,8 +1500,8 @@ where
         }
         Some(other) => {
             return Err(CliParseError::InvalidArguments(format!(
-                "`effigy run` supports `status`, `logs`, `stop` or `prepare`, not `{other}`"
-            )))
+            "`effigy run` supports `status`, `logs`, `stop`, `release` or `prepare`, not `{other}`"
+        )))
         }
     };
     Ok(Command::Runs(RunsArgs {

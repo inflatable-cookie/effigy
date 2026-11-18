@@ -270,13 +270,21 @@ pub fn read(root: &StateRoot, run: RunId) -> Observed<Option<TerminalRecord>> {
 ///
 /// Idempotent by `run_id`: a repeated settle of the same run finds its
 /// committed slot and returns without writing, so a second settle neither
-/// changes nor duplicates the slot. Two distinct runs take distinct slots and
-/// distinct sequence numbers, so they never coalesce.
+/// changes nor duplicates the slot. An `unknown`/`incomplete` parked record
+/// may overwrite that slot with `released` or `interrupted` (effigy#1034).
+/// Two distinct runs take distinct slots and distinct sequence numbers.
 ///
 /// The write ordering is the crash contract: body (through the checksum) and
 /// flush, then the commit marker and flush. A crash before the marker leaves
 /// the slot free; a committed slot with a mismatched checksum is refused, never
 /// read as a record.
+fn parked_upgrade(existing: &TerminalRecord, next: &TerminalRecord) -> bool {
+    existing.outcome == "unknown"
+        && existing.cleanup == "incomplete"
+        && next.cleanup == "complete"
+        && matches!(next.outcome.as_str(), "released" | "interrupted")
+}
+
 pub(crate) fn write(root: &StateRoot, record: &TerminalRecord) -> Result<(), StoreError> {
     let record = record.checked()?;
     let (file, stat) = root
@@ -301,7 +309,11 @@ pub(crate) fn write(root: &StateRoot, record: &TerminalRecord) -> Result<(), Sto
             }
             Decoded::Committed(committed) => {
                 if committed.record.run_id == record.run_id {
-                    return Ok(());
+                    if parked_upgrade(&committed.record, &record) {
+                        free = Some(index);
+                    } else {
+                        return Ok(());
+                    }
                 }
                 highest = highest.max(committed.seq);
             }

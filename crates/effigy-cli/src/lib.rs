@@ -46,7 +46,7 @@ pub enum Command {
     Release(ReleaseArgs),
     Doctor(DoctorArgs),
     Tasks(TasksArgs),
-    /// `effigy runs` and `effigy run status|logs|stop <id>`.
+    /// `effigy runs` and `effigy run status|logs|stop|release <id>`.
     Runs(RunsArgs),
     Task(TaskInvocation),
     #[doc(hidden)]
@@ -949,6 +949,9 @@ pub enum RunsAction {
     },
     /// `effigy run stop <run> [--wait-ms N]`: the kernel stop path.
     Stop { run: String, wait_ms: Option<u64> },
+    /// `effigy run release <run> [--wait-ms N]`: drop a parked sentinel after
+    /// proving its process group is empty. Never signals task processes.
+    Release { run: String, wait_ms: Option<u64> },
     /// `effigy run prepare [--task SELECTOR] [--check]`: prepares this
     /// checkout's journal, strict terminal ring, and one task's strict gates.
     Prepare { check: bool, task: Option<String> },

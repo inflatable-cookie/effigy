@@ -101,8 +101,8 @@ pub struct TerminalRecord {
     /// The boot the run's custodians lived in.
     pub boot: String,
     pub task: String,
-    /// `succeeded`, `failed`, `cancelled`, `timed-out`, `interrupted` or
-    /// `unknown`, the same words `run status` uses.
+    /// `succeeded`, `failed`, `cancelled`, `timed-out`, `interrupted`,
+    /// `released` or `unknown`, the same words `run status` uses.
     pub outcome: String,
     pub exit_code: Option<i32>,
     pub signal: Option<i32>,
@@ -163,7 +163,8 @@ pub(crate) fn write_row(
 /// The one row insert, shared by the non-strict writer and by ingestion of a
 /// strict-mode ring slot (`super::terminal_ring::ingest`). Idempotent by
 /// `run_id`: a repeated settle, or a re-ingested slot, keeps the row it already
-/// has.
+/// has, except an `unknown`/`incomplete` parked record may upgrade to
+/// `released` or `interrupted` once the sentinel drops its gates (effigy#1034).
 pub(crate) fn insert_row(
     txn: &mut crate::store::Txn<'_>,
     record: &TerminalRecord,
@@ -173,7 +174,13 @@ pub(crate) fn insert_row(
          (run_id, checkout, boot, task, outcome, exit_code, signal, cleanup, \
           workload_groups, closed_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
-         ON CONFLICT(run_id) DO NOTHING",
+         ON CONFLICT(run_id) DO UPDATE SET \
+           outcome=excluded.outcome, cleanup=excluded.cleanup, \
+           closed_at=excluded.closed_at \
+         WHERE foreground_terminals.outcome = 'unknown' \
+           AND foreground_terminals.cleanup = 'incomplete' \
+           AND excluded.cleanup = 'complete' \
+           AND excluded.outcome IN ('released', 'interrupted')",
         params![
             record.run_id,
             record.checkout,

@@ -598,6 +598,7 @@ pub(crate) fn classify(cmd: &Command) -> GuestOperation {
             },
             RunsAction::Logs { .. } => observation("runs:logs"),
             RunsAction::Stop { .. } => operation("runs:stop"),
+            RunsAction::Release { .. } => operation("runs:release"),
             RunsAction::Prepare { .. } => operation("runs:prepare"),
         },
         Command::Bundle(_) => operation("bundle"),
