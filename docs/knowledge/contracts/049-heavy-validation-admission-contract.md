@@ -1,7 +1,7 @@
 # 049 - Heavy Task Admission and Run Control Contract
 
 Owner: Platform
-Last Updated: 2026-11-13
+Last Updated: 2026-11-18
 
 Q-010 follows the storage and custody model approved by planner and Tom
 (2026-10-22: "Approve") in [052 §3.1](052-runtime-kernel-contract.md#31-q-010-run-classes-and-the-durability-boundary).
@@ -753,10 +753,13 @@ message naming the allowance (`run_deadline.rs:154-170`, `src/bin/effigy.rs`).
   remaining time (`supervise/memory.rs`; `settlement_budget`, `deadline_left`,
   `wait_for_closure`). A guard that reaches the ceiling with an unproved
   closure or residue records `unknown`/`incomplete` (never complete) and
-  **remains alive as the verified holder of the exclusion**: it performs no
-  further settlement, and a new invocation cannot acquire the gate until that
-  holder is explicitly stopped. Releasing the holder is an explicit later
-  action, never an implication of the deadline. The v2 terminal report
+  **remains alive as the verified holder of the exclusion**: it re-inventories
+  the run's recorded process groups and the cleanup pin every 250 ms. A
+  proved-empty group with the pin closed settles as `interrupted` and drops the
+  gates. Otherwise a new invocation cannot acquire the gate until `effigy run
+  release <run>` re-verifies emptiness and asks that parked sentinel to drop
+  its gates (it never signals task processes). Releasing the holder is that
+  explicit later action, never an implication of the deadline. The v2 terminal report
   exchange stops 2 s before the ceiling, leaving 1 s for hook settlement.
   Owner cleanup stops 1 s before the ceiling, leaving the final second for
   terminal accounting and exit; an unproved closure remains residue held by

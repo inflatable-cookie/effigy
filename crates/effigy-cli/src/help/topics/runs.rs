@@ -15,6 +15,7 @@ const RUNS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "A run reads by its run id or its key. A run started with `--run-id` logs each stream's output (redacted) unless both were terminals; other runs keep no log.",
         "`run logs --follow` ends when the run settles. Resume a lost follow with the byte offsets you already received; expired bytes are reported, never skipped.",
         "`run stop` asks the run's owner to stop through the kernel journal; the owner stops the task's whole process group and settles the run.",
+        "`run release` re-inventories a parked sentinel's process group with the same membership the sentinel uses. An empty group asks that sentinel to drop its gates and record `released`; a live member is named and nothing is signalled.",
         "`run prepare --task <selector>` prepares this checkout's journal, fixed terminal ring, and one foreground task's strict gate files; prepare each selector in a declared task tree separately. A strict run creates no gate directory entries. `run prepare --check --task <selector>` verifies the ring and gate files; its read-only store check may create the state directory or SQLite shared-memory sidecar."
     ],
     usage: text_lines![
@@ -22,6 +23,7 @@ const RUNS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "effigy run status <run> [--json]",
         "effigy run logs <run> [--follow] [--stdout-offset <N>] [--stderr-offset <N>] [--json]",
         "effigy run stop <run> [--wait-ms <MS>] [--json]",
+        "effigy run release <run> [--wait-ms <MS>] [--json]",
         "effigy run prepare [--task <selector>] [--check] [--json]",
         "effigy --run-id <key> <task> [task args]",
     ],
@@ -37,6 +39,7 @@ const RUNS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "effigy run logs ci-1234 --follow",
         "effigy run logs ci-1234 --follow --stdout-offset 5120 --stderr-offset 96",
         "effigy run stop ci-1234",
+        "effigy run release ci-1234",
     ],
 };
 
@@ -46,7 +49,7 @@ const RUNS_OPTIONS: &[(&str, &str)] = option_rows![
     "--follow" => "Keep reading until the run settles, then exit with its result",
     "--stdout-offset <N>" => "Resume stdout at this byte offset",
     "--stderr-offset <N>" => "Resume stderr at this byte offset",
-    "--wait-ms <MS>" => "How long `run stop` waits for the run to settle (default 30000)",
+    "--wait-ms <MS>" => "How long `run stop` or `run release` waits for the sentinel to drop its gates (default 30000)",
     "--check" => "`run prepare` verifies the requested journal, ring and task gates; it does not migrate the journal or write the ring or task gates",
     "--task <selector>" => "Prepare or verify the foreground gate files for this declared task selector",
 ];

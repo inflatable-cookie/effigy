@@ -18,6 +18,8 @@ pub enum Family {
     Runs,
     Objects,
     Staging,
+    /// Parked-sentinel snapshots and release requests (effigy#1034).
+    Parked,
 }
 impl Family {
     pub fn dir_name(self) -> &'static str {
@@ -27,6 +29,7 @@ impl Family {
             Self::Runs => "runs",
             Self::Objects => "objects",
             Self::Staging => "staging",
+            Self::Parked => "parked",
         }
     }
 }

@@ -769,7 +769,7 @@ pub(crate) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
         None => None,
         _ => return Err(RunError::refused("invalid descriptor custody socket")),
     };
-    let watch = inherited_pipe(config.watch, libc::O_RDONLY)?;
+    let mut watch = inherited_pipe(config.watch, libc::O_RDONLY)?;
     let mut gates: Vec<OwnedFd> = Vec::new();
     for &raw in &config.gate_fds {
         // fstat validates each inherited fd before it is adopted. These fds
@@ -1009,14 +1009,24 @@ pub(crate) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
     // report the run then, so the wait also observes the owner this guard
     // recorded: a verifiably gone owner ends the wait, and the guard takes the
     // settlement over instead of holding the lock forever (effigy#986).
-    let closure = wait_for_closure(watch, &config);
+    let closure = wait_for_closure(&mut watch, &config);
     // The run's own coordinates, read while the gate descriptions are still
     // open: the journal row names the task and checkout the dead owner wrote.
     let coordinates = gates.iter().find_map(|gate| {
         let file = std::fs::File::from(crate::gate::duplicate_custody(gate).ok()?);
         crate::gate::foreground_diag(&file)
     });
-    let unproved = residue || !closure.closed;
+    // Independent of settle_effect's budget: a spent deadline used to mark
+    // residue without looking at the group. An empty group after owner
+    // SIGKILL is proved closed even when that settle returned residue
+    // (effigy#1034, memory.rs wait_for_closure owner-lost early return).
+    let pgids = super::park::effect_pgids(&effects);
+    let inventory = super::park::inventory_groups(&pgids).ok();
+    let groups_empty = inventory
+        .as_ref()
+        .is_some_and(super::park::GroupInventory::proved_empty);
+    let pin_closed = closure.closed || pin_is_closed(&mut watch);
+    let unproved = !(groups_empty && pin_closed) && (residue || !pin_closed);
     if closure.owner_lost || unproved {
         // Record only what is true: custody closed (`interrupted`) or it did
         // not (`unknown`, with residue). This also covers an unproved closure
@@ -1026,19 +1036,28 @@ pub(crate) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
             &config,
             coordinates.as_ref(),
             effects.len(),
-            closure.closed && !residue,
+            pin_closed && groups_empty,
+            if pin_closed && groups_empty {
+                "interrupted"
+            } else {
+                "unknown"
+            },
         );
     }
     if unproved {
-        // Retain exclusion with this verified holder. The owner has reached
-        // its own ceiling and abandoned the wait; the guard performs no
-        // further settlement, records nothing as complete, and stays alive
-        // holding the gate descriptions so a new invocation cannot acquire
-        // the task while this run's resources remain. Releasing the holder is
-        // an explicit later action, never an implication of the deadline.
-        loop {
-            std::thread::sleep(Duration::from_millis(250));
-        }
+        // Retain exclusion with this verified holder. The park loop re-proves
+        // emptiness and polls `effigy run release` (effigy#1034). A provably
+        // empty group settles as interrupted; a release request with an empty
+        // group records `released`. KILL is not the supported path.
+        park_unproved(
+            &config,
+            &mut watch,
+            coordinates.as_ref(),
+            &pgids,
+            effects.len(),
+            gates,
+        );
+        return Ok(());
     }
     drop(gates); // positive delegated closure; no numeric replay
     if let Some(error) = protocol_error {
@@ -1061,7 +1080,7 @@ pub(super) struct ClosureWait {
 /// in which the owner is the only process that could have reported the run
 /// (effigy#986). A checkout-lease backup keeps waiting: a durable run's outcome
 /// and custody belong to its own journal and sentinel.
-fn wait_for_closure(mut watch: std::fs::File, config: &Config) -> ClosureWait {
+fn wait_for_closure(watch: &mut std::fs::File, config: &Config) -> ClosureWait {
     let mut bytes = [0u8; 4096];
     // The pin is polled every 5 ms; the owner's identity costs one process
     // observation, so it is re-read every twentieth poll (100 ms). A foreground
@@ -1134,6 +1153,91 @@ pub(super) fn owner_is_gone(config: &Config) -> bool {
     }
 }
 
+/// Non-blocking EOF on the cleanup pin. A still-open pin is not group
+/// evidence; the park loop re-checks it every tick.
+fn pin_is_closed(watch: &mut std::fs::File) -> bool {
+    let mut bytes = [0u8; 64];
+    match watch.read(&mut bytes) {
+        Ok(0) => true,
+        Ok(_) => false,
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+            ) =>
+        {
+            false
+        }
+        Err(_) => false,
+    }
+}
+
+/// Hold the gates until the group is empty or `effigy run release` asks, then
+/// drop them and record the honest outcome. Never signals.
+fn park_unproved(
+    config: &Config,
+    watch: &mut std::fs::File,
+    coordinates: Option<&crate::gate::ForegroundDiag>,
+    pgids: &[u32],
+    groups: usize,
+    gates: Vec<OwnedFd>,
+) {
+    let op = context(CancelToken::default(), Duration::from_secs(5));
+    let cx = op.effects().ok();
+    let root = cx
+        .as_ref()
+        .and_then(|cx| helper_root(cx, &config.home, false, None).ok());
+    let checkout = coordinates
+        .and_then(|diag| match diag.owner.scope() {
+            crate::id::Scope::Checkout(id) => Some(id.text()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let task = coordinates
+        .map(|diag| diag.task.task().to_owned())
+        .unwrap_or_default();
+    loop {
+        let pin_closed = pin_is_closed(watch);
+        let inventory =
+            super::park::inventory_groups(pgids).unwrap_or(super::park::GroupInventory {
+                live_pids: Vec::new(),
+                unproven: true,
+            });
+        if let Some(root) = root.as_ref() {
+            let holder = super::park::ParkedHolder {
+                schema: super::park::PARKED_SCHEMA.into(),
+                run: config.run.to_string(),
+                task: task.clone(),
+                sentinel_pid: std::process::id(),
+                owner_pid: config.owner.pid,
+                checkout: checkout.clone(),
+                pgids: pgids.to_vec(),
+                live_pids: inventory.live_pids.clone(),
+                state: "parked".into(),
+            };
+            let _ = super::park::write_snapshot(root, &holder);
+        }
+        let release = root
+            .as_ref()
+            .is_some_and(|root| super::park::release_requested(root, &config.run.to_string()));
+        if inventory.proved_empty() && (pin_closed || release) {
+            drop(gates);
+            record_owner_loss(
+                config,
+                coordinates,
+                groups,
+                true,
+                if release { "released" } else { "interrupted" },
+            );
+            if let Some(root) = root.as_ref() {
+                let _ = super::park::remove_snapshot(root, &config.run.to_string());
+            }
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
 /// One honest journal row for a run whose owner died before it settled: what
 /// the guard can still prove, never a reported result. A write that cannot be
 /// made leaves the run unrecorded rather than changing the settlement.
@@ -1142,6 +1246,7 @@ fn record_owner_loss(
     coordinates: Option<&crate::gate::ForegroundDiag>,
     groups: usize,
     closed: bool,
+    outcome: &str,
 ) {
     let Some(coordinates) = coordinates else {
         return;
@@ -1164,7 +1269,7 @@ fn record_owner_loss(
         checkout: checkout.text(),
         boot: config.owner.boot.as_str().to_owned(),
         task: coordinates.task.task().to_owned(),
-        outcome: if closed { "interrupted" } else { "unknown" }.to_owned(),
+        outcome: outcome.to_owned(),
         exit_code: None,
         signal: None,
         cleanup: if closed { "complete" } else { "incomplete" }.to_owned(),

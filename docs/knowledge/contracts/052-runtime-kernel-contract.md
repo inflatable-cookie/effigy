@@ -282,15 +282,30 @@ the pid, when another process has taken it, or when the recorded process has
 exited and its parent has not yet reaped it — a zombie can never settle or
 report the run again. Nobody is left to settle or report such a run, so the
 wait ends and the guard takes the settlement over rather than holding the lock
-forever. It settles its registered effects and then releases its gate
-descriptions, and only after that release does it record the run's honest
-outcome (below). The order is deliberate: a reader that found both a held
-foreground gate and a terminal record for one run would report conflicting
-evidence instead of the run, so the record follows the release, and a reader
-that needs the settled result (`effigy run stop <run>`) observes the release
+forever. After owner loss it inventories the run's recorded process groups with
+the same membership rows the sentinel uses (`custody/platform.rs`
+`group_membership`, including Darwin `getpgid` ESRCH skips so a stale
+`proc_listpgrppids` pid is not Unproven residue). A proved-empty group with the
+cleanup pin closed settles as `interrupted` and drops the gates
+(`supervise/memory.rs` `wait_for_closure` owner-lost early return, then
+`park_unproved`). An unproved closure — pin still open, or a group row that
+stayed ambiguous — parks the sentinel as the verified holder: it writes
+`.effigy/state/parked/<run>.json`, re-inventories every 250 ms, and never
+signals. `effigy run release <run>` re-inventories now; only a proved-empty
+group writes `.effigy/state/parked/<run>.release`, which the parked loop
+honours by dropping the gates and recording `released`. Live members are named
+and nothing is signalled. KILL is not the supported path. It settles its
+registered effects and then releases its gate descriptions, and only after that
+release does it record the run's honest outcome (below). The order is
+deliberate: a reader that found both a held foreground gate and a terminal
+record for one run would report conflicting evidence instead of the run, so the
+record follows the release, and a reader that needs the settled result
+(`effigy run stop <run>` or `effigy run release <run>`) observes the release
 first and then waits for the record within its own bounded wait. An observation
 the guard cannot verify is never proof of death, so custody stays held and
-nothing is recorded.
+nothing is recorded. `run stop`, a lock-wait timeout and `doctor` name the
+holding run id, task, sentinel or owner PID, checkout path and state, and the
+exact `effigy run release <run>` command when a parked snapshot exists.
 
 Bound checkout admission takes the checkout's one gate spelling: the digest of
 its canonical path. A run's persisted-token scope and that spelling are the same

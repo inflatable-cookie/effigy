@@ -2846,7 +2846,7 @@ fn prelaunch_pending_obligation_is_atomic_and_legacy_unreadable() {
 /// gate descriptions and the pin are the real ones.
 #[test]
 fn run_a_foreground_guard_settles_a_run_whose_owner_died_with_its_pin_held() {
-    check_foreground_owner_loss(true, OwnerEnd::Reaped, false);
+    check_foreground_owner_loss(true, OwnerEnd::Reaped, false, ParkFollowup::KeepHeld);
 }
 
 /// The same takeover with every pin writer closed first: custody provably
@@ -2854,7 +2854,7 @@ fn run_a_foreground_guard_settles_a_run_whose_owner_died_with_its_pin_held() {
 /// still never a reported success.
 #[test]
 fn run_a_foreground_guard_settles_closed_custody_as_interrupted() {
-    check_foreground_owner_loss(false, OwnerEnd::Reaped, false);
+    check_foreground_owner_loss(false, OwnerEnd::Reaped, false, ParkFollowup::KeepHeld);
 }
 
 /// An owner that has exited but whose parent has not reaped it is a zombie: it
@@ -2862,14 +2862,35 @@ fn run_a_foreground_guard_settles_closed_custody_as_interrupted() {
 /// gate forever (effigy#986).
 #[test]
 fn run_a_foreground_guard_settles_a_zombie_owner() {
-    check_foreground_owner_loss(true, OwnerEnd::Zombie, false);
+    check_foreground_owner_loss(true, OwnerEnd::Zombie, false, ParkFollowup::KeepHeld);
 }
 
 /// A strict-persistence run's owner-death record goes to the preallocated ring,
 /// so the guard opens no SQLite connection for it (effigy#985, effigy#986).
 #[test]
 fn run_a_foreground_guard_settles_a_strict_run_into_its_ring() {
-    check_foreground_owner_loss(false, OwnerEnd::Reaped, true);
+    check_foreground_owner_loss(false, OwnerEnd::Reaped, true, ParkFollowup::KeepHeld);
+}
+
+/// Owner SIGKILL with the pin still held, then the last pin holder exits: the
+/// park loop re-inventories, proves the empty group, and settles `interrupted`
+/// without an explicit release (effigy#1034).
+#[test]
+fn run_a_foreground_guard_releases_after_the_empty_group_closes() {
+    check_foreground_owner_loss(
+        true,
+        OwnerEnd::Reaped,
+        false,
+        ParkFollowup::EmptyGroupSettles,
+    );
+}
+
+/// A parked sentinel that sees `effigy run release` with a proved-empty group
+/// drops its gates and records `released`, even while the cleanup pin is still
+/// open (effigy#1034).
+#[test]
+fn run_a_parked_guard_records_released_on_an_empty_group_release_request() {
+    check_foreground_owner_loss(true, OwnerEnd::Reaped, false, ParkFollowup::ReleaseRequest);
 }
 
 /// How the stand-in owner ends.
@@ -2881,7 +2902,23 @@ enum OwnerEnd {
     Zombie,
 }
 
-fn check_foreground_owner_loss(pin_held: bool, owner_end: OwnerEnd, strict: bool) {
+/// What happens after an unproved closure parks the guard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParkFollowup {
+    /// Leave the pin held: the guard stays the verified holder.
+    KeepHeld,
+    /// Close the last pin writer: empty group settles as interrupted.
+    EmptyGroupSettles,
+    /// Write the release request while the pin is still open.
+    ReleaseRequest,
+}
+
+fn check_foreground_owner_loss(
+    pin_held: bool,
+    owner_end: OwnerEnd,
+    strict: bool,
+    followup: ParkFollowup,
+) {
     use std::os::fd::AsRawFd;
 
     let home = effigy_test_support::short_tempdir("og-").unwrap();
@@ -2995,6 +3032,46 @@ fn check_foreground_owner_loss(pin_held: bool, owner_end: OwnerEnd, strict: bool
             ),
             "an unproved closure retains the checkout gate"
         );
+        match followup {
+            ParkFollowup::KeepHeld => {}
+            ParkFollowup::EmptyGroupSettles => {
+                stop_owned(&mut residue);
+                let deadline = Instant::now() + Duration::from_secs(20);
+                while !guard.is_finished() && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                assert!(
+                    guard.is_finished(),
+                    "an empty group after owner SIGKILL settles without parking forever"
+                );
+                assert!(guard.join().unwrap().is_ok());
+            }
+            ParkFollowup::ReleaseRequest => {
+                let run_text = run.to_string();
+                let deadline = Instant::now() + Duration::from_secs(2);
+                while Instant::now() < deadline {
+                    if crate::supervise::park::read_snapshot(&root, &run_text)
+                        .ok()
+                        .flatten()
+                        .is_some()
+                    {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                crate::supervise::park::request_release(&root, &run_text)
+                    .expect("empty recorded groups release");
+                let deadline = Instant::now() + Duration::from_secs(20);
+                while !guard.is_finished() && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                assert!(
+                    guard.is_finished(),
+                    "a release request with an empty group drops the parked gates"
+                );
+                assert!(guard.join().unwrap().is_ok());
+            }
+        }
     } else {
         let deadline = Instant::now() + Duration::from_secs(20);
         while !guard.is_finished() && Instant::now() < deadline {
@@ -3047,12 +3124,28 @@ fn check_foreground_owner_loss(pin_held: bool, owner_end: OwnerEnd, strict: bool
     assert_eq!(record.checkout, checkout.text());
     assert_eq!(record.boot, identity.boot.as_str());
     assert!(record.exit_code.is_none() && record.signal.is_none());
-    if pin_held {
-        assert_eq!(record.outcome, "unknown");
-        assert_eq!(record.cleanup, "incomplete");
-    } else {
-        assert_eq!(record.outcome, "interrupted");
-        assert_eq!(record.cleanup, "complete");
+    match followup {
+        ParkFollowup::KeepHeld if pin_held => {
+            assert_eq!(record.outcome, "unknown");
+            assert_eq!(record.cleanup, "incomplete");
+        }
+        ParkFollowup::ReleaseRequest => {
+            assert_eq!(record.outcome, "released");
+            assert_eq!(record.cleanup, "complete");
+        }
+        _ => {
+            assert_eq!(record.outcome, "interrupted");
+            assert_eq!(record.cleanup, "complete");
+        }
+    }
+    if followup != ParkFollowup::KeepHeld || !pin_held {
+        assert!(
+            matches!(
+                crate::gate::Gate::probe(&cx.operation().observe().unwrap(), &root, &owner),
+                Observed::Verified(crate::gate::GateState::Free, _)
+            ),
+            "a settled parked run releases its checkout gate"
+        );
     }
     stop_owned(&mut residue);
 }

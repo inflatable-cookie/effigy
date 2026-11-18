@@ -529,23 +529,22 @@ pub(crate) enum MembershipRow {
 pub(crate) fn group_membership(pgid: u32) -> io::Result<Vec<MembershipRow>> {
     let mut rows = Vec::new();
     for pid in group_pids(pgid)? {
-        #[cfg(target_os = "linux")]
-        {
-            // SAFETY: pid came from the OS inventory; getpgid only observes it.
-            let group = unsafe { libc::getpgid(pid as i32) };
-            if group < 0 {
-                let e = io::Error::last_os_error();
-                if e.raw_os_error() == Some(libc::ESRCH) {
-                    // Gone before we could ask whether it was ours. Linux lists
-                    // every pid, so this is usually an unrelated short-lived
-                    // process; it is neither a member nor closure evidence.
-                    continue;
-                }
-                return Err(e);
-            }
-            if group as u32 != pgid {
+        // SAFETY: pid came from the OS inventory; getpgid only observes it.
+        let group = unsafe { libc::getpgid(pid as i32) };
+        if group < 0 {
+            let e = io::Error::last_os_error();
+            if e.raw_os_error() == Some(libc::ESRCH) {
+                // Gone before we could ask whether it was ours. Linux lists
+                // every pid; Darwin's proc_listpgrppids can retain a stale
+                // pid after the leader dies. Either way the pid is neither a
+                // member nor closure evidence, so it must not become Unproven
+                // residue (effigy#1034).
                 continue;
             }
+            return Err(e);
+        }
+        if group as u32 != pgid {
+            continue;
         }
         rows.push(membership_row(pid, ident::process_state(pid), || {
             ident::process_identity(pid)

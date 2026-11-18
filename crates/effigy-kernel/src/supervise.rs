@@ -44,6 +44,7 @@ pub(crate) mod image_identity;
 #[cfg(test)]
 pub(crate) mod image_identity;
 pub(crate) mod memory;
+pub mod park;
 
 /// Qualification executables call this at process entry. It grants no spawn
 /// authority and is absent from ordinary product builds.

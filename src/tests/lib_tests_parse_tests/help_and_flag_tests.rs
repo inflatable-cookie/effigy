@@ -264,6 +264,18 @@ fn parse_command_parses_run_control() {
             },
         })
     );
+    assert_eq!(
+        parse_command(["run", "release", "ci-1234", "--wait-ms", "250"].map(str::to_owned))
+            .expect("run release"),
+        Command::Runs(RunsArgs {
+            repo_override: None,
+            output_json: false,
+            action: RunsAction::Release {
+                run: "ci-1234".to_owned(),
+                wait_ms: Some(250),
+            },
+        })
+    );
     assert!(parse_command(["run".to_owned(), "status".to_owned()]).is_err());
     assert_eq!(
         parse_command(["run".to_owned()]).expect("bare run"),

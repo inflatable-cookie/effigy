@@ -1524,6 +1524,12 @@ fn conflict(
     let stop_command = holder_run
         .as_ref()
         .map(|run| format!("effigy run stop {run}"));
+    let parked = holder_run
+        .as_deref()
+        .and_then(|run| parked_holder(&target.root, run));
+    let release_command = parked
+        .as_ref()
+        .map(effigy_kernel::supervise::park::ParkedHolder::release_command);
     let attached_to_terminal = diag.as_ref().is_some_and(|diag| diag.foreground.is_some());
     // A foreground holder whose recorded owner is verifiably gone is not a
     // running invocation: its surviving sentinel holds the lock only while it
@@ -1532,8 +1538,9 @@ fn conflict(
     let owner_gone = diag
         .as_ref()
         .is_some_and(|diag| diag.foreground.is_some() && matches!(diag.state, Observed::Absent(_)));
-    let holder_text = match &diag {
-        Some(diag) if owner_gone => {
+    let holder_text = match (&diag, &parked) {
+        (_, Some(holder)) => holder.named(),
+        (Some(diag), None) if owner_gone => {
             let mut parts = vec![format!(
                 "pid {} was the foreground owner and is verified gone",
                 diag.pid
@@ -1544,7 +1551,7 @@ fn conflict(
             parts.push("the run's sentinel still holds the lock while it settles the run".into());
             parts.join(", ")
         }
-        Some(diag) => {
+        (Some(diag), None) => {
             let mut parts = vec![format!("pid {} on this host", diag.pid)];
             if let Some(run) = &diag.run {
                 parts.push(format!("run {run}"));
@@ -1562,7 +1569,7 @@ fn conflict(
             }
             parts.join(", ")
         }
-        None => "a live process on this host; its diagnostics are unreadable".to_owned(),
+        (None, None) => "a live process on this host; its diagnostics are unreadable".to_owned(),
     };
     let what = if owner_gone {
         format!(
@@ -1588,16 +1595,24 @@ fn conflict(
                       inventory cannot show it"
             .to_owned(),
     };
-    let stop_text = match (stop_command.as_deref(), attached_to_terminal) {
-        (Some(stop), true) if owner_gone => format!(
+    let stop_text = match (
+        stop_command.as_deref(),
+        release_command.as_deref(),
+        attached_to_terminal,
+    ) {
+        (_, Some(release), _) => format!(
+            "release the parked sentinel with `{release}` after proving its process group is empty \
+             (it never signals task processes)"
+        ),
+        (Some(stop), None, true) if owner_gone => format!(
             "settle it with `{stop}`, which waits for that run's sentinel to finish and reports \
              what it recorded"
         ),
-        (Some(stop), true) => {
+        (Some(stop), None, true) => {
             format!("stop that run with `{stop}` (or press Ctrl-C in its terminal)")
         }
-        (Some(stop), false) => format!("stop it with `{stop}`"),
-        (None, _) => "stop that run through its own owner".to_owned(),
+        (Some(stop), None, false) => format!("stop it with `{stop}`"),
+        (None, None, _) => "stop that run through its own owner".to_owned(),
     };
     let remediation = match (wait, &wait_flag) {
         (Some((timeout, waited)), Some(wait_flag)) => format!(
@@ -1620,7 +1635,15 @@ fn conflict(
         "schema_version": 2,
         "scope": scope,
         "task": target.label,
-        "holder": diag.as_ref().map(|diag| serde_json::json!({
+        "holder": parked.as_ref().map(|holder| serde_json::json!({
+            "pid": holder.sentinel_pid,
+            "sentinel_pid": holder.sentinel_pid,
+            "owner_pid": holder.owner_pid,
+            "run": holder.run,
+            "task": holder.task,
+            "checkout": holder.checkout,
+            "state": holder.state,
+        })).or_else(|| diag.as_ref().map(|diag| serde_json::json!({
             "pid": diag.pid,
             "run": diag.run,
             "start": diag.start,
@@ -1629,25 +1652,30 @@ fn conflict(
                 Observed::Verified(_, _) => "running",
                 _ => "unknown",
             },
-        })),
+        }))),
         "holder_started_at_epoch_ms": run_started,
         "wait_timeout_ms": wait.map(|(timeout, _)| timeout),
         "waited_ms": wait.map(|(_, waited)| waited).or_else(|| {
             Some(started.elapsed().as_millis() as u64)
         }),
         "status_command": status_command,
+        "release_command": release_command,
         "next": status_command
             .iter()
             .map(|command| format!("inspect the live run with `{command}`"))
             .chain(wait_flag.iter().map(|flag| format!("wait for it with `{flag}`")))
-            .chain(stop_command.iter().map(|stop| format!("stop it with `{stop}`")))
+            .chain(release_command.iter().map(|release| format!("release the parked sentinel with `{release}`")))
+            .chain(stop_command.iter().filter(|_| release_command.is_none()).map(|stop| format!("stop it with `{stop}`")))
             .collect::<Vec<_>>(),
     })
     .to_string();
     RunnerError::TaskLockConflict(Box::new(effigy_core::task_lock::TaskLockConflict {
         scope,
         task: target.label.clone(),
-        holder_pid: diag.as_ref().map(|diag| diag.pid),
+        holder_pid: parked
+            .as_ref()
+            .map(|holder| holder.sentinel_pid)
+            .or_else(|| diag.as_ref().map(|diag| diag.pid)),
         holder_run: diag.as_ref().and_then(|diag| diag.run.clone()),
         holder_started_at_epoch_ms: run_started,
         wait_timeout_ms: wait.map(|(timeout, _)| timeout),
@@ -1656,6 +1684,19 @@ fn conflict(
         details_json: Some(details_json),
         remediation,
     }))
+}
+
+fn parked_holder(
+    checkout: &std::path::Path,
+    run: &str,
+) -> Option<effigy_kernel::supervise::park::ParkedHolder> {
+    let cx = kernel::observe_context(Duration::from_secs(2));
+    match kernel::observe_root(&cx, checkout) {
+        Observed::Verified(root, _) => effigy_kernel::supervise::park::read_snapshot(&root, run)
+            .ok()
+            .flatten(),
+        _ => None,
+    }
 }
 
 fn age_text(started_ms: i64) -> Option<String> {

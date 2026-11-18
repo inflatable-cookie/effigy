@@ -51,6 +51,16 @@ impl RunRecord {
     pub(in crate::runner) fn foreground(&self) -> bool {
         matches!(self.source, RunSource::Foreground(_))
     }
+
+    /// The parked-sentinel snapshot this run wrote, if the memory guard is
+    /// still holding the checkout gates (effigy#1034).
+    pub(in crate::runner) fn parked_snapshot(
+        &self,
+    ) -> Option<effigy_kernel::supervise::park::ParkedHolder> {
+        effigy_kernel::supervise::park::read_snapshot(&self.root, &self.view.run_id)
+            .ok()
+            .flatten()
+    }
     /// A terminal-record run: settled, with no live owner and no recoverable
     /// process identity.
     pub(in crate::runner) fn is_terminal_record(&self) -> bool {

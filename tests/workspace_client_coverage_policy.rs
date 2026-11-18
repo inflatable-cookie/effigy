@@ -36,6 +36,7 @@ fn deferred_commands_refuse_without_echoing_arguments() {
         vec!["gateway", "status"],
         vec!["container", "stats", "--global"],
         vec!["run", "logs", "secret-value"],
+        vec!["run", "release", "id"],
         vec!["release", "status"],
     ] {
         let diagnostic = unsupported(&parse(&args)).expect("deferred command must refuse");

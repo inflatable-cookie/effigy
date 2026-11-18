@@ -1,4 +1,4 @@
-//! `effigy runs` and `effigy run status|logs|stop <run>`: generic run
+//! `effigy runs` and `effigy run status|logs|stop|release <run>`: generic run
 //! control for every run (Q-006), on the kernel run journal.
 //!
 //! A follower binds to one exact run id and reads each stream's log by byte
@@ -69,6 +69,12 @@ pub(in crate::runner) fn run_runs(args: RunsArgs) -> Result<String, RunnerError>
             json,
         ),
         RunsAction::Stop { run, wait_ms } => stop(
+            &checkout(repo_override)?,
+            &run,
+            wait_ms.map_or(STOP_WAIT_DEFAULT, Duration::from_millis),
+            json,
+        ),
+        RunsAction::Release { run, wait_ms } => release(
             &checkout(repo_override)?,
             &run,
             wait_ms.map_or(STOP_WAIT_DEFAULT, Duration::from_millis),
@@ -368,7 +374,13 @@ fn status(checkout: &Path, selector: &str, json: bool) -> Result<String, RunnerE
             lines.push(format!("boot     {boot}"));
         }
     }
-    if record.view.state == "interrupted" {
+    if let Some(holder) = parked_holder(checkout, &record.view.run_id) {
+        lines.push(format!("holder   {}", holder.named()));
+        lines.push(format!(
+            "next     {}  (parked sentinel; never signals task processes)",
+            holder.release_command()
+        ));
+    } else if record.view.state == "interrupted" {
         if record.foreground() {
             // A foreground run has no replay: its surviving sentinel settles it
             // and records what it can prove (effigy#986).
@@ -481,8 +493,8 @@ fn stop_foreground(record: &RunRecord, wait: Duration, json: bool) -> Result<Str
         let started = Instant::now();
         while !record.foreground_released() {
             if started.elapsed() >= wait {
-                return Err(unknown(
-                    &record.id.to_string(),
+                return Err(parked_or_unknown(
+                    record,
                     "the verified foreground owner was signalled but custody has not released its \
                      gate",
                 ));
@@ -520,8 +532,8 @@ fn stop_foreground(record: &RunRecord, wait: Duration, json: bool) -> Result<Str
     let started = Instant::now();
     while !record.foreground_released() {
         if started.elapsed() >= wait {
-            return Err(unknown(
-                &record.id.to_string(),
+            return Err(parked_or_unknown(
+                record,
                 "the run's owner is gone and its sentinel has not released custody; no signal was \
                  sent",
             ));
@@ -995,6 +1007,129 @@ impl StreamJson {
             "truncated_at": self.truncated_at,
         })
     }
+}
+
+/// `effigy run release <run>`: re-inventory a parked sentinel's groups and,
+/// only when they are empty, ask that sentinel to drop its gates. Never
+/// signals a task process (effigy#1034).
+fn release(
+    checkout: &Path,
+    selector: &str,
+    wait: Duration,
+    json: bool,
+) -> Result<String, RunnerError> {
+    let root = checkout_effects_root(checkout)?;
+    let run = match resolve_in(checkout, selector) {
+        Ok(Lookup::Found(record)) => record.view.run_id.clone(),
+        Ok(Lookup::NotFound) | Ok(Lookup::Unknown(_)) | Err(_) => selector.to_owned(),
+    };
+    match effigy_kernel::supervise::park::request_release(root, &run) {
+        Ok(outcome) => {
+            if effigy_kernel::supervise::park::wait_released(root, &outcome.run, wait) {
+                if json {
+                    return Ok(serde_json::json!({
+                        "schema": RUN_SCHEMA,
+                        "schema_version": 1,
+                        "run": outcome.run,
+                        "task": outcome.task,
+                        "checkout": outcome.checkout,
+                        "sentinel_pid": outcome.sentinel_pid,
+                        "release": "released",
+                    })
+                    .to_string());
+                }
+                return Ok(format!(
+                    "run {} released (task {}, sentinel pid {}); custody dropped",
+                    outcome.run, outcome.task, outcome.sentinel_pid
+                ));
+            }
+            let holder = parked_holder(checkout, &outcome.run);
+            let named = holder
+                .as_ref()
+                .map(|holder| holder.named())
+                .unwrap_or_else(|| {
+                    format!(
+                        "run {} sentinel pid {} still holds the gate",
+                        outcome.run, outcome.sentinel_pid
+                    )
+                });
+            let command = holder
+                .as_ref()
+                .map(effigy_kernel::supervise::park::ParkedHolder::release_command)
+                .unwrap_or_else(|| format!("effigy run release {}", outcome.run));
+            Err(RunnerError::RunControl {
+                code: 1,
+                detail: format!(
+                    "{named}; the release request was written and no signal was sent. Wait for \
+                     that sentinel to drop its gates, or retry `{command}`. An older sentinel \
+                     that never wrote a parked snapshot cannot handle the request"
+                ),
+                details_json: serde_json::json!({
+                    "schema": RUN_SCHEMA,
+                    "schema_version": 1,
+                    "run": outcome.run,
+                    "task": outcome.task,
+                    "checkout": outcome.checkout,
+                    "sentinel_pid": outcome.sentinel_pid,
+                    "release": "requested",
+                    "holder": holder.as_ref().map(|holder| serde_json::json!({
+                        "run": holder.run,
+                        "task": holder.task,
+                        "sentinel_pid": holder.sentinel_pid,
+                        "owner_pid": holder.owner_pid,
+                        "checkout": holder.checkout,
+                        "state": holder.state,
+                    })),
+                    "release_command": command,
+                })
+                .to_string(),
+            })
+        }
+        Err(error) => Err(RunnerError::task_invocation(error.to_string())),
+    }
+}
+
+fn parked_holder(
+    checkout: &Path,
+    run: &str,
+) -> Option<effigy_kernel::supervise::park::ParkedHolder> {
+    let root = checkout_effects_root(checkout).ok()?;
+    effigy_kernel::supervise::park::read_snapshot(root, run)
+        .ok()
+        .flatten()
+}
+
+fn parked_or_unknown(record: &RunRecord, reason: &str) -> RunnerError {
+    let run = record.view.run_id.clone();
+    if let Some(holder) = record.parked_snapshot() {
+        return RunnerError::RunControl {
+            code: 1,
+            detail: format!(
+                "run `{run}`: outcome unknown, because runtime evidence cannot be verified ({reason}). \
+                 Holder: {}. No signal was sent. Release with `{}`",
+                holder.named(),
+                holder.release_command()
+            ),
+            details_json: serde_json::json!({
+                "schema": RUN_SCHEMA,
+                "schema_version": 1,
+                "selector": run,
+                "state": "unknown",
+                "reason": reason,
+                "holder": {
+                    "run": holder.run,
+                    "task": holder.task,
+                    "sentinel_pid": holder.sentinel_pid,
+                    "owner_pid": holder.owner_pid,
+                    "checkout": holder.checkout,
+                    "state": holder.state,
+                },
+                "release_command": holder.release_command(),
+            })
+            .to_string(),
+        };
+    }
+    unknown(&run, reason)
 }
 
 fn find(checkout: &Path, selector: &str) -> Result<RunRecord, RunnerError> {
