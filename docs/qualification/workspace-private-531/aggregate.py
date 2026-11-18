@@ -188,6 +188,12 @@ def verify_record(backend, record, head, allowed):
             and binding['candidate_receipt']['features'] == QUALIFICATION_FEATURES
             and binding['candidate_receipt']['sha256'] == binding['candidate']['sha256'],
             'receipt does not carry the exact qualification candidate contract')
+    sidecar = binding.get('candidate_active_version')
+    require(isinstance(sidecar, dict) and set(sidecar) == {'path', 'sha256'}
+            and isinstance(sidecar['path'], str) and Path(sidecar['path']).is_absolute()
+            and re.fullmatch(r'[0-9a-f]{64}', sidecar['sha256'])
+            and sidecar['path'] == str(Path(binding['candidate']['path']).with_suffix('.active-version')),
+            'receipt does not carry the candidate active-version sidecar binding')
     require(binding['production_receipt']['source_head'] == cell_head
             and binding['production_receipt']['features'] == []
             and binding['production_receipt']['sha256'] == binding['production']['sha256'],
@@ -266,6 +272,7 @@ def aggregate(args):
             'production_features': first['production_receipt']['features'],
             'old_source_head': first['old_source_head'],
             'artifacts': {backend: {'candidate': records[backend]['binding']['candidate'],
+                                    'candidate_active_version': records[backend]['binding']['candidate_active_version'],
                                     'production': records[backend]['binding']['production'],
                                     'old_binary': records[backend]['binding']['old_binary']}
                           for backend in BACKENDS},

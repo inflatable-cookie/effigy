@@ -110,6 +110,8 @@ Each backend's input pins:
 - exact source head for that cell; default production binary and its feature-free build
   receipt; qualification binary and its single-feature build receipt. Both binary
   receipts must name the cell's own source head;
+- candidate binary bytes and the adjacent `.active-version` sidecar as separate
+  SHA-256-bound inputs;
 - the frozen helper protocols for that head and the genuine old head
   (`candidate_helper_protocol`, `old_helper_protocol` per cell), computed on
   the host launcher where a git checkout exists and frozen into the inputs.

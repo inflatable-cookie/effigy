@@ -1,0 +1,1 @@
+Workspace activation refusals now include the bounded cause from frozen publication planning and bind/reacquire, making failures easier to diagnose without changing their category or recovery behavior.

@@ -28,7 +28,7 @@ pub(super) fn build(
 ) -> Result<SupervisorPlan, RunError> {
     validation.recheck_directory()?;
     let mut observation = prepare_observation(&validation.policy)
-        .map_err(|_| unavailable("workspace planning backend observation unavailable"))?;
+        .map_err(|error| unavailable_with_cause("workspace planning backend observation unavailable", error))?;
     let plan = inputs::plan(
         ReservedPlanRequest {
             policy: &validation.policy,
@@ -36,7 +36,7 @@ pub(super) fn build(
         },
         observation.as_mut(),
     )
-    .map_err(|_| unavailable("workspace frozen publication planning refused"))?
+    .map_err(|error| unavailable_with_cause("workspace frozen publication planning refused", error))?
     .ok_or_else(|| RunError::refused("workspace declaration changed before sealing"))?;
     if plan.backend().kind != validation.backend.kind
         || plan.backend().engine != validation.backend.engine
@@ -163,4 +163,25 @@ pub(super) fn prepare_observation(
 
 fn unavailable(message: &'static str) -> RunError {
     RunError::unavailable(message)
+}
+
+fn unavailable_with_cause(message: &str, error: impl std::fmt::Display) -> RunError {
+    RunError::unavailable(format!("{message}: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unavailable_with_cause;
+
+    #[test]
+    fn frozen_publication_refusal_keeps_the_inner_cause() {
+        let error = unavailable_with_cause(
+            "workspace frozen publication planning refused",
+            "candidate artifact active-version sidecar missing",
+        );
+
+        assert!(error
+            .to_string()
+            .contains("candidate artifact active-version sidecar missing"));
+    }
 }

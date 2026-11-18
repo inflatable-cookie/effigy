@@ -17,6 +17,10 @@ class Window(runtime.Window):
     def inventory(self):
         return runtime.engine_inventory(self.engine_command)
 
+    @staticmethod
+    def live_writer_ack_deadline(window_end, now):
+        return min(window_end, now + runtime.SEALED_ACTIVATION_PHASE_SECONDS)
+
     def engine_command(self, *args, **kwargs):
         if 'inspect' in args:
             kwargs['protected_output'] = True
@@ -39,7 +43,7 @@ class Window(runtime.Window):
             name = 'writer-gate-%04d' % self.command_count
             exclusive(name + '.request.json', {'nonce': gate, 'container': self.container}, dir_fd=self.root_fd)
             acknowledgement = self.base / (name + '.observed.json')
-            deadline = min(self.end, time.monotonic() + 90)
+            deadline = self.live_writer_ack_deadline(self.end, time.monotonic())
             while not acknowledgement.exists():
                 require(time.monotonic() < deadline, 'live native writer observation did not return')
                 time.sleep(.1)

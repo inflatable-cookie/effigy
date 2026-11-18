@@ -199,6 +199,9 @@ class Window:
         self.root = Path(exploration_checkout['path']) if exploration_checkout else self.base / 'checkout'
         self.events = []
         self.candidate = artifact(cell['candidate'])
+        candidate_active_version = artifact(cell['candidate_active_version'])
+        require(candidate_active_version == Path(str(self.candidate) + '.active-version'),
+                'candidate active-version sidecar belongs to another artifact')
         self.production = artifact(cell['production'])
         self.utility = artifact(cell['utility'])
         self.kernel_fixture = artifact(cell['kernel_fixture'])

@@ -25,7 +25,9 @@ def inputs():
             old_source_receipt=dict(source_head='2' * 40, sha256='c' * 64),
             candidate_receipt=dict(source_head=HEAD, features=['workspace-private-qualification'], sha256='a' * 64),
             production_receipt=dict(source_head=HEAD, features=[], sha256='b' * 64),
-            candidate=dict(sha256='a' * 64), production=dict(sha256='b' * 64), old_binary=dict(sha256='c' * 64),
+            candidate=dict(path=str(SCRATCH / 'unarmed-candidate'), sha256='a' * 64),
+            candidate_active_version=dict(path=str(SCRATCH / 'unarmed-candidate.active-version'), sha256='d' * 64),
+            production=dict(sha256='b' * 64), old_binary=dict(sha256='c' * 64),
             guest_install_identity=dict(path=str(SCRATCH / 'unarmed-guest.install-identity'), sha256='e' * 64),
             runtime_image='sha256:' + 'd' * 64, budget_seconds=600,
             qualification_root=dict(path=str(SCRATCH / ('531-unarmed-' + backend)),
@@ -116,7 +118,9 @@ def invocation_record(backend, cell, base, source_head=HEAD, inputs_sha256='f' *
                'source_head': source_head,
                'programs': {name: 'p' * 64 for name in ('launch.py', 'runtime.py', 'common.py', 'probe.py')},
                'contract': 'effigy.workspace-private-proof.v1',
-               'candidate': dict(cell['candidate']), 'candidate_receipt': dict(cell['candidate_receipt']),
+               'candidate': dict(cell['candidate']),
+               'candidate_active_version': dict(cell['candidate_active_version']),
+               'candidate_receipt': dict(cell['candidate_receipt']),
                'production': dict(cell['production']), 'production_receipt': dict(cell['production_receipt']),
                'old_source_head': cell['old_source_head'], 'old_binary': dict(cell['old_binary']),
                'old_source_receipt': dict(cell['old_source_receipt']),
@@ -443,6 +447,24 @@ class Boundaries(unittest.TestCase):
         for cell in value['backends']:
             validate_go(go(cell), 'f' * 64, cell, HEAD)
 
+    def test_candidate_requires_its_pinned_active_version_sidecar(self):
+        value = inputs()
+        del value['backends'][0]['candidate_active_version']
+        with self.assertRaisesRegex(RuntimeError, 'pinned candidate active-version sidecar required'):
+            validate_inputs(value, HEAD)
+        value = inputs()
+        value['backends'][0]['candidate_active_version']['path'] = str(SCRATCH / 'other.active-version')
+        with self.assertRaisesRegex(RuntimeError, 'belongs to another artifact'):
+            validate_inputs(value, HEAD)
+
+    def test_linux_live_writer_ack_uses_activation_allowance_and_window_cap(self):
+        import linux_native_window
+        import runtime
+        deadline = linux_native_window.Window.live_writer_ack_deadline
+        allowance = runtime.SEALED_ACTIVATION_PHASE_SECONDS
+        self.assertEqual(deadline(1000, 10), 10 + allowance)
+        self.assertEqual(deadline(200, 10), 200)
+
     def test_frozen_protocols_guard_without_git_on_ssh_route(self):
         import common
         value = inputs()
@@ -604,7 +626,14 @@ class Boundaries(unittest.TestCase):
             file = parent / 'fixture-only'
             file.write_bytes(b'unarmed unit fixture; never executed')
             item = dict(path=str(file), sha256=digest(file))
-            for name in ('candidate', 'production', 'utility', 'kernel_fixture', 'old_binary',
+            candidate = parent / 'candidate'
+            candidate.write_bytes(b'unarmed candidate; never executed')
+            candidate_active_version = Path(str(candidate) + '.active-version')
+            candidate_active_version.write_bytes(b'v0.14.1+local.fixture\n')
+            cell['candidate'] = dict(path=str(candidate), sha256=digest(candidate))
+            cell['candidate_active_version'] = dict(path=str(candidate_active_version),
+                                                   sha256=digest(candidate_active_version))
+            for name in ('production', 'utility', 'kernel_fixture', 'old_binary',
                          'kernel_tests', 'custody_tests', 'nextest_binary', 'nextest_config',
                          'guest_producer_receipt', 'guest_active_version', 'engine_binary'):
                 cell[name] = item.copy()
@@ -836,7 +865,8 @@ class Boundaries(unittest.TestCase):
             export = record['receipt_export']
             self.assertEqual(digest(Path(export['path'])), record['receipt_sha256'])
             binding = record['binding']
-            for key in ('source_head', 'cell_source_head', 'programs', 'contract', 'candidate', 'candidate_receipt', 'production',
+            for key in ('source_head', 'cell_source_head', 'programs', 'contract', 'candidate',
+                        'candidate_active_version', 'candidate_receipt', 'production',
                         'production_receipt', 'source_equivalence', 'old_source_head', 'old_binary', 'old_source_receipt', 'inputs',
                         'go_bindings', 'go_receipt', 'go_decision_id', 'qualification_root', 'driver',
                         'engine_kind', 'engine_identity', 'runtime_image', 'budget_seconds', 'one_shot_marker'):

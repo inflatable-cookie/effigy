@@ -316,6 +316,19 @@ def validate_inputs(value, head):
         require(len({cell['candidate']['sha256'], cell['production']['sha256'], cell['old_binary']['sha256']}) == 3,
                 'distinct qualification, ordinary and genuine old binaries required')
         require(cell['candidate_receipt']['sha256'] == cell['candidate']['sha256'], 'candidate receipt mismatch')
+        candidate_active_version = cell.get('candidate_active_version')
+        require(isinstance(candidate_active_version, dict)
+                and set(candidate_active_version) == {'path', 'sha256'}
+                and isinstance(candidate_active_version['path'], str)
+                and Path(candidate_active_version['path']).is_absolute()
+                and isinstance(candidate_active_version['sha256'], str)
+                and HEX.fullmatch(candidate_active_version['sha256']),
+                'pinned candidate active-version sidecar required')
+        require(isinstance(cell['candidate'].get('path'), str)
+                and Path(cell['candidate']['path']).is_absolute(),
+                'candidate artifact path required for its frozen sidecar')
+        require(candidate_active_version['path'] == str(Path(cell['candidate']['path']).with_suffix('.active-version')),
+                'candidate active-version sidecar belongs to another artifact')
         require(cell['old_source_receipt']['sha256'] == cell['old_binary']['sha256'], 'old receipt mismatch')
         require(cell['production_receipt']['source_head'] == cell['source_head'] and cell['production_receipt']['features'] == []
                 and cell['production_receipt']['sha256'] == cell['production']['sha256'], 'ordinary production build receipt mismatch')

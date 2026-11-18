@@ -104,13 +104,16 @@ class ReadinessTests(unittest.TestCase):
         Path(str(guest) + '.install-identity').write_bytes(b'fixture identity')
         metadata = self.root / 'binaries.json'
         metadata.write_text(json.dumps({'binary-path': str(self.binary)}))
+        candidate_active_version = Path(str(self.binary) + '.active-version')
+        candidate_active_version.write_bytes(b'v0.14.1+local.fixture\n')
         cell = {key: dict(path=str(self.binary), sha256=self.item['sha256']) for key in (
             'candidate', 'production', 'utility', 'kernel_fixture', 'old_binary', 'kernel_tests',
             'custody_tests', 'nextest_binary', 'cargo_metadata', 'nextest_config',
             'guest_producer_receipt', 'guest_active_version')}
         def bind(path):
             return dict(path=str(path), sha256=readiness.digest(path))
-        cell.update(binaries_metadata=bind(metadata), guest_artifact=bind(guest),
+        cell.update(candidate_active_version=bind(candidate_active_version),
+                    binaries_metadata=bind(metadata), guest_artifact=bind(guest),
                     guest_install_identity=bind(Path(str(guest) + '.install-identity')),
                     engine_binary=self.item, backend='desktop', engine_kind='docker',
                     engine_identity=self.env['DOCKER_HOST'], docker_config=self.env['DOCKER_CONFIG'],
