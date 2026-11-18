@@ -443,9 +443,11 @@ pub(in crate::runner) fn changed_runtime_secret_keys(
 /// The one line a changed delivery prints, in that apply only.
 ///
 /// The delivery cannot know whether a consumer reads these files per request or
-/// once at startup, so it states both facts and the remedy that re-delivers:
-/// stopping the stack and running `effigy dev` again. It names keys, never a
-/// value (effigy#1036).
+/// once at startup, so it states both facts. It prescribes nothing: runtime
+/// files are written after services start on every path, so a startup-only
+/// reader cannot be served by this delivery, and restarting the container may
+/// clear a tmpfs `runtime_dir`. That delivery-timing limit is its own lead
+/// (planner ruling 9b1019a7). It names keys, never a value (effigy#1036).
 pub(in crate::runner) fn runtime_secret_refresh_warnings(
     policy: &EffectiveContainerPolicy,
     runtime_dir: &str,
@@ -455,7 +457,7 @@ pub(in crate::runner) fn runtime_secret_refresh_warnings(
         return Vec::new();
     }
     vec![format!(
-        "container secret(s) {} were written to {runtime_dir}/runtime.json after `{service}` started; services that read this file per request see them now; a service that reads it only at startup keeps its old values: stop the stack and run `effigy dev` again",
+        "container secret(s) {} were written to {runtime_dir}/runtime.json after `{service}` started; services that read this file per request see them now; a service that reads it only at startup needs its process restarted to see them",
         changed.join(", "),
         service = policy.primary_service,
     )]
@@ -1000,17 +1002,30 @@ catalog = "php-fpm"
             "{line}"
         );
         assert!(
-            line.contains("a service that reads it only at startup keeps its old values"),
-            "{line}"
-        );
-        assert!(
-            line.contains("stop the stack and run `effigy dev` again"),
+            line.contains(
+                "a service that reads it only at startup needs its process restarted to see them"
+            ),
             "{line}"
         );
         assert!(
             !line.contains("stays until"),
             "the warning is one apply's report, not a persisted record: {line}"
         );
+        // Facts only: the delivery prescribes no remedy, because runtime files
+        // are written after services start on every path and a container
+        // restart may clear a tmpfs runtime directory (planner ruling
+        // 9b1019a7).
+        for prescribed in [
+            "stop the stack",
+            "effigy dev` again",
+            "effigy container",
+            "restart the container",
+        ] {
+            assert!(
+                !line.contains(prescribed),
+                "the warning prescribes nothing ({prescribed}): {line}"
+            );
+        }
 
         // An apply that writes what the service already holds says nothing.
         let matching = r#"{"OPENAI_API_KEY":"sk-new-value","UNCHANGED_KEY":"kept-value"}"#;
@@ -1095,8 +1110,14 @@ catalog = "php-fpm"
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].contains("MAILCHIMP_API_KEY"), "{}", warnings[0]);
         assert!(
-            warnings[0].contains("stop the stack and run `effigy dev` again"),
-            "the remedy re-delivers from a dev session: {}",
+            warnings[0]
+                .contains("a service that reads it only at startup needs its process restarted"),
+            "a startup-only reader is told the fact, not a remedy: {}",
+            warnings[0]
+        );
+        assert!(
+            !warnings[0].contains("stop the stack") && !warnings[0].contains("effigy container"),
+            "the warning prescribes nothing: {}",
             warnings[0]
         );
         assert!(

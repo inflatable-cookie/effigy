@@ -430,20 +430,31 @@ differs from what the service holds (including a service that holds no file at
 all), reports the changed keys once in that apply:
 
 ```text
-[warn] container secret(s) mailchimp_api_key were written to /run/effigy/secrets/runtime.json after `app` started; services that read this file per request see them now; a service that reads it only at startup keeps its old values: stop the stack and run `effigy dev` again
+[warn] container secret(s) mailchimp_api_key were written to /run/effigy/secrets/runtime.json after `app` started; services that read this file per request see them now; a service that reads it only at startup needs its process restarted to see them
 ```
 
 That is one apply's report, not a record: nothing is persisted between applies
 and nothing retires it. An apply that writes exactly what the service already
 holds says nothing, and an apply that changes a key says so again because it
-changed it again.
+changed it again. The line states facts and prescribes nothing: it does not
+recommend a container restart, which may clear a tmpfs `runtime_dir`.
 
 Nothing restarts a live service on its own: the apply is the preparation the
 task is about to run in, so stopping it there would break the run. Consumers
 that read these files when a process starts — a request-time bootstrap, a
-deferred spawn — see the new values on their next start and need no restart; a
-consumer that reads them only at startup needs the stack stopped and
-`effigy dev` run again, which is what the warning says.
+deferred spawn — see the new values on their next start and need no restart.
+
+**Known limitation: delivery timing for startup-only readers.** These files are
+written into a container that is already running, so a process that reads them
+exactly once at container start does not see a delivery that arrives afterwards
+— on any path, including a clean `effigy dev`. This is a pre-existing
+limitation of runtime-file delivery, not something this change introduces or
+fixes; the planner tracks it as its own lead. Until it is addressed, a consumer
+that must have the values at process start either reads the files per request
+(as the PHP bootstrap example below does), sources `runtime.env` for the
+process it starts, or gets its process restarted after a delivery — with the
+caveat that a restart clears a tmpfs `runtime_dir`, so a delivery into a tmpfs
+has to be repeated afterwards.
 
 Core
 Effigy treats those as generic runtime files. The bundle/catalog can then wire
