@@ -42,6 +42,10 @@
         "path": "/Volumes/Stash/scratch/effigy/531-approved-inputs/colima-candidate",
         "sha256": "RECORD_ACTUAL_SHA256"
       },
+      "candidate_active_version": {
+        "path": "/Volumes/Stash/scratch/effigy/531-approved-inputs/colima-candidate.active-version",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
       "production": {
         "path": "/Volumes/Stash/scratch/effigy/531-approved-inputs/colima-production",
         "sha256": "RECORD_ACTUAL_SHA256"
@@ -148,6 +152,10 @@
         "path": "/Volumes/Stash/scratch/effigy/531-approved-inputs/desktop-candidate",
         "sha256": "RECORD_ACTUAL_SHA256"
       },
+      "candidate_active_version": {
+        "path": "/Volumes/Stash/scratch/effigy/531-approved-inputs/desktop-candidate.active-version",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
       "production": {
         "path": "/Volumes/Stash/scratch/effigy/531-approved-inputs/desktop-production",
         "sha256": "RECORD_ACTUAL_SHA256"
@@ -252,6 +260,10 @@
       "colima_home": "/RECORD/EXISTING/COLIMA/HOME",
       "candidate": {
         "path": "/Volumes/Stash/scratch/effigy/531-approved-inputs/linux-candidate",
+        "sha256": "RECORD_ACTUAL_SHA256"
+      },
+      "candidate_active_version": {
+        "path": "/Volumes/Stash/scratch/effigy/531-approved-inputs/linux-candidate.active-version",
         "sha256": "RECORD_ACTUAL_SHA256"
       },
       "production": {

@@ -124,22 +124,18 @@ impl<E> IntegratedFailure<'_, E> {
     /// refusal here is what lets an operator read which call failed instead of
     /// only that the activation did.
     ///
-    /// Only the publication/selection sequence qualifies: every refusal it
-    /// raises is this crate's own fixed classification, because its guest I/O
-    /// is already reduced to the call that failed. Every other stage may carry
-    /// a backend or guest stream verbatim (a guest adapter's error can contain
-    /// the bytes it moved), and those sink the activation only to its stage.
+    /// Publication/selection and bind/reacquire keep their bounded causes.
+    /// Other stages may carry backend or guest streams verbatim (a guest
+    /// adapter's error can contain the bytes it moved), so they retain only
+    /// their existing stage classification.
     pub(in crate::runner) fn diagnosis(&self) -> Option<String> {
         match self {
-            Self::Publication { cause, .. } => Some(effigy_ui::human::bound_text(
-                &cause
-                    .diagnosis()
-                    .lines()
-                    .map(str::trim)
-                    .collect::<Vec<_>>()
-                    .join("; "),
-                DIAGNOSIS_BYTES,
-            )),
+            Self::Guarded {
+                cause,
+                bound: None,
+                ..
+            } => Some(bounded_diagnosis(&cause.to_string())),
+            Self::Publication { cause, .. } => Some(bounded_diagnosis(&cause.diagnosis())),
             Self::PhaseA(_)
             | Self::Guarded { .. }
             | Self::Parked { .. }
@@ -147,6 +143,27 @@ impl<E> IntegratedFailure<'_, E> {
             | Self::CleanupOnly { .. }
             | Self::ParkedCleanup { .. } => None,
         }
+    }
+}
+
+fn bounded_diagnosis(message: &str) -> String {
+    effigy_ui::human::bound_text(
+        &message.lines().map(str::trim).collect::<Vec<_>>().join("; "),
+        DIAGNOSIS_BYTES,
+    )
+}
+
+#[cfg(test)]
+mod diagnosis_tests {
+    use super::bounded_diagnosis;
+    use effigy_containers::environment::EnvError;
+    use effigy_kernel::run::RunError;
+
+    #[test]
+    fn bind_reacquire_diagnosis_keeps_the_inner_cause() {
+        let cause = EnvError::Kernel(RunError::unavailable("backend binding refused: engine offline"));
+
+        assert!(bounded_diagnosis(&cause.to_string()).contains("engine offline"));
     }
 }
 

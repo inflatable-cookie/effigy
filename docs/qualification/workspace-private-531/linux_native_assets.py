@@ -37,7 +37,7 @@ def script(binding, roles, seed):
                + qsource + ' ' + qroles + '/effigy-production\n')
     overlay = '[tasks."workspace:linux:artifact"]\nrun = ' + json.dumps(
         'exec ' + shlex.quote(roles + '/native-artifact.sh')) + '\ntimeout_ms = 1800000\n'
-    finish = '''import hashlib,json,shutil,sys,os
+    finish = '''import hashlib,json,shutil,sys,os,re
 from pathlib import Path
 sys.path.insert(0, str(Path.cwd()/'docs/qualification/workspace-private-531'))
 import common
@@ -75,6 +75,11 @@ for key,name in {'candidate':'effigy-candidate','production':'effigy-production'
  'kernel_tests':'kernel-tests','custody_tests':'custody-tests',
  'binaries_metadata':'binaries.json','cargo_metadata':'cargo.json'}.items():
  cell[key]=bind(roles/name)
+version_match=re.search(r'(?ms)^\\[workspace\\.package\\]\\s+.*?^version\\s*=\\s*"([^"]+)"', (source/'Cargo.toml').read_text())
+common.require(version_match is not None, 'candidate workspace version is missing')
+candidate_active_version=Path(str(roles/'effigy-candidate')+'.active-version')
+common.exclusive_bytes(candidate_active_version, ('v'+version_match.group(1)+'+local.'+cell['source_head'][:7]+'\\n').encode())
+cell['candidate_active_version']=bind(candidate_active_version)
 cell['candidate_receipt']={'source_head':cell['source_head'],'features':['workspace-private-qualification'],'sha256':cell['candidate']['sha256']}
 cell['production_receipt']={'source_head':cell['source_head'],'features':[],'sha256':cell['production']['sha256']}
 cell['old_source_receipt']={'source_head':cell['old_source_head'],'sha256':cell['old_binary']['sha256']}

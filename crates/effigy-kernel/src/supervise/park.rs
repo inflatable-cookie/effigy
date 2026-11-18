@@ -155,18 +155,14 @@ pub fn inventory_groups(pgids: &[u32]) -> io::Result<GroupInventory> {
             Observed::Verified(_, _) | Observed::Absent(_) => {}
             Observed::Unknown(_) => unproven = true,
         }
-        match platform::group_membership(pgid) {
-            Ok(rows) => {
-                if platform::classify_round(&rows, &[]) == RoundVerdict::Unproven {
-                    unproven = true;
-                }
-                for row in rows {
-                    if let MembershipRow::Live(identity) = row {
-                        live_pids.push(identity.pid);
-                    }
-                }
+        let rows = platform::group_membership(pgid)?;
+        if platform::classify_round(&rows, &[]) == RoundVerdict::Unproven {
+            unproven = true;
+        }
+        for row in rows {
+            if let MembershipRow::Live(identity) = row {
+                live_pids.push(identity.pid);
             }
-            Err(error) => return Err(error),
         }
     }
     live_pids.sort_unstable();
