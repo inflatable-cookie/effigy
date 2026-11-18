@@ -112,6 +112,9 @@ Each backend's input pins:
   receipts must name the cell's own source head;
 - candidate binary bytes and the adjacent `.active-version` sidecar as separate
   SHA-256-bound inputs;
+- production binary bytes and the adjacent `.active-version` sidecar as separate
+  SHA-256-bound inputs: phase P installs the in-guest producer with its frozen
+  sidecar, so the guest artifact it publishes carries the frozen version;
 - the frozen helper protocols for that head and the genuine old head
   (`candidate_helper_protocol`, `old_helper_protocol` per cell), computed on
   the host launcher where a git checkout exists and frozen into the inputs.

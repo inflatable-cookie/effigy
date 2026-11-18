@@ -735,8 +735,8 @@ class RetainedStreamTests(unittest.TestCase):
                 os.close(window.root_fd)
 
     def test_generated_native_build_script_has_compilable_metadata_binder(self):
-        seed = {'cell': {'baseline': {'containers': [], 'networks': [], 'volumes': []}}}
-        script = assets.script({'guest_source': build.BASE + '/builds/example/source'},
+        seed = {'cell': {'source_head': 'a' * 40, 'baseline': {'containers': [], 'networks': [], 'volumes': []}}}
+        script = assets.script({'guest_source': build.BASE + '/builds/example/source', 'source_pin': 'a' * 40},
                                build.BASE + '/artifacts/example', seed)
         finish = script.split("python3 -I -B - <<'FINISH'\n")[1].removesuffix('FINISH\n')
         compile(finish, 'native-asset-binder', 'exec')
