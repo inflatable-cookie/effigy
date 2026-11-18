@@ -291,16 +291,14 @@ pub(in crate::runner) fn writes_runtime_secret_files(
     runtime.delivery == ManifestContainerSecretDelivery::RuntimeFiles && !runtime.env.is_empty()
 }
 
-/// Write this delivery's runtime files, and say what a service that is
-/// already running will not pick up.
+/// Write this delivery's runtime files, and say what changed under the running
+/// service, in this apply only.
 ///
-/// These files are read when a process starts, so a delivery that changes a
-/// value under a live service leaves that service on the old one. The files are
-/// read back first, so the warning names only the keys whose value actually
-/// changed; the outstanding keys are then recorded with the service's start
-/// identity, so every later invocation keeps reporting them until that service
-/// restarts instead of the warning vanishing with the next apply
-/// (effigy#1036). Warnings name keys, never values.
+/// The file is read back before it is rewritten, so the warning names only the
+/// keys whose value actually changed; an apply that writes exactly what the
+/// service already holds says nothing. Nothing is persisted between applies:
+/// the delivery reports what it changed, and the next apply compares against
+/// the file it finds (effigy#1036). Warnings name keys, never values.
 pub(in crate::runner) fn materialize_container_secret_runtime(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -320,20 +318,9 @@ pub(in crate::runner) fn materialize_container_secret_runtime(
     let runtime_json_path = format!("{runtime_dir}/runtime.json");
 
     // Read before rewriting: this is what the running service reads, and the
-    // difference is what it must be told to reload. The recorded start
-    // identity is what makes an outstanding warning survive later applies.
+    // difference is what this delivery says out loud, once.
     let previous = read_primary_service_file(repo_root, policy, &runtime_json_path, binding)?;
-    let observed = inspect_primary_service(repo_root, policy, binding, runtime_dir);
-    let refresh_path = runtime_secret_refresh_path(repo_root, policy);
-    let pending = refresh_path
-        .as_deref()
-        .and_then(recorded_runtime_secret_refresh);
-    let outstanding = outstanding_refresh_keys(
-        &observed.start,
-        pending.as_ref(),
-        previous.as_deref(),
-        runtime,
-    );
+    let changed = changed_runtime_secret_keys(previous.as_deref(), runtime);
 
     run_primary_service_shell_command(
         repo_root,
@@ -387,144 +374,11 @@ pub(in crate::runner) fn materialize_container_secret_runtime(
         binding,
     )?;
 
-    // Record, or retire, what the running service still owes: a warning that
-    // vanished on the next apply would leave an operator who missed one line
-    // believing the service had reloaded.
-    if let Some(path) = refresh_path.as_deref() {
-        persist_runtime_secret_refresh(path, &observed.start.container, &outstanding);
-    }
     Ok(runtime_secret_refresh_warnings(
         policy,
         runtime_dir,
-        &outstanding.keys,
-        observed.storage,
+        &changed,
     ))
-}
-
-/// The identity of the process that is running the primary service now: the
-/// container and when its current process started, as the runtime reports it.
-/// A restart changes the start time, which retires an outstanding warning.
-/// `started_at` is `None` when the runtime did not report one, which is not the
-/// same fact as "it started again": nothing retires on an absent start time.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(in crate::runner) struct ContainerStartIdentity {
-    pub container: String,
-    pub started_at: Option<String>,
-}
-
-/// Whether the runtime directory keeps its files across a container restart.
-/// A tmpfs is cleared by the restart that would reload the service, so the
-/// remedy must not depend on the files surviving one.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(in crate::runner) enum RuntimeDirStorage {
-    /// A tmpfs inside the container: cleared whenever the container restarts.
-    Ephemeral,
-    /// A bind mount or volume: the files survive a restart.
-    Persistent,
-    /// The runtime did not say, or mounts the directory nowhere: the warning
-    /// states both consequences instead of guessing.
-    #[default]
-    Unknown,
-}
-
-/// What one inspect of the running container says about a delivery.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(in crate::runner) struct PrimaryServiceObservation {
-    pub start: ContainerStartIdentity,
-    pub storage: RuntimeDirStorage,
-}
-
-fn inspect_primary_service(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    binding: &effigy_containers::exec::VerifiedComposeContainer,
-    runtime_dir: &str,
-) -> PrimaryServiceObservation {
-    let mut observation = PrimaryServiceObservation {
-        start: ContainerStartIdentity {
-            container: binding.id().to_owned(),
-            started_at: None,
-        },
-        storage: RuntimeDirStorage::Unknown,
-    };
-    let Ok(output) = effigy_containers::exec::inspect_containers_for_policy(
-        repo_root,
-        policy,
-        &[binding.id().to_owned()],
-        None,
-    ) else {
-        return observation;
-    };
-    let Ok(records) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
-        return observation;
-    };
-    let Some(record) = records
-        .as_array()
-        .and_then(|records| records.first())
-        .cloned()
-    else {
-        return observation;
-    };
-    observation.start.started_at = record
-        .get("State")
-        .and_then(|state| state.get("StartedAt"))
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|started_at| !started_at.is_empty())
-        .map(str::to_owned);
-    observation.storage = runtime_dir_storage(&record, runtime_dir);
-    observation
-}
-
-/// Whether `runtime_dir` is a tmpfs inside this container, a persistent mount,
-/// or something the runtime did not describe.
-fn runtime_dir_storage(record: &serde_json::Value, runtime_dir: &str) -> RuntimeDirStorage {
-    let runtime_dir = runtime_dir.trim_end_matches('/');
-    let covers = |destination: &str| {
-        let destination = destination.trim_end_matches('/');
-        !destination.is_empty()
-            && (runtime_dir == destination
-                || runtime_dir
-                    .strip_prefix(destination)
-                    .is_some_and(|rest| rest.starts_with('/')))
-    };
-    let mut storage = RuntimeDirStorage::Unknown;
-    let tmpfs_keys = record
-        .get("HostConfig")
-        .and_then(|host| host.get("Tmpfs"))
-        .and_then(serde_json::Value::as_object)
-        .into_iter()
-        .flat_map(|tmpfs| tmpfs.keys().map(String::as_str))
-        .collect::<Vec<_>>();
-    let tmpfs_mounts = record
-        .get("Mounts")
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|mount| mount.get("Type").and_then(serde_json::Value::as_str) == Some("tmpfs"))
-        .filter_map(|mount| mount.get("Destination").and_then(serde_json::Value::as_str))
-        .collect::<Vec<_>>();
-    let tmpfs = tmpfs_keys.into_iter().chain(tmpfs_mounts).any(covers);
-    if tmpfs {
-        return RuntimeDirStorage::Ephemeral;
-    }
-    let persistent = record
-        .get("Mounts")
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|mount| {
-            matches!(
-                mount.get("Type").and_then(serde_json::Value::as_str),
-                Some("bind") | Some("volume")
-            )
-        })
-        .filter_map(|mount| mount.get("Destination").and_then(serde_json::Value::as_str))
-        .any(covers);
-    if persistent {
-        storage = RuntimeDirStorage::Persistent;
-    }
-    storage
 }
 
 /// The runtime file the primary service holds, read without failing when it is
@@ -560,162 +414,50 @@ fn read_primary_service_file(
     Ok((!document.trim().is_empty()).then_some(document))
 }
 
-/// The keys a runtime-file delivery changes under a service that is already
-/// running.
-///
-/// `previous` is the `runtime.json` the primary service holds, or `None` when
-/// it holds none. A key is reported when its value differs, or when the
-/// service holds no file at all; a delivery that writes exactly what the
-/// service already reads reports nothing. The lines name keys and the restart
-/// that loads them, never a value.
-pub(in crate::runner) fn outstanding_refresh_keys(
-    start: &ContainerStartIdentity,
-    pending: Option<&RuntimeSecretRefresh>,
+/// The declared keys whose value differs from the runtime file this delivery
+/// replaces. A key the service already reads is not reported, and a service
+/// that holds no file at all is told about every delivered key.
+pub(in crate::runner) fn changed_runtime_secret_keys(
     held: Option<&str>,
     runtime: &ResolvedContainerSecretRuntime,
-) -> OutstandingRefresh {
-    let mut outstanding = OutstandingRefresh {
-        keys: Vec::new(),
-        started_at: start.started_at.clone(),
-    };
+) -> Vec<String> {
     if runtime.env.is_empty() {
-        return outstanding;
-    }
-    let note = |keys: &mut Vec<String>, key: &str| {
-        if !keys.iter().any(|known| known == key) {
-            keys.push(key.to_owned());
-        }
-    };
-    // A warning raised while this same process was running still stands: the
-    // service has not restarted since, so it still owes those keys. Retirement
-    // needs proof of a restart, so an absent start time on either side keeps
-    // the warning instead of quietly dropping it.
-    if let Some(pending) = pending {
-        let replaced = pending.container != start.container;
-        let restarted = match (&pending.started_at, &start.started_at) {
-            (Some(recorded), Some(current)) => recorded != current,
-            _ => false,
-        };
-        if !replaced && !restarted {
-            for key in &pending.keys {
-                note(&mut outstanding.keys, key);
-            }
-            outstanding.started_at = match (&pending.started_at, &start.started_at) {
-                // The runtime reports nothing now: keep the anchor the record
-                // already had, so the restart that finally happens is provable.
-                (Some(recorded), None) => Some(recorded.clone()),
-                // Adopt the first start time the runtime does report as the
-                // baseline: a later change is then provable.
-                (None, Some(current)) => Some(current.clone()),
-                (recorded, _) => recorded.clone(),
-            };
-        }
+        return Vec::new();
     }
     let held_document: serde_json::Map<String, serde_json::Value> = held
         .and_then(|document| serde_json::from_str(document).ok())
         .unwrap_or_default();
-    for (key, value) in &runtime.env {
-        let changed = held_document
-            .get(key)
-            .and_then(serde_json::Value::as_str)
-            .is_none_or(|held| held != value.expose());
-        if changed {
-            note(&mut outstanding.keys, key);
-        }
-    }
-    outstanding
+    runtime
+        .env
+        .iter()
+        .filter(|(key, value)| {
+            held_document
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(|held| held != value.expose())
+        })
+        .map(|(key, _)| key.clone())
+        .collect()
 }
 
-/// The keys a running service still owes, and the start time the record is
-/// anchored to when it is written back.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(in crate::runner) struct OutstandingRefresh {
-    pub keys: Vec<String>,
-    pub started_at: Option<String>,
-}
-
-/// What a running service still owes after a runtime-file delivery, recorded
-/// with the start identity it belongs to: keys only, never values.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub(in crate::runner) struct RuntimeSecretRefresh {
-    pub container: String,
-    /// The start time this record is anchored to. `None` means the runtime did
-    /// not report one when the record was written; nothing retires the record
-    /// on an absent start time.
-    pub started_at: Option<String>,
-    pub keys: Vec<String>,
-}
-
-/// Where an outstanding refresh for this environment is recorded. It lives
-/// beside the checkout's runtime state, so a later invocation reports it
-/// without consulting the service again.
-fn runtime_secret_refresh_path(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-) -> Option<PathBuf> {
-    let state = repo_root.join(".effigy/runtime/container-secrets");
-    Some(state.join(format!("{}.refresh.json", policy.project_name)))
-}
-
-fn recorded_runtime_secret_refresh(path: &Path) -> Option<RuntimeSecretRefresh> {
-    let document = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str(&document).ok()
-}
-
-/// Record the outstanding keys, or retire the record when nothing is owed. A
-/// state directory that cannot be written costs the next invocation's reminder,
-/// never this delivery.
-fn persist_runtime_secret_refresh(path: &Path, container: &str, outstanding: &OutstandingRefresh) {
-    if outstanding.keys.is_empty() {
-        let _ = std::fs::remove_file(path);
-        return;
-    }
-    let Some(parent) = path.parent() else {
-        return;
-    };
-    if std::fs::create_dir_all(parent).is_err() {
-        return;
-    }
-    let record = RuntimeSecretRefresh {
-        container: container.to_owned(),
-        started_at: outstanding.started_at.clone(),
-        keys: outstanding.keys.clone(),
-    };
-    if let Ok(document) = serde_json::to_string_pretty(&record) {
-        let _ = std::fs::write(path, document);
-    }
-}
-
-/// The one line that tells an operator what a running service still owes.
+/// The one line a changed delivery prints, in that apply only.
 ///
-/// The remedy has to hold for the files' storage: a tmpfs under `runtime_dir`
-/// is cleared by any container restart, so recommending one would undo the
-/// delivery and repeat the problem. Every form names the reload that keeps the
-/// files, and the resolving command a recreate needs afterwards.
+/// The delivery cannot know whether a consumer reads these files per request or
+/// once at startup, so it states both facts and the remedy that re-delivers:
+/// stopping the stack and running `effigy dev` again. It names keys, never a
+/// value (effigy#1036).
 pub(in crate::runner) fn runtime_secret_refresh_warnings(
     policy: &EffectiveContainerPolicy,
     runtime_dir: &str,
-    outstanding: &[String],
-    storage: RuntimeDirStorage,
+    changed: &[String],
 ) -> Vec<String> {
-    if outstanding.is_empty() {
+    if changed.is_empty() {
         return Vec::new();
     }
-    let service = policy.primary_service.as_str();
-    let remedy = match storage {
-        RuntimeDirStorage::Ephemeral => format!(
-            "`{runtime_dir}` is a tmpfs in this container, so restarting it clears these files: reload `{service}`'s own process inside the running container, and rerun `effigy dev` or the command that resolved these keys after any restart"
-        ),
-        RuntimeDirStorage::Persistent => format!(
-            "restart `{service}` in place so it reads them (a stack recreate starts it before these files exist again, so rerun `effigy dev` or the command that resolved these keys after one)"
-        ),
-        RuntimeDirStorage::Unknown => format!(
-            "reload `{service}`'s own process inside the running container; if `{runtime_dir}` is a tmpfs, any restart clears these files, so rerun `effigy dev` or the command that resolved these keys after one"
-        ),
-    };
     vec![format!(
-        "container secret(s) {} were written to {runtime_dir}/runtime.json after `{service}` started, so `{service}` keeps the values it read until it reloads them, and this warning stays until it does; {remedy}",
-        outstanding.join(", "),
+        "container secret(s) {} were written to {runtime_dir}/runtime.json after `{service}` started; services that read this file per request see them now; a service that reads it only at startup keeps its old values: stop the stack and run `effigy dev` again",
+        changed.join(", "),
+        service = policy.primary_service,
     )]
 }
 
@@ -856,12 +598,10 @@ impl TempSecretFile {
 #[cfg(test)]
 mod tests {
     use super::{
-        container_secret_runtime_env_path, materialize_container_secret_runtime,
-        outstanding_refresh_keys, recorded_runtime_secret_refresh, render_runtime_env_file,
-        render_runtime_json_file, resolve_container_secret_runtime, runtime_dir_storage,
-        runtime_secret_refresh_path, runtime_secret_refresh_warnings, writes_runtime_secret_files,
-        ContainerStartIdentity, ResolvedContainerSecretRuntime, RuntimeDirStorage,
-        RuntimeSecretRefresh,
+        changed_runtime_secret_keys, container_secret_runtime_env_path,
+        materialize_container_secret_runtime, render_runtime_env_file, render_runtime_json_file,
+        resolve_container_secret_runtime, runtime_secret_refresh_warnings,
+        writes_runtime_secret_files, ResolvedContainerSecretRuntime,
     };
     use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
     use effigy_env::secret::SecretString;
@@ -1216,11 +956,10 @@ catalog = "php-fpm"
         assert!(rendered.contains("\"API_TOKEN\": \"tok'en\\\\value\""));
     }
 
-    /// A delivery names the keys the running service must reload, keeps
-    /// naming them while that service has not restarted, and stops once it
-    /// has. No line carries a value (effigy#1036).
+    /// A delivery reports the keys it changed under the running service, in
+    /// that apply only, and no line carries a value (effigy#1036).
     #[test]
-    fn a_runtime_file_delivery_names_the_keys_a_running_service_still_owes() {
+    fn a_runtime_file_delivery_reports_only_the_keys_it_changes() {
         let policy = test_runtime_files_policy();
         let runtime = ResolvedContainerSecretRuntime {
             delivery: ManifestContainerSecretDelivery::RuntimeFiles,
@@ -1236,123 +975,55 @@ catalog = "php-fpm"
             ],
             warnings: Vec::new(),
         };
-        let running = ContainerStartIdentity {
-            container: "c".repeat(64),
-            started_at: Some("2026-11-18T10:00:00Z".to_owned()),
-        };
-        let delivered = r#"{"OPENAI_API_KEY":"sk-new-value","UNCHANGED_KEY":"kept-value"}"#;
 
         // The service holds the same unchanged value and a stale openai key.
         let held = r#"{"OPENAI_API_KEY":"sk-old-value","UNCHANGED_KEY":"kept-value"}"#;
-        let owed = outstanding_refresh_keys(&running, None, Some(held), &runtime);
-        assert_eq!(owed.keys, vec!["OPENAI_API_KEY".to_owned()]);
-        let warnings = runtime_secret_refresh_warnings(
-            &policy,
-            "/run/effigy/secrets",
-            &owed.keys,
-            RuntimeDirStorage::Persistent,
-        );
+        let changed = changed_runtime_secret_keys(Some(held), &runtime);
+        assert_eq!(changed, vec!["OPENAI_API_KEY".to_owned()]);
+
+        let warnings = runtime_secret_refresh_warnings(&policy, "/run/effigy/secrets", &changed);
         assert_eq!(warnings.len(), 1, "{warnings:?}");
-        assert!(warnings[0].contains("OPENAI_API_KEY"), "{}", warnings[0]);
-        assert!(!warnings[0].contains("sk-new-value"), "{}", warnings[0]);
-        assert!(!warnings[0].contains("sk-old-value"), "{}", warnings[0]);
+        let line = &warnings[0];
+        assert!(line.contains("OPENAI_API_KEY"), "{line}");
+        assert!(!line.contains("sk-new-value"), "{line}");
+        assert!(!line.contains("sk-old-value"), "{line}");
         assert!(
-            !warnings[0].contains("UNCHANGED_KEY"),
-            "a value the service already reads is not reported: {}",
-            warnings[0]
+            !line.contains("UNCHANGED_KEY"),
+            "a value the service already reads is not reported: {line}"
         );
         assert!(
-            warnings[0].contains("stays until it does"),
-            "the warning says it persists: {}",
-            warnings[0]
+            line.contains("were written to /run/effigy/secrets/runtime.json after `app` started"),
+            "{line}"
         );
         assert!(
-            warnings[0].contains("restart `app` in place"),
-            "the remedy keeps the delivery: {}",
-            warnings[0]
+            line.contains("services that read this file per request see them now"),
+            "{line}"
         );
         assert!(
-            !warnings[0].contains("effigy container web down"),
-            "a stack recreate would repeat the original problem: {}",
-            warnings[0]
+            line.contains("a service that reads it only at startup keeps its old values"),
+            "{line}"
+        );
+        assert!(
+            line.contains("stop the stack and run `effigy dev` again"),
+            "{line}"
+        );
+        assert!(
+            !line.contains("stays until"),
+            "the warning is one apply's report, not a persisted record: {line}"
         );
 
-        // The very same delivery again, with the service still running, owes
-        // the same key: the warning does not vanish on the next apply.
-        let record = RuntimeSecretRefresh {
-            container: running.container.clone(),
-            started_at: running.started_at.clone(),
-            keys: owed.keys.clone(),
-        };
-        let again = outstanding_refresh_keys(&running, Some(&record), Some(delivered), &runtime);
-        assert_eq!(again.keys, vec!["OPENAI_API_KEY".to_owned()]);
+        // An apply that writes what the service already holds says nothing.
+        let matching = r#"{"OPENAI_API_KEY":"sk-new-value","UNCHANGED_KEY":"kept-value"}"#;
+        assert!(
+            changed_runtime_secret_keys(Some(matching), &runtime).is_empty(),
+            "an identical re-apply is silent"
+        );
+
+        // A service holding no file at all is told about every delivered key.
         assert_eq!(
-            again.started_at,
-            running.started_at.clone(),
-            "the record keeps the start time it is anchored to"
+            changed_runtime_secret_keys(None, &runtime),
+            vec!["OPENAI_API_KEY".to_owned(), "UNCHANGED_KEY".to_owned()]
         );
-
-        // A start time the runtime cannot report never retires the record: an
-        // unobservable restart is not a restart (effigy#1036 review).
-        let unobservable = ContainerStartIdentity {
-            container: running.container.clone(),
-            started_at: None,
-        };
-        let blind =
-            outstanding_refresh_keys(&unobservable, Some(&record), Some(delivered), &runtime);
-        assert_eq!(
-            blind.keys,
-            vec!["OPENAI_API_KEY".to_owned()],
-            "an absent start time keeps the outstanding warning"
-        );
-        assert_eq!(
-            blind.started_at,
-            running.started_at.clone(),
-            "and keeps the anchor it already had"
-        );
-
-        // A record written while the start time was unknown adopts the first
-        // one the runtime reports, and still owes its keys.
-        let unanchored = RuntimeSecretRefresh {
-            container: running.container.clone(),
-            started_at: None,
-            keys: vec!["OPENAI_API_KEY".to_owned()],
-        };
-        let adopted =
-            outstanding_refresh_keys(&running, Some(&unanchored), Some(delivered), &runtime);
-        assert_eq!(adopted.keys, vec!["OPENAI_API_KEY".to_owned()]);
-        assert_eq!(adopted.started_at, running.started_at.clone());
-
-        // Once that service restarts, nothing is owed: the file now carries
-        // exactly what the delivery writes, and the old warning is retired.
-        let restarted = ContainerStartIdentity {
-            container: running.container.clone(),
-            started_at: Some("2026-11-18T11:03:00Z".to_owned()),
-        };
-        assert!(
-            outstanding_refresh_keys(&restarted, Some(&record), Some(delivered), &runtime)
-                .keys
-                .is_empty(),
-            "a restarted service owes nothing for values it already reads"
-        );
-
-        // A replaced container is not a restart of the process that read the
-        // files: the new one owes whatever this delivery changed for it.
-        let replaced = ContainerStartIdentity {
-            container: "d".repeat(64),
-            started_at: Some("2026-11-18T11:03:00Z".to_owned()),
-        };
-        assert!(
-            outstanding_refresh_keys(&replaced, Some(&record), Some(delivered), &runtime)
-                .keys
-                .is_empty()
-        );
-
-        // A service holding no file at all owes every delivered key.
-        let absent = outstanding_refresh_keys(&running, None, None, &runtime);
-        assert_eq!(absent.keys.len(), 2, "{absent:?}");
-        assert!(absent.keys.contains(&"OPENAI_API_KEY".to_owned()));
-        assert!(absent.keys.contains(&"UNCHANGED_KEY".to_owned()));
 
         // An empty delivery has nothing to say.
         let empty = ResolvedContainerSecretRuntime {
@@ -1360,121 +1031,17 @@ catalog = "php-fpm"
             env: Vec::new(),
             warnings: Vec::new(),
         };
-        assert!(
-            outstanding_refresh_keys(&running, Some(&record), None, &empty)
-                .keys
-                .is_empty()
-        );
-    }
-
-    /// The remedy must hold for the files' storage: a tmpfs is cleared by the
-    /// restart that would reload the service, so the warning never asks for one
-    /// there, and every form names the resolving command a recreate needs
-    /// (effigy#1036 review).
-    #[test]
-    fn a_runtime_file_refresh_remedy_matches_where_the_files_live() {
-        let policy = test_runtime_files_policy();
-        let keys = vec!["MAILCHIMP_API_KEY".to_owned()];
-        let line = |storage| {
-            runtime_secret_refresh_warnings(&policy, "/run/effigy/secrets", &keys, storage)
-                .remove(0)
-        };
-
-        let ephemeral = line(RuntimeDirStorage::Ephemeral);
-        assert!(ephemeral.contains("tmpfs"), "{ephemeral}");
-        assert!(
-            ephemeral.contains("restarting it clears these files"),
-            "{ephemeral}"
-        );
-        assert!(
-            ephemeral.contains("reload `app`'s own process"),
-            "{ephemeral}"
-        );
-        assert!(
-            ephemeral.contains("rerun `effigy dev`"),
-            "a tmpfs restart needs the resolving command again: {ephemeral}"
-        );
-        assert!(
-            !ephemeral.contains("restart `app` in place"),
-            "a restart would clear a tmpfs: {ephemeral}"
-        );
-
-        let persistent = line(RuntimeDirStorage::Persistent);
-        assert!(
-            persistent.contains("restart `app` in place"),
-            "{persistent}"
-        );
-        assert!(persistent.contains("rerun `effigy dev`"), "{persistent}");
-
-        let unknown = line(RuntimeDirStorage::Unknown);
-        assert!(
-            unknown.contains("if `/run/effigy/secrets` is a tmpfs"),
-            "{unknown}"
-        );
-        assert!(unknown.contains("rerun `effigy dev`"), "{unknown}");
-
-        for line in [ephemeral, persistent, unknown] {
-            assert!(
-                !line.contains("mc-"),
-                "a remedy never carries a value: {line}"
-            );
-            assert!(
-                !line.contains("effigy container web down"),
-                "no form recommends a recreate as the remedy: {line}"
-            );
-        }
-    }
-
-    /// The storage a delivery finds, from the inspect record: a tmpfs at the
-    /// runtime directory is ephemeral even under a persistent parent, and a
-    /// bind or volume is persistent.
-    #[test]
-    fn runtime_dir_storage_reads_the_container_mounts() {
-        let record = serde_json::json!({
-            "HostConfig": {"Tmpfs": {"/run/effigy/secrets": ""}},
-            "Mounts": [{"Type": "bind", "Destination": "/workspace"}],
-        });
-        assert_eq!(
-            runtime_dir_storage(&record, "/run/effigy/secrets"),
-            RuntimeDirStorage::Ephemeral
-        );
-        assert_eq!(
-            runtime_dir_storage(&record, "/run/effigy/secrets/nested"),
-            RuntimeDirStorage::Ephemeral
-        );
-
-        let record = serde_json::json!({
-            "Mounts": [{"Type": "volume", "Destination": "/run/effigy/secrets"}],
-        });
-        assert_eq!(
-            runtime_dir_storage(&record, "/run/effigy/secrets"),
-            RuntimeDirStorage::Persistent
-        );
-
-        let record = serde_json::json!({"Mounts": []});
-        assert_eq!(
-            runtime_dir_storage(&record, "/run/effigy/secrets"),
-            RuntimeDirStorage::Unknown
-        );
-
-        // A different tmpfs does not describe this directory.
-        let record = serde_json::json!({
-            "HostConfig": {"Tmpfs": {"/tmp": ""}},
-            "Mounts": [],
-        });
-        assert_eq!(
-            runtime_dir_storage(&record, "/run/effigy/secrets"),
-            RuntimeDirStorage::Unknown
-        );
+        assert!(changed_runtime_secret_keys(None, &empty).is_empty());
+        assert!(runtime_secret_refresh_warnings(&policy, "/run/effigy/secrets", &[]).is_empty());
     }
 
     /// A `dev` session that borrows a stack a direct `container up` started
-    /// writes the keys it resolved into the running service's runtime files,
-    /// and tells that service which of them it must reload: the reused service
-    /// here is a real container inventory with an exec that lands on disk
-    /// (effigy#1036).
+    /// writes the keys it resolved into the running service's runtime files and
+    /// reports the change once; the next apply of the same values is silent and
+    /// nothing is carried between applies (effigy#1036, planner ruling
+    /// 9b1019a7).
     #[test]
-    fn a_reused_running_service_receives_the_resolved_keys_and_is_told_to_reload() {
+    fn a_reused_running_service_receives_the_resolved_keys_and_warns_once() {
         let _test = crate::contract_test_support::lock_test();
         let fixture = RunningServiceFixture::new("reused-runtime-files");
         let policy = fixture.policy();
@@ -1528,8 +1095,8 @@ catalog = "php-fpm"
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].contains("MAILCHIMP_API_KEY"), "{}", warnings[0]);
         assert!(
-            warnings[0].contains("restart `app` in place"),
-            "a persistent runtime directory reloads by restarting in place: {}",
+            warnings[0].contains("stop the stack and run `effigy dev` again"),
+            "the remedy re-delivers from a dev session: {}",
             warnings[0]
         );
         assert!(
@@ -1538,56 +1105,21 @@ catalog = "php-fpm"
             warnings[0]
         );
 
-        // The same delivery again, with the service still running, keeps the
-        // reminder: the values are on disk but this process never read them.
+        // A later apply of the same values says nothing: the file it replaces
+        // already carries them.
         let again =
             materialize_container_secret_runtime(&fixture.repo_root, &policy, &runtime, &binding)
                 .expect("the same delivery again");
-        assert_eq!(again.len(), 1, "{again:?}");
-        assert!(again[0].contains("MAILCHIMP_API_KEY"), "{}", again[0]);
-        let record = fixture.refresh_record();
-        assert_eq!(
-            record.keys,
-            vec!["MAILCHIMP_API_KEY".to_owned()],
-            "the outstanding keys are recorded with the service's start identity"
-        );
+        assert!(again.is_empty(), "{again:?}");
 
-        // The runtime stops reporting a start time: nothing proves a restart,
-        // so the warning stays rather than retiring on an absent fact.
-        fixture.hide_the_start_time();
-        let unobservable =
-            materialize_container_secret_runtime(&fixture.repo_root, &policy, &runtime, &binding)
-                .expect("a delivery without a start time");
-        assert_eq!(unobservable.len(), 1, "{unobservable:?}");
+        // Nothing about the warning is carried between applies: no state file,
+        // no record directory.
         assert!(
-            unobservable[0].contains("MAILCHIMP_API_KEY"),
-            "{}",
-            unobservable[0]
-        );
-
-        // A tmpfs runtime directory changes the remedy: a restart clears it.
-        fixture.mount_the_runtime_dir_as_tmpfs();
-        let tmpfs =
-            materialize_container_secret_runtime(&fixture.repo_root, &policy, &runtime, &binding)
-                .expect("a delivery into a tmpfs runtime directory");
-        assert_eq!(tmpfs.len(), 1, "{tmpfs:?}");
-        assert!(tmpfs[0].contains("tmpfs"), "{}", tmpfs[0]);
-        assert!(
-            !tmpfs[0].contains("restart `app` in place"),
-            "a restart would clear a tmpfs: {}",
-            tmpfs[0]
-        );
-
-        // The service restarts: the recorded warning retires and the next
-        // delivery of the same values says nothing.
-        fixture.restart_the_service("2026-11-18T12:00:00Z");
-        let after_restart =
-            materialize_container_secret_runtime(&fixture.repo_root, &policy, &runtime, &binding)
-                .expect("a delivery after the restart");
-        assert!(after_restart.is_empty(), "{after_restart:?}");
-        assert!(
-            fixture.refresh_record_absent(),
-            "a restarted service owes nothing"
+            !fixture
+                .repo_root
+                .join(".effigy/runtime/container-secrets")
+                .exists(),
+            "the delivery keeps no state across applies"
         );
     }
 
@@ -1596,49 +1128,10 @@ catalog = "php-fpm"
     struct RunningServiceFixture {
         repo_root: PathBuf,
         runtime_dir: String,
-        started_at: PathBuf,
-        mounts: PathBuf,
         _env: crate::contract_test_support::EnvGuard,
     }
 
     impl RunningServiceFixture {
-        /// When the fake container's current process started, as the runtime
-        /// reports it: the identity a restart changes.
-        fn restart_the_service(&self, started_at: &str) {
-            fs::write(&self.started_at, started_at).expect("record the restart");
-        }
-
-        /// A runtime that reports no start time for the container.
-        fn hide_the_start_time(&self) {
-            fs::remove_file(&self.started_at).expect("withhold the start time");
-        }
-
-        /// The container mounts the runtime directory as a tmpfs.
-        fn mount_the_runtime_dir_as_tmpfs(&self) {
-            fs::write(
-                &self.mounts,
-                format!(
-                    r#"[{{"Type":"tmpfs","Destination":"{}"}}]"#,
-                    self.runtime_dir
-                ),
-            )
-            .expect("record the tmpfs mount");
-        }
-
-        fn refresh_record(&self) -> RuntimeSecretRefresh {
-            recorded_runtime_secret_refresh(&self.refresh_path())
-                .expect("the outstanding refresh is recorded")
-        }
-
-        fn refresh_record_absent(&self) -> bool {
-            !self.refresh_path().exists()
-        }
-
-        fn refresh_path(&self) -> PathBuf {
-            runtime_secret_refresh_path(&self.repo_root, &self.policy())
-                .expect("the fixture records its refresh state")
-        }
-
         fn new(name: &str) -> Self {
             let root = temp_repo(name);
             let repo_root = root.join("repo");
@@ -1703,8 +1196,8 @@ for arg in "$@"; do
 done
 case "$1" in
   inspect)
-    printf '[{"Id":"%s","Name":"/%s","State":{"Status":"running","Running":true,"ExitCode":0,"StartedAt":"%s"},"Config":{"Labels":{"com.docker.compose.project":"%s","com.docker.compose.service":"app","com.docker.compose.oneoff":"False","com.docker.compose.project.working_dir":"%s"}},"Mounts":'"$(cat "$EFFIGY_TEST_MOUNTS")"',"NetworkSettings":{"Ports":{}}}]
-' "$EFFIGY_TEST_ID" "$EFFIGY_TEST_CONTAINER" "$(cat "$EFFIGY_TEST_STARTED_AT")" "$EFFIGY_TEST_PROJECT" "$EFFIGY_TEST_WORKDIR"
+    printf '[{"Id":"%s","Name":"/%s","State":{"Status":"running","Running":true,"ExitCode":0},"Config":{"Labels":{"com.docker.compose.project":"%s","com.docker.compose.service":"app","com.docker.compose.oneoff":"False","com.docker.compose.project.working_dir":"%s"}},"Mounts":[],"NetworkSettings":{"Ports":{}}}]
+' "$EFFIGY_TEST_ID" "$EFFIGY_TEST_CONTAINER" "$EFFIGY_TEST_PROJECT" "$EFFIGY_TEST_WORKDIR"
     exit 0
     ;;
 esac
@@ -1761,21 +1254,6 @@ exit 0
 
             let home = root.join("home");
             fs::create_dir_all(&home).expect("mkdir fake home");
-            // The fake runtime reports this as the container's start time; a
-            // restart rewrites the file.
-            let started_at = root.join("started-at");
-            fs::write(&started_at, "2026-11-18T10:00:00Z").expect("write start identity");
-            // The container's mounts, as its inspect reports them: the
-            // runtime directory is a persistent bind by default.
-            let mounts = root.join("mounts.json");
-            fs::write(
-                &mounts,
-                format!(
-                    r#"[{{"Type":"bind","Destination":"{}"}}]"#,
-                    runtime_dir.display()
-                ),
-            )
-            .expect("write mount evidence");
             let env = crate::contract_test_support::EnvGuard::set_many(&[
                 ("PATH", Some(format!("{}:/bin:/usr/bin", bin.display()))),
                 ("HOME", Some(home.display().to_string())),
@@ -1794,17 +1272,10 @@ exit 0
                 ("EFFIGY_TEST_PROJECT", Some("started-web".to_owned())),
                 ("EFFIGY_TEST_WORKDIR", Some(repo_root.display().to_string())),
                 ("EFFIGY_FAKE_WORKSPACE_USER", Some(current_user())),
-                (
-                    "EFFIGY_TEST_STARTED_AT",
-                    Some(started_at.display().to_string()),
-                ),
-                ("EFFIGY_TEST_MOUNTS", Some(mounts.display().to_string())),
             ]);
             Self {
                 repo_root,
                 runtime_dir: runtime_dir.display().to_string(),
-                started_at,
-                mounts,
                 _env: env,
             }
         }

@@ -148,7 +148,7 @@ pub(super) fn run_task_apply(
 }
 
 /// Write the runtime files this apply resolved, now that the primary service
-/// binding is verified, and report what a running service will not pick up.
+/// binding is verified, and report the keys this apply changed under it.
 ///
 /// A stack this session started already received them from its `container up`.
 /// A stack this session *reused* did not: a direct `container up` outside a
@@ -156,10 +156,11 @@ pub(super) fn run_task_apply(
 /// that borrows that stack would otherwise run with the keys it just resolved
 /// missing and nothing said about it (effigy#1036). Writing the files delivers
 /// them to every process that starts next; a service already running keeps the
-/// values it read, so the delivery names those keys and the restart that loads
-/// them. Restarting a live service from inside the apply would stop the very
-/// stack this task is about to run in, so the warning is the safe half of
-/// "rewrite and refresh" here.
+/// values it read, so the delivery names the keys it changed, once, and says
+/// how a startup-only reader gets them. Nothing is carried between applies.
+/// Restarting a live service from inside the apply would stop the very stack
+/// this task is about to run in, so the report is the safe half of "rewrite and
+/// refresh" here.
 pub(super) fn deliver_applied_runtime_secret_files(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
