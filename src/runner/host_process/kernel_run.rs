@@ -247,9 +247,7 @@ fn journal_root(repo_root: &Path) -> Result<&'static effigy_kernel::root::StateR
 }
 
 fn location(repo_root: &Path) -> effigy_kernel::location::CheckoutLocation {
-    effigy_kernel::location::CheckoutLocation {
-        root: effigy_core::worktree_scope::checkout_root(repo_root),
-    }
+    crate::runner::task_engine::checkout_location(repo_root)
 }
 
 fn observe_root(repo_root: &Path) -> Option<Observed<effigy_kernel::root::StateRoot>> {

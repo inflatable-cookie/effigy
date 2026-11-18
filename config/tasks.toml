@@ -1276,6 +1276,12 @@
   "sh scripts/oxide-selector.sh clippy -p effigy-builtin --all-targets -- -D warnings",
 ] }
 "test:docs:skill-parity" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --test documentation_coverage_tests -E 'test(project_local_and_distributed_effigy_skills_have_semantic_parity)' --no-fail-fast --retries 0 --no-tests fail --no-capture" }
+# A container handoff keeps its task journal beside the guest's own HOME, so an
+# ordinary container-routed task runs with the checkout's host-state mask
+# unreadable and untouched (effigy#1037). Private fixture: no VM, container,
+# backend, credential or consumer; the nested guest Effigy is this checkout's
+# own binary.
+"test:workspace:guest-task-state" = { durable = true, visibility = "internal", group = "Maintenance", description = "Prove a workspace guest runs a container-routed task beside its own state, with the host-state mask untouched.", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(/^guest_task_state_tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
 # Workspace rust/cache ownership: mount classification, permission prep,
 # doctor diagnosis, and the activation routing that must fail closed before
 # lease refresh. Includes fake-runtime container data-seed routes that run

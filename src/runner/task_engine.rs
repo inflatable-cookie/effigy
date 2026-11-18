@@ -51,10 +51,10 @@ pub(in crate::runner) use status::{
 #[cfg(test)]
 pub(in crate::runner) use kernel::test_state_home;
 pub(in crate::runner) use kernel::{
-    adopt_state_home, cleanup_context, effect_context, effects_root as checkout_effects_root,
-    install_client_router, interrupted_by, observe_context, observe_root as observe_checkout_root,
-    reading_context, root_cancel_cause, routed_signals, startup_executable, state_home_path,
-    CustodyWait,
+    adopt_state_home, checkout_location, cleanup_context, effect_context,
+    effects_root as checkout_effects_root, install_client_router, interrupted_by, observe_context,
+    observe_root as observe_checkout_root, reading_context, root_cancel_cause, routed_signals,
+    startup_executable, state_home_path, CustodyWait,
 };
 pub(in crate::runner) use process::spawn_environment;
 #[cfg(test)]

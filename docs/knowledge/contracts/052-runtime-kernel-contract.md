@@ -2685,7 +2685,17 @@ checkout roots**, never real checkout links. No production state override is
 needed. Wall clocks are display only; persisted deadlines retain
 boot identity and boot-monotonic nanoseconds. A different boot ends them.
 The state subtree, secrets and control sockets are masked from workspace guest
-mounts; guests continue through the host authority channel (R1).
+mounts; guests continue through the host authority channel (R1). A declared
+task whose steps are bound to the workspace container that a production guest
+verifies it is already inside (effigy#1015) runs there, and it keeps its own
+journal beside the container's HOME under `.effigy/guest-checkouts/<digest>/`,
+keyed by the mounted checkout's canonical path. That owner is the guest's own
+writable filesystem, so an ordinary container-routed task run from a handoff
+(`effigy sync:db`) admits, gates, journals and settles locally while the
+mounted checkout's masked `.effigy/state` is never opened, adopted, tightened
+or written (effigy#1037). Host placement is unchanged: the checkout keeps
+`<checkout>/.effigy/state/`. A guest with no absolute HOME refuses, naming the
+missing fact, rather than falling back to the host state root.
 
 `.effigy/state/` is kernel-owned. The `effigy state` surface's own artefacts
 (capture/apply hook context and its recommended capture payload paths) live
@@ -3524,7 +3534,7 @@ the missing credential named, and local reads keep working.
 
 | Rule | Holds because |
 | --- | --- |
-| R1 Host authority | The guest has no state root, gates or runs. Every effect is a host run under the owning engine's gate. Capabilities are host-kept grants; a request carries no authority beyond its capability, and the host re-resolves it. The state root and vault are never in the guest's mounts. |
+| R1 Host authority | The guest has no host state root, host gate or host run. Every host effect is a host run under the owning engine's gate. Capabilities are host-kept grants; a request carries no authority beyond its capability, and the host re-resolves it. The host state root and vault are never in the guest's mounts. The one local exception is a declared task a production guest runs because its steps are already bound to the container the verified context places it in (§8.11): that run keeps its own journal, gates and custody on the container's own filesystem (§7.1), and it never opens, adopts or repairs the masked host state root. |
 | R2 Pure reads | Local Static and Observe read an immutable context and the mounted checkout and write nothing. Host Observe requests create no run, token or log entry. `--plan` is Static and admits nothing. Context publication and the enrolment credential are Prepare effects; capability issue and enrolment are Mutate requests to the session run. |
 | R3 Unknown grants nothing | Disconnect, stale generation or an unreachable host is `Unknown` for the client and refuses Mutate with no local fallback. The host acts only on its own `Verified` observations and fences every request by generation (K7). |
 
@@ -5221,12 +5231,15 @@ For every request the host verifies the current context, environment and
 container fences and re-resolves selector, cwd, target, placement, privileges
 and effect class from host records into `ResolvedInvocation`. It acquires
 the canonical engine gates and journals effects before execution (§5 and §9).
-Origin does not change resource identity. The guest has no state root,
-store writer or gate: guest placement rejects `Gate::acquire` with
-`HostAuthorityRequired`, and dispatch cannot construct host effect contexts
-locally. State and vault mounts remain masked. No failed channel request falls
-back to guest execution. Hybrid provisions no guest binary, context, listener
-or enrolment credential.
+Origin does not change resource identity. A guest-placement request holds no
+host state root, store writer or host gate: guest placement rejects
+`Gate::acquire` with `HostAuthorityRequired`, and dispatch cannot construct
+host effect contexts locally. State and vault mounts remain masked. The local
+task a production guest runs (§8.11) is not guest placement for the kernel: it
+is the ordinary run, and its journal, gates and custody live in the guest's own
+state root beside the container's HOME (§7.1), never in the masked host one. A
+failed channel request never falls back to guest execution. Hybrid provisions
+no guest binary, context, listener or enrolment credential.
 
 Detached channel custody is handed to `workspace_session::SessionSupervisor::adopt`,
 which consumes the admitted session Run. Only this retained supervisor registers

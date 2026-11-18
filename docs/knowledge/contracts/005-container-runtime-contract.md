@@ -2103,6 +2103,15 @@ Compose file or catalog does not prevent an already-running guest from
 executing locally. Bounded guest commands preserve the same deadline, output
 budgets and JSON schema as host-routed commands.
 
+A task admitted inside that handoff keeps its own task state beside the
+container's HOME (`<HOME>/.effigy/guest-checkouts/<checkout-digest>/.effigy/state`,
+private to the workspace user), not the mounted checkout's `.effigy/state`.
+That path is the intentional read-only host-state mask, so the guest journal is
+opened, gated and settled locally while host state and secrets stay masked
+(effigy#1037). Host placement is unchanged: a host run still owns
+`<checkout>/.effigy/state`. A guest with no absolute HOME refuses and names the
+missing fact instead of falling back to the host root.
+
 ### Generated host-port preparation
 
 Host ports are assigned by Compose or the OS. A generated service publishes
@@ -2600,6 +2609,8 @@ The minimum proof set should cover:
 Update this contract when Effigy changes:
 
 - the handoff marker name or meaning
+- where a task admitted inside a handoff keeps its own task state, and what
+  proves the mounted checkout's host-state mask is left untouched
 - which execution targets receive container-local alias guarantees
 - the boundary between gateway-owned and runtime-owned alias behavior
 - the runtime-prep steps required before exec or handoff
