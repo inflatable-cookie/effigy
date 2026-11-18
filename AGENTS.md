@@ -44,19 +44,6 @@ The planner runs milestone full QA on `main` through Queue `project.qa.run` and 
 
 Run validation through Effigy selectors, not raw Cargo, Bun, or Vitest commands. **Run selectors with the installed `effigy`** (Tom, 2026-10-22). It's a `install:local` install of current main and reads this checkout's config. Don't build Effigy just to run a selector: tests build what they test. When your change alters config parsing, selector syntax or the task runner, build your binary once per head (`oxide build --bin effigy`) and run those checks with the checkout binary's absolute path (`"$(pwd)/target/debug/effigy"`); a host admission hook that resolves the admitted image from the process argv cannot resolve a relative `./target/...` against its own cwd, and refuses the run as an unidentifiable workload, so reuse the absolute path until you edit source again. Run independent selectors one after another in a single shell command. Selectors run Cargo through `scripts/oxide-selector.sh`, so Rust intermediates land in Oxide's shared slot pool instead of `target/`; a wrapper that runs Cargo itself goes through `oxide exec -- <tool>`, and every route still on plain Cargo is recorded with its rule and reason in `docs/knowledge/cargo-routes.md` (`effigy qa:docs:cargo-routes` fails on an unrecorded one). There is no per-selector plain-Cargo escape: the one escape is `EFFIGY_OXIDE_ESCAPE=cargo effigy <selector>`, which runs that selector's Cargo command exactly as written; beyond it, run `cargo` by hand. During an Oxide outage the machine-wide switch is `[programs.oxide] fallback = "cargo"` with `force = true` in `~/.effigy/config.toml` (Effigy's per-program fallback; Tom's config carries it with `force = false`). The escapes are for a named, recorded need, not a fallback: if Oxide refuses a build, report its exact failure to the task owner instead of switching to plain Cargo, which writes a checkout-local `target/` to the internal SSD (Oxide planner advisory, 2026-10-25). Selectors now pass the real Oxide pool through themselves; a harness that runs `oxide` directly under a private HOME must still pass `OXIDE_POOL` through from the real environment first (from `OXIDE_POOL`, or the first `pool:` line of `oxide status` under the real HOME). Otherwise Oxide creates a cold pool on the internal SSD under the fake HOME. Ad-hoc scratch (probes, logs, packets, throwaway fixtures you create by hand) goes under `/Volumes/Stash/scratch/effigy/`, never at the scratch top level, the drive root or `~`. Effigy's own per-run scratch already lives there (Tom, via the Oxide Supervisor, 2026-10-25). Host scratch moved from `/Volumes/Builds/scratch/effigy/` to `/Volumes/Stash/scratch/effigy/` in 2026-11: `/Volumes/Builds` is no longer mounted, so current guidance that still names it is stale, while a dated log, receipt or decision record that does is history and stays as written. Record background exit codes. Stop only processes you started, using their recorded PIDs or process groups; never use pattern kills (`pkill -f`, `killall`, or `pgrep` piped into `kill`).
 
-<!-- northstar:rust-quality:start -->
-## Northstar Rust Quality
-
-Scope: Rust source, Cargo manifests, build files, tests, and directly related
-documentation under this directory.
-
-Use Northstar's strict everyday-authoring route for ordinary Rust work. Resolve
-the repository-owned profile and deviations under `docs/knowledge/contracts/`; never
-assume a universal MSRV. Re-enter at task start and coherent batch closeout.
-Preserve unrelated work. A quality audit, no-slop pass, or audit-and-fix request
-is explicit audit intent; never route it through everyday authoring.
-<!-- northstar:rust-quality:end -->
-
 <!-- oxide:begin -->
 <!-- oxide:workspaces: . -->
 ## Rust commands: use `oxide`

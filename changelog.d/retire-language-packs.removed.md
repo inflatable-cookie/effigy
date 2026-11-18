@@ -1,0 +1,1 @@
+Retired the Northstar language-quality package: removed the Rust quality profile, deviations and activation files and the `northstar:rust-quality` AGENTS.md block. Workspace lints and normal validation are unchanged.
