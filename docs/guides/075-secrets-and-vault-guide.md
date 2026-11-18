@@ -427,17 +427,26 @@ that is missing them.
 A service that is already running keeps the values it read when it started. The
 delivery reads the files back before rewriting them and, when a delivered value
 differs from what the service holds (including a service that holds no file at
-all), names the changed keys once and the restart that loads them:
+all), names the changed keys and what loads them:
 
 ```text
-[warn] container secret(s) mailchimp_api_key were written to /run/effigy/secrets/runtime.json after `app` started, so a service that read them at startup keeps the old values until it restarts (effigy container web down, then effigy container web up)
+[warn] container secret(s) mailchimp_api_key were written to /run/effigy/secrets/runtime.json after `app` started, so `app` keeps the values it read until its process restarts, and this warning stays until it does; restart `app` in place (a stack recreate starts it before these files exist again, so rerun `effigy dev` or the command that resolved these keys afterwards)
 ```
+
+That warning is kept, not printed once: the outstanding keys are recorded with
+the container's start identity under `.effigy/runtime/container-secrets/`, so
+every later invocation reports them again until that service restarts, and the
+record retires as soon as the runtime reports a new start time. A recreate of
+the stack starts the service before these files exist again, which is why the
+remedy is a restart in place rather than `effigy container down` followed by
+`up`: the recreate would drop the delivery and the direct command cannot
+resolve the session's optional keys.
 
 Nothing restarts a live service on its own: the apply is the preparation the
 task is about to run in, so stopping it there would break the run. Consumers
 that read these files when a process starts — a request-time bootstrap, a
 deferred spawn — see the new values on their next start and need no restart;
-the warning names the keys for those that do. Core
+the warning names the keys for those that read once at startup. Core
 Effigy treats those as generic runtime files. The bundle/catalog can then wire
 them into the app runtime however it needs. A legacy PHP bundle, for example,
 can mount `runtime_dir` as tmpfs, auto-prepend a PHP bootstrap that reads
