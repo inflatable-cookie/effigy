@@ -435,12 +435,23 @@ all), names the changed keys and what loads them:
 
 That warning is kept, not printed once: the outstanding keys are recorded with
 the container's start identity under `.effigy/runtime/container-secrets/`, so
-every later invocation reports them again until that service restarts, and the
-record retires as soon as the runtime reports a new start time. A recreate of
-the stack starts the service before these files exist again, which is why the
-remedy is a restart in place rather than `effigy container down` followed by
-`up`: the recreate would drop the delivery and the direct command cannot
-resolve the session's optional keys.
+every later invocation reports them again until that service restarts. Only a
+start time the runtime actually reports by a different value retires the
+record; when the runtime reports none, nothing is retired, because an
+unobservable restart is not a restart. A record written while no start time was
+available adopts the first one the runtime later reports, so the eventual
+restart is still provable.
+
+The remedy follows where the files live. When the container's inspect shows a
+bind mount or volume under `runtime_dir`, the files survive a restart and the
+warning asks for a restart in place. When it shows a tmpfs, a restart clears
+them, so the warning asks for the app's own process to be reloaded inside the
+running container instead, and says the resolving command has to run again
+after any restart. When the runtime does not say, the warning states both.
+A recreate of the stack starts the service before these files exist again,
+which is why no form recommends `effigy container down` followed by `up`: the
+recreate would drop the delivery and the direct command cannot resolve the
+session's optional keys.
 
 Nothing restarts a live service on its own: the apply is the preparation the
 task is about to run in, so stopping it there would break the run. Consumers
