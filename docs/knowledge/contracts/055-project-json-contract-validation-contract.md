@@ -143,5 +143,3 @@ checked.
   `json-contracts-selected.json` artifact it wrote for local QA;
   `qa:ci:json` now runs `check-json --print-selected=json`, which
   validates the payload in process.
-
-See [retired.toml](../retired.toml) for the machine-readable record.

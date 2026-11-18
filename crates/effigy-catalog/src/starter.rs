@@ -295,7 +295,6 @@ mod tests {
             "docs/knowledge/domain/README.md",
             "docs/knowledge/vision.md",
             "docs/knowledge/contracts/release.md",
-            "docs/knowledge/retired.toml",
             "docs/knowledge/questions.md",
         ];
         for expected in expected_targets {

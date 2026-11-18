@@ -31,8 +31,7 @@ platform contract the next day. v0.15 retired:
 | `[distribution]` | `[release]` identities, gates, artifacts and targets, plus repo tasks |
 | the `distribution::` Rhai module | Repo tasks and ordinary process calls |
 
-Each retired command refuses with the replacement above, and each is recorded
-in [retired.toml](../knowledge/retired.toml). A manifest that still declares
+Each retired command refuses with the replacement above. A manifest that still declares
 `[distribution]` loads and is ignored with one deprecation notice per manifest,
 because dropping the table changes nothing else about a v0.14.1 project.
 

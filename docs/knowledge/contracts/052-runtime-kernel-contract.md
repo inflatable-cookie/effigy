@@ -97,8 +97,7 @@ engine exposes them.
 
 Owner: runtime kernel (Queue lane `v015-kernel`)
 Architecture: [032](../architecture/032-runtime-kernel-architecture.md)
-Supersedes: the former owned-run supervision proposal (see
-[retired concepts](../retired.toml)); the lifecycle and ownership sections of
+Supersedes: the former owned-run supervision proposal; the lifecycle and ownership sections of
 contracts [005](005-container-runtime-contract.md) and
 [049](049-heavy-validation-admission-contract.md), whose full reconciliation
 is engine-lane work
@@ -4831,8 +4830,7 @@ v0.15 imports nothing (effigy#307, effigy#373).
 - A checkout database opens as its checkout's journal in place.
 - There is no migration command and no migration report. The importer's
   preflight, stop controls, staged destinations, seal resumption and copy proof
-  have no replacement; `docs/knowledge/retired.toml` lists their terms and
-  paths.
+  have no replacement.
 
 ## 12. Proof plan
 

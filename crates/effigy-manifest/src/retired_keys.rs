@@ -8,7 +8,7 @@
 //! deprecation notice per manifest ([`crate::retired_config`]).
 //!
 //! `[drafts]` and `draft` step references are still refused, with the
-//! replacement an operator can act on (contract 043, `retired.toml`):
+//! replacement an operator can act on (contract 043):
 //! ignoring them would silently drop task definitions.
 use serde::Deserialize;
 use toml::Value;

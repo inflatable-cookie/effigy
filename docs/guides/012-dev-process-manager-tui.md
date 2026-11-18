@@ -230,8 +230,7 @@ Profile entries support:
   one accepted value; order environment host processes with `depends_on`.
 - `start_after_ms` still delays its entry for the v0.15 line, but it no longer
   orders a managed session. A manifest or bundle declaration emits one
-  deprecation notice naming the readiness/dependency replacement and removal in v0.16
-  (`docs/knowledge/retired.toml`, `managed-start-after-ordering`).
+  deprecation notice naming the readiness/dependency replacement and removal in v0.16.
 
 Run-array note:
 

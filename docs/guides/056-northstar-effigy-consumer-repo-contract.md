@@ -6,7 +6,7 @@ This guide's path stays stable for consumers. A new repository can start with `e
 
 - `AGENTS.md` orients agents and names `effigy qa` as validation.
 - `docs/README.md` describes the current state and links by topic.
-- `docs/knowledge/` owns current vision, architecture, contracts, release procedure, retired concepts, and open questions.
+- `docs/knowledge/` owns current vision, architecture, contracts, release procedure, and open questions.
 - Queue holds the plan (lanes, lane documents and order), leads, papercuts and draft briefs.
 - `docs/guides/` remains product documentation at stable consumer paths.
 - Queue closeout is the default when no control manifest applies. New lean

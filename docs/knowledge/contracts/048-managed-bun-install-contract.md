@@ -7,17 +7,14 @@ Owner: Bootstrap maintainers
 
 Related: [020](020-remote-bundle-sources-git-and-oci-delivery-contract.md),
 [047](047-bounded-doctor-and-scan-cache-contract.md),
-[bootstrap guide 057](../../guides/057-bootstrap-repo-bringup.md),
-[retired concepts](../retired.toml)
+[bootstrap guide 057](../../guides/057-bootstrap-repo-bringup.md)
 
 ## What was retired
 
 `effigy bootstrap deps sync`, its `--js-only`/`--rust-only`/`--refresh-lock`
 flags, the `effigy.bootstrap.deps.v1` payload, the bootstrap-owned missing-lock
 preflight, the Bun invocation and the Finder-metadata cleanup are gone. The
-command refuses with the replacement, and the
-`bootstrap-children-and-runtime-flags` entry in
-[retired.toml](../retired.toml) names every retired spelling.
+command refuses with the replacement.
 
 ## What replaced it
 

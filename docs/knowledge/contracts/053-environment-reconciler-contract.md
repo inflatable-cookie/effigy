@@ -173,7 +173,7 @@ is never reported as resource removal.
 Owner: environment reconciler (Queue lane `v015-environment`)
 Kernel: [052](052-runtime-kernel-contract.md) §5.9, §11
 Supersedes: the lease, lifecycle-marker and per-site holder-check sections of
-[005](005-container-runtime-contract.md) (see [retired concepts](../retired.toml))
+[005](005-container-runtime-contract.md)
 Related: [006](006-compose-backend-compatibility.md),
 [049](049-heavy-validation-admission-contract.md), [questions](../questions.md)
 Q-004, Q-005 and Q-010
