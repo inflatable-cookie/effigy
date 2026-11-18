@@ -113,6 +113,7 @@ class ReadinessTests(unittest.TestCase):
         def bind(path):
             return dict(path=str(path), sha256=readiness.digest(path))
         cell.update(candidate_active_version=bind(candidate_active_version),
+                    production_active_version=bind(candidate_active_version),
                     binaries_metadata=bind(metadata), guest_artifact=bind(guest),
                     guest_install_identity=bind(Path(str(guest) + '.install-identity')),
                     engine_binary=self.item, backend='desktop', engine_kind='docker',

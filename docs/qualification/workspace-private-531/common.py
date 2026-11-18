@@ -329,6 +329,19 @@ def validate_inputs(value, head):
                 'candidate artifact path required for its frozen sidecar')
         require(candidate_active_version['path'] == str(Path(cell['candidate']['path']).with_suffix('.active-version')),
                 'candidate active-version sidecar belongs to another artifact')
+        production_active_version = cell.get('production_active_version')
+        require(isinstance(production_active_version, dict)
+                and set(production_active_version) == {'path', 'sha256'}
+                and isinstance(production_active_version['path'], str)
+                and Path(production_active_version['path']).is_absolute()
+                and isinstance(production_active_version['sha256'], str)
+                and HEX.fullmatch(production_active_version['sha256']),
+                'pinned production active-version sidecar required')
+        require(isinstance(cell['production'].get('path'), str)
+                and Path(cell['production']['path']).is_absolute(),
+                'production artifact path required for its frozen sidecar')
+        require(production_active_version['path'] == str(Path(cell['production']['path']).with_suffix('.active-version')),
+                'production active-version sidecar belongs to another artifact')
         require(cell['old_source_receipt']['sha256'] == cell['old_binary']['sha256'], 'old receipt mismatch')
         require(cell['production_receipt']['source_head'] == cell['source_head'] and cell['production_receipt']['features'] == []
                 and cell['production_receipt']['sha256'] == cell['production']['sha256'], 'ordinary production build receipt mismatch')

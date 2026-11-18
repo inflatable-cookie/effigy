@@ -203,6 +203,9 @@ class Window:
         require(candidate_active_version == Path(str(self.candidate) + '.active-version'),
                 'candidate active-version sidecar belongs to another artifact')
         self.production = artifact(cell['production'])
+        production_active_version = artifact(cell['production_active_version'])
+        require(production_active_version == Path(str(self.production) + '.active-version'),
+                'production active-version sidecar belongs to another artifact')
         self.utility = artifact(cell['utility'])
         self.kernel_fixture = artifact(cell['kernel_fixture'])
         self.old = artifact(cell['old_binary'])

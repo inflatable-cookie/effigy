@@ -14,9 +14,14 @@ import linux_native_session as session
 
 def script(binding, roles, seed):
     source = binding['guest_source']
+    # The frozen short head is the verified build pin prepare() already
+    # required to equal the cell head: the installed sidecar carries frozen
+    # bytes, never a version discovered from `--version`, the environment or
+    # a fresh git description in the guest.
+    head = binding['source_pin'][:7]
     # All paths are produced by our fixed-root builder, never arbitrary shell
     # text from a caller. Quote every value nevertheless.
-    qsource, qroles, qbase = map(shlex.quote, (source, roles, build.BASE))
+    qsource, qroles, qbase, qhead = map(shlex.quote, (source, roles, build.BASE, head))
     commands = {
         'fixture': 'build --locked -p effigy-kernel --features fault-injection,workspace-private-qualification --bin kernel-custody-fixture',
         'test-inputs': 'nextest list --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection,workspace-private-qualification --lib --test custody --message-format json --list-type binaries-only > ' + qroles + '/binaries.original.json',
@@ -80,6 +85,12 @@ common.require(version_match is not None, 'candidate workspace version is missin
 candidate_active_version=Path(str(roles/'effigy-candidate')+'.active-version')
 common.exclusive_bytes(candidate_active_version, ('v'+version_match.group(1)+'+local.'+cell['source_head'][:7]+'\\n').encode())
 cell['candidate_active_version']=bind(candidate_active_version)
+production_sidecar=Path(str(roles/'effigy-production')+'.active-version')
+try:production_bytes=production_sidecar.read_bytes()
+except OSError:production_bytes=None
+common.require(production_bytes==candidate_active_version.read_bytes(),
+ 'in-guest production lacks the frozen active-version sidecar')
+cell['production_active_version']=bind(production_sidecar)
 cell['candidate_receipt']={'source_head':cell['source_head'],'features':['workspace-private-qualification'],'sha256':cell['candidate']['sha256']}
 cell['production_receipt']={'source_head':cell['source_head'],'features':[],'sha256':cell['production']['sha256']}
 cell['old_source_receipt']={'source_head':cell['old_source_head'],'sha256':cell['old_binary']['sha256']}
@@ -117,6 +128,20 @@ export ZIG_GLOBAL_CACHE_DIR="$base/toolchain/zig-cache" TMPDIR={shlex.quote(bind
 export TMP="$TMPDIR" TEMP="$TMPDIR"
 test -d "$roles" && test "$(stat -c %a \"$roles\")" = 700
 install -m 700 "$source/target/debug/effigy" "$roles/effigy-production"
+python3 -I -B - "$source" "$roles/effigy-production" {qhead} <<'SIDECAR'
+import os,re,sys
+from pathlib import Path
+source,binary,head=sys.argv[1:4]
+if re.fullmatch(r'[0-9a-f]{{7}}',head) is None:raise SystemExit('frozen head is not seven hex')
+match=re.search(r'(?ms)^\\[workspace\\.package\\]\\s+.*?^version\\s*=\\s*"([^"]+)"',Path(source,'Cargo.toml').read_text())
+if match is None:raise SystemExit('candidate workspace version is missing')
+sidecar=Path(str(binary)+'.active-version')
+fd=os.open(sidecar,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+with os.fdopen(fd,'wb') as out:
+ out.write(('v'+match.group(1)+'+local.'+head+'\\n').encode())
+ out.flush()
+ os.fsync(out.fileno())
+SIDECAR
 cd "$source"
 "$roles/effigy-production" build:workspace:private-qualification
 install -m 700 "$CARGO_TARGET_DIR/debug/effigy" "$roles/effigy-candidate"

@@ -198,6 +198,12 @@ def verify_record(backend, record, head, allowed):
             and binding['production_receipt']['features'] == []
             and binding['production_receipt']['sha256'] == binding['production']['sha256'],
             'receipt does not carry the exact ordinary production contract')
+    production_sidecar = binding.get('production_active_version')
+    require(isinstance(production_sidecar, dict) and set(production_sidecar) == {'path', 'sha256'}
+            and isinstance(production_sidecar['path'], str) and Path(production_sidecar['path']).is_absolute()
+            and re.fullmatch(r'[0-9a-f]{64}', production_sidecar['sha256'])
+            and production_sidecar['path'] == str(Path(binding['production']['path']).with_suffix('.active-version')),
+            'receipt does not carry the production active-version sidecar binding')
     old = binding['old_source_head']
     require(old not in allowed and re.fullmatch(r'[0-9a-f]{40}', old)
             and binding['old_source_receipt']['source_head'] == old
@@ -274,6 +280,7 @@ def aggregate(args):
             'artifacts': {backend: {'candidate': records[backend]['binding']['candidate'],
                                     'candidate_active_version': records[backend]['binding']['candidate_active_version'],
                                     'production': records[backend]['binding']['production'],
+                                    'production_active_version': records[backend]['binding']['production_active_version'],
                                     'old_binary': records[backend]['binding']['old_binary']}
                           for backend in BACKENDS},
             'backends': {backend: {'invocation_receipt': receipts[backend],
