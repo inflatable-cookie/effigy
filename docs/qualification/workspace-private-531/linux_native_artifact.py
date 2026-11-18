@@ -80,7 +80,19 @@ def produce(source, effigy):
         if (directory.resolve(strict=True) != directory or not directory.is_dir()
                 or info.st_uid != os.geteuid() or info.st_mode & 0o777 != 0o700):
             raise RuntimeError('private stable build directory differs')
-    build_env = dict(os.environ, HOME=str(BUILD_HOME), CARGO_TARGET_DIR=str(TARGET_HOME))
+    # The producer's own active version is this build's frozen identity: the
+    # role installer writes it beside the role binaries and the candidate
+    # compares the produced artifact against that same value. A fresh
+    # `cargo zigbuild` carries no sidecar, so it would report the bare package
+    # version and could never be current for the candidate. Pin the producer's
+    # version for the build and for both `--version` probes (effigy#622).
+    producer_version = subprocess.check_output([effigy, '--version'], text=True).strip()
+    producer = re.fullmatch(r'effigy (v[^\s]+)', producer_version)
+    if not producer:
+        raise RuntimeError('producer does not report an Effigy active version')
+    active_version = producer[1]
+    build_env = dict(os.environ, HOME=str(BUILD_HOME), CARGO_TARGET_DIR=str(TARGET_HOME),
+                     EFFIGY_ACTIVE_VERSION=active_version)
     subprocess.run([effigy, 'skill', 'run', '--path', driver, 'compile'], cwd=source,
                    env=build_env, check=True)
     binary = TARGET_HOME / TRIPLE / 'release/effigy'
@@ -91,11 +103,13 @@ def produce(source, effigy):
     headers = subprocess.check_output(['readelf', '-W', '-l', binary], text=True)
     versions = subprocess.check_output(['readelf', '-W', '--version-info', binary], text=True)
     tags = validate_elf(data[:64], headers, versions)
-    version = subprocess.check_output([binary, '--version'], text=True).strip()
-    match = re.fullmatch(r'effigy v([^\s]+)', version)
+    version = subprocess.check_output(
+        [binary, '--version'], text=True,
+        env=dict(os.environ, EFFIGY_ACTIVE_VERSION=active_version)).strip()
+    match = re.fullmatch(r'effigy (v[^\s]+)', version)
     if not match:
         raise RuntimeError('artifact does not report an Effigy active version')
-    if subprocess.check_output([effigy, '--version'], text=True).strip() != version:
+    if version != producer_version:
         raise RuntimeError('producer host and GNU artifact versions differ')
     # The real publisher binds local artifacts to the host freshness anchor.
     # Match that contract from the actual prepared host's metadata; never stamp
