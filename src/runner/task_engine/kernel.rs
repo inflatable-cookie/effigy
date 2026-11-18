@@ -22,6 +22,10 @@ use effigy_kernel::supervise::Executable;
 
 use crate::runner::error::RunnerError;
 
+/// The directory under the guest Effigy home that holds one checkout's own
+/// state root. Never the mounted checkout, whose `.effigy/state` is masked.
+const GUEST_CHECKOUT_STATE_DIR: &str = "guest-checkouts";
+
 /// Workload capture bounds. JSON task output keeps its own tail on top.
 pub(super) const LIMITS: Limits = Limits {
     capture_tail: 64 * 1024,
@@ -237,16 +241,79 @@ pub(super) fn known_roots_view(cx: &ObserveContext) -> Result<RootsView, RunnerE
     Ok(RootsView { roots, omitted })
 }
 
+/// Whether this process runs inside its own workspace container's handoff.
+fn guest_placement() -> bool {
+    crate::runner::container_runtime::inside_container_handoff()
+}
+
+/// The directory a workspace guest keeps for one checkout under its own Effigy
+/// home, or `None` on the host.
+///
+/// A container handoff runs inside its own workspace container, where the
+/// mounted checkout's `.effigy/state` is a read-only host-state mask: the host
+/// journal is not this process's to open (contract 052 §8.2, R1). The guest
+/// therefore keeps its own journal beside its own Effigy home, keyed by the
+/// checkout it belongs to, so two checkouts in one container never share a
+/// journal and the mask is never written, adopted or repaired.
+fn guest_state_owner(checkout: &Path) -> Option<PathBuf> {
+    if !guest_placement() {
+        return None;
+    }
+    let home = state_home()?;
+    let mut bytes = b"effigy-guest-checkout-state-v1\0".to_vec();
+    let path = checkout.as_os_str().as_encoded_bytes();
+    bytes.extend((path.len() as u64).to_le_bytes());
+    bytes.extend(path);
+    let digest = effigy_kernel::id::Digest::of(&bytes).hex();
+    Some(
+        home.join(".effigy")
+            .join(GUEST_CHECKOUT_STATE_DIR)
+            .join(digest),
+    )
+}
+
 /// The kernel location of the checkout an invocation root belongs to.
 ///
 /// Durable checkout state belongs to the resolved invocation root, not a
 /// nested catalog's cwd (contract 052 §7.1): Git discovery is lexical and
 /// upward, so a nested directory with no `.git` of its own declares no second
 /// checkout and its state belongs to the nearest enclosing one.
+///
+/// In a workspace guest that root is the checkout's guest-local state owner:
+/// the checkout's own `.effigy/state` is the host-state mask, so the guest
+/// opens its journal where it owns storage instead.
 pub(in crate::runner) fn checkout_location(root: &Path) -> CheckoutLocation {
+    let checkout = effigy_core::worktree_scope::checkout_root(root);
     CheckoutLocation {
-        root: effigy_core::worktree_scope::checkout_root(root),
+        root: guest_state_owner(&checkout).unwrap_or(checkout),
     }
+}
+
+/// Create a guest-local state owner before an effect opens it.
+///
+/// `StateRoot::effects` opens `<owner>/.effigy/state`, and only creates what is
+/// below the owner. A host checkout already exists; a guest-local owner is new
+/// storage this process owns, so the effect that opens it makes it first. A
+/// read-only observation calls neither this nor any other effect.
+pub(in crate::runner) fn prepare_state_owner(
+    location: &CheckoutLocation,
+) -> Result<(), RunnerError> {
+    if !guest_placement() {
+        return Ok(());
+    }
+    if state_home().is_none() {
+        return Err(RunnerError::task_invocation(
+            "a workspace guest keeps its own task state beside the container's HOME, and HOME is \
+             unset or not absolute; set HOME for the workspace user, or run this task on the host"
+                .to_owned(),
+        ));
+    }
+    std::fs::create_dir_all(&location.root).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "the workspace guest state directory `{}` cannot be created: {error}",
+            location.root.display()
+        ))
+    })
 }
 
 /// Checkout journals are opened independently; the actual user HOME is only
@@ -257,6 +324,7 @@ pub(in crate::runner) fn effects_root(checkout: &Path) -> Result<&'static StateR
     let home =
         state_home().ok_or_else(|| RunnerError::task_invocation("HOME is unset or relative"))?;
     let location = checkout_location(checkout.path());
+    prepare_state_owner(&location)?;
     // Revalidate before reusing a retained handle: same-path replacement is
     // never permission to write through the previous checkout's descriptor.
     let current = StateRoot::checkout_effects(&effects(), &home, &location)

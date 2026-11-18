@@ -11,6 +11,9 @@ mod core_output_tests;
 mod deploy_fixture_support;
 #[path = "cli_output_tests/flat_command_execution_tests.rs"]
 mod flat_command_execution_tests;
+#[cfg(unix)]
+#[path = "cli_output_tests/guest_task_state_tests.rs"]
+mod guest_task_state_tests;
 #[path = "cli_output_tests/help_and_flags_tests.rs"]
 mod help_and_flags_tests;
 #[path = "cli_output_tests/json_envelope_tests/mod.rs"]

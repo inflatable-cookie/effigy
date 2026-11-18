@@ -1695,3 +1695,78 @@ fn reserved_child_receives_grant_at_handoff_fd() {
     );
     assert!(session_run.close(WorkloadOutcome::Succeeded).is_empty());
 }
+
+/// A container handoff opens its journal beside its own guest HOME, never the
+/// mounted checkout's `.effigy/state`: inside a workspace that path is the
+/// read-only host-state mask (contract 052 §8.2, R1), so the guest keeps its
+/// own task state and the mask stays exactly as the workspace left it.
+mod guest_state {
+    use super::super::*;
+    use crate::contract_test_support::EnvGuard;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    const HANDOFF: &str = crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_NAME;
+
+    /// Undo the fixture's own read/traverse denial before its tree is dropped.
+    struct RestoreMode(std::path::PathBuf);
+    impl Drop for RestoreMode {
+        fn drop(&mut self) {
+            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+
+    fn masked_checkout(name: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let root = tempfile::tempdir().expect("checkout root");
+        let checkout = root.path().join(name);
+        std::fs::create_dir_all(checkout.join(".git")).expect("git directory");
+        let mask = checkout.join(".effigy/state");
+        std::fs::create_dir_all(&mask).expect("host-state mask");
+        std::fs::set_permissions(&mask, std::fs::Permissions::from_mode(0o000)).expect("mask mode");
+        (root, checkout)
+    }
+
+    /// On the host the checkout owns its journal, exactly as before.
+    #[test]
+    fn host_placement_keeps_the_checkout_state_root() {
+        let _env = EnvGuard::set_many(&[(HANDOFF, None)]);
+        let (_root, checkout) = masked_checkout("host-checkout");
+        let location = checkout_location(&checkout);
+        assert_eq!(location.root, checkout);
+    }
+
+    /// In a handoff the journal moves under the guest's own HOME, and opening
+    /// it never adopts, tightens or writes the masked checkout root.
+    #[test]
+    fn guest_placement_opens_its_journal_outside_the_masked_checkout() {
+        let (_root, checkout) = masked_checkout("guest-checkout");
+        let mask = checkout.join(".effigy/state");
+        let _restore = RestoreMode(mask.clone());
+        let before = std::fs::symlink_metadata(&mask).expect("mask metadata");
+
+        let _env = EnvGuard::set_many(&[(HANDOFF, Some("1".to_owned()))]);
+        let location = checkout_location(&checkout);
+        let home = state_home_path().expect("test state home");
+        let guest_root = home.join(".effigy/guest-checkouts");
+        assert_ne!(location.root, checkout);
+        assert_eq!(location.root.parent(), Some(guest_root.as_path()));
+        assert!(
+            !location.root.starts_with(&checkout),
+            "guest state belongs outside the mounted checkout: {}",
+            location.root.display()
+        );
+
+        let root = checkout_effects_root(&checkout).expect("guest journal opens");
+        assert!(!root.path().starts_with(&checkout));
+
+        let after = std::fs::symlink_metadata(&mask).expect("mask metadata");
+        assert_eq!(after.ino(), before.ino(), "the mask was replaced");
+        assert_eq!(after.mode() & 0o7777, 0o000, "the mask mode changed");
+        assert_eq!(after.mtime(), before.mtime(), "the mask was written");
+        assert_eq!(
+            std::fs::read_dir(&mask)
+                .expect_err("mask is unreadable")
+                .kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+    }
+}

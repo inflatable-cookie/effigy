@@ -38,6 +38,7 @@ impl TaskRun {
         // Hook custody is connected to the same memory record below; until
         // admitted it cannot grant a child permission to bypass admission.
         let location = kernel::checkout_location(&request.target.root);
+        kernel::prepare_state_owner(&location).map_err(|error| start_error(&error.to_string()))?;
         let cx = kernel::effects();
         let checkout = checkout::read(&request.target.root)
             .map_err(|error| start_error(&error.to_string()))?
@@ -284,6 +285,7 @@ impl TaskRun {
             return Err(start_error("memory parent is not checkout-local"));
         };
         let location = kernel::checkout_location(&self.target.root);
+        kernel::prepare_state_owner(&location).map_err(|error| start_error(&error.to_string()))?;
         let root = StateRoot::foreground_effects(&kernel::effects(), &location)
             .map_err(|error| start_error(&error.to_string()))?;
         let step_owner = ResourceId::store(
