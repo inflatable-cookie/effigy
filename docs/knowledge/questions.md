@@ -397,7 +397,8 @@ grew by about 18,700 runs in four days and about 20 MB in 15 minutes. The ruling
   kernel's crash-recovery guarantees still hold for every run that outlives its
   terminal.
 
-The storage model is owned by [052 §3.1](contracts/052-runtime-kernel-contract.md#31-q-010-run-classes-and-the-durability-boundary),
+The v0.16 D3 ruling changed foreground settlement. The current storage model
+is owned by [052 §3.1](contracts/052-runtime-kernel-contract.md#31-q-010-run-classes-and-the-durability-boundary),
 with storage in §7, the v0.14.1 importers in §11 and acceptance proofs in §12.6; contracts
 [053](contracts/053-environment-reconciler-contract.md) and
 [049](contracts/049-heavy-validation-admission-contract.md) specify environment
@@ -435,7 +436,12 @@ exception is narrow:
   authority inside Effigy.
 - Runs without a hook keep Q-010 unchanged.
 
-effigy#325 implemented it: contract 049 owns the opt-in protocol
+Superseded on 2026-11-19 (v0.16 simplification, task 1063): the opt-in reported
+protocol, the acknowledgements and the strict ring are retired. Contract 049's
+Retired section records what went and what remains (the owner-loss row). The
+history below is kept as the record of the decision.
+
+effigy#325 implemented it: contract 049 owned the opt-in protocol
 (`EFFIGY_ADMISSION_PROTOCOL=2`), the acknowledged reports and the coverage
 witness, and 052 §3.1 records this note's narrow exception. The row lives in an
 additive schema-1 `foreground_terminals` table in the owning checkout journal,

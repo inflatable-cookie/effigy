@@ -163,7 +163,7 @@ code settle it:
 
 | # | Topic | X-opus | X-sol | Decision | Ground |
 | --- | --- | --- | --- | --- | --- |
-| D1 | Runtime store | per-checkout JSON records, revision field | one SQLite store: operations, resources, attachments, claims, requests, events | Q-010: memory for foreground runs; SQLite journals per checkout; a small machine store for shared facts only (§7). Vault and user-owned files stay separate. | Tom, 2026-10-22; Q-010 |
+| D1 | Runtime store | per-checkout JSON records, revision field | one SQLite store: operations, resources, attachments, claims, requests, events | Foreground lifecycle in memory with a checkout terminal row (§3.1). SQLite journals per checkout and a small machine store for shared facts (§7). Vault and user-owned files stay separate. | Q-010; Tom, 2026-11-19 (D3) |
 | D2 | Store and gate location | `<checkout>/.effigy/kernel/` | outside disappearing worktrees | Q-010: `<checkout>/.effigy/state/`, independently per linked worktree; machine resources alone under `~/.effigy/state/`. Guest mounts mask local state. | Tom, 2026-10-22; deletion limits in §7.1 |
 | D3 | Settle | replay recorded undo in reverse | per-adapter semantics, positive settlement | Reverse order, with a declared `Settlement` per effect. Irreversible effects are reported, never replayed. | Both; X-sol's objection to blind undo of borrowed or irreversible effects is absorbed |
 | D4 | Meaning of a free gate | free gate + live record = interrupted | release permits reconciliation, not successor activation | Both. A free gate with a non-closed run reads `Interrupted`. A successor must settle it before its own run is admitted (K5). | X-sol §3: lock release does not prove grouped or remote work ended |
@@ -189,7 +189,7 @@ lifetime belongs to its invoking process/session even when it has no terminal.
 
 | Invocation or obligation | Class and owner |
 | --- | --- |
-| Local foreground task, sequence or test; all descendants local and terminal-bound | `Foreground`: record, intents, receipts and outcome in memory; checkout resource lock files |
+| Local foreground task, sequence or test; all descendants local and terminal-bound | `Foreground`: in-memory lifecycle, checkout resource locks and one terminal row at settlement |
 | `tasks qa-group run` (maintained or temporary group, with or without heavy members) | `CheckoutDurable`; contract [051](051-bounded-qa-groups-contract.md) requires a retained definition, member ledger, result and run-scoped logs after completion; member runs use the group's checkout journal |
 | `--run-id <key>` on a supported one-shot command | `CheckoutDurable`, even without `--detach`; idempotency, requests and logs need a journal |
 | `--detach`; managed session in TUI, attached text or `--headless`; environment-owned host sidecar | `CheckoutDurable`; detached supervisor and journal-backed sentinel. Existing managed-task refusal of `--run-id` is unchanged |
@@ -208,10 +208,9 @@ launch named/detached Effigy children from shell code. The default `false`
 permits foreground admission only when the remaining tree is local. A
 referenced durable task makes its ancestors durable too. A declared durable
 task selects the journal for the whole tree before workload go; there is no
-promotion after workload go and no silent fallback to the machine database. A
-container-free foreground build never opens either database for writing.
-Machine-store failure is not a foreground dependency; existing local
-predecessor evidence stays read-only.
+promotion after workload go and no silent fallback to the machine database.
+Foreground settlement writes one terminal row to the checkout journal.
+Foreground runs leave the machine store and local predecessor records untouched.
 
 The durability class belongs to the invocation that declares it. A nested
 `effigy` is an ordinary invocation: it classifies its own tree, and a durable
@@ -229,11 +228,10 @@ operation, and only a proved, live predecessor holding that owner gate refuses.
 Local gate identity is a digest of the root's canonical path, with a domain
 separate from persisted `CheckoutId`s, so a reboot, a renumbering or a replaced
 Git directory cannot rename a checkout's gates and locks (effigy#337). First
-durable initialization serializes on this local identity gate. A short run never mints a Git token, registers a
-checkout, appends an ignore block, creates a database, writes a run directory,
-or fsyncs run metadata. Lock-file creation and best-effort diagnostic bytes
-are transient exclusion machinery, not durable run records. Task outputs and
-explicit user-requested exports are outside runtime-state accounting.
+durable initialization serializes on this local identity gate. Foreground
+admission uses lock files and best-effort gate diagnostics for transient
+exclusion. Task outputs and explicit user-requested exports are outside
+runtime-state accounting.
 
 Admission nesting is one advisory environment fact. `EFFIGY_ADMITTED=<admitting
 run id>` is set on everything an admitted heavy run spawns; a heavy invocation
@@ -352,54 +350,23 @@ blocks the affected owner until positively absent or explicitly acknowledged;
 acknowledgement for a foreground run lasts only in the current custodian.
 Guaranteed restartable recovery requires a durable class.
 
-**The narrow terminal-record exception (effigy#325).** One deliberate,
-bounded exception to "a foreground run leaves no durable record" (Tom,
-2026-10-24; Queue decision b3538091, chosen option verbatim: "the admission
-hook reports the workload's real process group and start identity, and Effigy
-records a terminal result for foreground runs. Then Queue can settle dead runs
-as lost and free slots on its own."). An orchestrator that opts in to
-`effigy.admission-request.v2` (contract [049](049-heavy-validation-admission-contract.md))
-makes Effigy write exactly one row to the owning checkout journal at settle,
-in an additive schema-1 `foreground_terminals` table. An older reader selects
-the columns it knows, so that existing addition needs no schema-version bump.
-The later v2 detached-owner claim boundary had different writer rules; that
-claim path is retired (Tom 2026-11-19, D1).
+**The foreground terminal record.** The settling owner writes the workload
+outcome, its exit code or signal when observed, and the cleanup result to the
+owning checkout journal's `foreground_terminals` table. Each run has one row,
+identified by run id, with its checkout, boot, task and closed time.
 
-The row holds the run id, the `CheckoutId`, the boot identity, the task, the
-outcome, the exit code or signal, `cleanup`, the acknowledged workload-group
-count and the closed time. The row is bounded at write time: an oversized
-`run_id`, `checkout`, `boot`, `outcome` or `cleanup` is refused rather than cut,
-so no two runs can coalesce on one key, and only the descriptive `task` label is
-cut and marked. Contract
-[049](049-heavy-validation-admission-contract.md#per-invocation-persistence-effigy977)
-states the maxima, the row maximum and the rest of this route's per-invocation
-persistence. It is
-**evidence, never authority**: it carries no
-PID, PGID or start identity, so no run, provider or built-in may signal,
-reclaim, recover or settle from it. `run status <id>` reports it with
-`evidence_source: "foreground-terminal-record.v1"`; `run logs` reports no
-retained log and `run stop` refuses. The only closure Effigy asserts from it is
-a terminal result with `cleanup: "complete"` (R5/I-R7). A run whose custodians
-all died before settle writes nothing and stays `not-recorded`; there is no
-replay.
+If the owner dies, the surviving memory guard records custody evidence.
+It writes `interrupted` with `cleanup: "complete"` when custody closes, or
+`unknown` with `cleanup: "incomplete"` when a pin or registered effect remains
+unproven. It leaves the exit code and signal empty. Either custodian may
+upgrade a parked `unknown`/`incomplete` row to `interrupted`/`complete`
+after proving closure. The guard writes `released`/`complete` when it
+honours a verified explicit release. Other existing terminal rows are kept.
 
-One writer is not the admission hook. A foreground run whose *owner* died while
-its memory guard survived is settled by that guard, which writes one such
-record itself (effigy#986). It says only what the guard can still prove:
-`interrupted` with `cleanup: "complete"` when the run's custody closed, and
-`unknown` with `cleanup: "incomplete"` when a pin or registered effect did not.
-It never says `succeeded`, and it carries no identity either, so the owner's
-death grants no signal, reclaim or replay. A guard carries the persistence
-class of the run whose owner it observed, so a strict run's owner-death record
-goes to the same preallocated ring instead of opening SQLite. Every other
-foreground run keeps Q-010 unchanged, including no journal write at all.
-
-Under strict persistence (effigy#985) the same record is first written to one
-slot of a fixed-size, preallocated ring under the state root, and the route
-opens no SQLite connection at all; the next non-strict store open ingests the
-slot into the same `foreground_terminals` table, and `run status` and `runs`
-read the slot until then (contract 049). The provider-side release rule this
-evidence supports is contract 049's, and it is not an Effigy authority.
+The row carries neither PID, PGID nor start identity. `run status <id>`
+reports it with `evidence_source: "foreground-terminal-record.v1"`.
+`run logs` reports no retained log and `run stop` refuses. If every custodian
+dies before recording settlement, status reports `not-recorded`.
 
 **Views and fencing.** Foreground runs have random `RunId`s and an in-memory
 incarnation fence containing that id; persistent resource generations are not
@@ -408,8 +375,8 @@ incremented. No persisted request can address a foreground incarnation.
 its holder's boot/start identity and checkout binding. Without an owner query,
 phase/outcome/log fields are explicitly unavailable. `run status <id>` checks
 the current checkout's journal and verified live gate diagnostics; after the
-foreground run exits it says `not recorded (foreground or expired)`, never
-`succeeded` or `interrupted` from stale bytes. Discovered survivors are residue
+foreground run exits it reports its terminal row when available, never
+`succeeded` or `interrupted` from stale gate bytes. Discovered survivors are residue
 observations, not reconstructed journal entries. `run logs` has no foreground
 history. A held gate whose recorded owner is verifiably gone is not a live
 owner: `run status` reports it as `interrupted` and names `effigy run stop
@@ -872,17 +839,11 @@ machine journal initialization. Checkout backend logs use their checkout gate.
 SQLite settings: `journal_mode=WAL` (persistent), `synchronous=FULL`,
 `foreign_keys=ON`, `journal_size_limit` = 16 MiB and `wal_autocheckpoint` = 1024
 pages, `auto_vacuum=INCREMENTAL` chosen while the store is empty, and a
-`busy_timeout` from the store's own window. The open reads both log settings
-back and refuses a store whose settings did not apply, and a closing writable
-store attempts `PRAGMA wal_checkpoint(TRUNCATE)` inside a short window, so a
+`busy_timeout` from the store's own window. A closing writable store attempts `PRAGMA wal_checkpoint(TRUNCATE)` inside a short window, so a
 finished writer carries its log into the store and releases it when no
 concurrent reader needs it. `journal_size_limit` bounds the log after a
 completed checkpoint reset, not its peak: a reader that pins an older snapshot
-stops the reset, and writers keep appending while it does. What one invocation
-of a route contributes is therefore the frames of its own transaction, and
-contract
-[049](049-heavy-validation-admission-contract.md#per-invocation-persistence-effigy977)
-states that contribution and what it excludes. Write-ahead logging is what lets a
+stops the reset, and writers keep appending while it does. Write-ahead logging is what lets a
 reader and a writer share the store; it replaced the rollback journal in
 effigy#275 after concurrent runs refused each other with `Busy`.
 
@@ -2730,9 +2691,9 @@ The §5.5/§5.6 record shapes remain in the checkout journal: `meta`, the owning
 identity and verified import aliases in `checkouts`, `resources`, `runs`, `events`, `attachments`, local `claims`,
 `requests`, `objects`/object references and `logs`. No row represents another
 checkout's task history. All environment records, renders, backend metadata,
-data ownership, remote receipts and holder runs live here. Foreground runs
-create none of these rows. A checkout journal failure affects that checkout;
-no common database is opened for task begin, spawn or settle.
+data ownership, remote receipts and holder runs live here. The foreground
+lifecycle stays in memory and uses only the `foreground_terminals` table for
+settlement (§3.1). A checkout journal failure affects that checkout.
 
 An environment holder and its environment authority use the same checkout
 journal, preserving atomic attach/activation and R4. An explicit borrow from
@@ -3479,9 +3440,9 @@ only those identities, remove fixtures and preserve exit codes before reporting.
 | Proof | Required evidence |
 | --- | --- |
 | Classification | Table-driven CLI coverage of every §3.1 row, with text/JSON, TTY/pipe, heavy/no hook, nested scripts and late durable requests; no effect before refusal or durable admission |
-| Write count | Instrument database opens/commits and filesystem writes/fsyncs before/after fresh and warm foreground tasks, sequences and test suites: **0 database writes, 0 durable runtime records**, no machine DB dependency. Show transient lock writes separately. Repeat with configured source preparation and prove honest durable classification. QA-group runs are checkout-durable: retain their definition, member ledger, result and logs across owner exit, with zero machine-store writes for local-only members. Measure their checkout writes separately. Detached runs report commits by admission, spawn, requests, settle, bytes and fsyncs; no per-output, poll or heartbeat journal writes |
+| Write count | Foreground settlement writes one checkout terminal row, with no machine DB dependency. QA-group and detached runs retain their durable lifecycle records. |
 | Isolation/concurrency | At least 20 overlapping short runs across at least 3 independent checkouts, while long detached runs and an environment transition run; zero cross-project lock refusals, including a deliberately stalled local retention writer. Same-resource contention still returns the specified Busy result. Busy/corrupt machine store cannot block local-only foreground work |
-| Foreground custody | macOS/Linux: leader exit with live descendants, HUP/INT/TERM, owner SIGKILL, guard SIGKILL, both dead, cleared tags, escaped session, reused/foreign PGIDs and SIGSTOP; positive cleanup or explicit evidence-limited residue, no numeric recovery signal, no false persisted success, no unlock while the surviving custodian cleans up |
+| Foreground custody | macOS/Linux: leader exit with live descendants, HUP/INT/TERM, owner SIGKILL, guard SIGKILL, both dead, cleared tags, escaped session, reused/foreign PGIDs and SIGSTOP. Prove cleanup or report residue. A settled routed signal records cancellation and its signal. A surviving guard records custody evidence only after owner death. No numeric recovery signal or unlock while a surviving custodian cleans up. |
 | Durable crash recovery | Kill/ENOSPC/EPERM/Unknown at every intent, receipt, activation and settle crossing for QA-group runs, `--run-id`, detached one-shot, each managed front end, environment transition, sidecar, remote/container run, and gateway lifecycle/publication. Preserve O1–O14 with local integrity and cross-store receipts; one authority and no double release |
 | Task status read model | `tasks status <task>` and `tasks status --all`, text/JSON: first foreground run with no token/DB is live, not never-run; free/stale gates and foreground exit produce not-recorded; old durable success stays historical; held/unverifiable identity and discovered residue are unknown; interrupted durable runs keep recovery commands. No history row or token is created. Validate the v3 envelopes and durable-only latest/history per 018 |
 | Gates/layout/deletion | Fresh checkout, linked worktree, primary, non-Git root, same-path replacement, explicit retire and external deletion; gate inode continuity while held, token-init races, host-only guest masking, unknown residue/claims protected, no primary journal fallback |

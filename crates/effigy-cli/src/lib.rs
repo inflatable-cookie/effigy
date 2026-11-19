@@ -902,9 +902,6 @@ pub enum RunsAction {
     /// `effigy run release <run> [--wait-ms N]`: drop a parked sentinel after
     /// proving its process group is empty. Never signals task processes.
     Release { run: String, wait_ms: Option<u64> },
-    /// `effigy run prepare [--task SELECTOR] [--check]`: prepares this
-    /// checkout's journal, strict terminal ring, and one task's strict gates.
-    Prepare { check: bool, task: Option<String> },
 }
 
 /// Bounded QA-group surfaces under `effigy tasks` (contract 051).

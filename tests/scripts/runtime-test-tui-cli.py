@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Real terminal input and owner-death proofs in one disposable checkout."""
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 import errno
 import fcntl
 import json
@@ -10,6 +10,7 @@ import pty
 import select
 import shlex
 import signal
+import sqlite3
 import struct
 import subprocess
 import sys
@@ -165,7 +166,9 @@ with tempfile.TemporaryDirectory(prefix="q010-test-tui-") as temporary:
                 assert outer_gate is not None, "nested task custody gate"
             started = time.monotonic()
             child.kill()  # Only this proof's recorded owner PID.
-            child.wait(timeout=10)
+            while child.poll() is None:
+                drain()
+                assert time.monotonic() - started < 10, "killed owner did not exit"
             try:
                 while alive(pid):
                     if outer_gate is not None:
@@ -183,6 +186,13 @@ with tempfile.TemporaryDirectory(prefix="q010-test-tui-") as temporary:
                     outer_gate.close()
             print(json.dumps({"proof": "test-tui-owner-death", "nested": args == ["nested"],
                               "cleanup_seconds": round(time.monotonic() - started, 3)}))
-    assert not list(base.rglob("*.db")), "local TUI wrote a database"
-    print(json.dumps({"proof": "interactive-local-test", "exit": 0, "database_files": 0,
+    journal = project / ".effigy/state/kernel.db"
+    assert list(base.rglob("*.db")) == [journal], "local TUI used another database"
+    with closing(sqlite3.connect(f"{journal.as_uri()}?mode=rw", uri=True)) as db:
+        db.execute("PRAGMA query_only = ON")
+        outcomes = {row[0] for row in db.execute("SELECT outcome FROM foreground_terminals")}
+        assert {"succeeded", "cancelled"} <= outcomes, outcomes
+        for table in ("runs", "objects", "logs"):
+            assert db.execute(f"SELECT count(*) FROM {table}").fetchone() == (0,), table
+    print(json.dumps({"proof": "interactive-local-test", "exit": 0, "database_files": 1,
                       "rows": 32, "columns": 100, "input": "hello"}))

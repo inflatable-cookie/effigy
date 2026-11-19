@@ -296,13 +296,6 @@ pub struct PartialSpawn {
     pub primary: SpawnError,
     pub cleanup: Vec<StopReport>,
 }
-/// A caller's last step between a spawned child's recorded receipt and its
-/// `go`. An engine uses it to deliver evidence about the exact group that is
-/// about to exec. A refusal stops the child before it can run: it is still
-/// behind the barrier, so it exits without exec and its group is reaped.
-pub trait SpawnGate {
-    fn before_go(&mut self, receipt: &ProcessReceipt) -> Result<(), SpawnError>;
-}
 
 #[derive(Debug)]
 pub struct Custody;
@@ -604,7 +597,6 @@ impl Custody {
             true,
             None,
             None,
-            None,
         )
     }
 
@@ -624,7 +616,6 @@ impl Custody {
             false,
             None,
             None,
-            None,
         )
     }
 
@@ -640,7 +631,6 @@ impl Custody {
             None,
             crate::ctx::Capability::AdapterEffect,
             true,
-            None,
             None,
             None,
         )
@@ -662,7 +652,6 @@ impl Custody {
             false,
             None,
             None,
-            None,
         )
     }
     /// Acquire executable source under a Prepare run. This uses the same
@@ -682,7 +671,6 @@ impl Custody {
             true,
             None,
             None,
-            None,
         )
     }
     pub(crate) fn spawn_remote(
@@ -698,7 +686,6 @@ impl Custody {
             Some(registration),
             crate::ctx::Capability::AdapterEffect,
             true,
-            None,
             None,
             None,
         )
@@ -720,7 +707,6 @@ impl Custody {
             None,
             crate::ctx::Capability::AdapterEffect,
             required,
-            None,
             handoff,
             None,
         )
@@ -739,28 +725,6 @@ impl Custody {
             None,
             crate::ctx::Capability::AdapterEffect,
             required,
-            None,
-            handoff,
-            None,
-        )
-    }
-    /// `spawn_foreground_with_handoff` with a gate between the recorded receipt
-    /// and the child's `go`. A gate refusal leaves the child unexecuted.
-    pub fn spawn_foreground_gated(
-        run: &mut crate::run::ForegroundRun,
-        spec: ProcessSpec,
-        cx: &EffectContext,
-        gate: &mut dyn SpawnGate,
-        handoff: Option<OwnedFd>,
-    ) -> Result<OwnedProcess, SpawnError> {
-        Self::spawn_inner(
-            run,
-            spec,
-            cx,
-            None,
-            crate::ctx::Capability::AdapterEffect,
-            true,
-            Some(gate),
             handoff,
             None,
         )
@@ -797,7 +761,6 @@ impl Custody {
             crate::ctx::Capability::AdapterEffect,
             false,
             None,
-            None,
             Some(output),
         )
     }
@@ -822,14 +785,12 @@ impl Custody {
             true,
             None,
             None,
-            None,
             Some(file),
             None,
             None,
         )
     }
-    // Every parameter is a distinct spawn knob the public entry points set;
-    // the gate is the one an engine adds between receipt and `go`.
+    // Every parameter is a distinct spawn knob the public entry points set.
     #[allow(clippy::too_many_arguments)]
     fn spawn_inner(
         run: &mut impl ProcessOwner,
@@ -838,7 +799,6 @@ impl Custody {
         registration: Option<Arc<Mutex<crate::remote::stream::RegistrationStream>>>,
         capability: crate::ctx::Capability,
         required: bool,
-        gate: Option<&mut dyn SpawnGate>,
         handoff: Option<OwnedFd>,
         canonical_output: Option<CanonicalOutput>,
     ) -> Result<OwnedProcess, SpawnError> {
@@ -849,7 +809,6 @@ impl Custody {
             registration,
             capability,
             required,
-            gate,
             handoff,
             canonical_output,
             None,
@@ -857,8 +816,7 @@ impl Custody {
             None,
         )
     }
-    // Every parameter is a distinct spawn knob the public entry points set;
-    // the gate is the one an engine adds between receipt and `go`.
+    // Every parameter is a distinct spawn knob the public entry points set.
     #[allow(clippy::too_many_arguments)]
     fn spawn_inner_retained(
         run: &mut impl ProcessOwner,
@@ -867,7 +825,6 @@ impl Custody {
         registration: Option<Arc<Mutex<crate::remote::stream::RegistrationStream>>>,
         capability: crate::ctx::Capability,
         required: bool,
-        gate: Option<&mut dyn SpawnGate>,
         handoff: Option<OwnedFd>,
         canonical_output: Option<CanonicalOutput>,
         interpolation: Option<Arc<Mutex<crate::interpolation::PrelaunchInterpolation>>>,
@@ -1087,9 +1044,6 @@ impl Custody {
                 // this exact core in the Run; Blocked still owns the closed barrier
                 // and reaps the pre-exec group. Neither receipt publication nor a
                 // handoff acknowledgement can leave a runnable, unowned child.
-                if let Some(gate) = gate {
-                    gate.before_go(&receipt)?;
-                }
                 // Re-prove both incarnations after the potentially slow handoff,
                 // immediately before transferring the barrier to live custody.
                 retained_leader(&receipt)?;

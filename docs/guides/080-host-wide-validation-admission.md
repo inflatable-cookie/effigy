@@ -74,62 +74,11 @@ Effigy's own wait for the hook is bounded by
 `EFFIGY_ADMISSION_HOOK_TIMEOUT_MS`; an expired wait refuses the run with its
 `effigy.admission.v1` details rather than waiting forever.
 
-## Report custody back to the hook (protocol v2)
+## When the owner dies
 
-An orchestrator that must settle a run whose Effigy process died needs more
-than the hook's own PID. Setting `EFFIGY_ADMISSION_PROTOCOL=2` next to the hook
-opts that launcher in to a second protocol; v1 consumers are untouched, since
-without the variable the request, stdin and behaviour are exactly what they
-were. Any other value refuses the run, naming the variable.
-
-v2 is for foreground runs, because its first report names the memory guard
-that keeps a foreground run's custody. A durable run (`--run-id`) refuses v2
-before the hook starts, naming the variable: unset it for those runs; they
-already record their own run row.
-
-Under v2 the request is `effigy.admission-request.v2` (every v1 field plus
-`"protocol": 2`), and Effigy sends newline-delimited
-`effigy.admission-event.v1` reports to the hook's **stdin**. Each report must
-be acknowledged with `ack <seq>` on stdout within 10 seconds:
-
-| Report | Carries | When |
-| --- | --- | --- |
-| `custodians` (seq 1) | the owner's and the guard's `ProcessIdentity` | after `admit`, before any workload |
-| `workload` | the group's real `pgid` and its leader `ProcessIdentity` | before that group's first instruction runs |
-| `terminal` | outcome, exit code or signal, cleanup, group count | at settle, before the hook is stopped |
-
-```sh
-#!/bin/sh
-# heavy-slot for an orchestrator that settles dead runs itself.
-slot=$(my-scheduler acquire --request "$EFFIGY_ADMISSION_REQUEST") || {
-  echo "deny no capacity"; exit 0; }
-trap 'my-scheduler release "$slot"; exit 0' TERM
-echo admit
-while IFS= read -r event; do
-  seq=$(printf '%s\n' "$event" | sed 's/.*"seq":\([0-9]*\).*/\1/')
-  my-scheduler record --slot "$slot" --event "$event"   # durably
-  echo "ack $seq"                                       # only after recording
-done
-```
-
-What the acknowledged sequence proves, even if Effigy and its guard are killed:
-
-- The acknowledged seqs are always a gap-free prefix `1..n`, because Effigy
-  never writes event n+1 before n is acknowledged.
-- A workload group's `go` is sent only after its own report is acknowledged,
-  so a group whose report was never acknowledged never runs. A child already
-  spawned is held at the barrier and exits without executing.
-- `custodians` plus two `workload` reports with no gaps means exactly those
-  custodians and groups existed; `custodians` alone means no workload group
-  ever started (a legitimate zero). No `custodians` means nothing is known.
-- `workload_groups` in the terminal report is only a cross-check.
-
-A report that is not acknowledged — a write failure, EOF, a malformed or
-out-of-order `ack`, or the timeout — stops the workload before it runs and
-fails the run closed with the usual `effigy.admission.v1` `failed` error.
-
-After a normal v2 settle, the run also leaves one terminal row in its checkout
-journal, so `run status` still answers once the process is gone:
+If the Effigy process that admitted a run dies before the run settles, the
+run's memory guard settles it and writes one row to the checkout journal, so
+`run status` still answers after the process has gone:
 
 ```sh
 effigy --json run status agqvltk3r7jktaa6vi23dpcu4a
@@ -137,11 +86,9 @@ effigy --json run status agqvltk3r7jktaa6vi23dpcu4a
 # "checkout_id": "4:6f0106cdfc7327d913ccf9dd28c91c7d", "boot": "..."
 ```
 
-That record is evidence for your own lease, not an Effigy authority: it holds
-no PID, PGID or start identity, `run logs` reports no retained log and
-`run stop` refuses. Effigy never recovers or signals from it, and a provider
-release on this evidence is never shown as `cleanup: "complete"`. The release
-rule and its accepted risk are contract 049's.
+The row records the guard's cleanup evidence. It carries no process identity
+for recovery or signaling. `run logs` reports no retained log and `run stop`
+refuses.
 
 ## Name and control runs
 
@@ -178,61 +125,6 @@ mode, `run logs` returns base64 data and each stream's `next_offset` to poll
 with. Bytes older than the kept log are reported as expired, never skipped.
 If the log is gone, `run logs --follow` still exits with the run's real
 result from the journal; only an unreadable journal reports `unknown`.
-
-## Account for every byte a run writes (strict persistence)
-
-A consumer that has to price a route's storage can ask for a run that writes
-almost nothing, at a fixed logical size. With `EFFIGY_STRICT_PERSISTENCE=1`, a
-v2-admitted plain foreground task does not open the checkout journal at all:
-its settled outcome goes into **one slot of a fixed-size, preallocated ring
-file**, and no SQLite row is written. `kernel.db`, `kernel.db-wal` and
-`kernel.db-shm` stay byte-identical across the route. Effigy also rewrites the
-existing task gate bodies. Before this, a strict run still wrote a SQLite row
-whose log frames had no small physical maximum; the ring replaces that write
-(effigy#985).
-
-`run prepare --task <selector>` prepares one task identity per command. If a
-declared task tree invokes other task selectors, prepare each selector
-separately; each invocation writes its own terminal slot.
-
-The ring is `<checkout>/.effigy/state/foreground-terminals.ring`: a 64-byte
-header and 16 slots of 1,024 bytes, 16,448 bytes in total. It is created and
-fully preallocated by `effigy run prepare --task <heavy-task>`, **outside** the
-strict run, along with that task's gate files. The route rewrites one slot in
-place — 1,024 logical bytes, with no file-length growth — so the file must
-already exist and have a free slot. APFS can allocate copy-on-write blocks if a
-snapshot or clone shares those blocks. If the ring does not exist, has the
-wrong size, holds a corrupt slot, or is full, the run refuses **before the
-admission hook is called**, writes no ring slot, and names the step that fixes
-it:
-
-```sh
-effigy run prepare --check --task <heavy-task> # verify journal, ring and gates
-effigy run prepare --task <heavy-task>         # prepare them and ingest old slots
-EFFIGY_STRICT_PERSISTENCE=1 effigy <heavy-task>
-```
-
-The strict route checks its task gates before admission and opens them without
-creating files or directories. It rewrites up to 4,096 bytes in each existing
-gate body and one 1,024-byte ring slot. On APFS with a 4 KiB allocation unit,
-data-block copy-on-write is at most 8 KiB for the ring slot plus 4 KiB per gate
-file (up to 24 KiB for four gates). APFS metadata copy-on-write is internal and
-is not bounded by Effigy; consumers must reserve or measure that separately.
-The actual state-volume block size is reported by `run prepare` as
-`allocation_unit_bytes`. Contract 049 documents the allocation model and
-prepare's full write and wait scope.
-
-A slot is written body first, flushed, then a one-byte commit marker, flushed
-again, so a crash never leaves a half record that reads as valid: an unmarked
-slot is free, and a marked slot whose checksum does not match is reported
-`unknown`, never returned as a record. A repeated settle of the same run writes
-nothing. The next ordinary (non-strict) Effigy command that opens the checkout
-journal ingests committed slots into the usual terminal-record table and frees
-them, so `run status` and `runs` read the slot before that and the row after it.
-
-The complete file count, byte layout, write ordering and failure behaviour, with
-file:line, are in [contract 049](../knowledge/contracts/049-heavy-validation-admission-contract.md).
-The switch is off by default, and every run without it behaves exactly as before.
 
 ## Migration note for Queue
 

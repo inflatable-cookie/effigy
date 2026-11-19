@@ -13,9 +13,11 @@ use effigy_core::task_selection::TaskSurface;
 use effigy_kernel::custody::Stream;
 
 use super::*;
+use crate::runner::task_engine::effect_context;
 use crate::runner::task_engine::{
     run_plain, PlainCommand, RunKey, TaskRun, TaskRunRequest, TaskTarget,
 };
+use effigy_kernel::ctx::OpenReason;
 
 #[cfg(feature = "fault-injection")]
 const LINES: usize = 40;
@@ -1259,22 +1261,21 @@ fn a_foreground_run_whose_owner_is_gone_offers_its_supported_settlement() {
     assert_eq!(parsed["run"]["state"], "interrupted");
     assert_eq!(parsed["run"]["pid"], serde_json::Value::Null);
 
-    // The settlement the sentinel records: custody never closed, so it is
-    // `unknown` with `cleanup: incomplete` — never a success.
+    // Seed the sentinel's parked row while custody is still open.
     write_settled_record(directory.path(), id, "unknown", "incomplete");
 
     let root = directory.path().to_path_buf();
     let selector = id.to_string();
     let stopping =
         std::thread::spawn(move || stop(&root, &selector, Duration::from_secs(20), false));
-    // The sentinel releases the gate only after the owner is gone; this test's
-    // foreground run is that owner-side custodian.
+    // The real owner in this fixture can still prove closure. Its interrupted
+    // settlement upgrades the parked row before releasing the gate.
     std::thread::sleep(Duration::from_millis(200));
     let warnings = memory.close(effigy_kernel::outcome::WorkloadOutcome::Interrupted);
     assert!(warnings.is_empty(), "{warnings:?}");
     let text = stopping.join().expect("stop thread").expect("stop settles");
     assert!(
-        text.contains("settled by its sentinel: unknown (cleanup incomplete)"),
+        text.contains("settled by its sentinel: interrupted (cleanup complete)"),
         "{text}"
     );
 }
@@ -1401,7 +1402,6 @@ fn write_settled_record(checkout: &Path, run: RunId, outcome: &str, cleanup: &st
             exit_code: None,
             signal: None,
             cleanup: cleanup.to_owned(),
-            workload_groups: 1,
             closed_at_ms: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |elapsed| elapsed.as_millis() as i64),

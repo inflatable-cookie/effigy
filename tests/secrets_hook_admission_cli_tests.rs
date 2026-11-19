@@ -127,10 +127,15 @@ fn captured(root: &Path) -> String {
     fs::read_to_string(root.join("captured.out")).expect("task body wrote captured.out")
 }
 
-/// A durable admission creates the checkout journal; a foreground run never
-/// opens the database (contract 052 §3.1).
+/// The listing distinguishes a durable lifecycle from a foreground terminal.
 fn ran_durable(root: &Path) -> bool {
-    root.join(".effigy/state/kernel.db").is_file()
+    let output = effigy(root, &["runs", "--json"]);
+    assert!(output.status.success(), "{}", text(&output));
+    let envelope: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run listing");
+    let runs = envelope["result"]["runs"].as_array().expect("runs");
+    assert!(!runs.is_empty(), "{envelope}");
+    runs.iter()
+        .any(|run| run["evidence_source"] == "checkout-journal")
 }
 
 #[test]
@@ -219,8 +224,7 @@ fn generation_hook_failure_never_spawns_the_task_body() {
 #[test]
 fn tasks_without_a_hook_admission_stay_foreground() {
     // No declared hook means no durable admission, with or without required
-    // secrets: both fixtures must run to completion without opening the
-    // checkout journal (contract 052 §3.1).
+    // secrets. Both fixtures keep foreground terminal records.
     let plain = support::temp_workspace("effigy-hook-admission", "plain-foreground");
     fs::write(
         plain.join("effigy.toml"),
@@ -235,7 +239,7 @@ fn tasks_without_a_hook_admission_stay_foreground() {
     );
     assert!(
         !ran_durable(&plain),
-        "an ordinary task must not gain a journal from the hook admission rule"
+        "an ordinary task stays foreground under the hook admission rule"
     );
 
     let root = support::temp_workspace("effigy-hook-admission", "no-hook-foreground");

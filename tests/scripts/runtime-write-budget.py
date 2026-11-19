@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Linux syscall accounting for private foreground, named and detached runs."""
+from contextlib import closing
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -40,9 +42,13 @@ concurrent = [{name = "job", run = "touch ready; sleep 60"}]
                                 capture_output=True, text=True, timeout=45)
         if check: assert result.returncode == 0, (args, result.stdout, result.stderr)
         return result
-    def files():
-        return {str(p.relative_to(base)): hashlib.sha256(p.read_bytes()).hexdigest()
-                for p in base.rglob('*.db*') if p.is_file()}
+    def journal_rows():
+        journal = project / '.effigy/state/kernel.db'
+        with closing(sqlite3.connect(f'{journal.as_uri()}?mode=rw', uri=True)) as db:
+            db.execute('PRAGMA query_only = ON')
+            tables = ('foreground_terminals', 'runs', 'logs', 'objects')
+            return tuple(db.execute(f'SELECT count(*) FROM {table}').fetchone()[0]
+                         for table in tables)
     def measure(label, args, detached=False):
         prefix = base / label
         argv = ['strace', '-ff', '-yy', '-s', '32', '-o', str(prefix), '-e',
@@ -103,25 +109,24 @@ concurrent = [{name = "job", run = "touch ready; sleep 60"}]
         counts['trace_files'] = len(traces)
         return counts
     results = {}
-    for label in ['foreground_fresh', 'foreground_repeat']:
+    for count, label in enumerate(['foreground_fresh', 'foreground_repeat'], start=1):
         results[label] = measure(label, ['short'])
-        assert not files(), 'foreground initialized a database'
+        assert journal_rows() == (count, 0, 0, 0)
     for label, args in [('foreground_sequence', ['sequence']), ('foreground_suite', ['test', 'local'])]:
+        before = journal_rows()
         results[label] = measure(label, args)
-        assert not files(), 'local composition initialized a database'
+        after = journal_rows()
+        assert after[0] > before[0] and after[1:] == (0, 0, 0), (label, before, after)
     results['named_fresh'] = measure('named_fresh', ['--run-id', 'named', 'short'])
-    before = files()
+    before = journal_rows()
     results['foreground_warm'] = measure('foreground_warm', ['short'])
-    assert files() == before, 'warm foreground changed journal bytes'
+    assert journal_rows() == (before[0] + 1, *before[1:]), before
     results['named_warm'] = measure('named_warm', ['--run-id', 'named-warm', 'short'])
     results['qa_group_warm'] = measure('qa_group_warm', ['tasks', 'qa-group', 'run', 'local'])
     assert json.loads(cli('--json', 'tasks', 'status', 'short').stdout)['result']['latest'] is not None
     results['detached_warm'] = measure('detached_warm', ['hold', '--detach'], detached=True)
     for label, row in results.items():
-        if label.startswith('foreground'):
-            assert all(row[key] == 0 for key in ['database_mutation_open_calls', 'database_write_calls',
-                       'database_write_bytes', 'database_fsync_calls', 'database_other_mutations']), (label, row)
-        else: assert row['database_write_bytes'] > 0, (label, row)
+        assert row['database_write_bytes'] > 0, (label, row)
     assert not list(home.rglob('*.db*')), 'checkout runs wrote a machine or legacy database'
     print(json.dumps({'schema': 'effigy.proof.runtime-write-budget.v1',
                       'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(), 'syscalls': results}, sort_keys=True))

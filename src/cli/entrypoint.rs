@@ -31,6 +31,11 @@ pub fn run_cli(raw_args: Vec<String>) {
         let _ = std::io::stderr().write_all(message.as_bytes());
         exit_process(2);
     }
+    if let Err(error) = crate::runner::check_retired_switches() {
+        let message = format!("effigy: {error}\n");
+        let _ = std::io::stderr().write_all(message.as_bytes());
+        exit_process(2);
+    }
     let original_args = raw_args.clone();
     let requested_root_json = runtime_flag_present_before_passthrough(&raw_args, "--json");
     // One argv snapshot feeds the targeted usage of every argument error below:

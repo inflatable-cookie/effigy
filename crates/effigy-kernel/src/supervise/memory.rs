@@ -78,12 +78,6 @@ pub(super) struct Config {
     /// the lease until closure, exactly as before.
     #[serde(default)]
     pub(super) foreground: bool,
-    /// The persistence class of the run whose owner this guard observed. A
-    /// helper's environment is cleared, so the owner's strict-persistence
-    /// choice has to travel in the frame for the owner-death record to land in
-    /// the ring instead of opening SQLite (effigy#985, effigy#986).
-    #[serde(default)]
-    pub(super) strict: bool,
     /// The owner's original absolute ceiling on the system-wide monotonic
     /// clock, in nanoseconds. Every guard settlement path caps its cleanup at
     /// `min(60s, remaining)` and compares this value directly; the guard never
@@ -220,7 +214,6 @@ impl MemoryGuard {
                 // owner dies while the guard still holds its gates.
                 home: root.owning_directory().path().to_path_buf(),
                 foreground: purpose == MemoryPurpose::Foreground,
-                strict: crate::store::strict_persistence(),
                 deadline_nanos,
             };
             let mut command = helper(executable, SENTINEL)?;
@@ -698,7 +691,6 @@ pub(crate) fn test_frame(
     home: &Path,
     gate_fds: &[RawFd],
     watch: RawFd,
-    strict: bool,
 ) -> serde_json::Value {
     serde_json::json!({
         "protocol": HELPER_PROTOCOL,
@@ -711,7 +703,6 @@ pub(crate) fn test_frame(
         "watch": watch,
         "home": home,
         "foreground": true,
-        "strict": strict,
     })
 }
 
@@ -1035,7 +1026,6 @@ pub(crate) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
         record_owner_loss(
             &config,
             coordinates.as_ref(),
-            effects.len(),
             pin_closed && groups_empty,
             if pin_closed && groups_empty {
                 "interrupted"
@@ -1049,14 +1039,7 @@ pub(crate) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
         // emptiness and polls `effigy run release` (effigy#1034). A provably
         // empty group settles as interrupted; a release request with an empty
         // group records `released`. KILL is not the supported path.
-        park_unproved(
-            &config,
-            &mut watch,
-            coordinates.as_ref(),
-            &pgids,
-            effects.len(),
-            gates,
-        );
+        park_unproved(&config, &mut watch, coordinates.as_ref(), &pgids, gates);
         return Ok(());
     }
     drop(gates); // positive delegated closure; no numeric replay
@@ -1179,7 +1162,6 @@ fn park_unproved(
     watch: &mut std::fs::File,
     coordinates: Option<&crate::gate::ForegroundDiag>,
     pgids: &[u32],
-    groups: usize,
     gates: Vec<OwnedFd>,
 ) {
     let op = context(CancelToken::default(), Duration::from_secs(5));
@@ -1230,7 +1212,6 @@ fn park_unproved(
             record_owner_loss(
                 config,
                 coordinates,
-                groups,
                 true,
                 if release { "released" } else { "interrupted" },
             );
@@ -1249,7 +1230,6 @@ fn park_unproved(
 fn record_owner_loss(
     config: &Config,
     coordinates: Option<&crate::gate::ForegroundDiag>,
-    groups: usize,
     closed: bool,
     outcome: &str,
 ) {
@@ -1278,16 +1258,9 @@ fn record_owner_loss(
         exit_code: None,
         signal: None,
         cleanup: if closed { "complete" } else { "incomplete" }.to_owned(),
-        workload_groups: u64::try_from(groups).unwrap_or(u64::MAX),
         closed_at_ms: crate::store::wall_ms(),
     };
-    // The same writer the owner's own settle would have reached: one ring slot
-    // under strict persistence, one journal row otherwise (effigy#985).
-    let _ = if config.strict {
-        crate::run::terminal_ring_write(&root, &record)
-    } else {
-        crate::run::record_terminal(&cx, &root, &record)
-    };
+    let _ = crate::run::record_terminal(&cx, &root, &record);
 }
 
 fn finish_interpolations(
@@ -1413,7 +1386,6 @@ mod tests {
             descriptors: None,
             home: PathBuf::from("/nonexistent"),
             foreground: true,
-            strict: false,
             deadline_nanos: None,
         };
         assert!(!owner_is_gone(&config));
@@ -1447,7 +1419,6 @@ mod tests {
             descriptors: None,
             home: PathBuf::from("/nonexistent"),
             foreground: true,
-            strict: false,
             deadline_nanos: None,
         };
         let now = effigy_core::run_deadline::system_monotonic_nanos();

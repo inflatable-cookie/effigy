@@ -458,7 +458,7 @@
   { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --test cli_output_tests -E 'test(retire_label_tests::dead_retire_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
 ] }
 "test:kernel:store" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib --test store -E 'test(store_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
-"test:kernel:foreground" = { durable = true, visibility = "internal", group = "Maintenance", description = "Prove foreground records, pipe-only custody, and zero durable runtime files.", run = [
+"test:kernel:foreground" = { durable = true, visibility = "internal", group = "Maintenance", description = "Prove pipe-only custody, terminal rows and the absence of durable foreground history.", run = [
   { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
   { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib --test custody -E 'test(/^run::memory::tests::/) | test(/^foreground_/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
