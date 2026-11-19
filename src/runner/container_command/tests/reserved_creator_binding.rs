@@ -212,7 +212,8 @@ esac
     ]);
     effigy_containers::with_test_effigy_home(&observation.home, || {
         let mut policy =
-            effigy_containers::prepare_container_policy(&observation.root, Some("web")).unwrap();
+            crate::runner::test_support::prepare_fixture_policy(&observation.root, Some("web"))
+                .unwrap();
         policy.workspace_user = Some("dev".into());
         policy.workspace_home = Some("/home/dev".into());
         let selected = environment::backend(&observation.root, &policy);

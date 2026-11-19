@@ -4,7 +4,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use effigy_containers::policy::compose_file::{fragment_matches, plan_migration};
-use effigy_containers::{load_container_policy, EffectiveContainerPolicy};
+use effigy_containers::{
+    load_container_policy, load_container_policy_for_migration, EffectiveContainerPolicy,
+};
 
 use super::RunnerError;
 use crate::runner::command_context::resolve_active_command_context;
@@ -18,7 +20,10 @@ pub(super) fn run(
     let repo_root = context.resolved.resolved_root.as_path();
     let plan = plan_migration(repo_root, name)?;
     let container = plan.migration.container.clone();
-    let before = render_outputs(&load_container_policy(repo_root, Some(&container))?);
+    let before = render_outputs(&load_container_policy_for_migration(
+        repo_root,
+        Some(&container),
+    )?);
     // Refuse before writing anything if a fragment directory is foreign.
     let mut pending = Vec::new();
     for fragment in &plan.migration.fragments {

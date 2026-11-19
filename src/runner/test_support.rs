@@ -54,3 +54,83 @@ pub(in crate::runner) fn effective_container_policy(
         host_processes: Vec::new(),
     }
 }
+
+/// Write the catalog fragments and manifest rewrite `effigy container migrate`
+/// would produce, for every environment that still declares the retired
+/// `compose_file` key. Fixtures predate the v0.16 retirement; migrating them
+/// before they resolve a policy is the same repository state a migrated
+/// consumer has. An unreadable manifest is left to the caller's own loader so
+/// the real error surfaces.
+pub(crate) fn migrate_declared_compose_files(repo_root: &std::path::Path) {
+    let manifest_path = repo_root.join(effigy_manifest::TASK_MANIFEST_FILE);
+    let Ok(manifest) = effigy_manifest::load_task_manifest(&manifest_path) else {
+        return;
+    };
+    let Some(containers) = manifest.containers.as_ref() else {
+        return;
+    };
+    let declared = containers
+        .environments
+        .iter()
+        .filter(|(_, config)| config.compose_file.is_some())
+        .map(|(name, _)| name.clone())
+        .collect::<Vec<_>>();
+    for name in declared {
+        migrate_compose_file(repo_root, &name);
+    }
+}
+
+/// Migration `effigy container migrate` performs for one environment.
+pub(crate) fn migrate_compose_file(repo_root: &std::path::Path, container: &str) {
+    let plan = effigy_containers::policy::compose_file::plan_migration(repo_root, Some(container))
+        .unwrap_or_else(|error| {
+            panic!("{}: {error}", repo_root.display());
+        });
+    for fragment in &plan.migration.fragments {
+        std::fs::create_dir_all(&fragment.directory).expect("fragment directory");
+        std::fs::write(
+            fragment.directory.join("service.toml"),
+            &fragment.service_toml,
+        )
+        .expect("service.toml");
+        std::fs::write(
+            fragment.directory.join("compose.fragment.yml"),
+            &fragment.compose_fragment,
+        )
+        .expect("compose fragment");
+    }
+    std::fs::write(&plan.manifest, &plan.manifest_after).expect("migrated manifest");
+}
+
+/// A fixture policy load: migrate any retired `compose_file` declaration first.
+pub(crate) fn load_fixture_policy(
+    repo_root: &std::path::Path,
+    requested_name: Option<&str>,
+) -> Result<EffectiveContainerPolicy, effigy_containers::ContainerPolicyError> {
+    migrate_declared_compose_files(repo_root);
+    effigy_containers::load_container_policy(repo_root, requested_name)
+}
+
+/// A fixture prepared policy: migrate any retired `compose_file` declaration first.
+pub(crate) fn prepare_fixture_policy(
+    repo_root: &std::path::Path,
+    requested_name: Option<&str>,
+) -> Result<EffectiveContainerPolicy, effigy_containers::ContainerPolicyError> {
+    migrate_declared_compose_files(repo_root);
+    effigy_containers::prepare_container_policy(repo_root, requested_name)
+}
+
+/// A fixture creation-time policy: migrate any retired `compose_file` first.
+pub(crate) fn load_fixture_policy_for_creation(
+    repo_root: &std::path::Path,
+    requested_name: Option<&str>,
+) -> Result<
+    (
+        EffectiveContainerPolicy,
+        Vec<effigy_containers::WorkspaceExtraMountDecision>,
+    ),
+    effigy_containers::ContainerPolicyError,
+> {
+    migrate_declared_compose_files(repo_root);
+    effigy_containers::load_container_policy_for_creation(repo_root, requested_name)
+}

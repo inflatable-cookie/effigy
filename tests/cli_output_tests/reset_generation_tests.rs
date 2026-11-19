@@ -81,6 +81,7 @@ fn reset_publishes_fresh_and_changed_compose_and_keeps_sibling_files() {
         "services:\n  app:\n    image: example:sibling\n",
     )
     .unwrap();
+    crate::compose_migration::migrate_declared(&f.repo);
     f.run(&["container", "two", "down"]);
     let sibling = PathBuf::from(f.calls()[0]["files"][0].as_str().unwrap());
     let sibling_bytes = fs::read(&sibling).unwrap();
@@ -91,8 +92,9 @@ fn reset_publishes_fresh_and_changed_compose_and_keeps_sibling_files() {
     let first = f.calls().last().unwrap().clone();
     assert!(!first["args"].as_array().unwrap().iter().any(|a| a == "-v"));
     fs::write(
-        f.repo.join("one.yml"),
-        "services:\n  app:\n    image: example:changed\n",
+        f.repo
+            .join("infra/dev/catalog/one-app/compose.fragment.yml"),
+        "services:\n  {{ service_name }}:\n    image: example:changed\n",
     )
     .unwrap();
     let changed = f.run(&["container", "render", "one"]);
@@ -123,6 +125,7 @@ fn reset_does_not_mint_or_stop_an_uninitialized_scoped_checkout() {
         "services:\n  app:\n    image: example\n",
     )
     .unwrap();
+    crate::compose_migration::migrate_declared(&f.repo);
     f.run(&["container", "reset", "--wipe-data", "--yes"]);
     assert!(
         f.calls().is_empty(),

@@ -14,7 +14,8 @@ fn declared() -> (
         .expect("Phase 0")
         .expect("workspace");
     effigy_core::worktree_scope::prepare_checkout_token(&root).expect("ordinary token prep");
-    let policy = effigy_containers::load_container_policy(&root, Some("web")).expect("render");
+    let policy =
+        crate::runner::test_support::load_fixture_policy(&root, Some("web")).expect("render");
     let prepared = checked.verify_prepared(&policy).expect("declaration");
     let request = ContainerUpRequest {
         environment: "web".into(),
@@ -78,8 +79,9 @@ fn supervisor_post_prep_changed_render_and_profile_refuse_before_admission() {
     assert!(error(&host, &request).contains("profile differs"));
     host.profile = "pinned-profile".into();
     std::fs::write(
-        host.project_path.join("compose.yml"),
-        "services:\n  app:\n    image: example:changed\n",
+        host.project_path
+            .join("infra/dev/catalog/web-app/compose.fragment.yml"),
+        "services:\n  {{ service_name }}:\n    image: example:changed\n",
     )
     .expect("changed source");
     assert!(error(&host, &request).contains("hash/closure changed"));

@@ -141,12 +141,8 @@ pub(crate) fn apply_bundle_defaults(
         inputs: resolved_inputs,
     } = resolved_defaults;
     let bundle_extend_paths = take_bundle_extend_paths(manifest_path, &mut defaults)?;
-    // Both sides use the same bootstrap shape before defaults are filled, so
-    // a consumer setup replaces the bundle setup instead of running both.
-    input.normalize();
     let current = &mut input.value;
-    let mut defaults = ManifestInput::new(defaults, Some(&source_path));
-    defaults.normalize();
+    let defaults = ManifestInput::new(defaults, Some(&source_path));
     let existing_extend_paths =
         combined_bundle_extend_paths(&input.extend_paths, &bundle_extend_paths);
     let existing_bundle_values = existing_extend_paths

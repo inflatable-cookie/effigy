@@ -21,7 +21,7 @@ primary_service = "app"
     std::fs::write(fixture.path().join("compose.yml"), "services:\n  app:\n    image: example:one\n    environment:\n      TOKEN: fixture-private-bytes\n").expect("compose");
     effigy_core::worktree_scope::prepare_checkout_token(fixture.path())
         .expect("ordinary identity prep");
-    let policy = effigy_containers::load_container_policy(fixture.path(), Some("web"))
+    let policy = crate::runner::test_support::load_fixture_policy(fixture.path(), Some("web"))
         .expect("in-memory render");
     (fixture, policy)
 }
@@ -52,11 +52,13 @@ fn post_prep_declaration_rejects_changed_actual_render_and_added_input() {
         .verify_policy(&policy, &backend(), identity(&policy))
         .expect("matching render");
     std::fs::write(
-        fixture.path().join("compose.yml"),
-        "services:\n  app:\n    image: example:two\n",
+        fixture
+            .path()
+            .join("infra/dev/catalog/web-app/compose.fragment.yml"),
+        "services:\n  {{ service_name }}:\n    image: example:two\n",
     )
     .expect("changed source");
-    let changed = effigy_containers::load_container_policy(fixture.path(), Some("web"))
+    let changed = crate::runner::test_support::load_fixture_policy(fixture.path(), Some("web"))
         .expect("fresh render");
     assert!(declared
         .verify_policy(&changed, &backend(), identity(&changed))

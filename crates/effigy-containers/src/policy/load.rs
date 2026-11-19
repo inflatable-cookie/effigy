@@ -37,6 +37,17 @@ pub fn load_container_policy(
     load_container_policy_with_workspace(repo_root, requested_name, None)
 }
 
+/// Resolve the pre-migration declaration of one environment whose
+/// `compose_file` `effigy container migrate` is about to rewrite. This is the
+/// only caller that reads the retired key: it renders exactly what the
+/// migration writes, so `migrate` can prove the render is unchanged.
+pub fn load_container_policy_for_migration(
+    repo_root: &Path,
+    requested_name: Option<&str>,
+) -> Result<EffectiveContainerPolicy, ContainerPolicyError> {
+    load_policy(repo_root, requested_name, None, false, true).map(|(policy, _)| policy)
+}
+
 /// Resolve user-global library mounts for the manifest's declared bundle.
 ///
 /// Returns an empty vec when the manifest has no `[bundle].base`, when the
@@ -245,6 +256,7 @@ fn load_container_policy_with_workspace_decisions(
         requested_name,
         workspace_override,
         record_optional_extra_mount_decisions,
+        false,
     )
 }
 
@@ -253,6 +265,7 @@ fn load_policy(
     requested_name: Option<&str>,
     workspace_override: Option<&ManifestWorkspaceConfig>,
     record_optional_extra_mount_decisions: bool,
+    translate_retired_compose_file: bool,
 ) -> Result<(EffectiveContainerPolicy, Vec<WorkspaceExtraMountDecision>), ContainerPolicyError> {
     let canonical_root = repo_root
         .canonicalize()
@@ -297,6 +310,7 @@ fn load_policy(
         workspace: inferred_workspace.as_ref(),
         library_mounts: &library_mounts,
         record_optional_extra_mount_decisions,
+        translate_retired_compose_file,
     })
 }
 
@@ -356,6 +370,7 @@ pub fn load_all_container_policies(
                 workspace: workspace.as_ref(),
                 library_mounts: &library_mounts,
                 record_optional_extra_mount_decisions: false,
+                translate_retired_compose_file: false,
             })
             .map(|(policy, _)| policy)
         })
@@ -485,6 +500,9 @@ struct PolicyBuildContext<'a> {
     workspace: Option<&'a ManifestWorkspaceConfig>,
     library_mounts: &'a [effigy_manifest::LibraryMount],
     record_optional_extra_mount_decisions: bool,
+    /// Only `effigy container migrate` renders the retired `compose_file`
+    /// declaration; every ordinary caller refuses it.
+    translate_retired_compose_file: bool,
 }
 
 fn build_effective_policy(
@@ -502,10 +520,14 @@ fn build_effective_policy(
         workspace,
         library_mounts,
         record_optional_extra_mount_decisions,
+        translate_retired_compose_file,
     } = context;
-    // Retired `compose_file` resolves as the catalog declaration that
-    // `effigy container migrate` would write, so both forms render alike.
-    let translated = super::compose_file::translate_for_policy(repo_root, name, config)?;
+    let translated = if translate_retired_compose_file {
+        super::compose_file::translate_for_render(repo_root, name, config)?
+    } else {
+        super::compose_file::refuse_unmigrated(repo_root, name, config)?;
+        None
+    };
     let config = translated.as_ref().unwrap_or(config);
     let mut draft = super::render::Draft::default();
     draft.declarations(declarations)?;

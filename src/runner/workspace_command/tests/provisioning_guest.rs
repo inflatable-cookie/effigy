@@ -1496,7 +1496,7 @@ fn a_declared_custom_workspace_without_identity_refuses_instead_of_becoming_hybr
     )
     .unwrap();
     std::fs::write(repo.join("effigy.toml"), "[containers]\ndefault = 'web'\n[containers.web]\ncompose_file = 'compose.yml'\nprimary_service = 'app'\nworking_dir = '/workspace'\n[systems]\ndefault = 'dev'\n[systems.dev]\ndefault_workspace = 'app'\n[systems.dev.workspaces.app]\ncontainer = 'web'\nworking_dir = '/workspace'\n").unwrap();
-    let mut policy = effigy_containers::load_container_policy(&repo, Some("web")).unwrap();
+    let mut policy = crate::runner::test_support::load_fixture_policy(&repo, Some("web")).unwrap();
     assert!(policy.workspace_user.is_none() && policy.workspace_home.is_none());
     let rendered = policy.read_compose(&policy.compose_files[0]).unwrap();
     assert!(
@@ -1574,7 +1574,7 @@ fn explicitly_selected_non_default_workspaces_prepare_and_verify_the_guest() {
         .unwrap()
         .expect("selected container");
         assert_eq!(selected, "other");
-        let mut policy = effigy_containers::load_container_policy(&repo, Some(&selected))
+        let mut policy = crate::runner::test_support::load_fixture_policy(&repo, Some(&selected))
             .expect("selected environment resolves its declared workspace policy");
         assert_eq!(policy.workspace_user.as_deref(), Some("selected"));
         assert_eq!(policy.workspace_home.as_deref(), Some("/home/selected"));

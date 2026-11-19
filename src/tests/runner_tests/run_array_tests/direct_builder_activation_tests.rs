@@ -405,7 +405,7 @@ esac
     ]);
 
     let result = if mode == "expired_binding" {
-        let policy = effigy_containers::load_container_policy(&root, Some("builder"))
+        let policy = crate::runner::test_support::load_fixture_policy(&root, Some("builder"))
             .expect("private declared policy");
         crate::runner::container_runtime_prep::verify_service_binding(
             &root,

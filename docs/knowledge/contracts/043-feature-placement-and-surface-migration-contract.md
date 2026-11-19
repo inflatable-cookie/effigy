@@ -392,7 +392,7 @@ completion and the active payload/schema inventory.
 | `effigy gateway setup-listener-handoff`, `listener-handoff-status`, `remove-listener-handoff` | No replacement. The gateway runs as your user: use `effigy gateway up` and inspect it with `effigy gateway status`. The three commands refuse with this text and the CHANGELOG entry; the definition generator, strict parser and launchd observation/removal plan are deleted. |
 | `docs qualified` and contract 053 | Run repository-owned docs QA directly. There is no qualified private docs recipe or separate build profile. |
 | `[manifest].root` | Remove it. Select the intended root explicitly with `--repo`; catalog membership stays explicit. Root and included fragments reject it with the source path. |
-| User-global catalog override (`~/.effigy/catalog/`) | Move custom fragments into `infra/dev/catalog/` in each consuming repository. The old directory is ignored and left untouched, with one warning per catalog-using process for one release. |
+| User-global catalog override (`~/.effigy/catalog/`) | Move custom fragments into `infra/dev/catalog/` in each consuming repository. The old directory is ignored and left untouched; the one-release notice was removed in v0.16. |
 
 Secret policy keys were excluded from this cut until consumer cleanup. Their
 separate retirement is owned by

@@ -14,7 +14,7 @@
 //! - success and refusal.
 
 use effigy_cli::ContainerDbDumpInput;
-use effigy_containers::{load_container_policy, EffectiveContainerPolicy};
+use effigy_containers::EffectiveContainerPolicy;
 use effigy_manifest::TaskManifest;
 use effigy_test_support::Fixture;
 use std::collections::BTreeMap;
@@ -286,7 +286,8 @@ exec "$@"
     }
 
     fn policy(&self, name: &str) -> EffectiveContainerPolicy {
-        load_container_policy(&self.root, Some(name)).expect("load policy")
+        crate::runner::test_support::load_fixture_policy(&self.root, Some(name))
+            .expect("load policy")
     }
 
     /// The `ps` row the fake runtime reports for `service` in `project`.

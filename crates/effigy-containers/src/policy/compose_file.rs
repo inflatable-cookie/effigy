@@ -1,10 +1,16 @@
-//! One-release translation of retired `compose_file` environments.
+//! Migration of retired `compose_file` environments.
 //!
 //! A repo-owned Compose file is read as project-layer catalog fragments, one
 //! per Compose service. `effigy container migrate` writes exactly these
 //! fragments and service declarations, so the render before and after
 //! migration is the same. Anything a fragment cannot express refuses with the
 //! offending key instead of being approximated.
+//!
+//! Ordinary policy resolution never translates: an environment that still
+//! declares `compose_file` refuses with the migration command
+//! ([`refuse_unmigrated`]). `effigy container migrate` alone renders the
+//! pre-migration declaration through [`translate_for_render`], so its
+//! before/after render-equivalence check compares real renders.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -319,9 +325,27 @@ fn rewrite_manifest(
     Ok(document.to_string())
 }
 
-/// Translate for policy resolution: register the fragments for this checkout
-/// and warn once. A fragment already on disk must match the translation.
-pub(crate) fn translate_for_policy(
+/// Refuse an environment that still declares `compose_file`. The explicit
+/// migration writes the fragments and replaces the key.
+pub(crate) fn refuse_unmigrated(
+    repo_root: &Path,
+    container: &str,
+    config: &ManifestContainerConfig,
+) -> Result<(), ContainerPolicyError> {
+    let Some(raw) = config.compose_file.as_deref() else {
+        return Ok(());
+    };
+    Err(ContainerPolicyError::TaskInvocation(format!(
+        "container `{container}` declares retired `compose_file = \"{raw}\"` ({}); run `effigy container migrate {container}` to write its project catalog fragments under `{PROJECT_LOCAL_CATALOG_DIR}/` and replace the key with `[containers.{container}.services]`",
+        repo_root.join(raw).display()
+    )))
+}
+
+/// Translate for the migration's own pre-migration render: register the
+/// fragments for this checkout so the render reads exactly what
+/// `effigy container migrate` is about to write. Only the explicit migration
+/// entry calls this. A fragment already on disk must match the translation.
+pub fn translate_for_render(
     repo_root: &Path,
     container: &str,
     config: &ManifestContainerConfig,
@@ -346,7 +370,6 @@ pub(crate) fn translate_for_policy(
         overlay.insert(fragment.name.clone(), loaded);
     }
     register(repo_root, overlay);
-    warn_once(repo_root, container, &migration);
     Ok(Some(migration.config))
 }
 
@@ -379,6 +402,7 @@ fn register(repo_root: &Path, overlay: HashMap<String, CatalogFragment>) {
 }
 
 /// Translated fragments for this checkout, layered below its catalog directory.
+/// Only the migration's own pre-migration render reads them.
 pub(crate) fn overlay_for(repo_root: &Path) -> HashMap<String, CatalogFragment> {
     overlays()
         .lock()
@@ -386,24 +410,6 @@ pub(crate) fn overlay_for(repo_root: &Path) -> HashMap<String, CatalogFragment> 
         .get(&overlay_key(repo_root))
         .cloned()
         .unwrap_or_default()
-}
-
-fn warn_once(repo_root: &Path, container: &str, migration: &ComposeFileMigration) {
-    static WARNED: OnceLock<Mutex<BTreeSet<(PathBuf, String)>>> = OnceLock::new();
-    let warned = WARNED.get_or_init(Mutex::default);
-    let mut warned = warned.lock().unwrap_or_else(|e| e.into_inner());
-    if !warned.insert((overlay_key(repo_root), container.to_owned())) {
-        return;
-    }
-    let fragments = migration
-        .fragments
-        .iter()
-        .map(|fragment| format!("{PROJECT_LOCAL_CATALOG_DIR}/{}/", fragment.name))
-        .collect::<Vec<_>>()
-        .join(", ");
-    eprintln!(
-        "[warn] `[containers.{container}].compose_file` is deprecated in v0.15 and is read as project catalog fragment(s) for one release; run `effigy container migrate {container}` to write {fragments} and replace the key."
-    );
 }
 
 fn fragment_name(container: &str, service: &str) -> String {

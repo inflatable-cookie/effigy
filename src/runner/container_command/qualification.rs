@@ -59,7 +59,7 @@ fn recheck(root: &Path, intent: &Intent) -> Result<EffectiveContainerPolicy, Run
     {
         return Err(unavailable_at("identity"));
     }
-    let policy = effigy_containers::load_container_policy(root, Some(&intent.environment))
+    let policy = load_container_policy(root, Some(&intent.environment))
         .map_err(|_| unavailable_at("policy-read"))?;
     let backend = read_backend(&policy, Some(intent.checkout))?;
     if policy.name != intent.environment

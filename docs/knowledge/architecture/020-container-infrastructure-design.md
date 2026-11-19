@@ -175,11 +175,11 @@ catalog for customization. The installed catalog-pack layer is retired.
 ### Repo-owned Compose (retired)
 
 Effigy owns the environment; Compose is the engine adapter (Q-004). Direct
-`compose_file` ownership and `eject` are retired. For one release a
-`compose_file` environment is read as project-layer fragments under
-`infra/dev/catalog/`, and `effigy container migrate <name>` writes them out
-with an unchanged render (contract 005). `effigy container render <name>`
-shows the exact render.
+`compose_file` ownership and `eject` are retired. v0.15 read a `compose_file`
+environment for one release; v0.16 refuses it and names
+`effigy container migrate <name>`, which writes the project-layer fragments
+under `infra/dev/catalog/` with an unchanged render (contract 005).
+`effigy container render <name>` shows the exact render.
 
 ### Design reference: DDEV
 

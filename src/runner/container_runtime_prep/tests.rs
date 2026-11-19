@@ -1083,7 +1083,7 @@ fn activation_returns_the_published_snapshot_for_its_exec_caller() {
     )
     .unwrap();
     effigy_containers::with_test_effigy_home(&home, || {
-        let observed = effigy_containers::load_container_policy(&repo, None).unwrap();
+        let observed = crate::runner::test_support::load_fixture_policy(&repo, None).unwrap();
         let prepared = effigy_containers::policy::render::prepare_resolved(&observed).unwrap();
         let plan = runtime_activation_plan_from_request(
             &repo,
@@ -1102,10 +1102,12 @@ fn activation_returns_the_published_snapshot_for_its_exec_caller() {
             true,
             |_, policy, _, _, _, _| {
                 effigy_containers::policy::render::verify(policy).unwrap();
-                // Editing source after activation must not replace the caller's snapshot.
+                // Editing the resolved source after activation must not replace
+                // the caller's snapshot. The migration wrote the fragment the
+                // declaration now resolves through.
                 fs::write(
-                    repo.join("compose.yml"),
-                    "services:\n  app:\n    image: changed\n",
+                    repo.join("infra/dev/catalog/web-app/compose.fragment.yml"),
+                    "services:\n  {{ service_name }}:\n    image: changed\n",
                 )
                 .unwrap();
                 Ok(true)
@@ -1124,7 +1126,7 @@ fn activation_returns_the_published_snapshot_for_its_exec_caller() {
             .contains("original"));
         assert_ne!(
             caller.render.as_ref().unwrap().closure.digest(),
-            effigy_containers::load_container_policy(&repo, None)
+            crate::runner::test_support::load_fixture_policy(&repo, None)
                 .unwrap()
                 .render
                 .unwrap()
@@ -1171,7 +1173,8 @@ fn the_preflight_seals_an_unpublished_render_and_the_publisher_accepts_it() {
     )
     .expect("compose file");
     effigy_containers::with_test_effigy_home(&home, || {
-        let policy = effigy_containers::load_container_policy(&checkout, None).expect("policy");
+        let policy =
+            crate::runner::test_support::load_fixture_policy(&checkout, None).expect("policy");
         let render = policy.render.as_ref().expect("render");
         assert!(!render.path.exists(), "the render is unpublished");
 
@@ -1278,7 +1281,8 @@ fn a_stalled_scope_token_makes_predecessor_ownership_unknown() {
     effigy_containers::with_test_effigy_home(&home, || {
         // Resolve the policy first: preparing it also reads the checkout identity,
         // which would block on the FIFO below.
-        let policy = effigy_containers::load_container_policy(&checkout, None).expect("policy");
+        let policy =
+            crate::runner::test_support::load_fixture_policy(&checkout, None).expect("policy");
         // Now the checkout is an ephemeral clone whose scope token is a stalled
         // read: ownership resolution must refuse at the deadline, not hold.
         fs::write(
@@ -1421,7 +1425,8 @@ fn the_predecessor_adapter_seals_an_unpublished_render_for_the_fenced_publisher(
     )
     .expect("compose file");
     effigy_containers::with_test_effigy_home(&home, || {
-        let policy = effigy_containers::load_container_policy(&checkout, None).expect("policy");
+        let policy =
+            crate::runner::test_support::load_fixture_policy(&checkout, None).expect("policy");
         let render = policy.render.as_ref().expect("render");
         assert!(!render.path.exists(), "the render is unpublished");
 
@@ -1502,7 +1507,8 @@ fn an_unavailable_predecessor_inventory_is_unknown_not_no_predecessor() {
     )
     .expect("compose file");
     effigy_containers::with_test_effigy_home(&home, || {
-        let policy = effigy_containers::load_container_policy(&checkout, None).expect("policy");
+        let policy =
+            crate::runner::test_support::load_fixture_policy(&checkout, None).expect("policy");
         let render = policy.render.as_ref().expect("render");
         let sealed = super::seal_render_for_preflight(
             &policy,
@@ -1789,7 +1795,8 @@ fn the_production_predecessor_adapter_accepts_a_matching_live_predecessor_and_pu
     )
     .expect("compose file");
     effigy_containers::with_test_effigy_home(&home, || {
-        let mut policy = effigy_containers::load_container_policy(&checkout, None).expect("policy");
+        let mut policy =
+            crate::runner::test_support::load_fixture_policy(&checkout, None).expect("policy");
         // Add frozen dependencies to the real generated catalog render. No
         // canonical file is written: the kernel seal/publisher owns all I/O.
         let render = policy.render.as_mut().unwrap();
@@ -2066,7 +2073,8 @@ fn an_expired_preflight_seal_opens_no_state_root_and_stages_nothing() {
     )
     .expect("compose file");
     effigy_containers::with_test_effigy_home(&home, || {
-        let policy = effigy_containers::load_container_policy(&checkout, None).expect("policy");
+        let policy =
+            crate::runner::test_support::load_fixture_policy(&checkout, None).expect("policy");
         let render = policy.render.as_ref().expect("render");
         assert!(
             super::seal_render_for_preflight(

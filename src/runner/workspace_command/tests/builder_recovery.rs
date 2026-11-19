@@ -372,7 +372,8 @@ fn builder_fixture_passes_colima_guard_while_os_temp_still_refuses() {
             "services:\n  app:\n    image: example\n",
         )
         .unwrap();
-        let policy = effigy_containers::load_container_policy(dir.path(), Some("web")).unwrap();
+        let policy =
+            crate::runner::test_support::load_fixture_policy(dir.path(), Some("web")).unwrap();
         let result = effigy_containers::validate_compose_backend_runtime(dir.path(), &policy);
         if allowed {
             // The guard refuses the fixed OS temp roots unconditionally, so the
@@ -398,9 +399,11 @@ fn builder_fixtures_teardown_and_confine_their_storage() {
     let _lock = crate::contract_test_support::lock_test();
     let (root, render) = {
         let fixture = Fixture::new(false, false, "docker");
-        let policy =
-            effigy_containers::prepare_container_policy(&fixture.root, Some("linux-release"))
-                .unwrap();
+        let policy = crate::runner::test_support::prepare_fixture_policy(
+            &fixture.root,
+            Some("linux-release"),
+        )
+        .unwrap();
         let render = policy.render.expect("prepared compose render").path;
         assert!(render.is_dir());
         (fixture.root.clone(), render)
@@ -632,7 +635,7 @@ esac
             ("EFFIGY_DISABLE_HOST_CONTAINER_LEASE", Some("1".to_owned())),
         ]);
         let policy =
-            effigy_containers::load_container_policy(&root, Some("linux-release")).unwrap();
+            crate::runner::test_support::load_fixture_policy(&root, Some("linux-release")).unwrap();
         std::env::set_var("EFFIGY_RECOVERY_PROJECT", &policy.project_name);
         std::fs::write(root.join("state/mode"), "success").unwrap();
         // The container's own mount table, as the boundary probes read it: the
@@ -696,7 +699,7 @@ esac
         // A generation snapshot stays frozen; observe the edited declaration
         // explicitly before asking whether its retained admission is stale.
         let policy =
-            effigy_containers::load_container_policy(&root, Some("linux-release")).unwrap();
+            crate::runner::test_support::load_fixture_policy(&root, Some("linux-release")).unwrap();
         Self {
             _temp: temp,
             root,
@@ -715,7 +718,8 @@ esac
         )
         .unwrap();
         let legacy =
-            effigy_containers::load_container_policy(&self.root, Some("linux-release")).unwrap();
+            crate::runner::test_support::load_fixture_policy(&self.root, Some("linux-release"))
+                .unwrap();
         write_legacy_partial_marker(&self.root, &legacy);
         // The old admission really predates the shipped declaration change.
         std::fs::write(&manifest, current).unwrap();
@@ -1632,7 +1636,7 @@ fn assert_managed_namespace_preserves_legacy(scoped: bool, legacy: &str) {
             "{project_name}"
         );
         assert_eq!(
-            effigy_containers::load_container_policy(&fixture.root, Some("linux-release"))
+            crate::runner::test_support::load_fixture_policy(&fixture.root, Some("linux-release"))
                 .unwrap()
                 .project_name,
             project_name

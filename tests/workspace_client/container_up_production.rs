@@ -94,6 +94,7 @@ impl BackendFixture {
             "services:\n  app:\n    image: example:one\n",
         )
         .expect("compose");
+        crate::compose_migration::migrate_declared(&project);
         // Arbitrary bind sources are user-owned; the ordinary Prepare creates
         // its generated Compose artifacts and checkout token, not these inputs.
         std::fs::create_dir(project.join("prepared")).expect("user-owned bind input");

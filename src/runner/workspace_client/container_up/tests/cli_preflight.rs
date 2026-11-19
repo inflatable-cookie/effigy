@@ -33,6 +33,8 @@ mounts = ["prepared:/workspace/prepared:ro"]
         "services:\n  app:\n    image: example:test\n",
     )
     .expect("compose");
+    // The retired key is migrated once, as a consumer would.
+    crate::runner::test_support::migrate_declared_compose_files(&root);
     (fixture, root)
 }
 
@@ -79,7 +81,7 @@ fn cli_phase_zero_retained_directory_and_token_fence_preparation_output() {
     )
     .expect("changed identity");
     let policy =
-        effigy_containers::load_container_policy(&root, Some("web")).expect("fresh render");
+        crate::runner::test_support::load_fixture_policy(&root, Some("web")).expect("fresh render");
     assert!(checked
         .verify_prepared(&policy)
         .expect_err("changed token")

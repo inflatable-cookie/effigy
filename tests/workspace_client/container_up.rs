@@ -124,6 +124,7 @@ mounts = ["prepared:/workspace/prepared:ro"]
         "services:\n  app:\n    image: example:test\n",
     )
     .expect("compose");
+    crate::compose_migration::migrate_declared(&project);
     for name in ["docker", "colima", "nerdctl"] {
         let executable = bin.join(name);
         std::fs::write(

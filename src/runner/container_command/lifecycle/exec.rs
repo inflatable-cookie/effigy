@@ -225,7 +225,6 @@ fn captured_exec_compose_plan(
 mod credential_plan_tests {
     use super::captured_exec_compose_plan;
     use crate::contract_test_support::EnvGuard;
-    use effigy_containers::load_container_policy;
     use std::collections::BTreeMap;
     use std::fs;
 
@@ -280,7 +279,8 @@ version = "16"
             ("stack", "credential-stack", "MYSQL_PWD"),
             ("hybrid", "credential-hybrid", "PGPASSWORD"),
         ] {
-            let policy = load_container_policy(&repo, Some(environment)).expect("policy");
+            let policy = crate::runner::test_support::load_fixture_policy(&repo, Some(environment))
+                .expect("policy");
             let plan = captured_exec_compose_plan(
                 &repo,
                 Some(environment),

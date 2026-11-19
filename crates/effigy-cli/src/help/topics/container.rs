@@ -11,7 +11,7 @@ const CONTAINER_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     topic: "container",
     notices: text_lines![
         "`container render <NAME>` prints the exact immutable render, generation path and digest without writing files or contacting the container engine.",
-        "`compose_file` is deprecated: it is read as project catalog fragments for one release. `container migrate <NAME>` writes those fragments under `infra/dev/catalog/` and replaces the key with `[containers.<NAME>.services]`; the render is unchanged.",
+        "`compose_file` is retired: ordinary commands refuse it and name `container migrate <NAME>`, which writes its project catalog fragments under `infra/dev/catalog/` and replaces the key with `[containers.<NAME>.services]`; the render is unchanged.",
         "Operate a manifest-defined local container environment by name, or the default environment when no name is given: `[containers].default`, else the `[systems].default` workspace container.",
         "`--system <NAME>` selects the environment through `[systems.<NAME>]`'s default workspace instead of naming its container.",
         "Host ports and repo-relative mounts are declared in `[containers.*.host]`. Leaving an interactive workspace or shell asks whether to bring the environment down (default yes).",

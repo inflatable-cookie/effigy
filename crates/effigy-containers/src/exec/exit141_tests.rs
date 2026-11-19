@@ -819,7 +819,7 @@ fn inventory_and_ownership_child() {
     std::env::set_current_dir(&root).expect("private fixture cwd");
     let fixture = Fixture::attach(root.clone());
     let policy = crate::with_test_effigy_home(&root.join("home"), || {
-        crate::load_container_policy(&root, None)
+        crate::tests::fixture_policy(&root, None)
     })
     .expect("private container policy");
     crate::with_test_compose_backend(crate::compose::ComposeBackend::Docker, || {

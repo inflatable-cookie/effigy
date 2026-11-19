@@ -424,7 +424,8 @@ home = "/home/vscode"
             ("EFFIGY_COMPOSE_BACKEND", Some("docker".into())),
             ("DOCKER_CONTEXT", Some("fixture-context".into())),
         ]);
-        let mut policy = effigy_containers::prepare_container_policy(&repo, Some("dev")).unwrap();
+        let mut policy =
+            crate::runner::test_support::prepare_fixture_policy(&repo, Some("dev")).unwrap();
         policy.workspace_user = Some("vscode".into());
         policy.workspace_home = Some("/home/vscode".into());
         let mut labels = serde_json::Map::new();

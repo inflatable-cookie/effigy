@@ -1,6 +1,5 @@
 use super::{
-    derive_repo_name, execute_bootstrap_request_with_progress, load_manifest_bootstrap,
-    normalize_bootstrap_repo_url, plan_bootstrap_request, render_bootstrap_plan,
+    derive_repo_name, normalize_bootstrap_repo_url, plan_bootstrap_request, render_bootstrap_plan,
     render_bootstrap_result, resolve_bootstrap_request, BootstrapRequest, PinnedSourceReport,
     SubmoduleReport,
 };
@@ -122,53 +121,10 @@ fn a_plan_reports_an_unreadable_manifest_without_failing() {
         .expect("request");
     let plan = plan_bootstrap_request(&request).expect("plan");
     assert!(plan.manifest_found);
-    assert!(plan.refusals.is_empty(), "{:?}", plan.refusals);
     let reason = plan.manifest_unreadable.as_deref().unwrap_or_default();
     assert!(reason.contains("bootstrap"), "{reason}");
     let text = render_bootstrap_plan(&plan, false);
     assert!(text.contains("manifest: unreadable"), "{text}");
-}
-
-#[test]
-fn a_plan_reports_retired_bootstrap_refusals_with_the_migration() {
-    let fixture = tempfile::tempdir().expect("temp dir");
-    let checkout = fixture.path().join("app");
-    std::fs::create_dir_all(&checkout).expect("mkdir");
-    std::fs::write(
-        checkout.join("effigy.toml"),
-        "[bootstrap]\nstart = \"dev\"\n\n[[bootstrap.children]]\npath = \"../book\"\nrepo = \"git@example.test:book.git\"\n",
-    )
-    .expect("write manifest");
-    let request = resolve_bootstrap_request(fixture.path(), None, Some(&checkout), None, true)
-        .expect("request");
-    let plan = plan_bootstrap_request(&request).expect("plan");
-    assert!(
-        plan.manifest_unreadable.is_none(),
-        "{:?}",
-        plan.manifest_unreadable
-    );
-    assert_eq!(plan.refusals.len(), 1, "{:?}", plan.refusals);
-    assert!(plan.refusals[0].contains("[bootstrap].children"));
-    assert!(plan.refusals[0].contains("[sources.<name>]"));
-    let text = render_bootstrap_plan(&plan, false);
-    assert!(text.contains("refused:"), "{text}");
-    assert!(text.contains("[sources.<name>]"), "{text}");
-    let json: serde_json::Value =
-        serde_json::from_str(&render_bootstrap_plan(&plan, true)).expect("plan json");
-    assert_eq!(json["refusals"].as_array().map(Vec::len), Some(1));
-    // The run entry point must refuse retired keys too, without running selectors.
-    let error = execute_bootstrap_request_with_progress(
-        &request,
-        load_manifest_bootstrap,
-        |_: &Path, _: &str, _: &str| -> Result<(), super::BootstrapError> {
-            panic!("no selector must run for retired bootstrap keys")
-        },
-        |_| Ok(()),
-    )
-    .expect_err("retired children refuse the run");
-    let message = error.to_string();
-    assert!(message.contains("[bootstrap].children"), "{message}");
-    assert!(message.contains("[sources.<name>]"), "{message}");
 }
 
 fn source_report(state: PinnedSourceState, dirty: bool) -> PinnedSourceReport {

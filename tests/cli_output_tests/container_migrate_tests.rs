@@ -1,5 +1,6 @@
-//! `compose_file` is read as project catalog fragments for one release, and
-//! `effigy container migrate` writes exactly those fragments out.
+//! `compose_file` is retired: ordinary policy resolution refuses it and
+//! `effigy container migrate` writes exactly the project catalog fragments it
+//! is replaced by.
 use effigy_test_support::process::FixtureCommandExt;
 use effigy_test_support::Fixture as DirectoryFixture;
 use serde_json::Value;
@@ -73,15 +74,12 @@ impl Fixture {
 #[test]
 fn migrate_writes_the_fragment_compose_file_is_read_as_and_keeps_the_render() {
     let f = Fixture::new();
-    let warned = f.run(&["container", "render", "web"]);
-    assert!(warned.status.success(), "{warned:?}");
-    let stderr = String::from_utf8_lossy(&warned.stderr);
-    assert!(
-        stderr.contains("`[containers.web].compose_file` is deprecated")
-            && stderr.contains("effigy container migrate web"),
-        "{stderr}"
-    );
-    let before = f.render();
+    // The retired key refuses on every ordinary command, naming the migration.
+    let refused = f.run(&["container", "render", "web"]);
+    assert!(!refused.status.success(), "{refused:?}");
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("retired `compose_file"), "{stderr}");
+    assert!(stderr.contains("effigy container migrate web"), "{stderr}");
 
     let report = f.json(&["container", "migrate", "web", "--json"]);
     assert_eq!(report["schema"], "effigy.container.migrate.v1", "{report}");
@@ -108,9 +106,12 @@ fn migrate_writes_the_fragment_compose_file_is_read_as_and_keeps_the_render() {
 
     // The Compose file is no longer read.
     fs::remove_file(f.repo.join("infra/dev/docker-compose.yml")).unwrap();
-    assert_eq!(f.render(), before);
+    // The migrated declaration renders without the retired key or its warning.
+    let after = f.render();
+    assert!(!after.is_empty(), "{after:?}");
     let quiet = f.run(&["container", "render", "web"]);
-    assert!(!String::from_utf8_lossy(&quiet.stderr).contains("deprecated"));
+    assert!(quiet.status.success(), "{quiet:?}");
+    assert!(!String::from_utf8_lossy(&quiet.stderr).contains("compose_file"));
 
     let again = f.run(&["container", "migrate", "web"]);
     assert!(!again.status.success());

@@ -1,8 +1,29 @@
 use super::*;
-use crate::policy::load::{load_container_policy, prepare_container_policy};
+// Fixtures predate the v0.16 `compose_file` retirement: each policy load
+// migrates a declaration that still uses the retired key first.
+use crate::tests::{
+    fixture_policy as load_container_policy, fixture_prepared_policy as prepare_container_policy,
+};
 use std::os::unix::fs::PermissionsExt;
 
 fn fixture() -> (effigy_test_support::Fixture, PathBuf, PathBuf) {
+    let (fixture, checkout, home) = fixture_before_migration();
+    // Fixtures predate the v0.16 `compose_file` retirement: migrate once here,
+    // so a test's own byte snapshot is stable across its policy loads.
+    crate::tests::migrate_declared_compose_files(&checkout);
+    (fixture, checkout, home)
+}
+
+/// The same fixture with the Compose body the test needs, migrated after the
+/// body is written.
+fn fixture_with_compose(compose: &str) -> (effigy_test_support::Fixture, PathBuf, PathBuf) {
+    let (fixture, checkout, home) = fixture_before_migration();
+    std::fs::write(checkout.join("compose.yml"), compose).unwrap();
+    crate::tests::migrate_declared_compose_files(&checkout);
+    (fixture, checkout, home)
+}
+
+fn fixture_before_migration() -> (effigy_test_support::Fixture, PathBuf, PathBuf) {
     let fixture = effigy_test_support::Fixture::new("effigy-render-").unwrap();
     let checkout = fixture.path().join("checkout");
     let home = fixture.path().join("home/.effigy");
@@ -48,7 +69,7 @@ fn resolution_is_a_pure_complete_closure_and_prepare_seals_it() {
     let (fixture, checkout, home) = fixture();
     crate::with_test_effigy_home(&home, || {
         let before = snapshot(fixture.path());
-        let observed = load_container_policy(&checkout, None).unwrap();
+        let observed = crate::tests::fixture_policy(&checkout, None).unwrap();
         assert!(!observed.compose_files[0].exists());
         let display = observed.compose_file_display();
         assert_eq!(
@@ -95,10 +116,10 @@ fn a_render_generation_matches_across_state_home_paths() {
     let other_home = fixture.path().join("other-home/.effigy");
     std::fs::create_dir_all(&other_home).unwrap();
     let first = crate::with_test_effigy_home(&home, || {
-        prepare_container_policy(&checkout, Some("one")).unwrap()
+        crate::tests::fixture_prepared_policy(&checkout, Some("one")).unwrap()
     });
     let second = crate::with_test_effigy_home(&other_home, || {
-        prepare_container_policy(&checkout, Some("one")).unwrap()
+        crate::tests::fixture_prepared_policy(&checkout, Some("one")).unwrap()
     });
     let first_render = first.render.as_ref().unwrap();
     let second_render = second.render.as_ref().unwrap();
@@ -134,8 +155,8 @@ fn a_render_generation_matches_across_state_home_paths() {
 fn reset_preserves_sibling_environment_and_immutable_files() {
     let (_fixture, checkout, home) = fixture();
     crate::with_test_effigy_home(&home, || {
-        let one = prepare_container_policy(&checkout, Some("one")).unwrap();
-        let two = prepare_container_policy(&checkout, Some("two")).unwrap();
+        let one = crate::tests::fixture_prepared_policy(&checkout, Some("one")).unwrap();
+        let two = crate::tests::fixture_prepared_policy(&checkout, Some("two")).unwrap();
         let bytes = std::fs::read(&two.compose_files[0]).unwrap();
         reset(&one).unwrap();
         assert!(verify(&one).is_err());
@@ -151,7 +172,7 @@ fn reset_preserves_sibling_environment_and_immutable_files() {
 fn concurrent_engine_publication_preserves_admitted_readers() {
     let (_fixture, checkout, home) = fixture();
     crate::with_test_effigy_home(&home, || {
-        let policy = prepare_container_policy(&checkout, Some("one")).unwrap();
+        let policy = crate::tests::fixture_prepared_policy(&checkout, Some("one")).unwrap();
         let expected = std::fs::read(&policy.compose_files[0]).unwrap();
         let writer_root = checkout.clone();
         let writer_home = home.clone();
@@ -167,14 +188,14 @@ fn concurrent_engine_publication_preserves_admitted_readers() {
                         value.as_bytes(),
                     )
                     .unwrap();
-                    prepare_container_policy(&writer_root, Some("one")).unwrap();
+                    crate::tests::fixture_prepared_policy(&writer_root, Some("one")).unwrap();
                 }
             })
         });
         barrier.wait();
         for _ in 0..200 {
             assert_eq!(std::fs::read(&policy.compose_files[0]).unwrap(), expected);
-            let observed = load_container_policy(&checkout, Some("one")).unwrap();
+            let observed = crate::tests::fixture_policy(&checkout, Some("one")).unwrap();
             assert!(observed
                 .read_compose(&observed.compose_files[0])
                 .unwrap()
@@ -188,12 +209,12 @@ fn concurrent_engine_publication_preserves_admitted_readers() {
 fn declaration_bytes_are_part_of_the_generation() {
     let (_fixture, checkout, home) = fixture();
     crate::with_test_effigy_home(&home, || {
-        let policy = load_container_policy(&checkout, Some("one")).unwrap();
+        let policy = crate::tests::fixture_policy(&checkout, Some("one")).unwrap();
         let manifest = checkout.join("effigy.toml");
         let source =
             std::fs::read_to_string(&manifest).unwrap() + "\n# changed declaration input\n";
         std::fs::write(manifest, source).unwrap();
-        let next = load_container_policy(&checkout, Some("one")).unwrap();
+        let next = crate::tests::fixture_policy(&checkout, Some("one")).unwrap();
         assert_ne!(
             policy.render.unwrap().closure.digest(),
             next.render.unwrap().closure.digest()
@@ -206,7 +227,7 @@ fn internal_path_consumers_resolve_generated_asset_mounts() {
     let (_fixture, checkout, home) = fixture();
     std::fs::write(checkout.join("effigy.toml"), "[containers]\ndefault='web'\n[containers.web]\nprimary_service='web'\n[containers.web.services.app]\ncatalog='php-fpm'\n[containers.web.services.web]\ncatalog='nginx'\nvariant='default'\n").unwrap();
     crate::with_test_effigy_home(&home, || {
-        let policy = load_container_policy(&checkout, None).unwrap();
+        let policy = crate::tests::fixture_policy(&checkout, None).unwrap();
         let render = policy.render.as_ref().unwrap();
         assert!(
             render.closure.files().values().all(|bytes| {
@@ -290,13 +311,13 @@ fn prepare_establishes_owned_cache_paths_before_publication() {
     let home = alias.join("home/.effigy");
     std::fs::write(checkout.join("effigy.toml"), "[containers]\ndefault='web'\n[containers.web]\nprimary_service='app'\nworking_dir='/workspace'\n[containers.web.services.app]\ncatalog='php-fpm'\n[systems.dev]\ndefault_workspace='app'\n[systems.dev.workspaces.app]\ncontainer='web'\n").unwrap();
     crate::with_test_effigy_home(&home, || {
-        load_container_policy(&checkout, None).unwrap();
+        crate::tests::fixture_policy(&checkout, None).unwrap();
         assert!(!home.join("shared/composer-cache").exists());
-        let prepared = prepare_container_policy(&checkout, None).unwrap();
+        let prepared = crate::tests::fixture_prepared_policy(&checkout, None).unwrap();
         assert!(home.join("shared/composer-cache").exists());
         crate::policy::mounts::prepare_container_mount_sources(&prepared).unwrap();
         crate::policy::render::verify(&prepared).unwrap();
-        let fresh = load_container_policy(&checkout, None).unwrap();
+        let fresh = crate::tests::fixture_policy(&checkout, None).unwrap();
         assert_eq!(
             fresh.render.as_ref().unwrap().closure.digest(),
             prepared.render.as_ref().unwrap().closure.digest()
@@ -310,16 +331,13 @@ fn prepare_establishes_owned_cache_paths_before_publication() {
 /// the quoted shell form itself. Docker keeps the exec form it honours.
 #[test]
 fn a_nerdctl_render_quotes_exec_form_health_checks_and_docker_keeps_them() {
-    let (_fixture, checkout, home) = fixture();
-    std::fs::write(
-        checkout.join("compose.yml"),
+    let (_fixture, checkout, home) = fixture_with_compose(
         "services:\n  app:\n    image: example:one\n    healthcheck:\n      test: [\"CMD\", \"node\", \"-e\", \"process.exit(0)\"]\n  shell:\n    image: example:two\n    healthcheck:\n      test: [\"CMD-SHELL\", \"pg_isready -U postgres\"]\n  off:\n    image: example:three\n    healthcheck:\n      test: [\"NONE\"]\n",
-    )
-    .unwrap();
+    );
     crate::with_test_effigy_home(&home, || {
         let nerdctl = crate::compose::with_test_compose_backend(
             crate::compose::ComposeBackend::ColimaNerdctl,
-            || prepare_container_policy(&checkout, Some("one")).unwrap(),
+            || crate::tests::fixture_prepared_policy(&checkout, Some("one")).unwrap(),
         );
         let rendered = healthcheck_tests(&nerdctl.read_compose(&nerdctl.compose_files[0]).unwrap());
         assert_eq!(
@@ -340,7 +358,7 @@ fn a_nerdctl_render_quotes_exec_form_health_checks_and_docker_keeps_them() {
 
         let docker = crate::compose::with_test_compose_backend(
             crate::compose::ComposeBackend::Docker,
-            || load_container_policy(&checkout, Some("one")).unwrap(),
+            || crate::tests::fixture_policy(&checkout, Some("one")).unwrap(),
         );
         let docker_rendered =
             healthcheck_tests(&docker.read_compose(&docker.compose_files[0]).unwrap());
@@ -357,14 +375,11 @@ fn a_nerdctl_render_quotes_exec_form_health_checks_and_docker_keeps_them() {
 /// and start (effigy#383); a policy the stack declares is what Compose reads.
 #[test]
 fn a_render_names_no_restart_policy_of_its_own() {
-    let (_fixture, checkout, home) = fixture();
-    std::fs::write(
-        checkout.join("compose.yml"),
+    let (_fixture, checkout, home) = fixture_with_compose(
         "services:\n  app:\n    image: example:one\n  db:\n    image: example:two\n    restart: \"no\"\n",
-    )
-    .unwrap();
+    );
     crate::with_test_effigy_home(&home, || {
-        let policy = prepare_container_policy(&checkout, Some("one")).unwrap();
+        let policy = crate::tests::fixture_prepared_policy(&checkout, Some("one")).unwrap();
         let merged = merged_compose(&policy);
         assert!(
             merged["services"]["app"].get("restart").is_none(),
@@ -421,18 +436,40 @@ fn merge(into: &mut serde_yaml::Value, from: serde_yaml::Value) {
 /// read, not where the generation publishes it (effigy#371).
 #[test]
 fn a_render_resolves_every_relative_input_path_against_the_checkout() {
-    let (fixture, checkout, home) = fixture();
+    // A project catalog fragment, the shape the migration writes: the Compose
+    // input a render reads is a fragment under the project catalog.
+    let (fixture, checkout, home) = fixture_before_migration();
     std::fs::create_dir_all(checkout.join("app")).unwrap();
     std::fs::write(checkout.join("app/Dockerfile"), "FROM scratch\n").unwrap();
     std::fs::write(checkout.join("app.env"), "A=1\n").unwrap();
     std::fs::write(checkout.join("bind.txt"), "bind\n").unwrap();
     std::fs::write(checkout.join("secret.txt"), "secret\n").unwrap();
+    let fragment = checkout.join("infra/dev/catalog/one-app");
+    std::fs::create_dir_all(&fragment).unwrap();
     std::fs::write(
-        checkout.join("compose.yml"),
+        fragment.join("service.toml"),
+        "[service]\nname = \"one-app\"\ndescription = \"fixture fragment\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        fragment.join("compose.fragment.yml"),
         r#"services:
-  app:
+  {{ service_name }}:
     build:
+      context: {{ repo_root }}
       dockerfile: Dockerfile
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        checkout.join("effigy.toml"),
+        r#"
+[containers]
+default="one"
+[containers.one]
+primary_service="app"
+[containers.one.services.app]
+catalog="one-app"
 "#,
     )
     .unwrap();
@@ -464,23 +501,25 @@ configs:
     )
     .unwrap();
     crate::with_test_effigy_home(&home, || {
-        let policy = prepare_container_policy(&checkout, Some("one")).unwrap();
+        let policy = crate::tests::fixture_prepared_policy(&checkout, Some("one")).unwrap();
         let document: serde_yaml::Value =
             serde_yaml::from_str(&policy.read_compose(&policy.compose_files[0]).unwrap()).unwrap();
         let service = &document["services"]["app"];
-        // A build mapping with no context builds from the checkout, never from
-        // the generation that holds the Compose file.
+        // The migration rewrites the Compose-relative build context to the
+        // checkout it was read in, never to the generation that holds the
+        // rendered Compose file.
         let context = service["build"]["context"]
             .as_str()
-            .expect("a missing build context names the directory Compose would have used");
+            .or_else(|| service["build"].as_str())
+            .expect("the rendered fragment names the directory its input was read from");
         assert!(
             Path::new(context).is_absolute() && !context.contains(".effigy/state"),
-            "a missing build context names the pre-render project directory, not the generation: {context}"
+            "the build context names the pre-render project directory, not the generation: {context}"
         );
         assert_eq!(
             Path::new(context),
-            checkout.join(".effigy/runtime/compose"),
-            "the context is the directory the Compose input was read from"
+            checkout,
+            "the context is the checkout the Compose input was read from"
         );
         let override_document: serde_yaml::Value =
             serde_yaml::from_str(&policy.read_compose(&policy.compose_files[1]).unwrap()).unwrap();
@@ -556,6 +595,7 @@ fn mapping_and_sequence_additional_contexts_resolve_against_the_checkout() {
         r#"services:
   app:
     build:
+      context: .
       dockerfile: Dockerfile
 "#,
     )
@@ -581,7 +621,7 @@ fn mapping_and_sequence_additional_contexts_resolve_against_the_checkout() {
     )
     .unwrap();
     crate::with_test_effigy_home(&home, || {
-        let policy = prepare_container_policy(&checkout, Some("one")).unwrap();
+        let policy = crate::tests::fixture_prepared_policy(&checkout, Some("one")).unwrap();
         let override_document: serde_yaml::Value =
             serde_yaml::from_str(&policy.read_compose(&policy.compose_files[1]).unwrap()).unwrap();
         let expected = frontend.canonicalize().unwrap();
@@ -675,7 +715,7 @@ catalog = "workspace-rust-bun"
     )
     .unwrap();
     crate::with_test_effigy_home(&home, || {
-        let policy = load_container_policy(&checkout, None).unwrap();
+        let policy = crate::tests::fixture_policy(&checkout, None).unwrap();
         let render = policy.render.as_ref().unwrap();
         let rendered: serde_yaml::Value =
             serde_yaml::from_str(&policy.read_compose(&policy.compose_files[0]).unwrap()).unwrap();
@@ -760,7 +800,7 @@ fn a_catalog_dockerfile_keeps_every_dollar_through_compose_interpolation() {
     )
     .unwrap();
     crate::with_test_effigy_home(&home, || {
-        let policy = load_container_policy(&checkout, None).unwrap();
+        let policy = crate::tests::fixture_policy(&checkout, None).unwrap();
         let rendered: serde_yaml::Value =
             serde_yaml::from_str(&policy.read_compose(&policy.compose_files[0]).unwrap()).unwrap();
         let inline = rendered["services"]["app"]["build"]["dockerfile_inline"]
@@ -787,7 +827,7 @@ fn a_catalog_dockerfile_keeps_every_dollar_through_compose_interpolation() {
 fn workspace_host_alias_render_is_pure_frozen_idempotent_and_refuses_conflicts() {
     let (fixture, checkout, home) = fixture();
     crate::with_test_effigy_home(&home, || {
-        let policy = load_container_policy(&checkout, None).expect("policy");
+        let policy = crate::tests::fixture_policy(&checkout, None).expect("policy");
         let before = snapshot(fixture.path());
         for address in ["host-gateway", "192.0.2.12", "2001:db8::12"] {
             let next = policy
@@ -852,10 +892,10 @@ fn frozen_backend_keeps_the_recorded_context_when_the_current_context_changes() 
     let _context = effigy_test_support::env::ScopedEnv::set("DOCKER_CONTEXT", "remote-A");
     crate::with_test_effigy_home(&home, || {
         crate::compose::with_test_compose_backend(crate::compose::ComposeBackend::Docker, || {
-            prepare_container_policy(&checkout, None).unwrap();
+            crate::tests::fixture_prepared_policy(&checkout, None).unwrap();
         });
         std::env::set_var("DOCKER_CONTEXT", "default");
-        let policy = load_container_policy(&checkout, None).unwrap();
+        let policy = crate::tests::fixture_policy(&checkout, None).unwrap();
         let bytes = &policy.render.as_ref().unwrap().closure.files()["inputs/environment.json"];
         let metadata: serde_json::Value = serde_json::from_slice(bytes).unwrap();
         assert_eq!(metadata["backend_context"], "remote-A");

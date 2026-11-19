@@ -49,7 +49,7 @@ fn an_ordinary_apply_cannot_supply_reserved_creator_attribution() {
     )
     .unwrap();
     effigy_containers::with_test_effigy_home(&home, || {
-        let policy = effigy_containers::load_container_policy(&checkout, None).unwrap();
+        let policy = crate::runner::test_support::load_fixture_policy(&checkout, None).unwrap();
         let ctx = crate::runner::environment::context(&checkout).unwrap();
         let env = crate::runner::environment::env_ref(&policy).unwrap();
         let mut labels: std::collections::BTreeMap<String, String> = [

@@ -1008,37 +1008,6 @@ mod tests {
     }
 
     #[test]
-    fn runtime_detection_for_policy_prefers_repo_backend_override_over_user_global_preference() {
-        let _lock = crate::test_env_lock();
-        let temp = tempfile::tempdir().expect("tempdir");
-        let repo_root = temp.path().join("repo");
-        let home = temp.path().join(".effigy-home");
-        std::fs::create_dir_all(&repo_root).expect("mkdir repo");
-        std::fs::create_dir_all(&home).expect("mkdir home");
-        std::fs::write(
-            home.join("config.toml"),
-            "[containers]\nbackend = \"containerd\"\n",
-        )
-        .expect("write config");
-        // A v0.14 per-environment record, read until Prepare imports it.
-        std::fs::create_dir_all(repo_root.join(".effigy/runtime/compose")).expect("mkdir");
-        std::fs::write(
-            repo_root.join(".effigy/runtime/compose/.effigy-runtime.json"),
-            "[containers.web]\nbackend = \"docker-compose\"\n",
-        )
-        .expect("write legacy runtime backend record");
-
-        let detection = with_test_user_config_home(&home, || {
-            runtime_detection_for_policy(&repo_root, &test_policy())
-        });
-
-        assert_eq!(
-            detection.backend_override,
-            Some(BackendId::docker_compose())
-        );
-    }
-
-    #[test]
     fn parse_colima_profiles_reads_disk_bytes() {
         let entries = parse_colima_profiles(
             r#"{"name":"effigy","status":"Running","cpus":2,"memory":34359738368,"disk":322122547200}"#,

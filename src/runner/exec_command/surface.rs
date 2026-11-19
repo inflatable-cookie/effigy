@@ -2,8 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use effigy_containers::{
-    exec::colima_is_running, load_container_policy, validate_container_policy,
-    EffectiveContainerPolicy,
+    exec::colima_is_running, validate_container_policy, EffectiveContainerPolicy,
 };
 use effigy_exec::{CwdMapper, ExecAlias, ExecAliasTable};
 use effigy_manifest::{
@@ -60,9 +59,10 @@ pub(super) fn resolve_named_exec_surface(
     container_name: &str,
 ) -> Result<ResolvedExecSurface, RunnerError> {
     let config = load_named_container_config(repo_root, container_name)?;
-    let policy = load_container_policy(repo_root, Some(container_name)).map_err(|error| {
-        RunnerError::container_surface_policy("policy load", container_name, error.to_string())
-    })?;
+    let policy = effigy_containers::load_container_policy(repo_root, Some(container_name))
+        .map_err(|error| {
+            RunnerError::container_surface_policy("policy load", container_name, error.to_string())
+        })?;
     validate_container_policy(repo_root, &policy).map_err(|error| {
         RunnerError::container_surface_policy(
             "policy validation",

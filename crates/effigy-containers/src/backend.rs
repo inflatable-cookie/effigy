@@ -1,10 +1,10 @@
 //! The exact backend of one environment (contract 052 §10.3).
 //!
 //! One precedence, used by every Compose, volume and data action: an explicit
-//! `EFFIGY_COMPOSE_BACKEND`, the environment's `resources` record, a legacy
-//! v0.14 record not yet imported (read-only), the user preference, then the
-//! driver default. An unreadable record is `Unknown`: ordinary activation may
-//! fall through, but volume and data actions refuse until the backend is named.
+//! `EFFIGY_COMPOSE_BACKEND`, the environment's `resources` record, the user
+//! preference, then the driver default. An unreadable record is `Unknown`:
+//! ordinary activation may fall through, but volume and data actions refuse
+//! until the backend is named.
 use std::path::Path;
 
 use effigy_kernel::observe::Observed;
@@ -12,9 +12,6 @@ use effigy_kernel::store::BackendMetadata;
 use effigy_manifest::ManifestContainerDriver;
 
 use crate::{BackendId, ContainerPolicyError, EffectiveContainerPolicy};
-
-/// Legacy v0.14 per-checkout backend file. Read for one release; never written.
-const LEGACY_BACKEND_FILE: &str = ".effigy/runtime/compose/.effigy-runtime.json";
 
 /// The runtime endpoint volume commands use for the Docker engine. Every
 /// other endpoint names a Colima profile.
@@ -26,8 +23,6 @@ pub enum BackendSource {
     Environment,
     /// The environment's `resources` row, with the source that chose it.
     Recorded(String),
-    /// The v0.14 runtime file, imported by the next Prepare.
-    Legacy,
     UserPreference,
     DriverDefault,
 }
@@ -37,7 +32,6 @@ impl BackendSource {
         match self {
             Self::Environment => "environment".into(),
             Self::Recorded(source) => format!("recorded ({source})"),
-            Self::Legacy => "legacy-runtime-file".into(),
             Self::UserPreference => "user-preference".into(),
             Self::DriverDefault => "driver-default".into(),
         }
@@ -72,8 +66,7 @@ fn from_engine(engine: &str) -> Result<BackendId, String> {
     }
 }
 
-/// Resolve the exact backend. Observe-safe: reads the store and legacy file,
-/// writes nothing.
+/// Resolve the exact backend. Observe-safe: reads the store, writes nothing.
 pub fn exact_backend(
     repo_root: &Path,
     name: &str,
@@ -90,13 +83,6 @@ pub fn exact_backend(
             },
             Observed::Verified(None, _) | Observed::Absent(_) => {}
             Observed::Unknown(reason) => unknown = Some(format!("{reason}")),
-        }
-    }
-    if chosen.is_none() && unknown.is_none() {
-        match legacy_backend(repo_root, name) {
-            Ok(Some(id)) => chosen = Some((id, BackendSource::Legacy)),
-            Ok(None) => {}
-            Err(reason) => unknown = Some(reason),
         }
     }
     let (id, source) = chosen
@@ -192,34 +178,6 @@ pub(crate) fn metadata_to_record(policy: &EffectiveContainerPolicy) -> Option<Ba
         context: selected.context,
         source: exact.source.label(),
     })
-}
-
-#[derive(serde::Deserialize)]
-struct LegacyBackendFile {
-    #[serde(default)]
-    containers: std::collections::BTreeMap<String, LegacyBackendEntry>,
-}
-
-#[derive(serde::Deserialize)]
-struct LegacyBackendEntry {
-    backend: String,
-}
-
-/// v0.14 wrote this file after `up`. An unparsable file is `Unknown`.
-fn legacy_backend(repo_root: &Path, name: &str) -> Result<Option<BackendId>, String> {
-    let path = repo_root.join(LEGACY_BACKEND_FILE);
-    let source = match std::fs::read_to_string(&path) {
-        Ok(source) => source,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("{}: {error}", path.display())),
-    };
-    let parsed = toml::from_str::<LegacyBackendFile>(&source)
-        .map_err(|error| format!("{}: {error}", path.display()))?;
-    parsed
-        .containers
-        .get(name)
-        .map(|entry| from_engine(&entry.backend))
-        .transpose()
 }
 
 #[cfg(test)]

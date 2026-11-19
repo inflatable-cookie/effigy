@@ -1,13 +1,12 @@
-//! Catalog sources for container work (Q-005): the project catalog with
-//! translated `compose_file` fragments, the pinned bundle's `catalog/`,
-//! declared `[catalog.sources.<name>]`, then the compiled baseline.
+//! Catalog sources for container work (Q-005): the project catalog, the
+//! pinned bundle's `catalog/`, declared `[catalog.sources.<name>]`, then the
+//! compiled baseline.
 //!
 //! Every layer is checkout-local pinned state or embedded bytes. Building a
 //! resolver reads only; source pins move through `effigy bundle sync` on the
 //! host, and a guest reads the same pins through the checkout mount.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use effigy_catalog::CatalogResolver;
 use effigy_manifest::TASK_MANIFEST_FILE;
@@ -15,17 +14,11 @@ use effigy_manifest::TASK_MANIFEST_FILE;
 use crate::ContainerPolicyError;
 
 pub(crate) const PROJECT_LOCAL_CATALOG_DIR: &str = "infra/dev/catalog";
-const RETIRED_PACK_STORE_DIR: &str = "catalog-packs";
-const RETIRED_USER_CATALOG_DIR: &str = "catalog";
 
 /// Resolver for `repo_root`'s catalog sources. `None` resolves the compiled
 /// baseline only: shared services are machine-scoped and never take one
 /// project's sources.
 pub fn catalog_resolver(repo_root: Option<&Path>) -> Result<CatalogResolver, ContainerPolicyError> {
-    // The real user home, not the container test-home override: this only
-    // names retired state that a user can see and delete.
-    let home = std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".effigy"));
-    warn_retired_catalog_state(home.as_deref());
     let Some(repo_root) = repo_root else {
         return Ok(CatalogResolver::new(None));
     };
@@ -86,40 +79,6 @@ pub fn catalog_service_sources(
             })
         })
         .collect()
-}
-
-/// One notice per invocation for retired user catalog state. The directories
-/// are never read, changed or removed.
-fn warn_retired_catalog_state(home: Option<&Path>) {
-    static EMITTED: AtomicBool = AtomicBool::new(false);
-    let Some(home) = home else {
-        return;
-    };
-    let notices = retired_catalog_notices(home);
-    if !notices.is_empty() && !EMITTED.swap(true, Ordering::Relaxed) {
-        for notice in notices {
-            eprintln!("[warn] {notice}");
-        }
-    }
-}
-
-fn retired_catalog_notices(home: &Path) -> Vec<String> {
-    let mut notices = Vec::new();
-    let store = home.join(RETIRED_PACK_STORE_DIR);
-    if store.is_dir() {
-        notices.push(format!(
-            "installed catalog pack state `{}` is retired and ignored; services resolve from the project catalog, the bundle's catalog/, [catalog.sources] and the compiled baseline. The directory is left untouched; delete it when convenient",
-            store.display()
-        ));
-    }
-    let user_catalog = home.join(RETIRED_USER_CATALOG_DIR);
-    if user_catalog.is_dir() {
-        notices.push(format!(
-            "user-global catalog override `{}` is retired and ignored; move custom fragments to {PROJECT_LOCAL_CATALOG_DIR}/ in each consuming repository, or publish them as a [catalog.sources] source",
-            user_catalog.display()
-        ));
-    }
-    notices
 }
 
 #[cfg(test)]
@@ -192,65 +151,6 @@ mod tests {
         }
     }
 
-    /// Q-005 preserves project, bundle and declared sources ahead of the
-    /// baseline, so a project-owned `minio` fragment still serves the service
-    /// and `catalog_service_sources` attributes it to `project`. Only a
-    /// `minio` that would fall back to the removed baseline refuses, naming
-    /// `silo` (effigy#424).
-    #[test]
-    fn retired_baseline_minio_refuses_while_a_project_fragment_still_serves() {
-        let temp = tempfile::tempdir().unwrap();
-        let repo = temp.path().join("repo");
-        std::fs::create_dir_all(&repo).unwrap();
-        std::fs::write(
-            repo.join("effigy.toml"),
-            "[containers]\ndefault = \"stack\"\n\n[containers.stack]\nprimary_service = \"app\"\n\n[containers.stack.services.app]\ncatalog = \"workspace-rust-bun\"\n\n[containers.stack.services.storage]\ncatalog = \"minio\"\n",
-        )
-        .unwrap();
-
-        let resolver = catalog_resolver(Some(&repo)).unwrap();
-        for name in ["minio", "baseline/minio"] {
-            let error = resolver
-                .resolve(name)
-                .expect_err("the baseline minio is retired");
-            assert!(
-                matches!(
-                    error,
-                    effigy_catalog::CatalogError::RetiredCatalogService { .. }
-                ),
-                "{name}: {error:?}"
-            );
-            assert!(
-                error.to_string().contains("catalog = \"silo\""),
-                "{name}: {error}"
-            );
-        }
-
-        write_fragment(&repo.join(PROJECT_LOCAL_CATALOG_DIR), "minio", "project");
-        let resolver = catalog_resolver(Some(&repo)).unwrap();
-        assert_eq!(
-            resolver.resolve("minio").unwrap().source.handle(),
-            "project",
-            "the project fragment wins over the removed baseline entry"
-        );
-
-        let sources = catalog_service_sources(&repo, "stack").unwrap();
-        let storage = sources
-            .iter()
-            .find(|source| source.service == "storage")
-            .expect("storage service");
-        assert_eq!(storage.catalog, "minio");
-        assert_eq!(storage.source, "project");
-        assert_eq!(storage.layer, "project");
-        assert!(
-            storage
-                .path
-                .as_deref()
-                .is_some_and(|path| path.ends_with("infra/dev/catalog/minio")),
-            "the attribution names the project fragment: {storage:?}"
-        );
-    }
-
     #[test]
     fn unprepared_declared_source_names_bundle_sync() {
         let temp = tempfile::tempdir().unwrap();
@@ -265,23 +165,5 @@ mod tests {
             .to_string();
         assert!(error.contains("effigy bundle sync"), "{error}");
         assert!(!temp.path().join(".effigy").exists());
-    }
-
-    #[test]
-    fn retired_state_is_named_and_left_untouched() {
-        let temp = tempfile::tempdir().unwrap();
-        let store = temp.path().join(RETIRED_PACK_STORE_DIR).join("v1");
-        std::fs::create_dir_all(&store).unwrap();
-        std::fs::write(store.join("state.json"), "{}").unwrap();
-        std::fs::create_dir_all(temp.path().join(RETIRED_USER_CATALOG_DIR)).unwrap();
-        let notices = retired_catalog_notices(temp.path());
-        assert_eq!(notices.len(), 2, "{notices:?}");
-        assert!(notices[0].contains("retired and ignored"), "{notices:?}");
-        assert!(notices[0].contains("left untouched"), "{notices:?}");
-        assert_eq!(
-            std::fs::read_to_string(store.join("state.json")).unwrap(),
-            "{}"
-        );
-        assert!(retired_catalog_notices(&temp.path().join("empty")).is_empty());
     }
 }

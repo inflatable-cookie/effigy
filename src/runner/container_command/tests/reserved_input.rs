@@ -141,7 +141,8 @@ fn checkout(label: &str) -> (Fixture, PathBuf, PathBuf) {
 }
 
 fn rendered_policy(root: &Path) -> EffectiveContainerPolicy {
-    let mut policy = effigy_containers::load_container_policy(root, Some("web")).expect("policy");
+    let mut policy =
+        crate::runner::test_support::load_fixture_policy(root, Some("web")).expect("policy");
     policy.workspace_user = Some("dev".to_owned());
     policy.workspace_home = Some("/home/dev".to_owned());
     assert!(policy.render.is_some(), "the alias render needs a snapshot");

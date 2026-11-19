@@ -236,20 +236,17 @@ that create spec; catalog members remain required. Policy, status, and doctor
 loads do not emit runtime skip diagnostics. They may render a snapshot, but
 that snapshot is not evidence about a later creation.
 
-### Retired `compose_file` (one-release translation)
+### Retired `compose_file`
 
-Direct `compose_file` ownership is retired (Q-004). For v0.15 a `compose_file`
-environment is read as project-layer catalog fragments, one per Compose
-service, with a once-per-process deprecation warning. Each fragment resolves as
-`infra/dev/catalog/<container>-<service>/` (suffixed `-migrated` when the name
-would shadow a compiled fragment) and the environment as the
-`[containers.<name>.services.<service>] catalog = "<fragment>"` declaration
-`effigy container migrate <name>` writes. Policy resolution therefore takes the
-generated path for both forms, and the render is identical before and after
-migration; only the recorded declaration inputs differ. The Compose file is
-read, never copied into the closure, and is not read again after migration.
+Direct `compose_file` ownership is retired (Q-004). v0.15 read a `compose_file`
+environment as project-layer catalog fragments for one release; v0.16 refuses
+it. Ordinary policy resolution returns the actionable error that names
+`effigy container migrate <name>`, and nothing else in the runtime reads the
+Compose file. `effigy container migrate` is the only caller that renders the
+retired declaration: it renders the old form through the translated fragments,
+so its before/after comparison is a comparison of real renders.
 
-Translation rewrites Compose-relative paths against the template's
+The migration rewrites Compose-relative paths against the template's
 `{{ repo_root }}` (build contexts, bind sources, `env_file`), names each
 project volume `{{ project_name }}-<volume>` once for every service that mounts
 it, and keeps published container ports. As in any catalog fragment, Prepare
@@ -265,7 +262,7 @@ refuses with the offending key: top-level `networks`, `configs`, `secrets`,
 `build.additional_contexts`; long-syntax named volumes; non-TCP or
 non-loopback port bindings; Compose `$` interpolation; template syntax; YAML
 merge keys. A fragment directory already on disk must hold exactly the
-translation, or loading refuses.
+migration's bytes, or the migration render refuses.
 
 Translated services carry generated-Compose identity: every service has the
 `com.effigy.checkout` label (and `com.effigy.scope` with a runtime token), and
@@ -873,15 +870,16 @@ Sibling environment references survive.
 
 Every Compose, volume and data action targets one exact backend, resolved in
 this order: `EFFIGY_COMPOSE_BACKEND` for the invocation, the environment's
-kernel `resources` row, a v0.14 `.effigy/runtime/compose/.effigy-runtime.json`
-entry not yet imported, the user preference, then the driver default. Prepare
+kernel `resources` row, the user preference, then the driver default. Prepare
 records the engine, its context (the Colima profile, or `DOCKER_CONTEXT`/
 `default`) and the source that chose it in the same owner run that publishes
-the desired generation, before any engine effect. The legacy file is read for
-one release and never written or deleted. A record Effigy cannot read, or an
-unparsable legacy file, is `Unknown`: activation may fall through to the next
-source, but volume and data actions refuse until the backend is named with
-`EFFIGY_COMPOSE_BACKEND`, and Prepare records nothing from a guess.
+the desired generation, before any engine effect. The v0.14
+`.effigy/runtime/compose/.effigy-runtime.json` file is no longer read: an
+upgrader whose only engine evidence is that file names the backend with
+`EFFIGY_COMPOSE_BACKEND` before the first destructive or data action, and the
+file itself stays untouched on disk. A record Effigy cannot read is `Unknown`:
+activation may fall through to the next source, but volume and data actions
+refuse until the backend is named, and Prepare records nothing from a guess.
 `container status` reports `backend_source` (and `backend_unknown`).
 
 Volume actions run on the environment's endpoint: `docker`, or its Colima
@@ -900,7 +898,7 @@ project is left intact, and cache-like names or legacy content classification
 mark diagnostic inventory only — they never admit removal (effigy#611).
 
 The focused `test:containers:generations:cli` proof snapshots bytes and filesystem
-metadata around status, hosts, scope, plan, render and logs for a translated `compose_file`
+metadata around status, hosts, scope, plan, render and logs for a migrated `compose_file`
 and pinned bundles. The operator-only `test:containers:generations:consumers`
 selector requires Python with PyYAML and the cbs/Acowtancy checkouts. It archives
 the pre-cutover main renderer into a private temporary fixture, copies the

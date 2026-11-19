@@ -354,8 +354,7 @@ mod tests {
     };
     use crate::runner::container_command::test_support::temp_repo;
     use effigy_containers::{
-        load_container_policy, EffectiveComposeSource, EffectiveContainerPolicy,
-        SharedServiceBinding,
+        EffectiveComposeSource, EffectiveContainerPolicy, SharedServiceBinding,
     };
     use effigy_manifest::{
         ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
@@ -399,7 +398,8 @@ catalog = "{catalog}"
             )
             .expect("write manifest");
 
-            let policy = load_container_policy(&root, Some("web")).expect("load policy");
+            let policy = crate::runner::test_support::load_fixture_policy(&root, Some("web"))
+                .expect("load policy");
             let working_dir = super::resolve_container_exec_working_dir_for_service(
                 &root,
                 Some("web"),
@@ -427,7 +427,8 @@ catalog = "php-fpm"
         )
         .expect("write manifest");
 
-        let policy = load_container_policy(&root, Some("web")).expect("load policy");
+        let policy = crate::runner::test_support::load_fixture_policy(&root, Some("web"))
+            .expect("load policy");
         let working_dir = super::resolve_container_exec_working_dir_for_service(
             &root,
             Some("web"),
@@ -456,7 +457,8 @@ working_dir = "/var/www/contact-patch"
 "#,
         )
         .expect("write manifest");
-        let policy = load_container_policy(&root, Some("web")).expect("load policy");
+        let policy = crate::runner::test_support::load_fixture_policy(&root, Some("web"))
+            .expect("load policy");
         fs::create_dir_all(root.join("db/migrations")).expect("create host cwd");
 
         for (label, input, expected) in [

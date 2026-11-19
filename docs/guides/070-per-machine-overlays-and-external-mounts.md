@@ -257,40 +257,29 @@ fragment **append** onto array-valued paths instead of fully
 replacing them. Useful when the root manifest already has its own
 entries on those paths.
 
-`optional = true` on includes (not used in the scaffold above, but
-worth knowing) lets a layer reference further fragments that may not
-exist on every machine. Pair it with auto-discovery to chain
-overlays. Through v0.15 the directive still loads; write a path-only
-include for a file that always exists, or let auto-discovery pick up
-`effigy.local.toml`. The form is removed in v0.16.
+`[manifest].include` has no `optional` flag in v0.16: it refuses with its
+replacement. Write a path-only include for a file that always exists, or let
+auto-discovery pick up `effigy.local.toml`.
 
 `external = true` on a mount makes the `host` value's interpolation
 resolve to an absolute path outside the repo without tripping the
 default repo-relative containment check.
 
-## v0.15 compatibility window
+## Retired spellings refused in v0.16
 
-Manual `[manifest].include` `optional` and `override` still parse
-through v0.15 with the same effective values. Each form records one
-deprecation notice naming the replacement and that the form is
-removed in v0.16:
+v0.15 accepted a manual `[manifest].include` `optional` or `override`, and the
+kebab-case keys `[contracts].schema-index` / `selection-contract` and
+`[sources.<name>].rev-file`. v0.16 refuses each with its replacement:
 
 - `optional` — omit a missing include, or rely on auto-discovered
-  `effigy.local.toml`. The notice fires when the key is present,
-  including `optional = false`.
-- `override` — use auto-discovered `effigy.local.toml` for
-  machine-local replacement, or `[manifest].extend` for arrays.
+  `effigy.local.toml`.
+- `override` — use auto-discovered `effigy.local.toml` for machine-local
+  replacement, or `[manifest].extend` for arrays.
+- write `schema_index`, `selection_contract` and `rev_file`.
 
-Public kebab-case aliases at their real positions still load:
-`[contracts].schema-index` / `selection-contract` as `schema_index` /
-`selection_contract`, and `[sources.<name>].rev-file` as `rev_file`.
-A task named `schema-index` is not an alias. Canonical snake_case and
-path-only includes print no notice. Combined legacy forms still print
-one notice per manifest. `--json` carries that notice in the command
-envelope `warnings` array and never on stdout. Auto-discovered
-`effigy.local.toml` is not a manual optional/override and stays
-silent. User-global program preference aliases (`colima-nerdctl`,
-`docker-compose`) are out of this window.
+Auto-discovered `effigy.local.toml` is not one of these forms and stays silent.
+User-global program preference aliases (`colima-nerdctl`, `docker-compose`)
+are unaffected.
 
 ## CI And Determinism
 

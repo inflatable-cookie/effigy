@@ -2110,7 +2110,7 @@ print('detached diagnostic',file=sys.stderr)
                 "services:\n  app:\n    image: fixture.invalid/app\n",
             )
             .expect("compose");
-            crate::load_container_policy(fixture.path(), None).expect("private policy")
+            crate::tests::fixture_policy(fixture.path(), None).expect("private policy")
         });
         policy.shared_services.clear();
         let logs_dir = fixture.path().join(".effigy/runtime/logs");

@@ -291,14 +291,17 @@ fn nested_container_fixture(name: &str) -> NestedContainerFixture {
     let root = fs::canonicalize(temp_workspace(name)).expect("canonicalize fixture root");
     write_root_manifest(&root, ROOT_MANIFEST);
     write_compose(&root, "workspace");
+    crate::runner::test_support::migrate_declared_compose_files(&root);
     let cattle = root.join("cattle-grid");
     fs::create_dir_all(&cattle).expect("mkdir cattle-grid");
     write_manifest(&cattle.join("effigy.toml"), CATTLE_MANIFEST);
     write_compose(&cattle, "cattle");
+    crate::runner::test_support::migrate_declared_compose_files(&cattle);
     let pen = root.join("pen");
     fs::create_dir_all(&pen).expect("mkdir pen");
     write_manifest(&pen.join("effigy.toml"), PEN_MANIFEST);
     write_compose(&pen, "sty");
+    crate::runner::test_support::migrate_declared_compose_files(&pen);
     // The root catalog is a Git checkout, as a monorepo is. The nested
     // catalog directories below it carry no Git metadata of their own, so
     // their environments and task runs share this checkout's identity and

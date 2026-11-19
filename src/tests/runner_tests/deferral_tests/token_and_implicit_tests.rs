@@ -9,8 +9,8 @@ use effigy_context::{CapturedEnv, EffigyRuntimeContext};
 use effigy_execution::{ExecutionEnvironmentPlan, ExecutionSurface, TaskExecutionRequestBuilder};
 
 fn fake_app_full_id(root: &std::path::Path) -> String {
-    let policy =
-        effigy_containers::load_container_policy(root, Some("web")).expect("fixture policy");
+    let policy = crate::runner::test_support::load_fixture_policy(root, Some("web"))
+        .expect("fixture policy");
     effigy_gateway::ports::sha256_hex(format!("{}-app-1", policy.project_name).as_bytes())
 }
 
@@ -513,7 +513,8 @@ base = { type = "path", dir = "bundles/php-library" }
     );
     // The run held the environment it started; the environment record names
     // it, and holder-based idle stop ran once the run ended.
-    let policy = effigy_containers::load_container_policy(&root, Some("web")).expect("policy");
+    let policy =
+        crate::runner::test_support::load_fixture_policy(&root, Some("web")).expect("policy");
     let record = crate::runner::environment::record(&policy).expect("environment record");
     assert_eq!(
         record.engine().map(|engine| engine.retention),
@@ -820,7 +821,8 @@ project_name = "legacy-dev"
         log[exec..].contains(" stop") || log[exec..].contains(" down"),
         "expected the idle stop after the run, got {log}"
     );
-    let policy = effigy_containers::load_container_policy(&root, Some("web")).expect("policy");
+    let policy =
+        crate::runner::test_support::load_fixture_policy(&root, Some("web")).expect("policy");
     let record = crate::runner::environment::record(&policy).expect("environment record");
     assert_eq!(
         record.state,
@@ -872,8 +874,10 @@ shared_root = "{}"
         "php_library bundle container deferral should succeed",
     );
 
-    let policy_a = effigy_containers::load_container_policy(&repo_a, Some("web")).expect("a");
-    let policy_b = effigy_containers::load_container_policy(&repo_b, Some("web")).expect("b");
+    let policy_a =
+        crate::runner::test_support::load_fixture_policy(&repo_a, Some("web")).expect("a");
+    let policy_b =
+        crate::runner::test_support::load_fixture_policy(&repo_b, Some("web")).expect("b");
     assert!(
         crate::runner::environment::record(&policy_a).is_some(),
         "repo a records its environment"
@@ -1157,8 +1161,8 @@ fn deferred_environment_lifetime(running: bool, bundle_update: bool) {
     let (docker_log, _env) = setup_fake_docker_deferral_runtime(root);
     crate::runner::bundle_command::prepare_missing_sources_for_manifest(&root.join("effigy.toml"))
         .expect("acquire fixture bundle");
-    let before =
-        effigy_containers::load_container_policy(root, Some("web")).expect("initial policy");
+    let before = crate::runner::test_support::load_fixture_policy(root, Some("web"))
+        .expect("initial policy");
     if running {
         // A held stack left by an interrupted invocation is adopted by this run.
         let bring_up = crate::runner::environment::reconcile(
@@ -1208,7 +1212,8 @@ with sqlite3.connect('file:' + str(root / '.effigy/state/kernel.db') + '?mode=ro
     let exec = log.find("EFFIGY_DEFER_DEPTH=1").expect("deferred exec");
     let down = log.find(" down").expect("idle stop");
     assert!(exec < down, "{log}");
-    let policy = effigy_containers::load_container_policy(root, Some("web")).expect("policy");
+    let policy =
+        crate::runner::test_support::load_fixture_policy(root, Some("web")).expect("policy");
     let record = crate::runner::environment::record(&policy).expect("record");
     assert!(!record.protected(), "deferred hold released");
     assert_eq!(

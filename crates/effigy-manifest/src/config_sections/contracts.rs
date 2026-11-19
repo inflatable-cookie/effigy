@@ -8,10 +8,10 @@
 #[serde(deny_unknown_fields)]
 pub struct ManifestContractsConfig {
     /// Project-relative path to the JSON schema index.
-    #[serde(default, alias = "schema-index")]
+    #[serde(default)]
     pub schema_index: Option<String>,
     /// Project-relative path to the selection payload contract.
-    #[serde(default, alias = "selection-contract")]
+    #[serde(default)]
     pub selection_contract: Option<String>,
 }
 

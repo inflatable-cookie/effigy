@@ -82,10 +82,9 @@ Docker backends and reports what is running.
 
 - Direct `compose_file` mode is retired, provided the migration is clean (Tom:
   "If there's a clean migration to managed catalog fragments for the two
-  projects, then let's do it"). For one release a `compose_file` container is
-  read as a project-layer catalog fragment, with a deprecation warning, and
-  `effigy container migrate` writes the fragment out. After that release the
-  key is retired, with an error naming the command.
+  projects, then let's do it"). v0.15 read a `compose_file` container as a
+  project-layer catalog fragment for one release; v0.16 retires the key, with
+  an error naming `effigy container migrate`, which writes the fragment out.
 - The generated Compose stays internal: there is no mutating pass-through
   (Tom: "Probably stay internal"). A read-only `effigy container render <env>`
   shows the exact render, path and digest for the current generation.
