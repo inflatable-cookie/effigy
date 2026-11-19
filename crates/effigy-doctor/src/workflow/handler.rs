@@ -157,14 +157,11 @@ impl phases::WorkflowPhaseHandler for DefaultWorkflowPhaseHandler<'_> {
                     self.progress.as_deref_mut(),
                 );
             }
-            if !state.is_complete() {
-                // The walk did not finish, so the health result is not recorded.
-                state.record_skipped_check("health_task");
-                if let Some(run) = health_run {
-                    crate::checks::abandon_health_check(run, self.progress.as_deref_mut());
-                }
-                break;
-            }
+            // A walk that ran out of budget leaves the state incomplete, but the
+            // health task ran alongside it under the same deadline. Its
+            // completed evidence is kept and its own state is reported. A health
+            // task the deadline cut off is reported as budget-exhausted. If the
+            // health task never started, the walk's incomplete state skips it.
             match health_run {
                 Some(run) => crate::checks::finish_health_check(
                     run,
@@ -172,7 +169,8 @@ impl phases::WorkflowPhaseHandler for DefaultWorkflowPhaseHandler<'_> {
                     state,
                     self.progress.as_deref_mut(),
                 ),
-                None => crate::checks::record_health_budget_exhausted(state),
+                None if state.is_complete() => crate::checks::record_health_budget_exhausted(state),
+                None => state.record_skipped_check("health_task"),
             }
             if !state.is_complete() {
                 break;

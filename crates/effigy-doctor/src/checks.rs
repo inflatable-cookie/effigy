@@ -141,15 +141,5 @@ pub(super) fn finish_health_check(
     }
 }
 
-/// The scan did not finish, so the health result is discarded unrecorded.
-pub(super) fn abandon_health_check(run: HealthRun, progress: Option<&mut DoctorProgressReporter>) {
-    if let (Some(progress), Some(label)) = (progress, run.label) {
-        progress.finish_scan(
-            label,
-            &ScanOutcome::Stopped("skipped, the shared scan did not finish"),
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests;
