@@ -266,12 +266,14 @@ resolves imports and local receivers, inspects macro arguments, propagates
 state-path ownership through ordinary external module ancestors, and keeps
 `cfg(test)` items and `tests/` trees separate. State writes are gated in modules
 containing `.effigy` path literals or Effigy-home builders. Unparseable Rust or
-source symlinks fail the scan. Production file/construct counts must match the
-baseline exactly; a legitimate reduction lowers the baseline in that change.
+source symlinks fail the scan. The gate compares each construct's total across
+the production files with the baseline: a rise is new raw authority and fails,
+while a fall or a move of an existing boundary to another file at the same
+total is bookkeeping and passes, so the baseline never needs churn-only edits.
 `qa:kernel-ratchet:baseline` explicitly regenerates the inventory for review;
 ordinary `qa:kernel-ratchet` never changes it. The ratchet tests include an
-added raw command against the real baseline and controls for rises, new pairs
-and unrecorded falls. This activates the baseline against the existing engines
+added raw command against the real baseline and controls for a rise, a fall and
+a verified move. This activates the baseline against the existing engines
 without migrating any of them.
 
 ## Immutable object closures
