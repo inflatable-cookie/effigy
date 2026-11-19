@@ -1508,20 +1508,33 @@ fn legacy_cutover_waits_for_the_existing_host_owner_gate() {
     )
     .unwrap();
     // The old writer's bytes are never converted automatically: the operator
-    // moves them aside once, and only then does this path admit a writer.
+    // moves them aside once, and a fresh admitted run opens the path.
     assert!(MergedLog::prepare(&mut replacement, &path).is_err());
     std::fs::rename(&path, home.path().join("app.log.legacy")).unwrap();
-    let _log = MergedLog::prepare(&mut replacement, &path).unwrap();
+    replacement
+        .interrupt(&cleanup(), crate::outcome::WorkloadOutcome::NotStarted)
+        .unwrap();
+    replacement.settle(&cleanup(), &mut Strict).unwrap();
+    let mut restarted = Run::begin(
+        &cx,
+        &root,
+        &invocation,
+        options(14),
+        &cleanup(),
+        &mut Strict,
+    )
+    .unwrap();
+    let _log = MergedLog::prepare(&mut restarted, &path).unwrap();
     assert!(std::fs::read(&path).unwrap().is_empty());
     assert!(MergedLog::identity(&path).is_ok());
     assert_eq!(
         std::fs::read(home.path().join("app.log.legacy")).unwrap(),
         raw
     );
-    replacement
+    restarted
         .finish(crate::outcome::WorkloadOutcome::Succeeded)
         .unwrap();
-    replacement.settle(&cleanup(), &mut Strict).unwrap();
+    restarted.settle(&cleanup(), &mut Strict).unwrap();
 }
 
 /// A stop never inherits the budget its caller minted earlier. A supervisor
@@ -4194,15 +4207,6 @@ fn a_full_drain_commits_one_window_per_stream() {
         offset = read.from + read.bytes.len() as u64;
     }
     assert_eq!(got, expected, "drain bytes arrive in pipe order");
-    let tap = std::fs::read(home.path().join("canonical.log.styled-tap")).unwrap();
-    let tap: serde_json::Value = serde_json::from_slice(&tap).unwrap();
-    assert_eq!(
-        tap.get("chunks")
-            .and_then(|chunks| chunks.as_array())
-            .map(Vec::len),
-        Some(2),
-        "the styled tap records exactly one chunk per commit"
-    );
     assert!(!output.is_failed());
     assert_eq!(output.capture_state(), CaptureState::Complete);
     drop(core);

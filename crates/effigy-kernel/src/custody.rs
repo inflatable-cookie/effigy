@@ -1374,12 +1374,11 @@ impl ProcessCore {
             let mut eof = false;
             // One durable commit per bounded window instead of one per read:
             // a full pipe used to pay the whole append-and-provenance dance
-            // (and the styled-tap republish) up to sixteen times per drain,
-            // which made a capture burst slower than its observer's bound
-            // under shared I/O load (effigy#558). The drain keeps the per-turn
-            // read bound and the exact released-byte order; only the commit
-            // granularity is bounded to one styled window, so every commit
-            // still fits the style projection a pane matches exactly.
+            // up to sixteen times per drain, which made a capture burst slower
+            // than its observer's bound under shared I/O load (effigy#558).
+            // The drain keeps the per-turn read bound and the exact
+            // released-byte order; only the commit granularity is bounded to
+            // one 64 KiB window.
             let mut batch = Vec::new();
             // Bound each turn even if a child writes continuously.
             for _ in 0..16 {
