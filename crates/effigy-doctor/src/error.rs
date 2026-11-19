@@ -28,14 +28,7 @@ pub enum DoctorError {
     CommandJsonFailure {
         rendered: String,
     },
-    TaskJsonFailure {
-        rendered: String,
-        code: i32,
-        outcome: effigy_kernel::outcome::WorkloadOutcome,
-        human: effigy_ui::HumanError,
-        stdout: String,
-        stderr: String,
-    },
+    TaskJsonFailure(Box<effigy_kernel::outcome::TaskFailure>),
     StructuredCommandFailure {
         rendered: String,
         human: effigy_ui::HumanError,
@@ -83,7 +76,7 @@ impl std::fmt::Display for DoctorError {
             DoctorError::TaskInvocation(message) => write!(f, "{message}"),
             DoctorError::Ui(message) => write!(f, "{message}"),
             DoctorError::CommandJsonFailure { .. }
-            | DoctorError::TaskJsonFailure { .. }
+            | DoctorError::TaskJsonFailure(_)
             | DoctorError::StructuredCommandFailure { .. } => {
                 write!(f, "command produced non-JSON output")
             }

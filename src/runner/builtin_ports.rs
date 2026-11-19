@@ -344,21 +344,7 @@ pub(in crate::runner) fn runner_to_builtin(error: RunnerError) -> BuiltinError {
         RunnerError::StructuredCommandFailure { rendered, human } => {
             BuiltinError::StructuredCommandFailure { rendered, human }
         }
-        RunnerError::TaskJsonFailure {
-            rendered,
-            code,
-            outcome,
-            human,
-            stdout,
-            stderr,
-        } => BuiltinError::TaskJsonFailure {
-            rendered,
-            code,
-            outcome,
-            human,
-            stdout,
-            stderr,
-        },
+        RunnerError::TaskJsonFailure(failure) => BuiltinError::TaskJsonFailure(failure),
         other => BuiltinError::TaskInvocation(other.to_string()),
     }
 }

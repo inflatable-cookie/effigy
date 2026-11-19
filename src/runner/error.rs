@@ -212,14 +212,7 @@ pub enum RunnerError {
         rendered: String,
         human: effigy_ui::HumanError,
     },
-    TaskJsonFailure {
-        rendered: String,
-        code: i32,
-        outcome: effigy_kernel::outcome::WorkloadOutcome,
-        human: effigy_ui::HumanError,
-        stdout: String,
-        stderr: String,
-    },
+    TaskJsonFailure(Box<effigy_kernel::outcome::TaskFailure>),
     /// An opt-in bounded container command did not produce a complete,
     /// in-budget capture. Carries a safe machine-readable reason/count
     /// diagnostic; never raw command output, arguments or credentials.
@@ -400,7 +393,9 @@ impl RunnerError {
             RunnerError::RunSettled { code }
             | RunnerError::RunSettledJson { code, .. }
             | RunnerError::RunControl { code, .. } => *code,
-            RunnerError::TaskJsonFailure { code, .. } if (1..=255).contains(code) => *code,
+            RunnerError::TaskJsonFailure(failure) if (1..=255).contains(&failure.code) => {
+                failure.code
+            }
             // The invocation's absolute deadline cut settlement short: the
             // interrupted convention, never a success (effigy#992).
             RunnerError::RunDeadline { .. } => 124,
@@ -435,8 +430,8 @@ impl RunnerError {
     /// record a cancelled builtin test as a failure.
     pub fn workload_outcome(&self) -> effigy_kernel::outcome::WorkloadOutcome {
         use effigy_kernel::outcome::WorkloadOutcome;
-        if let RunnerError::TaskJsonFailure { outcome, .. } = self {
-            return outcome.clone();
+        if let RunnerError::TaskJsonFailure(failure) = self {
+            return failure.outcome.clone();
         }
         if matches!(self, RunnerError::RunDeadline { .. }) {
             // No workload result can be certified when settlement did not
@@ -512,7 +507,7 @@ impl RunnerError {
             // its own document.
             | RunnerError::CommandJsonFailure { .. }
             | RunnerError::StructuredCommandFailure { .. }
-            | RunnerError::TaskJsonFailure { .. }
+            | RunnerError::TaskJsonFailure(_)
             | RunnerError::EnvSchema(_) => Category::Refused,
             // A step, a backend, a file, a service or a supervisor did not
             // answer, or the work it ran failed.
@@ -554,8 +549,8 @@ impl RunnerError {
     /// command failure additionally names its exit code and output tail.
     pub fn human_error(&self) -> effigy_ui::HumanError {
         match self {
-            RunnerError::TaskJsonFailure { human, .. }
-            | RunnerError::StructuredCommandFailure { human, .. } => human.clone(),
+            RunnerError::TaskJsonFailure(failure) => failure.human.clone(),
+            RunnerError::StructuredCommandFailure { human, .. } => human.clone(),
             RunnerError::TaskCommandFailure {
                 command,
                 code,
@@ -610,14 +605,14 @@ impl RunnerError {
             .evidence_output("stderr", stderr)
             .evidence_output("stdout", stdout)
             .next_action(TASK_COMMAND_FAILURE_NEXT);
-        Self::TaskJsonFailure {
+        Self::TaskJsonFailure(Box::new(effigy_kernel::outcome::TaskFailure {
             rendered,
             code,
             outcome,
             human,
             stdout: stdout.to_owned(),
             stderr: stderr.to_owned(),
-        }
+        }))
     }
 
     pub(in crate::runner) fn task_invocation(message: impl Into<String>) -> Self {
@@ -786,7 +781,7 @@ impl RunnerError {
             | RunnerError::RunControl { code, .. } => Some(*code),
             RunnerError::RunDeadline { .. } => Some(124),
             RunnerError::TaskCommandFailure { code, .. } => Some(code.unwrap_or(1)),
-            RunnerError::TaskJsonFailure { code, .. } => Some(*code),
+            RunnerError::TaskJsonFailure(failure) => Some(failure.code),
             RunnerError::CommandJsonFailure { rendered } => Some(
                 serde_json::from_str::<serde_json::Value>(rendered)
                     .ok()
@@ -1266,21 +1261,7 @@ impl From<effigy_builtin::BuiltinError> for RunnerError {
             B::StructuredCommandFailure { rendered, human } => {
                 Self::StructuredCommandFailure { rendered, human }
             }
-            B::TaskJsonFailure {
-                rendered,
-                code,
-                outcome,
-                human,
-                stdout,
-                stderr,
-            } => Self::TaskJsonFailure {
-                rendered,
-                code,
-                outcome,
-                human,
-                stdout,
-                stderr,
-            },
+            B::TaskJsonFailure(failure) => Self::TaskJsonFailure(failure),
             B::Manifest(error) => map_manifest_error(error),
             B::Managed(error) => Self::from(error),
             B::Routing(error) => Self::from(error),
@@ -1308,21 +1289,7 @@ impl From<effigy_doctor::DoctorError> for RunnerError {
             D::StructuredCommandFailure { rendered, human } => {
                 Self::StructuredCommandFailure { rendered, human }
             }
-            D::TaskJsonFailure {
-                rendered,
-                code,
-                outcome,
-                human,
-                stdout,
-                stderr,
-            } => Self::TaskJsonFailure {
-                rendered,
-                code,
-                outcome,
-                human,
-                stdout,
-                stderr,
-            },
+            D::TaskJsonFailure(failure) => Self::TaskJsonFailure(failure),
             D::Manifest(error) => map_manifest_error(error),
             D::Scan(error) => Self::from(error),
             D::Routing(error) => Self::from(error),

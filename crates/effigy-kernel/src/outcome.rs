@@ -22,6 +22,17 @@ pub enum WorkloadOutcome {
     Interrupted,
     Unknown(UnknownReason),
 }
+/// The task producer's failure payload and its already-known facts.
+#[derive(Debug, Clone)]
+pub struct TaskFailure {
+    pub rendered: String,
+    pub code: i32,
+    pub outcome: WorkloadOutcome,
+    pub human: effigy_ui::HumanError,
+    pub stdout: String,
+    pub stderr: String,
+}
+
 /// How the workload ended, in the words a person reads instead of a variant.
 impl std::fmt::Display for WorkloadOutcome {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

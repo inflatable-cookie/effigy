@@ -163,21 +163,7 @@ fn runner_to_doctor(error: RunnerError) -> DoctorError {
         RunnerError::StructuredCommandFailure { rendered, human } => {
             DoctorError::StructuredCommandFailure { rendered, human }
         }
-        RunnerError::TaskJsonFailure {
-            rendered,
-            code,
-            outcome,
-            human,
-            stdout,
-            stderr,
-        } => DoctorError::TaskJsonFailure {
-            rendered,
-            code,
-            outcome,
-            human,
-            stdout,
-            stderr,
-        },
+        RunnerError::TaskJsonFailure(failure) => DoctorError::TaskJsonFailure(failure),
         RunnerError::TaskInvocation(message) => DoctorError::TaskInvocation(message),
         RunnerError::Ui(message) => DoctorError::Ui(message),
         other => DoctorError::TaskInvocation(other.to_string()),

@@ -394,10 +394,8 @@ fn command_json_failure_survives_builtin_port_round_trip() {
 
     let builtin = crate::runner::builtin_ports::runner_to_builtin(error);
     match &builtin {
-        effigy_builtin::BuiltinError::TaskJsonFailure {
-            rendered: carried, ..
-        } => {
-            assert_eq!(carried, rendered);
+        effigy_builtin::BuiltinError::TaskJsonFailure(failure) => {
+            assert_eq!(failure.rendered, rendered)
         }
         other => panic!("unexpected builtin error variant: {other:?}"),
     }
@@ -408,11 +406,7 @@ fn command_json_failure_survives_builtin_port_round_trip() {
 
     let round_tripped = RunnerError::from(builtin);
     match &round_tripped {
-        RunnerError::TaskJsonFailure {
-            rendered: carried, ..
-        } => {
-            assert_eq!(carried, rendered);
-        }
+        RunnerError::TaskJsonFailure(failure) => assert_eq!(failure.rendered, rendered),
         other => panic!("unexpected runner error variant: {other:?}"),
     }
     assert_eq!(

@@ -239,7 +239,7 @@ fn run_single_member(root: &Path, member: &QaGroupPlanMember) -> MemberAttempt {
             let (stdout, stderr) = extract_payload_output(&rendered);
             Ok((stdout, stderr))
         }
-        Err(failure @ RunnerError::TaskJsonFailure { .. }) => {
+        Err(failure @ RunnerError::TaskJsonFailure(_)) => {
             let (stdout, stderr) = task_failure_output(&failure);
             Err((Box::new(failure), stdout, stderr))
         }
@@ -373,27 +373,30 @@ fn string_field(value: &serde_json::Value, key: &str) -> String {
 
 fn task_failure_output(error: &RunnerError) -> (String, String) {
     match error {
-        RunnerError::TaskCommandFailure { stdout, stderr, .. }
-        | RunnerError::TaskJsonFailure { stdout, stderr, .. } => (stdout.clone(), stderr.clone()),
+        RunnerError::TaskCommandFailure { stdout, stderr, .. } => (stdout.clone(), stderr.clone()),
+        RunnerError::TaskJsonFailure(failure) => (failure.stdout.clone(), failure.stderr.clone()),
         _ => (String::new(), String::new()),
     }
 }
 
 fn classify_member_failure(error: &RunnerError) -> (QaGroupMemberState, String, Option<i32>) {
     match error {
-        RunnerError::TaskJsonFailure {
-            outcome: effigy_kernel::outcome::WorkloadOutcome::Cancelled { .. },
-            code,
-            ..
-        } => (
-            QaGroupMemberState::Cancelled,
-            format!("interrupted (exit {code})"),
-            Some(*code),
-        ),
-        RunnerError::TaskJsonFailure { code, .. } => (
+        RunnerError::TaskJsonFailure(failure)
+            if matches!(
+                failure.outcome,
+                effigy_kernel::outcome::WorkloadOutcome::Cancelled { .. }
+            ) =>
+        {
+            (
+                QaGroupMemberState::Cancelled,
+                format!("interrupted (exit {})", failure.code),
+                Some(failure.code),
+            )
+        }
+        RunnerError::TaskJsonFailure(failure) => (
             QaGroupMemberState::Failed,
-            format!("task command failed with exit {code}"),
-            Some(*code),
+            format!("task command failed with exit {}", failure.code),
+            Some(failure.code),
         ),
         RunnerError::TaskCommandFailure { code, .. } if *code == Some(130) => (
             QaGroupMemberState::Cancelled,
@@ -433,10 +436,14 @@ fn classify_group_failure(error: &RunnerError) -> QaGroupOutcome {
         RunnerError::TaskCommandFailure { code, .. } if *code == Some(130) => {
             QaGroupOutcome::Cancelled
         }
-        RunnerError::TaskJsonFailure {
-            outcome: effigy_kernel::outcome::WorkloadOutcome::Cancelled { .. },
-            ..
-        } => QaGroupOutcome::Cancelled,
+        RunnerError::TaskJsonFailure(failure)
+            if matches!(
+                failure.outcome,
+                effigy_kernel::outcome::WorkloadOutcome::Cancelled { .. }
+            ) =>
+        {
+            QaGroupOutcome::Cancelled
+        }
         _ => QaGroupOutcome::Failed,
     }
 }
