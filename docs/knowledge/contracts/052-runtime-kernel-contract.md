@@ -2092,13 +2092,13 @@ unknown and never falls back to ambient PATH. Earlier intents without this
 binding also refuse recovery. Backend operation still requires a usable
 context under the cleared environment.
 
-The source-only signal qualification observer is feature-gated and read-only.
-It checks an exact owned run, live owner and sentinel, gate, checkout and
-environment generations, and the recorded remote intent and receipt. Its
-registration is not closure or authority to signal; the packet still needs a
-fresh complete guest inventory and settled terminal evidence. The owned
-producer/consumer and owner-death proof remains pending; see the
-[signal packet](../../qualification/task-engine-signal-matrix/packet-r1.md).
+Signal settlement is proven against the real task engine, not by a packet
+observer: `tests/task_engine_kill_matrix.rs` runs the real Effigy binary and
+settles owner INT/TERM/HUP/KILL, descendant closure, the released foreground
+gate and honest owner-death rows (`test:task-engine:kill-matrix`), and the same
+matrix runs on a Linux engine host
+(`test:task-engine:kill-matrix:linux`). A registration is not closure and
+never authorizes a signal.
 
 #### API
 
@@ -2257,22 +2257,13 @@ is gone or shows different start ticks. Exec failure is `Unknown`, never
   in-process owner never dies, so its sentinel would race its successor.
 - Real-engine qualification on Colima (docker and containerd), Docker Desktop
   and Linux Docker. Apple Containers must pass before it is supported. This
-  is a qualification-lane step (planner ruling, 2026-10-20): the relays,
-  helper and identity resolution above have not yet run against a live
-  engine. Task #579 prepared an UNARMED source packet at
-  `docs/qualification/task-engine-signal-matrix/` for the missing
-  real-container INT/TERM/HUP/KILL `RemoteExecAdapter` cells. Task #582
-  replaced the `--execute` stub with a GO-bound HostCli pass and added
-  dedicated sequence TERM/HUP host-fixture cells. Task #585 binds per-cell
-  64-hex nonce, live recorded owner pid/start, inspect and
-  `effigy.tasks-status.v3` parse, observed-generation helper-kill, and
-  failed-observe distinct from empty; the committed packet stays unarmed
-  and `qualification: false`. Status prepared-not-executed: packet
-  delivery, labeled-double control flow, HostCli local fake-executable
-  plumbing and host sequence fixtures are not live-engine qualification
-  and do not replace the consumer steps below. Native Linux sequence
-  TERM/HUP via `linux-custody.sh` remains separately GO-gated. The recorded
-  steps, on each
+  is a qualification-lane step: the relays, helper and identity resolution
+  above have not yet run against a live engine. The qualification route is one
+  small proof per backend (`docs/qualification/README.md`), and the
+  real-container INT/TERM/HUP/KILL cells of `RemoteExecAdapter` still need
+  their own native window; a labeled double, local fixture or host kill matrix
+  is not live-engine qualification. Native Linux sequence TERM/HUP via
+  `linux-custody.sh` remains separately GO-gated. The recorded steps, on each
   backend with the candidate binary:
   1. cbs: `effigy schema:refresh`, then `effigy seed`; compare the dumped
      schema files and step outcomes with v0.14.1; repeat `seed` under

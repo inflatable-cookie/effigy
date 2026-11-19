@@ -1,1 +1,0 @@
-Private macOS qualification plans now reject Colima and Lima socket paths before any occurrence when they exceed the macOS bound with reserved margin, list the derived paths and byte lengths, and use shorter isolated names. A fresh C0 origin is required before retrying the spent C1 chain.

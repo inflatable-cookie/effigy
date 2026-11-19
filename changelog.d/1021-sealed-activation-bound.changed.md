@@ -1,1 +1,0 @@
-The workspace-private qualification packet now allows sealed activation commands up to 300 seconds, sized from retained Colima activation timings and still capped by the backend window; other sealed commands remain limited to 60 seconds.

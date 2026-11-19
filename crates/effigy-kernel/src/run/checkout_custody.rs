@@ -353,10 +353,6 @@ impl Run<'_> {
         Ok(())
     }
 
-    /// Parking may close shared Env descriptions only after every private
-    /// workload and its exact backup have positively closed. The checkout
-    /// lease and sentinel stay on this same Run across gate-free integrations.
-
     #[cfg(all(test, feature = "fault-injection"))]
     pub(super) fn has_partial_checkout_backup(&self) -> bool {
         self.checkout_custody

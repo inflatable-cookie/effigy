@@ -173,6 +173,9 @@ no host Cargo command or silent fallback is introduced. A newly present Oxide
 refuses this bootstrap until the route is rebound. This grants no native proof
 or release credit and does not alter host placement rules.
 
+The `build:qualification:linux-native` selector is retired with the #531
+packet (effigy#1056); this dated answer stays as the record of that route.
+
 The native GNU producer uses the same guest-only route through a native Effigy
 skill selector and `scripts/oxide-selector.sh zigbuild --locked --release --bin
 effigy --target aarch64-unknown-linux-gnu.2.31`. Its tools and linker cache live in

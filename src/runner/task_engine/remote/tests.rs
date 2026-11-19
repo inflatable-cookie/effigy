@@ -21,9 +21,6 @@ use effigy_test_support::process::FixtureCommandExt;
 use super::*;
 use crate::runner::task_engine::{TaskRunRequest, TaskTarget};
 
-#[cfg(all(unix, feature = "signal-qualification-fixture"))]
-mod hostcli_fixture;
-
 const CONTAINER: &str = "model-container";
 const BOOT: &str = "boot-model";
 
