@@ -5247,6 +5247,10 @@ detach_timeout_secs = 1
                     .iter()
                     .map(|(key, value)| (key.as_str(), value.as_str())),
             )
+            // The holder runs as its workspace guest, so its foreground gate
+            // and journal live under the guest's own state home (effigy#1037).
+            // Observe the holder with the same placement, not the host's view.
+            .env("EFFIGY_INTERNAL_CONTAINER_HANDOFF", "1")
             .output_owned()
             .ok()?;
         serde_json::from_slice::<serde_json::Value>(&output.stdout).ok()?["result"]["state"]
