@@ -240,9 +240,8 @@ pub(super) fn project_foreground(row: &ForegroundHolder, run: String) -> RunView
     }
 }
 
-/// The narrow Q-010 exception's view: one settled v2 hook-admitted
-/// foreground run, read from its checkout journal. It is evidence only —
-/// there is no process identity here, so nothing can be signalled from it.
+/// Project a foreground terminal row from its checkout journal. The row
+/// carries outcome and cleanup evidence only.
 pub(in crate::runner) fn project_terminal(record: &effigy_kernel::run::TerminalRecord) -> RunView {
     RunView {
         evidence_source: effigy_kernel::run::TERMINAL_RECORD_EVIDENCE,

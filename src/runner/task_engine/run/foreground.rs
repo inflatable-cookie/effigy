@@ -130,7 +130,7 @@ impl TaskRun {
         };
         effigy_core::output_cap::foreground_started();
         // The deadline's own evidence: its clock, origin and phase budgets.
-        // Off by default, so an invocation without the opt-in writes nothing.
+        // Deadline diagnostics are emitted only when the deadline is enabled.
         effigy_core::run_deadline::note_phase(effigy_core::run_deadline::Phase::Admission);
         if let Some(deadline) = effigy_core::run_deadline::current() {
             // Name the guard too: a guard that cannot prove closure parks as

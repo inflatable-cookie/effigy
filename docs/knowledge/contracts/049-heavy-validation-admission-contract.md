@@ -262,8 +262,8 @@ the private unlinked helper log, and the foreground terminal row) is unchanged.
 
 ## Run control
 
-Every task run is a kernel `Run`. Foreground runs write a terminal row; durable runs also journal their lifecycle. The
-following is the Q-010 control boundary (contract 052 §3.1).
+Every task run is a kernel `Run`. Foreground settlement writes one terminal
+row. Durable runs journal their lifecycle (contract 052 §3.1).
 
 - **`--run-id <key>`.** A caller-chosen key (1–128 of `A–Z a–z 0–9 . _ : -`)
   selects checkout durability before effects. The key is scoped by CheckoutId,

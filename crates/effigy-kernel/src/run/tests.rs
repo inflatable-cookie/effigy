@@ -1881,10 +1881,8 @@ fn run_machine_owner_refusal_precedes_database_creation_and_shared_runs_reject_p
     run.settle(&cleanup(&cx), &mut fake).unwrap();
 }
 
-/// The narrow Q-010 exception's row (effigy#325): one terminal result per v2
-/// hook-admitted foreground run, read back by run id, newest first, and
-/// absent — never unreadable — from a journal written before the table
-/// existed. The row carries no process identity to reclaim from.
+/// A foreground terminal record is readable by run id and in the recent
+/// listing. A journal written before the table existed reports absence.
 #[test]
 fn run_terminal_record_round_trips_and_an_older_journal_reads_absent() {
     let fixture = home();
@@ -1943,7 +1941,7 @@ fn run_terminal_record_round_trips_and_an_older_journal_reads_absent() {
         other => panic!("record: {other:?}"),
     };
     assert_eq!(read, record);
-    // Evidence for the provider's lease only: nothing here names a process.
+    // The record carries no process identity.
     let encoded = serde_json::to_value(&read).unwrap();
     let keys: Vec<&str> = encoded
         .as_object()

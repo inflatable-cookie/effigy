@@ -1,4 +1,4 @@
-//! The one terminal record per admitted foreground run.
+//! The one terminal record per foreground run.
 //!
 //! A run that settles writes one row to the owning checkout journal, so `run
 //! status` and `runs` can report its outcome after the process has gone.
@@ -35,8 +35,8 @@ pub struct TerminalRecord {
     /// The boot the run's custodians lived in.
     pub boot: String,
     pub task: String,
-    /// `succeeded`, `failed`, `cancelled`, `timed-out`, `interrupted`,
-    /// `released` or `unknown`, the same words `run status` uses.
+    /// `not-started`, `succeeded`, `failed`, `cancelled`, `timed-out`,
+    /// `interrupted`, `released` or `unknown`, as reported by `run status`.
     pub outcome: String,
     pub exit_code: Option<i32>,
     pub signal: Option<i32>,
@@ -47,8 +47,9 @@ pub struct TerminalRecord {
 
 /// Writes one run's terminal record. Idempotent by run id: an existing row is
 /// kept, so a repeated settle never rewrites evidence. The one exception is an
-/// `unknown`/`incomplete` parked record, which may upgrade to `released` or
-/// `interrupted` once the sentinel drops its gates (effigy#1034).
+/// `unknown`/`incomplete` parked record. Once custody closes, the owner or
+/// sentinel may upgrade it to `interrupted`/`complete`. A sentinel that honors
+/// an explicit release may upgrade it to `released`/`complete` (effigy#1034).
 pub fn record(
     cx: &EffectContext,
     root: &StateRoot,

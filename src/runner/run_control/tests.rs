@@ -1261,22 +1261,21 @@ fn a_foreground_run_whose_owner_is_gone_offers_its_supported_settlement() {
     assert_eq!(parsed["run"]["state"], "interrupted");
     assert_eq!(parsed["run"]["pid"], serde_json::Value::Null);
 
-    // The settlement the sentinel records: custody never closed, so it is
-    // `unknown` with `cleanup: incomplete` — never a success.
+    // Seed the sentinel's parked row while custody is still open.
     write_settled_record(directory.path(), id, "unknown", "incomplete");
 
     let root = directory.path().to_path_buf();
     let selector = id.to_string();
     let stopping =
         std::thread::spawn(move || stop(&root, &selector, Duration::from_secs(20), false));
-    // The sentinel releases the gate only after the owner is gone; this test's
-    // foreground run is that owner-side custodian.
+    // The real owner in this fixture can still prove closure. Its interrupted
+    // settlement upgrades the parked row before releasing the gate.
     std::thread::sleep(Duration::from_millis(200));
     let warnings = memory.close(effigy_kernel::outcome::WorkloadOutcome::Interrupted);
     assert!(warnings.is_empty(), "{warnings:?}");
     let text = stopping.join().expect("stop thread").expect("stop settles");
     assert!(
-        text.contains("settled by its sentinel: unknown (cleanup incomplete)"),
+        text.contains("settled by its sentinel: interrupted (cleanup complete)"),
         "{text}"
     );
 }

@@ -36,8 +36,7 @@ pub(in crate::runner) struct RunRecord {
 enum RunSource {
     Journal(RunSummary),
     Foreground(ForegroundHolder),
-    /// The narrow Q-010 exception: a settled v2 hook-admitted foreground
-    /// run's journal row. Evidence, never a live or recoverable run.
+    /// A foreground run's terminal evidence from its checkout journal.
     Terminal(effigy_kernel::run::TerminalRecord),
 }
 
@@ -275,8 +274,7 @@ fn lookup_at(
         )),
         (Some(row), None) => Lookup::Found(Box::new(row)),
         (None, Some(record)) => Lookup::Found(Box::new(record)),
-        // A hook-admitted foreground run's one terminal record is the only
-        // post-exit evidence Q-010 keeps.
+        // The terminal record is the foreground run's post-exit evidence.
         (None, None) => match effigy_kernel::run::terminal_record(&reader, id) {
             Observed::Verified(Some(record), _) => Lookup::Found(Box::new(RunRecord {
                 id,
@@ -291,8 +289,7 @@ fn lookup_at(
     }
 }
 
-/// One terminal record as a run the listing reports: shared by the journal
-/// table and the strict ring, so both sources render one run the same way.
+/// Project a checkout journal's terminal record into the run listing.
 fn terminal_record(
     state: &effigy_kernel::root::StateRoot,
     terminal: effigy_kernel::run::TerminalRecord,

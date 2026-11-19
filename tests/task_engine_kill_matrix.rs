@@ -10,14 +10,10 @@
 //! Two run classes meet here, and each case proves its own (contract 052,
 //! `effigy.tasks-status.v3`):
 //!
-//! - a statically resolved plain foreground tree is a memory run. It holds a
-//!   verified foreground gate while it lives and retains no runtime result
-//!   afterwards, so its proof is the released holder (`state: not-recorded`,
-//!   `current: null`, no history) plus settled descendants and no later step.
-//!   When the owner itself is killed, the surviving memory sentinel settles the
-//!   run and records one honest owner-death row (`interrupted` with
-//!   `cleanup: complete`, or `unknown` with `cleanup: incomplete`), never a
-//!   success and never a process identity (effigy#986, contract 052).
+//! - a plain foreground tree holds a verified gate while it lives. After
+//!   release, task status shows no current run or durable history. Run status
+//!   shows the owner's cancellation and signal, or the surviving sentinel's
+//!   interrupted or unknown cleanup evidence after owner death (contract 052).
 //! - a declared `durable = true` tree keeps the checkout journal, so its proof
 //!   is the closed row: `cancelled` for a signalled owner and `interrupted`
 //!   for one whose sentinel had to settle it.
@@ -226,12 +222,8 @@ fn wait_state(
     }
 }
 
-/// A plain foreground run retains no runtime result (`effigy.tasks-status.v3`):
-/// the end of the run is the released foreground gate, not a closed journal
-/// row. An owner-death row (effigy#986) is terminal-record evidence, not task
-/// history, so this view still says `not-recorded` once the gate is released.
-/// Waiting for that release is the definitive settle barrier, so a sentinel
-/// that is still stopping descendants cannot be mistaken for a lost run.
+/// Task status has no current foreground run after the gate is released.
+/// Its terminal record is available separately through run status.
 fn wait_foreground_settled(fixture: &Fixture, task: &str, timeout: Duration) -> serde_json::Value {
     let started = Instant::now();
     loop {
@@ -300,30 +292,21 @@ fn assert_honest_owner_death_record(run: &serde_json::Value, cell: &str) {
     );
 }
 
-/// A routed signal's owner settles its own run and normally leaves no record;
-/// should the sentinel observe that owner verifiably gone first, it records the
-/// same honest owner-death row. Never `succeeded`, and never a claimed result.
-/// A read that cannot verify the settling run yet is retried, not read as
-/// absence.
-fn assert_no_result_or_owner_death_record(fixture: &Fixture, run_id: &str, cell: &str) {
-    let started = Instant::now();
-    loop {
-        let (success, envelope, text) = run_status(fixture, run_id, cell);
-        if success {
-            let run = &envelope["result"]["run"];
-            assert_eq!(run["run_id"], run_id, "{cell}: {run}");
-            assert_honest_owner_death_record(run, cell);
-            return;
-        }
-        if envelope["error"]["details"]["recording"] == "not-recorded" {
-            return;
-        }
-        assert!(
-            started.elapsed() < Duration::from_secs(20),
-            "{cell}: run status never became readable: {text}"
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
+/// The owner writes its settled result before it exits.
+fn assert_owner_cancellation_record(fixture: &Fixture, run_id: &str, signal: i32, cell: &str) {
+    let (success, envelope, text) = run_status(fixture, run_id, cell);
+    assert!(success, "{cell}: run status: {text}");
+    let run = &envelope["result"]["run"];
+    assert_eq!(run["run_id"], run_id, "{cell}: {run}");
+    assert_eq!(
+        run["evidence_source"], "foreground-terminal-record.v1",
+        "{cell}: {run}"
+    );
+    assert_eq!(run["state"], "cancelled", "{cell}: {run}");
+    assert_eq!(run["signal"], signal, "{cell}: {run}");
+    assert_eq!(run["cleanup"], "complete", "{cell}: {run}");
+    assert!(run["exit_code"].is_null(), "{cell}: {run}");
+    assert!(run["pid"].is_null(), "{cell}: {run}");
 }
 
 /// A SIGKILLed owner cannot settle, so its sentinel must take the settlement
@@ -421,7 +404,7 @@ fn kill_case(signal: i32) {
     if signal == libc::SIGKILL {
         assert_owner_death_record(&fixture, &run_id, &cell);
     } else {
-        assert_no_result_or_owner_death_record(&fixture, &run_id, &cell);
+        assert_owner_cancellation_record(&fixture, &run_id, signal, &cell);
     }
 }
 
@@ -624,10 +607,8 @@ run = "echo after >> runs.log"
 }
 
 /// One sequence cell: owned leader + grandchild, no later step, foreground
-/// gate released. A routed signal's owner settles its own run (no record, or
-/// the sentinel's honest owner-death row if it outlived the owner); a SIGKILLed
-/// owner leaves the sentinel's row. Extra subprocess starts are the fixture
-/// owner plus those two descendants.
+/// gate released. The owner records routed cancellation. After SIGKILL the
+/// surviving sentinel records owner loss.
 fn sequence_signal_cell(step: usize, signal: i32, json: bool) {
     let fixture = Fixture::new();
     let steps = (0..3)
@@ -725,7 +706,7 @@ fn sequence_signal_cell(step: usize, signal: i32, json: bool) {
     if signal == libc::SIGKILL {
         assert_owner_death_record(&fixture, &run_id, &cell);
     } else {
-        assert_no_result_or_owner_death_record(&fixture, &run_id, &cell);
+        assert_owner_cancellation_record(&fixture, &run_id, signal, &cell);
     }
 }
 

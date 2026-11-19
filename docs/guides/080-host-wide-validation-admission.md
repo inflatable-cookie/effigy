@@ -86,12 +86,9 @@ effigy --json run status agqvltk3r7jktaa6vi23dpcu4a
 # "checkout_id": "4:6f0106cdfc7327d913ccf9dd28c91c7d", "boot": "..."
 ```
 
-That record is evidence for your own lease, not an Effigy authority: it holds
-no PID, PGID or start identity, `run logs` reports no retained log and
-`run stop` refuses. Effigy never recovers or signals from it, and a provider
-release on this evidence is never shown as `cleanup: "complete"`. The release
-rule and its accepted risk are contract 049's. A run that settles normally
-writes no such row.
+The row records the guard's cleanup evidence. It carries no process identity
+for recovery or signaling. `run logs` reports no retained log and `run stop`
+refuses.
 
 ## Name and control runs
 

@@ -629,13 +629,18 @@ fn a_root_task_named_run_still_owns_the_word() {
     );
     let runs = fixture.run(&["--json", "runs"]);
     let envelope: serde_json::Value = serde_json::from_slice(&runs.stdout).expect("runs");
-    let tasks: Vec<_> = envelope["result"]["runs"]
-        .as_array()
-        .expect("runs")
-        .iter()
-        .map(|run| run["task"].clone())
-        .collect();
-    assert_eq!(tasks, vec![serde_json::json!("run")]);
+    let runs = envelope["result"]["runs"].as_array().expect("runs");
+    assert_eq!(runs.len(), 2, "{runs:?}");
+    assert!(runs.iter().all(|run| run["task"] == "run"), "{runs:?}");
+    for source in ["checkout-journal", "foreground-terminal-record.v1"] {
+        assert_eq!(
+            runs.iter()
+                .filter(|run| run["evidence_source"] == source)
+                .count(),
+            1,
+            "{runs:?}"
+        );
+    }
 }
 
 #[test]
@@ -1352,7 +1357,7 @@ fn json_of(text: &str) -> serde_json::Value {
 }
 
 /// A strict v1 consumer keeps its exact request: no new schema, no `protocol`
-/// field, and its stdin at EOF. Nothing durable is written for the run.
+/// field, and its stdin at EOF. The run leaves one foreground terminal row.
 #[test]
 fn admission_protocol_v1_stays_byte_identical_without_the_opt_in() {
     let fixture = Fixture::new();
