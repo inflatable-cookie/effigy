@@ -88,7 +88,7 @@ The front door stays short. Topic references hold depth and are read on demand.
 
 Update the maintained skill in the same PR as command or JSON contract changes.
 Run targeted changed-code checks, and run `effigy qa:docs` once when docs
-changed. The planner owns full `effigy qa` at Queue milestones.
+changed. The planner owns full `effigy qa` at Nucleus milestones.
 
 Reinstall after local edits:
 
