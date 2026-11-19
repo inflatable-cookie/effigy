@@ -406,3 +406,66 @@ mod committed_sources_tests {
         std::fs::remove_dir_all(&root).ok();
     }
 }
+
+/// The retired `[docs_policy.graph]` table is one actionable diagnostic, not a
+/// load failure: an older manifest still composes and every command works.
+#[cfg(test)]
+mod retired_graph_tests {
+    use super::*;
+
+    const RETIRED: &str = r#"
+[catalog]
+alias = "older-manifest"
+
+[docs_policy.graph]
+roots = ["README.md"]
+
+[docs_policy.graph.kinds.guide]
+include = ["docs/guides/*.md"]
+default-currentness = "current"
+"#;
+
+    #[test]
+    fn a_retired_graph_table_loads_and_names_itself_once() {
+        let manifest: crate::TaskManifest =
+            toml::from_str(RETIRED).expect("an older manifest with the retired table still loads");
+        let docs_policy = manifest.docs_policy.expect("docs policy");
+        assert!(docs_policy.graph);
+        let path = Path::new("/fixtures/retired-graph-once/effigy.toml");
+        docs_policy
+            .validate(path)
+            .expect("a retired table is a warning, never a load failure");
+        docs_policy
+            .validate(path)
+            .expect("validating twice is still not a failure");
+
+        let notices: Vec<String> = crate::retired_notice::take_pending()
+            .into_iter()
+            .filter(|notice| notice.contains("retired-graph-once"))
+            .collect();
+        assert_eq!(notices.len(), 1, "one notice per process: {notices:?}");
+        assert!(
+            notices[0].contains("[docs_policy.graph]") && notices[0].contains("delete the table"),
+            "the notice names the table and the action: {}",
+            notices[0]
+        );
+    }
+
+    #[test]
+    fn a_manifest_without_the_retired_table_is_silent() {
+        let manifest: crate::TaskManifest =
+            toml::from_str("[catalog]\nalias = \"current-manifest\"\n")
+                .expect("manifest without the retired table loads");
+        let docs_policy = manifest.docs_policy.unwrap_or_default();
+        assert!(!docs_policy.graph);
+        docs_policy
+            .validate(Path::new("/fixtures/retired-graph-absent/effigy.toml"))
+            .expect("valid");
+        assert!(
+            !crate::retired_notice::take_pending()
+                .iter()
+                .any(|notice| notice.contains("retired-graph-absent")),
+            "no notice without the retired table"
+        );
+    }
+}
