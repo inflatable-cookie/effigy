@@ -543,7 +543,7 @@ fn checkout_backup_retains_the_exact_environment_gate_description() {
     run.close_checkout_custody_recoverable(&super::super::tests::cleanup(&cx))
         .unwrap();
     run.guard = Gate::acquire(&cx, &root, &[owner], Wait::FailFast).unwrap();
-    let result = run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+    let result = run.settle_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
     assert!(result.is_ok(), "fixture settlement: {result:?}");
     reap_test_child(&backup);
     reap_test_child(&sentinel);
@@ -623,7 +623,7 @@ fn register_refuses_a_backup_that_has_exited_and_sends_no_frame() {
     );
     // Fixture teardown only: the exact backup died and the sentinel's owner
     // pipe closes when the run is dropped, so both are reaped by recorded pid.
-    let cleanup = run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+    let cleanup = run.settle_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
     match cleanup {
         Ok(_) => panic!("a backup that exited without settling is an unresolved cleanup"),
         Err((error, owner)) => {
@@ -696,7 +696,7 @@ fn enabling_existing_custody_does_not_spawn_a_second_sentinel() {
         Err(error) => Err(error),
     };
     let same = run.sentinel.as_ref().map(|lease| lease.identity.clone());
-    let cleanup = run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+    let cleanup = run.settle_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
     if let Ok(contents) = &logged {
         for line in contents.lines() {
             if let Ok(child) = serde_json::from_str::<ProcessIdentity>(line) {
@@ -746,7 +746,7 @@ fn cancelled_registration_keeps_the_exact_sentinel_for_cleanup() {
         .cancel(crate::ctx::StopCause::Requested);
     let result = run.register_lifecycle(lease, &plan);
     let retained = run.sentinel.as_ref().map(|lease| lease.identity.clone());
-    let cleanup = run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+    let cleanup = run.settle_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
     reap_test_child(&identity);
     assert!(result.is_err());
     assert_eq!(
@@ -807,7 +807,7 @@ fn failed_registration_and_close_keep_the_exact_sentinel_lease() {
     crate::fault::hook(None);
     crate::fault::arm(None);
     let retained = run.sentinel.as_ref().map(|lease| lease.identity.clone());
-    let cleanup = run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+    let cleanup = run.settle_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
     // The failing-first implementation can lose the Child handle. Reap
     // only this test's exact recorded child before making assertions.
     reap_test_child(&identity);
@@ -875,7 +875,7 @@ fn check_backup_start_fault(point: crate::fault::Point) {
     let gate = Gate::probe(&cx.operation().observe().unwrap(), &root, &owner);
     let start_count = starts.load(Ordering::SeqCst);
     crate::fault::hook(None);
-    let cleanup = run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+    let cleanup = run.settle_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
     let cleanup_failed = cleanup.is_err();
     assert!(enabled.is_err());
     assert!(fired, "the backup startup fault must fire: {point:?}");
@@ -1015,7 +1015,7 @@ fn after_commit_fault_preserves_same_env_sentinel_for_readback() {
         .unwrap();
     let retained = run.sentinel.as_ref().map(|lease| lease.identity.clone());
     let poisoned = run.can_effect().is_err();
-    let cleanup = run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+    let cleanup = run.settle_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
     assert!(enabled.is_err());
     assert!(fired, "the post-commit lifecycle fault must fire");
     assert!(exact.is_some());
@@ -1187,7 +1187,7 @@ fn retained_interpolation_crosses_the_helper_and_cleans_only_after_group_closure
         directory.join("compose-fixture.env").exists(),
         "caller handle drop is not group closure"
     );
-    let result = run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+    let result = run.settle_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
     assert!(result.is_ok(), "retained settlement: {result:?}");
     reap_test_child(&backup);
     reap_test_child(&sentinel);
@@ -1408,7 +1408,7 @@ fn retained_interpolation_occupied_destination_and_lost_reply_retry_same_owner()
     assert_eq!(run.checkout_backup_identity(), Some(backup.clone()));
     run.close_checkout_custody_recoverable(&super::super::tests::cleanup(&cx))
         .unwrap();
-    let result = run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+    let result = run.settle_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
     assert!(result.is_ok(), "fixture settlement: {result:?}");
     reap_test_child(&backup);
     reap_test_child(&sentinel);
@@ -1479,7 +1479,7 @@ fn retained_interpolation_lost_registration_reply_refuses_go_and_preserves_file(
     assert!(directory.join("compose-fixture.env").exists());
     run.close_checkout_custody_recoverable(&super::super::tests::cleanup(&cx))
         .unwrap();
-    let settled = run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+    let settled = run.settle_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
     // The pre-exec barrier already reaped the leader. Its exact retained core
     // may therefore report ECHILD residue, which grants no signal authority.
     if let Err((_, retained)) = settled {
@@ -1538,7 +1538,7 @@ fn retained_interpolation_helper_death_leaves_durable_residue_not_false_completi
     );
     // SAFETY: this Run's own exact recorded backup child, just reverified.
     assert_eq!(unsafe { libc::kill(backup.pid as i32, libc::SIGKILL) }, 0);
-    let settled = run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+    let settled = run.settle_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
     let (_, retained) = settled.expect_err("helper loss cannot complete the file obligation");
     let effect = retained
         .effects()
@@ -1635,7 +1635,7 @@ fn retained_interpolation_unsynced_binding_refuses_go_and_cannot_settle_as_plain
             .0,
         EffectState::Residue
     );
-    let result = run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+    let result = run.settle_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
     let (_, retained) = result.expect_err("an unconfirmed binding cannot complete the run");
     drop(retained);
     reap_test_child(&backup);
@@ -1937,7 +1937,7 @@ fn prelaunch_pending_obligation_is_atomic_and_legacy_unreadable() {
         crate::run::EffectState::Residue,
         "a process reader cannot infer barrier non-release from a missing receipt"
     );
-    run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake)
+    run.settle_recoverable(&super::super::tests::cleanup(&cx), &mut fake)
         .unwrap_or_else(|(error, _)| panic!("exact never-forked owner can clean: {error}"));
     assert!(!directory.join("compose-fixture.env").exists());
 }

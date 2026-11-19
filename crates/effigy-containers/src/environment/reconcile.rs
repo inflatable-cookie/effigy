@@ -1451,14 +1451,9 @@ impl<'r> EnvRun<'r> {
     }
 
     /// Retain the exact Env run if its settlement fails.
-    pub fn finish_recoverable(self, ok: bool) -> Result<CleanupOutcome, (EnvError, Box<Run<'r>>)> {
-        self.finish_with_policy(ok, false)
-    }
-
-    fn finish_with_policy(
+    pub fn finish_recoverable(
         mut self,
         ok: bool,
-        workspace: bool,
     ) -> Result<CleanupOutcome, (EnvError, Box<Run<'r>>)> {
         if ok
             && !self.published
@@ -1492,12 +1487,7 @@ impl<'r> EnvRun<'r> {
                 return Err((error, Box::new(self.run)));
             }
         };
-        let settled = if workspace {
-            self.run
-                .settle_workspace_recoverable(&cleanup, &mut EnvSettlement)
-        } else {
-            self.run.settle_recoverable(&cleanup, &mut EnvSettlement)
-        };
+        let settled = self.run.settle_recoverable(&cleanup, &mut EnvSettlement);
         let outcome = match settled {
             Ok(outcome) => {
                 self.step.succeed(&format!("environment `{env}` settled"));

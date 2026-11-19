@@ -869,58 +869,6 @@ Asked: 2026-10-29
 Original seam owners: #482 (C identity/context/publication), #483 (A transport), #452 (glue).
 Authority: [contract 052 §8](contracts/052-runtime-kernel-contract.md#8-host-and-guest-model).
 
-Tom's 2026-10-30 ruling (decision 8c0ef812) bounds the normative seam to 250 lines,
-tied to the merged #484 reservation/publication APIs. The detailed E-step,
-crash/fault/retry and ownership-transfer draft was non-normative post-v0.15
-candidate material and is retained in Git history only. It does not qualify any
-backend or waive Q-017.
-
-The three originally missing facts now have implemented seams in
-[052 §8](contracts/052-runtime-kernel-contract.md#8-host-and-guest-model):
-
-- **Guest-local identity:** `ProcGuestIdentity` and strict v2 context verification
-  compare independently observed container/boot/platform/libc before credential
-  access. Native qualification of those sources remains required.
-- **Qualified TLS locator:** `workspace_transport` implements pinned TLS and the
-  session-owned listener/key, with bounded private qualification fixtures for
-  Colima, Docker Desktop and Linux Docker. These are not native backend proofs.
-- **Session publication and serving:** the kernel reservation/selection APIs,
-  container/runner publication adapter, `ServingOwner` and production dispatcher
-  are implemented. The production activation caller, enrolment mint site and
-  wider command coverage remain absent; the dispatcher currently serves only
-  host `runs:list`/`runs:status` observations. The merged seams do not establish
-  that an ordinary command publishes a qualified context or serves a guest.
-
-The owning contract records the exact APIs, ordering, refusal rules and proof
-limits. Its historical design sketches are not further implementation evidence.
-
-Recovery judges listener liveness independently of session and target. A bounded
-pinned TLS-only probe must be available while selection is unfinished, including
-Holding; it opens no channel/admission and carries no application or credential
-frames. Complete only with all three facts verified. With an established dead
-listener or lost target, stop/settle the exact live successor on its own private
-slot before abandonment; a dead session needs no stop. Unknown liveness remains
-unresolved and grants no publication/admission. Abandonment cannot refuse solely
-because session and target remain live when the listener is established dead.
-Never stop a predecessor to clear its successor or rebind an old endpoint/pin.
-
-Code-first tasks own crash-family, concurrent-decision, fresh-network and
-mispinned-peer zero credential/Hello-byte proofs. Proposed test names and #452's
-239 fake tests supply no production evidence. Q-017's Colima, Docker Desktop and
-Linux Docker qualification gate remains; safe refusal is not qualification.
-Rootless Linux and Apple Containers have no qualification claim. These
-implementation seams do not waive the production activation or native
-qualification gates.
-
-`052` §8 carries the current creation-attribution detail: the answered render-preflight seal
-(`Objects::seal_for_preflight` -> retained `SealedPreflight` -> the one apply
-promoting it through `EnvRun::publish_sealed_desired` under `Gate(Env)`) and the
-creator adapter that reads #510's journal-bound exact-new-ID receipt. Unknown
-successors reserve `Absent`, including authorized non-live config recreation;
-only a receipt naming the current activation's exact new ID permits attribution.
-An attached ID is never attributed as created, and an `Observed` target retains
-its exact old identity. Missing, ambiguous or foreign evidence still refuses.
-The remaining gate is production lifecycle integration and native qualification
-under #452, rather than a missing creator receipt; the receipt alone proves no
-guest-session publication.
-
+The channel design and its qualification work are retired. Guest identity
+observation and binary publication remain; contract 052 §8 owns the current
+guest model. The earlier design is available in Git history.

@@ -35,7 +35,7 @@ const CONTAINER_WORKSPACE_EFFIGY_ACTIVE_VERSION_PATH: &str = "/usr/local/bin/eff
 const CONTAINER_WORKSPACE_EFFIGY_INSTALL_IDENTITY_PATH: &str =
     "/usr/local/bin/effigy.install-identity";
 
-/// What one container-mode Prepare published, for the caller and for lane B.
+/// What one container-mode Prepare published for the caller.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::runner) struct PreparedWorkspaceGuest {
     pub(in crate::runner) activation: WorkspaceActivationIdentity,

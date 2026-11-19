@@ -133,26 +133,33 @@ fn assert_recoverable_settlement_retains_core(lost_response: bool) {
             crate::fault::Fault::Enospc,
         );
     }
-    let result = run.settle_workspace_recoverable(&cleanup, &mut Strict);
+    let result = run.settle_recoverable(&cleanup, &mut Strict);
     let fired = crate::fault::fired();
     crate::fault::arm(None);
     assert_eq!(
         fired, lost_response,
         "the selected response fault must fire"
     );
-    let (_, owner) = result.expect_err("unknown receipt must retain the owner");
-    assert!(
-        weak.upgrade().is_some(),
-        "the same process core stays with the returned Run"
-    );
-    drop(owner);
+    if lost_response {
+        let (_, owner) = result.expect_err("lost response must retain the owner");
+        assert!(
+            weak.upgrade().is_some(),
+            "the returned Run retains its process core"
+        );
+        drop(owner);
+    } else {
+        let outcome = result.expect("unknown receipt yields an incomplete outcome");
+        assert_eq!(
+            outcome.cleanup(),
+            crate::outcome::CleanupOutcome::Incomplete
+        );
+    }
     assert!(weak.upgrade().is_none());
 }
 
 #[test]
 fn recoverable_settlement_retains_the_exact_core() {
-    // The unknown-receipt and lost-response faults differ only in the armed
-    // fault; both must retain the same process core with the returned run.
+    // An unknown receipt remains incomplete; a lost response retains the owner.
     for lost_response in [false, true] {
         assert_recoverable_settlement_retains_core(lost_response);
     }

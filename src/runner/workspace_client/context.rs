@@ -444,10 +444,7 @@ impl From<RunnerError> for LocalReadError {
 
 /// The pinned facts one local read is answered from.
 ///
-/// There is exactly one canonical document a guest reads (the strict v2
-/// `WorkspaceContextDocument`), and this is the narrow view a local read needs
-/// from it. The v1 projection implements it so the producer's own focused
-/// tests keep their semantics; the guest entry reads v2 only (§8).
+/// The v1 context supplies the facts used by local reads.
 pub(crate) trait LocalReadSource {
     fn context_generation(&self) -> u64;
     fn host_version(&self) -> &str;

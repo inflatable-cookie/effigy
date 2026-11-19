@@ -1248,8 +1248,7 @@ impl<'a> Run<'a> {
         })
     }
     /// Register an action the run performs when it settles (or is dropped
-    /// un-settled). A session's listener and key custody are released this way,
-    /// so settlement closes the socket and wipes the secret.
+    /// un-settled).
     pub fn on_settle(&mut self, action: impl FnOnce() + Send + 'static) {
         self.guard.on_release(action);
     }
@@ -1281,32 +1280,6 @@ impl<'a> Run<'a> {
         }
         self.run_settle_actions();
         match self.settle_inner(cleanup, adapter) {
-            Ok(outcome) => Ok(outcome),
-            Err(error) => Err((error, Box::new(self))),
-        }
-    }
-
-    /// Settle an existing checkout workspace owner without losing its exact
-    /// gate when effects remain unresolved. Listener/key release actions run
-    /// first. This returns the same owner on an incomplete cleanup.
-    pub fn settle_workspace_recoverable(
-        mut self,
-        cleanup: &CleanupContext,
-        adapter: &mut impl SettlementAdapter,
-    ) -> Result<Outcome<Settled>, (RunError, Box<Self>)> {
-        if self.root.is_machine() || self.machine_lifecycle() {
-            return Err((
-                RunError::refused(
-                    "recoverable workspace settlement requires a checkout workspace run",
-                ),
-                Box::new(self),
-            ));
-        }
-        if let Err(error) = self.require_environment_gate() {
-            return Err((error, Box::new(self)));
-        }
-        self.run_settle_actions();
-        match self.settle_workspace_inner(cleanup, adapter) {
             Ok(outcome) => Ok(outcome),
             Err(error) => Err((error, Box::new(self))),
         }
