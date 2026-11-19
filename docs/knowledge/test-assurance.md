@@ -1,26 +1,24 @@
 # Test assurance and suite census
 
-Status: active. Owner: this file. Route: `effigy test:inventory` proves the census helper; `effigy test:qa:static-guards` proves the Cargo-route and mktemp detectors on owned synthetic trees; `effigy qa:docs` guards this document. The [test and code quality tables](quality/README.md) are maintained as long-horizon ratings.
+Status: active. Owner: this file. Route: `effigy test:qa:static-guards` proves the Cargo-route and mktemp detectors on owned synthetic trees; `effigy qa:docs` guards this document. The [November 2026 quality ratings](quality.md) are a closed review artifact.
 
-This file states what the Rust test suite promises, how the whole suite is
-counted reproducibly, and the rules a pruning wave must follow when it removes
-or consolidates cases. It records current test/proof truth; audit dispositions
-and wave status live in Queue artifacts, not here.
+This file states what the Rust test suite promises, how it is counted, and the
+rules a pruning wave must follow when it removes or consolidates cases. It
+records current test/proof truth; audit dispositions and wave status live in
+Queue artifacts, not here.
 
 ## What the suite promises
 
 The default workspace suite is `oxide nextest run --workspace` (built-in
 `effigy test`, `effigy test --plan`) plus doc tests through
-`sh scripts/oxide-selector.sh test --workspace --doc` in the CI mirrors. On a
-collected snapshot at `ccf9c9f42` (the pruning tranches of effigy#556/#557
-integrated) it collects 6283 cases across 86 test binaries (6252 runnable, 31
-ignored helpers and proofs). Collection is exact:
-`scripts/test-inventory.py` reconciles every collected ID against the source
-scan — 6193 direct declarations, 90 attributed to their generating macro
-invocations, 0 unattributed — and every non-collected declaration is explained
-by a named gate (fault-injection, workspace-serving-fixture,
-endpoint-store-faults, required-features targets, platform gates). The suite
-runs on one host per invocation: platform-gated declarations are single-sided
+`sh scripts/oxide-selector.sh test --workspace --doc` in the CI mirrors. The
+suite is counted from nextest's own collection: `nextest list` reports the IDs
+this host selects, and those IDs are the census. A collected snapshot at
+`ccf9c9f42` (the pruning tranches of effigy#556/#557 integrated) reported 6283
+cases across 86 test binaries (6252 runnable, 31 ignored helpers and proofs);
+the number is an observation that moves with the tree, never a target or a
+gate. The suite runs on one host per invocation: platform-gated declarations
+are single-sided
 (a `target_os = "linux"` module contributes nothing on macOS and is collected
 when a Linux runner builds the same tree), so per-host collection counts are
 not comparable case-for-case.
@@ -37,33 +35,12 @@ The generic `effigy test` default keeps nextest's own fail-fast behavior;
 only the `qa` step passes the flag, and focused selectors keep their explicit
 `--no-fail-fast` / `--max-fail` choices.
 
-The internal `qa:later-stages <fresh-absolute-output-dir>` selector is a
-separate partial diagnostic route for inspecting the 21 checks after that
-default suite. It omits the default suite, preserves each stage's independent
-stdout and stderr, and continues after ordinary failed checks. Its receipt
-always sets `diagnostic_only=true`, `default_suite_omitted=true`, and
-`full_qa_pass=false`; even a successful census is not full QA or a milestone
-gate. It sets `NEXTEST_SUCCESS_OUTPUT=immediate` so successful facts remain in
-the retained logs, without changing test selection, timing, or concurrency.
-`test:qa:later-stages-wrapper` exercises the collector with owned stub
-executables and does not run repository tests or the census.
-
-The collector accepts `--start-at <canonical-selector>` and
-`--stop-after <canonical-selector>` to run an inclusive range in the existing
-stage order; either boundary may be omitted. Invalid selectors and reversed
-ranges are rejected before output setup. The final receipt lists
-`selected_stages` and `omitted_stages` separately; selected stages not reached
-after setup failure, cancellation, or unsettled children appear as
-`not_started`. It never infers success from prior output. Fresh output contains
-an `events/` directory with create-once `selection.json`, `setup.json`, one
-`stage-NN.json` after each stage settles, and `teardown.json`. Stage events
-include the exact argv, source bindings, process result, byte completeness, and
-separate stdout/stderr hashes. The final hash manifest includes event files.
-These v1 event records are durable scoped facts bound to their source input and
-selection; they do not replace the final `receipt.json` or make an interrupted
-run complete. Event publication uses a synced private temporary file and an
-exclusive hard-link into the final name, so an interrupted write cannot appear
-as a finalized record.
+Diagnosing a milestone failure in a later stage runs that stage's own
+selector: `test:kernel:*` and its feature families, `test:secrets:vault`, the
+`qa:docs:*` checks, `qa:json` and the feedback lints. Each keeps its own
+status, output and honest partial outcome, and a subset of them is a
+diagnostic, never full QA. There is no separate later-stage runner or per-stage
+receipt protocol.
 
 ## Proof tiers
 
@@ -111,23 +88,23 @@ tier, not the count.
 - Doc tests (a static census counts 25 doc-comment fences across six lib
   targets) run in `qa:ci:fast`'s `test --workspace --doc`; that run is the
   real collection, the fence count is triage.
-- T6 routes are enumerated by `test-inventory.py census` from
-  `config/tasks.toml` (56 payload scripts at `f317d443`).
+- T6 routes are the Python, Rhai and shell payloads a `config/tasks.toml` route
+  names. The named feature and native families are the `fault-injection` and
+  `endpoint-store-faults` targets, the `workspace-serving-fixture` serving
+  proofs, the ignored `proof:`/`test:*:linux` routes, and the platform-gated
+  cases above; each is listed once, by its route, not re-enumerated per wave.
 
-## Reproducible census
+## Census
 
 ```
-effigy test:inventory            # proves the helper's reconciliation logic
-effigy test:qa:static-guards     # Cargo-route and mktemp detectors on synthetic trees
 sh scripts/oxide-selector.sh nextest list --workspace --message-format json
-python3 scripts/test-inventory.py census --out <scratch-dir> \
-    --nextest-list <collected-list.json>
+effigy test:qa:static-guards     # Cargo-route and mktemp detectors on synthetic trees
 ```
 
-`test:inventory` is fixture-only (no Cargo). It names include!/file-module/macro
-attribution, duplicate and unattributed collected IDs, ignored / feature /
-platform / target / unknown gates, an ignored declaration missing from the
-collected list (never covered by exemption), and an ignored-flag mismatch.
+`nextest list` is the whole census. When a tranche changes membership, compare
+the collected IDs before and after it. A suspected missing or unattributed case
+is a one-off investigation from the target's module tree and Git, not a
+standing invariant, a static source parser or an attribution gate.
 `test:qa:static-guards` copies the exact committed detectors into a private
 tree and asserts their exit diagnostics: unrecorded vs stale Cargo routes,
 Oxide nested-tool / escape / comment exclusions, catalog include and nested
@@ -135,15 +112,9 @@ script traversal, bare vs hardcoded vs placeholder-less `mktemp`, guest
 exemptions, crate `tests/scripts` scan, quoted mentions, escaped substitution
 openers, and double-quoted `$(...)` / backtick substitutions. Live
 `qa:docs:cargo-routes` and `qa:docs:mktemp` remain the repository checks.
-Most other T6 payloads are unassessed; this file does not certify them.
-
-`scripts/test-inventory.py` (standard library only) runs `cargo metadata`,
-scans every workspace target's module tree for declared tests with their cfg
-gates, and reconciles the two. Classes: `collected`, `macro-generated`
-(attributed to the invocation site), `gated-out`, `target-gated`,
-`unattributed` (must be zero), `duplicate_ids` (must be zero). It never runs a
-test body. The census is measurement, not semantic certification; the private
-audit ledger (Queue artifact) holds per-family dispositions with exact heads.
+Most other T6 payloads are unassessed; this file does not certify them. The
+census is measurement, not semantic certification; the private audit ledger
+(Queue artifact) holds per-family dispositions with exact heads.
 
 ## Rules a pruning wave must follow
 
@@ -162,6 +133,11 @@ audit ledger (Queue artifact) holds per-family dispositions with exact heads.
    consolidation targets; a unique T5 proof is valuable even when expensive.
 6. Changed-code validation runs through Effigy selectors; whole-suite QA stays
    with the milestone (`project.qa.run`), not the task.
+7. Place a case with its owner: domain behavior tests with the domain crate,
+   runner tests for adaptation (invocation, error and report mapping,
+   side-effect orchestration, text/JSON boundary). Fixture builders stay
+   private near the tests that use them, and a shared test-support crate needs
+   two production crates sharing the same stable boundary.
 
 See [fixture ownership](test-fixture-hygiene.md) for process-group rules and
 [cargo routes](cargo-routes.md) for the Oxide routing rule every selector

@@ -8,7 +8,7 @@ Consumer application wiring of scoped worker hosts remains on Queue lead
 Status: answered
 Asked: 2026-10-05
 Answered: 2026-10-05 by Tom
-Owner: [Gateway process identity ruling](architecture/020-container-infrastructure-design.md#gateway-process-identity-ruling)
+Owner: [Gateway process identity ruling](architecture/020-container-infrastructure-design.md#gateway-process-identity)
 
 Tom's v0.14.0 publication block remains in force until final release assurance
 completes. He does not accept the PID-only risk and authorized dispatch of the
@@ -21,7 +21,7 @@ assurance boundary; this does not claim publication readiness.
 Status: answered
 Asked: 2026-10-05
 Answered: 2026-10-06 by Tom
-Owner: [Gateway process identity ruling](architecture/020-container-infrastructure-design.md#gateway-process-identity-ruling)
+Owner: [Gateway process identity ruling](architecture/020-container-infrastructure-design.md#gateway-process-identity)
 
 Tom approved the narrow, bounded read-only identity command through Effigy's
 existing administrator elevation. It reads only the trusted recorded gateway
@@ -858,9 +858,9 @@ Authority: [contract 052 §8.11](contracts/052-runtime-kernel-contract.md#811-wo
 
 Tom's 2026-10-30 ruling (decision 8c0ef812) bounds the normative seam to 250 lines,
 tied to the merged #484 reservation/publication APIs. The detailed E-step,
-crash/fault/retry and ownership-transfer draft is explicitly
-[non-normative, unimplemented/post-v0.15 candidate material](contracts/052-runtime-kernel-contract.md#appendix-b-non-normative-post-v015-sequence-candidates),
-with no acceptance claims. It does not qualify any backend or waive Q-017.
+crash/fault/retry and ownership-transfer draft was non-normative post-v0.15
+candidate material and is retained in Git history only. It does not qualify any
+backend or waive Q-017.
 
 The three originally missing facts now have implemented seams in
 [052 §8.11](contracts/052-runtime-kernel-contract.md#811-workspace-client-interface-v1):

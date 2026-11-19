@@ -20,7 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         serde_json::from_slice(&std::fs::read(root.join("config/kernel-ratchet.json"))?)?;
     current.compare(&baseline)?;
     println!(
-        "kernel ratchet: production counts match baseline; {} test files reported separately",
+        "kernel ratchet: no construct exceeds its baseline; {} test files reported separately",
         current.tests.len()
     );
     Ok(())

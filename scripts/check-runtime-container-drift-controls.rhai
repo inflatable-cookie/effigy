@@ -86,7 +86,7 @@ require_contains(
     `src/runner/workspace_command/permissions_gnu_accept\.rs`,
     "gnu-accept raw-CLI allowlist",
 );
-require_contains(guard_source, "022-runtime-architecture-sanity-audit.md", "guard diagnostic owner");
+require_contains(guard_source, "010-package-map.md", "guard diagnostic owner");
 require_absent(guard_source, "052-drift-guards-and-architecture-proof-matrix-strict-lane.md", "obsolete diagnostic");
 require_absent(guard_source, "qa_group_command/execute", "qa-group cwd whole-file waiver");
 require_absent(

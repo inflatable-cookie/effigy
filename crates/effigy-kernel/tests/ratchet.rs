@@ -101,10 +101,10 @@ fn ratchet_counts_every_construct_and_loophole() {
     );
     assert!(scan_source("this is not rust", false).is_err());
 }
-/// Merged proof: ratchet_baseline_rejects_unrecorded_fall_and_new_pair_at_same_total, ratchet_type_aliases_function_references_and_typed_parameters_are_counted, ratchet_child_file_inherits_parent_state_path_without_gating_ordinary_files.
+/// Merged proof: ratchet_baseline_allows_a_safe_fall_and_a_verified_move, ratchet_type_aliases_function_references_and_typed_parameters_are_counted, ratchet_child_file_inherits_parent_state_path_without_gating_ordinary_files.
 #[test]
 fn ratchet_compares_baselines_and_semantics() {
-    // ratchet_baseline_rejects_unrecorded_fall_and_new_pair_at_same_total
+    // ratchet_baseline_allows_a_safe_fall_and_a_verified_move
 
     let old = Inventory {
         schema: 1,
@@ -119,7 +119,8 @@ fn ratchet_compares_baselines_and_semantics() {
         schema: 1,
         ..Default::default()
     };
-    assert!(empty.compare(&old).unwrap_err().contains("fell"));
+    // A count that falls is an improvement, not baseline churn.
+    assert!(empty.compare(&old).is_ok());
     let moved = Inventory {
         schema: 1,
         production: std::collections::BTreeMap::from([(
@@ -128,9 +129,21 @@ fn ratchet_compares_baselines_and_semantics() {
         )]),
         tests: Default::default(),
     };
-    let error = moved.compare(&old).unwrap_err();
-    assert!(error.contains("rose"));
-    assert!(error.contains("fell"));
+    // A verified move keeps the construct's total, so it is not new authority.
+    assert!(moved.compare(&old).is_ok());
+    let risen = Inventory {
+        schema: 1,
+        production: std::collections::BTreeMap::from([(
+            "src/b.rs".into(),
+            counts(
+                "fn f(){std::process::Command::new(\"true\");}\nfn g(){std::process::Command::new(\"true\");}",
+            ),
+        )]),
+        tests: Default::default(),
+    };
+    let error = risen.compare(&old).unwrap_err();
+    assert!(error.contains("rose 1 -> 2"), "{error}");
+    assert!(error.contains("src/b.rs (2)"), "{error}");
     assert!(empty.compare(&empty).is_ok());
 
     // ratchet_type_aliases_function_references_and_typed_parameters_are_counted

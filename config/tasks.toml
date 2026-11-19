@@ -330,8 +330,8 @@
   { task = "test:kernel:custody:handoff" },
 ] }
 "test:kernel:custody:handoff" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test handoff -E 'binary(handoff)' --no-fail-fast --retries 0 --no-tests fail && sh scripts/record-nextest-junit.sh qa-kernel-handoff", timeout_ms = 600000 }] }
-# Independent leaves for the partial later-stage census. Each owns its fixture
-# build so it remains safe to run without relying on an earlier QA stage.
+# Independent leaves of the kernel QA families. Each owns its fixture build so
+# it remains safe to run on its own, with no dependency on an earlier QA stage.
 "test:kernel:custody:later" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
   { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test custody --lib -E 'test(/^custody::tests::/) | test(/^signal::tests::/) | test(/^run::lifecycle::tests::/) | binary(custody)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
@@ -1774,8 +1774,6 @@
 
 # JSON contract QA
 "qa:json" = { visibility = "public", group = "Validation", description = "Validate every active JSON contract row, its envelope and its payload schema.", run = [{ task = "contracts check-json --print-selected=text" }] }
-"qa:later-stages" = { durable = true, visibility = "internal", group = "Maintenance", admission = "heavy", description = "Collect the canonical later QA stages as a partial diagnostic receipt; omits the default suite and is never full QA.", run = [{ run = "python3 scripts/qa-later-stages.py {args}", timeout_ms = 5400000 }] }
-"test:qa:later-stages-wrapper" = { visibility = "internal", group = "Maintenance", run = [{ run = "python3 scripts/test_qa_later_stages.py", timeout_ms = 180000 }] }
 "qa:ci:json" = { visibility = "internal", group = "Maintenance", run = [
   "effigy contracts check-json --print-selected=json",
   "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --test cli_output_tests -E 'test(cli_contracts_)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
@@ -2222,18 +2220,7 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 # runners with no Colima, VM or scratch qualification state touched.
 "test:qualification:entry-sweep" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "python3 tests/scripts/qualification-entry-sweep.py {args}", timeout_ms = 600000 }] }
 
-# ---- Whole-suite census (effigy#555) -----------------------------------------
-# Proves scripts/test-inventory.py's reconciliation logic on embedded controls:
-# duplicate-ID detection, missing attribution, include!/file-module/macro
-# attribution, ignored / feature-gated / platform-gated / target-gated /
-# unknown-gated distinctions, and that an ignored declaration missing from
-# the collected list stays uncovered. Pure Python, no Cargo, never runs a
-# test body. The census route itself is documented in
-# docs/knowledge/test-assurance.md.
-"test:inventory" = { durable = true, visibility = "internal", group = "Maintenance", description = "Prove the test-suite census helper's reconciliation logic.", run = [{ run = "python3 scripts/test-inventory.py self-test", timeout_ms = 120000 }] }
-"qa:quality:tests" = { visibility = "internal", group = "Maintenance", description = "Report drift in the frozen test quality tables without gating QA.", run = "python3 scripts/quality-table.py {args}" }
-"qa:quality:code" = { visibility = "internal", group = "Maintenance", description = "Report drift in the frozen code-module quality tables without gating QA.", run = "python3 scripts/quality-table.py --code {args}" }
-"test:quality:table" = { visibility = "internal", group = "Maintenance", description = "Prove quality-table source hashing helpers.", run = "python3 -B tests/scripts/quality_table_tests.py" }
+# ---- Static hygiene guards --------------------------------------------------
 # Owned synthetic-tree proofs for the Cargo-route and mktemp detectors. Live
 # qa:docs:cargo-routes and qa:docs:mktemp stay the repository checks; this
 # selector never scans the real tree.
