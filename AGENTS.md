@@ -4,7 +4,7 @@ Effigy is a Rust task runner for monorepos. Its CLI and `effigy.toml` give agent
 
 ## Where things live
 
-- Current state: `docs/README.md`
+- Docs entry point: `docs/README.md`
 - Current knowledge: `docs/knowledge/README.md`
 - Open questions: `docs/knowledge/questions.md`
 - User documentation: `docs/guides/README.md`
