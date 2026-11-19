@@ -69,7 +69,10 @@ pub(super) fn parse_completion_request(
     args: &[String],
 ) -> Result<CompletionRequest, BuiltinError> {
     let mut parser = BuiltinArgParser::new(args);
-    let mut output_json = false;
+    let mut output_json = task
+        .options
+        .as_ref()
+        .is_some_and(|options| options.json_mode);
     let mut shell: Option<CompletionShell> = None;
     let mut action: Option<CompletionAction> = None;
 
@@ -130,7 +133,10 @@ pub(super) fn parse_completion_candidates_request(
     args: &[String],
 ) -> Result<CompletionCandidatesRequest, BuiltinError> {
     let mut parser = BuiltinArgParser::new(args);
-    let mut output_json = false;
+    let mut output_json = task
+        .options
+        .as_ref()
+        .is_some_and(|options| options.json_mode);
     let mut repo_override: Option<PathBuf> = None;
     let mut prefix: Option<String> = None;
     parser.parse_loop_require_no_unknown_with_prefix(

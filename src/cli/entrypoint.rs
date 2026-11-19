@@ -339,7 +339,8 @@ fn run_and_render_command_in(
                     "RunnerError",
                     err.category().as_str(),
                     &err.to_string(),
-                    err.json_error_details().map(parse_json_or_string),
+                    err.json_error_value()
+                        .or_else(|| err.json_error_details().map(parse_json_or_string)),
                     human.to_json(),
                 );
             }

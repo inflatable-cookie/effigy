@@ -55,10 +55,7 @@ pub enum BuiltinError {
         rendered: String,
     },
     TaskJsonFailure(Box<effigy_kernel::outcome::TaskFailure>),
-    StructuredCommandFailure {
-        rendered: String,
-        human: effigy_ui::HumanError,
-    },
+    StructuredCommandFailure(Box<effigy_kernel::outcome::CommandFailure>),
     Manifest(ManifestError),
     Managed(ManagedError),
     Routing(RoutingError),
@@ -124,7 +121,7 @@ impl std::fmt::Display for BuiltinError {
             }
             BuiltinError::CommandJsonFailure { .. }
             | BuiltinError::TaskJsonFailure(_)
-            | BuiltinError::StructuredCommandFailure { .. } => {
+            | BuiltinError::StructuredCommandFailure(_) => {
                 write!(f, "command failed (json output available)")
             }
             BuiltinError::Manifest(error) => write!(f, "{error}"),

@@ -37,7 +37,7 @@ impl PlannedRuntimeTarget {
     }
 }
 
-pub(super) fn task_run_payload(
+pub(in crate::runner::execute) fn task_run_payload(
     selector: &TaskSelector,
     cwd: &std::path::Path,
     command: &str,

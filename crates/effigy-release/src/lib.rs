@@ -28,16 +28,16 @@ pub use prepare_helpers::{
 pub use run::{
     new_run_id, parse_release_task_output, read_release_observation_for_root, read_release_record,
     read_release_task_output, release_home, release_input_value, release_owner,
-    release_receipt_for_run, render_release_receipt_json, render_release_receipt_text,
-    render_release_run_json, run_release, run_release_with_observer, settle_release, sha256_bytes,
-    verify_artifact_digests, GitEffects, RecordApproval, RecordArtifact, RecordArtifactFile,
-    RecordCheckpoint, RecordDecision, RecordDestination, RecordGate, RecordIdentity, RecordTarget,
-    RecordTargetState, RecordVerification, ReleaseAction, ReleaseCheckpoint, ReleaseEffects,
-    ReleaseReceipt, ReleaseRecord, ReleaseRunOutcome, ReleaseRunRequest, ReleaseRunStatus,
-    ReleaseSession, ReleaseStage, ReleaseState, ReleaseTaskOutput, ReleaseTaskSubject, ReportsOnly,
-    TargetDecision, TaskRequest, TaskResponse, RELEASE_INPUT_ENV, RELEASE_OUTPUT_ENV,
-    RELEASE_RECEIPT_SCHEMA, RELEASE_RECORD_SCHEMA, RELEASE_TASK_INPUT_SCHEMA,
-    RELEASE_TASK_OUTPUT_SCHEMA,
+    release_receipt_for_run, release_run_payload, render_release_receipt_json,
+    render_release_receipt_text, render_release_run_json, run_release, run_release_with_observer,
+    settle_release, sha256_bytes, verify_artifact_digests, GitEffects, RecordApproval,
+    RecordArtifact, RecordArtifactFile, RecordCheckpoint, RecordDecision, RecordDestination,
+    RecordGate, RecordIdentity, RecordTarget, RecordTargetState, RecordVerification, ReleaseAction,
+    ReleaseCheckpoint, ReleaseEffects, ReleaseReceipt, ReleaseRecord, ReleaseRunOutcome,
+    ReleaseRunRequest, ReleaseRunStatus, ReleaseSession, ReleaseStage, ReleaseState,
+    ReleaseTaskOutput, ReleaseTaskSubject, ReportsOnly, TargetDecision, TaskRequest, TaskResponse,
+    RELEASE_INPUT_ENV, RELEASE_OUTPUT_ENV, RELEASE_RECEIPT_SCHEMA, RELEASE_RECORD_SCHEMA,
+    RELEASE_TASK_INPUT_SCHEMA, RELEASE_TASK_OUTPUT_SCHEMA,
 };
 
 pub use effigy_changelog::BumpKind;
@@ -46,6 +46,7 @@ pub use git::{
     git_modified_files, git_push_release, git_tag_exists, git_work_tree_clean,
 };
 pub use render_json::{
+    release_gate_run_payload, release_plan_payload, release_status_payload,
     render_release_gate_run_json, render_release_plan_json, render_release_status_json,
 };
 pub use text::{

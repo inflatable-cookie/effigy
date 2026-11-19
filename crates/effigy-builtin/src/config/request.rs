@@ -125,7 +125,10 @@ pub(super) fn parse_config_request(
     let mut inspect_path: Option<String> = None;
     let mut schema = false;
     let mut minimal = false;
-    let mut output_json = false;
+    let mut output_json = task
+        .options
+        .as_ref()
+        .is_some_and(|options| options.json_mode);
     let mut target: Option<ConfigSchemaTarget> = None;
     let mut runner: Option<ConfigTestRunner> = None;
     let mut user_inspect = false;

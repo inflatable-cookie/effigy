@@ -759,13 +759,24 @@ pub(super) fn finish(
     output_json: bool,
 ) -> Result<String, RunnerError> {
     let ok = outcome.ok();
-    let rendered = render_container_report(retire_report(checkout, &outcome), output_json);
+    let human = outcome.failed.iter().fold(
+        effigy_ui::HumanError::new("container retirement did not complete"),
+        |human, failure| human.evidence(&failure.error),
+    );
+    let report = retire_report(checkout, &outcome);
     if ok {
-        Ok(rendered)
+        Ok(render_container_report(report, output_json))
     } else if output_json {
-        Err(RunnerError::CommandJsonFailure { rendered })
+        Err(RunnerError::structured_json(
+            report.json,
+            false,
+            human,
+            None,
+        ))
     } else {
-        Err(RunnerError::task_invocation(rendered))
+        Err(RunnerError::task_invocation(render_container_report(
+            report, false,
+        )))
     }
 }
 

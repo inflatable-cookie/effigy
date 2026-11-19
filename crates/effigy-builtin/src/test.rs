@@ -22,7 +22,11 @@ pub(super) fn try_run_builtin_test(
     resolved_root: &Path,
     catalogs: &[LoadedCatalog],
 ) -> Result<Option<String>, BuiltinError> {
-    let (flags, passthrough) = planning::extract_builtin_test_flags(&runtime_args.passthrough);
+    let (mut flags, passthrough) = planning::extract_builtin_test_flags(&runtime_args.passthrough);
+    if let Some(options) = &task.options {
+        flags.output_json |= options.json_mode;
+        flags.plan_mode |= options.task_plan;
+    }
     // A plan runs nothing, so it neither resolves a scoped backing-service
     // alias nor refuses for one (effigy#431).
     let planning_ports = match flags.plan_mode {

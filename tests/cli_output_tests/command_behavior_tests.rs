@@ -1757,6 +1757,9 @@ fn cli_release_status_json_mode_surfaces_gate_failures_in_error_details() {
         "effigy.release.status.v1"
     );
     assert_eq!(parsed["error"]["details"]["ready"], false);
+    assert!(parsed["error"]["human"]["evidence"]
+        .to_string()
+        .contains("smoke-fail"));
     let blockers = parsed["error"]["details"]["blockers"]
         .as_array()
         .expect("blockers array");

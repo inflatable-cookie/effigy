@@ -24,7 +24,10 @@ pub(super) fn parse_tasks_request(
     let mut status_mode = false;
     let mut status_all = false;
     let mut all = false;
-    let mut output_json = false;
+    let mut output_json = task
+        .options
+        .as_ref()
+        .is_some_and(|options| options.json_mode);
     let mut pretty_json = true;
     let mut pretty_seen = false;
     parser.parse_loop_require_no_unknown(&task.name, |parser, arg| {

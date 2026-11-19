@@ -19,7 +19,13 @@ pub(super) fn run_builtin_doctor(
     run_passthrough_builtin_command(
         &task.name,
         runtime_args,
-        |output_json| render_builtin_help_topic(HelpTopic::Doctor, "doctor", output_json),
+        |output_json| {
+            render_builtin_help_topic(
+                HelpTopic::Doctor,
+                "doctor",
+                output_json || task.options.as_ref().is_some_and(|o| o.json_mode),
+            )
+        },
         |args| request::parse_doctor_request(task, args),
         |request: request::DoctorRequest| {
             ports

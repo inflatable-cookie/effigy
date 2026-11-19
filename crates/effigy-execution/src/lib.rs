@@ -286,6 +286,26 @@ impl ExecutionRuntimeArgsPlan {
         }
     }
 
+    pub fn from_builtin_cli(
+        args: &[String],
+        options: &effigy_core::task_args::GlobalCliOptions,
+    ) -> Result<Self, ExecutionRequestError> {
+        let mut plan = Self::from_args(args)?;
+        if plan.repo_override.is_none() {
+            plan.repo_override = options.repo_override.clone();
+        }
+        plan.verbose_root |= options.task_verbose_root;
+        if plan.env_schema_override.is_none() {
+            plan.env_schema_override = options.task_env_schema.clone();
+        }
+        if plan.lock_wait_ms.is_none() {
+            plan.lock_wait_ms = options.task_lock_wait_ms;
+        }
+        plan.output_json |= options.json_mode;
+        plan.plan |= options.task_plan;
+        Ok(plan)
+    }
+
     pub fn from_args(args: &[String]) -> Result<Self, ExecutionRequestError> {
         let raw = effigy_tasks::parse_task_runtime_args(args)
             .map_err(ExecutionRequestError::InvalidRuntimeArgs)?;

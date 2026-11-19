@@ -157,11 +157,11 @@ fn run_manifest_task_subprocess_bounded(
 
 fn runner_to_doctor(error: RunnerError) -> DoctorError {
     match error {
-        RunnerError::CommandJsonFailure { rendered } => {
-            DoctorError::CommandJsonFailure { rendered }
-        }
-        RunnerError::StructuredCommandFailure { rendered, human } => {
-            DoctorError::StructuredCommandFailure { rendered, human }
+        RunnerError::CommandJsonFailure(failure) => DoctorError::CommandJsonFailure {
+            rendered: failure.rendered,
+        },
+        RunnerError::StructuredCommandFailure(failure) => {
+            DoctorError::StructuredCommandFailure(failure)
         }
         RunnerError::TaskJsonFailure(failure) => DoctorError::TaskJsonFailure(failure),
         RunnerError::TaskInvocation(message) => DoctorError::TaskInvocation(message),

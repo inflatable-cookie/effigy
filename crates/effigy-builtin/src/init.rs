@@ -34,7 +34,13 @@ pub(super) fn run_builtin_init(
 ) -> Result<Option<String>, BuiltinError> {
     run_builtin_command(
         args,
-        |output_json| render_builtin_help_topic(HelpTopic::Init, "init", output_json),
+        |output_json| {
+            render_builtin_help_topic(
+                HelpTopic::Init,
+                "init",
+                output_json || task.options.as_ref().is_some_and(|o| o.json_mode),
+            )
+        },
         || request::parse_init_request(task, args),
         |request: request::InitRequest| run_init_request(ports, request, target_root),
     )

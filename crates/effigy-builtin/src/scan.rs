@@ -37,7 +37,11 @@ pub(super) fn run_builtin_scan(
                 Some(ScanCommand::DuplicateBlocks) => render_duplicate_blocks_help(),
                 None => render_scan_help(),
             };
-            render_builtin_help_text("scan", help, output_json)
+            render_builtin_help_text(
+                "scan",
+                help,
+                output_json || task.options.as_ref().is_some_and(|o| o.json_mode),
+            )
         },
         |args| parse_scan_request(task, args),
         |request| run_scan_request(request, target_root, catalogs),

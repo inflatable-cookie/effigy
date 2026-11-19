@@ -20,6 +20,14 @@ mod display;
 #[path = "error/rendered_output.rs"]
 mod rendered_output;
 
+/// Facts adapted once from an external or older command payload.
+#[derive(Debug)]
+pub struct LegacyCommandFailure {
+    pub(in crate::runner) rendered: String,
+    pub(in crate::runner) value: Option<serde_json::Value>,
+    human: effigy_ui::HumanError,
+}
+
 #[derive(Debug)]
 pub enum RunnerError {
     Cwd(std::io::Error),
@@ -56,7 +64,8 @@ pub enum RunnerError {
     ContainerWaitRefused {
         environment: String,
         diagnostic: String,
-        details_json: String,
+        details: serde_json::Value,
+        details_json: std::sync::OnceLock<String>,
     },
     ContainerSurfaceRegistryMissing,
     ContainerSurfaceDefaultTargetMissing,
@@ -205,13 +214,8 @@ pub enum RunnerError {
         stderr: String,
     },
     TaskLockConflict(Box<TaskLockConflict>),
-    CommandJsonFailure {
-        rendered: String,
-    },
-    StructuredCommandFailure {
-        rendered: String,
-        human: effigy_ui::HumanError,
-    },
+    CommandJsonFailure(Box<LegacyCommandFailure>),
+    StructuredCommandFailure(Box<effigy_kernel::outcome::CommandFailure>),
     TaskJsonFailure(Box<effigy_kernel::outcome::TaskFailure>),
     /// An opt-in bounded container command did not produce a complete,
     /// in-budget capture. Carries a safe machine-readable reason/count
@@ -402,12 +406,13 @@ impl RunnerError {
             RunnerError::TaskCommandFailure {
                 code: Some(code), ..
             } if (1..=255).contains(code) => *code,
-            RunnerError::CommandJsonFailure { rendered }
-                if serde_json::from_str::<serde_json::Value>(rendered)
-                    .ok()
+            RunnerError::CommandJsonFailure(failure)
+                if failure
+                    .value
+                    .as_ref()
                     .is_some_and(|value| value["schema"] == "effigy.task.run.v1") =>
             {
-                self.task_exit_status()
+                legacy_exit_status(failure)
                     .filter(|code| (1..=255).contains(code))
                     .unwrap_or(1)
             }
@@ -432,6 +437,11 @@ impl RunnerError {
         use effigy_kernel::outcome::WorkloadOutcome;
         if let RunnerError::TaskJsonFailure(failure) = self {
             return failure.outcome.clone();
+        }
+        if let RunnerError::StructuredCommandFailure(failure) = self {
+            if let Some(outcome) = &failure.outcome {
+                return outcome.clone();
+            }
         }
         if matches!(self, RunnerError::RunDeadline { .. }) {
             // No workload result can be certified when settlement did not
@@ -505,8 +515,8 @@ impl RunnerError {
             | RunnerError::DeferLoopDetected { .. }
             // A command that reported its own outcome carries the next step in
             // its own document.
-            | RunnerError::CommandJsonFailure { .. }
-            | RunnerError::StructuredCommandFailure { .. }
+            | RunnerError::CommandJsonFailure(_)
+            | RunnerError::StructuredCommandFailure(_)
             | RunnerError::TaskJsonFailure(_)
             | RunnerError::EnvSchema(_) => Category::Refused,
             // A step, a backend, a file, a service or a supervisor did not
@@ -539,6 +549,22 @@ impl RunnerError {
         rendered_output::runner_error_json_details(self)
     }
 
+    /// A structured payload when its producer supplied one.
+    pub fn json_error_value(&self) -> Option<serde_json::Value> {
+        match self {
+            RunnerError::TaskJsonFailure(failure) => Some(failure.payload.clone()),
+            RunnerError::StructuredCommandFailure(failure) => Some(failure.json_value()),
+            RunnerError::ContainerWaitRefused { details, .. } => Some(details.clone()),
+            RunnerError::CommandJsonFailure(failure) => Some(
+                failure
+                    .value
+                    .clone()
+                    .unwrap_or_else(|| serde_json::Value::String(failure.rendered.clone())),
+            ),
+            _ => None,
+        }
+    }
+
     /// The three facts a person needs from this refusal: what failed, the
     /// evidence, and the next action. The top-level printer renders this as
     /// text, and `--json` carries the same value as `error.human`.
@@ -550,7 +576,7 @@ impl RunnerError {
     pub fn human_error(&self) -> effigy_ui::HumanError {
         match self {
             RunnerError::TaskJsonFailure(failure) => failure.human.clone(),
-            RunnerError::StructuredCommandFailure { human, .. } => human.clone(),
+            RunnerError::StructuredCommandFailure(failure) => failure.human.clone(),
             RunnerError::TaskCommandFailure {
                 command,
                 code,
@@ -569,31 +595,44 @@ impl RunnerError {
             // timeout to ``task `heavy` failed`` and hid why the heavy task
             // never ran (effigy#328).
             RunnerError::AdmissionRefused { detail, .. } => human_error_from_display(detail),
-            _ => match self
-                .json_error_details()
-                .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
-                .filter(|details| details.is_object())
-            {
-                Some(details) => {
-                    let human = human_error_from_details(&self.to_string(), &details);
-                    // A failed task run's payload names no next step; its text
-                    // form does. Both carry the same one (failed task commands).
-                    if details["schema"] == "effigy.task.run.v1" {
-                        human.next_action(TASK_COMMAND_FAILURE_NEXT)
-                    } else {
-                        human
-                    }
-                }
-                None => match self {
-                    RunnerError::CommandJsonFailure { rendered } => text_payload_human(rendered),
-                    _ => human_error_from_display(&self.to_string()),
-                },
-            },
+            RunnerError::CommandJsonFailure(failure) => failure.human.clone(),
+            _ => human_error_from_display(&self.to_string()),
         }
     }
 
+    pub(in crate::runner) fn structured_json(
+        payload: serde_json::Value,
+        pretty: bool,
+        human: effigy_ui::HumanError,
+        outcome: Option<effigy_kernel::outcome::WorkloadOutcome>,
+    ) -> Self {
+        Self::StructuredCommandFailure(Box::new(effigy_kernel::outcome::CommandFailure::json(
+            payload, pretty, human, outcome,
+        )))
+    }
+
+    pub(in crate::runner) fn structured_text(
+        text: String,
+        human: effigy_ui::HumanError,
+        outcome: Option<effigy_kernel::outcome::WorkloadOutcome>,
+    ) -> Self {
+        Self::StructuredCommandFailure(Box::new(effigy_kernel::outcome::CommandFailure::text(
+            text, human, outcome,
+        )))
+    }
+
+    pub(in crate::runner) fn legacy_command_failure(rendered: String) -> Self {
+        let value = serde_json::from_str::<serde_json::Value>(&rendered).ok();
+        let human = legacy_payload_human(&rendered, value.as_ref());
+        Self::CommandJsonFailure(Box::new(LegacyCommandFailure {
+            rendered,
+            value,
+            human,
+        }))
+    }
+
     pub(in crate::runner) fn task_json_failure(
-        rendered: String,
+        payload: serde_json::Value,
         task: &str,
         code: i32,
         outcome: effigy_kernel::outcome::WorkloadOutcome,
@@ -606,7 +645,8 @@ impl RunnerError {
             .evidence_output("stdout", stdout)
             .next_action(TASK_COMMAND_FAILURE_NEXT);
         Self::TaskJsonFailure(Box::new(effigy_kernel::outcome::TaskFailure {
-            rendered,
+            payload,
+            rendered: std::sync::OnceLock::new(),
             code,
             outcome,
             human,
@@ -630,7 +670,8 @@ impl RunnerError {
         Self::ContainerWaitRefused {
             environment: environment.to_owned(),
             diagnostic,
-            details_json: details.to_string(),
+            details,
+            details_json: std::sync::OnceLock::new(),
         }
     }
 
@@ -782,14 +823,9 @@ impl RunnerError {
             RunnerError::RunDeadline { .. } => Some(124),
             RunnerError::TaskCommandFailure { code, .. } => Some(code.unwrap_or(1)),
             RunnerError::TaskJsonFailure(failure) => Some(failure.code),
-            RunnerError::CommandJsonFailure { rendered } => Some(
-                serde_json::from_str::<serde_json::Value>(rendered)
-                    .ok()
-                    .and_then(|value| value["exit_code"].as_i64())
-                    .map(|code| code as i32)
-                    .filter(|code| *code != 0)
-                    .unwrap_or(1),
-            ),
+            RunnerError::CommandJsonFailure(failure) => {
+                Some(legacy_exit_status(failure).unwrap_or(1))
+            }
             RunnerError::BoundedExecFailure { code, .. } => Some(*code),
             _ => None,
         }
@@ -845,10 +881,6 @@ pub(in crate::runner) fn child_failure_text(
     text
 }
 
-/// A refusal that carries structured details says more than its message: the
-/// details name the phase, the cause and the recovery. Lift those into the
-/// three facts, and keep the message's own sentence as what failed when the
-/// details do not improve on it.
 /// The lock refusal as three facts: the holder and the wait, then the next
 /// commands. `remediation` is the one rendering both paths share, so the text a
 /// person reads can never drift from the text `Display` produces.
@@ -861,12 +893,14 @@ fn lock_conflict_human(
     }
 }
 
-fn human_error_from_details(rendered: &str, details: &serde_json::Value) -> effigy_ui::HumanError {
-    // A command that reports its own failure in the standard `--json` envelope
-    // nests the rendered three facts under `error.human`. Lifting that block
-    // keeps the outer form's `what_failed` and `next_action` equal to the ones
-    // the payload itself names, instead of reducing a nested refusal to the
-    // generic "json output available" sentence and a null action (effigy#946).
+/// Adapter for command envelopes produced by older or external binaries.
+fn legacy_payload_human(
+    rendered: &str,
+    details: Option<&serde_json::Value>,
+) -> effigy_ui::HumanError {
+    let Some(details) = details else {
+        return text_payload_human(rendered);
+    };
     if let Some(human) = details
         .get("error")
         .and_then(|error| error.get("human"))
@@ -874,54 +908,90 @@ fn human_error_from_details(rendered: &str, details: &serde_json::Value) -> effi
     {
         return embedded_human_error(human);
     }
-    // A detail is a string or a number (`exit_code` is a JSON number).
-    let scalar = |key: &str| {
-        details.get(key).and_then(|value| match value {
-            serde_json::Value::String(text) => Some(text.trim().to_owned()),
-            serde_json::Value::Number(number) => Some(number.to_string()),
-            _ => None,
-        })
-    };
-    let text = |key: &str| scalar(key).filter(|value| !value.is_empty());
-    let base = human_error_from_display(rendered);
-    let mut error = match (text("cause"), text("message"), text("task")) {
-        (Some(cause), Some(message), _) if cause != message => {
-            effigy_ui::HumanError::new(cause).evidence(message)
+    match details.get("schema").and_then(serde_json::Value::as_str) {
+        Some("effigy.task.run.v1") => {
+            let task = details
+                .get("task")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("task");
+            let mut human = effigy_ui::HumanError::new(format!("task `{task}` failed"));
+            if let Some(code) = details.get("exit_code").and_then(serde_json::Value::as_i64) {
+                human = human.evidence(format!("exit_code: {code}"));
+            }
+            if let Some(stderr) = details.get("stderr").and_then(serde_json::Value::as_str) {
+                human = human.evidence_output("stderr", stderr);
+            }
+            if let Some(stdout) = details.get("stdout").and_then(serde_json::Value::as_str) {
+                human = human.evidence_output("stdout", stdout);
+            }
+            human.next_action(TASK_COMMAND_FAILURE_NEXT)
         }
-        (Some(cause), _, _) => effigy_ui::HumanError::new(cause),
-        (None, Some(message), _) => effigy_ui::HumanError::new(message),
-        (None, None, Some(task)) => effigy_ui::HumanError::new(format!("task `{task}` failed")),
-        (None, None, None) => base.clone(),
-    };
-    for key in [
-        "failure_kind",
-        "phase",
-        "preparation_step",
-        "activation_stage",
-        "state",
-        "readiness",
-        "exposure",
-        "exit_code",
-    ] {
-        if let Some(value) = text(key) {
-            error = error.evidence(format!("{key}: {value}"));
+        Some("effigy.run.v1" | "effigy.deploy.apply.v1") => {
+            let message = details
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("command failed (json output available)");
+            let human = effigy_ui::HumanError::new(effigy_ui::human::bound_text(
+                message,
+                effigy_ui::human::RELAY_MAX_BYTES,
+            ));
+            match details
+                .get("next_action")
+                .and_then(serde_json::Value::as_str)
+            {
+                Some(action) => human.next_action(action),
+                None => human,
+            }
         }
-    }
-    // The failing output is the evidence: both streams when both said
-    // something, so the cause cannot hide in the stream that was not read.
-    for (label, key) in [("stderr", "stderr"), ("stdout", "stdout")] {
-        if let Some(output) = text(key) {
-            error = error.evidence_output(label, &output);
+        Some("effigy.gateway.status.v1") => {
+            let message = details
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("gateway status failed");
+            let human = effigy_ui::HumanError::new(effigy_ui::human::bound_text(
+                message,
+                effigy_ui::human::RELAY_MAX_BYTES,
+            ));
+            match details.get("recovery").and_then(serde_json::Value::as_str) {
+                Some(action) => human.next_action(action),
+                None => human,
+            }
         }
+        Some("effigy.container.activation.v1") | None
+            if details.get("phase").and_then(serde_json::Value::as_str)
+                == Some("detached_activation") =>
+        {
+            let cause = details
+                .get("cause")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("container activation failed");
+            let mut human = effigy_ui::HumanError::new(effigy_ui::human::bound_text(
+                cause,
+                effigy_ui::human::RELAY_MAX_BYTES,
+            ));
+            if let Some(message) = details.get("message").and_then(serde_json::Value::as_str) {
+                human = human.evidence(message);
+            }
+            if let Some(phase) = details.get("phase").and_then(serde_json::Value::as_str) {
+                human = human.evidence(format!("phase: {phase}"));
+            }
+            if let Some(stop) = details.get("stop").and_then(serde_json::Value::as_str) {
+                human = human.next_action(stop);
+            }
+            human
+        }
+        _ => effigy_ui::HumanError::new("command failed (json output available)"),
     }
-    if let Some(action) = ["next_action", "next", "stop", "recovery"]
-        .iter()
-        .find_map(|key| text(key))
-        .or_else(|| base.next_action_text().map(str::to_owned))
-    {
-        error = error.next_action(action);
-    }
-    error
+}
+
+fn legacy_exit_status(failure: &LegacyCommandFailure) -> Option<i32> {
+    failure
+        .value
+        .as_ref()?
+        .get("exit_code")?
+        .as_i64()
+        .and_then(|code| i32::try_from(code).ok())
+        .filter(|code| *code != 0)
 }
 
 /// The three facts a payload already carries as its own rendered human block.
@@ -937,7 +1007,10 @@ fn embedded_human_error(human: &serde_json::Value) -> effigy_ui::HumanError {
             .map(str::trim)
             .filter(|value| !value.is_empty())
     };
-    let mut error = effigy_ui::HumanError::new(text("what_failed").unwrap_or("the command failed"));
+    let mut error = effigy_ui::HumanError::new(effigy_ui::human::bound_text(
+        text("what_failed").unwrap_or("the command failed"),
+        effigy_ui::human::RELAY_MAX_BYTES,
+    ));
     for line in human
         .get("evidence")
         .and_then(serde_json::Value::as_array)
@@ -978,7 +1051,10 @@ fn human_error_from_lines(rendered: &str, include_evidence: bool) -> effigy_ui::
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .unwrap_or("the command failed");
-    let mut error = effigy_ui::HumanError::new(what_failed);
+    let mut error = effigy_ui::HumanError::new(effigy_ui::human::bound_text(
+        what_failed,
+        effigy_ui::human::RELAY_MAX_BYTES,
+    ));
     if !include_evidence {
         if let Some(action) = first.and_then(|line| line.trim().strip_prefix("next:")) {
             if !action.trim().is_empty() {
@@ -1257,10 +1333,8 @@ impl From<effigy_builtin::BuiltinError> for RunnerError {
                 error_count,
                 rendered,
             },
-            B::CommandJsonFailure { rendered } => Self::CommandJsonFailure { rendered },
-            B::StructuredCommandFailure { rendered, human } => {
-                Self::StructuredCommandFailure { rendered, human }
-            }
+            B::CommandJsonFailure { rendered } => Self::legacy_command_failure(rendered),
+            B::StructuredCommandFailure(failure) => Self::StructuredCommandFailure(failure),
             B::TaskJsonFailure(failure) => Self::TaskJsonFailure(failure),
             B::Manifest(error) => map_manifest_error(error),
             B::Managed(error) => Self::from(error),
@@ -1285,10 +1359,8 @@ impl From<effigy_doctor::DoctorError> for RunnerError {
             },
             D::TaskInvocation(message) => Self::TaskInvocation(message),
             D::Ui(message) => Self::Ui(message),
-            D::CommandJsonFailure { rendered } => Self::CommandJsonFailure { rendered },
-            D::StructuredCommandFailure { rendered, human } => {
-                Self::StructuredCommandFailure { rendered, human }
-            }
+            D::CommandJsonFailure { rendered } => Self::legacy_command_failure(rendered),
+            D::StructuredCommandFailure(failure) => Self::StructuredCommandFailure(failure),
             D::TaskJsonFailure(failure) => Self::TaskJsonFailure(failure),
             D::Manifest(error) => map_manifest_error(error),
             D::Scan(error) => Self::from(error),

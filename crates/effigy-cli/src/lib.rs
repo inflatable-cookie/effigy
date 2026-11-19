@@ -88,39 +88,7 @@ pub struct InternalContainerLeaseReaperArgs {
     pub token: String,
 }
 
-/// Which `effigy <topic> --help` panel to render.
-///
-/// `effigy help <command>` reuses these same panels, so both spellings render
-/// identical facts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HelpTopic {
-    General,
-    Bundle,
-    Changelog,
-    Deploy,
-    Deps,
-    Secrets,
-    Defer,
-    Exec,
-    State,
-    Workspace,
-    Gateway,
-    Service,
-    Rhai,
-    Skill,
-    Docs,
-    Contracts,
-    Container,
-    Bootstrap,
-    Release,
-    Doctor,
-    Tasks,
-    Test,
-    Init,
-    Uninstall,
-    Runs,
-    Fmt,
-}
+pub use effigy_core::builtin_tasks::HelpTopic;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChangelogArgs {

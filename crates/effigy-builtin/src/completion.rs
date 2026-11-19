@@ -46,7 +46,11 @@ pub(super) fn run_builtin_completion(
             } else {
                 ("completion", render_completion_help())
             };
-            render_builtin_help_text(topic, text, output_json)
+            render_builtin_help_text(
+                topic,
+                text,
+                output_json || task.options.as_ref().is_some_and(|o| o.json_mode),
+            )
         },
         |args| parse_completion_parsed_request(task, args),
         |parsed: CompletionParsedRequest| match parsed {

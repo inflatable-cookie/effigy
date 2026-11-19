@@ -3,10 +3,19 @@ use effigy_execution::ExecutionRuntimeArgsPlan;
 use effigy_tasks::TaskRuntimeArgs;
 
 pub(super) fn prepare_execution_runtime_args(
+    selector: &str,
     args: &[String],
     options: Option<&effigy_core::task_args::GlobalCliOptions>,
 ) -> Result<(TaskRuntimeArgs, TaskRuntimeArgs, bool, bool, bool), RunnerError> {
     let plan = match options {
+        Some(options)
+            if effigy_core::builtin_tasks::is_builtin_task_name(
+                selector.rsplit('/').next().unwrap_or(selector),
+            ) =>
+        {
+            ExecutionRuntimeArgsPlan::from_builtin_cli(args, options)
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+        }
         Some(options) => ExecutionRuntimeArgsPlan::from_cli(args, options),
         None => ExecutionRuntimeArgsPlan::from_args(args)
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?,

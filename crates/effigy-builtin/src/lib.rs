@@ -40,7 +40,7 @@ mod test;
 pub mod test_support;
 mod text_doc;
 
-pub use constants::{BUILTIN_TASKS, DEFAULT_BUILTIN_TEST_MAX_PARALLEL};
+pub use constants::{builtin_tasks, DEFAULT_BUILTIN_TEST_MAX_PARALLEL};
 pub use effigy_core::host_alias::HostAlias as BuiltinHostAlias;
 pub use error::BuiltinError;
 pub use ports::{
@@ -91,6 +91,17 @@ pub fn try_run_builtin_task(
     catalogs: &[LoadedCatalog],
     invocation_cwd: &Path,
 ) -> Result<Option<String>, BuiltinError> {
+    if task
+        .options
+        .as_ref()
+        .is_some_and(|options| options.task_plan)
+        && selector.task_name != "test"
+    {
+        return Err(BuiltinError::task_invocation(format!(
+            "unknown argument(s) for built-in `{}`: --plan",
+            task.name
+        )));
+    }
     let Some(entry) = registry::builtin_registry_entry(&selector.task_name) else {
         return Ok(None);
     };

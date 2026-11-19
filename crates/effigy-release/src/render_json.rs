@@ -5,29 +5,26 @@ use crate::{
     ResolvedVersionSource, TargetKind,
 };
 
+pub fn release_status_payload(status: &ReleaseStatus) -> serde_json::Value {
+    serde_json::to_value(ReleaseStatusPayload::from(status))
+        .unwrap_or_else(|_| serde_json::json!({"schema":"effigy.release.status.v1","ready":false}))
+}
+pub fn release_gate_run_payload(run: &ReleaseGateRun) -> serde_json::Value {
+    serde_json::to_value(ReleaseGateRunPayload::from(run))
+        .unwrap_or_else(|_| serde_json::json!({"schema":"effigy.release.gates.v1","passed":false}))
+}
+pub fn release_plan_payload(plan: &ReleasePipelinePlan) -> serde_json::Value {
+    serde_json::to_value(ReleasePipelinePlanPayload::from(plan))
+        .unwrap_or_else(|_| serde_json::json!({"schema":"effigy.release.plan.v1","ready":false}))
+}
 pub fn render_release_status_json(status: &ReleaseStatus) -> String {
-    render_pretty(
-        &ReleaseStatusPayload::from(status),
-        "{\"schema\":\"effigy.release.status.v1\",\"ready\":false}",
-    )
+    serde_json::to_string_pretty(&release_status_payload(status)).expect("JSON value encodes")
 }
-
 pub fn render_release_gate_run_json(run: &ReleaseGateRun) -> String {
-    render_pretty(
-        &ReleaseGateRunPayload::from(run),
-        "{\"schema\":\"effigy.release.gates.v1\",\"passed\":false}",
-    )
+    serde_json::to_string_pretty(&release_gate_run_payload(run)).expect("JSON value encodes")
 }
-
 pub fn render_release_plan_json(plan: &ReleasePipelinePlan) -> String {
-    render_pretty(
-        &ReleasePipelinePlanPayload::from(plan),
-        "{\"schema\":\"effigy.release.plan.v1\",\"ready\":false}",
-    )
-}
-
-fn render_pretty<T: Serialize>(payload: &T, fallback: &str) -> String {
-    serde_json::to_string_pretty(payload).unwrap_or_else(|_| fallback.to_owned())
+    serde_json::to_string_pretty(&release_plan_payload(plan)).expect("JSON value encodes")
 }
 
 fn optional_path(path: &Option<std::path::PathBuf>) -> Option<String> {

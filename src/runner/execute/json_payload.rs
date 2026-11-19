@@ -3,24 +3,13 @@ mod payload;
 
 use effigy_ui::encode_json;
 
+pub(super) use payload::task_run_payload;
 pub(in crate::runner) use payload::PlannedRuntimeTarget;
 
 use crate::runner::error::RunnerError;
 use effigy_cli::builtin_names::builtin_escape_spelling;
 use effigy_manifest::TaskSelection;
 use effigy_tasks::TaskSelector;
-
-pub(super) fn render_task_command_json(
-    selector: &TaskSelector,
-    cwd: &std::path::Path,
-    command: &str,
-    exit_code: Option<i32>,
-    stdout: &str,
-    stderr: &str,
-) -> Result<String, RunnerError> {
-    let payload = payload::task_run_payload(selector, cwd, command, exit_code, stdout, stderr);
-    encode_task_run_json(&payload)
-}
 
 pub(super) fn render_task_plan(
     output_json: bool,

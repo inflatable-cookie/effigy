@@ -4,9 +4,7 @@ use crate::contracts::{check_id, remediation};
 use crate::FindingSink;
 
 pub fn is_builtin_selector(task_name: &str) -> bool {
-    effigy_core::builtin_tasks::BUILTIN_TASKS
-        .iter()
-        .any(|(name, _)| *name == task_name)
+    effigy_core::builtin_tasks::is_builtin_task_name(task_name)
 }
 
 pub fn add_invalid_reference_syntax(

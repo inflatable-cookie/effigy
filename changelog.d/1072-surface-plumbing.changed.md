@@ -1,1 +1,1 @@
-Simplified internal help topic dispatch while preserving existing help output.
+Improved command failure reporting while simplifying CLI option routing.

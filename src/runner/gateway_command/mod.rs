@@ -985,9 +985,16 @@ fn gateway_status_refusal(
     recovery: serde_json::Value,
 ) -> RunnerError {
     let diagnosis = effigy_gateway::server::diagnose_gateway_status(config);
-    RunnerError::CommandJsonFailure {
-        rendered: gateway_status_refusal_json(error, message, &diagnosis, recovery).to_string(),
+    let mut human = effigy_ui::HumanError::new(message);
+    if let Some(action) = recovery.as_str().filter(|action| !action.trim().is_empty()) {
+        human = human.next_action(action);
     }
+    RunnerError::structured_json(
+        gateway_status_refusal_json(error, message, &diagnosis, recovery),
+        false,
+        human,
+        None,
+    )
 }
 
 fn legacy_identity_recovery(pid: u32) -> serde_json::Value {

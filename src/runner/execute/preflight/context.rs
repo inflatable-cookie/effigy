@@ -81,7 +81,7 @@ pub(in crate::runner) fn build_execution_preflight_from_input(
         args: input.args.clone(),
     };
     let (runtime_args_raw, runtime_args_exec, output_json, plan, help) =
-        prepare_execution_runtime_args(&input.args, input.task_options.as_ref())?;
+        prepare_execution_runtime_args(&input.selector, &input.args, input.task_options.as_ref())?;
     let discovery = discovery::discover_execution_preflight(
         &input.selector,
         input.cwd,

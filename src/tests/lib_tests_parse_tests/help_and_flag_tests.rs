@@ -408,7 +408,7 @@ fn parse_unknown_help_topic_fails_with_group_and_command_guidance() {
 fn parse_help_topic_for_builtin_owned_help_mirrors_the_direct_command() {
     for name in ["config", "scan"] {
         let expected = Command::Task(TaskInvocation {
-            options: None,
+            options: Some(Default::default()),
             name: name.to_owned(),
             args: vec!["--help".to_owned()],
         });
