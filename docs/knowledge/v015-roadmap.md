@@ -2,7 +2,7 @@
 
 Current direction: Q-011–Q-017 in [questions.md](questions.md), the runtime
 contracts, and the dated release direction in
-[release.md](contracts/release.md#v015-level-1-qualification-order--2026-11-02).
+[release.md](contracts/release.md#release-proof-obligations).
 Queue owns live task status, lane order and proof receipts. This page states
 durable release gates; it does not qualify a source head or authorize native
 windows, installation, production enablement or publication.
@@ -49,7 +49,7 @@ The selected order is recorded in Tom's 2026-11-02 v2 decision d01912ac
    That GO is separate from the qualification GOs and grants no publication
    authority.
 
-Tom's 2026-11-03 [source-split ruling](contracts/release.md#source-delivery-and-separate-proof-tasks--2026-11-03)
+Tom's 2026-11-03 [source-split ruling](contracts/release.md#release-proof-obligations)
 allows the reviewed implementation and test-only packet to merge after
 current-main integration review with ordinary production Discard still refused.
 Separate owned tasks carry the deferred source proofs, final candidate and
@@ -60,7 +60,7 @@ and inputs; every required backend and consumer gate must pass before Tom's
 separate production-enable GO. Each launcher invocation requires one explicit
 backend; the independent offline aggregate judges the three retained receipts.
 Source delivery transfers these obligations; it does not satisfy them. The
-[owned follow-up map](contracts/release.md#source-delivery-and-separate-proof-tasks--2026-11-03)
+[owned follow-up map](contracts/release.md#release-proof-obligations)
 is effigy#619 (source controls), #620 (candidate/bindings), #621–#623 (Colima,
 Desktop, Linux), #624 (aggregate judgment), #625 (Acow/CBS continuity) and #626
 (reviewed production enablement after Tom's final GO).

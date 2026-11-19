@@ -2,7 +2,7 @@
 
 This runner interface implements the Level 1 boundary in [contract
 052](../contracts/052-runtime-kernel-contract.md#811-workspace-client-interface-v1).
-It supplements the [activation interface](../contracts/053-workspace-activation-interface.md)
+It supplements contract [053](../contracts/053-environment-reconciler-contract.md)
 without changing activation ownership. The host channel authenticates the
 capability, current session fence and generation before calling an adapter.
 An adapter never authenticates guest claims or opens a second authority.

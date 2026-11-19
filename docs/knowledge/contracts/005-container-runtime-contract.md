@@ -2621,189 +2621,18 @@ Update this contract when Effigy changes:
 - which host runs receive scoped declared-alias resolution, and what proves a
   scope's backing service before such a run starts
 
-## Verified local runtime refresh — 2026-10-04
+## MinIO service retirement
 
-Under Tom’s standing authority `b16abcd4`, the planner refreshed the local host,
-ARM64 Linux artifact and canonical skill to `v0.13.1+local.ffdfc1f9`, from
-reviewed main `ffdfc1f9b6368461ed87cc745859532d422a6e27`. Queue milestone
-`c15c9959-2329-4d4f-ad5e-01728a70acbc` passed setup, QA and teardown, with
-no escaped descendants and automatic capacity release. Both private native
-candidates and installed host routing checks passed. The Linux build’s
-original scheduler run settled passed after its follower lost contact while
-queued; the idle-read failure remains separately owned by Effigy #077.
-
-This refresh includes the exact-owned stale healthcheck recovery and Rust-path
-ownership diagnostics/provisioning. Automatic repair remains limited to
-exclusively owned disposable volumes. Bind-mounted targets and shared caches
-are verified only; real consumer UID/mount acceptance is still required and
-was not established by private numeric-UID memory fixtures. No live ownership
-repair, VM start, stack restart or release was performed. Historical admission
-state was preserved. The actual prior host `056111f` and Linux `47078933`
-channels, skill files and hashes are backed up in
-`~/.cache/effigy/rollbacks/runtime-ffdfc1f9-4cquw2gs/rollout-receipt.json`.
-
-## Release-unblock local refresh — 2026-10-04
-
-Under standing authority `b16abcd4`, the planner refreshed the host, ARM64
-Linux artifact and canonical skill to `v0.13.1+local.c6f4f33c`, pinned to
-`c6f4f33c0038b1f25cae335a35708a063f16c0d0`. Queue milestone
-`132db11b-5876-4099-abae-3aa9c2451735` passed setup, QA and teardown.
-Its capture recorded inherited parent-token children, the QA nested fact,
-unchanged historical admission state, no escaped descendants or reapers,
-and automatic capacity release at settlement.
-
-Host and native ARM64 Linux candidates passed version, light routing,
-unavailable-scheduler exit 75 and retired explicit-zero exit 2 checks, with
-no heavy-task effects. Whole JSON output parsed successfully on the host.
-Installed host checks passed and the previous `ffdfc1f9` binary remained
-usable as a rollback artifact. Backups, hashes, private checks and the
-install receipt are in
-`~/.cache/effigy/rollbacks/runtime-c6f4f33c-e7ycg0c7/rollout-receipt.json`.
-A private build-routing mistake stopped the first candidate attempt before
-compilation; the corrected attempt completed. No milestone rerun occurred.
-
-This includes #077 idle follower and #079 exact-unit unload verification;
-#078 doctor latency and #080 bulk ownership remain separate. Actual fresh
-Acowtancy stack acceptance of #073 failed provisioning throughput, and its
-log also recorded a deep Cargo checkout chown failure. The owning worker
-stopped that bootstrap, preserving services, volumes, logs and worktree.
-#080 must pass independent protection/throughput review, a later gated
-refresh and real consumer acceptance before that blocker is resolved.
-No live ownership cleanup, stack restart, VM start or release was performed
-by this refresh. Historical admission state stayed unchanged.
-
-## Legacy nested-bind acceptance and local refresh — 2026-10-05
-
-Tom explicitly approved installation of the prepared `67748464` candidate and
-`effigy exec true` in `/Users/tom/Dev/legacy/sites/acowtancy`. The host binary,
-ARM64 Linux artifact and canonical installed skill were refreshed from exact
-source `677484647f6e0896ba016fc329c921f1251a096f`, after Queue milestone
-`1a053222-3931-42af-9e30-ef7abf30b714` passed setup, QA and teardown. Its
-settlement recorded no escaped descendants or containers; capacity released
-automatically at `2026-10-05T11:54:59.108Z`.
-
-Private host and native Linux checks passed version, light routing, whole JSON
-parsing, unavailable-scheduler exit 75 and explicit-zero exit 2 with no heavy
-task effects. The prior host binary passed the same rollback checks. Installed
-host routing checks passed. Backups, hashes and the acceptance receipt are at
-`~/.cache/effigy/rollbacks/runtime-67748464-mcbr1_7z/rollout-receipt.json`.
-
-On installed `v0.13.1+local.6774846`, the previously failing legacy
-`effigy exec true` exited 0. Read-only inspection confirmed that Composer cache
-remains a host bind from `/Users/tom/.effigy/shared/composer-cache` to
-`/home/dev/.cache/composer`; the resolved numeric user `501:20` sees it as
-readable and writable, with `501:20` ownership and mode 0755. The legacy route
-returned HTTP 200. This proves the reported launch failure is resolved on the
-existing running stack; it is not a fresh-stack bootstrap claim. No mount
-restructuring, manual chown/chmod, reseed, stack restart or VM restart occurred.
-
-## Owned-child exit observation qualification — 2026-10-13
-
-Tom's standing bounded hybrid approval and explicit "OK, coordinate with effigy
-to get this done" authorize qualification of the generic owned-child observation
-and published dependent-replacement path. This extends the existing owned-stop
-repair scope; it does not authorize another consumer attempt or runtime cleanup.
-
-The retained `0412cc7b` Reference attempt selected `owner_unverified`, then both
-dependent supervisor logs reported `owned child exit observation was malformed`.
-The published dependency-stop path propagated that error before relaunch.
-Front/admin listener files remained present as `unavailable`; their retained
-identities do not prove current process liveness or death. The owner-verification
-subfailure and actual malformed process-table capture are not established.
-
-Qualification must first exercise the actual production path in isolated private
-host fixtures: published dependency replacement, new tuple/assignments, native
-owned-group settlement and cleanup, with siblings and foreign processes
-preserved. Valid active/exited/zombie observations must remain distinct from
-empty, malformed, unreadable, deadline and failed inspection. No parser fallback,
-longer deadline, fabricated completion or weakened identity predicate may turn
-uncertainty into success.
-
-Only bounded structural evidence may be added when necessary: exact owned
-PID/boot/start/group identity, capture byte count and digest, UTF-8/token/state
-classification, result/exit/deadline/capture category and timing. Arbitrary raw
-output, environment, commands and secrets are excluded. Any demonstrated defect
-must be corrected narrowly; otherwise the exact missing observation or capability
-remains explicit. The existing owned-stop correction is not presumed to cure
-this capture without independent controlled proof, exact-head review/CI and
-coherent main assurance. No consumer repin or retry follows from this policy.
-
-## Private legacy MinIO fixture distribution — 2026-10-12
-
-Retired — 2026-10-28 (v0.15, effigy#424). Tom ruled MinIO unsupported and both
-Acowtancy and the upstream Underlay bundle use Silo. Effigy removed the
-built-in `minio` catalog service: `effigy service list` no longer offers it and
+MinIO is unsupported (Tom, 2026-10-28, v0.15, effigy#424). Effigy removed the
+built-in `minio` catalog service: `effigy service list` no longer offers it, and
 a manifest whose `catalog = "minio"` would fall back to it is refused with a
 message naming `silo`, never remapped. Q-005 precedence still applies: a
 project, bundle or declared source that defines its own `minio` fragment
-resolves from that source, and list and render name it. Silo keeps the `MINIO_ROOT_*` environment names
-and `minioadmin` default credentials as its own compatibility surface, not as a
-MinIO service. Existing MinIO volumes and data are not migrated, deleted or
-otherwise touched, Convergence is neither a migration target nor edited, and no
-new pack release follows. Everything below is the earlier record and remains
-historical.
-
-### Underlay scope correction — 2026-10-13
-
-Tom's subsequent ruling is: "We're supposed to be dropping minio for silo -
-this is such a silly waste of time and effort!" For Underlay profile acceptance,
-the private legacy MinIO parity/package prerequisite is withdrawn. Further
-MinIO packaging, native qualification and review intake for that prerequisite
-stop; the existing source, unqualified artifact and receipts remain preserved.
-No deletion, abandonment, runtime cleanup or qualification follows from this
-ruling.
-
-The bundle owner now owns an explicitly named Silo container/hybrid proof and
-default migration through its normal checked scope. Silo must retain its own
-identity and contract; it is not a substitution under a MinIO label. This ruling
-does not itself change the shipped catalog, prove Silo acceptance or authorize
-release, installation or existing-data effects. The older private-package ruling
-below remains historical context, not continuing authority for Underlay's
-withdrawn prerequisite.
-
-Tom's recorded ruling is: "Authorize separately bounded private fixture-only
-package qualification; no shared catalog/default change or publication."
-The ruling selects direction; a checked, approved bounded brief must precede
-package construction or runtime qualification.
-
-The shipped MinIO catalog remains unchanged. A private fixture package must
-identify the exact upstream server release and verify its downloaded bytes,
-plus independently pinned base and client identities. It must preserve the
-catalog's server command, environment contract, ports, persistent `/data`,
-`/bin/sh` target and `mc ready local` health contract. Record packaging and
-client differences explicitly; a new private image is not the unavailable
-upstream image, and Silo must not be substituted under the MinIO identity.
-
-Artifact inspection and checksums establish package identity, not service
-readiness or consumer parity. Qualification must separately prove the native
-Linux server/client behavior, bootstrap, storage operations and owned cleanup.
-Any unavailable runtime or incomplete ownership proof remains an explicit
-boundary. Consumer profile acceptance and its attempt allowance remain with
-the bundle owner; package work does not start or retry that profile.
-
-This scope excludes shared catalog adoption, default migration, publication,
-release or tag changes, global installation, existing data or volume changes,
-and effects on live consumers, gateway settings or VM lifecycle. Private
-qualification cannot establish remote cancellation or unrelated Linux Effigy
-artifact freshness.
-
-Tom subsequently answered "Approved" to the separate bounded lifecycle
-proposal. After incorporating that scope into the checked, approved fixture
-brief, qualification may create exactly one new profile named
-`effigy-minio-fixture-dfefc279`. Refuse any pre-existing name or state; existing
-profiles and the bundle owner's held scopes are not available for adoption.
-The profile is Linux arm64 with containerd and VZ, four CPUs, 4 GiB RAM,
-32 GiB data disk and 20 GiB root disk. It must not activate host contexts,
-modify SSH configuration, forward an SSH agent, mount host directories, edit
-templates, enable Kubernetes or foreign-architecture helpers, or add custom
-DNS, gateway, host networking or port forwarding.
-
-Record creation intent and exact owned identities before effects. Startup,
-one native proof batch and owned teardown have respective bounds of 300,
-600 and 120 seconds, with no automatic retries. Cleanup may stop and delete
-only that positively identified newly owned profile and its fixture resources.
-Any ownership uncertainty leaves them held. This exception does not authorize
-changes to any existing VM, held resource, consumer profile, data or allowance.
+resolves from that source, and list and render name it. Silo keeps the
+`MINIO_ROOT_*` environment names and `minioadmin` default credentials as its own
+compatibility surface, not as a MinIO service. Existing MinIO volumes and data
+are not migrated, deleted or otherwise touched, and Convergence is neither a
+migration target nor edited.
 
 ## Owned completion observation and stop authority
 
@@ -2828,11 +2657,8 @@ both keep the refusal. A zombie member holds no workload, so it keeps no group
 open. Process IDs and status observations grant no signal authority, and no
 signal is sent after reaping.
 
-The retained macOS CI failure proves an observation deadline was reported; its
-exact historical interleaving remains unknown. This correction does not change
-unsafe/FFI blocks, doctor deadlines, admission, container cancellation or public
-APIs. Existing unsafe proof-comment observations remain report-only in the
-scoped Rust audit, without a soundness or whole-product certification claim.
+This correction changes no unsafe/FFI block, doctor deadline, admission,
+container cancellation or public API.
 
 
 ### Exit observation evidence and published dependent replacement
@@ -2856,46 +2682,9 @@ The controlled public proof publishes both a dependency and its dependent,
 replaces the dependency's child generation in the published phase, then requires
 a new dependent generation with the current dependency assignments after actual
 owned-group settlement. Scoped teardown must preserve sibling and foreign
-listeners. It uses private host fixtures and the production native observer;
-it does not certify consumer VM cleanup, real Linux or remote cancellation.
-The historical malformed capture from bundle005 was not retained. Its exact
-bytes and cause remain unknown; the additional diagnostics and controlled proof
-do not establish that historical cause or authorize a consumer retry.
+listeners. It uses private host fixtures and the production native observer; it does not
+certify consumer VM cleanup, real Linux or remote cancellation.
 
-
-### Reviewed replacement source assurance (2026-10-14)
-
-Task 151 / PR 272 completed at clean synchronized main
-`77d22adcbdbca20752720d6671310f13894d219f`. Its tree matches independently
-reviewed head `11d8530fda6a653a4375152405130826a5158bbd`: all five review
-subjects passed, the reviewer executed all nine covering selectors with 105
-cases and no required skips, and all seven exact-head CI checks passed.
-
-The one fresh main QA, `01f42aa0-04dd-4a02-a5ef-69ab19f27465`, passed: 5,038
-tests, no failures, 34 skips. Setup, QA and teardown each exited zero; every
-owned group settled empty, with no escaped descendants or containers. Capacity
-released automatically at `2026-10-13T22:58:20.605Z`. One passing test carried
-a nextest LEAK diagnostic: `bootstrap_help_is_command_specific` at 2.071 seconds.
-Its process/output lifetime cause is unestablished and is recorded separately
-as lead `6920b85a-f6c3-4513-bb31-0a9d58df5743`; it is not attributed to the
-historical release-plan leak or bundle005 failure.
-
-One private `build:release` from that unchanged source exited zero. The artifact
-is Mach-O Darwin arm64 with SHA-256
-`95b16dbf56f507f0593ca205694fc5e667d311eee7e67b4e1d3afc81ba724938`.
-Its displayed `v0.14.1` is not source attestation. The qualified handover retains
-the original intents, exact source/build correspondence, exits, logs, checksum
-and settlement in the owner audit directory
-`owned-child-exit-observation/final-main-77d22adc/qualified-source-artifact-handover.json`.
-It is a private artifact, not an installed or published release.
-
-Acowtancy and the bundle owner retain admission of their actual next runs. This
-assurance does not retry bundle005, adopt or clean held resources, change its
-spent allowance, prove the historical malformed capture, or qualify real Linux
-and remote container cancellation. Source 156's launchd handoff remains privately
-qualified source only; administrator installation, live migration and cross-boot
-proof are Tom-only and unexecuted. Older source, QA and artifact receipts remain
-immutable history.
 
 ## nerdctl health-check rendering — 2026-10-24
 

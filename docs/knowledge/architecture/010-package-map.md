@@ -93,7 +93,7 @@ these callers. `deny.toml` remains the dependency policy authority.
 | `effigy-runtime` | runtime metadata, data/read/write/shell adapter helpers, and manager-backed runtime IO wrappers |
 | `effigy-process` | host process/runtime process primitives used by runner surfaces |
 | `effigy-data` | data target resolution, seed/dump source normalization, artifact handoff planning, and database command rendering |
-| `effigy-state` | state-stack planning/apply/capture/lineage, plus the `artifact` module (artifact refs, OCI adapter, staging/apply/capture plans, metadata, and operation reports; folded in from `effigy-artifacts` in v0.15) |
+| `effigy-state` | the pure state-stack model: planning/apply/capture/lineage, report paths, history and validation, with no file writes, tasks or container calls, plus the `artifact` module (artifact refs, OCI adapter, staging/apply/capture plans, metadata, and operation reports; folded in from `effigy-artifacts` in v0.15) |
 
 ### Operator and policy domains
 
@@ -162,6 +162,21 @@ these callers. `deny.toml` remains the dependency policy authority.
 | [`src/runner/container_command/data.rs`](../../../src/runner/container_command/data.rs) | container data command glue over `effigy-data`, `effigy-state::artifact`, container operation plans, and runtime IO adapters |
 | [`src/runner/db_seed.rs`](../../../src/runner/db_seed.rs) | bootstrap and task-facing DB seed glue over `effigy-data` source normalization, artifact staging, and task execution requests |
 | [`src/runner/state_command_artifact.rs`](../../../src/runner/state_command_artifact.rs) | `effigy state artifact` command glue over `effigy_state::artifact` refs, OCI transport, staging, and capture plans |
+
+### Deploy surfaces
+
+| Module | Responsibility |
+| --- | --- |
+| [`src/runner/deploy_command/mod.rs`](../../../src/runner/deploy_command/mod.rs) | `deploy` dispatch only: one arm per subcommand, naming the module that answers it |
+| [`src/runner/deploy_command/model/`](../../../src/runner/deploy_command/model/mod.rs) | managed deployment-model vocabulary: `deploy.model.v1` output, `[deploy.model]` manifest wire shapes, per-environment override merging and provenance, derivation, the closed runtime/backing-service mode sets, development-value suppression |
+| [`src/runner/deploy_command/provider/`](../../../src/runner/deploy_command/provider/mod.rs) | external provider-package vocabulary: package identity and resolution, `provider.toml` descriptor, path/git source materialization and cache, Rhai phase invocation and its workspace, phase-report contract, phase context document |
+| [`src/runner/deploy_command/plan.rs`](../../../src/runner/deploy_command/plan.rs), [`status.rs`](../../../src/runner/deploy_command/status.rs), [`export.rs`](../../../src/runner/deploy_command/export.rs) | the read and transaction command surfaces; `deploy model` and `deploy export` stay static derivation and export |
+| [`src/runner/deploy_command/report.rs`](../../../src/runner/deploy_command/report.rs) | report schemas, active/latest/history path conventions, JSON read/write; path and display helpers come from `effigy_state::paths` |
+| [`src/runner/deploy_command/text.rs`](../../../src/runner/deploy_command/text.rs) | human-facing deploy rendering |
+
+Report paths, JSON schemas and the provider context/report contracts are stable
+across internal moves. Provider-specific live behavior, resource provisioning
+and secret management stay outside Effigy core and outside these modules.
 
 ### Workspace/session ownership
 

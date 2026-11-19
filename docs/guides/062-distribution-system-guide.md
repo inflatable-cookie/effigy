@@ -71,7 +71,7 @@ tasks, where they can name Effigy's workflow, artifacts and tap directly.
 Effigy's own mapping is in [`config/release.toml`](../../../config/release.toml)
 and [`config/tasks.toml`](../../../config/tasks.toml) under the `release:`
 namespace, and
-[`release.md`](../knowledge/contracts/release.md#repo-tasks-that-replaced-the-retired-commands)
+[`release.md`](../knowledge/contracts/release.md#release-tasks)
 describes each task.
 
 ## Historical Notes Kept

@@ -9,15 +9,15 @@ Current product truth is owned by topic. User documentation remains in [guides](
 | Detailed component design | [Architecture directory](architecture/000-overview.md) |
 | Live progress sites and the feedback lint gate | [Live progress sites](architecture/036-live-progress-sites.md) |
 | Interfaces and guarantees | [Contracts](contracts/README.md) |
-| Change-scoped QA (proposed) | [Bounded QA groups contract](contracts/051-bounded-qa-groups-contract.md) |
+| Change-scoped QA (implemented; `stop` and `hard_timeout_ms` wait on 052) | [Bounded QA groups contract](contracts/051-bounded-qa-groups-contract.md) |
 | Runtime kernel (session kernel, guest client, pinned TLS transport, host channel seam and serving owner implemented; the production activation caller, the wider guest Observe surface and backend/consumer qualification are not) | [Runtime kernel contract](contracts/052-runtime-kernel-contract.md); [workspace-client interface](contracts/052-runtime-kernel-contract.md#811-workspace-client-interface-v1) |
 | Interpolation custody and recovery (proposed) | [Design](architecture/037-interpolation-custody-proposal.md) |
 | Container environments | [Environment reconciler contract](contracts/053-environment-reconciler-contract.md) |
 | Releases (config, `status`, `--plan` and the Run with checkpoints and receipts implemented for `tag` and `task` targets; native publish providers are v0.16) | [Release platform contract](contracts/054-release-platform-contract.md) |
 | Release procedure | [Release](contracts/release.md) |
 | Test fixture ownership | [Fixture hygiene](test-fixture-hygiene.md) |
-| Test assurance and whole-suite census | [Test assurance](test-assurance.md) |
-| Test and code quality ratings | [Quality tables](quality/README.md) |
+| Test assurance and suite census | [Test assurance](test-assurance.md) |
+| Test and code quality ratings (closed review artifact) | [Quality ratings](quality.md) |
 | Cargo routing and its recorded exceptions | [Cargo routes](cargo-routes.md) |
 | Domain vocabulary | [Domain](domain/README.md) |
 | Open questions | [Questions](questions.md) |

@@ -110,8 +110,8 @@ Remaining compatibility boundary:
   no override; they are not the compose-backend surface
 - drift allowances for named adapter boundaries and private fixtures stay
   path-scoped in `scripts/check-runtime-container-drift.rhai` and are owned by
-  [architecture 022](../architecture/022-runtime-architecture-sanity-audit.md)
-  and [contract 015](015-runtime-operation-pipeline-contract.md)
+  the [package map](../architecture/010-package-map.md) and
+  [contract 015](015-runtime-operation-pipeline-contract.md)
 
 ## Operation Reports
 
