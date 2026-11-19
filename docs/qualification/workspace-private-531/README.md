@@ -20,11 +20,13 @@ Tom's [2026-11-03 source-split ruling](../../knowledge/contracts/release.md#sour
 permits the implementation and compile-time qualification packet to merge after
 current-main integration review with ordinary production Discard still refused.
 effigy#620 split the packet's entry points: `launch.py --backend
-colima|desktop|linux` independently executes exactly one backend under its own
+colima|desktop|linux --evidence-root <root>` independently executes exactly one
+backend under its own
 scoped GO, binding the exact source, programs, contract, candidate, inputs,
 pinned root, old baseline, window budget and input-hash one-use marker, and
 retaining the exact original complete/failed receipt bytes as a hash-bound
-export inside that authorized proof turn. Positivity is recorded only after
+export inside that authorized proof turn, below the explicit durable evidence
+root (never a Queue run scratch directory, effigy#1041). Positivity is recorded only after
 the post-run source check, so a mid-window source edit yields honest,
 nonqualifying evidence. `--backend` is required; new all-backend launches are
 retired (Tom, 2026-11-10; effigy#879). Backend receipts must still match the same final source, features and
@@ -271,6 +273,29 @@ insufficient. Missing placement evidence refuses, with no internal-drive fallbac
 
 ## Separate GO receipts and the entry selectors
 
+### Durable evidence root (effigy#1041)
+
+Queue deletes its run scratch directory `<scratch>/<8hex>/` at task closeout,
+so no packet output may live there: evidence in Queue run scratch was deleted
+at closeout twice (effigy#622 and #624), and one frozen production binary had
+to be rebuilt. The launcher therefore takes the evidence root explicitly and
+refuses to guess one. It refuses a missing, relative, symlinked or non-private
+root, and it refuses any root inside a Queue run scratch directory. The
+documented default is `/Volumes/Stash/scratch/effigy/evidence/<run>/` (Barge's
+Stash layout, Tom 2026-11-18); `/Volumes/Stash/effigy-evidence/<run>/` stays
+accepted until it moves, as do `planner-owned-*` roots directly below the
+scratch root. The root must already exist as a private `0700` directory owned
+by the native executor; the launcher never creates, rebinds or repairs it, and
+it is never the pinned qualification root.
+
+The freezing recipes ([producer.md](producer.md)) write the frozen role
+artifacts, their `.active-version` sidecars and their receipts under that same
+root before the inputs are frozen. The launcher writes exactly one fresh
+`attempt-<inputs-sha256>-<suffix>/` directory per invocation below the root,
+holding `started.json` (including the root), each invocation record and each
+retained original-receipt export. The aggregate input is those records and
+exports, so a later judgment reads the root, never a Queue run scratch path.
+
 First freeze the runtime inputs and obtain their SHA-256. Each native GO is then
 recorded as `effigy.workspace-private-native-go.v1`, naming Tom's actual decision
 ID, kind `native`, this exact source head, input hash, backend, engine identity,
@@ -290,14 +315,15 @@ Bind one backend cell of the frozen inputs with the selector below, replacing
 the paths, hashes and backend with their reviewed values:
 
 ```sh
-effigy proof:workspace:private-qualification -- --inputs <inputs.json> --sha256 <inputs-sha256> --go-bindings <go-index.json> --go-sha256 <go-index-sha256> --backend <colima|desktop|linux>
+effigy proof:workspace:private-qualification -- --inputs <inputs.json> --sha256 <inputs-sha256> --go-bindings <go-index.json> --go-sha256 <go-index-sha256> --backend <colima|desktop|linux> --evidence-root <evidence-root>
 ```
 
 It validates exactly the selected backend's scoped GO, consumes that backend's
 input-hash one-use marker, runs only that backend's full session, and records
 the original complete/failed receipt with its binding record in a fresh
-evidence directory, retaining the exact original receipt bytes through a
-quoted, size-bounded, hash-bound export inside the proof turn. Positivity is
+directory below the explicit evidence root, retaining the exact original
+receipt bytes through a quoted, size-bounded, hash-bound export inside the
+proof turn. Positivity is
 recorded only after the post-run
 source-unchanged check: a mid-window source edit refuses and yields honest,
 nonqualifying evidence. One entry is one positive native receipt: it is never
@@ -322,7 +348,10 @@ effigy verify:workspace:private-qualification:aggregate -- --source-head <head> 
 
 It performs no native action and writes nothing: no SSH, no runtime, no
 qualification-root reopen, no backend or VM observation. It reads and hashes
-the retained original-receipt exports locally, refuses missing, failed,
+the retained original-receipt exports locally, either at their durable
+evidence-root paths or as a byte-identical copy wherever that copy lives; a
+file whose sha256 differs from the recorded digest always refuses. It also
+refuses missing, failed,
 source-changed, foreign, stale, mixed-source, mixed-candidate or incomplete
 receipts, and validates the fixed full-session cell contract of each export
 (native, production-disabled, the production-refusal through restored-baseline
@@ -421,9 +450,9 @@ Re-runs are the norm: a failed attempt is diagnosed, fixed and re-run with fresh
 inputs. Nothing in the packet may require an operator to clean up the previous
 attempt, so every per-attempt identity is derived from the attempt itself:
 
-- The launcher derives a fresh evidence directory from the inputs digest plus an
-  attempt suffix below the frozen parent; a reused base name never refuses and a
-  failed attempt's evidence stays intact.
+- The launcher derives a fresh attempt directory from the inputs digest plus an
+  attempt suffix below the explicit durable evidence root; a reused root never
+  refuses and a failed attempt's evidence stays intact.
 - The GO is compared with one reference head on both sides — the frozen inputs
   head it names. The host entry and the guest runtime read the same value; the
   live checkout head is accepted only through the frozen packet-only

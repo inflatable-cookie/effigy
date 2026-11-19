@@ -16,6 +16,8 @@ SSH_CONTROL = SCRATCH / '531-linux-control'
 PACKET = Path(__file__).resolve().parent
 REPOSITORY = PACKET.parents[2]
 HEX = re.compile(r'[0-9a-f]{64}')
+# A Queue run's scratch directory component, e.g. /Volumes/Stash/scratch/effigy/48caffc0/.
+QUEUE_RUN_SCRATCH_NAME = re.compile(r'[0-9a-f]{8}')
 HELPER_PROTOCOL_RE = re.compile(r'^pub const HELPER_PROTOCOL: u32 = (\d+);$', re.MULTILINE)
 # Docs are not compiled into the shipped binary; the only docs include_str! is a test fixture.
 PACKET_ONLY_PREFIXES = ('docs/', 'changelog.d/')
@@ -197,6 +199,43 @@ def qualification_path(binding):
             'qualification root must be an exact absolute child of removable scratch')
     require(all(type(binding[key]) is int and binding[key] >= 0 for key in ('device', 'inode', 'uid')),
             'actual qualification root identity required')
+    return path
+
+
+def queue_run_scratch(path, *, scratch=None):
+    """True when the absolute path sits inside a Queue run scratch directory.
+
+    Queue deletes `<scratch>/<8hex>/` at task closeout, so evidence written there
+    is gone before any later judgment can read it (effigy#622, #624)."""
+    scratch = SCRATCH if scratch is None else Path(scratch)
+    try:
+        relative = Path(path).relative_to(scratch)
+    except ValueError:
+        return False
+    return bool(relative.parts) and QUEUE_RUN_SCRATCH_NAME.fullmatch(relative.parts[0]) is not None
+
+
+def evidence_root(raw, *, scratch=None):
+    """Validate the explicit, durable evidence root every packet output is written under.
+
+    A Queue run scratch directory is refused because its contents do not outlive
+    the task. The documented default is `<scratch>/evidence/<run>/` (Barge's
+    Stash layout, Tom 2026-11-18); `/Volumes/Stash/effigy-evidence/<run>/`
+    remains accepted until it moves, as do `<scratch>/planner-owned-*` roots.
+    The root is created once by the planner, so a missing, aliased or
+    foreign-owned root refuses rather than being invented."""
+    require(isinstance(raw, str) and raw and Path(raw).is_absolute()
+            and str(Path(raw)) == raw and '..' not in Path(raw).parts,
+            'evidence root must be an exact absolute path')
+    path = Path(raw)
+    require(not queue_run_scratch(path, scratch=scratch),
+            'evidence root must never be a Queue run scratch directory')
+    require(not path.is_symlink() and path.is_dir(),
+            'evidence root must be an existing real directory')
+    info = path.lstat()
+    require(stat.S_ISDIR(info.st_mode) and info.st_uid == os.geteuid()
+            and stat.S_IMODE(info.st_mode) == 0o700,
+            'evidence root must be a private 0700 directory owned by the native executor')
     return path
 
 

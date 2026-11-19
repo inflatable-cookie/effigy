@@ -169,6 +169,22 @@ def write_bound(base, name, value):
     return path, digest(path)
 
 
+def evidence_fixture(base, run='1041-run'):
+    # The fixture's temporary directory stands in for removable scratch, and the
+    # documented default root is <scratch>/evidence/<run>/.
+    evidence = Path(base) / 'evidence'
+    evidence.mkdir(mode=0o700, exist_ok=True)
+    root = evidence / run
+    root.mkdir(mode=0o700, exist_ok=True)
+    return root
+
+
+def fixture_evidence_root(launch, base):
+    # The real validator bound to the fixture's simulated removable-scratch root.
+    import common
+    return patch.object(launch, 'evidence_root', lambda raw: common.evidence_root(raw, scratch=base))
+
+
 class Boundaries(unittest.TestCase):
     def setUp(self):
         # Most packet fixtures use synthetic commit IDs and do not exercise git.
@@ -823,7 +839,9 @@ class Boundaries(unittest.TestCase):
             file.write_text(json.dumps(value))
             self.assertNotEqual(approved, digest(file))
             with patch.object(sys, 'argv', ['launch.py', '--inputs', str(file), '--sha256', approved,
-                              '--go-bindings', str(Path(directory) / 'not-created'), '--go-sha256', 'e' * 64, '--backend', 'colima']), \
+                              '--go-bindings', str(Path(directory) / 'not-created'), '--go-sha256', 'e' * 64,
+                              '--backend', 'colima', '--evidence-root', str(evidence_fixture(directory))]), \
+                 fixture_evidence_root(launch, Path(directory)), \
                  patch.object(launch, 'source_head', return_value=HEAD), \
                  patch.object(launch, 'run', side_effect=AssertionError('native call for changed root')):
                 with self.assertRaisesRegex(RuntimeError, 'input hash mismatch'):
@@ -843,12 +861,15 @@ class Boundaries(unittest.TestCase):
         import launch
         from types import SimpleNamespace
         with tempfile.TemporaryDirectory(prefix='531-receipt-root-', dir=os.environ['TMPDIR']) as directory:
+            base = Path(directory)
             value = inputs()
-            value['evidence'] = str(Path(directory) / 'aggregate')
+            evidence = evidence_fixture(base)
             result = SimpleNamespace(returncode=0, stderr=b'',
-                                     stdout=json.dumps({'receipt': str(Path(directory) / 'foreign.json')}).encode())
-            with patch.object(sys, 'argv', ['launch.py', '--inputs', str(Path(directory) / 'input.json'),
-                              '--sha256', 'f' * 64, '--go-bindings', str(Path(directory) / 'go.json'), '--go-sha256', 'e' * 64, '--backend', 'colima']), \
+                                     stdout=json.dumps({'receipt': str(base / 'foreign.json')}).encode())
+            with patch.object(sys, 'argv', ['launch.py', '--inputs', str(base / 'input.json'),
+                              '--sha256', 'f' * 64, '--go-bindings', str(base / 'go.json'), '--go-sha256', 'e' * 64,
+                              '--backend', 'colima', '--evidence-root', str(evidence)]), \
+                 fixture_evidence_root(launch, base), \
                  patch.object(launch, 'source_head', return_value=HEAD), \
                  patch.object(launch, 'digest', side_effect=['f' * 64, 'e' * 64]), \
                  patch.object(launch, 'load', side_effect=[value, {name: {'path': name} for name in BACKENDS}]
@@ -879,7 +900,7 @@ class Boundaries(unittest.TestCase):
 
             def fixture(evidence_name='evidence', foreign_desktop=False):
                 value = inputs()
-                value['evidence'] = str(base / evidence_name)
+                evidence = evidence_fixture(base, evidence_name)
                 value['backends'] = [cells[cell['backend']] for cell in value['backends']]
                 inputs_path, approved = write_bound(base, 'inputs-' + evidence_name + '.json', value)
                 index = {}
@@ -891,12 +912,14 @@ class Boundaries(unittest.TestCase):
                     index[backend] = {'path': str(path), 'sha256': bound}
                 index_path, index_hash = write_bound(base, 'go-index-' + evidence_name + '.json', index)
                 argv = ['launch.py', '--inputs', str(inputs_path), '--sha256', approved,
-                        '--go-bindings', str(index_path), '--go-sha256', index_hash]
+                        '--go-bindings', str(index_path), '--go-sha256', index_hash,
+                        '--evidence-root', str(evidence)]
                 return argv, value
 
             # A GO naming another backend refuses before any evidence or effect.
             argv, _ = fixture(evidence_name='evidence-foreign', foreign_desktop=True)
             with patch.object(sys, 'argv', argv + ['--backend', 'desktop']), \
+                 fixture_evidence_root(launch, base), \
                  patch.object(launch, 'source_head', return_value=HEAD), \
                  patch.object(launch, 'run', side_effect=AssertionError('native run for foreign authority')), \
                  patch.object(Path, 'mkdir', side_effect=AssertionError('effect for foreign authority')):
@@ -912,6 +935,7 @@ class Boundaries(unittest.TestCase):
                                      stdout=json.dumps({'receipt': str(complete)}).encode())
             printed = io.StringIO()
             with patch.object(sys, 'argv', argv + ['--backend', 'desktop']), \
+                 fixture_evidence_root(launch, base), \
                  patch.object(launch, 'source_head', return_value=HEAD), \
                  patch.object(launch, 'run', return_value=result) as native, \
                  redirect_stdout(printed):
@@ -953,11 +977,12 @@ class Boundaries(unittest.TestCase):
             # nonqualifying evidence: the bound receipt stays, never positive.
             argv, value = fixture(evidence_name='evidence-2')
             with patch.object(sys, 'argv', argv + ['--backend', 'desktop']), \
+                 fixture_evidence_root(launch, base), \
                  patch.object(launch, 'source_head', side_effect=[HEAD, '3' * 40]), \
                  patch.object(launch, 'run', return_value=result):
                 with self.assertRaisesRegex(RuntimeError, 'proof source changed'):
                     launch.main()
-            retained_dirs = list(base.glob('evidence-2-*'))
+            retained_dirs = list((base / 'evidence' / 'evidence-2').glob('attempt-*'))
             self.assertEqual(len(retained_dirs), 1, 'one attempt writes one evidence directory')
             retained = json.loads((retained_dirs[0] / 'desktop.json').read_text())
             self.assertEqual(retained['exit_code'], 0)
@@ -1070,7 +1095,7 @@ class Boundaries(unittest.TestCase):
             complete = qual / 'complete.json'
             exclusive(complete, {'cells': complete_cells(), 'native': True, 'production_enabled': False})
             value = inputs()
-            value['evidence'] = str(base / 'mixed-evidence')
+            evidence = evidence_fixture(base, 'mixed-evidence')
             value['source_equivalence'] = {'baseline': HEAD, 'alternates': {alternate: changed}}
             value['backends'] = [desktop if cell['backend'] == 'desktop' else cells[cell['backend']]
                                  for cell in value['backends']]
@@ -1088,7 +1113,8 @@ class Boundaries(unittest.TestCase):
             printed = io.StringIO()
             with patch.object(sys, 'argv', ['launch.py', '--inputs', str(inputs_path), '--sha256', approved,
                               '--go-bindings', str(index_path), '--go-sha256', index_hash,
-                              '--backend', 'desktop']), \
+                              '--backend', 'desktop', '--evidence-root', str(evidence)]), \
+                 fixture_evidence_root(launch, base), \
                  patch.object(launch, 'source_head', return_value=HEAD), \
                  patch.object(common, 'diff_names', return_value=list(changed)), \
                  patch.object(launch, 'run', return_value=result), \
@@ -1127,7 +1153,6 @@ class Boundaries(unittest.TestCase):
                              candidate_receipt=dict(desktop['candidate_receipt'], source_head='4' * 40),
                              production_receipt=dict(desktop['production_receipt'], source_head='4' * 40))
             refused = inputs()
-            refused['evidence'] = str(base / 'mixed-evidence-refused')
             refused['backends'] = [uncovered if cell['backend'] == 'desktop' else cells[cell['backend']]
                                    for cell in refused['backends']]
             refused_path, refused_hash = write_bound(base, 'mixed-inputs-refused.json', refused)
@@ -1139,7 +1164,7 @@ class Boundaries(unittest.TestCase):
             refused_index_path, refused_index_hash = write_bound(base, 'mixed-refused-go-index.json', refused_index)
             with patch.object(sys, 'argv', ['launch.py', '--inputs', str(refused_path), '--sha256', refused_hash,
                               '--go-bindings', str(refused_index_path), '--go-sha256', refused_index_hash,
-                              '--backend', 'desktop']), \
+                              '--backend', 'desktop', '--evidence-root', str(evidence)]), \
                  patch.object(launch, 'source_head', return_value=HEAD), \
                  patch.object(launch, 'run', side_effect=AssertionError('native run for uncovered head')):
                 with self.assertRaisesRegex(RuntimeError, 'backend candidate source differs'):
@@ -1157,7 +1182,9 @@ class Boundaries(unittest.TestCase):
             receipt_path=receipt_root+'/complete.json'
             payload=json.dumps({'cells':complete_cells(),'native':True,'production_enabled':False}).encode()
             def fixture(evidence_name):
-                value=inputs();value['evidence']=str(base/evidence_name)
+                value=inputs()
+                value['backends']=list(value['backends'])
+                evidence=evidence_fixture(base,evidence_name)
                 cell=value['backends'][2]
                 cell['ssh_alias']='effigy-531-vault'
                 cell['qualification_root']=dict(path=receipt_root,device=0,inode=0,uid=os.geteuid())
@@ -1166,13 +1193,15 @@ class Boundaries(unittest.TestCase):
                 index_path,index_hash=write_bound(base,'go-index-'+evidence_name+'.json',
                     {'linux':{'path':str(go_path),'sha256':digest(go_path)}})
                 return ['launch.py','--inputs',str(inputs_path),'--sha256',approved,
-                        '--go-bindings',str(index_path),'--go-sha256',index_hash,'--backend','linux']
+                        '--go-bindings',str(index_path),'--go-sha256',index_hash,'--backend','linux',
+                        '--evidence-root',str(evidence)]
             def drive(argv,transported,original_hash):
                 result=dict(receipt=receipt_path,receipt_bytes=transported,receipt_sha256=original_hash,
                     stdout=json.dumps({'receipt':receipt_path}).encode(),stderr=b'',linux_allocation={},
                     linux_capacity_originals={'path':str(base/'originals.json'),'sha256':'a'*64})
                 printed=io.StringIO()
                 with patch.object(sys,'argv',argv),patch.object(launch,'source_head',return_value=HEAD), \
+                     fixture_evidence_root(launch,base), \
                      patch.object(launch,'ssh_prefix',return_value=['prepared-ssh']), \
                      patch.object(linux_native_run,'execute_proof',return_value=result) as execute, \
                      patch.object(launch,'run') as raw,redirect_stdout(printed):
@@ -1194,7 +1223,7 @@ class Boundaries(unittest.TestCase):
 
             # The local driver's held-descriptor read is size-bounded too.
             value = inputs()
-            value['evidence'] = str(base / 'evidence-4')
+            evidence = evidence_fixture(base, 'evidence-4')
             local_cell = copy.deepcopy(value['backends'][1])
             local_root = base / 'oversize-root'
             local_root.mkdir(mode=0o700)
@@ -1208,15 +1237,18 @@ class Boundaries(unittest.TestCase):
             index_path, index_hash = write_bound(base, 'go-index-oversize.json',
                                                  {'desktop': {'path': str(go_path), 'sha256': digest(go_path)}})
             argv = ['launch.py', '--inputs', str(inputs_path), '--sha256', approved,
-                    '--go-bindings', str(index_path), '--go-sha256', index_hash, '--backend', 'desktop']
+                    '--go-bindings', str(index_path), '--go-sha256', index_hash, '--backend', 'desktop',
+                    '--evidence-root', str(evidence)]
             local_result = SimpleNamespace(returncode=0, stderr=b'',
                                            stdout=json.dumps({'receipt': str(local_root / 'complete.json')}).encode())
             with patch.object(sys, 'argv', argv), \
+                 fixture_evidence_root(launch, base), \
                  patch.object(launch, 'source_head', return_value=HEAD), \
                  patch.object(launch, 'run', return_value=local_result):
                 with self.assertRaisesRegex(RuntimeError, 'exceeds its retained size bound'):
                     launch.main()
-            self.assertFalse([path for path in base.glob('evidence-4-*') if (path / 'desktop.json').exists()])
+            self.assertFalse([path for path in (base / 'evidence' / 'evidence-4').glob('attempt-*')
+                              if (path / 'desktop.json').exists()])
 
     def test_launcher_derives_a_fresh_evidence_directory_per_attempt(self):
         import io
@@ -1234,9 +1266,9 @@ class Boundaries(unittest.TestCase):
             complete = root / 'complete.json'
             exclusive(complete, {'cells': [], 'native': True})
             value = inputs()
-            # The same frozen base name is reused on purpose: the launcher, not
-            # an operator, must derive a fresh directory for each attempt.
-            value['evidence'] = str(base / 'attempts')
+            # The same durable root is reused on purpose: the launcher, not an
+            # operator, must derive a fresh directory for each attempt.
+            evidence = evidence_fixture(base, 'attempts')
             value['backends'] = [cells[cell['backend']] for cell in value['backends']]
             approved_path, approved = write_bound(base, 'inputs.json', value)
             index = {}
@@ -1245,29 +1277,174 @@ class Boundaries(unittest.TestCase):
                 index[backend] = {'path': str(path), 'sha256': bound}
             index_path, index_hash = write_bound(base, 'go-index.json', index)
             argv = ['launch.py', '--inputs', str(approved_path), '--sha256', approved,
-                    '--go-bindings', str(index_path), '--go-sha256', index_hash, '--backend', 'desktop']
+                    '--go-bindings', str(index_path), '--go-sha256', index_hash, '--backend', 'desktop',
+                    '--evidence-root', str(evidence)]
             result = SimpleNamespace(returncode=0, stderr=b'',
                                      stdout=json.dumps({'receipt': str(complete)}).encode())
             entries = []
             for _ in range(2):
                 printed = io.StringIO()
                 with patch.object(sys, 'argv', argv), patch.object(launch, 'source_head', return_value=HEAD), \
+                     fixture_evidence_root(launch, base), \
                      patch.object(launch, 'run', return_value=result), redirect_stdout(printed):
                     launch.main()
                 entries.append(Path(json.loads(printed.getvalue())['invocation']))
             self.assertEqual(len({entry.parent for entry in entries}), 2,
                              'a second attempt reused the first evidence directory')
-            self.assertFalse((base / 'attempts').exists(), 'the frozen base is not itself created')
+            self.assertEqual(len(list(evidence.iterdir())), 2,
+                             'the explicit evidence root holds exactly one directory per attempt')
             for entry in entries:
                 attempt_dir = entry.parent
-                self.assertEqual(attempt_dir.parent, base)
-                self.assertTrue(attempt_dir.name.startswith('attempts-' + approved + '-'))
+                self.assertEqual(attempt_dir.parent, evidence)
+                self.assertTrue(attempt_dir.name.startswith('attempt-' + approved + '-'))
                 started = json.loads((attempt_dir / 'started.json').read_text())
                 self.assertEqual(started['inputs_sha256'], approved)
                 self.assertEqual(started['evidence'], str(attempt_dir))
+                self.assertEqual(started['evidence_root'], str(evidence))
                 self.assertEqual(started['attempt'], attempt_dir.name.rsplit('-', 1)[-1])
                 self.assertTrue(entry.is_file())
                 self.assertFalse((attempt_dir / 'complete.json').exists())
+
+    def test_launcher_refuses_a_queue_run_scratch_evidence_root(self):
+        # Queue deletes <scratch>/<8hex>/ at closeout, so a root there cannot be
+        # evidence; the documented default <scratch>/evidence/<run>/, the legacy
+        # /Volumes/Stash/effigy-evidence root and planner-owned roots remain.
+        import common
+        import launch
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory(prefix='531-evidence-root-', dir=os.environ['TMPDIR']) as directory:
+            base = Path(directory)
+            run_scratch = base / ('0f' * 4)
+            run_scratch.mkdir(mode=0o700)
+            refused = run_scratch / 'evidence'
+            refused.mkdir(mode=0o700)
+            durable = evidence_fixture(base, 'durable-run')
+            planner_owned = base / 'planner-owned-1041'
+            planner_owned.mkdir(mode=0o700)
+            for accepted in (durable, planner_owned):
+                self.assertEqual(common.evidence_root(str(accepted), scratch=base), accepted)
+            for scratch_root in (refused, run_scratch, base / ('0f' * 4) / 'nested' / 'root'):
+                with self.subTest(root=str(scratch_root)), \
+                     self.assertRaisesRegex(RuntimeError, 'Queue run scratch'):
+                    common.evidence_root(str(scratch_root), scratch=base)
+            # The production constant refuses the same shape before any output.
+            with self.assertRaisesRegex(RuntimeError, 'Queue run scratch'):
+                common.evidence_root(str(SCRATCH / ('0f' * 4) / 'evidence'))
+            # A relative, missing, symlinked or non-private root refuses too.
+            link = base / 'evidence-link'
+            link.symlink_to(durable, target_is_directory=True)
+            for bad, message in (('relative/root', 'exact absolute path'),
+                                 (str(durable) + '/', 'exact absolute path'),
+                                 (str(base / 'missing-root'), 'existing real directory'),
+                                 (str(link), 'existing real directory'),
+                                 (str(base / 'input.json'), 'existing real directory')):
+                with self.subTest(root=bad), self.assertRaisesRegex(RuntimeError, message):
+                    common.evidence_root(bad, scratch=base)
+            public = base / 'evidence' / 'public-run'
+            public.mkdir(mode=0o700)
+            public.chmod(0o755)
+            with self.assertRaisesRegex(RuntimeError, 'private 0700'):
+                common.evidence_root(str(public), scratch=base)
+
+            # The launcher refuses the scratch-shaped root before writing anything
+            # and before any native call.
+            value = inputs()
+            argv = ['launch.py', '--inputs', str(base / 'input.json'), '--sha256', 'f' * 64,
+                    '--go-bindings', str(base / 'go.json'), '--go-sha256', 'e' * 64,
+                    '--backend', 'colima', '--evidence-root', str(refused)]
+            with patch.object(sys, 'argv', argv), \
+                 fixture_evidence_root(launch, base), \
+                 patch.object(launch, 'source_head', return_value=HEAD), \
+                 patch.object(launch, 'digest', side_effect=['f' * 64, 'e' * 64]), \
+                 patch.object(launch, 'load', side_effect=[value, {name: {'path': name} for name in BACKENDS}]
+                              + [go(cell) for cell in value['backends']]), \
+                 patch.object(launch, 'artifact', side_effect=[Path(name) for name in BACKENDS]), \
+                 patch.object(launch, 'run', side_effect=AssertionError('native run for a refused evidence root')):
+                with self.assertRaisesRegex(RuntimeError, 'Queue run scratch'):
+                    launch.main()
+            self.assertEqual(list(refused.iterdir()), [],
+                             'a refused evidence root receives no output')
+
+    def test_aggregate_accepts_durable_evidence_root_and_a_moved_copy(self):
+        import io
+        import aggregate
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory(prefix='531-evidence-aggregate-', dir=os.environ['TMPDIR']) as directory:
+            base = Path(directory)
+            root = evidence_fixture(base, 'durable-run')
+            cells = inputs()['backends']
+            cells[2]['ssh_alias'] = 'effigy-531-vault'
+            paths = {}
+            for backend, cell in zip(BACKENDS, cells):
+                paths[backend], _ = invocation_record(backend, cell, root, label=backend)
+            self.assertTrue(all(Path(paths[backend]).is_relative_to(root) for backend in BACKENDS),
+                            'every invocation record and receipt export lives under the root')
+
+            def invoke(table):
+                argv = ['aggregate.py', '--source-head', HEAD]
+                for backend in BACKENDS:
+                    argv += ['--receipt', '{}={}'.format(backend, table[backend]),
+                             '--receipt-sha256', '{}={}'.format(backend, digest(table[backend]))]
+                with patch.object(sys, 'argv', argv), redirect_stdout(io.StringIO()) as printed:
+                    aggregate.main()
+                return json.loads(printed.getvalue())
+
+            verdict = invoke(paths)
+            self.assertTrue(verdict['qualified'])
+            self.assertEqual(verdict['backends']['colima']['invocation_receipt'], str(paths['colima']))
+            # A byte-identical copy outside the evidence root aggregates too.
+            moved = base / 'moved'
+            moved.mkdir(mode=0o700)
+            copies = {}
+            for backend in BACKENDS:
+                copies[backend] = moved / (backend + '.json')
+                copies[backend].write_bytes(Path(paths[backend]).read_bytes())
+            moved_verdict = invoke(copies)
+            self.assertTrue(moved_verdict['qualified'])
+            self.assertEqual(moved_verdict['backends']['linux']['invocation_receipt'], str(copies['linux']))
+
+    def test_aggregate_refuses_a_tampered_receipt_copy(self):
+        import io
+        import aggregate
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory(prefix='531-evidence-tampered-', dir=os.environ['TMPDIR']) as directory:
+            base = Path(directory)
+            root = evidence_fixture(base, 'durable-run')
+            cells = inputs()['backends']
+            cells[2]['ssh_alias'] = 'effigy-531-vault'
+            paths, recorded = {}, {}
+            for backend, cell in zip(BACKENDS, cells):
+                paths[backend], _ = invocation_record(backend, cell, root, label=backend)
+                recorded[backend] = digest(paths[backend])
+            moved = base / 'moved'
+            moved.mkdir(mode=0o700)
+            copies = {}
+            for backend in BACKENDS:
+                copies[backend] = moved / (backend + '.json')
+                copies[backend].write_bytes(Path(paths[backend]).read_bytes())
+            # A byte differing from the recorded digest never qualifies, even when
+            # the copy is honestly re-hashed in the caller's own argv.
+            tampered = copies['colima']
+            tampered.write_bytes(tampered.read_bytes().replace(b'"positive": true', b'"positive": true '))
+            self.assertNotEqual(digest(tampered), recorded['colima'])
+            argv = ['aggregate.py', '--source-head', HEAD]
+            table = dict(copies)
+            for backend in BACKENDS:
+                bound = recorded[backend] if backend == 'colima' else digest(table[backend])
+                argv += ['--receipt', '{}={}'.format(backend, table[backend]),
+                         '--receipt-sha256', '{}={}'.format(backend, bound)]
+            with patch.object(sys, 'argv', argv), redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(RuntimeError, 'differs from its bound hash'):
+                    aggregate.main()
+            # Byte-identical copies without tampering still aggregate.
+            copies['colima'].write_bytes(Path(paths['colima']).read_bytes())
+            argv = ['aggregate.py', '--source-head', HEAD]
+            for backend in BACKENDS:
+                argv += ['--receipt', '{}={}'.format(backend, copies[backend]),
+                         '--receipt-sha256', '{}={}'.format(backend, recorded[backend])]
+            with patch.object(sys, 'argv', argv), redirect_stdout(io.StringIO()) as printed:
+                aggregate.main()
+            self.assertTrue(json.loads(printed.getvalue())['qualified'])
 
     def test_go_binds_the_frozen_inputs_head_on_host_and_guest(self):
         import io
@@ -1287,7 +1464,7 @@ class Boundaries(unittest.TestCase):
             complete = root / 'complete.json'
             exclusive(complete, {'cells': [], 'native': True})
             value = inputs()
-            value['evidence'] = str(base / 'head-evidence')
+            evidence = evidence_fixture(base, 'head-evidence')
             # The guest route has no checkout, so the only reference head both
             # sides can compare is the frozen inputs head this GO names. The live
             # checkout head is accepted through the frozen equivalence record.
@@ -1300,11 +1477,13 @@ class Boundaries(unittest.TestCase):
                 index[backend] = {'path': str(path), 'sha256': bound}
             index_path, index_hash = write_bound(base, 'go-index.json', index)
             argv = ['launch.py', '--inputs', str(inputs_path), '--sha256', approved,
-                    '--go-bindings', str(index_path), '--go-sha256', index_hash, '--backend', 'desktop']
+                    '--go-bindings', str(index_path), '--go-sha256', index_hash, '--backend', 'desktop',
+                    '--evidence-root', str(evidence)]
             result = SimpleNamespace(returncode=0, stderr=b'',
                                      stdout=json.dumps({'receipt': str(complete)}).encode())
             printed = io.StringIO()
             with patch.object(sys, 'argv', argv), patch.object(launch, 'source_head', return_value=checkout), \
+                 fixture_evidence_root(launch, base), \
                  patch.object(common, 'diff_names', return_value=['docs/knowledge/contracts/release.md']), \
                  patch.object(launch, 'run', return_value=result), redirect_stdout(printed):
                 launch.main()
@@ -1324,7 +1503,7 @@ class Boundaries(unittest.TestCase):
             wrong_index_path, wrong_index_hash = write_bound(base, 'go-index-wrong.json', wrong_index)
             with patch.object(sys, 'argv', ['launch.py', '--inputs', str(inputs_path), '--sha256', approved,
                               '--go-bindings', str(wrong_index_path), '--go-sha256', wrong_index_hash,
-                              '--backend', 'desktop']), \
+                              '--backend', 'desktop', '--evidence-root', str(evidence)]), \
                  patch.object(launch, 'source_head', return_value=checkout), \
                  patch.object(common, 'diff_names', return_value=['docs/knowledge/contracts/release.md']), \
                  patch.object(launch, 'run', side_effect=AssertionError('native run for a foreign GO head')):
@@ -1810,7 +1989,7 @@ class Boundaries(unittest.TestCase):
                 (call(receipt_list=receipts[:2] + [driver_binding], hash_list=hashes[:2] + [driver_hash]),
                  'driver or engine identity differs from its platform'),
                 (call(receipt_list=receipts[:1] + ['desktop=/etc/hosts'] + receipts[2:], hash_list=hashes),
-                 'absolute retained scratch file'),
+                 'differs from its bound hash'),
                 (call(receipt_list=receipts[:1] + ['desktop=' + str(absent_path)] + receipts[2:],
                       hash_list=hashes[:1] + ['desktop=' + absent_bound] + hashes[2:]),
                  'retained receipt export'),
