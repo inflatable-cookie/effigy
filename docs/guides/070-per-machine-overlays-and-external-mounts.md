@@ -1,6 +1,6 @@
 # 070 — Per-Machine Local Overlays and External Mounts
 
-This guide ties together five composition primitives that together let
+This guide ties together four composition primitives that together let
 a project ship a committed environment definition while letting each
 developer plug in machine-specific details (bastion hosts, SSH config,
 scratch directories) without committing absolute paths or personal
@@ -12,14 +12,10 @@ The primitives:
    loaded automatically when present.
 2. **`[manifest].extend = [...]`** — append onto array-valued fields
    from an imported fragment rather than replacing them.
-3. **`optional = true` include directive** — silently skip an include
-   when its file is missing. Accepted through v0.15 with one deprecation
-   notice; omit the missing include or rely on auto-discovered
-   `effigy.local.toml`. Removed in v0.16.
-4. **`domains = [...]` sugar on `[containers.<name>.dns]`** — a flat
+3. **`domains = [...]` sugar on `[containers.<name>.dns]`** — a flat
    list of public-facing names that expand into routes inheriting from
    `domain_defaults`.
-5. **External `host.mounts` with `${VAR}` and `~` expansion** — opt
+4. **External `host.mounts` with `${VAR}` and `~` expansion** — opt
    into out-of-repo mount sources via `external = true` in the
    structured table form.
 
@@ -249,7 +245,7 @@ Add `effigy.local.toml` to `.gitignore`; discovery does not modify Git ignore fi
 `effigy.local.toml` is auto-included **last**, so it always wins over
 committed layers. Conflicting leaves are replaced by the local value;
 inspection identifies the winning file and the replaced source. Explicitly
-including this file instead uses ordinary include and override rules, and
+including this file instead uses ordinary include conflict rules, and
 prevents auto-discovery from including it a second time.
 
 `[manifest].extend = [...]` in `effigy.local.toml` makes the env
@@ -325,14 +321,11 @@ git grep <env-name>-bastion envs/   # alias name only — never a real host
 - **Committing `effigy.local.toml` without `.example` suffix.** That
   defeats the per-machine model. Ignore the file and flag a committed
   overlay in PRs.
-- **Using `extend` and `override` on the same include path.** They
-  are mutually exclusive — declare exactly one per path.
 
 ## Related Guides
 
 - [`059-manifest-composition-guide.md`](059-manifest-composition-guide.md)
-  — full include-directive semantics (extend, override, optional,
-  auto-discovery).
+  — include and extend semantics and local auto-discovery.
 - [`063-container-system-guide.md`](063-container-system-guide.md)
   — host-mount rules including the External Host Mounts subsection.
 - [`050-env-schema-integration.md`](050-env-schema-integration.md)

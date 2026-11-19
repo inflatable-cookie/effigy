@@ -11,7 +11,7 @@ pub(super) fn validate_manifest_section(context: &mut SchemaContext<'_, '_>, val
         context,
         "manifest",
         table,
-        &["include", "minimum_effigy_version"],
+        &["include", "extend", "minimum_effigy_version"],
     );
 
     if let Some(minimum) = table.get("minimum_effigy_version") {
@@ -49,25 +49,6 @@ pub(super) fn validate_manifest_section(context: &mut SchemaContext<'_, '_>, val
             );
             continue;
         };
-        validate_allowed_keys(context, &entry_path, entry_table, &["path", "override"]);
-        if let Some(override_value) = entry_table.get("override") {
-            let Some(override_entries) = override_value.as_array() else {
-                context.unsupported_value(
-                    &format!("{entry_path}.override"),
-                    SchemaContext::value_type(override_value),
-                    "expected array of strings",
-                );
-                continue;
-            };
-            for (override_index, override_entry) in override_entries.iter().enumerate() {
-                if !override_entry.is_str() {
-                    context.unsupported_value(
-                        &format!("{entry_path}.override[{override_index}]"),
-                        SchemaContext::value_type(override_entry),
-                        "expected string",
-                    );
-                }
-            }
-        }
+        validate_allowed_keys(context, &entry_path, entry_table, &["path"]);
     }
 }

@@ -417,27 +417,11 @@ mounts = [
 [manifest]
 include = [
   "effigy.tasks.toml",
-  { path = "effigy.docs.toml", override = ["docs_policy.indexes.topic"] },
+  { path = "effigy.docs.toml" },
 ]
 
 [tasks.dev]
 run = "printf dev"
-"#,
-    },
-    AcceptCase {
-        name: "bootstrap-one-release-spellings",
-        manifest: r#"
-[bootstrap]
-run = [
-  { task = "secrets init" },
-  { rhai = "scripts/bootstrap.rhai" },
-]
-start = [{ task = "container:up" }, { task = "dev" }]
-submodules = "recursive"
-
-[[bootstrap.children]]
-path = "../book"
-repo = "git@example.test:book.git"
 "#,
     },
     AcceptCase {
@@ -542,6 +526,29 @@ description = "Alias for the dev stack"
 ];
 
 static REJECT_CASES: &[RejectCase] = &[
+    RejectCase {
+        name: "retired-include-flags",
+        manifest: "[manifest]\ninclude = [{ path = 'fragment.toml', override = ['tasks.dev'], optional = true }]",
+        evidence: &["manifest.include[0].override", "manifest.include[0].optional"],
+        remediation: &[], findings: None,
+    },
+    RejectCase {
+        name: "retired-kebab-keys",
+        manifest: "[contracts]\nschema-index = 'a'\nselection-contract = 'b'\n[sources.book]\ngit = 'repo'\npath = 'book'\nrev-file = 'pin'",
+        evidence: &["contracts.schema-index", "contracts.selection-contract", "sources.book.rev-file"],
+        remediation: &[], findings: None,
+    },
+    RejectCase {
+        name: "retired-bootstrap-keys-and-shapes",
+        manifest: "[bootstrap]\nrun = ['old']\nchildren = []\nsetup = [{ task = 'old' }]\nstart = ['old']\nsubmodules = 'recursive'",
+        evidence: &["bootstrap.run", "bootstrap.children", "bootstrap.setup", "bootstrap.start", "bootstrap.submodules"],
+        remediation: &[], findings: None,
+    },
+    RejectCase {
+        name: "retired-bootstrap-scalar-setup",
+        manifest: "[bootstrap]\nsetup = 'old'",
+        evidence: &["bootstrap.setup"], remediation: &[], findings: None,
+    },
     RejectCase {
         name: "retired-catalog-pack-support-policy",
         manifest: r#"

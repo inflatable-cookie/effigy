@@ -124,7 +124,6 @@ an explicit execution context:
 include = [
   "effigy.tasks.toml",
   "effigy.docs.toml",
-  { path = "effigy.local.toml", override = ["tasks.dev", "release.sync-files"] },
 ]
 ```
 
@@ -160,9 +159,8 @@ Composition rules:
 - repo-local development builds like `v0.6.1+local.<hash>` still pass those
   floors so unreleased feature work is not blocked by the last tagged version.
 - distinct keys merge additively by default.
-- conflicting values fail unless the include entry explicitly names the path in
-  `override = [...]`.
-- override is path-scoped and replaces the whole addressed value.
+- conflicting values fail; use `[manifest].extend` for shared arrays or tables.
+- an auto-discovered `effigy.local.toml` replaces conflicting local values.
 
 ### Mounted Sibling Isolation
 

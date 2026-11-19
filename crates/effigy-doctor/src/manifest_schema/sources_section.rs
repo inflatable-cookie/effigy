@@ -19,10 +19,7 @@ pub(super) fn validate_sources_section(context: &mut SchemaContext<'_, '_>, valu
             continue;
         };
         for key in table.keys() {
-            if !matches!(
-                key.as_str(),
-                "git" | "rev" | "rev_file" | "rev-file" | "path"
-            ) {
+            if !matches!(key.as_str(), "git" | "rev" | "rev_file" | "path") {
                 context.unsupported_nested_key(&path, key);
             }
         }
@@ -45,12 +42,10 @@ pub(super) fn validate_sources_section(context: &mut SchemaContext<'_, '_>, valu
             .get("rev")
             .and_then(Value::as_str)
             .is_some_and(|rev| !rev.trim().is_empty());
-        let from_file = ["rev_file", "rev-file"].iter().any(|key| {
-            table
-                .get(*key)
-                .and_then(Value::as_str)
-                .is_some_and(|file| !file.trim().is_empty())
-        });
+        let from_file = table
+            .get("rev_file")
+            .and_then(Value::as_str)
+            .is_some_and(|file| !file.trim().is_empty());
         if inline && from_file {
             context.unsupported_value(
                 &path,

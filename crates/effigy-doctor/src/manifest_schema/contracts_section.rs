@@ -1,7 +1,7 @@
 use toml::Value;
 
 use super::diagnostics::SchemaContext;
-use super::tables::{aliased, require_table, validate_allowed_keys};
+use super::tables::{require_table, validate_allowed_keys};
 use super::values::validate_optional_non_empty_string_field;
 
 pub(super) fn validate_contracts_section(context: &mut SchemaContext<'_, '_>, contracts: &Value) {
@@ -18,22 +18,17 @@ pub(super) fn validate_contracts_section(context: &mut SchemaContext<'_, '_>, co
         context,
         "contracts",
         table,
-        &[
-            "schema_index",
-            "schema-index",
-            "selection_contract",
-            "selection-contract",
-        ],
+        &["schema_index", "selection_contract"],
     );
 
     validate_optional_non_empty_string_field(
         context,
-        aliased(table, &["schema_index", "schema-index"]),
+        table.get("schema_index"),
         "contracts.schema_index",
     );
     validate_optional_non_empty_string_field(
         context,
-        aliased(table, &["selection_contract", "selection-contract"]),
+        table.get("selection_contract"),
         "contracts.selection_contract",
     );
 }
