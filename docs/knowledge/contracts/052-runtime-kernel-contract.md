@@ -4558,20 +4558,41 @@ single-execution rule. The allowlist rule is absolute, in this order:
 1. **The selector resolves against the verified pinned composed snapshot first**,
    in the guest entry, before any routing, repository, alias or fallback
    resolution, source preparation or catalog load. A name the snapshot does not
-   declare — a qualified `<catalog>/<task>`, another repository's task, an
-   unknown name, or a built-in/exec-alias/`[defer]` fallback target — refuses
-   there with the host-CLI message and no effect.
+   declare resolves only through the deferral that same snapshot declares (see
+   below); a qualified `<catalog>/<task>`, another repository's task, or a
+   built-in/exec-alias fallback target with no such deferral refuses there with
+   the host-CLI message and no effect.
 2. **The resolved repository is fenced to the published checkout.** A `--repo`
    override or any other resolver root refuses before the dispatcher prepares
    that repository's sources.
-3. **A non-task route refuses.** A built-in, container exec alias or a catalog
-   `[defer]` command is never executed for a guest selector, even when the route
-   resolution finds one.
+3. **A non-task route refuses.** A built-in, container exec alias or another
+   catalog's `[defer]` command is never executed for a guest selector, even when
+   the route resolution finds one. The one deferral a guest runs is the one its
+   own pinned composed manifest declares (effigy#1044).
 4. **The definition that runs must be the pinned one.** The execution entry
    compares the resolved declaration of the task, and of every task its steps
    reference, with the pinned snapshot's declaration; the guest also records a
    placement only after every pinned checkout file still matches its digest and
    the dispatcher re-checks that closure before it prepares sources.
+
+**Deferral in the production guest (effigy#1044).** A legacy workspace hands an
+unresolved request to the deferral its manifest declares, and a bundle supplies
+that declaration by being composed into the manifest, so the pinned composed
+document carries it. The guest resolves the deferral from that pinned document —
+its template, its `run_in` and the mounted checkout it runs in — and never from
+the writable checkout. When the deferral targets a container (`run_in =
+"container"` or `"either"`) the deferred command runs **in the container**,
+through the runner's own local deferral execution
+(`deferral::run::run_deferred_request_in_this_container`): the one-hop
+`EFFIGY_DEFER_DEPTH` guard, the composer-global `PATH` preference for a
+`composer global exec` template and the local node bin path are the same ones
+the host's handoff-local container branch uses, and `{request}`, `{args}` and
+`{repo}` render from the frozen request (`{args}` is the task half of the CLI's
+argument boundary) and the mounted checkout. No binding resolution, source
+preparation, runtime activation or `compose exec` runs, and no task placement is
+recorded. A deferral whose `run_in` is `"host"` or omitted keeps its host-only
+default and refuses with the host-authority message, as does a name no deferral
+resolves at all.
 
 The machine-local bundle-input layer (which legitimately differs between host
 and container) is not part of that comparison. The stronger form — handing the

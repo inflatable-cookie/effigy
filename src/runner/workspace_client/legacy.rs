@@ -29,14 +29,21 @@
 //! the same placement, and needs none of the host authority a v1 document
 //! cannot carry (planner ruling, 2026-11-16; [`classify_task`]). A task that
 //! needs any host facility refuses by name instead.
+//!
+//! A name the pinned manifest does not declare is not refused outright when
+//! that manifest (or the bundle composed into it) declares a container
+//! deferral: the deferred command runs here, in the container this process has
+//! already proved it is, exactly as the host would hand the request to the
+//! legacy Effigy (effigy#1044; [`LegacyTask::Deferred`]).
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use effigy_cli::TaskInvocation;
 use effigy_manifest::{
-    resolve_task_execution_binding, ManifestManagedRun, ManifestManagedRunStep, ManifestTask,
-    ManifestTaskRunIn, ResolvedTaskExecutionBinding, ResolvedWorkspaceContainer, TaskManifest,
+    resolve_task_execution_binding, DeferredCommand, ManifestManagedRun, ManifestManagedRunStep,
+    ManifestTask, ManifestTaskRunIn, ResolvedTaskExecutionBinding, ResolvedWorkspaceContainer,
+    TaskManifest,
 };
 
 use super::context::v2::SCHEMA as V2_SCHEMA;
@@ -176,6 +183,10 @@ pub(crate) enum LegacyTask {
     /// The task's steps are bound to the workspace container this process is
     /// already in and need no host facility: they run here.
     ContainerLocal,
+    /// The name is not a declared task, but the pinned manifest's deferral
+    /// resolves it and the deferral targets a container: the deferred command
+    /// runs here.
+    Deferred(DeferredCommand),
     /// The task needs host authority. The reason names the declaration that
     /// keeps it off this container.
     HostAuthority(String),
@@ -196,16 +207,85 @@ pub(crate) fn classify_task(
 ) -> Result<LegacyTask, RunnerError> {
     let (manifest, _) = pinned_task_manifest(published, guest, checkout)?;
     let Some(declaration) = manifest.tasks.get(&task.name) else {
-        return Ok(LegacyTask::HostAuthority(format!(
-            "`{}` is not a task in the manifest this workspace's context pins",
-            task.name
-        )));
+        return Ok(undeclared_task(published, &manifest, task));
     };
     let prepared = prepared_container(published)?;
     let Some(reason) = host_facility(&manifest, &task.name, declaration, prepared) else {
         return Ok(LegacyTask::ContainerLocal);
     };
     Ok(LegacyTask::HostAuthority(reason))
+}
+
+/// The placement of a name the pinned manifest does not declare.
+///
+/// A legacy workspace hands unresolved requests to the deferral its manifest
+/// declares; a bundle provides the same declaration by being composed into
+/// that manifest. The deferral is resolved from the pinned composed document —
+/// never from the writable checkout — so the guest runs the command the host
+/// approved. It runs here when it targets a container, because this process
+/// already is that container. A deferral that declares `run_in = "host"` (the
+/// omitted default) still needs host authority, and a name with no deferral at
+/// all keeps the plain refusal.
+fn undeclared_task(
+    published: &PublishedLegacyGuestContext,
+    manifest: &TaskManifest,
+    task: &TaskInvocation,
+) -> LegacyTask {
+    let Some(defer) = manifest.defer.as_ref() else {
+        return LegacyTask::HostAuthority(unresolved_task_reason(&task.name));
+    };
+    let run_in = defer.run_in.unwrap_or(ManifestTaskRunIn::Host);
+    if run_in == ManifestTaskRunIn::Host {
+        return LegacyTask::HostAuthority(format!(
+            "`{}` is not a task in the manifest this workspace's context pins, and the deferral \
+             that manifest declares runs on the host (`[defer].run_in` is `\"host\"` or omitted)",
+            task.name
+        ));
+    }
+    LegacyTask::Deferred(DeferredCommand {
+        template: defer.run.clone(),
+        // The deferral belongs to the workspace root the context mounted, and
+        // that mount is the only working directory this guest has.
+        working_dir: PathBuf::from(&published.context.paths.guest_checkout),
+        source: format!(
+            "the manifest workspace context generation {} pins",
+            published.generation
+        ),
+        run_in,
+    })
+}
+
+/// The refusal reason a name the pinned manifest does not resolve carries.
+fn unresolved_task_reason(name: &str) -> String {
+    format!("`{name}` is not a task in the manifest this workspace's context pins")
+}
+
+/// Run one pinned deferral in this container.
+///
+/// The guest entry reaches here only for [`LegacyTask::Deferred`], so the
+/// deferral and its placement came from the pinned document, and the request
+/// tail is the one the frozen CLI request carries. The command runs through the
+/// runner's own local deferral execution, in the container this process proved
+/// it is.
+pub(crate) fn run_deferred_task(
+    task: &TaskInvocation,
+    deferral: &DeferredCommand,
+) -> Result<String, RunnerError> {
+    // The CLI joins Effigy's own flags and the task's arguments with a
+    // boundary (D1-34); `{args}` is the task's half, exactly as the host hands
+    // it over. An invocation built inside Effigy carries no boundary and keeps
+    // its arguments as they are.
+    let passthrough = match effigy_core::task_args::split_task_args(&task.args) {
+        Some(split) => split.task,
+        None => task.args.clone(),
+    };
+    let cause = RunnerError::task_invocation(unresolved_task_reason(&task.name));
+    crate::runner::deferral::run_deferred_request_in_this_container(
+        task,
+        &passthrough,
+        deferral,
+        &cause,
+    )
 }
 
 /// The container this context was prepared for, from the environment resource

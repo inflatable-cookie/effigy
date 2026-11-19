@@ -894,6 +894,184 @@ fn a_container_bound_task_runs_in_the_container_the_context_proved() {
     );
 }
 
+/// [`production_guest`] whose mounted checkout is a real directory, so a
+/// deferral the guest runs has the working directory it names.
+fn production_guest_mounted_at(
+    manifest: &[u8],
+    checkout: &std::path::Path,
+) -> (legacy::PublishedLegacyGuestContext, FakeGuest, FakeCheckout) {
+    let mut context = production_context_over(manifest);
+    context.paths.guest_checkout = checkout.display().to_string();
+    context.paths.workdir = checkout.display().to_string();
+    let mut guest = FakeGuest::new();
+    publish_production_with(&mut guest, &context, manifest);
+    let published = legacy::published_legacy_at(
+        &context.render().expect("render"),
+        GENERATION,
+        &mut ObservedIt(Some(guest_observation())),
+        &running_binary(),
+    )
+    .expect("the production context");
+    (published, guest, FakeCheckout::default())
+}
+
+#[test]
+fn an_undeclared_name_runs_the_pinned_container_deferral_here() {
+    // effigy#1044: a name the pinned manifest does not declare, which that
+    // manifest's `[defer]` resolves to a container command, runs in the
+    // container this process proved it is — the host's fallback behaviour
+    // without the host.
+    let fixture =
+        effigy_test_support::Fixture::new("legacy-guest-deferral-").expect("fixture root");
+    let marker = fixture.path().join("deferral-ran");
+    let manifest = format!(
+        "[defer]\nrun = \"printf '%s %s %s' \\\"$EFFIGY_DEFER_DEPTH\\\" {{request}} {{args}} > {}\"\nrun_in = \"container\"\n\n[tasks]\nbuild = \"cargo build\"\n",
+        marker.display()
+    );
+    let (published, mut guest, mut checkout) =
+        production_guest_mounted_at(manifest.as_bytes(), fixture.path());
+
+    let output = legacy_command(
+        &parsed(&["prep", "--dry-run"]),
+        &published,
+        &mut guest,
+        &mut checkout,
+    )
+    .expect("the pinned deferral resolves the request")
+    .expect("the deferral answers the command here");
+    assert!(
+        output.is_empty(),
+        "a non-verbose deferral returns no extra output: {output}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&marker).expect("the deferred command ran in this container"),
+        "1 prep --dry-run",
+        "the child carries the request tail and the one-hop depth guard"
+    );
+    assert_eq!(
+        checkout.reads, 0,
+        "the deferral is resolved from the pinned manifest, never the checkout"
+    );
+    assert!(
+        legacy::local_task_placement().is_none(),
+        "a deferred name records no task placement"
+    );
+}
+
+#[test]
+fn a_bundle_deferral_reaches_the_guest_through_the_composed_manifest() {
+    // The decodelabs/php bundle declares the legacy deferral in its export, so
+    // composition puts it in the document the publication pins: the guest
+    // resolves the same deferral the host does, from pinned bytes only.
+    let fixture =
+        effigy_test_support::Fixture::new("legacy-guest-bundle-deferral-").expect("fixture root");
+    copy_fixture_dir(
+        &php_library_bundle_fixture(),
+        &fixture.path().join("bundles/php-library"),
+    );
+    let manifest_path = fixture.path().join("effigy.toml");
+    std::fs::write(
+        &manifest_path,
+        "[bundle]\nbase = { type = \"path\", dir = \"bundles/php-library\" }\n",
+    )
+    .expect("the bundle root manifest");
+    let composed = effigy_manifest::load_task_manifest_with_inspection(&manifest_path)
+        .expect("the bundle composes")
+        .effective_manifest;
+    assert!(
+        composed.contains("[defer]"),
+        "the composed document carries the bundle's deferral: {composed}"
+    );
+
+    let (published, mut guest, mut checkout) =
+        production_guest_mounted_at(composed.as_bytes(), fixture.path());
+    let placement = legacy::classify_task(
+        &published,
+        &mut guest,
+        &mut checkout,
+        &TaskInvocation {
+            name: "prep".to_owned(),
+            args: Vec::new(),
+        },
+    )
+    .expect("the pinned manifest");
+    match placement {
+        legacy::LegacyTask::Deferred(deferral) => {
+            assert_eq!(
+                deferral.template,
+                "\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" {request} {args}",
+                "the deferred command is the bundle's own"
+            );
+            assert_eq!(
+                deferral.run_in,
+                effigy_manifest::ManifestTaskRunIn::Container
+            );
+            assert_eq!(
+                deferral.working_dir,
+                fixture.path(),
+                "the deferral runs from the checkout the context mounted"
+            );
+        }
+        other => panic!("the bundle deferral should run here, got {other:?}"),
+    }
+    assert_eq!(
+        checkout.reads, 0,
+        "nothing is read from the writable checkout"
+    );
+}
+
+#[test]
+fn a_pinned_deferral_that_targets_the_host_still_refuses() {
+    // `run_in` omitted keeps its host-only default, and an explicit
+    // `run_in = "host"` is the same fact: the backward-compatible deferral is
+    // host work this guest has no authority for.
+    for run_in in ["", "run_in = \"host\"\n"] {
+        let manifest = format!(
+            "[defer]\nrun = \"printf deferred\"\n{run_in}\n[tasks]\nbuild = \"cargo build\"\n"
+        );
+        let (published, mut guest, mut checkout, _) = production_guest(manifest.as_bytes());
+        let error = legacy_command(&parsed(&["prep"]), &published, &mut guest, &mut checkout)
+            .expect_err("a host deferral needs host authority");
+        let message = error.to_string();
+        assert!(message.contains("not a task in the manifest"), "{message}");
+        assert!(message.contains("runs on the host"), "{message}");
+        assert!(message.contains("run on the host"), "{message}");
+        assert_eq!(checkout.reads, 0, "a refusal reads no checkout file");
+    }
+}
+
+#[test]
+fn an_undeclared_name_without_a_pinned_deferral_keeps_the_refusal() {
+    let (published, mut guest, mut checkout, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
+    let error = legacy_command(&parsed(&["prep"]), &published, &mut guest, &mut checkout)
+        .expect_err("an unknown name with no deferral refuses");
+    let message = error.to_string();
+    assert!(message.contains("not a task in the manifest"), "{message}");
+    assert!(message.contains("no host authority channel"), "{message}");
+    assert!(message.contains("cannot grant host authority"), "{message}");
+    assert_eq!(checkout.reads, 0, "a refusal reads no checkout file");
+    assert!(legacy::local_task_placement().is_none());
+}
+
+/// The bundle fixture the decodelabs/php cohorts publish from.
+fn php_library_bundle_fixture() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("crates/effigy-manifest/tests/fixtures/php-library-bundle")
+}
+
+fn copy_fixture_dir(src: &std::path::Path, dst: &std::path::Path) {
+    std::fs::create_dir_all(dst).expect("create fixture directory");
+    for entry in std::fs::read_dir(src).expect("read fixture directory") {
+        let entry = entry.expect("fixture entry");
+        let target = dst.join(entry.file_name());
+        if entry.path().is_dir() {
+            copy_fixture_dir(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), &target).expect("copy fixture file");
+        }
+    }
+}
+
 #[test]
 fn a_task_bound_to_another_container_than_the_prepared_one_refuses() {
     // A guest prepared for container `web` may only run a task bound to `web`.

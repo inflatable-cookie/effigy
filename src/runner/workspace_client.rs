@@ -1760,9 +1760,11 @@ impl Transport for BoxedTransport {
 /// placement, so the local reads every container-mode guest is granted (§8.6)
 /// are served from it. It carries no admitted session, no credential and no
 /// host authority channel, so a command needing host authority refuses here,
-/// naming the host CLI as what actually serves it — except a declared task
-/// whose steps are bound to this workspace container, which runs here because
-/// this process already is that container (planner ruling, 2026-11-16).
+/// naming the host CLI as what actually serves it — except two placements the
+/// context itself resolves, which run here because this process already is that
+/// container: a declared task whose steps are bound to this workspace container
+/// (planner ruling, 2026-11-16), and an undeclared name the pinned manifest's
+/// container deferral receives (effigy#1044).
 ///
 /// `Ok(None)` means the ordinary dispatch runs the command in this container.
 fn legacy_command(
@@ -1796,6 +1798,13 @@ fn legacy_command(
                     "1",
                 );
                 Ok(None)
+            }
+            legacy::LegacyTask::Deferred(deferral) => {
+                // The pinned manifest's own deferral resolves this name and
+                // targets a container: this process already is that container,
+                // so the deferred command runs here. Nothing on this path reads
+                // the writable checkout, and no placement is recorded for it.
+                legacy::run_deferred_task(task, &deferral).map(Some)
             }
             legacy::LegacyTask::HostAuthority(reason) => Err(RunnerError::task_invocation(
                 legacy::host_authority_unavailable_for(published, &reason),
