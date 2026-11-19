@@ -122,9 +122,11 @@ that only `effigy bundle sync` moved selected bytes.
 
 - `effigy bundle sync` stays as the explicit command: it re-acquires every
   declared source, including path sources.
-- The Prepare paths update a stale source themselves, before the command
-  composes the manifest from it: `effigy dev`, `effigy bootstrap`,
-  `effigy container up` and the callers of container up.
+- The Prepare paths update a stale source themselves, once, at the start of the
+  command and before it composes the manifest from it: `effigy dev`,
+  `effigy bootstrap`, `effigy container up` and the callers of container up. A
+  later Prepare in the same process only fills a missing pin; it never moves a
+  selected one, so nothing a command resolves changes under it.
 - Any other task run applies rule 1 only, before it composes the manifest: a
   declared source with no **usable** pin is acquired, so a fresh checkout,
   worktree or clone runs an ordinary task, lists its tasks and plans one
@@ -184,9 +186,9 @@ check, or register Git excludes. `--plan`, `--help` and `effigy tasks` still
 apply rule 1: a pin this checkout does not hold yet is acquired, so the first
 command an agent runs in a fresh worktree works. Managed (`mode = "tui"`)
 task-local `status`, `logs` and `stop` never apply rule 1. A task whose first
-argument happens to be those words still acquires. When a source is behind, the read
-notice names the locked and the available revision and says that the next
-`effigy dev` or `effigy container up` will update it. Static help and version
+argument happens to be those words still acquires. When a declaration has changed, the
+read notice names the locked revision and says that the next `effigy dev` or
+`effigy container up` will update it. Static help and version
 remain available while source preparation is unavailable.
 
 Preparation runs as a kernel Prepare operation under the declaring checkout's
@@ -264,41 +266,35 @@ replacement's bytes are never pinned. Git exclude registration occurs only in
 Prepare and Mutate paths, never during manifest composition.
 
 After the lock is published, a successful Prepare removes every generation
-under `.effigy/cache/sources/` that the lock does not reference and reports
-`pruned N source generations nothing pins` once. Every generation the lock
-selects is kept, so repeated syncs no longer accumulate copies of each source.
+under `.effigy/cache/sources/` that the lock does not reference and that no live
+invocation holds, and reports `pruned N source generations nothing pins` once.
+Every generation the lock selects is kept, so repeated syncs no longer
+accumulate copies of each source.
 
-A run step is a Prepare path too, so a later step must never open a path that
-Prepare has already removed. A path under
-`.effigy/cache/sources/<generation>/<source>/` names the source, not the
-generation that happened to hold it: a step command, a Rhai step path and a
-managed run command are pointed at the object the lock selects at the moment
-they start, not at the generation the manifest load or plan resolved. In a
-managed run the process commands are rendered only after its setup steps and
-its environment `up` have run — both Prepare paths — so a container `up` that
-publishes a generation is never rendered around. A container route's per-process
-setup is its own exec, resolved from the same lock and run by the supervisor
-before that process's command is resolved, and each command is resolved again as
-the process starts, including on a restart. The supervisor observes a stop, a
-stop request or the owning client's death while that setup runs, as it does
-during the run's own setup steps. A container-routed process
-command has been rewritten to the checkout's mount by then, so the same source
-resolves under that spelling too. The run continues on the newly selected
-bytes, exactly as it does after its own Prepare, and nothing records an
-in-flight reference or delays the prune.
+A command selects its sources once, at its start, before any task, command or
+Rhai text resolves. Everything it renders (task and step commands, Rhai step
+paths, managed run commands) names the generation that selection published, and
+nothing later in the same invocation moves it. A step that runs `effigy bundle
+sync` or `container up` publishes a generation for the next command; it does
+not rewrite the paths this one already rendered. Source paths are not relocated
+after they are resolved.
 
-A bounded host-side `~/.effigy/cache/sources-known.json` hint records the source bytes each
-checkout selected, written by any Prepare. A short shared cache gate serializes publishers;
-this derived hint is outside both runtime databases and contains no run index. A read may emit one
-`<source> behind: locked <rev>, available <rev>; the next `effigy dev` or
-`effigy container up` will update` notice per process when a declaration changed
-or a known version differs from the pin. The locked side is the pinned Git
-revision when the pin has one; the hint records a content digest, not a
-revision, so a mixed pair is labelled by kind (`locked revision <rev>,
-available digest <digest>`), and only a pair of revisions is printed bare. It
-performs no network request and never changes the selection. A missing or
-unreadable hint grants no update authority, and a missing or unreadable update
-record grants no TTL: the next Prepare checks again.
+Holds keep those bytes on disk. A command that resolves sources writes one
+symlink per object its lock selects into `.effigy/cache/source-holds/<pid>.<n>`,
+after its start-of-command refresh and before anything resolves, and removes
+them when it exits. A managed run's supervisor writes its own holds before it is
+admitted, because it outlives its client. A prune skips every generation a
+live holder names. A link whose pid is gone is stale, and the next prune removes
+it; a reused pid only keeps bytes longer. No hold is written inside a workspace
+container, because a container pid means nothing to the host.
+
+A read emits at most one `<source> behind: locked <rev>, declaration changed;
+the next `effigy dev` or `effigy container up` will update` notice per process
+when a declaration no longer matches its pin. Reads perform no network request
+and never change the selection. There is no machine-wide known-version hint: the
+only read-path notice is the declaration change, and only the start-of-command
+check learns that a floating source moved. A missing or unreadable update record
+grants no TTL: the next Prepare checks again.
 
 ## v0.14.1 import
 
@@ -317,7 +313,8 @@ The old Git URL/ref and OCI registry/name/version cache layouts are import input
 only; their refresh writer and cache lock are removed.
 
 `EFFIGY_GIT_BUNDLE_REMOTE_CHECK_TTL_SECS` no longer controls source selection:
-the 10-minute floating-source window is fixed. Prepare warns when it is set.
+the 10-minute floating-source window is fixed, and setting the variable is
+ignored without a warning.
 
 ## Inspection and synchronization
 
@@ -342,6 +339,6 @@ Update this contract when any of these change:
 - `[sources.<name>]` grammar, pin identity, the declared-path resolution and
   the publication of a missing checkout (staging name, the rename, and when a
   concurrent run's checkout is adopted or reported)
-- source generation layout under `.effigy/cache/sources/`, when a run step
-  resolves its source path, and which generations a Prepare prunes
+- source generation layout under `.effigy/cache/sources/`, the hold links under
+  `.effigy/cache/source-holds/`, and which generations a Prepare prunes
 - `bundle inspect` or `bundle sync` minimum source metadata

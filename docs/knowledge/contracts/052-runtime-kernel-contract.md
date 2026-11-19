@@ -4969,8 +4969,8 @@ arguments, catalog and output mode. Builtins retain exact argv for supervised
 child execution; their admission parse is discarded. Leading global arguments
 carry catalog targeting without entering command payloads. Documentation checks
 keep their checkout-wide defaults and catalog-relative invocation cwd. User `run`
-strings use a real shell, and source paths relocate against the current pin when
-a step starts. Embedded task calls carry an explicit environment snapshot and
+strings use a real shell. Source paths name the generation the command's start
+selected, and the invocation holds it (contract 020). Embedded task calls carry an explicit environment snapshot and
 absolute inherited deadline; a child can shorten that deadline, never restart it.
 
 Consumer sequence compatibility compares JSON plans against the dispatch baseline

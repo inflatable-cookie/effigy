@@ -65,6 +65,9 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
     // before any preparation or fallback can produce effects. Its first
     // resolver already observed the sources; missing sources now refuse.
     let reserved_workspace = crate::runner::managed_run::workspace_resolution()?.is_some();
+    // The command's own hold on the sources it selected. It lives until the
+    // command finishes, so a refresh by another invocation cannot remove them.
+    let mut _source_hold: Option<effigy_manifest::SourceHold> = None;
     if let Some(manifest) = root
         .ancestors()
         .map(|root| root.join("effigy.toml"))
@@ -86,6 +89,18 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
                 crate::runner::bundle_command::prepare_sources_for_manifest(&manifest)?;
             } else {
                 crate::runner::bundle_command::prepare_missing_sources_for_manifest(&manifest)?;
+            }
+            // Only a run that executes a catalog task holds its sources. Listing,
+            // `--plan` and built-in discovery write nothing into the checkout.
+            let executes = matches!(
+                &cmd,
+                Command::Task(task)
+                    if !crate::runner::bundle_command::is_read_only_task_invocation(task)
+                        && !effigy_core::builtin_tasks::is_builtin_task_name(&task.name)
+            );
+            if executes {
+                _source_hold = effigy_manifest::hold_selected_sources(&manifest)
+                    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
             }
         }
     }

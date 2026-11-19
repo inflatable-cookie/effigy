@@ -195,12 +195,6 @@ fn prepare(
     preparation: &SourcePreparation,
     mode: Mode,
 ) -> Result<Option<BundleSyncReport>, ManifestError> {
-    static TTL_WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    if std::env::var_os("EFFIGY_GIT_BUNDLE_REMOTE_CHECK_TTL_SECS").is_some()
-        && !TTL_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed)
-    {
-        warn(&preparation.progress, "EFFIGY_GIT_BUNDLE_REMOTE_CHECK_TTL_SECS is retired; a floating source is checked at most once per checkout every 10 minutes");
-    }
     let manifest = std::fs::canonicalize(manifest).map_err(|err| io_error(manifest, err))?;
     let (bundle, catalogs) = crate::composition::load_manifest_source_declarations(&manifest)?;
     let mut selections = BTreeMap::new();
@@ -979,78 +973,6 @@ fn acquire_and_publish(
         .map_err(|err| io_error(manifest, err))?;
     run.applied(&exclude, serde_json::Value::Null)
         .map_err(|err| error(manifest, err.to_string()))?;
-    // Other checkouts can report a known newer source without remote probes.
-    // This bounded hint is never used to select or acquire source bytes.
-    // This is a derived shared hint cache, never a runtime database or run
-    // index. A short cache lock serializes publishers from different checkouts.
-    // This handle supplies only a shared cache lock. It never opens a
-    // machine database or makes source acquisition depend on its health.
-    let machine =
-        StateRoot::machine_effects(cx, home).map_err(|err| error(manifest, err.to_string()))?;
-    let cache_gate = effigy_kernel::gate::Gate::acquire(
-        cx,
-        &machine,
-        &[ResourceId::store(Scope::Machine, "source-hints")
-            .map_err(|err| error(manifest, err.to_string()))?],
-        Wait::Until(Instant::now() + Duration::from_secs(10)),
-    )
-    .map_err(|err| error(manifest, err.to_string()))?;
-    let home_dir = DirFd::open(home).map_err(|err| error(manifest, err.to_string()))?;
-    let effigy = home_dir
-        .prepare_child(
-            cx,
-            &FileName::new(".effigy").map_err(|err| error(manifest, err.to_string()))?,
-        )
-        .map_err(|err| error(manifest, err.to_string()))?;
-    let store_dir = effigy
-        .prepare_child(
-            cx,
-            &FileName::new("cache").map_err(|err| error(manifest, err.to_string()))?,
-        )
-        .map_err(|err| error(manifest, err.to_string()))?;
-    let known_name =
-        FileName::new("sources-known.json").map_err(|err| error(manifest, err.to_string()))?;
-    let observe = cx.operation().observe().map_err(|_| {
-        error(
-            manifest,
-            "source preparation could not read its source cache: the observation window is not finite",
-        )
-    })?;
-    let mut known =
-        effigy_kernel::record::read_cache::<KnownVersions>(&observe, &store_dir, &known_name)
-            .unwrap_or_default();
-    for (name, selection) in selections {
-        if let Some(pin) = pins.get(name) {
-            known.0.insert(
-                source_key(selection).map_err(|err| error(manifest, err.to_string()))?,
-                pin.version.clone(),
-            );
-        }
-    }
-    while known.0.len() > 4096 {
-        known.0.pop_first();
-    }
-    let known_bytes = serde_json::to_vec(&known).map_err(|err| error(manifest, err.to_string()))?;
-    if known_bytes.len() as u64 > LOCK_MAX {
-        return Err(error(manifest, "source hint inventory exceeds size limit"));
-    }
-    let known_ticket = retained_intent(
-        run,
-        "sources:known-versions",
-        &store_dir.path().join("sources-known.json"),
-        manifest,
-    )?;
-    effigy_kernel::record::atomic_replace(
-        cx,
-        &cache_gate,
-        &store_dir,
-        &known_name,
-        &known_bytes,
-        effigy_kernel::record::ReplaceOpts::default(),
-    )
-    .map_err(|err| error(manifest, err.to_string()))?;
-    run.applied(&known_ticket, serde_json::Value::Null)
-        .map_err(|err| error(manifest, err.to_string()))?;
     // The TTL record of this run's remote checks. It is an explicit Prepare
     // effect beside the lock until the per-checkout state store owns it (#276).
     if checked_any {
@@ -1129,10 +1051,10 @@ fn acquire_and_publish(
     })
 }
 
-/// Remove the source generations the published lock does not pin. Every
-/// Prepare writes a new generation, so without this the predecessor of each
-/// sync stays on disk for good. Runs after the lock is published, so the
-/// generations it selects are never removed.
+/// Remove the source generations the published lock does not pin and no live
+/// invocation holds. Every Prepare writes a new generation, so without this the
+/// predecessor of each sync stays on disk for good. Runs after the lock is
+/// published, so the generations it selects are never removed.
 ///
 /// Cleanup is maintenance: an unlistable or undeletable generation warns and
 /// the successful Prepare stands.
@@ -1159,13 +1081,16 @@ fn prune_unpinned_generations(
         );
         return Ok(());
     };
+    // Bytes a live invocation holds are not this Prepare's to remove (contract
+    // 020): a run keeps the generation it started with until it exits.
+    let held = super::hold::held_generations(manifest);
     let mut pruned = 0usize;
     for entry in entries {
         let Some(name) = entry.to_str() else {
             continue;
         };
         let prefix = Path::new("cache/sources").join(name);
-        if pins.values().any(|pin| pin.object.starts_with(&prefix)) {
+        if pins.values().any(|pin| pin.object.starts_with(&prefix)) || held.contains(name) {
             continue;
         }
         let name = FileName::new(name).map_err(|err| error(manifest, err.to_string()))?;
