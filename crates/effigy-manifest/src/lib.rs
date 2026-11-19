@@ -11,6 +11,7 @@ mod bundles;
 mod catalog_section;
 mod composition;
 pub mod config_sections;
+pub mod diagnostics;
 mod ingress;
 mod lifecycle_date;
 pub use lifecycle_date::ManifestLifecycleDate;
@@ -31,6 +32,7 @@ pub mod task_runtime;
 mod test_config;
 pub mod user_config;
 
+pub use diagnostics::{diagnose_manifest_value, ManifestDiagnostic};
 pub use effigy_core::repo_markers::TASK_MANIFEST_FILE;
 /// Longest task `description` Effigy accepts, in characters. A description is
 /// one line of human context, not documentation: the guide and the task's own
