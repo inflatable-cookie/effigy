@@ -1798,6 +1798,46 @@ fn a_lock_pin_whose_object_is_gone_is_acquired_again() {
     assert!(fixture.repo.join(".effigy").join(object).is_dir());
 }
 
+/// An ordinary task acquires a missing pinned checkout once, then does not
+/// inspect it on later invocations.
+#[test]
+fn an_ordinary_task_does_not_inspect_an_existing_pinned_checkout() {
+    let fixture = Fixture::new();
+    let source = fixture.owner.path().join("book-src");
+    let rev = init_git_bundle(&source, &fixture.home, "one");
+    fs::write(
+        fixture.repo.join("effigy.toml"),
+        format!(
+            "[sources.book]\ngit = \"file://{}\"\nrev = \"{rev}\"\npath = \"book\"\n\n[tasks.hello]\nrun = \"echo hello\"\n",
+            source.display()
+        ),
+    )
+    .unwrap();
+    let (ok, output) = fixture.run(&["hello"], &[], Duration::from_secs(30));
+    assert!(ok, "{output}");
+    assert!(fixture.repo.join("book").is_dir());
+
+    let tools = fixture.owner.path().join("tools");
+    fs::create_dir(&tools).unwrap();
+    let git = tools.join("git");
+    fs::write(
+        &git,
+        "#!/bin/sh\nprintf called > \"$HOME/git-called\"\nexit 1\n",
+    )
+    .unwrap();
+    fs::set_permissions(&git, fs::Permissions::from_mode(0o755)).unwrap();
+    let path =
+        std::env::join_paths([tools, PathBuf::from("/usr/bin"), PathBuf::from("/bin")]).unwrap();
+    let (ok, output) = fixture.run(
+        &["hello"],
+        &[("PATH", Path::new(&path))],
+        Duration::from_secs(30),
+    );
+    assert!(ok, "{output}");
+    assert!(output.contains("hello"), "{output}");
+    assert!(!fixture.home.join("git-called").exists(), "{output}");
+}
+
 /// A pinned `[sources.*]` git URL that needs a credential prompt fails the task
 /// quickly and non-interactively, and leaves no half checkout behind.
 #[test]

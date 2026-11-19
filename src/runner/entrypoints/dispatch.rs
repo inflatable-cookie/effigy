@@ -89,7 +89,11 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
                         && !effigy_core::builtin_tasks::is_builtin_task_name(&task.name)
             );
             if executes {
-                crate::runner::bundle_command::prepare_sources_for_manifest(&manifest)?;
+                if crate::runner::bundle_command::is_source_prepare_command(&cmd) {
+                    crate::runner::bundle_command::prepare_sources_for_manifest(&manifest)?;
+                } else {
+                    crate::runner::bundle_command::prepare_task_sources_for_manifest(&manifest)?;
+                }
                 _source_hold = effigy_manifest::hold_selected_sources(&manifest)
                     .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
             } else {

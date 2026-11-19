@@ -567,6 +567,15 @@ pub(in crate::runner) fn prepare_sources_for_manifest(manifest: &Path) -> Result
     prepare_pinned_sources_for_manifest(manifest)
 }
 
+/// Refresh bundle and catalog pins, while leaving existing pinned working
+/// copies alone on an ordinary task run (contract 020).
+pub(in crate::runner) fn prepare_task_sources_for_manifest(
+    manifest: &Path,
+) -> Result<(), RunnerError> {
+    prepare_bundle_sources_for_manifest(manifest)?;
+    prepare_missing_pinned_sources_for_manifest(manifest)
+}
+
 /// Read-only discovery acquires missing sources without moving usable pins
 /// (contract 020), so a fresh checkout can list and plan tasks.
 pub(in crate::runner) fn prepare_missing_sources_for_manifest(

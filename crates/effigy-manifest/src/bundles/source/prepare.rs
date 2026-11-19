@@ -130,8 +130,8 @@ pub fn sync_bundle_source(
 ) -> Result<Option<BundleSyncReport>, ManifestError> {
     prepare(manifest, preparation, Mode::Sync)
 }
-/// Prepare paths acquire a missing source and refresh a pin that is behind, so
-/// `dev`, `bootstrap` and `container up` never need a manual `bundle sync`.
+/// Task execution and Prepare paths acquire missing sources and refresh stale
+/// pins before resolving their selected bytes.
 pub fn prepare_bundle_sources(
     manifest: &Path,
     preparation: &SourcePreparation,
@@ -152,7 +152,7 @@ pub fn prepare_missing_bundle_sources(
 enum Mode {
     /// `effigy bundle sync`: re-acquire every selected source.
     Sync,
-    /// `dev`, `bootstrap`, `container up`: acquire what is missing and refresh
+    /// Task execution and Prepare paths: acquire what is missing and refresh
     /// what is behind.
     Refresh,
     /// Read-only discovery: acquire only a source without a usable pin.
