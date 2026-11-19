@@ -18,7 +18,6 @@ use effigy_manifest::config_sections::{
 };
 use effigy_manifest::{load_task_manifest, TASK_MANIFEST_FILE};
 
-use crate::hosted_evidence::{hosted_evidence_spec_from_manifest, HostedEvidenceSpec};
 use crate::prepare_helpers::{apply_bump, suggested_bump, unreleased_counts};
 use crate::{
     format_release_tag, git_head_sha, git_tag_exists, git_work_tree_clean, read_current_version,
@@ -148,7 +147,6 @@ pub struct ReleasePipeline {
     pub targets: Vec<ResolvedTarget>,
     pub approvals: Vec<String>,
     pub approval_defaulted: bool,
-    pub hosted_evidence: Option<HostedEvidenceSpec>,
 }
 
 impl ReleasePipeline {
@@ -165,8 +163,8 @@ pub struct ReleaseRunSummary {
     pub id: Option<String>,
     pub stage: Option<String>,
     pub waiting_on: Option<String>,
-    /// `paused`, `awaiting-approval`, `awaiting-hosted-evidence`,
-    /// `awaiting-decision`, `failed` or `complete`.
+    /// `paused`, `awaiting-approval`, `awaiting-decision`, `failed` or
+    /// `complete`.
     pub status: Option<String>,
     /// `pending` when the invocation was interrupted, `incomplete` when it
     /// closed without its cleanup settling. Absent once settled.
@@ -381,9 +379,6 @@ pub fn resolve_release_pipeline(root: &Path) -> Result<ReleasePipeline, ReleaseE
         targets,
         approvals: approvals.0,
         approval_defaulted: approvals.1,
-        hosted_evidence: hosted_evidence_spec_from_manifest(
-            config.and_then(|config| config.hosted_evidence.as_ref()),
-        )?,
     })
 }
 
@@ -537,27 +532,19 @@ fn resolve_identity_version_source(
 pub(crate) fn resolve_gates(
     config: Option<&ManifestReleaseConfig>,
 ) -> Result<Vec<crate::ResolvedGate>, ReleaseError> {
-    let hosted = hosted_evidence_spec_from_manifest(
-        config.and_then(|config| config.hosted_evidence.as_ref()),
-    )?;
     let Some(config) = config else {
         return Ok(Vec::new());
     };
     let mut gates = Vec::with_capacity(config.gates.len());
     for (name, gate) in &config.gates {
-        let (command, task, description, reuse_hosted_evidence, stage) = match gate {
-            ManifestReleaseGateConfig::Command(command) => (
-                command.trim().to_owned(),
-                None,
-                None,
-                false,
-                GateStage::Certify,
-            ),
+        let (command, task, description, stage) = match gate {
+            ManifestReleaseGateConfig::Command(command) => {
+                (command.trim().to_owned(), None, None, GateStage::Certify)
+            }
             ManifestReleaseGateConfig::Detailed(ManifestReleaseGateDetails {
                 command,
                 task,
                 description,
-                reuse_hosted_evidence,
                 stage,
             }) => {
                 let command = command.as_deref().map(str::trim).unwrap_or_default();
@@ -580,28 +567,16 @@ pub(crate) fn resolve_gates(
                     command,
                     task,
                     description.clone(),
-                    *reuse_hosted_evidence,
                     GateStage::from_manifest(*stage),
                 )
             }
         };
-        if reuse_hosted_evidence && hosted.is_none() {
-            return Err(ReleaseError::TaskInvocation(format!(
-                "release gate `{name}` sets reuse-hosted-evidence but [release.hosted-evidence].workflow is not configured"
-            )));
-        }
         gates.push(crate::ResolvedGate {
             name: name.clone(),
             command,
             task,
             description,
             stage,
-            reuse_hosted_evidence,
-            hosted_evidence: if reuse_hosted_evidence {
-                hosted.clone()
-            } else {
-                None
-            },
         });
     }
     Ok(gates)

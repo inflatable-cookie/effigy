@@ -381,8 +381,8 @@ fn assert_poodle_shorthand_contract() {
     assert_eq!(declared["bump"], "patch");
     assert_eq!(declared["tag"], "v0.4.1");
 
-    // Poodle declares one detailed gate, which keeps its command, description
-    // and hosted-evidence setting.
+    // Poodle declares one detailed gate, which keeps its command and
+    // description.
     let gates = plan["gates"].as_array().expect("gates");
     assert_eq!(gates.len(), 1);
     assert_eq!(gates[0]["name"], "headless");
@@ -846,8 +846,8 @@ fn release_decide_records_an_unknown_publish_outcome_and_continues() {
 /// machine cannot reproduce in a temporary workspace is stubbed, and each stub
 /// is a file the config already names:
 ///
-/// - `scripts/check-release-ci.sh` exits 0 instead of asking `gh` for a hosted
-///   run on this exact commit;
+/// - `scripts/check-release-ci.sh` records the candidate the release runner
+///   bound it to instead of asking `gh` for a hosted run on that commit;
 /// - `scripts/release/secret-audit.sh` records the pinned arguments instead of
 ///   scanning the real release lineage, which a synthetic repository lacks;
 /// - the fixture's `build:release`, which the real `release:artifact` task
@@ -894,6 +894,7 @@ include = ["config/release.toml"]
 "build:release" = { run = "cargo build --release --bin effigy" }
 "release:artifact" = { task = "build:release" }
 "release:metadata" = { run = "sh scripts/release/checks.sh metadata {args}" }
+"release:ci-evidence" = { run = "sh scripts/check-release-ci.sh {args}" }
 "release:preflight" = { run = "sh scripts/release/checks.sh preflight {args}" }
 "release:publish:binaries" = { run = "sh fake-dispatch.sh" }
 "release:check:binaries" = { run = "sh fake-check.sh" }
@@ -927,7 +928,7 @@ include = ["config/release.toml"]
     }
     fs::write(
         root.join("scripts/check-release-ci.sh"),
-        "#!/bin/sh\n# fixture: the hosted CI probe needs gh and a real dispatch\necho 'CI is green for candidate commit fixture'\n",
+        "#!/bin/sh\nset -eu\n# fixture: `gh` and a real dispatch are unavailable, so this gate proves the\n# runner bound it to the exact candidate instead.\ntest \"$EFFIGY_RELEASE_COMMIT\" = \"$(git rev-parse HEAD)\"\nprintf '%s\\n' \"$EFFIGY_RELEASE_COMMIT\" > \"$HOME/ci-gated-commit\"\necho 'CI is green for candidate commit fixture'\n",
     )
     .expect("fixture CI gate");
     fs::write(
@@ -1031,7 +1032,11 @@ fn effigy_release_plan_reports_the_contract_054_declaration() {
                 "certify".to_owned(),
                 String::new()
             ),
-            ("ci".to_owned(), "certify".to_owned(), String::new()),
+            (
+                "ci".to_owned(),
+                "certify".to_owned(),
+                "release:ci-evidence".to_owned()
+            ),
             ("format".to_owned(), "certify".to_owned(), String::new()),
             ("test".to_owned(), "certify".to_owned(), String::new()),
             ("qa".to_owned(), "certify".to_owned(), String::new()),
@@ -1114,6 +1119,16 @@ fn effigy_release_run_certifies_and_then_publishes_through_the_fake_dispatch() {
     );
     let receipt = &certified["result"]["receipt"];
     assert_eq!(receipt["published"], false);
+    // The `ci` gate is a repo task, and the runner told it which commit to
+    // prove: the prepared candidate it certified (contract 054 §3).
+    assert_eq!(
+        fs::read_to_string(home.join("ci-gated-commit"))
+            .expect("the ci gate ran")
+            .trim(),
+        receipt["candidate"]["commit"]
+            .as_str()
+            .expect("candidate commit")
+    );
     assert_eq!(
         fs::read_to_string(home.join("secret-audit-invoked")).expect("secret audit ran"),
         "--base\nv0.14.1\n--base-sha\n20465f1ff690340ee9ef461915ca769da1c76fca\n"

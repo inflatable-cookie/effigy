@@ -1,7 +1,13 @@
 #!/bin/sh
 
 # The release's hosted CI gate: exactly one `workflow_dispatch` run of
-# `ci.yml`, for this exact commit.
+# `ci.yml`, for the exact release candidate.
+#
+# A gate is an ordinary repo task, so the runner tells it which commit to
+# prove (`EFFIGY_RELEASE_COMMIT`, contract 054 §3). Run by hand, the work
+# tree's HEAD is that commit. A work tree that moved away from the candidate
+# refuses: proving another commit's CI would attach that evidence to this
+# candidate.
 #
 # Never the newest run on the ref: a sibling dispatch — another branch's
 # promotion, an operator's re-dispatch, a re-run — is a different run, and
@@ -11,7 +17,13 @@
 
 set -eu
 
-candidate_sha="$(git rev-parse HEAD)"
+head_sha="$(git rev-parse HEAD)"
+candidate_sha="${EFFIGY_RELEASE_COMMIT:-$head_sha}"
+if [ "$head_sha" != "$candidate_sha" ]; then
+  echo "release blocked: the work tree HEAD is $head_sha, not release candidate $candidate_sha" >&2
+  echo "check out the candidate commit before running this gate" >&2
+  exit 1
+fi
 # One line per run: "<databaseId> <headSha> <status> <conclusion>-or-dash <url>".
 # `--commit` and `--event` already narrow the query; the gate re-checks the SHA.
 runs="$(

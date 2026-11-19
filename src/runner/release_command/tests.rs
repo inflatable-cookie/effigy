@@ -346,21 +346,39 @@ fn release_ci_gate_requires_a_successful_manual_run_for_the_exact_head() {
         fake_bin.display(),
         std::env::var("PATH").unwrap_or_default()
     );
-    let run = |reported_sha: &str| {
-        std::process::Command::new("sh")
+    let run = |reported_sha: &str, bound_commit: Option<&str>| {
+        let mut command = std::process::Command::new("sh");
+        command
             .arg("scripts/check-release-ci.sh")
             .current_dir(root)
             .env("PATH", &path)
             .env("EFFIGY_TEST_CI_SHA", reported_sha)
-            .output()
-            .expect("run CI gate")
+            .env_remove("EFFIGY_RELEASE_COMMIT");
+        if let Some(bound_commit) = bound_commit {
+            command.env("EFFIGY_RELEASE_COMMIT", bound_commit);
+        }
+        command.output().expect("run CI gate")
     };
 
-    let success = run(&candidate_sha);
+    let success = run(&candidate_sha, None);
     assert!(success.status.success());
     assert!(String::from_utf8_lossy(&success.stdout).contains(&candidate_sha));
 
-    let failure = run("different-commit");
+    // The runner binds the gate to the release candidate: the same commit the
+    // gate would read from HEAD passes, and a candidate the work tree is not
+    // on refuses instead of proving another commit's CI.
+    let bound = run(&candidate_sha, Some(&candidate_sha));
+    assert!(bound.status.success());
+    let elsewhere = "0123456789abcdef0123456789abcdef01234567";
+    let moved = run(&candidate_sha, Some(elsewhere));
+    assert!(!moved.status.success());
+    let moved_stderr = String::from_utf8_lossy(&moved.stderr);
+    assert!(
+        moved_stderr.contains(&format!("not release candidate {elsewhere}")),
+        "{moved_stderr}"
+    );
+
+    let failure = run("different-commit", None);
     assert!(!failure.status.success());
     let stderr = String::from_utf8_lossy(&failure.stderr);
     assert!(
@@ -384,21 +402,10 @@ fn release_gate_steps_name_the_gate_and_its_outcome() {
         task: Some("test".to_owned()),
         description: None,
         stage: effigy_release::GateStage::Certify,
-        reuse_hosted_evidence: false,
-        hosted_evidence: None,
     };
     assert_eq!(
-        gate_progress(2, 5, &gate, false).detailed_frame_at(Duration::from_secs(3)),
+        gate_progress(2, 5, &gate).detailed_frame_at(Duration::from_secs(3)),
         "running gate cargo test (2/5); waiting for `effigy test` to exit; 3s elapsed"
-    );
-    let reused = ResolvedGate {
-        name: "hosted ci".to_owned(),
-        reuse_hosted_evidence: true,
-        ..gate
-    };
-    assert_eq!(
-        gate_progress(1, 1, &reused, true).detailed_frame_at(Duration::from_secs(2)),
-        "reusing hosted evidence for gate hosted ci (1/1); waiting for hosted evidence for gate hosted ci; 2s elapsed"
     );
 
     let failed = GateResult {
@@ -414,10 +421,6 @@ fn release_gate_steps_name_the_gate_and_its_outcome() {
         log_path: Some(std::path::PathBuf::from(
             ".effigy/release/gates/cargo-test.log",
         )),
-        reused: false,
-        hosted_run_url: None,
-        hosted_head_sha: None,
-        hosted_repository: None,
     };
     let summary = release_gate_summary(2, 5, &failed);
     assert!(
@@ -459,10 +462,8 @@ fn a_release_run_step_names_the_stage_the_gate_and_the_next_stage() {
         task: Some("test".to_owned()),
         description: None,
         stage: effigy_release::GateStage::Certify,
-        reuse_hosted_evidence: false,
-        hosted_evidence: None,
     };
-    observer.gate_started(2, 5, &gate, false);
+    observer.gate_started(2, 5, &gate);
     assert_eq!(
         progress.detailed_frame_at(Duration::from_secs(4)),
         "running gate cargo test (2/5); waiting for `effigy test` to exit; 4s elapsed"
@@ -479,23 +480,11 @@ fn a_release_run_step_names_the_stage_the_gate_and_the_next_stage() {
         launch_error: None,
         duration_ms: 12_000,
         log_path: None,
-        reused: false,
-        hosted_run_url: None,
-        hosted_head_sha: None,
-        hosted_repository: None,
     };
     observer.gate_finished(2, 5, &result);
     assert_eq!(
         progress.detailed_frame_at(Duration::from_secs(40)),
         "checking the next gate or stage (2/5); waiting for the next gate or stage; last: gate `cargo test` passed after 12s (2/5); 40s elapsed"
-    );
-
-    // A wait that is not one gate names itself as the sub-step; the last gate
-    // outcome stays visible until a newer event replaces it.
-    observer.note("checking hosted GitHub Actions evidence");
-    assert_eq!(
-        progress.detailed_frame_at(Duration::from_secs(41)),
-        "checking hosted GitHub Actions evidence; waiting for the next gate or stage; last: gate `cargo test` passed after 12s (2/5); 41s elapsed"
     );
 }
 

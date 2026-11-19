@@ -34,10 +34,6 @@ fn optional_path(path: &Option<std::path::PathBuf>) -> Option<String> {
     path.as_ref().map(|value| value.display().to_string())
 }
 
-fn is_false(value: &bool) -> bool {
-    !*value
-}
-
 #[derive(Serialize)]
 struct VersionSourcePayload {
     file: String,
@@ -93,14 +89,6 @@ struct GateResultPayload {
     duration_ms: u128,
     #[serde(skip_serializing_if = "Option::is_none")]
     log_path: Option<String>,
-    #[serde(skip_serializing_if = "is_false")]
-    reused: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    hosted_run_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    hosted_head_sha: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    hosted_repository: Option<String>,
 }
 
 impl From<&GateResult> for GateResultPayload {
@@ -116,10 +104,6 @@ impl From<&GateResult> for GateResultPayload {
             launch_error: gate.launch_error.clone(),
             duration_ms: gate.duration_ms,
             log_path: optional_path(&gate.log_path),
-            reused: gate.reused,
-            hosted_run_url: gate.hosted_run_url.clone(),
-            hosted_head_sha: gate.hosted_head_sha.clone(),
-            hosted_repository: gate.hosted_repository.clone(),
         }
     }
 }
@@ -426,7 +410,6 @@ struct PlanGatePayload {
     command: String,
     task: Option<String>,
     description: Option<String>,
-    reuse_hosted_evidence: bool,
 }
 
 impl From<&crate::ResolvedGate> for PlanGatePayload {
@@ -437,7 +420,6 @@ impl From<&crate::ResolvedGate> for PlanGatePayload {
             command: gate.command.clone(),
             task: gate.task.clone(),
             description: gate.description.clone(),
-            reuse_hosted_evidence: gate.reuse_hosted_evidence,
         }
     }
 }

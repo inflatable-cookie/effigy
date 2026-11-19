@@ -168,9 +168,7 @@ fn plan_sync_files(plan: &ReleasePipelinePlan) -> Vec<ResolvedSyncFile> {
 mod tests;
 
 pub use artifacts::{capture_artifact, sha256_bytes, verify_artifact_digests};
-pub use effects::{
-    approver_name, GitEffects, HostedEvidence, ReleaseEffects, TaskRequest, TaskResponse,
-};
+pub use effects::{approver_name, GitEffects, ReleaseEffects, TaskRequest, TaskResponse};
 pub use input::{
     parse_release_task_output, read_release_task_output, release_input_value, Committed,
     ReleaseTaskOutput, ReleaseTaskSubject, RELEASE_INPUT_ENV, RELEASE_OUTPUT_ENV,
@@ -200,7 +198,6 @@ use effigy_kernel::observe::UnknownReason;
 use effigy_kernel::outcome::WorkloadOutcome;
 use effigy_kernel::run::{EffectSpec, EffectTicket, Run, Settlement};
 
-use crate::hosted_evidence::{HostedEvidenceBinding, HostedEvidenceSpec};
 use crate::model::{FileMutationApply, FileMutationPlan};
 use crate::pipeline::{
     plan_release_pipeline, GateStage, IdentityKind, ReleaseIdentityPlan, ReleasePipelinePlan,
@@ -254,15 +251,14 @@ pub struct ReleaseRunOutcome {
 
 impl ReleaseRunOutcome {
     /// The invocation did everything it was asked. A Run stopped at a
-    /// checkpoint — for approval, hosted evidence or an operator decision —
-    /// also counts: it is waiting, not failing.
+    /// checkpoint — for approval or an operator decision — also counts: it is
+    /// waiting, not failing.
     pub fn succeeded(&self) -> bool {
         matches!(
             self.record.status,
             ReleaseRunStatus::Complete
                 | ReleaseRunStatus::Paused
                 | ReleaseRunStatus::AwaitingApproval
-                | ReleaseRunStatus::AwaitingHostedEvidence
                 | ReleaseRunStatus::AwaitingDecision
         )
     }
@@ -977,77 +973,16 @@ impl<'a, 's> Runner<'a, 's> {
                 ));
                 continue;
             }
-            if let Some(spec) = gate.hosted_evidence.clone() {
-                let commit = self.hosted_evidence_commit(stage)?;
-                let binding = self.open_hosted_wait(&gate.name, &spec, &commit)?;
-                match self
-                    .effects
-                    .hosted_evidence(self.run, &gate.name, &spec, &commit, &binding)?
-                {
-                    HostedEvidence::Accepted {
-                        repository,
-                        commit,
-                        run,
-                    } => {
-                        // Bind and journal the one run this release dispatched,
-                        // so a resume re-checks it instead of a sibling.
-                        self.record
-                            .bind_hosted_run(&gate.name, run.run_id, &run.url);
-                        self.record.gates.push(RecordGate {
-                            stage: stage.stage_name().to_owned(),
-                            name: gate.name.clone(),
-                            passed: true,
-                            hosted_run: Some(run.url.clone()),
-                            hosted_run_id: run.run_id,
-                        });
-                        self.messages.push(format!(
-                            "gate `{}` reused hosted evidence {} for {repository}@{commit}",
-                            gate.name,
-                            match run.run_id {
-                                Some(id) => format!("run #{id} {}", run.url),
-                                None => run.url.clone(),
-                            }
-                        ));
-                        continue;
-                    }
-                    HostedEvidence::Waiting { detail, run } => {
-                        // The Run holds no process open: a resume re-checks the
-                        // bound run and continues this same gate stage.
-                        if let Some(run) = &run {
-                            self.record
-                                .bind_hosted_run(&gate.name, run.run_id, &run.url);
-                        }
-                        let release_id = self.record.release_id.clone();
-                        self.wait_for(
-                            ReleaseRunStatus::AwaitingHostedEvidence,
-                            Some(gate.name.clone()),
-                            format!(
-                                "release Run {release_id} is waiting on hosted evidence for gate `{}`: {detail} `effigy release resume {release_id}` re-checks it without holding a process open",
-                                gate.name
-                            ),
-                        );
-                        return Ok(());
-                    }
-                    HostedEvidence::Failed { detail, run } => {
-                        if let Some(run) = &run {
-                            self.record
-                                .bind_hosted_run(&gate.name, run.run_id, &run.url);
-                        }
-                        self.record.gates.push(RecordGate {
-                            stage: stage.stage_name().to_owned(),
-                            name: gate.name.clone(),
-                            passed: false,
-                            hosted_run: run.as_ref().map(|run| run.url.clone()),
-                            hosted_run_id: run.as_ref().and_then(|run| run.run_id),
-                        });
-                        return Err(ReleaseError::TaskInvocation(detail));
-                    }
-                }
-            }
+            // A gate is an ordinary command or task. The runner exports the
+            // exact commit it gates, so a provider-specific gate task verifies
+            // that candidate rather than whatever the work tree holds now
+            // (contract 054 §3).
+            let commit = self.gate_commit(stage)?;
             let report = run_release_gates_with_observer(
                 &self.plan.repo_root,
                 std::slice::from_ref(&gate),
                 true,
+                Some(&commit),
                 self.observer,
             );
             for result in &report.results {
@@ -1055,8 +990,6 @@ impl<'a, 's> Runner<'a, 's> {
                     stage: stage.stage_name().to_owned(),
                     name: result.name.clone(),
                     passed: result.passed,
-                    hosted_run: None,
-                    hosted_run_id: None,
                 });
                 if result.passed {
                     continue;
@@ -1080,44 +1013,9 @@ impl<'a, 's> Runner<'a, 's> {
         }
     }
 
-    /// The hosting binding for a gate's evidence: the dispatch window this Run
-    /// opened, and the run it already bound.
-    ///
-    /// The window opens the first time the gate needs evidence and is durable
-    /// from then on, so a later dispatch cannot be mistaken for one that ran
-    /// before this Run was waiting, and `effigy release resume` re-checks the
-    /// same evidence instead of rebinding.
-    fn open_hosted_wait(
-        &mut self,
-        gate: &str,
-        spec: &HostedEvidenceSpec,
-        commit: &str,
-    ) -> Result<HostedEvidenceBinding, ReleaseError> {
-        let fresh = self
-            .record
-            .hosted_wait(gate)
-            .is_none_or(|wait| wait.commit != commit);
-        let opened = self
-            .record
-            .open_hosted_wait(gate, &spec.workflow, commit, &now());
-        let binding = HostedEvidenceBinding {
-            created_after: Some(opened.created_after.clone()),
-            run_id: opened.run_id,
-        };
-        if fresh {
-            self.messages.push(format!(
-                "gate `{gate}` opened its hosted dispatch window at {}: only a `{}` run created after it is this release's evidence",
-                binding.created_after.as_deref().unwrap_or(""),
-                spec.workflow
-            ));
-            self.persist()?;
-        }
-        Ok(binding)
-    }
-
-    /// The commit a hosted gate's evidence must be for: the candidate once
-    /// `prepare` committed it, and the source commit before that.
-    fn hosted_evidence_commit(&self, stage: GateStage) -> Result<String, ReleaseError> {
+    /// The commit a gate's evidence must be for: the candidate once `prepare`
+    /// committed it, and the source commit before that (contract 054 §3).
+    fn gate_commit(&self, stage: GateStage) -> Result<String, ReleaseError> {
         let commit = match stage {
             GateStage::Pre => self.record.source_commit.clone(),
             GateStage::Certify => self
@@ -1128,7 +1026,7 @@ impl<'a, 's> Runner<'a, 's> {
         };
         commit.ok_or_else(|| {
             ReleaseError::TaskInvocation(format!(
-                "release hosted evidence for the `{}` gate stage has no commit: the validate stage records the source commit",
+                "release `{}` gates have no commit: the validate stage records the source commit",
                 stage.stage_name()
             ))
         })
@@ -1223,8 +1121,8 @@ impl<'a, 's> Runner<'a, 's> {
     fn certify(&mut self) -> Result<(), ReleaseError> {
         self.run_gates(GateStage::Certify)?;
         if self.waiting.is_some() {
-            // A hosted wait stopped the gate stage: the Run captures no
-            // artifacts until the gate has its exact-commit evidence (054 §3).
+            // An approval checkpoint stopped the gate stage: the Run captures
+            // no artifacts until it continues.
             return Ok(());
         }
         let candidate = self.record.candidate_commit.clone().ok_or_else(|| {

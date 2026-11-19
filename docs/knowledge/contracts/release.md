@@ -143,25 +143,18 @@ place.
 
 ## Hosted gate evidence
 
-A `stage = "pre"` release gate may reuse a hosted CI result when the gate is
-configured with `reuse-hosted-evidence = true`. The result must come from this
-repository's own GitHub Actions runs, verified through authenticated `gh`, and
-match the exact commit SHA being released (`HEAD` when the Run validates). The
-`prepare` stage's version, changelog and lockfile mutations do not change that
-SHA, which is why hosted evidence belongs in `pre-gates`, before the release
-commit exists. An identical tree at another SHA is insufficient. Gates not
-named for reuse still run under the full configured gate policy. Missing,
-pending, failed, ambiguous, wrong-repository or wrong-SHA evidence fails
-closed. The release record names every reused gate and links to its run.
-
-The wait binds the run this release dispatched, never a sibling. It opens a
-dispatch window when it first needs evidence and accepts only a run of the
-configured workflow and event, for the exact commit, created inside that
-window; several matches in one window fail closed with the candidates named.
-The bound run id is journalled on the gate and re-checked by every
-`effigy release resume`, so a newer dispatch of the same commit cannot replace
-it. `effigy release gates` has no Run record to open a window in, so it accepts
-only a commit's single matching run and is equally strict about several.
+Hosted CI evidence is an ordinary release gate: a repo task in this
+repository's `config/tasks.toml` (`release:ci-evidence`) wired under
+`[release.gates]`, exactly as a consumer project declares its own. The runner
+exports the commit the gate must prove as `EFFIGY_RELEASE_COMMIT` — the source
+commit at `pre-gates`, the prepared candidate at `certify` — and the task
+accepts only one successful `workflow_dispatch` run of its workflow for that
+exact commit in this repository. The newest run on the ref never substitutes:
+a sibling dispatch, re-dispatch or re-run is a different run and refuses.
+Identical trees at another SHA are insufficient. Missing, pending, failed,
+ambiguous, wrong-repository or wrong-SHA evidence exits non-zero and fails the
+gate stage, so nothing publishes behind it; `effigy release resume` re-runs
+that gate.
 
 ## Changelog fragments
 

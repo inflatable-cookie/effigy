@@ -188,12 +188,9 @@ initial-tag-current-version = true
 sync-files = ["Cargo.lock"]
 approve = ["publish"]
 
-[release.hosted-evidence]
-workflow = "ci.yml"
-
 [release.gates]
 qa = "cargo test"
-smoke = { command = "printf ok", description = "smoke gate", reuse-hosted-evidence = true }
+smoke = { command = "printf ok", description = "smoke gate" }
 
 [release.identities.core]
 version-file = "packages/core/package.json"

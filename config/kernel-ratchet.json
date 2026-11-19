@@ -176,10 +176,6 @@
       "std.process.Command.new": 13,
       "std.process.Command.output": 13
     },
-    "crates/effigy-release/src/hosted_evidence.rs": {
-      "std.process.Command.new": 1,
-      "std.process.Command.output": 1
-    },
     "crates/effigy-release/src/lib.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.output": 1
