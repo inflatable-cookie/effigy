@@ -26,10 +26,6 @@ pub(crate) enum ManifestIncludeEntry {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ManifestIncludeDirective {
     pub(crate) path: String,
-    #[serde(default, rename = "override")]
-    pub(crate) override_paths: Vec<String>,
-    #[serde(default)]
-    pub(crate) optional: bool,
 }
 
 pub(crate) fn validate_minimum_effigy_version(

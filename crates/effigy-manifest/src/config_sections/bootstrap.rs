@@ -35,9 +35,8 @@ pub struct ManifestPinnedSourceConfig {
     pub git: String,
     #[serde(default)]
     pub rev: Option<String>,
-    /// A file holding the pinned commit, relative to the manifest. The brief
-    /// spells it `rev_file`; kebab-case is accepted as an alias.
-    #[serde(default, rename = "rev_file", alias = "rev-file")]
+    /// A file holding the pinned commit, relative to the manifest.
+    #[serde(default, rename = "rev_file")]
     pub rev_file: Option<String>,
     pub path: String,
 }

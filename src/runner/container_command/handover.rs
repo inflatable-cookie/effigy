@@ -652,7 +652,8 @@ domain = "switch.test"
         }
 
         fn policy(&self, name: &str) -> EffectiveContainerPolicy {
-            load_container_policy(&self.repo_root, Some(name)).expect("fixture policy")
+            crate::runner::test_support::load_fixture_policy(&self.repo_root, Some(name))
+                .expect("fixture policy")
         }
 
         fn docker_log(&self) -> String {
@@ -810,13 +811,13 @@ shared = true
             ));
         }
         fs::write(fixture.repo_root.join("effigy.toml"), manifest).unwrap();
-        let stack = effigy_containers::load_container_policy_for_creation(
+        let stack = crate::runner::test_support::load_fixture_policy_for_creation(
             &fixture.repo_root,
             Some("stack"),
         )
         .unwrap()
         .0;
-        let hybrid = effigy_containers::load_container_policy_for_creation(
+        let hybrid = crate::runner::test_support::load_fixture_policy_for_creation(
             &fixture.repo_root,
             Some("hybrid"),
         )

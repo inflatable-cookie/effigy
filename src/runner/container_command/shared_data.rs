@@ -382,9 +382,7 @@ mod tests {
     };
     use crate::runner::db_seed::{run_builtin_db_seed_task_with, DB_SEEDS_JSON_ENV};
     use effigy_containers::exec::SharedProjectContainer;
-    use effigy_containers::{
-        load_container_policy, EffectiveContainerPolicy, SharedServiceBinding,
-    };
+    use effigy_containers::{EffectiveContainerPolicy, SharedServiceBinding};
     use effigy_manifest::TaskManifest;
     use effigy_test_support::Fixture;
     use std::collections::BTreeMap;
@@ -546,7 +544,8 @@ shared = true
         }
 
         fn policy(&self, name: &str) -> EffectiveContainerPolicy {
-            load_container_policy(&self.root, Some(name)).expect("load fixture policy")
+            crate::runner::test_support::load_fixture_policy(&self.root, Some(name))
+                .expect("load fixture policy")
         }
 
         fn publish_shared_render(&self, policy: &EffectiveContainerPolicy) {
@@ -1658,8 +1657,11 @@ run = "true"
         .expect("write barn manifest");
         repo.install_fake_runtime();
         let _env = repo.env();
-        let barn = load_container_policy(&repo.root.join("barn"), Some("catalog"))
-            .expect("load barn policy");
+        let barn = crate::runner::test_support::load_fixture_policy(
+            &repo.root.join("barn"),
+            Some("catalog"),
+        )
+        .expect("load barn policy");
         let shared = barn
             .shared_services
             .first()

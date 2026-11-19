@@ -145,6 +145,7 @@ mod tests {
                 "services:\n  app:\n    image: example.invalid/fixture\n",
             )
             .expect("write compose file");
+            crate::runner::test_support::migrate_declared_compose_files(&repo_root);
             let bin = fixture.path().join("bin");
             fs::create_dir_all(&bin).expect("mkdir bin");
             for program in ["colima", "docker", "nerdctl", "compose"] {

@@ -1811,7 +1811,7 @@ variant = "default"
     /// rendered here and published by the ensure, never by this stage.
     fn prepare(&self) -> EffectiveContainerPolicy {
         effigy_containers::with_test_effigy_home(&self.home, || {
-            effigy_containers::load_container_policy_for_creation(&self.root, None)
+            crate::runner::test_support::load_fixture_policy_for_creation(&self.root, None)
                 .expect("creation policy")
                 .0
         })

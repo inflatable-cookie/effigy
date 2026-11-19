@@ -133,8 +133,8 @@ fn effective_alias_in(checkout: &Path, environment: Option<&str>, label: &str) -
     effigy_core::worktree_scope::load(checkout)
         .expect("read scope token")
         .expect("a marked checkout has a token");
-    let policy =
-        effigy_containers::load_container_policy(checkout, environment).expect("policy loads");
+    let policy = crate::runner::test_support::load_fixture_policy(checkout, environment)
+        .expect("policy loads");
     let base = policy
         .dns_effective_base_domain()
         .expect("declared base domain");

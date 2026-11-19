@@ -386,9 +386,11 @@ Split `effigy.toml` across focused files instead of one dumping ground:
 include = [
   "config/tasks.toml",
   "config/containers.toml",
-  { path = "effigy.local.toml", override = ["tasks.dev"] },
 ]
 ```
+
+A machine-local `effigy.local.toml` is discovered automatically and can replace
+committed values.
 
 ### Public and internal tasks
 

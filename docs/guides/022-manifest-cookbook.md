@@ -124,7 +124,6 @@ an explicit execution context:
 include = [
   "effigy.tasks.toml",
   "effigy.docs.toml",
-  { path = "effigy.local.toml", override = ["tasks.dev", "release.sync-files"] },
 ]
 ```
 
@@ -160,9 +159,8 @@ Composition rules:
 - repo-local development builds like `v0.6.1+local.<hash>` still pass those
   floors so unreleased feature work is not blocked by the last tagged version.
 - distinct keys merge additively by default.
-- conflicting values fail unless the include entry explicitly names the path in
-  `override = [...]`.
-- override is path-scoped and replaces the whole addressed value.
+- conflicting values fail; use `[manifest].extend` for shared arrays or tables.
+- an auto-discovered `effigy.local.toml` replaces conflicting local values.
 
 ### Mounted Sibling Isolation
 
@@ -710,15 +708,12 @@ Behavior:
 - `effigy doctor` reports pinned-source drift (`sources.pinned-drift`)
 - inline run steps, `{ task = ... }` entries, `[bootstrap].children`,
   `bootstrap deps sync`, `--db-seed`, `--fresh`, `--backend` and `--start` are
-  retired in v0.15 (Q-009). For the whole v0.15 line a v0.14.1 manifest still
-  loads: `run` is read as `setup`, `{ task = ... }` entries and inline steps
-  are read as selectors and internal tasks, a `submodules` policy string is
-  read as a boolean, and a multi-selector `start` chain runs as one internal
-  task, with one deprecation notice per manifest (once per checkout per
-  manifest digest on stderr, every `effigy doctor` run, and the `--json`
-  envelope's `warnings`). Only `effigy bootstrap`
-  refuses the retired-only surfaces (children, `bootstrap deps sync`,
-  `bootstrap:db-seed`) with their replacement; see
+  retired in v0.15 (Q-009). v0.15 read them for one release; v0.16 refuses each
+  with the replacement its error names (`run` becomes `setup` with selector
+  entries, `{ task = ... }` entries and inline steps become selectors and
+  internal tasks, a `submodules` policy string becomes a boolean, and a
+  multi-selector `start` chain becomes one internal task). The manifest error
+  names the replacement; see
   [guide 085](085-v0.15.0-consumer-migration.md).
 
 ## Removed Sections
@@ -950,7 +945,7 @@ Shape rules (current v0.3+ form):
 - generated compose is internal and immutable; read it with
   `effigy container render <name>`. `infra/dev/catalog/` holds project catalog
   fragments, including those `effigy container migrate <name>` writes for a
-  retired `compose_file`.
+  retired `compose_file`; ordinary commands refuse that key by name.
 
 Typical commands:
 - `effigy container up` / `effigy container down` / `effigy container status`

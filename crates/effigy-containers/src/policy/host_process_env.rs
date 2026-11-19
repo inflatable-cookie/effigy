@@ -727,7 +727,7 @@ env = { DATABASE_URL = "postgres://app@127.0.0.1:${service.postgress.port}/app" 
             "services:\n  app:\n    image: example\n",
         )
         .expect("compose");
-        let error = crate::load_container_policy(&root, None).expect_err("the typo fails at load");
+        let error = crate::tests::fixture_policy(&root, None).expect_err("the typo fails at load");
         assert_eq!(
             error.to_string(),
             "host process `api` env `DATABASE_URL` uses unknown reference `${service.postgress.port}`: valid references are `${service.<name>.host}` and `${service.<name>.port}` (services: app), `${route.<domain>.public_url}` (routes: none), `${host_process.<name>.public_url}` and `${host_process.<name>.internal_url}` (host processes: none), `${domains}`, `${apex}` and `${gateway.https_port}`"
@@ -789,7 +789,7 @@ tls = true
             "services:\n  app:\n    image: example\n    ports:\n      - \"127.0.0.1:0:3000\"\n",
         )
         .expect("compose");
-        let policy = crate::load_container_policy(&root, None).expect("policy loads");
+        let policy = crate::tests::fixture_policy(&root, None).expect("policy loads");
         let facts = HostProcessEnvFacts::for_policy(&policy).expect("facts");
         assert_eq!(facts.apex.as_deref(), Some("acme.test"));
         assert_eq!(facts.routes["api.acme.test"], "https://api.acme.test");

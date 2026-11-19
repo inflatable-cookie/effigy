@@ -52,7 +52,7 @@ volumes:
     )
     .expect("compose");
 
-    let policy = load_container_policy(&root, None).expect("policy");
+    let policy = crate::tests::fixture_policy(&root, None).expect("policy");
     let targets = load_workspace_ownership_targets(&policy).expect("targets");
 
     assert!(targets.iter().any(|value| value == "/home/dev"));
@@ -94,7 +94,7 @@ primary_service = "jobs"
     )
     .expect("compose");
 
-    let policies = load_all_container_policies(&root).expect("policies");
+    let policies = crate::tests::fixture_all_policies(&root).expect("policies");
     assert_eq!(policies.len(), 2);
     assert_eq!(policies[0].name, "web");
     assert_eq!(policies[1].name, "worker");
@@ -151,7 +151,7 @@ primary_service = "app"
     )
     .expect("compose");
 
-    let policy = load_container_policy(&root, None).expect("policy");
+    let policy = crate::tests::fixture_policy(&root, None).expect("policy");
     let health = ContainerServiceHealth {
         status: "unhealthy".to_owned(),
         failing_streak: 12,
@@ -282,7 +282,7 @@ primary_service = "app"
     )
     .expect("compose");
 
-    let mut policy = load_container_policy(&root, None).expect("policy");
+    let mut policy = crate::tests::fixture_policy(&root, None).expect("policy");
     policy.shared_services = vec![SharedServiceBinding {
         service_name: "db".to_owned(),
         catalog: "mariadb".to_owned(),
@@ -338,7 +338,7 @@ working_subdir = "managed-volumes"
     )
     .expect("write manifest");
 
-    let policy = load_container_policy(&root, None).expect("policy");
+    let policy = crate::tests::fixture_policy(&root, None).expect("policy");
 
     // The workspace catalog declares exactly two managed volumes; their
     // names embed a hash of the fixture path, so the set is pinned on the
@@ -416,7 +416,7 @@ catalog = "mariadb"
     )
     .expect("write manifest");
 
-    let policy = load_container_policy(&root, None).expect("policy");
+    let policy = crate::tests::fixture_policy(&root, None).expect("policy");
 
     assert_eq!(
         policy.declared_media_mounts,
@@ -477,7 +477,7 @@ catalog = "mariadb"
     )
     .expect("write manifest");
 
-    let policy = load_container_policy(&root, None).expect("policy");
+    let policy = crate::tests::fixture_policy(&root, None).expect("policy");
 
     let expected = format!(
         "{}:/var/www/mortcalc",
@@ -516,7 +516,7 @@ version = "8.3"
     )
     .expect("write manifest");
 
-    let policy = load_container_policy(&root, None).expect("policy");
+    let policy = crate::tests::fixture_policy(&root, None).expect("policy");
 
     assert_eq!(
         policy.pull_production_hook.as_deref(),
@@ -544,7 +544,7 @@ primary_service = "app"
     )
     .expect("compose");
 
-    let policy = load_container_policy(&root, None).expect("policy");
+    let policy = crate::tests::fixture_policy(&root, None).expect("policy");
     let report = crate::data_pull_production_report(
         &policy,
         &crate::ContainerDataHookResult {
@@ -587,7 +587,7 @@ primary_service = "app"
     )
     .expect("compose");
 
-    let policy = load_container_policy(&root, None).expect("policy");
+    let policy = crate::tests::fixture_policy(&root, None).expect("policy");
     let report = crate::reset_report(
         &policy,
         true,
@@ -639,7 +639,7 @@ primary_service = "app"
     )
     .expect("compose");
 
-    let policy = load_container_policy(&root, None).expect("policy");
+    let policy = crate::tests::fixture_policy(&root, None).expect("policy");
     let report = data_list_report(
         &policy,
         false,
@@ -930,7 +930,7 @@ primary_service = "app"
     )
     .expect("compose");
 
-    let policy = load_container_policy(&root, None).expect("policy");
+    let policy = crate::tests::fixture_policy(&root, None).expect("policy");
     let report = data_transfer_report(
         &policy,
         ContainerDataTransferAction::Export,
@@ -973,7 +973,7 @@ primary_service = "app"
     )
     .expect("compose");
 
-    let policy = load_container_policy(&root, None).expect("policy");
+    let policy = crate::tests::fixture_policy(&root, None).expect("policy");
     let services = vec![ContainerStatusService {
         name: "app".to_owned(),
         container_name: "demo-app-1".to_owned(),
@@ -1022,7 +1022,7 @@ primary_service = "app"
     )
     .expect("compose");
 
-    let policy = load_container_policy(&root, None).expect("policy");
+    let policy = crate::tests::fixture_policy(&root, None).expect("policy");
     let services = vec![ContainerStatusService {
         name: "postgres".to_owned(),
         container_name: "demo-postgres-1".to_owned(),
@@ -1074,7 +1074,7 @@ primary_service = "app"
     )
     .expect("compose");
 
-    let policy = load_container_policy(&root, None).expect("policy");
+    let policy = crate::tests::fixture_policy(&root, None).expect("policy");
     let report = status_report(&policy, "containerd", true, None, Some(false), &[], None);
 
     assert_eq!(report.json["primary_service_exec_ready"], false);
@@ -1105,7 +1105,7 @@ primary_service = "app"
     )
     .expect("compose");
 
-    let policy = load_container_policy(&root, None).expect("policy");
+    let policy = crate::tests::fixture_policy(&root, None).expect("policy");
     let report = status_report(&policy, "containerd", false, None, None, &[], None);
 
     assert_eq!(report.json["runtime_running"], false);

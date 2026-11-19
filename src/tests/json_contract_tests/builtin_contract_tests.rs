@@ -106,7 +106,7 @@ fn builtin_config_inspect_path_json_contract_has_versioned_shape() {
         &root.join("effigy.toml"),
         r#"
 [manifest]
-include = ["effigy.tasks.toml", { path = "effigy.override.toml", override = ["tasks.qa"] }]
+include = ["effigy.tasks.toml", "effigy.override.toml"]
 "#,
     );
     write_manifest(
@@ -119,7 +119,7 @@ run = "printf tasks"
     write_manifest(
         &root.join("effigy.override.toml"),
         r#"
-[tasks.qa]
+[tasks.docs]
 run = "printf docs"
 "#,
     );
@@ -127,13 +127,13 @@ run = "printf docs"
     let parsed = run_invocation_json(
         root,
         "config",
-        &["--inspect", "--path", "tasks.qa.run", "--json"],
+        &["--inspect", "--path", "tasks.docs.run", "--json"],
     );
     assert_schema_v1(&parsed, "effigy.config.v1");
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["mode"], "inspect");
-    assert_eq!(parsed["selected_path"], "tasks.qa.run");
-    assert_eq!(parsed["selected_value"]["path"], "tasks.qa.run");
+    assert_eq!(parsed["selected_path"], "tasks.docs.run");
+    assert_eq!(parsed["selected_value"]["path"], "tasks.docs.run");
     assert_eq!(parsed["selected_value"]["source"], "effigy.override.toml");
     assert_eq!(parsed["selected_value"]["value"], "printf docs");
     assert!(parsed["selected_value"]["overrides"].is_array());

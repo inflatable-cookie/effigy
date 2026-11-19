@@ -1266,7 +1266,7 @@ mod tests {
             ("EFFIGY_COMPOSE_BACKEND", Some("docker".into())),
         ]);
         let (policy, _decisions) =
-            effigy_containers::load_container_policy_for_creation(&root, Some("web"))
+            crate::runner::test_support::load_fixture_policy_for_creation(&root, Some("web"))
                 .expect("creation policy");
         (fixture, policy, env)
     }

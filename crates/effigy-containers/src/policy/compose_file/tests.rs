@@ -1,5 +1,5 @@
 use super::*;
-use crate::policy::load::load_container_policy;
+use crate::policy::load::{load_container_policy, load_container_policy_for_migration};
 
 const FIXTURES: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -51,10 +51,11 @@ fn consumer(name: &str) -> Checkout {
 }
 
 /// Generated Compose, Dockerfiles and configs. Declaration inputs differ by
-/// construction: migration rewrites the manifest that produced them.
+/// construction: migration rewrites the manifest that produced them, so the
+/// pre-migration render reads the retired key through the migration entry.
 fn rendered(checkout: &Checkout, name: &str) -> (BTreeMap<String, Vec<u8>>, Vec<String>) {
     crate::with_test_effigy_home(&checkout.home, || {
-        let policy = load_container_policy(&checkout.root, Some(name)).unwrap();
+        let policy = load_container_policy_for_migration(&checkout.root, Some(name)).unwrap();
         let render = policy.render.as_ref().expect("render");
         let files = render
             .closure
@@ -304,7 +305,7 @@ fn a_different_on_disk_fragment_refuses_instead_of_shadowing() {
     )
     .unwrap();
     let error = crate::with_test_effigy_home(&checkout.home, || {
-        load_container_policy(&checkout.root, Some("linux-arm")).unwrap_err()
+        load_container_policy_for_migration(&checkout.root, Some("linux-arm")).unwrap_err()
     });
     assert!(
         error
@@ -351,5 +352,25 @@ fn inline_container_tables_migrate_in_place() {
             .contains("services = { app = { catalog = \"dev-app\" } }"),
         "{}",
         plan.manifest_after
+    );
+}
+
+/// Ordinary policy resolution refuses the retired key, naming the migration,
+/// even though the migration itself can still render the old declaration.
+#[test]
+fn ordinary_policy_resolution_refuses_the_retired_key_with_the_migration() {
+    let checkout = consumer("linux-release");
+    let error = crate::with_test_effigy_home(&checkout.home, || {
+        load_container_policy(&checkout.root, Some("linux-release")).unwrap_err()
+    });
+    let message = error.to_string();
+    assert!(message.contains("retired `compose_file"), "{message}");
+    assert!(
+        message.contains("effigy container migrate linux-release"),
+        "{message}"
+    );
+    assert!(
+        message.contains("infra/dev/catalog/"),
+        "the refusal names where the fragments go: {message}"
     );
 }

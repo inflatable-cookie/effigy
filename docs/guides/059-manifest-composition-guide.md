@@ -4,7 +4,7 @@ Use this guide when one `effigy.toml` is starting to carry too many unrelated
 concerns and the right fix is composition, not more comments or wrapper files.
 
 This is the practical front door for `[manifest].include`, partial manifests,
-override boundaries, and fragment layout.
+local overlays, and fragment layout.
 
 ## Vision Alignment
 
@@ -67,8 +67,7 @@ Good fragment shapes:
 Bad split:
 
 - one fragment per tiny feature
-- multiple fragments competing to define the same keys without a clear override
-  policy
+- multiple fragments competing to define the same keys
 - fragments that only exist to hide confusing task ownership
 
 Aim for “one concern per fragment,” not “maximum fragmentation.”
@@ -77,26 +76,8 @@ Aim for “one concern per fragment,” not “maximum fragmentation.”
 
 Distinct keys merge additively by default.
 
-Conflicting values fail unless the include entry explicitly allows that path to
-be replaced.
-
-Example:
-
-```toml
-[manifest]
-include = [
-  "effigy.tasks.toml",
-  { path = "effigy.local.toml", override = ["tasks.dev", "release.sync-files"] },
-]
-```
-
-Meaning:
-
-- `config/tasks.toml` contributes normal values
-- `effigy.local.toml` may replace only `tasks.dev` and `release.sync-files`
-- other conflicting keys still fail
-
-Override is path-scoped and replaces the whole addressed value.
+Conflicting values fail. Keep each value in one committed fragment; use the
+auto-discovered `effigy.local.toml` for machine-local replacements.
 
 For arrays specifically, `[manifest].extend = [...]` appends instead of
 replacing:
@@ -110,20 +91,10 @@ include = ["envs/cumberland/effigy.env.toml"]
 This is the right tool when an imported fragment needs to grow a shared list
 (DNS routes, env-schema paths, scan globs) or merge entries into a shared
 table without restating every existing entry. `extend` needs arrays or
-tables on both sides and conflicts with `override` on
-the same path — pick one per path.
+tables on both sides.
 
-Includes can also opt out of the "missing file is an error" default:
-
-```toml
-[manifest]
-include = [
-  { path = "effigy.local.toml", optional = true },
-]
-```
-
-A missing optional file is silently skipped; a present one loads and
-merges normally. Auto-discovery uses different conflict rules (see §4b).
+Every explicitly included file must exist. For an optional machine-local file,
+rely on auto-discovery instead of listing it in `include`.
 
 ## 4b) Auto-Discovered `effigy.local.toml`
 
@@ -139,7 +110,7 @@ Discovery does not change Git ignore files.
 
 If the committed manifest explicitly includes the same file, Effigy detects
 it by canonical path and does not auto-discover it again. That explicit
-include follows ordinary conflict and override rules, even when
+include follows ordinary conflict rules, even when
 `EFFIGY_NO_LOCAL_OVERLAY=1` is set.
 
 For CI determinism, set `EFFIGY_NO_LOCAL_OVERLAY=1` to skip
@@ -232,7 +203,7 @@ Examples of good fragment-local entries:
 Composition starts to hurt when:
 
 - the root file no longer tells you what fragments exist
-- one fragment silently overrides another without an explicit path
+- multiple committed fragments define the same value
 - docs explain a value but `config --inspect` shows it comes from somewhere else
 - task ownership is split so widely that people stop knowing where to edit
 
@@ -255,7 +226,7 @@ After this guide, you should be able to:
 - [`061-rhai-script-steps-guide.md`](061-rhai-script-steps-guide.md)
 - [`070-per-machine-overlays-and-external-mounts.md`](070-per-machine-overlays-and-external-mounts.md)
   for a worked end-to-end pattern that combines auto-discovery,
-  `extend`/`optional` includes, domain sugar, and external host
+  `extend`, local overlays, domain sugar, and external host
   mounts into one developer-onboarding workflow.
 
 ## Next Step

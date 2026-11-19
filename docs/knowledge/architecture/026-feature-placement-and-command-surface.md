@@ -113,8 +113,8 @@ source is enough; there is no central registry (Q-005).
 A service resolves from the first source that provides it, in this order:
 
 1. `project`: the repository's committed `infra/dev/catalog/` directory, plus
-   any `compose_file` service read as a project fragment for its one-release
-   window;
+   the fragments `effigy container migrate` wrote for a retired `compose_file`
+   (the retired key itself refuses);
 2. `bundle`: the `catalog/` directory shipped inside the pinned bundle;
 3. declared sources: `[catalog.sources.<name>]` git, OCI or path sources,
    resolved in handle order;
@@ -167,8 +167,8 @@ channel, the workspace pack handoff, and the update support policy
 (`support/catalog-pack-update.toml` and `release.sync-catalog-pack-support-policy`).
 Its fragments were already byte-identical to the compiled baseline, which is
 now an ordinary Effigy-owned source tree rather than a vendored pack snapshot.
-Existing `~/.effigy/catalog-packs/` state is ignored with a one-release notice
-and left untouched. Effigy no longer reads the pack repository; archiving it is an operator action.
+Existing `~/.effigy/catalog-packs/` state is ignored silently (v0.16 removed
+the one-release notice) and left untouched. Effigy no longer reads the pack repository; archiving it is an operator action.
 
 ## Release And Distribution
 

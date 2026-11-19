@@ -135,12 +135,11 @@ Bundle defaults in `export.toml` should therefore keep executors and step
 metadata in the same table, and repo overrides should switch executors by
 naming the new executor rather than deleting the old one.
 
-Retired v0.15 `[bootstrap]` spelling is normalised on both sides before that
-merge. A bundle that still writes `run` is read as `setup` first, so a repo
-that declares its own `setup` replaces the bundle's rather than inheriting a
-second list beside it, and a repo that declares nothing inherits the
-translated `setup`. A retired `start` still inherits the same way, and
-`[bootstrap].children` is ignored with its deprecation notice on either side.
+v0.15 normalised a retired `[bootstrap]` spelling on both sides before that
+merge; v0.16 refuses it. A bundle or repo that still writes `run`, an inline
+`setup`/`start` definition or chain, a `submodules` policy string or
+`[bootstrap].children` fails the manifest with the replacement named, so
+refresh a pinned bundle with `effigy bundle sync` or migrate the declaration.
 See [guide 085](085-v0.15.0-consumer-migration.md).
 
 ## Inspect and Sync

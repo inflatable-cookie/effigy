@@ -457,7 +457,7 @@ run = "bun run dev"
     }
 
     fn policy(root: &Path) -> EffectiveContainerPolicy {
-        effigy_containers::load_container_policy(root, Some("stack")).expect("policy")
+        crate::runner::test_support::load_fixture_policy(root, Some("stack")).expect("policy")
     }
 
     fn write_package_json(directory: &Path, name: &str, dependencies: &[(&str, &str)]) {
