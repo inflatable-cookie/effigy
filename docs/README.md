@@ -1,31 +1,30 @@
-# Effigy — current state
+# Effigy documentation
 
-Effigy runs manifest tasks and built-in workflows across monorepos. Linked worktrees and clones marked `effigy.runtimeScope = ephemeral` get distinct generated-Compose identities and effective gateway hosts by default, and gateway routes are owned by their checkout path. The same checkout always replaces its own route; another checkout takes a domain automatically when the recorded checkout path is gone or its numeric target definitively refuses a connection, and is refused by name otherwise. Hostnames, timeouts and observation failures keep the claim and report how to retry. A deleted checkout's loopback assignment is reclaimed at allocation time rather than needing a reset. `effigy container hosts` exposes the host map; `effigy container retire` tears down one scope's owned resources. A worktree's container targets and its host-run tasks both resolve the declared backing-service alias to that scope's own service, so application configuration keeps its declared names and still reaches its own database; a host run refuses before it starts when the scope's backing service is not published. Consumer applications still need to feed the scoped names into public URLs and selectors; Nucleus lead `af3ab7c7-b631-4d4f-9da7-f2949ded82f3` tracks that wiring and an observed workspace recycle.
+The entry point to Effigy's docs. Users start with the guides; contributors
+and agents start with the knowledge index, which names the file that owns each
+topic.
 
-Runtime state follows [contract 052](knowledge/contracts/052-runtime-kernel-contract.md):
-short foreground runs use memory, retained runs use their checkout journal, and
-only gateway/port/admission facts use the machine store. The
-[v0.15 migration guide](guides/085-v0.15.0-consumer-migration.md#runtime-state)
-covers upgrade and deleted-worktree cleanup.
+## Using Effigy
 
-## By topic
+- Guide map, by journey: [guides/README.md](guides/README.md)
+- First run and common commands: [guides/021-quick-start-and-command-cookbook.md](guides/021-quick-start-and-command-cookbook.md)
+- Everyday workflows: [guides/055-everyday-workflows.md](guides/055-everyday-workflows.md)
+- Managed task sessions: [guides/012-dev-process-manager-tui.md](guides/012-dev-process-manager-tui.md)
+- Containers and the gateway: [guides/063-container-system-guide.md](guides/063-container-system-guide.md)
+- Commands at a glance: [guides/025-command-reference-matrix.md](guides/025-command-reference-matrix.md)
+- When something fails: [guides/023-troubleshooting-and-failure-recipes.md](guides/023-troubleshooting-and-failure-recipes.md)
 
-- [Vision](knowledge/vision.md)
-- [Architecture and ownership](knowledge/README.md)
-- [Contracts and JSON schemas](knowledge/contracts/README.md)
-- [Release procedure](knowledge/contracts/release.md)
-- [Changelog fragment migration record (effigy#804): 314 legacy entries to `changelog.d/` fragments, with the equivalence mapping](qualification/changelog-fragment-migration-804/README.md)
-- [Qualification packet: private workspace full sessions](qualification/workspace-private-531/README.md) (task effigy#531; #620 prepared the independent per-backend proof entries, read-only aggregate verifier and #627 producer recipes; #627 owns frozen artifact production after integrated main QA; native/consumer/final production gates pending)
-- [Qualification evidence: merged workspace sessions on Colima, Docker Desktop and Linux](qualification/workspace-sessions-a00394012/README.md) (frozen candidate a00394012, task effigy#530; prepared, Colima entry sweep complete, positive gates blocked by the production cut)
-- [Qualification evidence: ordinary-Compose on Colima](qualification/ordinary-compose-colima-5f466914/README.md) (frozen candidate 5f466914, tasks effigy#537/#542; prepared with a self-enforcing r18 entry sweep, native GO and consumer gates pending)
-- [Qualification evidence: Acow ordinary-Compose consumer packets](qualification/acow-ordinary-compose-5f466914/README.md) (frozen candidate 5f466914, task effigy#540, amended by effigy#543 and effigy#545; prepared, not executed — routes armed at the selected current consumer head with the twelve-input closure, the approved bundle-sync transition, and the actual effigy#544 r18 proof receipt as the warm-up prerequisite, awaiting their GO chains)
-- [Qualification packets: current-candidate Acow and CBS consumer proofs](qualification/consumer-packets-r1/README.md) (task effigy#757, armed by effigy#760; source-only preparation for #625 continuity; unarmed until candidate, positive624 and window pins are concrete; fixture controls only, no consumer or native credit)
-- [Qualification evidence: task-engine signal matrix](qualification/task-engine-signal-matrix/README.md) (tasks effigy#579/#582/#585; prepared, not executed — accepted #298/#236/#325/#373 credit kept; sequence TERM/HUP host-source cells added, native Linux still owed; the UNARMED packet's registration binding and retained settlement need an owned production-seam proof; `test:qualification:task-engine-signals` is admission, labeled-double control flow and local HostCli fixtures, not native closure)
-- [User and consumer guides](guides/README.md), including [managed task sessions](guides/012-dev-process-manager-tui.md)
-- [Bounded QA groups workflow](guides/081-bounded-qa-groups-workflow.md) (implemented through `tasks qa-group`; `stop`/`hard_timeout_ms` wait on owned-run supervision, contract 052)
-- [v0.15.0 consumer migration](guides/085-v0.15.0-consumer-migration.md) (catalog sources and pack retirement, behavior changes and DecodeLabs checklist)
-- [v0.14.0 consumer migration](guides/083-v0.14.0-consumer-migration.md) (migration checklist and incremental first-parent change coverage)
+## How Effigy works
 
-## What's next
+- Why it exists and what it is not: [knowledge/vision.md](knowledge/vision.md)
+- How the system is shaped: [knowledge/architecture.md](knowledge/architecture.md)
+- Interfaces, guarantees and JSON schemas: [knowledge/contracts/README.md](knowledge/contracts/README.md)
+- Release procedure: [knowledge/contracts/release.md](knowledge/contracts/release.md)
+- Domain vocabulary: [knowledge/domain/README.md](knowledge/domain/README.md)
+- Everything, by topic: [knowledge/README.md](knowledge/README.md)
 
-The project's plan is in Nucleus: its lanes, their documents and their order. Nucleus also holds leads, brief drafts, tasks, status and outcomes.
+## Records
+
+Qualification packets and migration records are kept as evidence under
+[qualification/](qualification/), one folder per packet, for example the
+[changelog fragment migration](qualification/changelog-fragment-migration-804/README.md).
