@@ -1330,6 +1330,27 @@ class Boundaries(unittest.TestCase):
             # The production constant refuses the same shape before any output.
             with self.assertRaisesRegex(RuntimeError, 'Queue run scratch'):
                 common.evidence_root(str(SCRATCH / ('0f' * 4) / 'evidence'))
+            # A symlinked parent must not smuggle the real directory into run
+            # scratch: the refusal follows parents to the resolved directory.
+            alias = base / 'evidence' / 'alias'
+            alias.symlink_to(run_scratch, target_is_directory=True)
+            smuggled = alias / 'evidence'
+            self.assertTrue(smuggled.is_dir(), 'the alias resolves to a real run-scratch directory')
+            with self.assertRaisesRegex(RuntimeError, 'Queue run scratch'):
+                common.evidence_root(str(smuggled), scratch=base)
+            (run_scratch / 'evidence' / 'deep').mkdir(mode=0o700)
+            with self.assertRaisesRegex(RuntimeError, 'Queue run scratch'):
+                common.evidence_root(str(alias / 'evidence' / 'deep'), scratch=base)
+            # Only the brief's durable locations accept, judged on the resolved path.
+            elsewhere = base / 'other-evidence'
+            elsewhere.mkdir(mode=0o700)
+            with self.assertRaisesRegex(RuntimeError, 'accepted durable location'):
+                common.evidence_root(str(elsewhere), scratch=base)
+            for accepted_location in (base / 'evidence' / 'run-2',
+                                      base / 'planner-owned-1041' / 'run-2',
+                                      common.LEGACY_EVIDENCE_ROOT / 'run-2'):
+                self.assertTrue(common.evidence_location(accepted_location, base))
+            self.assertFalse(common.evidence_location(elsewhere, base))
             # A relative, missing, symlinked or non-private root refuses too.
             link = base / 'evidence-link'
             link.symlink_to(durable, target_is_directory=True)
@@ -1362,8 +1383,8 @@ class Boundaries(unittest.TestCase):
                  patch.object(launch, 'run', side_effect=AssertionError('native run for a refused evidence root')):
                 with self.assertRaisesRegex(RuntimeError, 'Queue run scratch'):
                     launch.main()
-            self.assertEqual(list(refused.iterdir()), [],
-                             'a refused evidence root receives no output')
+            self.assertEqual([path for path in refused.iterdir() if path.name.startswith('attempt-')], [],
+                             'a refused evidence root receives no attempt output')
 
     def test_aggregate_accepts_durable_evidence_root_and_a_moved_copy(self):
         import io

@@ -280,13 +280,16 @@ so no packet output may live there: evidence in Queue run scratch was deleted
 at closeout twice (effigy#622 and #624), and one frozen production binary had
 to be rebuilt. The launcher therefore takes the evidence root explicitly and
 refuses to guess one. It refuses a missing, relative, symlinked or non-private
-root, and it refuses any root inside a Queue run scratch directory. The
+root, and it refuses any root inside a Queue run scratch directory. Both checks
+follow symlinked parents to the real directory first, and the resolved
+directory must sit in one of the accepted durable locations below. The
 documented default is `/Volumes/Stash/scratch/effigy/evidence/<run>/` (Barge's
 Stash layout, Tom 2026-11-18); `/Volumes/Stash/effigy-evidence/<run>/` stays
 accepted until it moves, as do `planner-owned-*` roots directly below the
-scratch root. The root must already exist as a private `0700` directory owned
-by the native executor; the launcher never creates, rebinds or repairs it, and
-it is never the pinned qualification root.
+scratch root. Any other location refuses rather than silently becoming a
+second, untracked evidence store. The root must already exist as a private
+`0700` directory owned by the native executor; the launcher never creates,
+rebinds or repairs it, and it is never the pinned qualification root.
 
 The freezing recipes ([producer.md](producer.md)) write the frozen role
 artifacts, their `.active-version` sidecars and their receipts under that same
