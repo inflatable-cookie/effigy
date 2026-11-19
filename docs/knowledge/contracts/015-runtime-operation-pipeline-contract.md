@@ -153,8 +153,8 @@ It checks for new direct uses of cwd discovery, backend branching, raw
 Docker/Colima/nerdctl commands, compose helper calls, legacy capture helpers,
 and Rhai container-sensitive bypasses outside allowlisted debt.
 
-Allowances must stay path-scoped and documented here and in
-[architecture 022](../architecture/022-runtime-architecture-sanity-audit.md).
+Allowances must stay path-scoped and documented here and in the
+[package map](../architecture/010-package-map.md).
 A private fixture file may be allowed; a production file that also holds
 fixtures may not. Positive and negative controls:
 `effigy test:architecture:runtime-container-drift-controls`.

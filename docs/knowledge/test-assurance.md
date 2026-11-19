@@ -162,6 +162,11 @@ audit ledger (Queue artifact) holds per-family dispositions with exact heads.
    consolidation targets; a unique T5 proof is valuable even when expensive.
 6. Changed-code validation runs through Effigy selectors; whole-suite QA stays
    with the milestone (`project.qa.run`), not the task.
+7. Place a case with its owner: domain behavior tests with the domain crate,
+   runner tests for adaptation (invocation, error and report mapping,
+   side-effect orchestration, text/JSON boundary). Fixture builders stay
+   private near the tests that use them, and a shared test-support crate needs
+   two production crates sharing the same stable boundary.
 
 See [fixture ownership](test-fixture-hygiene.md) for process-group rules and
 [cargo routes](cargo-routes.md) for the Oxide routing rule every selector

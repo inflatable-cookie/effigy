@@ -16,7 +16,7 @@ native receipts.
 
 ## Source delivery and deferred qualification
 
-Tom's [2026-11-03 source-split ruling](../../knowledge/contracts/release.md#source-delivery-and-separate-proof-tasks--2026-11-03)
+Tom's [2026-11-03 source-split ruling](../../knowledge/contracts/release.md#release-proof-obligations)
 permits the implementation and compile-time qualification packet to merge after
 current-main integration review with ordinary production Discard still refused.
 effigy#620 split the packet's entry points: `launch.py --backend
@@ -35,7 +35,7 @@ own producer receipts — and the read-only offline aggregate verifier refuses
 anything less before any aggregate judgment, which additionally requires the
 actual consumer gates and Tom's separate production-enable GO. The [owned
 transfer
-map](../../knowledge/contracts/release.md#source-delivery-and-separate-proof-tasks--2026-11-03)
+map](../../knowledge/contracts/release.md#release-proof-obligations)
 assigns source controls to effigy#619, SOURCE packet/backend bindings to #620,
 immutable artifact production after integrated main QA to #627, the Colima,
 Desktop and Linux full-session proofs to #621/#622/#623 (each bound by both

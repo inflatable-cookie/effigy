@@ -458,532 +458,107 @@ do not prove that the live process is the gateway that wrote the file. See
 
 ### Gateway process identity
 
-This subsection is the owner for current behavior, source evidence, and the
-bounded correction history. Tom's ruling lives in
-[Gateway process identity ruling](#gateway-process-identity-ruling).
+The gateway records a persisted control record beside its routes: the daemon
+PID, the boot identity and the precise process start identity. A process is the
+gateway only when all three match the record; only then may the lifecycle treat
+it as running or send it a signal. A missing, unreadable or legacy record is
+`Unknown`: the record is preserved byte-identical, nothing is signalled and no
+replacement starts. A numeric PID alone never authorizes a signal.
 
-#### Behavior before task 104 (main `127291bac`, verified at dispatch)
+- **Boot identity.** macOS reads the kernel `kern.bootsessionuuid` session
+  identity through `sysctl` and accepts only a canonical 8-4-4-4-12 UUID;
+  missing, failed, empty, non-UTF-8 or malformed output is `Unknown`. Linux
+  reads `/proc/sys/kernel/random/boot_id`. `effigy_process::compare_boot_identity`
+  is the single comparison point and answers `Match`, `DifferentSession` or
+  `Unknown`; a record written before the change holds the `kern.boottime`
+  timeval, whose seconds component is wall-clock-adjusted within one boot, so a
+  changed or unreadable legacy value is `Unknown`, never `DifferentSession`.
+  `probe_live_identity` uses that comparison for the ordinary and elevated
+  readers alike.
+- **Cross-user access.** Apple applies `CHECK_SAME_USER` to
+  `PROC_PIDTBSDINFO`, so an ordinary operator client cannot read a root-owned
+  daemon's live identity. Q-002's bounded read-only identity command runs
+  through Effigy's existing administrator elevation, reads only the trusted
+  recorded target, returns bounded identity/status data and never signals,
+  changes records or starts anything. A declined or non-interactive prompt is
+  `Unknown`, and the lifecycle then refuses. No new helper, standing privilege
+  or wider privilege model follows.
+- **Legacy records.** The supported upgrade starts from v0.14.1's
+  identity-bearing state; a numeric-only record requires the administrator
+  migration path in
+  [architecture 034](034-gateway-legacy-upgrade-recovery.md#migration-boundary),
+  not a numeric guess.
+- **Residual limit.** The last identity comparison and the TERM/KILL syscall are
+  separate operations, so a PID can be reused in that interval. No pidfd or
+  atomic targeting is claimed.
 
-Persisted control record (`crates/effigy-gateway/src/server.rs`):
+The daemon registers Unix TERM and INT handling before publishing its
+generation, forwards the shutdown signal to its server tasks, and joins every
+owned DNS, HTTP, HTTPS and TCP-alias task before removing the exact unchanged
+identity record. Bounded waits: the read-only identity reader 15 seconds, a
+full elevated lifecycle 30 seconds, managed auto-start 35 seconds and printing
+the required operator action before it waits. A timeout reaps only the owned
+launcher and reports the gateway outcome as unknown; the caller neither guesses
+that an elevated child finished nor removes records. Run `effigy gateway
+status` before retrying, and use `effigy dev status` / `effigy dev stop` before
+the next `effigy dev --headless` invocation for a task-local development
+restart.
 
-- `write_pid_file` writes `std::process::id()` as decimal text. No owner-only
-  mode, no atomic publish, no boot id, no start identity, no comm/exe/uid.
-  The writer is the daemon after start. When `gateway up` elevates
-  (osascript/sudo), that process has euid 0 and writes into
-  `~/.effigy/gateway`, which `prepare_gateway_state_for_elevated_run`
-  created as the unelevated operator. Root `std::fs::write` plus a typical
-  umask leaves a root-owned world-readable file, so unelevated
-  `read_pid_file` still works. `routes.json` `0o600` is written by the
-  unelevated CLI; that ownership does not apply to a root-written sidecar.
-- `gateway.version` beside it records the daemon binary version only.
-- `read_pid_file` parses `u32` then `checked_gateway_pid` (reject 0, 1, and
-  values that do not fit positive `pid_t`). Permission-denied reads surface
-  as I/O errors through `get_status`, not as a dedicated unknown.
-
-Liveness (`probe_gateway_process`): Unix `ps -p <pid> -o pid= -o stat=`, one
-exact non-zombie row → `Running`. No command, uid, start time, or boot id.
-Non-Unix reports a valid-domain PID as `Running` with no probe.
-
-Lifecycle consumers:
-
-- `get_status` / `check_existing_gateway_pid`: `Running` means the gateway is
-  up (`AlreadyRunning` on start). `ConfirmedAbsent` clears the PID and version
-  files. `Unknown` leaves them byte-identical and returns
-  `ProcessStateUnknown`.
-- `run_gateway_status` / `gateway_up_for_managed_task` use that status.
-- `handle_existing_gateway_for_up`: matching binary version returns
-  already-running; otherwise it may elevate, then
-  `stop_gateway_process(status.pid)` and start a replacement.
-- `run_gateway_down`: `stop_gateway_process(running.pid)` then
-  `remove_pid_file` after a confirmed-absent re-probe.
-- `stop_gateway_process` (`src/runner/gateway_command/daemon.rs`): domain
-  check, refuse the caller PID, then SIGTERM, wait, SIGKILL. Each step
-  re-probes liveness only.
-- Elevation (`process_signal_accessible`): `kill(pid, 0)` after the same
-  domain check. A `false` result asks for elevation (fail-closed for
-  privilege). It does not prove identity. An unsignalable leftover PID after
-  reboot therefore elevates, then the privileged path can TERM/KILL whatever
-  now holds that number.
-
-`kill` takes only integer arguments, so a negative `pid_t` is memory-safe.
-v0.13.1's unchecked `u32 as i32` could form `-1` (broadcast) or `0` (process
-group): that is numeric-domain / signaling-authority, not a libc memory-safety
-hole. 099 closed that domain (`checked_gateway_pid` plus
-`gateway_signal_target_is_safe`). Ownership remains open.
-
-#### Baseline v0.13.1 (`08e17227021778b5126adfe06d8a141b05776d70`)
-
-Unchanged across the baseline and HEAD: decimal PID only, `ps` liveness, no
-start identity, `stop` signals that PID, elevation `kill(pid, 0)` without
-identity. v0.13.1 also used an unchecked `pid as i32` for TERM/KILL and
-`kill(pid as i32, 0)`, and collapsed any failed `ps` to not-running (then
-deleted the PID file and could start a replacement).
-
-099 (`3991ecbc1`) closed the numeric domain. 101 (`3dea18c91`) closed the
-unknown-probe collapse. Ownership is the same as v0.13.1.
-
-#### Historical source counterexample (recording-only)
-
-A live `sleep` child whose decimal PID is written to `gateway.pid` is
-`GatewayProcessProbe::Running`. `get_status` returns that PID as the gateway;
-`check_existing_gateway_pid` returns `AlreadyRunning`. The probe never reads
-comm, uid, boot id, or start identity. Prove with
-The pre-task-104 control was named
-`server_probe_state_live_non_gateway_pid_is_reported_running`; the identity
-selector replaces it with `gateway_identity_matching_private_child_is_reported_running`,
-which writes a precise record for its owned fixture before invoking status.
-Neither status proof signals the fixture.
-
-The same PID, once treated as running, is the argument to
-`stop_gateway_process` on `down` and on `up` replacement when
-`gateway.version` does not match the current binary. The in-tree private-child
-stop test `gateway_pid_domain_stops_exact_private_owned_child` showed TERM of
-a private child given only its PID before task 104.
-
-Static sequence for a leftover file after crash or reboot, no live
-exploitation claimed:
-
-1. Daemon writes `N` and later dies without unlinking the file.
-2. The kernel reuses `N` for an unrelated process (common after reboot).
-3. `get_status` sees one `ps` row for `N` → running gateway.
-4. `gateway down`, or `gateway up` with a mismatched version file, sends
-   SIGTERM then SIGKILL to `N`. If `kill(N, 0)` is `EPERM`, elevation runs
-   first and the privileged path can signal a process the unprivileged user
-   could not.
-
-A second, narrower race remains even for a true gateway PID: the process can
-exit and be reused between the last `Running` probe and `kill`. A pre-signal
-start-time check would still be a TOCTOU, not an atomic signal.
-
-uid/`ps` row matching would not close this. The live foreign process can share
-uid with the operator, and an exact PID row is what the probe already
-requires.
-
-#### Platform identity primitives (pre-correction inventory)
-
-Historical baseline before the start-identity correction: these primitives were
-already in the product but were not used to establish gateway ownership.
-The implemented policy is described in the following subsection.
-
-| Primitive | Where | Precision | Gateway use |
-| --- | --- | --- | --- |
-| `effigy_process::boot_identity` | Linux `/proc/sys/kernel/random/boot_id`; macOS `sysctl kern.boottime` | Per boot | None |
-| `effigy_process::process_start_identity` | Linux `/proc/<pid>/stat` field 22 (ticks); macOS `ps -o lstart=` | Linux: tick-granularity within a boot. macOS `lstart` is locale-dependent and must not be persisted as a generation key | QA-group owner liveness (`qa_group_status.rs`); not gateway |
-| `effigy_host_run::canonical_start_identity` (retired with the host-run client, effigy#227) | Linux `{pid}@{boot}:{ticks}`; macOS `{pid}@UTC-whole-seconds` from `pbi_start_tvsec` only | The retired host-run wire format truncated macOS start time to whole seconds; never a gateway record | None (removed) |
-| macOS `libc::proc_bsdinfo` | `proc_pidinfo(PROC_PIDTBSDINFO)` → `pbi_start_tvsec` and `pbi_start_tvusec` (`u64` each). Locked `libc` 0.2.189 and XNU's public `sys/proc_info.h` both expose the usec field. XNU copies both fields from the kernel process start timestamp. Host-run ignores usec. XNU `proc_info.c` applies `CHECK_SAME_USER`; a cross-uid read needs `PRIV_GLOBAL_PROC_INFO` | Strongest macOS start-time primitive in this tree: pid + boot + sec + usec. Whole-second collision is avoidable truncation. A root-owned gateway is unverifiable through this API from the ordinary operator uid ([Q-002](../questions.md#q-002--macos-gateway-cross-user-identity-access)) | Unused by gateway |
-| Linux pidfd | not used | Would make open-then-signal atomic on Linux 5.3+ | Not portable to macOS; out of the smallest fix |
-
-At that baseline, unknown identities already failed closed in host-run and in
-`process_start_identity_matches`; gateway had no equivalent match step.
-
-#### Implemented correction in task 104
-
-Published v0.14.0 upgrade/start defect (present in the `v0.14.0` tag, corrected
-on main by task 113, `4201e0b3`): that binary's `trusted_directory_owner`
-accepted only a directory owned by root or the effective caller UID. During
-existing administrator elevation the effective UID is root, so a genuine
-ordinary-operator-owned gateway directory was rejected before startup with
-`gateway directory is unsafe`, even though the operator UID was forwarded.
-The root/operator trust boundary is corrected on main: the elevated root caller
-accepts the forwarded non-root operator UID only when it matches ambient
-`SUDO_UID` (when present) and owns the forwarded `HOME` per passwd, and
-unauthenticated root still accepts only root ownership. Changing directory
-ownership or relaxing trust for every owner is not a supported workaround. A
-legacy gateway also needs the explicit transition below. A previously installed
-binary may have been overwritten, and using an older CLI for development may
-fail to parse newer linked manifests; a general CLI downgrade is not a recovery
-strategy. The supported upgrade/recovery design is
-[034](034-gateway-legacy-upgrade-recovery.md). Published v0.14.0 cannot complete
-a pre-0.14 upgrade. Such numeric-only records now require administrator migration; see [architecture 034](034-gateway-legacy-upgrade-recovery.md).
-
-The decimal `gateway.pid` remains compatible. `gateway.identity` is a
-version-1 JSON sidecar containing `format_version`, the same `pid`,
-`boot_identity`, and a tagged platform start identity. Linux stores `/proc` stat
-field 22 ticks; macOS stores `pbi_start_tvsec` and `pbi_start_tvusec` separately.
-The sidecar and PID are staged as owner-only `0o600` files and atomically
-renamed, sidecar first. A lock file serializes publishers and compare-and-remove.
-An identity-only interrupted pair, mismatched pair, malformed sidecar, unsafe
-mode, or symlink is unknown and preserved. A root writer validates the gateway
-directory owner before `fchown` on the open published file; both record files
-are assigned to that directory owner so the ordinary operator can read them.
-The decimal file stays owner-only as well. Task 113 extends that owner check
-across elevation: an elevated root caller behind the existing
-`EFFIGY_GATEWAY_ESCALATED` marker additionally accepts a gateway directory
-owned by the authenticated operator UID from `EFFIGY_GATEWAY_OPERATOR_UID`.
-That UID is authenticated, not merely read: it must be non-root, match an
-ambient `SUDO_UID` when one is present, and name the UID whose passwd home is
-byte-identical to the forwarded `HOME`. An unauthenticated root still accepts
-only root ownership, so the v0.14.0 `gateway directory is unsafe` rejection of
-the genuine operator-owned directory no longer recurs for the authenticated
-context, while a forged, substituted, or unrelated owner still refuses. The
-spawned daemon inherits the same forwarded `HOME`, escalation marker, and
-operator UID, so its publication carries the identical context.
-
-All production lifecycle paths carry `VerifiedGatewayStatus`, which keeps the
-unchanged public `GatewayStatus` output paired with the exact trusted record
-snapshot. `get_status` and `check_existing_gateway_pid` require the recorded
-PID, boot id and precise start identity to match. `get_status` is read-only: a
-readable different live generation is not Running, and confirmed absence is
-NotRunning, without deleting records. Stale authenticated records are removed
-only by byte-for-byte compare-and-remove after the transition lock, including
-`check_existing_gateway_pid` at daemon start. A readable PID-only record with
-no `gateway.identity` sidecar receives a specific legacy identity migration
-error after a read-only process probe. An unknown process probe keeps the
-distinct `ProcessStateUnknown` error; a running or confirmed-absent numeric-only
-record still preserves its files and refuses signal, cleanup, or replacement.
-A present but malformed, PID-mismatched, unreadable or otherwise untrusted
-identity also remains unknown and is preserved.
-Before TERM and again before KILL, stop rechecks the same record and live
-identity; `process_signal_accessible` performs the same check before its
-signal-zero permission probe. The `gateway up` check and record publication
-share the sidecar policy and a locked second check prevents overwriting a pair
-published by another starter.
-
-When the local kernel denies a live-identity read, the runner may invoke the
-hidden `__gateway-identity` command through existing `/usr/bin/sudo` or
-`/usr/bin/osascript` elevation. It accepts only a digest of the validated
-record, its directory owner UID, and a digest of the canonical fixed gateway
-PID path; it accepts no PID or path. The root command verifies the elevation
-marker and operator UID, rechecks the canonical path and trusted byte pair,
-reads only that recorded target, and returns at most 1 KiB of identity state.
-It never signals, changes records or starts a daemon. The caller requires an
-interactive terminal, caps the reader wait at 15 seconds, and rejects
-nonzero exit, timeout, malformed output, or either digest mismatch as Unknown.
-Declined, unavailable and non-interactive authentication therefore preserve
-the lifecycle's fail-closed behavior. The reader's ordinary private tests do
-not substitute for a live cross-UID integration proof.
-
-The production caller chain is `run_gateway_status` and
-`gateway_up_for_managed_task` → `verified_gateway_status` →
-`server::get_verified_gateway_status_with`; `run_gateway_up` first passes the
-same snapshot through `handle_existing_gateway_for_up`, and daemon start uses
-`check_existing_gateway_pid` plus locked publication. `run_gateway_down` and
-version-mismatch `up` pass the retained snapshot to `stop_gateway_process`;
-`gateway_down_requires_elevation` / `process_signal_accessible` validate it
-before selecting the elevated down path. Daemon shutdown removes only the
-snapshot it published. No production caller uses a numeric-only signal path.
-
-Legacy records remain untouched and block `status`, `up`, `down`, and managed
-start. A missing sidecar is reported as a migration requirement rather than a
-process-probe failure; if the process probe itself is unknown, that unknown
-remains distinct. Version-only, malformed, or symlink `gateway.version` state
-is the same fail-closed unknown: the shared classifier refuses before start
-can overwrite those files, and version publication refuses to follow a
-symlink target. The diagnostic does not assume the previous executable is
-still installed and does not authorize PID-only signaling. A pre-0.14
-numeric-only record requires administrator migration: verify and stop that
-exact daemon, confirm absence, and remove only its old PID/version records.
-Unknown identity preserves all records and refuses replacement; see the
-[migration boundary](034-gateway-legacy-upgrade-recovery.md#migration-boundary).
-A v0.13.1 rollback ignores `gateway.identity` and restores the PID-only risk;
-downgrade is not claimed safe. Host-run
-contract 010 and its whole-second wire identity are unchanged. Non-Unix
-`down` remains unimplemented.
-
-Private controls cover exact-byte preservation for legacy/malformed and
-interrupted pairs, unsafe/symlink records, owner-only publication, target/path
-substitution, boot/start mismatch (including same-second/different-usec macOS
-identity), compare-and-remove against a newer pair, bounded reader parsing and
-timeout, declined/non-interactive reader results, and recording-only zero
-signal dispatch for mismatch/unknown identity. The existing private owned
-child TERM-resistant cleanup control remains the positive signal-path proof.
-The supported API evidence remains `libc::proc_bsdinfo` plus the SDK's
-`sys/proc_info.h`. The public [XNU header](https://github.com/apple/darwin-xnu/blob/main/bsd/sys/proc_info.h#L2286-L2331)
-declares the two start-time fields, [the libproc header](https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/libproc/libproc.h#L695)
-declares `proc_pidinfo`, and [the XNU kernel implementation](https://github.com/apple/darwin-xnu/blob/main/bsd/kern/proc_info.c#L3316-L3360)
-fills both fields from `p_start`. An actual cross-UID kernel read cannot be exercised without
-the prohibited live elevated daemon, so the implementation discloses that
-integration limitation rather than claiming it was run.
-
-#### Follow-up correction in task 117
-
-The task-104 correction left two defects that surfaced on the latest bootstrap
-against a live root gateway:
-
-- `gateway_up_for_managed_task` ran its `sh -lc` child through
-  `ProcessCommand::output()`, which replaces stdin with `null`. The bounded
-  read-only elevated identity reader requires `stdin.is_terminal()`, so a
-  managed auto-start against a root-owned live gateway could not read the
-  cross-UID generation and failed with an Unknown "cannot determine gateway
-  state" error even though the daemon was healthy. The managed transport now
-  spawns the child with `Stdio::inherit()` on stdin and piped stdout/stderr,
-  then drains both pipes with `wait_with_output`. Noninteractive and declined
-  authentication still return Unknown, so the lifecycle refuses without a
-  signal, cleanup, or replacement. Startup text is state-keyed (`stopped` or
-  `unverified`); an unknown or mismatched live daemon is never described as
-  "down". A managed start that finds any running gateway uses it instead of
-  starting another (see "Managed start never replaces a running gateway"
-  below).
-- The macOS boot identity was the raw `kern.boottime` timeval, whose
-  microsecond field is not stable across reads. A sidecar written by the
-  published v0.14.0 macOS build could therefore compare `Mismatch` against the
-  live process it had itself published. `effigy_process::boot_identity` now
-  reads the kernel `kern.bootsessionuuid` session identity through `sysctl`,
-  requires a successful command status, and accepts only a canonical
-  8-4-4-4-12 UUID; missing, failed, empty, non-UTF-8, or malformed output is
-  Unknown. Linux is unchanged (`/proc/sys/kernel/random/boot_id`).
-
-`effigy_process::compare_boot_identity` is the single comparison point and
-returns three values: `Match`, `DifferentSession`, or `Unknown`. New records
-store the session UUID: an equal value is a match, and a different canonical
-session identity proves another boot. Records written before the change store
-the `kern.boottime` timeval. Its seconds component is wall-clock-adjusted
-within one boot (XNU adjusts the boot-time value on a calendar change), so a
-changed or unreadable legacy value is `Unknown`, never `DifferentSession`: the
-ordinary lifecycle preserves the record and refuses instead of deleting a live
-daemon. A parse must see the braced timeval with exact `sec` and `usec` decimal
-fields; malformed input is `Unknown`. The exact process start identity stays
-mandatory for every match, so a reused PID never matches. No old sidecar is
-reclassified as absent or rewritten. `probe_live_identity` uses this
-comparison for both the ordinary and elevated readers; `Unknown` means the
-record is preserved and `status`/`up`/`down`/managed start refuse. A live
-pre-identity daemon requires the host administrator migration
-path. An ambiguous identity-bearing record is honestly refused, not guessed at.
-There is no automatic cleanup or replacement path for that case; preserve the
-records until the administrator can establish the exact generation. The
-retained v0.14.1 lifecycle and the retired pre-identity window are distinguished
-in [architecture 034](034-gateway-legacy-upgrade-recovery.md#migration-boundary).
-
-Shared boot-ID callers are unaffected on macOS: the retired host-run client
-derived its wire identity from `pbi_start_tvsec` only, and the QA-group owner check uses
-`process_start_identity`, not `boot_identity`. The QA-group record's
-informational `boot_identity` field now carries the session UUID on macOS.
-
-Private controls added by task 117: `effigy-process`
-`boot_session_uuid_parser_rejects_missing_failed_and_malformed`,
-`boot_session_identity_reader_is_stable_and_ignores_boot_time`,
-`legacy_boot_time_identity_matches_across_microsecond_drift`,
-`legacy_boot_time_change_is_unknown_not_a_different_session`,
-`legacy_boot_time_parser_rejects_malformed_fields`,
-`different_session_identity_is_known_different_and_malformed_is_unknown`, and
-the separate-process `boot_identity_uncached_is_stable_across_separate_processes`;
-`effigy-gateway`
-`gateway_identity_legacy_boot_time_record_matches_across_microsecond_drift`,
-the full-path
-`gateway_identity_legacy_boot_time_sidecar_stays_running_across_drift`, and the
-preservation control
-`gateway_identity_ambiguous_legacy_boot_time_preserves_live_record`;
-`effigy` `gateway_up_for_managed_task_preserves_terminal_stdin_and_diagnostics`
-(real private PTY, null-stdin diagnostics, and a null-stdin unknown-identity
-case proving the managed start never launches) and
-`gateway_up_for_managed_task_startup_notice_is_state_accurate`. Maintained
-selectors: `test:gateway:boot-identity`, `check:gateway:boot-identity`,
-`test:gateway:managed-tty`.
-
-Residual: the last identity comparison and TERM/KILL syscall are separate
-operations. A process can exit and its PID can be reused in that interval; this
-bounded portable fix does not claim atomic process targeting or add pidfd.
-
-#### Gateway reuse and fixture isolation
+### Gateway reuse, attribution and private state
 
 A managed start uses the running gateway, warns when its build differs, and
-starts one only after positive absence. Unavailable observations warn and
-proceed without starting a second daemon. Replacement belongs to explicit
+starts one only after positive absence. An unavailable observation warns and
+proceeds without starting a second daemon. Replacement belongs to explicit
 `gateway down` / `gateway up`. Debug fixture commands require a private root,
-including down and platform setup. Operator lifecycle tests refuse while the
-machine ports are occupied; a private HOME alone does not isolate the broker.
+including down and platform setup, and operator lifecycle tests refuse while
+the machine ports are occupied; a private HOME alone does not isolate the
+broker.
+
 Command stops and kernel custody settlement append the caller's pid, argv, cwd
-and cause to `gateway.stderr.log`. A custody stop can result from owner loss,
-a durable stop request, cancellation or interrupted-run recovery, even when no
-`gateway down` command ran. This identifies possible causes of the 2026-10-26
-clean exits, without attributing an unobserved incident to one of them.
+and cause to `gateway.stderr.log`; a custody stop can follow owner loss, a
+durable stop request, cancellation or interrupted-run recovery even when no
+`gateway down` ran. The `gateway_setup`, `up` and `down` event carries a bounded
+`caller` record: start identity, session and controlling terminal of the
+invoking process and its parent chain to the session leader (at most eight
+entries), plus only allowlisted `PASEO_*`, `NS_*` and `EFFIGY_RUN_*` markers
+whose value is a supported identity form, recorded as that form plus a SHA-256
+fingerprint. The controlling terminal comes from the kernel's own record for
+the session (`bsdinfo` on macOS, `/proc/<pid>/stat` on Linux), never from a
+descriptor or `/dev/tty`. Command text is published by role: the invoking
+program plus Effigy's own flag names, every other token `<redacted>`, and only a
+program name for an ancestor. An unreadable parent, argument or marker, a
+changed start identity, a parent in another session, or an omitted reason is a
+bounded unknown reason, never a guess. The event is written at the command
+boundary only, a task run that starts the gateway in-process records a managed
+start, and logging never authorizes, refuses or delays an action. The elevated
+child of `gateway setup` writes nothing.
 
-The 2026-10-28 15:26:25Z stop of the installed Mac gateway showed what those
-fields could not answer: which terminal, session, agent or task asked for it.
-The same event now carries a bounded `caller` record for `up`, `down` and
-`setup`, and each action names itself when it starts, so a refusal or an action
-with nothing to do is attributable as well: the start identity, session and
-controlling terminal of the invoking process, its parent chain up to and
-including the session leader (at most eight entries, each with pid, start
-identity, session and redacted command), and only allowlisted `PASEO_*`, `NS_*`
-and `EFFIGY_RUN_*` identity markers whose value is a supported identity form. An
-unreadable parent, argument or marker, a pid whose start identity changed or
-could not be confirmed by a second read, or a parent in another session —
-a reparented child ends the walk instead of naming another session's leader —
-becomes a bounded unknown reason instead of a guess, and no environment value is
-read unless its name is on that allowlist. The controlling terminal is the
-session's terminal, resolved from the kernel's record of it by device on each
-platform (`bsdinfo` on macOS, the `/proc/<pid>/stat` line on Linux) and never
-taken from a standard descriptor or named by the generic `/dev/tty` alias, so a
-redirected descriptor or one attached to another terminal never misattributes the
-action. The reason list keeps chain failures ahead of marker failures and
-ends with how many reasons it omitted, so a full list never hides a missing or
-unconfirmed part of the chain.
+On macOS, gateway setup manages `/etc/resolver/` files for local domains. HTTPS
+uses mkcert-backed certificates after `effigy gateway setup-tls`; plain HTTP
+redirects to HTTPS for TLS routes. `.test` names work without TLS; a `.dev`
+route needs certificate setup before it is useful. The gateway serves
+certificates, mkcert manages the local trust chain, and route lifecycle stays
+tied to the owning environment. DNS-only TCP aliases for services such as
+Postgres, MariaDB, Redis and Memcached use deterministic loopback targets, so
+no manual `/etc/hosts` edit is needed. The gateway can serve non-container host
+listeners when the manifest explicitly declares them.
 
-Command text is published by role, not by spelling. The invoking process's own
-`argv` records the program's file name and one of Effigy's own flag names; every
-other token is `<redacted>` — a positional argument whatever its spelling, a
-path, an unknown flag, a URL, a `KEY=value` pair, a JSON body, and the value of
-any flag in `--flag value` or `--flag=value` form, so `gateway setup --suffix
-down` records `--suffix <redacted>`. An ancestor's command is another program's
-text, so only its program is published — the executable the operating system
-reports, never its caller-chosen `argv[0]` — and no option token of it is, even
-one that spells an Effigy flag; a shell command string is foreign text too and
-publishes nothing inside itself. A marker is read only when its value is a UUID, a decimal
-id, or Effigy's own base32 run id for `EFFIGY_RUN_*`, and it is recorded as that
-form plus a SHA-256 fingerprint, never as the value: an ID-shaped value can still
-be a credential, and a password pasted into a marker variable is refused by name
-only. A stop signalled by replacement or
-migration is attributable through the `up` or `setup` action that requested it;
-no lower-level helper writes a second record for one action. The event is written
-at the command boundary only, so a `setup` step that starts or stops the gateway
-emits its single `gateway_setup` event, and a task run that starts the gateway
-in-process is recorded as `managed gateway start`, never as an operator
-`gateway up`. Logging
-stays best effort and never authorizes, refuses or delays an action; the
-elevated child of `gateway setup` writes nothing, because the file would become
-root-owned in the operator's directory.
-
-### Gateway process identity ruling
-
-Tom ruled on 2026-10-06: "Approved, but you need to fix this so other users
-don't have the same problem." This approves the proposed one-time transition
-of his existing legacy gateway: use a verified previous binary to stop the
-confirmed daemon, confirm it is gone before reconciling only its PID/version
-records, then start the current gateway. Routes, certificates, containers and
-volumes are preserved. This is explicit authority for that host transition,
-not a general exception allowing numeric-only records to authorize signals.
-That historical pre-0.14 recovery window is retired in v0.15. The supported
-upgrade starts from v0.14.1 identity-bearing state; older numeric-only records
-require administrator migration. The earlier candidate-inspection and stop
-protocol is no longer an implemented surface. See the current
-[migration boundary](034-gateway-legacy-upgrade-recovery.md#migration-boundary).
-This historical one-host ruling is not standing authority to signal a PID-only
-record.
-
-Tom ruled on 2026-10-05: block v0.14.0 publication until a persisted
-start-identity sidecar and fail-closed legacy policy are implemented. He does
-not accept the current PID-only ownership risk and authorized the bounded fix.
-
-The correction must match the recorded PID, boot identity and precise process
-start identity before treating a process as the gateway or signaling it.
-Use Linux boot identity plus start ticks; on macOS retain both start seconds
-and microseconds. Missing or unreadable identity is unknown: preserve records,
-do not signal, and do not start a replacement. A numeric-only legacy record
-must not authorize a signal. Migration must confirm the exact owned daemon
-stopped/gone before removing its records.
-
-The legitimate unelevated reader must be able to read the trusted sidecar
-published by an elevated daemon. Private proofs must establish that read policy
-and live identity access. Tom's 2026-10-06 Q-002 ruling authorizes only the
-bounded read-only command through existing administrator elevation described
-below; no new helper or host-run contract change is authorized. A last identity check still races the signal syscall;
-implementation and release documentation must disclose that limit rather than
-claim atomic ownership. No live gateway migration or release publication is
-part of this authorization.
-
-The macOS supported-reader constraint is now established: Apple's XNU
-`proc_info.c` applies `CHECK_SAME_USER` to `PROC_PIDTBSDINFO`; a cross-uid
-read requires `PRIV_GLOBAL_PROC_INFO`. The existing root-owned gateway is
-therefore unverifiable through this API by an ordinary operator client.
-A readable sidecar alone does not solve live identity access. See
-[Apple's process security policy](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/proc_info.c).
-Do not weaken the identity match or use deprecated `kern.proc` SPI to hide
-this support limit.
-
-Tom ruled NARROW on 2026-10-06 in [Q-002](../questions.md#q-002--macos-gateway-cross-user-identity-access):
-task 104 implements a bounded read-only identity command through Effigy's
-existing administrator elevation. It may prompt for authentication. A
-declined or non-interactive prompt yields unknown; lifecycle commands then
-refuse to signal. The command reads only the trusted recorded gateway target,
-returns bounded identity/status data, and does not signal, change records or
-start anything.
-No new helper, install, standing privilege, live-operations authority or change
-to contract 010 is approved. The larger privilege model is not approved.
-This authorizes the bounded implementation, not a live gateway migration.
-Task 104 is in main and implements the sidecar plus fail-closed legacy policy.
-Q-001's publication block remains until exact-candidate release assurance is
-complete. The final identity-check-to-signal TOCTOU and the unrun live
-cross-UID daemon proof remain documented limitations; this is not acceptance
-of those risks or a release-readiness claim.
-
-### Root-owned gateway restart follow-through — 2026-10-09
-
-Tom requested a durable correction after repeated operator-account restarts
-could not verify a healthy root-owned gateway and manual SIGKILL was used.
-The bounded work first qualifies the existing identity/elevation path,
-corrects demonstrated shutdown and terminal-handoff defects, and makes
-refusal or authentication requirements visible within a bounded wait.
-Private fixtures must preserve unrelated gateway, route and process state.
-
-Successful HTTP traffic, a readable sidecar or a numeric PID alone still
-cannot authenticate the daemon. Non-interactive reuse through a new
-authenticated mechanism requires a concrete trust and compatibility proposal
-and its own ruling before implementation; this request does not silently
-widen Q-002, install a helper or grant standing privilege. The supported
-interactive administrator path remains available. No live gateway migration,
-manual signal, global binary replacement or release is authorized here.
-
-The operator's installed `effigy v0.14.1+local.7b26a15` corresponds to source
-commit `7b26a15`. At that source, `run_gateway` documents TERM/INT shutdown but
-waits only for Ctrl-C. At task start, checkout `b0858d5c` already included the
-generation sidecar, the bounded read-only identity reader and legacy recovery.
-All three capabilities are also present and wired in source commit `7b26a15`;
-the source comparison isolates the TERM-handler mismatch from those identity
-and recovery features. The reported root daemon's historical reason for
-ignoring TERM was not captured, so the missing TERM handler is a demonstrated
-source defect, not a proven explanation of that earlier incident.
-
-The corrected daemon registers Unix TERM and INT handling before publishing
-its generation, sends the existing shutdown signal to its server tasks, and
-joins all owned DNS, HTTP and HTTPS server tasks plus the TCP alias manager
-before removing the exact unchanged identity record. Private-process proofs
-cover ready listeners,
-normal TERM/INT, inherited ignored TERM, owned PID cleanup, untouched routes
-and a foreign listener. The last identity-check-to-signal interval remains a
-TOCTOU.
-
-Operator recovery stays on Q-002's existing authority. The read-only identity
-reader remains bounded to 15 seconds and asks for visible administrator
-approval only from an interactive terminal. Full elevated lifecycle waits are
-bounded to 30 seconds; managed auto-start is bounded to 35 seconds and prints
-the required operator action before waiting. A timeout reaps only the owned
-launcher and reports that the gateway outcome is unknown; the caller does not
-guess that an elevated child finished or remove records. Run `effigy gateway
-status` before retrying. A non-interactive unknown identity remains held.
-
-For a task-local development restart, use the managed session controls in
-[guide 012](../../guides/012-dev-process-manager-tui.md#restart-the-managed-dev-session):
-`effigy dev status`, `effigy dev stop`, then the same `effigy dev --headless`
-task invocation. That restarts the managed dev session while the shared
-gateway remains available to other sessions.
-
-If Q-002's interactive reader cannot support prompt-free verification, see the
-separate [read-only daemon attestation proposal](034-gateway-legacy-upgrade-recovery.md#proposed-read-only-root-daemon-attestation).
-It is design evidence only; implementation needs a new operator ruling.
-
-On macOS, gateway setup manages `/etc/resolver/` files for local domains.
-HTTPS uses mkcert-backed certificates after `effigy gateway setup-tls`.
-Plain HTTP redirects to HTTPS for TLS routes. `.test` names work
-without TLS for local development. `.dev` names require HTTPS in common
-browsers because of HSTS, so a `.dev` route needs certificate setup before it
-is useful. The gateway serves certificates; mkcert manages the local trust
-chain. The gateway can also serve
-non-container host listeners when the manifest explicitly declares them;
-route lifecycle remains tied to the owning environment. DNS-only TCP aliases
-for services such as Postgres, MariaDB, Redis, and Memcached use deterministic
-loopback targets, avoiding manual `/etc/hosts` edits.
-
-Disposable consumers can select a caller-owned private gateway with
+A disposable consumer can select a caller-owned private gateway with
 `effigy gateway setup-tls --private-state-root <DIR>` and
-`effigy gateway up --private-state-root <DIR>`. The existing root must be a
-canonical owner-only directory; private mode keeps routes, process records,
-listeners, certificates, and the mkcert CA under it. It binds DNS, HTTP, and
-HTTPS only to loopback, with unprivileged ports (port `0` requests actual OS
-allocation). Startup and status report the sockets held by that generation.
-Private state validation currently requires Unix ownership and permission
-checks; other platforms fail closed.
-`EFFIGY_GATEWAY_PRIVATE_STATE_ROOT=<DIR>` selects the same root for normal
-container route registration and managed startup. Private mode does not install
-CA trust, modify resolver files, provision host loopback aliases, or request
-elevation. An absolute `EFFIGY_GATEWAY_MKCERT_BIN` selects the mkcert executable
-for private certificate generation; otherwise Effigy searches its bounded
-trusted install prefixes. Invalid explicit paths fail closed. Effigy passes
-`<DIR>/ca` as `CAROOT` and invokes only certificate generation, never trust
-installation. Clients explicitly trust `<DIR>/ca/rootCA.pem` and resolve each
-route name to the reported HTTPS address; normal operator mode and its
-established host integration remain the default. Fixed-port consumer adapters
-and hybrid child-listener ownership are outside this capability.
+`effigy gateway up --private-state-root <DIR>`, or
+`EFFIGY_GATEWAY_PRIVATE_STATE_ROOT=<DIR>` for normal route registration and
+managed startup. The existing root must be a canonical owner-only directory;
+private mode keeps routes, process records, listeners, certificates and the
+mkcert CA under it, binds DNS, HTTP and HTTPS only to loopback on unprivileged
+ports (port `0` requests actual OS allocation), and reports the sockets its
+generation holds. It installs no CA trust, modifies no resolver file,
+provisions no host loopback alias and requests no elevation. An absolute
+`EFFIGY_GATEWAY_MKCERT_BIN` selects mkcert; otherwise Effigy searches its
+bounded trusted install prefixes, and an invalid explicit path fails closed.
+`<DIR>/ca` is passed as `CAROOT` and only certificate generation runs, never
+trust installation; clients trust `<DIR>/ca/rootCA.pem` and resolve each route
+name to the reported HTTPS address. Non-Unix platforms fail the private-root
+validation closed.
 
 A checkout's loopback alias is not a separate record: the gateway's route table
 is the only record of loopback ownership, so an address is in use exactly when
@@ -992,8 +567,8 @@ address the checkout's routes already answer with, or the lowest address in the
 `127.1.0.1`-`127.1.0.250` pool that no route references; `down` and retirement
 free it by removing those routes, and any route write drops the routes of a
 checkout path that is missing. A deleted worktree therefore keeps neither a
-domain nor an address, and no inventory across runtimes, qualified project key
-or reclamation plan exists to run.
+domain nor an address, and no cross-runtime inventory or reclamation plan
+exists to run.
 
 ## 5. Persistent Data, Cache, and Volume Lifecycle
 
@@ -1031,8 +606,9 @@ a digest-pinned reference is not a writable destination.
 owns prompting, artifact adapters, container execution, and report rendering.
 The shared database resolver classifies Postgres, MariaDB, and MySQL catalog
 entries, reads declared databases and credential references, and rejects
-missing or ambiguous targets. Secret values stay out of reports. See the
-[database resolution contract](../contracts/026-shared-database-target-resolution-contract.md).
+missing or ambiguous targets. Secret values stay out of reports, and a
+credential travels by name only
+([contract 005](../contracts/005-container-runtime-contract.md#shared-data-targets-data-seed-data-dump)).
 
 Cache and persistent volume cleanup are separate. Generated Compose can put
 Rust `target`, `node_modules`, and pnpm store paths on disposable named
