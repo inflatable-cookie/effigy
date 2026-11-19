@@ -15,23 +15,11 @@ pub(super) fn cache_kind_label(kind: CacheVolumeKind) -> &'static str {
     }
 }
 
-pub(super) fn cache_kind_from_volume_name(name: &str) -> Option<String> {
-    if name.contains("pnpm-store") {
-        return Some("pnpm-store".to_owned());
-    }
-    if name.contains("node_modules") || name.contains("node-modules") {
-        return Some("node-modules".to_owned());
-    }
-    if name.contains("cargo-registry") {
-        return Some("cargo-registry".to_owned());
-    }
-    if name.contains("cargo-git") {
-        return Some("cargo-git".to_owned());
-    }
-    if name.contains("target") {
-        return Some("rust-target".to_owned());
-    }
-    None
+/// Effigy's own cache volumes carry its `efv-` name. The listing never reads
+/// volume contents or guesses a kind from a foreign name, so a cache the
+/// report cannot classify is named as unclassified rather than mislabelled.
+pub(super) fn is_effigy_cache_volume(name: &str) -> bool {
+    name.starts_with("efv-")
 }
 
 pub(super) fn ensure_cache_prune_target_is_stopped(
@@ -70,16 +58,11 @@ pub(super) fn collect_global_cache_entries_from_names(
     names: Vec<String>,
     running_projects: &BTreeSet<String>,
     metadata_by_name: &BTreeMap<String, RuntimeVolumeMetadata>,
-    content_kind_by_name: &BTreeMap<String, String>,
     usage_by_mount_point: &BTreeMap<String, u64>,
 ) -> Vec<ContainerCacheGlobalEntry> {
     let mut caches = Vec::new();
     for name in names {
-        let Some(kind) =
-            cache_kind_from_volume_name(&name).or_else(|| content_kind_by_name.get(&name).cloned())
-        else {
-            continue;
-        };
+        let kind = "unknown".to_owned();
         let metadata = metadata_by_name.get(&name);
         // Proven Effigy ownership names the project exactly; name markers and
         // Compose labels stay diagnostic fallbacks for everything else.
@@ -108,21 +91,6 @@ pub(super) fn collect_global_cache_entries_from_names(
     }
     caches.sort_by(|left, right| left.name.cmp(&right.name));
     caches
-}
-
-pub(super) fn parse_volume_cache_kind_rows(stdout: &str) -> BTreeMap<String, String> {
-    stdout
-        .lines()
-        .filter_map(|line| {
-            let (mount_point, kind) = line.split_once('\t')?;
-            let mount_point = mount_point.trim();
-            let kind = kind.trim();
-            if mount_point.is_empty() || kind.is_empty() {
-                return None;
-            }
-            Some((mount_point.to_owned(), kind.to_owned()))
-        })
-        .collect()
 }
 
 fn project_name_from_volume_name(name: &str) -> Option<String> {
@@ -215,51 +183,57 @@ mod tests {
     }
 
     #[test]
-    fn global_cache_entries_mark_running_projects_in_use() {
+    fn global_cache_entries_mark_running_projects_in_use_from_their_labels() {
         let mut running_projects = BTreeSet::new();
-        running_projects.insert("workspace-app-reference-dev".to_owned());
+        running_projects.insert("acme-dev".to_owned());
 
+        let owned_labels = |volume: &str| {
+            BTreeMap::from([
+                ("com.effigy.managed".to_owned(), "true".to_owned()),
+                ("com.effigy.project".to_owned(), "acme-dev".to_owned()),
+                ("com.effigy.volume-name".to_owned(), volume.to_owned()),
+            ])
+        };
         let mut metadata = BTreeMap::new();
-        metadata.insert(
-            "workspace-app-reference-dev-workspace-acme-api-target".to_owned(),
-            RuntimeVolumeMetadata {
-                name: "workspace-app-reference-dev-workspace-acme-api-target".to_owned(),
-                mount_point: Some("/var/lib/mock/target".to_owned()),
-                size_bytes: Some(1024),
-                labels: BTreeMap::new(),
-            },
-        );
-        metadata.insert(
-            "contact-patch-dev-workspace-cargo-git".to_owned(),
-            RuntimeVolumeMetadata {
-                name: "contact-patch-dev-workspace-cargo-git".to_owned(),
-                mount_point: Some("/var/lib/mock/cargo-git".to_owned()),
-                size_bytes: Some(2048),
-                labels: BTreeMap::new(),
-            },
+        for (name, mount_point, size_bytes) in [
+            ("efv-running", "/var/lib/mock/target", 1024),
+            ("efv-stopped", "/var/lib/mock/cargo-git", 2048),
+        ] {
+            metadata.insert(
+                name.to_owned(),
+                RuntimeVolumeMetadata {
+                    name: name.to_owned(),
+                    mount_point: Some(mount_point.to_owned()),
+                    size_bytes: Some(size_bytes),
+                    labels: owned_labels(name),
+                },
+            );
+        }
+        metadata
+            .get_mut("efv-stopped")
+            .unwrap()
+            .labels
+            .insert("com.effigy.project".to_owned(), "other-dev".to_owned());
+        metadata.get_mut("efv-stopped").unwrap().labels.insert(
+            "com.effigy.volume-name".to_owned(),
+            "efv-stopped".to_owned(),
         );
 
         let entries = collect_global_cache_entries_from_names(
-            vec![
-                "workspace-app-reference-dev-workspace-acme-api-target".to_owned(),
-                "contact-patch-dev-workspace-cargo-git".to_owned(),
-                "contact-patch-dev-db-data".to_owned(),
-            ],
+            vec!["efv-stopped".to_owned(), "efv-running".to_owned()],
             &running_projects,
             &metadata,
-            &BTreeMap::new(),
             &BTreeMap::new(),
         );
 
         assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].name, "contact-patch-dev-workspace-cargo-git");
-        assert!(!entries[0].in_use);
-        assert_eq!(
-            entries[1].name,
-            "workspace-app-reference-dev-workspace-acme-api-target"
-        );
-        assert!(entries[1].in_use);
-        assert_eq!(entries[1].kind, "rust-target");
+        assert_eq!(entries[0].name, "efv-running");
+        assert_eq!(entries[0].project_name.as_deref(), Some("acme-dev"));
+        assert!(entries[0].in_use);
+        assert_eq!(entries[0].kind, "unknown");
+        assert_eq!(entries[1].name, "efv-stopped");
+        assert_eq!(entries[1].project_name.as_deref(), Some("other-dev"));
+        assert!(!entries[1].in_use);
     }
 
     #[test]
@@ -282,7 +256,6 @@ mod tests {
             vec!["contact-patch-dev-workspace-cargo-git".to_owned()],
             &running_projects,
             &metadata,
-            &BTreeMap::new(),
             &usage,
         );
 
@@ -291,7 +264,7 @@ mod tests {
     }
 
     #[test]
-    fn global_cache_entries_classify_legacy_efv_rust_targets_by_content() {
+    fn global_cache_entries_name_an_unclassified_cache_instead_of_guessing() {
         let mut running_projects = BTreeSet::new();
         running_projects.insert("acowtancy-dev".to_owned());
         let mut labels = BTreeMap::new();
@@ -309,33 +282,17 @@ mod tests {
                 labels,
             },
         );
-        let mut content_kinds = BTreeMap::new();
-        content_kinds.insert("efv-e2523d125410efb8".to_owned(), "rust-target".to_owned());
-
         let entries = collect_global_cache_entries_from_names(
             vec!["efv-e2523d125410efb8".to_owned()],
             &running_projects,
             &metadata,
-            &content_kinds,
             &BTreeMap::new(),
         );
 
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].kind, "rust-target");
+        assert_eq!(entries[0].kind, "unknown");
         assert_eq!(entries[0].project_name.as_deref(), Some("acowtancy-dev"));
         assert!(entries[0].in_use);
-    }
-
-    #[test]
-    fn volume_cache_kind_rows_parse_tab_separated_probe_output() {
-        let parsed =
-            parse_volume_cache_kind_rows("/volumes/one/_data\trust-target\ninvalid\n\tmissing\n");
-
-        assert_eq!(parsed.len(), 1);
-        assert_eq!(
-            parsed.get("/volumes/one/_data").map(String::as_str),
-            Some("rust-target")
-        );
     }
 
     #[test]
@@ -436,7 +393,6 @@ mod tests {
             vec!["workspace-app-reference-dev-workspace-acme-api-target".to_owned()],
             &running_projects,
             &metadata,
-            &BTreeMap::new(),
             &BTreeMap::new(),
         );
         assert_eq!(entries.len(), 1);

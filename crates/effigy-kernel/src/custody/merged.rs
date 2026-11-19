@@ -17,18 +17,18 @@ pub struct MergedLog {
     failed: bool,
     committed: u64,
     commit: migration::Commit,
-    tap: Option<super::styled_tap::Tap>,
 }
 
 impl MergedLog {
-    /// Prepare the one-time legacy cutover under a newly admitted host owner.
-    /// Run admission proves predecessor settlement and retains the owner gate.
+    /// Admit the canonical log under a newly admitted host owner. Run
+    /// admission proves predecessor settlement and retains the owner gate. A
+    /// path holding another writer's bytes is refused, never converted.
     pub fn prepare(run: &mut crate::run::Run<'_>, path: &Path) -> Result<Self, super::SpawnError> {
         run.verify_custody()?;
         if run.fence().resource.kind() != crate::id::ResourceKind::HostProcess
             || run.phase()? != crate::run::Phase::Admitted
         {
-            return Err(super::SpawnError::Refused("host log cutover needs a newly admitted host-process owner with all predecessors settled".into()));
+            return Err(super::SpawnError::Refused("canonical host log admission needs a newly admitted host-process owner with all predecessors settled".into()));
         }
         let owner = crate::id::Digest::of(
             &serde_json::to_vec(&run.fence().resource).map_err(io::Error::other)?,
@@ -41,15 +41,13 @@ impl MergedLog {
             settlement: crate::run::Settlement::Retain,
             required: false,
         })?;
-        let file = migration::prepare(path, owner, &run.id().to_string(), |_| Ok(()))?;
+        let file = migration::prepare(path, owner, &run.id().to_string())?;
         let log = Self::from_file(path, file)?;
         let identity = Self::identity(path)?;
         run.applied(
             &ticket,
             serde_json::json!({"version":1,"canonical":identity.identity}),
         )?;
-        let mut log = log;
-        log.tap = Some(migration::tap(path, identity.identity)?);
         Ok(log)
     }
 
@@ -67,22 +65,17 @@ impl MergedLog {
             failed: false,
             committed,
             commit,
-            tap: None,
         })
     }
 
+    /// A test's own log never inherits another writer's file: a conversion is
+    /// refused in production, so the fixture moves it aside the same way.
     #[cfg(test)]
     pub(super) fn prepare_test(path: &Path) -> io::Result<Self> {
-        let mut log =
-            Self::from_file(path, migration::prepare(path, [7; 32], "test", |_| Ok(()))?)?;
-        log.tap = Some(migration::tap(path, Self::identity(path)?.identity)?);
-        Ok(log)
-    }
-
-    /// Styles are a bounded optional projection; bytes must come from a
-    /// verified canonical read before using this API.
-    pub fn styles(path: &Path, read: &PlainRead) -> Vec<effigy_core::terminal_text::StyledSpan> {
-        migration::styles(path, read)
+        if path.exists() {
+            std::fs::rename(path, path.with_extension("test-legacy"))?;
+        }
+        Self::from_file(path, migration::prepare(path, [7; 32], "test")?)
     }
 
     /// Read-only canonical provenance and snapshot extent.
@@ -109,13 +102,6 @@ impl MergedLog {
     /// A failed write can leave an unacknowledged partial suffix on disk.
     pub fn committed_offset(&self) -> u64 {
         self.committed
-    }
-
-    pub(super) fn publish_styles(
-        &mut self,
-        chunk: effigy_core::terminal_text::StyledChunk,
-    ) -> io::Result<()> {
-        self.tap.as_mut().map_or(Ok(()), |tap| tap.append(chunk))
     }
 
     pub(super) fn append(&mut self, bytes: &[u8]) -> io::Result<()> {

@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::path::PathBuf;
 use std::time::Instant;
 
 use vt100::Parser as VtParser;
@@ -24,7 +23,6 @@ pub(super) enum ProcessStartupState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OptionsAction {
     ToggleFollow,
-    ExportTranscript,
     Restart,
     Stop,
     Cancel,
@@ -32,7 +30,6 @@ pub enum OptionsAction {
 }
 
 pub struct SessionState {
-    pub repo_root: PathBuf,
     pub process_names: Vec<String>,
     pub logs: HashMap<String, VecDeque<LogEntry>>,
     pub scroll_offsets: HashMap<String, usize>,

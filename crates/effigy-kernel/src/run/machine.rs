@@ -11,8 +11,8 @@ use super::provenance::{self, OperatorAction};
 
 /// Log one operator event to the existing gateway log. Logging is best effort
 /// so an unavailable log never prevents settlement, and the record is the same
-/// shape for `up`, `down` and `setup`: the invoking pid, redacted argv, cwd,
-/// cause and the bounded caller provenance behind them.
+/// shape for `up`, `down` and `setup`: the invoking pid, its program name, cwd
+/// and the cause.
 pub fn record_gateway_operator(directory: &std::path::Path, action: OperatorAction, cause: &str) {
     // Recording never creates the directory, so an `up` or `setup` before any
     // gateway state exists stays read-only and a diagnostic adds no state tree
@@ -38,20 +38,14 @@ pub fn try_record_gateway_operator(
     append_operator_line(directory, &operator_event_line(action, cause))
 }
 
-/// The one event line: pid, redacted argv, cwd, cause and the caller chain.
+/// The one event line: pid, invoking program, cwd and cause.
 fn operator_event_line(action: OperatorAction, cause: &str) -> String {
-    let pid = std::process::id();
-    let caller = provenance::caller(
-        &provenance::Platform,
-        pid,
-        crate::ident::controlling_terminal(),
-        |name: &str| std::env::var_os(name),
-    );
     let argv = std::env::args_os()
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect::<Vec<_>>();
+    let argv = argv.iter().map(String::as_str).collect::<Vec<_>>();
     let cwd = std::env::current_dir().ok();
-    provenance::event(action, cause, pid, &argv, cwd.as_deref(), &caller).to_string()
+    provenance::event(action, cause, std::process::id(), &argv, cwd.as_deref()).to_string()
 }
 
 fn append_operator_line(directory: &std::path::Path, line: &str) -> std::io::Result<()> {

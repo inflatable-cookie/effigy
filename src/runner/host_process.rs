@@ -1387,13 +1387,12 @@ def follow_log(repo: Path, container: str, process: str, out=sys.stdout, sleep=t
         sleep(0.25)
 "#;
 
-    /// Real custody cutover, then the bundled direct inode/offset follower's
-    /// contract, transcribed test-only so the proof needs no submodule
-    /// checkout. Only the follower's pre-cutover stat snapshot is mocked: its
-    /// new file open, fstat, decoder, gap and payload handling run against the
-    /// real log.
+    /// A log written by an older Effigy is refused and kept, then the bundled
+    /// direct inode/offset follower's contract is proved against the canonical
+    /// log the operator admitted by moving the old file aside. The follower
+    /// proof is transcribed test-only so it needs no submodule checkout.
     #[test]
-    fn canonical_cutover_and_bundled_underlay_follower_use_the_same_new_inode() {
+    fn legacy_log_is_refused_and_the_bundled_underlay_follower_uses_the_new_inode() {
         use std::os::unix::fs::MetadataExt as _;
         let fixture = fixture();
         fs::write(
@@ -1415,6 +1414,12 @@ def follow_log(repo: Path, container: str, process: str, out=sys.stdout, sleep=t
         fs::write(&path, legacy).unwrap();
         let old = fs::metadata(&path).unwrap();
         assert!(effigy_kernel::custody::MergedLog::read_plain(&path, None, 0, 4096).is_err());
+        let refused =
+            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
+                .expect_err("an older writer's log is refused");
+        assert!(refused.to_string().contains("move it aside"), "{refused}");
+        assert_eq!(fs::read(&path).unwrap(), legacy);
+        fs::rename(&path, directory.join("app.log.legacy")).unwrap();
         super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("custody producer starts");
         wait_until("new producer closes", || {
@@ -1443,24 +1448,11 @@ def follow_log(repo: Path, container: str, process: str, out=sys.stdout, sleep=t
                 && !text.contains("legacy-457-secret")
                 && !text.contains('\x1b')
         );
-        let styles = effigy_kernel::custody::MergedLog::styles(&path, &read);
         assert_eq!(
-            styles
-                .iter()
-                .map(|span| span.text.as_str())
-                .collect::<String>(),
-            text
+            fs::read(directory.join("app.log.legacy")).unwrap(),
+            legacy,
+            "the operator's moved-aside file stays exactly as written"
         );
-        assert!(styles
-            .iter()
-            .any(|span| span.text.contains("ready") && span.style != Default::default()));
-        let quarantined = fs::read_dir(directory.join(".legacy-host-logs"))
-            .unwrap()
-            .map(|entry| entry.unwrap())
-            .collect::<Vec<_>>();
-        assert_eq!(quarantined.len(), 1);
-        assert_eq!(quarantined[0].metadata().unwrap().mode() & 0o777, 0o600);
-        assert_eq!(fs::read(quarantined[0].path()).unwrap(), legacy);
         let script = r#"
 import io,json,sys
 from pathlib import Path
@@ -1508,7 +1500,7 @@ print(json.dumps(out.getvalue()))
     }
 
     #[test]
-    fn canonical_capture_stops_a_full_pipe_with_an_unconsumed_styled_reader() {
+    fn canonical_capture_stops_a_full_pipe_with_an_unconsumed_log_reader() {
         let fixture = fixture();
         fs::write(
             fixture.checkout.join(".env.schema"),
@@ -1549,10 +1541,9 @@ print(json.dumps(out.getvalue()))
         }
         let status = super::kernel_run::host_process_status(&fixture.checkout, &policy);
         let pid = status[0].pid.expect("chatty child stays in custody");
-        // This reader holds an old style snapshot open without consuming it.
-        // It cannot hold the writer's queue, lock or a child pipe.
-        let tap = fs::File::open(directory.join("app.log.styled-tap")).unwrap();
-        assert!(tap.metadata().unwrap().len() <= 1024 * 1024);
+        // This reader holds the canonical log open without consuming it. It
+        // cannot hold the writer's queue, lock or a child pipe.
+        let reader = fs::File::open(&log).unwrap();
         let started = Instant::now();
         let report =
             super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
@@ -1570,8 +1561,9 @@ print(json.dumps(out.getvalue()))
             read_private_json(&log.with_extension("stop.json")).unwrap();
         assert!(
             !stop.custody.unwrap().capture_truncated,
-            "an unconsumed style reader must not force a capture drain deadline"
+            "an unconsumed log reader must not force a capture drain deadline"
         );
+        assert!(reader.metadata().unwrap().len() > 0);
         let read = effigy_kernel::custody::MergedLog::read_plain(&log, None, 0, 64 * 1024).unwrap();
         let text = std::str::from_utf8(&read.bytes).unwrap();
         assert!(!text.contains("opaque-457-full-pipe-key") && !text.contains('\x1b'));

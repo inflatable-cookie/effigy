@@ -68,7 +68,6 @@ fn dispatch_action(
 fn action_from_hotkey(code: KeyCode) -> Option<OptionsAction> {
     match code {
         KeyCode::Char('f') => Some(OptionsAction::ToggleFollow),
-        KeyCode::Char('y') => Some(OptionsAction::ExportTranscript),
         KeyCode::Char('r') => Some(OptionsAction::Restart),
         KeyCode::Char('s') => Some(OptionsAction::Stop),
         KeyCode::Char('q') => Some(OptionsAction::Quit),

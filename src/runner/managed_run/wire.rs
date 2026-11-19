@@ -46,6 +46,13 @@ pub(in crate::runner) enum EngineEvent {
     Started { process: String, sequence: i64 },
     /// A workload's process ended with `code`.
     Exited { process: String, code: i32 },
+    /// Live presentation styles for bytes this run's log already holds. A
+    /// reader that attached later has no event and renders the same bytes
+    /// plain, so colour never needs a persisted sidecar.
+    Styled {
+        process: String,
+        chunk: effigy_core::terminal_text::StyledChunk,
+    },
     /// Wake readers after a complete wait snapshot was journalled. A lost
     /// event does not change what the polling front ends observe.
     WaitsChanged,

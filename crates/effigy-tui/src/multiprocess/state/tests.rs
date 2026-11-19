@@ -4,13 +4,7 @@ use super::SessionState;
 
 #[test]
 fn new_initializes_process_scoped_maps_and_defaults() {
-    let state = SessionState::new(
-        ".".into(),
-        vec!["api".to_owned(), "shell".to_owned()],
-        2000,
-        240,
-        8000,
-    );
+    let state = SessionState::new(vec!["api".to_owned(), "shell".to_owned()], 2000, 240, 8000);
 
     assert_eq!(state.active_process(), "api");
     assert_eq!(state.logs.len(), 2);
@@ -26,7 +20,7 @@ fn new_initializes_process_scoped_maps_and_defaults() {
 
 #[test]
 fn accessor_fallbacks_remain_safe_for_unknown_processes() {
-    let mut state = SessionState::new(".".into(), vec!["api".to_owned()], 2000, 240, 8000);
+    let mut state = SessionState::new(vec!["api".to_owned()], 2000, 240, 8000);
 
     assert_eq!(state.scroll_offset_for("missing"), 0);
     assert!(state.follow_for("missing"));
@@ -49,13 +43,7 @@ fn accessor_fallbacks_remain_safe_for_unknown_processes() {
 fn entry_waits_are_replaced_by_each_snapshot() {
     use crate::waits::{EntryPhase, EntryState, WaitOn};
 
-    let mut state = SessionState::new(
-        ".".into(),
-        vec!["api".to_owned(), "front".to_owned()],
-        2000,
-        240,
-        8000,
-    );
+    let mut state = SessionState::new(vec!["api".to_owned(), "front".to_owned()], 2000, 240, 8000);
     let probe = EntryState {
         entry: "api".to_owned(),
         phase: EntryPhase::Starting,
@@ -101,13 +89,7 @@ fn entry_waits_are_replaced_by_each_snapshot() {
 fn a_starting_entry_rebases_its_clock_instead_of_reporting_its_queue_time() {
     use super::ProcessStartupState;
 
-    let mut state = SessionState::new(
-        ".".into(),
-        vec!["api".to_owned(), "web".to_owned()],
-        2000,
-        240,
-        8000,
-    );
+    let mut state = SessionState::new(vec!["api".to_owned(), "web".to_owned()], 2000, 240, 8000);
     state
         .process_started_at
         .insert("web".to_owned(), Instant::now() - Duration::from_secs(60));
@@ -148,7 +130,6 @@ fn a_starting_entry_rebases_its_clock_instead_of_reporting_its_queue_time() {
 #[test]
 fn startup_focus_restores_selection_unless_the_user_changes_it() {
     let mut state = SessionState::new(
-        ".".into(),
         vec!["front".into(), "services".into(), "api".into()],
         24,
         80,
@@ -170,13 +151,7 @@ fn startup_focus_restores_selection_unless_the_user_changes_it() {
 #[test]
 fn focus_follows_a_running_prerequisite_until_the_wait_settles() {
     use crate::waits::{EntryPhase, EntryState, WaitOn};
-    let mut state = SessionState::new(
-        ".".into(),
-        vec!["front".into(), "services".into()],
-        24,
-        80,
-        100,
-    );
+    let mut state = SessionState::new(vec!["front".into(), "services".into()], 24, 80, 100);
     let waiting = EntryState {
         entry: "front".into(),
         phase: EntryPhase::Waiting,

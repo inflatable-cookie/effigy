@@ -271,16 +271,8 @@ mod terminal_input_tests {
 mod shutdown_tests {
     use super::*;
     use crate::multiprocess::state::SessionState;
-    use std::path::PathBuf;
-
     fn state() -> SessionState {
-        SessionState::new(
-            PathBuf::from("/fixture"),
-            vec!["build".to_owned()],
-            40,
-            120,
-            500,
-        )
+        SessionState::new(vec!["build".to_owned()], 40, 120, 500)
     }
 
     #[test]

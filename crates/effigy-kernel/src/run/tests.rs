@@ -1188,8 +1188,16 @@ fn gateway_operator_events_write_one_private_record_per_action() {
         assert_eq!(event["event"], name, "{log}");
         assert_eq!(event["cause"], cause, "{log}");
         assert_eq!(event["pid"], std::process::id(), "{log}");
-        assert_eq!(event["caller"]["pid"], std::process::id(), "{log}");
-        assert!(event["caller"]["markers"].is_object(), "{log}");
+        assert!(
+            event["caller"]
+                .as_str()
+                .is_some_and(|caller| !caller.is_empty()),
+            "{log}"
+        );
+        assert!(
+            event.get("argv").is_none() && event.get("parents").is_none(),
+            "{log}"
+        );
     }
     // A stop keeps the event name earlier records already use.
     assert_eq!(events[1]["action"], "down", "{log}");
@@ -1310,9 +1318,9 @@ fn gateway_custody_settlement_logs_caller_and_owner_loss() {
         record["cwd"],
         std::env::current_dir().unwrap().to_string_lossy().as_ref()
     );
-    assert!(record["argv"]
-        .as_array()
-        .is_some_and(|args| !args.is_empty()));
+    assert!(record["caller"]
+        .as_str()
+        .is_some_and(|caller| !caller.is_empty()));
     assert!(record["cause"]
         .as_str()
         .unwrap()

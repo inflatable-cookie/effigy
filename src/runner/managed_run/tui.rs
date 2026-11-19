@@ -71,6 +71,9 @@ struct Shared {
     hosts: BTreeMap<String, HostFollower>,
     queue: VecDeque<ProcessEvent>,
     exits: BTreeMap<String, SessionEntryState>,
+    /// Log offset already delivered as live styled output per tab, so the log
+    /// follower does not repeat those bytes plain.
+    styled_through: BTreeMap<String, u64>,
     startup_finished: bool,
     closed: Option<Closed>,
     stop: StopSender,
@@ -173,6 +176,9 @@ impl Shared {
                             },
                         );
                         self.exits.remove(&process);
+                        // A restart writes a fresh log from offset zero, so no
+                        // earlier style coverage applies to it.
+                        self.styled_through.remove(&process);
                         self.queue
                             .push_back(event(&process, ProcessEventKind::Started, ""));
                     }
@@ -184,6 +190,21 @@ impl Shared {
                             .insert(process.clone(), SessionEntryState::from_exit_code(code));
                         self.queue
                             .push_back(event(&process, ProcessEventKind::Exit, &payload));
+                    }
+                    Some(EngineEvent::Styled { process, chunk }) => {
+                        let end = chunk.offset
+                            + chunk
+                                .spans
+                                .iter()
+                                .map(|span| span.text.len() as u64)
+                                .sum::<u64>();
+                        let through = self.styled_through.entry(process.clone()).or_insert(0);
+                        *through = (*through).max(end);
+                        self.queue.push_back(event(
+                            &process,
+                            ProcessEventKind::Styled,
+                            &serde_json::to_string(&chunk).expect("typed style event"),
+                        ));
                     }
                     Some(EngineEvent::WaitsChanged) => {}
                     Some(EngineEvent::StartupFinished) => self.startup_finished = true,
@@ -271,7 +292,7 @@ impl Shared {
                 ) else {
                     continue;
                 };
-                let output = follower.cursors[slot].consume(&read, false);
+                let mut output = follower.cursors[slot].consume(&read, false);
                 if output.truncated {
                     self.queue.push_back(event(name, ProcessEventKind::Stdout, "[effigy] capture truncated: log append failed; inspect this run before restarting"));
                 }
@@ -281,18 +302,21 @@ impl Shared {
                 if output.gap {
                     self.queue.push_back(event(name, ProcessEventKind::Stdout, "[effigy] output gap: older canonical bytes expired; resuming the retained log"));
                 }
+                // Bytes already sent as live styles keep their colour; only
+                // the rest of a followed log renders as plain text.
+                let covered = self.styled_through.get(name).copied().unwrap_or(0);
+                if let Some(cut) = covered.checked_sub(output.from).filter(|cut| *cut > 0) {
+                    let cut = cut as usize;
+                    if cut >= output.text.len() {
+                        continue;
+                    }
+                    output.text = output.text[cut..].to_owned();
+                    output.from = covered;
+                }
                 if output.text.is_empty() {
                     continue;
                 }
-                let chunk = output.styled(|from, bytes| {
-                    effigy_kernel::custody::read_styles(
-                        &self.root,
-                        self.run,
-                        follower.sequence,
-                        from,
-                        bytes,
-                    )
-                });
+                let chunk = output.chunk();
                 self.queue.push_back(event(
                     name,
                     ProcessEventKind::Styled,
@@ -562,6 +586,7 @@ pub(in crate::runner) fn attach_tui(
         hosts,
         queue,
         exits: BTreeMap::new(),
+        styled_through: BTreeMap::new(),
         startup_finished: false,
         closed: None,
         stop: StopSender::new(),
@@ -614,7 +639,6 @@ pub(in crate::runner) fn attach_tui(
         after_shutdown: &none,
     };
     let rendered = run_multiprocess_tui_with_source(
-        repo_root,
         Box::new(source),
         session_tabs,
         tab_order,

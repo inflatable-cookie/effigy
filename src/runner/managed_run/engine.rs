@@ -990,8 +990,9 @@ impl Owner {
     fn poll(&mut self, run: &mut TaskRun, index: usize) -> Option<End> {
         let workload = &mut self.workloads[index];
         let process = workload.process.as_mut()?;
-        // Output is already in the run log; the in-memory queue is not read.
+        // Output is already in the run log; only live styles travel in memory.
         let _ = process.take_output();
+        let styled = process.take_styled_output();
         let Observed::Verified(exit, _) = process.poll() else {
             return None;
         };
@@ -1002,6 +1003,14 @@ impl Owner {
         workload.process = None;
         workload.exit = Some(exit.code);
         println!("[effigy] `{name}` exit={}", exit.code);
+        // Styles go first: the client folds the log's last bytes into a plain
+        // read on exit, and must already know which of them it styled live.
+        for chunk in styled.chunks {
+            self.event(&EngineEvent::Styled {
+                process: name.clone(),
+                chunk,
+            });
+        }
         self.event(&EngineEvent::Exited {
             process: name.clone(),
             code: exit.code,

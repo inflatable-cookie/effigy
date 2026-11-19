@@ -936,8 +936,8 @@ mod global_cache_prune_tests {
 
     const RUNNING_PROJECT: &str = "webshop-dev";
     const STOPPED_PROJECT: &str = "shop-old";
-    const OWNED_STOPPED: &str = "shop-old-workspace-api-target";
-    const OWNED_RUNNING: &str = "webshop-dev-workspace-cargo-git";
+    const OWNED_STOPPED: &str = "efv-shop0lda11";
+    const OWNED_RUNNING: &str = "efv-webshopde9";
     const FOREIGN_TARGET: &str = "acme-website-target";
     const FOREIGN_NODE_MODULES: &str = "shared-node_modules";
     const FOREIGN_PNPM: &str = "pnpm-store";
@@ -1036,7 +1036,6 @@ mod global_cache_prune_tests {
         /// Overrides the inspect response entirely; `Err` models a spawn
         /// failure the way the real adapter produces one.
         inspect_result: Option<Result<String, EffigyRuntimeError>>,
-        kind_rows: String,
         removals: Rc<RefCell<Vec<String>>>,
         inspect_requests: Rc<RefCell<Vec<Vec<String>>>>,
         commands: Rc<RefCell<Vec<String>>>,
@@ -1049,7 +1048,6 @@ mod global_cache_prune_tests {
                 listing: standard_listing(),
                 inspect_fragments: standard_inspect_fragments(),
                 inspect_result: None,
-                kind_rows: format!("/var/lib/docker/volumes/{LEGACY_EFV}/_data\trust-target\n"),
                 removals: Rc::new(RefCell::new(Vec::new())),
                 inspect_requests: Rc::new(RefCell::new(Vec::new())),
                 commands: Rc::new(RefCell::new(Vec::new())),
@@ -1062,9 +1060,6 @@ mod global_cache_prune_tests {
             let sub = |index: usize| command.args.get(index).map(String::as_str);
             if sub(0) == Some("volume") && sub(1) == Some("ls") {
                 return Ok(output(&self.listing.join("\n")));
-            }
-            if command.program == "__effigy_volume_cache_kind_batch" {
-                return Ok(output(&self.kind_rows));
             }
             if command.program == "__effigy_volume_usage_batch" {
                 return Ok(output(""));
@@ -1155,7 +1150,7 @@ mod global_cache_prune_tests {
         )
         .expect("prune succeeds");
 
-        // Exactly the owned stopped cache is removed; every lookalike name
+        // Exactly the owned stopped cache is removed; the unproven volume
         // stays intact.
         assert_eq!(removals.borrow().as_slice(), [OWNED_STOPPED]);
 
@@ -1164,40 +1159,31 @@ mod global_cache_prune_tests {
         let entries = cache_entries(&report);
         assert!(entries.contains(&(OWNED_STOPPED.to_owned(), true, false)));
         assert!(entries.contains(&(OWNED_RUNNING.to_owned(), false, true)));
-        for foreign in [
-            FOREIGN_TARGET,
-            FOREIGN_NODE_MODULES,
-            FOREIGN_PNPM,
-            LEGACY_EFV,
-        ] {
-            assert!(
-                entries.contains(&(foreign.to_owned(), false, false)),
-                "{foreign} must be listed as kept"
-            );
-        }
-        // Every foreign volume is reported, not silently kept.
+        assert!(entries.contains(&(LEGACY_EFV.to_owned(), false, false)));
+        // Every listed volume that is not removed is reported.
         let warnings = warning_lines(&report);
-        assert_eq!(warnings.len(), 4, "warnings: {warnings:?}");
-        for foreign in [
-            FOREIGN_TARGET,
-            FOREIGN_NODE_MODULES,
-            FOREIGN_PNPM,
-            LEGACY_EFV,
-        ] {
-            assert!(
-                warnings
-                    .iter()
-                    .any(|warning| warning.contains(foreign) && warning.contains("left")),
-                "{foreign} must be reported: {warnings:?}"
-            );
-        }
+        assert_eq!(warnings.len(), 1, "warnings: {warnings:?}");
+        assert!(
+            warnings[0].contains(LEGACY_EFV) && warnings[0].contains("left"),
+            "{warnings:?}"
+        );
 
-        // The unrelated data volume is not even a candidate: it is listed but
-        // never inspected and never removed.
+        // Only Effigy's own `efv-` volumes are candidates, so a foreign name
+        // and an unrelated data volume are never inspected and never removed.
         let inspected = runtime.inspect_requests.borrow();
         assert_eq!(inspected.len(), 1, "one batched inspect");
-        assert!(!inspected[0].iter().any(|name| name == UNRELATED_DATA));
-        assert_eq!(inspected[0].len(), 6);
+        for absent in [
+            FOREIGN_TARGET,
+            FOREIGN_NODE_MODULES,
+            FOREIGN_PNPM,
+            UNRELATED_DATA,
+        ] {
+            assert!(
+                !inspected[0].iter().any(|name| name == absent),
+                "{absent} must not be a cache candidate"
+            );
+        }
+        assert_eq!(inspected[0].len(), 3);
     }
 
     /// A partial inspection (a listed volume missing from the inspect rows)
@@ -1388,11 +1374,11 @@ mod global_cache_prune_tests {
         assert!(kinds);
     }
 
-    /// The read-only global listing keeps its legacy behaviour: opaque `efv-*`
-    /// volumes are classified by content and stay visible, with no removal
-    /// authority behind it.
+    /// The read-only global listing names an opaque `efv-*` volume it cannot
+    /// classify instead of reading its contents, and carries no removal
+    /// authority behind that report.
     #[test]
-    fn global_cache_list_keeps_legacy_classification_diagnostic() {
+    fn global_cache_list_names_unclassified_volumes_without_reading_contents() {
         let runtime = FakeRuntime::standard();
         let rendered = run_container_cache_list_all(
             Path::new("."),
@@ -1411,7 +1397,7 @@ mod global_cache_prune_tests {
             .iter()
             .find(|cache| cache["name"] == LEGACY_EFV)
             .expect("legacy efv volume stays listed");
-        assert_eq!(efv["kind"], "rust-target");
+        assert_eq!(efv["kind"], "unknown");
         assert_eq!(efv["project_name"], "legacy-app");
         assert_eq!(efv["in_use"], false);
         assert!(runtime.removals.borrow().is_empty());
