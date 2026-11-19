@@ -8,9 +8,9 @@ from pathlib import Path
 import sys
 import uuid
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import (BACKENDS, PACKET, SCRATCH, artifact, digest, exclusive, exclusive_bytes, load, require, run,
-                    open_qualification_root, qualification_path, source_head, ssh_prefix, validate_go, validate_inputs,
-                    verify_host_inputs)
+from common import (BACKENDS, PACKET, SCRATCH, artifact, digest, evidence_root, exclusive, exclusive_bytes, load,
+                    require, run, open_qualification_root, qualification_path, source_head, ssh_prefix, validate_go,
+                    validate_inputs, verify_host_inputs)
 
 # Receipt exports are small bounded JSON documents; anything larger refuses
 # before retention on every driver.
@@ -25,6 +25,9 @@ def main():
     parser.add_argument('--go-sha256', required=True)
     parser.add_argument('--backend', required=True, choices=list(BACKENDS),
                         help='independently execute exactly one backend under its own scoped GO')
+    parser.add_argument('--evidence-root', required=True,
+                        help='explicit durable root for every output, default '
+                             '/Volumes/Stash/scratch/effigy/evidence/<run>/; never a Queue run scratch directory')
     args = parser.parse_args()
     os.umask(0o077)
     root = PACKET.parents[2]
@@ -57,18 +60,19 @@ def main():
             ssh_prefix(cell)
     # A failed attempt retains its evidence directory, so the launcher derives a
     # fresh per-attempt directory instead of asking an operator to invent one:
-    # the inputs digest plus this attempt's own suffix, below the frozen parent.
-    base_evidence = Path(value['evidence'])
-    require(base_evidence.parent.resolve().is_relative_to(SCRATCH.resolve()),
-            'evidence parent must be removable scratch')
+    # the inputs digest plus this attempt's own suffix, below the explicit
+    # durable evidence root. Queue deletes its run scratch at closeout, so a root
+    # inside <scratch>/<8hex>/ refuses before any output is written.
+    base_evidence = evidence_root(args.evidence_root)
     suffix = uuid.uuid4().hex
-    name = '{}-{}-{}'.format(base_evidence.name, args.sha256, suffix)
-    require(base_evidence.name and len(name) <= 200, 'evidence directory name exceeds its bound')
-    evidence = base_evidence.parent / name
+    name = 'attempt-{}-{}'.format(args.sha256, suffix)
+    require(len(name) <= 200, 'evidence directory name exceeds its bound')
+    evidence = base_evidence / name
     require(not evidence.exists(), 'attempt evidence directory already exists')
     evidence.mkdir(mode=0o700)
     exclusive(evidence / 'started.json', {'source_head': head, 'inputs_sha256': args.sha256,
                                          'attempt': suffix, 'evidence': str(evidence),
+                                         'evidence_root': str(base_evidence),
                                          'backends': [cell['backend'] for cell in selected]})
     for cell in selected:
         command = ['python3', '-I', '-B', str(PACKET / 'runtime.py'), '--inputs', str(inputs),

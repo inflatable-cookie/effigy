@@ -16,6 +16,10 @@ SSH_CONTROL = SCRATCH / '531-linux-control'
 PACKET = Path(__file__).resolve().parent
 REPOSITORY = PACKET.parents[2]
 HEX = re.compile(r'[0-9a-f]{64}')
+# A Queue run's scratch directory component, e.g. /Volumes/Stash/scratch/effigy/48caffc0/.
+QUEUE_RUN_SCRATCH_NAME = re.compile(r'[0-9a-f]{8}')
+# Legacy durable evidence root, accepted until it moves (brief v2, 2026-11-18).
+LEGACY_EVIDENCE_ROOT = Path('/Volumes/Stash/effigy-evidence')
 HELPER_PROTOCOL_RE = re.compile(r'^pub const HELPER_PROTOCOL: u32 = (\d+);$', re.MULTILINE)
 # Docs are not compiled into the shipped binary; the only docs include_str! is a test fixture.
 PACKET_ONLY_PREFIXES = ('docs/', 'changelog.d/')
@@ -197,6 +201,69 @@ def qualification_path(binding):
             'qualification root must be an exact absolute child of removable scratch')
     require(all(type(binding[key]) is int and binding[key] >= 0 for key in ('device', 'inode', 'uid')),
             'actual qualification root identity required')
+    return path
+
+
+def queue_run_scratch(path, *, scratch=None):
+    """True when the absolute path sits inside a Queue run scratch directory.
+
+    Queue deletes `<scratch>/<8hex>/` at task closeout, so evidence written there
+    is gone before any later judgment can read it (effigy#622, #624). Both sides
+    are resolved first: a symlinked parent must not let a path that really lives
+    in Queue run scratch pass as somewhere else."""
+    scratch = Path(SCRATCH if scratch is None else scratch)
+    try:
+        relative = Path(path).resolve().relative_to(scratch.resolve())
+    except (ValueError, OSError, RuntimeError):
+        return False
+    return bool(relative.parts) and QUEUE_RUN_SCRATCH_NAME.fullmatch(relative.parts[0]) is not None
+
+
+def evidence_location(real, scratch):
+    """True when a resolved evidence root sits in an accepted durable location.
+
+    The brief accepts three locations (effigy#1041): the documented default
+    `<scratch>/evidence/<run>/`, the legacy `/Volumes/Stash/effigy-evidence/<run>/`
+    until it moves, and planner-owned roots directly below the scratch root.
+    Anything else refuses, so a stray scratch subdirectory is never mistaken for
+    durable evidence."""
+    scratch = Path(scratch).resolve()
+    real = Path(real)
+    if real.is_relative_to(scratch / 'evidence') or real.is_relative_to(LEGACY_EVIDENCE_ROOT):
+        return True
+    try:
+        return real.relative_to(scratch).parts[0].startswith('planner-owned-')
+    except (ValueError, IndexError):
+        return False
+
+
+def evidence_root(raw, *, scratch=None):
+    """Validate the explicit, durable evidence root every packet output is written under.
+
+    A Queue run scratch directory is refused because its contents do not outlive
+    the task, and the refusal follows symlinked parents to the real directory.
+    The documented default is `<scratch>/evidence/<run>/` (Barge's Stash layout,
+    Tom 2026-11-18); `/Volumes/Stash/effigy-evidence/<run>/` remains accepted
+    until it moves, as do `<scratch>/planner-owned-*` roots. The root is created
+    once by the planner, so a missing, foreign-owned or wrongly-placed root
+    refuses rather than being invented. Canonical spelling is not required: a
+    fixture or CI temporary root may sit behind a `/var` symlink, so the
+    location rules are applied to the resolved directory."""
+    require(isinstance(raw, str) and raw and Path(raw).is_absolute()
+            and str(Path(raw)) == raw and '..' not in Path(raw).parts,
+            'evidence root must be an exact absolute path')
+    path = Path(raw)
+    real = path.resolve()
+    require(not queue_run_scratch(real, scratch=scratch),
+            'evidence root must never be a Queue run scratch directory')
+    require(not path.is_symlink() and path.is_dir(),
+            'evidence root must be an existing real directory')
+    require(evidence_location(real, SCRATCH if scratch is None else scratch),
+            'evidence root must stay in an accepted durable location')
+    info = path.lstat()
+    require(stat.S_ISDIR(info.st_mode) and info.st_uid == os.geteuid()
+            and stat.S_IMODE(info.st_mode) == 0o700,
+            'evidence root must be a private 0700 directory owned by the native executor')
     return path
 
 

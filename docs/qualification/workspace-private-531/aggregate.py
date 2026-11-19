@@ -12,8 +12,10 @@ packet: every required positive backend receipt must be authentic, complete,
 carry the fixed full-session cell contract, and match the SAME final source,
 feature and common contract. Each platform's actual artifact bytes stay bound
 to their own producer receipts and are compared per platform, never across
-platforms. This verifier writes nothing and starts nothing; its module surface
-deliberately excludes every SSH/runtime/native/root API.
+platforms. Receipts are read from the run's durable evidence root or from a
+byte-identical copy of one; a file whose sha256 differs from the recorded
+digest always refuses. This verifier writes nothing and starts nothing; its
+module surface deliberately excludes every SSH/runtime/native/root API.
 """
 import argparse
 import json
@@ -22,7 +24,7 @@ from pathlib import Path
 import re
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import BACKENDS, SCRATCH, check_equivalence_record, digest, load, qualification_path, require
+from common import BACKENDS, check_equivalence_record, digest, load, qualification_path, require
 
 CONTRACT = 'effigy.workspace-private-proof.v1'
 INVOCATION = 'effigy.workspace-private-backend-invocation.v1'
@@ -61,10 +63,15 @@ def parse_pairs(values, label):
 
 
 def receipt_file(raw, label):
+    # Durable evidence lives below an explicit evidence root outside Queue run
+    # scratch (a run scratch directory is deleted at closeout), and a
+    # byte-identical copy is accepted wherever it lives. Every caller still
+    # compares the file's sha256 with the recorded digest, so a tampered or
+    # replaced copy refuses; a differing digest is never accepted.
     path = Path(raw)
     require(path.is_absolute() and str(path) == raw and '..' not in path.parts
-            and not path.is_symlink() and path.is_file() and path.is_relative_to(SCRATCH),
-            label + ' must be an absolute retained scratch file')
+            and not path.is_symlink() and path.is_file(),
+            label + ' must be an absolute retained file')
     return path
 
 

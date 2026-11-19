@@ -1,7 +1,6 @@
 {
   "schema": "effigy.workspace-private-proof.v1",
   "source_head": "EXACT_PUBLISHED_PR_HEAD",
-  "evidence": "/Volumes/Stash/scratch/effigy/531-approved-inputs/aggregate-evidence",
   "backends": [
     {
       "backend": "colima",

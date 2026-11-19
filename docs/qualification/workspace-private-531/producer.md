@@ -16,8 +16,11 @@ shipped binary, and the only `include_str!` of a docs path is a test fixture.
 - One frozen head `H`: the exact reviewed source head Queue records for the
   production window. Every recipe runs at `H` with a clean tracked
   source/index, and its receipt names that head.
-- Every artifact is frozen — copied to its retained scratch location and
-  recorded by SHA-256 — before any later build can move a managed output link.
+- Every artifact is frozen — copied to the run's explicit durable evidence root
+  (default `/Volumes/Stash/scratch/effigy/evidence/<run>/`, never a Queue run
+  scratch directory) and recorded by SHA-256 — before any later build can move
+  a managed output link. The frozen role artifact, its `.active-version`
+  sidecar and this recipe's receipt stay adjacent under that root.
   A managed output that survives only as a lease or symlink is not an artifact;
   record the frozen copy's bytes.
 - No guessed pins, no stale reuse of deleted output, no fabricated ELF, no
