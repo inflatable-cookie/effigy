@@ -1,6 +1,5 @@
 mod gate_reports;
 mod git;
-mod hosted_evidence;
 mod model;
 mod pipeline;
 mod prepare_helpers;
@@ -11,11 +10,6 @@ pub mod test_support;
 mod text;
 mod version;
 
-pub use hosted_evidence::{
-    collect_hosted_evidence, evaluate_hosted_runs, github_repository_from_remote_url,
-    parse_gh_run_list_json, GhCliHostedEvidenceLookup, HostedEvidenceError, HostedEvidenceLookup,
-    HostedEvidenceQuery, HostedEvidenceSpec, HostedRun,
-};
 pub use model::{
     FileMutationApply, FileMutationPlan, GateExecutionReport, GateResult, ReleaseConfig,
     ReleaseContext, ReleaseError, ReleaseGateRun, ReleaseStatus,
@@ -36,20 +30,20 @@ pub use run::{
     read_release_task_output, release_home, release_input_value, release_owner,
     release_receipt_for_run, render_release_receipt_json, render_release_receipt_text,
     render_release_run_json, run_release, run_release_with_observer, settle_release, sha256_bytes,
-    verify_artifact_digests, GitEffects, HostedEvidence, RecordApproval, RecordArtifact,
-    RecordArtifactFile, RecordCheckpoint, RecordDecision, RecordDestination, RecordGate,
-    RecordIdentity, RecordTarget, RecordTargetState, RecordVerification, ReleaseAction,
-    ReleaseCheckpoint, ReleaseEffects, ReleaseReceipt, ReleaseRecord, ReleaseRunOutcome,
-    ReleaseRunRequest, ReleaseRunStatus, ReleaseSession, ReleaseStage, ReleaseState,
-    ReleaseTaskOutput, ReleaseTaskSubject, ReportsOnly, TargetDecision, TaskRequest, TaskResponse,
-    RELEASE_INPUT_ENV, RELEASE_OUTPUT_ENV, RELEASE_RECEIPT_SCHEMA, RELEASE_RECORD_SCHEMA,
-    RELEASE_TASK_INPUT_SCHEMA, RELEASE_TASK_OUTPUT_SCHEMA,
+    verify_artifact_digests, GitEffects, RecordApproval, RecordArtifact, RecordArtifactFile,
+    RecordCheckpoint, RecordDecision, RecordDestination, RecordGate, RecordIdentity, RecordTarget,
+    RecordTargetState, RecordVerification, ReleaseAction, ReleaseCheckpoint, ReleaseEffects,
+    ReleaseReceipt, ReleaseRecord, ReleaseRunOutcome, ReleaseRunRequest, ReleaseRunStatus,
+    ReleaseSession, ReleaseStage, ReleaseState, ReleaseTaskOutput, ReleaseTaskSubject, ReportsOnly,
+    TargetDecision, TaskRequest, TaskResponse, RELEASE_INPUT_ENV, RELEASE_OUTPUT_ENV,
+    RELEASE_RECEIPT_SCHEMA, RELEASE_RECORD_SCHEMA, RELEASE_TASK_INPUT_SCHEMA,
+    RELEASE_TASK_OUTPUT_SCHEMA,
 };
 
 pub use effigy_changelog::BumpKind;
 pub use git::{
     git_add_release_files, git_commit_release, git_create_tag, git_current_branch, git_head_sha,
-    git_modified_files, git_push_release, git_remote_url, git_tag_exists, git_work_tree_clean,
+    git_modified_files, git_push_release, git_tag_exists, git_work_tree_clean,
 };
 pub use render_json::{
     render_release_gate_run_json, render_release_plan_json, render_release_status_json,
@@ -72,7 +66,6 @@ use std::time::Instant;
 
 use effigy_manifest::config_sections::ManifestReleaseConfig;
 use effigy_manifest::load_task_manifest;
-use hosted_evidence::hosted_evidence_spec_from_manifest;
 
 use effigy_manifest::TASK_MANIFEST_FILE;
 
@@ -113,9 +106,15 @@ pub struct ResolvedGate {
     pub description: Option<String>,
     /// Contract 054 §4.2: `pre` runs before any version edit, `certify` after.
     pub stage: pipeline::GateStage,
-    pub reuse_hosted_evidence: bool,
-    pub hosted_evidence: Option<HostedEvidenceSpec>,
 }
+
+/// The commit a gate's evidence must be for (contract 054 §3).
+///
+/// A gate is an ordinary command or task, so the only way it can prove
+/// evidence for the candidate rather than for whatever the work tree holds now
+/// is to be told the commit. The runner exports this variable to every gate
+/// command; a provider-specific gate task compares it with what it verified.
+pub const RELEASE_GATE_COMMIT_ENV: &str = "EFFIGY_RELEASE_COMMIT";
 
 #[derive(Debug, Clone)]
 pub struct ResolvedSyncFile {
@@ -187,9 +186,6 @@ pub fn load_release_config(root: &Path) -> Result<ReleaseConfig, ReleaseError> {
         sync_files,
         gates,
         tag_format,
-        hosted_evidence: hosted_evidence_spec_from_manifest(
-            manifest_release.and_then(|config| config.hosted_evidence.as_ref()),
-        )?,
     })
 }
 
@@ -538,7 +534,7 @@ pub fn run_release_gates(
     gates: &[ResolvedGate],
     fail_fast: bool,
 ) -> GateExecutionReport {
-    run_release_gates_with_lookup(root, gates, fail_fast, &GhCliHostedEvidenceLookup, |_| {})
+    run_release_gates_with_progress(root, gates, fail_fast, |_| {})
 }
 
 pub fn run_release_gates_with_progress<F>(
@@ -550,21 +546,20 @@ pub fn run_release_gates_with_progress<F>(
 where
     F: FnMut(&str),
 {
-    run_release_gates_with_lookup(root, gates, fail_fast, &GhCliHostedEvidenceLookup, progress)
+    let mut observer = TextGateObserver { progress };
+    run_release_gates_observed(
+        root,
+        gates,
+        fail_fast,
+        gate_head_commit(root).as_deref(),
+        &mut observer,
+    )
 }
 
-pub fn run_release_gates_with_lookup<F>(
-    root: &Path,
-    gates: &[ResolvedGate],
-    fail_fast: bool,
-    lookup: &dyn HostedEvidenceLookup,
-    progress: F,
-) -> GateExecutionReport
-where
-    F: FnMut(&str),
-{
-    let mut observer = TextGateObserver { progress };
-    run_release_gates_observed(root, gates, fail_fast, lookup, &mut observer)
+/// The commit a one-off gate run gates: the work tree's HEAD, because a run
+/// outside a release Run has no recorded candidate.
+fn gate_head_commit(root: &Path) -> Option<String> {
+    git_head_sha(root).ok()
 }
 
 /// How a gate run says what it is doing, as it does it.
@@ -574,15 +569,9 @@ where
 /// engine reports the facts; the plane decides how they look, which is why
 /// `--json` and piped output stay silent.
 pub trait GateObserver {
-    /// A gate is about to run, or about to reuse hosted evidence.
-    fn gate_started(
-        &mut self,
-        position: usize,
-        total: usize,
-        gate: &ResolvedGate,
-        reusing_hosted_evidence: bool,
-    ) {
-        let _ = (position, total, gate, reusing_hosted_evidence);
+    /// A gate is about to run.
+    fn gate_started(&mut self, position: usize, total: usize, gate: &ResolvedGate) {
+        let _ = (position, total, gate);
     }
     /// The gate finished, passed or failed.
     fn gate_finished(&mut self, position: usize, total: usize, result: &GateResult) {
@@ -591,10 +580,6 @@ pub trait GateObserver {
     /// A release Run moved on to `stage`. A one-off gate run has no stages.
     fn stage(&mut self, stage: &str) {
         let _ = stage;
-    }
-    /// Progress that is not one gate: hosted evidence lookup, for instance.
-    fn note(&mut self, message: &str) {
-        let _ = message;
     }
 }
 
@@ -610,27 +595,13 @@ struct TextGateObserver<F: FnMut(&str)> {
 }
 
 impl<F: FnMut(&str)> GateObserver for TextGateObserver<F> {
-    fn gate_started(
-        &mut self,
-        position: usize,
-        total: usize,
-        gate: &ResolvedGate,
-        reusing_hosted_evidence: bool,
-    ) {
-        if reusing_hosted_evidence {
-            (self.progress)(&format!(
-                "gate {position}/{total} `{}` ({}) reusing hosted evidence",
-                gate.name,
-                gate.stage.stage_name()
-            ));
-        } else {
-            (self.progress)(&format!(
-                "gate {position}/{total} `{}` ({}) starting: {}",
-                gate.name,
-                gate.stage.stage_name(),
-                gate.command
-            ));
-        }
+    fn gate_started(&mut self, position: usize, total: usize, gate: &ResolvedGate) {
+        (self.progress)(&format!(
+            "gate {position}/{total} `{}` ({}) starting: {}",
+            gate.name,
+            gate.stage.stage_name(),
+            gate.command
+        ));
     }
 
     fn gate_finished(&mut self, position: usize, total: usize, result: &GateResult) {
@@ -641,17 +612,11 @@ impl<F: FnMut(&str)> GateObserver for TextGateObserver<F> {
             format_duration_ms(result.duration_ms),
         ));
     }
-
-    fn note(&mut self, message: &str) {
-        (self.progress)(message);
-    }
 }
 
 /// The one word a finished gate reads as.
 pub fn gate_outcome_word(result: &GateResult) -> &'static str {
-    if result.reused {
-        "reused"
-    } else if result.passed {
+    if result.passed {
         "passed"
     } else {
         "failed"
@@ -659,36 +624,35 @@ pub fn gate_outcome_word(result: &GateResult) -> &'static str {
 }
 
 /// Run gates, reporting each start and finish to `observer`.
+///
+/// `commit` is the exact commit the gates' evidence must be for, exported to
+/// every gate command as [`RELEASE_GATE_COMMIT_ENV`] (contract 054 §3).
 pub fn run_release_gates_with_observer(
     root: &Path,
     gates: &[ResolvedGate],
     fail_fast: bool,
+    commit: Option<&str>,
     observer: &mut dyn GateObserver,
 ) -> GateExecutionReport {
-    run_release_gates_observed(root, gates, fail_fast, &GhCliHostedEvidenceLookup, observer)
+    run_release_gates_observed(root, gates, fail_fast, commit, observer)
 }
 
 fn run_release_gates_observed(
     root: &Path,
     gates: &[ResolvedGate],
     fail_fast: bool,
-    lookup: &dyn HostedEvidenceLookup,
+    commit: Option<&str>,
     observer: &mut dyn GateObserver,
 ) -> GateExecutionReport {
     let started = Instant::now();
     let environment_path = gate_reports::persist_gate_run_environment(root);
     let mut results = Vec::with_capacity(gates.len());
     let mut stopped_early = false;
-    let hosted = resolve_run_hosted_evidence(root, gates, lookup, observer);
 
     for (index, gate) in gates.iter().enumerate() {
         let position = index + 1;
-        observer.gate_started(position, gates.len(), gate, gate.reuse_hosted_evidence);
-        let result = if gate.reuse_hosted_evidence {
-            gate_result_from_hosted_evidence(root, gate, hosted.as_ref())
-        } else {
-            run_release_gate(root, gate)
-        };
+        observer.gate_started(position, gates.len(), gate);
+        let result = run_release_gate(root, gate, commit);
         observer.gate_finished(position, gates.len(), &result);
         let passed = result.passed;
         results.push(result);
@@ -703,100 +667,6 @@ fn run_release_gates_observed(
         stopped_early,
         total_duration_ms: started.elapsed().as_millis(),
         environment_path,
-    }
-}
-
-fn resolve_run_hosted_evidence(
-    root: &Path,
-    gates: &[ResolvedGate],
-    lookup: &dyn HostedEvidenceLookup,
-    observer: &mut dyn GateObserver,
-) -> Option<Result<HostedRun, HostedEvidenceError>> {
-    let spec = gates
-        .iter()
-        .find(|gate| gate.reuse_hosted_evidence)?
-        .hosted_evidence
-        .as_ref()?;
-    observer.note("checking hosted GitHub Actions evidence");
-    Some(collect_hosted_evidence(root, spec, lookup))
-}
-
-fn gate_result_from_hosted_evidence(
-    root: &Path,
-    gate: &ResolvedGate,
-    hosted: Option<&Result<HostedRun, HostedEvidenceError>>,
-) -> GateResult {
-    let started_at = gate_reports::capture_started_at();
-    let started = Instant::now();
-    let mut result = match hosted {
-        Some(Ok(run)) => GateResult {
-            name: gate.name.clone(),
-            description: gate.description.clone(),
-            command: gate.command.clone(),
-            passed: true,
-            exit_code: None,
-            stdout: format!(
-                "reused hosted GitHub Actions run {} for commit {}",
-                run.url, run.head_sha
-            ),
-            stderr: String::new(),
-            launch_error: None,
-            duration_ms: started.elapsed().as_millis(),
-            log_path: None,
-            reused: true,
-            hosted_run_url: Some(run.url.clone()),
-            hosted_head_sha: Some(run.head_sha.clone()),
-            hosted_repository: Some(run.repository.clone()),
-        },
-        Some(Err(error)) => GateResult {
-            name: gate.name.clone(),
-            description: gate.description.clone(),
-            command: gate.command.clone(),
-            passed: false,
-            exit_code: None,
-            stdout: String::new(),
-            stderr: error.diagnostic(&gate.name),
-            launch_error: None,
-            duration_ms: started.elapsed().as_millis(),
-            log_path: None,
-            reused: false,
-            hosted_run_url: hosted_error_url(error),
-            hosted_head_sha: None,
-            hosted_repository: None,
-        },
-        None => GateResult {
-            name: gate.name.clone(),
-            description: gate.description.clone(),
-            command: gate.command.clone(),
-            passed: false,
-            exit_code: None,
-            stdout: String::new(),
-            stderr: format!(
-                "hosted evidence for gate `{}` could not be verified through authenticated `gh`: [release.hosted-evidence].workflow is not configured",
-                gate.name
-            ),
-            launch_error: None,
-            duration_ms: started.elapsed().as_millis(),
-            log_path: None,
-            reused: false,
-            hosted_run_url: None,
-            hosted_head_sha: None,
-            hosted_repository: None,
-        },
-    };
-    result.log_path = gate_reports::persist_gate_result_log(root, &result, &started_at);
-    result
-}
-
-fn hosted_error_url(error: &HostedEvidenceError) -> Option<String> {
-    match error {
-        HostedEvidenceError::Pending { url, .. }
-        | HostedEvidenceError::Failed { url, .. }
-        | HostedEvidenceError::WrongRepository { url, .. }
-        | HostedEvidenceError::WrongSha { url, .. } => Some(url.clone()),
-        HostedEvidenceError::Missing(_)
-        | HostedEvidenceError::Ambiguous { .. }
-        | HostedEvidenceError::LookupFailed { .. } => None,
     }
 }
 
@@ -820,16 +690,18 @@ pub fn collect_release_gate_run(
     }
 }
 
-pub fn run_release_gate(root: &Path, gate: &ResolvedGate) -> GateResult {
+pub fn run_release_gate(root: &Path, gate: &ResolvedGate, commit: Option<&str>) -> GateResult {
     let shell = gate_reports::resolved_shell();
     let started_at = gate_reports::capture_started_at();
     let started = Instant::now();
-    let mut result = match ProcessCommand::new(&shell)
-        .arg("-lc")
-        .arg(&gate.command)
-        .current_dir(root)
-        .output()
-    {
+    let mut command = ProcessCommand::new(&shell);
+    command.arg("-lc").arg(&gate.command).current_dir(root);
+    if let Some(commit) = commit {
+        command.env(RELEASE_GATE_COMMIT_ENV, commit);
+    } else {
+        command.env_remove(RELEASE_GATE_COMMIT_ENV);
+    }
+    let mut result = match command.output() {
         Ok(output) => GateResult {
             name: gate.name.clone(),
             description: gate.description.clone(),
@@ -841,10 +713,6 @@ pub fn run_release_gate(root: &Path, gate: &ResolvedGate) -> GateResult {
             launch_error: None,
             duration_ms: started.elapsed().as_millis(),
             log_path: None,
-            reused: false,
-            hosted_run_url: None,
-            hosted_head_sha: None,
-            hosted_repository: None,
         },
         Err(error) => GateResult {
             name: gate.name.clone(),
@@ -857,10 +725,6 @@ pub fn run_release_gate(root: &Path, gate: &ResolvedGate) -> GateResult {
             launch_error: Some(error.to_string()),
             duration_ms: started.elapsed().as_millis(),
             log_path: None,
-            reused: false,
-            hosted_run_url: None,
-            hosted_head_sha: None,
-            hosted_repository: None,
         },
     };
     result.log_path = gate_reports::persist_gate_result_log(root, &result, &started_at);

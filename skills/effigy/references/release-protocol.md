@@ -69,18 +69,18 @@ gh run list --workflow ci.yml --branch main --commit "$candidate_sha" \
 ```
 
 Exactly one run must match: zero or several refuse and name the candidates.
-Effigy's configured `ci` release gate checks the same exact-SHA invariant, and
-a hosted-evidence release gate binds the one run it dispatched and records its
-id, so a resume never re-binds a sibling. Missing, pending, red, or
-different-commit evidence blocks every gate-checked preview and prepare. Local
-release gates then validate deterministic release file mutations; they do not
-replace hosted CI on the candidate source.
+Effigy's configured `ci` release gate is the repo task `release:ci-evidence`
+(`config/tasks.toml`), and it checks that same exact-SHA invariant against
+`$EFFIGY_RELEASE_COMMIT`, the commit the gate stage gates. Missing, pending,
+red, or different-commit evidence fails the gate. Local release gates then
+validate deterministic release file mutations; they do not replace hosted CI
+on the candidate source.
 
-A gate may opt in with `reuse-hosted-evidence = true` when
-`[release.hosted-evidence].workflow` is set. Reuse accepts only this
-repository's GitHub Actions run for the exact `HEAD` SHA, verified through
-authenticated `gh`. Unlisted gates still run locally. Bad evidence fails
-closed. Prepare records each reused gate and its run URL.
+A provider gate is a project task: declare it in `[tasks]` and wire it under
+`[release.gates]` with `task = "<name>"`. The runner exports
+`EFFIGY_RELEASE_COMMIT` for the exact commit the gate must prove, and a gate
+that cannot prove it exits non-zero so the stage fails and nothing publishes
+behind it. `release resume` re-runs that gate.
 
 If any step fails, **stop**. Surface the failure to the human. Do not retry
 with bypass flags.
