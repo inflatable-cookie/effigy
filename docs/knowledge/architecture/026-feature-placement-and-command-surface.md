@@ -172,9 +172,10 @@ and left untouched. Effigy no longer reads the pack repository; archiving it is 
 
 ## Release And Distribution
 
-Effigy core owns release readiness, exact-SHA identity, gate evaluation,
-named GitHub Actions hosted-evidence reuse, ordered mutation,
-irreversible-action safety, and evidence.
+Effigy core owns release readiness, exact-SHA identity, gate evaluation
+(including the exact commit a gate must prove), ordered mutation,
+irreversible-action safety, and evidence. A provider-specific gate, hosted CI
+included, is a repo task; core carries no provider knowledge.
 
 Effigy-specific repository, Homebrew, documentation, file, and self-hosting
 recipes belong to this repository or an installed extension. Provider-neutral

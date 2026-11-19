@@ -141,35 +141,6 @@ pub fn git_head_sha(repo_root: &Path) -> Result<String, ReleaseError> {
     }
 }
 
-pub fn git_remote_url(repo_root: &Path, remote: &str) -> Result<String, ReleaseError> {
-    let output = ProcessCommand::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .args(["remote", "get-url", remote])
-        .output()
-        .map_err(|error| {
-            ReleaseError::TaskInvocation(format!(
-                "failed to inspect git remote `{remote}`: {error}"
-            ))
-        })?;
-    if !output.status.success() {
-        return Err(ReleaseError::TaskInvocation(format!(
-            "the release run requires a configured `{remote}` remote"
-        )));
-    }
-    let url = String::from_utf8(output.stdout).map_err(|error| {
-        ReleaseError::TaskInvocation(format!("git remote output was not utf-8: {error}"))
-    })?;
-    let trimmed = url.trim();
-    if trimmed.is_empty() {
-        Err(ReleaseError::TaskInvocation(format!(
-            "the release run requires a configured `{remote}` remote"
-        )))
-    } else {
-        Ok(trimmed.to_owned())
-    }
-}
-
 pub fn git_tag_exists(repo_root: &Path, tag: &str) -> Result<bool, ReleaseError> {
     let output = ProcessCommand::new("git")
         .arg("-C")

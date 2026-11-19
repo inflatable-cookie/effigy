@@ -5,10 +5,9 @@ use super::{
     load_release_context, plan_release_pipeline, render_release_gate_run_json,
     render_release_gate_run_text, render_release_status_json, render_release_status_text,
     restore_mutation_snapshots, run::plan_prepare_mutations, run_release_gates,
-    run_release_gates_with_lookup, run_release_gates_with_observer,
-    run_release_gates_with_progress, snapshot_mutation_paths, test_support, FileMutationApply,
-    FileMutationPlan, GateExecutionReport, GateObserver, GateResult, HostedEvidenceLookup,
-    HostedEvidenceSpec, HostedRun, ResolvedGate,
+    run_release_gates_with_observer, run_release_gates_with_progress, snapshot_mutation_paths,
+    test_support, FileMutationApply, FileMutationPlan, GateExecutionReport, GateObserver,
+    GateResult, ResolvedGate,
 };
 use std::collections::BTreeMap;
 
@@ -693,8 +692,6 @@ fn shell_gate(name: &str, command: &str) -> ResolvedGate {
         task: None,
         description: None,
         stage: crate::GateStage::Certify,
-        reuse_hosted_evidence: false,
-        hosted_evidence: None,
     }
 }
 
@@ -776,17 +773,9 @@ struct RecordingGateObserver {
 }
 
 impl GateObserver for RecordingGateObserver {
-    fn gate_started(
-        &mut self,
-        position: usize,
-        total: usize,
-        gate: &ResolvedGate,
-        reusing_hosted_evidence: bool,
-    ) {
-        self.events.push(format!(
-            "start {position}/{total} {} reuse={reusing_hosted_evidence}",
-            gate.name
-        ));
+    fn gate_started(&mut self, position: usize, total: usize, gate: &ResolvedGate) {
+        self.events
+            .push(format!("start {position}/{total} {}", gate.name));
     }
 
     fn gate_finished(&mut self, position: usize, total: usize, result: &GateResult) {
@@ -795,10 +784,6 @@ impl GateObserver for RecordingGateObserver {
             result.name,
             gate_outcome_word(result)
         ));
-    }
-
-    fn note(&mut self, message: &str) {
-        self.events.push(format!("note {message}"));
     }
 }
 
@@ -810,14 +795,14 @@ fn gate_observer_sees_each_gate_start_and_finish_in_order() {
         shell_gate("smoke", "printf smoke-ok"),
     ];
     let mut observer = RecordingGateObserver::default();
-    let report = run_release_gates_with_observer(&root, &gates, true, &mut observer);
+    let report = run_release_gates_with_observer(&root, &gates, true, None, &mut observer);
     assert!(report.results.iter().all(|result| result.passed));
     assert_eq!(
         observer.events,
         [
-            "start 1/2 format reuse=false",
+            "start 1/2 format",
             "finish 1/2 format passed",
-            "start 2/2 smoke reuse=false",
+            "start 2/2 smoke",
             "finish 2/2 smoke passed",
         ]
     );
@@ -881,10 +866,6 @@ fn status_text_shows_the_failed_gate_tail_and_log_path() {
             launch_error: None,
             duration_ms: 4,
             log_path: Some(PathBuf::from(".effigy/reports/release/gates/floor.log")),
-            reused: false,
-            hosted_run_url: None,
-            hosted_head_sha: None,
-            hosted_repository: None,
         }],
         ..GateExecutionReport::empty()
     };
@@ -1002,265 +983,6 @@ fn redacted_environment_record_masks_token_like_keys() {
     assert_eq!(record["CARGO_HOME"], "/cargo");
     assert_eq!(record["CARGO_REGISTRY_TOKEN"], "<redacted>");
     assert!(record.get("IGNORED").is_none());
-}
-
-struct StubHostedLookup {
-    runs: Result<Vec<HostedRun>, String>,
-}
-
-impl HostedEvidenceLookup for StubHostedLookup {
-    fn list_runs(&self, _query: &super::HostedEvidenceQuery) -> Result<Vec<HostedRun>, String> {
-        self.runs.clone()
-    }
-}
-
-fn hosted_spec() -> HostedEvidenceSpec {
-    HostedEvidenceSpec {
-        workflow: "ci.yml".to_owned(),
-        event: "workflow_dispatch".to_owned(),
-        branch: "main".to_owned(),
-    }
-}
-
-fn reuse_gate(name: &str, command: &str) -> ResolvedGate {
-    ResolvedGate {
-        name: name.to_owned(),
-        command: command.to_owned(),
-        task: None,
-        description: None,
-        stage: crate::GateStage::Certify,
-        reuse_hosted_evidence: true,
-        hosted_evidence: Some(hosted_spec()),
-    }
-}
-
-fn hosted_run(
-    repo: &str,
-    sha: &str,
-    status: &str,
-    conclusion: Option<&str>,
-    url: &str,
-) -> HostedRun {
-    HostedRun {
-        repository: repo.to_owned(),
-        head_sha: sha.to_owned(),
-        status: status.to_owned(),
-        conclusion: conclusion.map(ToOwned::to_owned),
-        url: url.to_owned(),
-        database_id: Some(11),
-        event: Some("workflow_dispatch".to_owned()),
-        head_branch: Some("main".to_owned()),
-        created_at: Some("2026-10-22T00:00:00Z".to_owned()),
-    }
-}
-
-fn commit_and_set_origin(root: &PathBuf, origin: &str) -> String {
-    for args in [
-        &["config", "user.name", "Effigy Test"][..],
-        &["config", "user.email", "effigy@example.invalid"][..],
-        &["add", "VERSION", "CHANGELOG.md", "effigy.toml"][..],
-        &["commit", "--quiet", "-m", "initial"][..],
-        &["remote", "add", "origin", origin][..],
-        &["branch", "-M", "main"][..],
-    ] {
-        let status = Command::new("git")
-            .arg("-C")
-            .arg(root)
-            .args(args)
-            .status()
-            .expect("git fixture command");
-        assert!(status.success(), "git command failed: {args:?}");
-    }
-    let head = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .expect("head");
-    String::from_utf8(head.stdout)
-        .expect("head utf8")
-        .trim()
-        .to_owned()
-}
-
-#[test]
-fn named_hosted_reuse_skips_local_command_and_keeps_unlisted_gate() {
-    let root = write_initial_release_repo("hosted-reuse-ok", false);
-    let sha = commit_and_set_origin(&root, "https://github.com/acme/demo.git");
-    let lookup = StubHostedLookup {
-        runs: Ok(vec![hosted_run(
-            "acme/demo",
-            &sha,
-            "completed",
-            Some("success"),
-            "https://github.com/acme/demo/actions/runs/11",
-        )]),
-    };
-    let report = run_release_gates_with_lookup(
-        &root,
-        &[
-            shell_gate("smoke", "printf SMOKE_RAN > smoke.txt"),
-            reuse_gate("test", "printf LOCAL_RAN > reused-local.txt"),
-        ],
-        true,
-        &lookup,
-        |_| {},
-    );
-    assert_eq!(report.results.len(), 2);
-    assert!(report.results[0].passed);
-    assert!(!report.results[0].reused);
-    assert_eq!(
-        fs::read_to_string(root.join("smoke.txt")).expect("smoke"),
-        "SMOKE_RAN"
-    );
-    assert!(report.results[1].passed);
-    assert!(report.results[1].reused);
-    assert_eq!(
-        report.results[1].hosted_run_url.as_deref(),
-        Some("https://github.com/acme/demo/actions/runs/11")
-    );
-    assert!(!root.join("reused-local.txt").exists());
-    let json = render_release_gate_run_json(&collect_release_gate_run(
-        root.clone(),
-        Vec::new(),
-        report.clone(),
-    ));
-    let parsed: serde_json::Value = serde_json::from_str(&json).expect("json");
-    assert_eq!(parsed["results"][1]["reused"], true);
-    assert_eq!(
-        parsed["results"][1]["hosted_run_url"],
-        "https://github.com/acme/demo/actions/runs/11"
-    );
-}
-
-#[test]
-fn unlisted_gate_still_runs_when_named_reuse_evidence_is_bad() {
-    let root = write_initial_release_repo("hosted-reuse-unlisted", false);
-    let sha = commit_and_set_origin(&root, "https://github.com/acme/demo.git");
-    let lookup = StubHostedLookup {
-        runs: Ok(vec![hosted_run(
-            "acme/demo",
-            "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-            "completed",
-            Some("success"),
-            "https://github.com/acme/demo/actions/runs/11",
-        )]),
-    };
-    let report = run_release_gates_with_lookup(
-        &root,
-        &[
-            shell_gate("smoke", "printf SMOKE_RAN > smoke.txt"),
-            reuse_gate("test", "printf LOCAL_RAN > reused-local.txt"),
-        ],
-        false,
-        &lookup,
-        |_| {},
-    );
-    assert!(report.results[0].passed);
-    assert!(!report.results[0].reused);
-    assert_eq!(
-        fs::read_to_string(root.join("smoke.txt")).expect("smoke"),
-        "SMOKE_RAN"
-    );
-    assert!(!report.results[1].passed);
-    assert!(!report.results[1].reused);
-    assert!(
-        report.results[1].stderr.contains("not the release commit"),
-        "{}",
-        report.results[1].stderr
-    );
-    assert!(report.results[1].stderr.contains(&sha));
-    assert!(!root.join("reused-local.txt").exists());
-}
-
-#[test]
-fn hosted_reuse_fails_closed_on_repository_mismatch_failed_and_incomplete_runs() {
-    let root = write_initial_release_repo("hosted-reuse-fail-closed", false);
-    let sha = commit_and_set_origin(&root, "https://github.com/acme/demo.git");
-
-    let wrong_repo = run_release_gates_with_lookup(
-        &root,
-        &[reuse_gate("test", "printf LOCAL_RAN > reused-local.txt")],
-        true,
-        &StubHostedLookup {
-            runs: Ok(vec![hosted_run(
-                "other/repo",
-                &sha,
-                "completed",
-                Some("success"),
-                "https://github.com/other/repo/actions/runs/11",
-            )]),
-        },
-        |_| {},
-    );
-    assert!(!wrong_repo.results[0].passed);
-    assert!(wrong_repo.results[0]
-        .stderr
-        .contains("not this repository `acme/demo`"));
-
-    let failed = run_release_gates_with_lookup(
-        &root,
-        &[reuse_gate("test", "printf LOCAL_RAN > reused-local.txt")],
-        true,
-        &StubHostedLookup {
-            runs: Ok(vec![hosted_run(
-                "acme/demo",
-                &sha,
-                "completed",
-                Some("failure"),
-                "https://github.com/acme/demo/actions/runs/11",
-            )]),
-        },
-        |_| {},
-    );
-    assert!(!failed.results[0].passed);
-    assert!(failed.results[0].stderr.contains("conclusion is `failure`"));
-
-    let pending = run_release_gates_with_lookup(
-        &root,
-        &[reuse_gate("test", "printf LOCAL_RAN > reused-local.txt")],
-        true,
-        &StubHostedLookup {
-            runs: Ok(vec![hosted_run(
-                "acme/demo",
-                &sha,
-                "in_progress",
-                None,
-                "https://github.com/acme/demo/actions/runs/11",
-            )]),
-        },
-        |_| {},
-    );
-    assert!(!pending.results[0].passed);
-    assert!(pending.results[0].stderr.contains("is pending"));
-    assert!(!root.join("reused-local.txt").exists());
-}
-
-#[test]
-fn reuse_without_hosted_evidence_workflow_fails_at_resolve() {
-    let root = temp_repo("hosted-reuse-missing-workflow");
-    fs::write(
-        root.join("effigy.toml"),
-        r#"
-[release]
-version-file = "VERSION"
-changelog = "CHANGELOG.md"
-
-[release.gates.test]
-command = "cargo test"
-reuse-hosted-evidence = true
-"#,
-    )
-    .expect("manifest");
-    fs::write(root.join("VERSION"), "0.1.0\n").expect("version");
-    fs::write(root.join("CHANGELOG.md"), "# Changelog\n").expect("changelog");
-    let error = load_release_config(&root).expect_err("missing workflow");
-    assert!(
-        error
-            .to_string()
-            .contains("[release.hosted-evidence].workflow is not configured"),
-        "{error}"
-    );
 }
 
 fn write_empty_unreleased_repo(name: &str) -> PathBuf {
