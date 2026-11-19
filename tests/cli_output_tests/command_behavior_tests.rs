@@ -2644,7 +2644,7 @@ mounts = ["{mount}"]
         ),
     )
     .expect("write container manifest");
-    crate::compose_migration::migrate_declared(&root);
+    crate::compose_migration::migrate_declared(root);
 }
 
 fn append_required_container_secret(root: &std::path::Path) {

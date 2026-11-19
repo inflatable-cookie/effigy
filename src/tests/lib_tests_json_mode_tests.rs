@@ -5,23 +5,28 @@ use super::prelude::{
 };
 
 #[test]
-fn apply_global_json_flag_injects_task_arg_when_missing() {
+fn apply_global_json_flag_sets_task_json_option_without_mutating_args() {
     let cmd = Command::Task(TaskInvocation {
         options: None,
         name: "tasks".to_owned(),
         args: vec!["--resolve".to_owned(), "catalog-a/api".to_owned()],
     });
     let applied = apply_global_json_flag(cmd, true);
+    assert!(command_requests_json(&applied, false));
     match applied {
         Command::Task(task) => {
-            assert_eq!(task.args.first(), Some(&"--json".to_owned()));
+            assert!(task.options.is_some_and(|options| options.json_mode));
+            assert_eq!(
+                task.args,
+                vec!["--resolve".to_owned(), "catalog-a/api".to_owned()]
+            );
         }
         other => panic!("expected task command, got: {other:?}"),
     }
 }
 
 #[test]
-fn apply_global_json_flag_preserves_config_completion_nested_subcommand_position() {
+fn apply_global_json_flag_preserves_config_completion_args_and_sets_json_option() {
     let cmd = Command::Task(TaskInvocation {
         options: None,
         name: "config".to_owned(),
@@ -32,13 +37,14 @@ fn apply_global_json_flag_preserves_config_completion_nested_subcommand_position
         ],
     });
     let applied = apply_global_json_flag(cmd, true);
+    assert!(command_requests_json(&applied, false));
     match applied {
         Command::Task(task) => {
+            assert!(task.options.is_some_and(|options| options.json_mode));
             assert_eq!(
                 task.args,
                 vec![
                     "completion".to_owned(),
-                    "--json".to_owned(),
                     "bash".to_owned(),
                     "--export".to_owned(),
                 ]

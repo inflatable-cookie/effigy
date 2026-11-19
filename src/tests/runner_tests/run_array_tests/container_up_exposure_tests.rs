@@ -651,7 +651,19 @@ fn assert_bounded_redacted_tail(where_: &str, text: &str) {
         "{where_} names the child's output tail: {text}"
     );
     for tail in tails {
-        let tail = tail.split("; its generation was settled").next().unwrap();
+        // Strip trailing report prose after each named tail layer so the bound
+        // measures the child-output excerpt itself rather than the enclosing
+        // partial-exposure summary.
+        let tail = tail
+            .split("; its generation was settled")
+            .next()
+            .unwrap()
+            .split("\nDetached activation settled")
+            .next()
+            .unwrap()
+            .split("\n[withheld] ")
+            .next()
+            .unwrap();
         assert!(
             tail.len() <= TAIL_BOUND_BYTES,
             "{where_} bounds each tail: {tail}"

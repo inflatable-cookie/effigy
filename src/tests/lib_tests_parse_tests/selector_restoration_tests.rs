@@ -68,8 +68,7 @@ fn slash_selectors_never_enter_help_group_or_builtin_parsing() {
     assert_eq!(
         parse(&["admin/test"]),
         Command::Task(TaskInvocation {
-            options: None,
-            // A prefixed built-in keeps its own flag positions: no boundary.
+            options: Some(effigy_cli::GlobalCliOptions::default()),
             name: "admin/test".to_owned(),
             args: Vec::new(),
         })

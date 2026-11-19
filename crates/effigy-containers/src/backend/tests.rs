@@ -1,6 +1,5 @@
 use super::*;
 use crate::compose::{with_test_compose_backend, ComposeBackend};
-use crate::policy::load::{load_container_policy, prepare_container_policy};
 
 struct Fixture {
     _fixture: effigy_test_support::Fixture,
