@@ -111,7 +111,6 @@ pub(in crate::runner) fn run_reserved_shell(
             task: name.clone(),
             profile: "default".into(),
             source_manifest: selection.catalog.manifest_path.clone(),
-            container_repo_root: None,
             environment: None,
             fail_on_non_zero: true,
             scratch: selection.task.uses_scratch(),

@@ -39,12 +39,11 @@ pub const TASK_DESCRIPTION_MAX_CHARS: usize = 200;
 pub use portfolio::{load_portfolio, Portfolio, PORTFOLIO_FILE};
 
 pub use bundles::{
-    bundle_update_notes, catalog_source_roots, inspect_bundle_source, prepare_bundle_sources,
-    prepare_missing_bundle_sources, relocate_source_paths, relocate_source_paths_through,
-    resolve_catalog_source, sync_bundle_source, BundleInputResolution, BundleInputSource,
-    BundleInputSpec, BundleInputType, BundleSourceInspectReport, BundleSourceType, BundleSpec,
-    BundleSyncReport, CatalogSourceRoots, SourcePreparation, SourceProgress, SourceProgressEvent,
-    SourceSettlement,
+    bundle_update_notes, catalog_source_roots, hold_selected_sources, inspect_bundle_source,
+    prepare_bundle_sources, prepare_missing_bundle_sources, resolve_catalog_source,
+    sync_bundle_source, BundleInputResolution, BundleInputSource, BundleInputSpec, BundleInputType,
+    BundleSourceInspectReport, BundleSourceType, BundleSpec, BundleSyncReport, CatalogSourceRoots,
+    SourceHold, SourcePreparation, SourceProgress, SourceProgressEvent, SourceSettlement,
 };
 pub use catalog_section::{
     env_schema_declaring_catalog, nearest_catalog, nearest_declaring_catalog,
