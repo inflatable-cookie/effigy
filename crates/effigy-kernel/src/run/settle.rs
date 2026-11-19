@@ -208,17 +208,11 @@ impl Run<'_> {
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )?;
             let effects = journal::effects(self.store.conn(), self.id)?;
-            let custody: i64 = self.store.conn().query_row(
-                "SELECT count(*) FROM workspace_session_custody WHERE run_id=?1",
-                [self.id.to_string()],
-                |row| row.get(0),
-            )?;
             if record.owner != self.owner.resource.name().to_string()
                 || record.generation != self.owner.generation
                 || cleanup_outcome.as_deref() != Some("complete")
                 || closed_at.is_none()
                 || record.workload.is_none()
-                || custody != 0
                 || effects.iter().any(|effect| !effect.state.terminal())
             {
                 return Err(RunError::unavailable(

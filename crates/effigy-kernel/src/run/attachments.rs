@@ -295,8 +295,6 @@ impl Attachments {
     }
 
     /// Publishes an environment's applied generation under its owner gate.
-    /// A still-mapped workspace session retains its applied fence through a
-    /// no-op publication; changing that fence requires its atomic successor commit.
     /// Engines call this only after their required startup effects completed.
     pub fn publish_active(run: &mut Run<'_>) -> Result<(), RunError> {
         run.can_effect()?;

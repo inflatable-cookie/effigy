@@ -1,21 +1,14 @@
-//! The materialised guest context and its version lock (contract 052 §8.2,
-//! §8, §8.9 and §8).
+//! The materialised guest context and its version lock (contract 052 §8).
 //!
 //! The host's Prepare publishes one immutable generation of this context
-//! inside a container-mode workspace. Two publications write one: the qualified
-//! (reserved) path writes the strict v2 document in [`v2`], and the ordinary
-//! production path still writes this v1 document, which the guest reads through
-//! the separate `workspace_client::legacy` reader (effigy#1015). A guest reads
+//! inside a container-mode workspace. The guest reads this v1 document through
+//! the `workspace_client::legacy` reader. A guest reads
 //! exactly one generation for its whole run, checks it against the executable
 //! that is running and the container that is running it, and refuses before any
 //! effect when they disagree. Nothing here downloads, builds, enrols or writes
 //! host state: the publish side is `workspace_command::provisioning`, and
 //! reading is pure.
 //!
-//! Lane A (the host authority channel) binds a grant to
-//! [`VerifiedWorkspaceContext`]; lane B (the workspace session) records
-//! [`WorkspaceActivationIdentity`] for the session run it admits. Until that
-//! integration file lands, the verification seam has no caller in this crate.
 #![allow(dead_code)]
 
 use std::fmt;
@@ -169,9 +162,7 @@ impl WorkspaceContainerIdentity {
     }
 }
 
-/// The identity a prepared workspace activation hands to the workspace session
-/// (lane B). It is everything a session run needs to record about where it is
-/// running, before any context generation exists.
+/// The identity of the environment and container prepared for a guest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkspaceActivationIdentity {
@@ -235,24 +226,17 @@ pub(crate) struct WorkspaceRoute {
     pub(crate) tls: bool,
 }
 
-/// Where the host authority channel listens and which server identity the
-/// client pins before it sends a credential (§8.3, §8). Neither value is a
-/// credential.
-///
 /// One immutable context generation, as published by the host's Prepare.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkspaceContext {
     pub(crate) schema: String,
-    /// Monotonic context generation. A request carries the generation it read;
-    /// the host refuses a stale one (K7, §8.2).
+    /// Monotonic context generation.
     pub(crate) generation: u64,
     pub(crate) host: WorkspaceHostIdentity,
     pub(crate) binary: GuestBinaryIdentity,
     pub(crate) activation: WorkspaceActivationIdentity,
-    /// The workspace session run serving this context (§8.7). `None` means the
-    /// environment is prepared but no session has been admitted yet; a client
-    /// then has local reads only.
+    /// Retained v1 fields for compatibility with published contexts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) session_run_id: Option<String>,
     pub(crate) session_generation: Option<u64>,
@@ -267,13 +251,13 @@ pub(crate) struct WorkspaceContext {
 /// Stable refusal codes from §8. A `response` carries one of these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ContextRefusalCode {
-    /// The request's context generation is no longer published.
+    /// The context generation is no longer published.
     StaleContext,
-    /// The context names another container, boot, environment or session.
+    /// The context names another container, boot or environment.
     IdentityMismatch,
     /// Client, context and host disagree on version or protocol.
     VersionMismatch,
-    /// No context, no admitted session or no qualified channel.
+    /// The context or provisioned guest is unavailable.
     Unavailable,
 }
 
@@ -331,8 +315,7 @@ impl ContextRefusal {
     /// actually clears (§8), so it is the only one that adds the host
     /// command. A stale generation asks the client to reread `current`, and an
     /// `unavailable` refusal already carries the guidance its own cause needs:
-    /// re-preparing cannot grant an absent session, channel or provisioned
-    /// guest, and saying so would send the reader into the same refusal again.
+    /// re-preparing does not necessarily resolve its cause.
     pub(crate) fn names_reprepare(&self) -> bool {
         matches!(
             self.code,
@@ -502,8 +485,7 @@ impl LocalReadSource for WorkspaceContext {
 /// A container-mode guest's local read surface: the pinned context and the
 /// mounted checkout, nothing else (R2).
 ///
-/// It holds no capability and no enrolment credential, so a local read cannot
-/// enrol, and it has no writer, so a local read cannot write.
+/// It has no writer, so a local read cannot write.
 pub(crate) struct GuestLocalReads<'a> {
     pub(crate) context: &'a (dyn LocalReadSource + 'a),
     pub(crate) guest: &'a mut dyn GuestReader,
@@ -860,9 +842,7 @@ pub(crate) fn read_published_generation(
     }
 }
 
-/// The facts one context generation is built from. The caller is the host's
-/// Prepare; `session_run_id` is `None` until lane B admits the session run for
-/// this environment.
+/// The facts one context generation is built from by the host's Prepare.
 pub(crate) struct WorkspaceContextInput {
     pub(crate) generation: u64,
     pub(crate) host: WorkspaceHostIdentity,

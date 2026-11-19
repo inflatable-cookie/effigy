@@ -194,7 +194,7 @@ lifetime belongs to its invoking process/session even when it has no terminal.
 | `--run-id <key>` on a supported one-shot command | `CheckoutDurable`, even without `--detach`; idempotency, requests and logs need a journal |
 | `--detach`; managed session in TUI, attached text or `--headless`; environment-owned host sidecar | `CheckoutDurable`; detached supervisor and journal-backed sentinel. Existing managed-task refusal of `--run-id` is unchanged |
 | `container up` (attached or detached), down, handover, repair, reset, reap, retire, data mutation or environment import | `CheckoutDurable`; environment authority in its owning checkout |
-| A task that attaches to/ensures an environment, runs a container/remote workload, owns a workspace session, or publishes a route | `CheckoutDurable`; durable holder and remote-custody records before effects |
+| A task that attaches to/ensures an environment, runs a container/remote workload, or publishes a route | `CheckoutDurable`; durable holder and remote-custody records before effects |
 | A workflow needing resumable checkpoints or persistent source preparation after the invocation | `CheckoutDurable`; the feature's authority owns the journal |
 | Gateway daemon lifecycle, endpoint/route publication, port allocation or release | `MachineDurable`; gateway authority, only the bounded records allowed in §7.5 |
 | Static/Observe, including `runs`, `run status`, doctor and gateway status | No run, admission, import or write (R2) |
@@ -459,7 +459,7 @@ names the rule or invariant it relies on.
 
 | # | Rule | Forbidden states |
 | --- | --- | --- |
-| R1 | **Host authority.** Every mutable resource has exactly one authority and one gate. Gates and the store live on the host. Guests never lock host gates or write host records. Effigy in a guest keeps working by requesting host authority (§8). | A guest holding or opening a host gate; a guest writing the host store; a host acting on a guest-resolved plan; authority inferred from a hostname, heartbeat age or a file in a bind mount. |
+| R1 | **Separate authority.** Every mutable resource has exactly one authority and one gate. Guests never lock host gates or write host records; they run locally with their own state. Host actions run in the host CLI (§8). | A guest holding or opening a host gate; a guest writing the host store; a host acting on a guest-resolved plan; authority inferred from a hostname, heartbeat age or a file in a bind mount. |
 | R2 | **Pure reads.** Static and Observe commands write nothing anywhere. Observe may run guarded, non-mutating probes (§5.11). The narrowly scoped deep-doctor derived-cache exception is defined in contract 047: only a changed generation may be published; unchanged deep inventory writes nothing. | `help`, `status`, `tasks`, `--plan`, `graph status` or `doctor` (outside the contract 047 exception) creating, renaming or truncating a file, appending a Git exclude, allocating a port or address, rendering Compose, minting a scope token, fetching a bundle, writing the store or a journal, or acquiring a gate exclusively. |
 | R3 | **Unknown grants nothing.** An `Unknown` observation never authorises a kill, teardown, reclaim, reuse, displacement, restart or deletion. Destructive action needs the resource's own gate plus `Verified` ownership and identity, or `Absent` with proof. | A restart because an exec probe failed; reuse of a gateway whose identity could not be read; a route displaced because owner evidence was unreadable; git failure read as clean; a lock reclaimed because a heartbeat aged. |
 | R4 | **Holder protection.** Nothing stops, restarts, recreates, resets or hands over an environment while a live or unknown holder of a bound run exists, except that run's own settle releasing its own attachment. | Any `down`, restart, recreate, reset, handover or reap of an environment with a holder whose liveness is `Verified` or `Unknown`. |
@@ -2672,8 +2672,7 @@ checkout roots**, never real checkout links. No production state override is
 needed. Wall clocks are display only; persisted deadlines retain
 boot identity and boot-monotonic nanoseconds. A different boot ends them.
 The state subtree, secrets and control sockets are masked from workspace guest
-mounts; a guest with a host authority channel continues through it (R1), and a
-production guest with the legacy v1 document runs its work in the container it
+mounts; a guest with the legacy v1 document runs its work in the container it
 is already inside (Tom, 2026-11-19). A guest task keeps its own journal beside
 the container's HOME under `.effigy/guest-checkouts/<digest>/`, keyed by the
 mounted checkout's canonical path. That owner is the guest's own
@@ -3059,11 +3058,8 @@ workspace is admitted:
   checkout alone. The pins whose snapshot is checkout-visible are
   digest-checked before anything is parsed, so a checkout that changed since
   Prepare refuses instead of reading bytes the host never approved. A local
-  reader holds no capability, so a Static or Observe read cannot enrol, and an
-  authority-bearing command refuses rather than enrol.
-- Staleness: the context is input, not liveness proof. Every request carries
-  the context generation; the host refuses a stale one (K7) and the client
-  rereads `current`. A missing context means the workspace is unprepared:
+  reader does not acquire host authority.
+- Staleness: the context is input, not liveness proof. A missing context means the workspace is unprepared:
   commands that need it report unavailable. Nothing fetches, renders or
   allocates as a fallback (R2).
 - Secret grants: an admitted run that needs secrets in the container gets a
@@ -3073,8 +3069,7 @@ workspace is admitted:
   grant. No shell gets every vault key.
 - The guest never opens the host vault. The workspace mount masks the vault,
   its previous generation, key wraps and unlock credentials (§7.3 families
-  10–11) with an empty read-only overlay. Vault reads and writes are channel
-  requests to the secrets engine.
+  10–11) with an empty read-only overlay. Host vault actions run in the host CLI.
 - Mount isolation validates the complete effective mount set the primary
   service will have: injected and retained entries, short and long form, with
   absolute guest targets checked before comparison. Parent (`..`) traversal
@@ -3502,7 +3497,7 @@ only those identities, remove fixtures and preserve exit codes before reporting.
 | Write count | Instrument database opens/commits and filesystem writes/fsyncs before/after fresh and warm foreground tasks, sequences and test suites: **0 database writes, 0 durable runtime records**, no machine DB dependency. Show transient lock writes separately. Repeat with configured source preparation and prove honest durable classification. QA-group runs are checkout-durable: retain their definition, member ledger, result and logs across owner exit, with zero machine-store writes for local-only members. Measure their checkout writes separately. Detached runs report commits by admission, spawn, requests, settle, bytes and fsyncs; no per-output, poll or heartbeat journal writes |
 | Isolation/concurrency | At least 20 overlapping short runs across at least 3 independent checkouts, while long detached runs and an environment transition run; zero cross-project lock refusals, including a deliberately stalled local retention writer. Same-resource contention still returns the specified Busy result. Busy/corrupt machine store cannot block local-only foreground work |
 | Foreground custody | macOS/Linux: leader exit with live descendants, HUP/INT/TERM, owner SIGKILL, guard SIGKILL, both dead, cleared tags, escaped session, reused/foreign PGIDs and SIGSTOP; positive cleanup or explicit evidence-limited residue, no numeric recovery signal, no false persisted success, no unlock while the surviving custodian cleans up |
-| Durable crash recovery | Kill/ENOSPC/EPERM/Unknown at every intent, receipt, activation and settle crossing for QA-group runs, `--run-id`, detached one-shot, each managed front end, environment transition, sidecar, workspace session, remote/container run, and gateway lifecycle/publication. Preserve O1–O14 with local integrity and cross-store receipts; one authority and no double release |
+| Durable crash recovery | Kill/ENOSPC/EPERM/Unknown at every intent, receipt, activation and settle crossing for QA-group runs, `--run-id`, detached one-shot, each managed front end, environment transition, sidecar, remote/container run, and gateway lifecycle/publication. Preserve O1–O14 with local integrity and cross-store receipts; one authority and no double release |
 | Task status read model | `tasks status <task>` and `tasks status --all`, text/JSON: first foreground run with no token/DB is live, not never-run; free/stale gates and foreground exit produce not-recorded; old durable success stays historical; held/unverifiable identity and discovered residue are unknown; interrupted durable runs keep recovery commands. No history row or token is created. Validate the v3 envelopes and durable-only latest/history per 018 |
 | Gates/layout/deletion | Fresh checkout, linked worktree, primary, non-Git root, same-path replacement, explicit retire and external deletion; gate inode continuity while held, token-init races, host-only guest masking, unknown residue/claims protected, no primary journal fallback |
 | Discovery/admission | Configured/unconfigured roots, linked worktrees, duplicate/ambiguous keys, symlink, missing/unreadable/corrupt checkout, depth/count/time limits, empty roots; R2 filesystem diff empty. Nested live/dead/forged admission capabilities and hook death/owner death do not use a central run lookup |
@@ -3586,7 +3581,7 @@ to the rule and primitive that makes it structurally impossible.
 ## 15. Change triggers
 
 Revisit this contract before: adding a daemon; coordinating across hosts;
-adding a second guest-to-host channel or a guest outside container mode;
+adding a guest-to-host channel or a guest outside container mode;
 supporting network filesystems; adopting cgroup custody; adding a resource
 kind or encoding version; bumping the store's major schema; supporting Apple
 Containers; or relaxing any of R1–R5.

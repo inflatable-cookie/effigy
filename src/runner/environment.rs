@@ -644,7 +644,7 @@ pub(in crate::runner) struct Held {
 impl Held {
     /// Begins the session before any bring-up, so the bring-up's activation
     /// can attach it. A failed local journal refuses the operation before
-    /// backend effects; guest work continues through host authority.
+    /// backend effects. Guest work uses its own local state.
     pub(in crate::runner) fn begin(
         repo_root: &Path,
         policy: &EffectiveContainerPolicy,
