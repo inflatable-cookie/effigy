@@ -45,12 +45,12 @@
 //!
 //! The ordinary production publication carries none of a session, credential or
 //! channel at all, so a production guest ([`GuestPlacement::Legacy`]) serves its
-//! local reads, runs a declared task whose steps are bound to this workspace
-//! container (the verified placement already proves this process is inside it),
-//! and refuses every other authority-bearing command by name, naming the host
-//! CLI as what actually serves it. Re-preparing cannot change that: it
-//! republishes the same legacy document until the production activation caller
-//! lands (effigy#626).
+//! local reads from the document and runs everything else here, the way the
+//! host would: it holds no host authority, so it needs no placement policy
+//! (Tom, 2026-11-19). The one refusal is a task the checkout binds to the host,
+//! `run_in = "host"`, which fails in one line naming the host checkout.
+//! Re-preparing cannot change what this document carries until the production
+//! activation caller lands (effigy#626).
 
 // The channel client below is exercised by the proofs in `tests.rs` and is
 // opened by the transport integration that is a separate task (lane A's note
@@ -361,8 +361,8 @@ pub(crate) enum GuestPlacement {
     /// The workspace is in container mode and prepared for one generation with
     /// the legacy production document (`effigy.workspace-context.v1`), already
     /// matched against this guest's own independent observation and the
-    /// executable it runs. It pins no session, credential or channel, so only
-    /// local reads are served from it.
+    /// executable it runs. It carries no session, credential or channel, so
+    /// local reads are served from it and everything else runs here.
     Legacy(Box<legacy::PublishedLegacyGuestContext>),
 }
 
@@ -1756,13 +1756,12 @@ impl Transport for BoxedTransport {
 
 /// Serve one command from a production workspace's legacy context.
 ///
-/// The legacy document carries the pinned checkout, sources, version and
-/// placement, so the local reads every container-mode guest is granted (§8.6)
-/// are served from it. It carries no admitted session, no credential and no
-/// host authority channel, so a command needing host authority refuses here,
-/// naming the host CLI as what actually serves it — except a declared task
-/// whose steps are bound to this workspace container, which runs here because
-/// this process already is that container (planner ruling, 2026-11-16).
+/// The document carries the pinned checkout, sources and version, so the local
+/// reads every container-mode guest is granted (§8.6) are served from it.
+/// Everything else runs in this container exactly as it would on the host: this
+/// context holds no host authority, so there is nothing to forward and nothing
+/// to protect (Tom, 2026-11-19). A task the checkout binds to the host refuses
+/// at its own declaration ([`legacy::refuse_host_bound_task`]).
 ///
 /// `Ok(None)` means the ordinary dispatch runs the command in this container.
 fn legacy_command(
@@ -1772,35 +1771,11 @@ fn legacy_command(
     checkout: &mut dyn CheckoutReader,
 ) -> Result<Option<String>, RunnerError> {
     let wants_json = effigy_cli::command_requests_json(cmd, false);
-    if let Command::Task(task) = cmd {
-        return match legacy::classify_task(published, guest, checkout, task)? {
-            legacy::LegacyTask::ContainerLocal => {
-                // This process proved it runs inside the container the context
-                // was prepared for: the container id, VM boot, platform and
-                // libc matched an independent observation of itself, and the
-                // task's declaration is bound to that same container. Record
-                // that placement (refusing a checkout manifest that no longer
-                // matches its pin) and let the ordinary dispatch run the steps
-                // here, exactly once.
-                //
-                // `EFFIGY_INTERNAL_CONTAINER_HANDOFF` is the runner's existing
-                // "this process is inside its own workspace container" switch:
-                // it keeps routing local instead of spawning a container client.
-                // The verified context is a stronger proof of the same fact than
-                // the compose-exec marker it stands in for, and the dispatch
-                // re-checks the definition it actually resolves against the
-                // recorded placement before anything runs.
-                legacy::remember_local_task_placement(published, guest, checkout)?;
-                std::env::set_var(
-                    crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_NAME,
-                    "1",
-                );
-                Ok(None)
-            }
-            legacy::LegacyTask::HostAuthority(reason) => Err(RunnerError::task_invocation(
-                legacy::host_authority_unavailable_for(published, &reason),
-            )),
-        };
+    // The Level 1 channel-scope filter describes the qualified channel's
+    // authority, which this context does not have and does not forward
+    // anything for; a hidden producer entry is refused either way.
+    if let Some(message) = coverage_policy::hidden_internal_entry(cmd) {
+        return Err(RunnerError::task_invocation(message));
     }
     match classify(cmd) {
         GuestOperation::Local(read) => {
@@ -1814,10 +1789,20 @@ fn legacy_command(
                 .map_err(local_read_error)?;
             Ok(Some(render_local(outcome, wants_json)))
         }
-        GuestOperation::Refused(message) => Err(RunnerError::task_invocation(message)),
-        GuestOperation::Observe { .. } | GuestOperation::Invoke { .. } => Err(
-            RunnerError::task_invocation(legacy::host_authority_unavailable(published)),
-        ),
+        _ => {
+            // The ordinary dispatch runs it here. `EFFIGY_INTERNAL_CONTAINER_HANDOFF`
+            // is the runner's existing "this process is inside its own workspace
+            // container" switch: it keeps routing local instead of spawning a
+            // container client, so a task, a built-in and a deferral all behave
+            // as they do on the host. The recorded host checkout is what the
+            // host-bound refusal names.
+            legacy::remember_guest_host_checkout(published);
+            std::env::set_var(
+                crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_NAME,
+                "1",
+            );
+            Ok(None)
+        }
     }
 }
 
@@ -2226,6 +2211,10 @@ pub(crate) fn guest_command(
                 .expect("installed guest I/O override")(cmd, &args, cwd)
         });
     }
+    // One command runs one placement; a process that runs another command (a
+    // proof sharing a thread, or a host that keeps this process alive) starts
+    // from no guest facts.
+    legacy::forget_guest_host_checkout();
     let mut guest = ContainerGuest;
     let published = match detect(&mut guest)? {
         GuestPlacement::Host => return Ok(None),
@@ -2253,8 +2242,9 @@ pub(crate) fn guest_command(
     .map(Some)
 }
 
-/// A container-mode guest never runs the host engines locally, so a raw
-/// stdio task passthrough is refused here rather than in the host dispatch.
+/// A strict container-mode guest never runs the host engines locally, so a raw
+/// stdio task passthrough is refused here rather than in the host dispatch. A
+/// legacy production guest runs it here, like every other task.
 pub(crate) fn guest_passthrough_refusal() -> Result<(), RunnerError> {
     let mut guest = ContainerGuest;
     match detect(&mut guest)? {
@@ -2264,9 +2254,9 @@ pub(crate) fn guest_passthrough_refusal() -> Result<(), RunnerError> {
              host authority to admit or run one. Run it on the host, or open the terminal with \
              `effigy workspace`; `{HOST_REPREPARE_COMMAND}` on the host re-prepares the workspace"
         ))),
-        GuestPlacement::Legacy(published) => Err(RunnerError::task_invocation(
-            legacy::host_authority_unavailable(&published),
-        )),
+        // A legacy guest runs the passthrough here, like every other task: this
+        // context holds no host authority to refuse on behalf of.
+        GuestPlacement::Legacy(_) => Ok(()),
     }
 }
 

@@ -2684,11 +2684,11 @@ checkout roots**, never real checkout links. No production state override is
 needed. Wall clocks are display only; persisted deadlines retain
 boot identity and boot-monotonic nanoseconds. A different boot ends them.
 The state subtree, secrets and control sockets are masked from workspace guest
-mounts; guests continue through the host authority channel (R1). A declared
-task whose steps are bound to the workspace container that a production guest
-verifies it is already inside (effigy#1015) runs there, and it keeps its own
-journal beside the container's HOME under `.effigy/guest-checkouts/<digest>/`,
-keyed by the mounted checkout's canonical path. That owner is the guest's own
+mounts; a guest with a host authority channel continues through it (R1), and a
+production guest with the legacy v1 document runs its work in the container it
+is already inside (Tom, 2026-11-19). A guest task keeps its own journal beside
+the container's HOME under `.effigy/guest-checkouts/<digest>/`, keyed by the
+mounted checkout's canonical path. That owner is the guest's own
 writable filesystem, so an ordinary container-routed task run from a handoff
 (`effigy sync:db`) admits, gates, journals and settles locally while the
 mounted checkout's masked `.effigy/state` is never opened, adopted, tightened
@@ -4502,9 +4502,9 @@ above at the same call site: `detect` now selects the strict document only after
 authority request re-verifies that same document against the retained
 observation before it opens a connection.
 
-**Production guest entry (legacy v1, effigy#1015).** Production enablement of
-the v2 publication is Tom's review gate (effigy#626), so the ordinary
-(non-qualified) `workspace_command::provisioning::publication` path still writes
+**Production guest entry (legacy v1).** Production enablement of the v2
+publication is Tom's review gate (effigy#626), so the ordinary (non-qualified)
+`workspace_command::provisioning::publication` path still writes
 `effigy.workspace-context.v1` and every production workspace container carries
 that document. #452 made the guest read v2 only and thereby refused every
 production workspace, including its local reads; re-preparing republished the
@@ -4528,69 +4528,51 @@ document's own claims, validated by that parser; the running binary's
 document was written before the host recorded the authenticated version beside
 the digest-addressed executable (effigy#1014), so that file is absent for the
 executables this reader serves and its version string is whatever the artifact
-was packaged with (`0.14.1`), never a host claim this reader may rely on. It infers no
-session, credential, locator or selection, because the v1 document names none,
-and it grants no `VerifiedWorkspaceContext`. A v1 document is never handed to
-the v2 reader: `WorkspaceContextV2::parse` still refuses it, with a message that
-names it as the legacy production document instead of claiming a re-prepare
-would produce a v2 context.
+was packaged with (`0.14.1`), never a host claim this reader may rely on. It
+infers no session, credential, locator or selection, because the v1 document
+names none, and it grants no `VerifiedWorkspaceContext`. A v1 document is never
+handed to the v2 reader: `WorkspaceContextV2::parse` still refuses it, with a
+message that names it as the legacy production document instead of claiming a
+re-prepare would produce a v2 context.
 - `GuestPlacement` gains `Legacy`. Local reads (version, pinned task list, source
 pins, checkout reads) are served from the v1 document exactly as the v2 document
-serves them. A **declared task whose steps are bound to this workspace
-container runs in the container** (planner ruling, 2026-11-16): the verified
-placement already proves this process is inside the container the host would
-exec into, so the placement is the one the host would choose and it needs none
-of the host authority a v1 document cannot carry. The placement decision reads
-the context's pinned composed manifest (digest-verified, never the writable
-checkout): the task and every task its steps reference must resolve to the
-context's prepared container — the `env:<policy name>` resource the publication
-records, so a non-default selected workspace is admitted when its binding names
-the prepared container, and a task bound to any other named or inline container
-refuses — and must declare none of
-`run_in = "host"`, `secrets`, `gateway`, `container_lifecycle`,
-`admission = "heavy"`, `durable`, or a managed-session shape (`health_wait`,
-`ready_message`, `stay_in_shell`, `concurrent`). The allowed task is handed to
-the ordinary runner dispatch with `EFFIGY_INTERNAL_CONTAINER_HANDOFF` set — the
-runner's existing "already inside its own workspace container" switch — so
-routing stays local and the run keeps its ordinary gates, custody and
-single-execution rule. The allowlist rule is absolute, in this order:
+serves them.
 
-1. **The selector resolves against the verified pinned composed snapshot first**,
-   in the guest entry, before any routing, repository, alias or fallback
-   resolution, source preparation or catalog load. A name the snapshot does not
-   declare — a qualified `<catalog>/<task>`, another repository's task, an
-   unknown name, or a built-in/exec-alias/`[defer]` fallback target — refuses
-   there with the host-CLI message and no effect.
-2. **The resolved repository is fenced to the published checkout.** A `--repo`
-   override or any other resolver root refuses before the dispatcher prepares
-   that repository's sources.
-3. **A non-task route refuses.** A built-in, container exec alias or a catalog
-   `[defer]` command is never executed for a guest selector, even when the route
-   resolution finds one.
-4. **The definition that runs must be the pinned one.** The execution entry
-   compares the resolved declaration of the task, and of every task its steps
-   reference, with the pinned snapshot's declaration; the guest also records a
-   placement only after every pinned checkout file still matches its digest and
-   the dispatcher re-checks that closure before it prepares sources.
+**Placement: a legacy guest behaves like the host (Tom, 2026-11-19).** The v1
+document grants no session, no credential and no host authority channel, so the
+guest holds no host authority to protect and needs no placement policy. It
+reads the checkout's `effigy.toml` with its includes and bundles, resolves
+normally — declared tasks, built-ins, exec aliases and every deferral form
+(`[defer]`, a bundle-provided `[defer]`, a `defer …` reference) — and runs
+everything **in the container**, which is where the process already is. The
+guest entry sets `EFFIGY_INTERNAL_CONTAINER_HANDOFF` so routing stays local and
+records the context's host checkout path for the one refusal it makes
+(`legacy::remember_guest_host_checkout`).
 
-The machine-local bundle-input layer (which legitimately differs between host
-and container) is not part of that comparison. The stronger form — handing the
-runner one isolated catalogue built from the pinned snapshot — is not available
-for a workspace run: the isolated loader (`TaskSourceContext`,
-`load_isolated_catalog`) requires the manifest to live inside its source root and
-the runner derives container and compose policy from the catalogue root, so a
-snapshot under the guest store is refused as escaping that root (observed:
-"composed manifest escapes canonical skill source root `/workspace`"). Equality
-binding plus the three fences above is therefore the guest's guarantee: any
-divergence between the pinned and the resolved route, repository or definition
-refuses, and nothing unpinned executes. Every other Observe, Invoke or
-Refused command refuses
-before any connection with the honest cause: the production context pins no
-admitted session and no host authority channel, re-preparing republishes the
-same legacy document, and the host CLI in the pinned checkout is what actually
-serves the command. A task that needs a host facility refuses naming that
-declaration. Nothing here creates host authority: no channel, no credential, no
-host run record, and no guest-resolved plan.
+The one declaration it cannot run is work bound to the host: a task whose own
+declaration, or a step's declaration, carries `run_in = "host"` refuses at the
+execution entry with the single line
+
+    `<task>` runs on the host (`run_in = "host"`); run it in `<host checkout>`
+
+(`workspace_client::legacy::refuse_host_bound_task`). Everything else runs here
+and keeps the ordinary gates, custody, journal and single-execution rule.
+
+The Level 1 command filter (`workspace_client::coverage_policy`) describes the
+qualified channel's authority scope, so the legacy guest does not apply it
+either: `effigy defer`, `effigy exec`, a `--repo` within the container and the
+rest run here as they would on the host. Only hidden producer entries
+(`hidden_internal_entry`) stay refused, because that is a property of the binary
+rather than of a channel.
+
+There is no pinned-manifest task classification, no in-container task
+allowlist, no `--repo` or definition fence, no host-authority refusal text and
+no guest-resolved plan. The earlier placement policy was removed rather than
+amended: it refused ordinary work in production containers (effigy#1015's
+allowlist, effigy#1044's deferred `prep`) while gaining nothing, because the
+guest holds no host authority for a classification to protect. The qualified v2
+context is untouched: it carries an admitted session and a host channel, so its
+guest keeps its own placement and authority rules.
 
 The adopted run — not a bare `Run` — is what the entry takes, because a
 `PreparedHostChannel` cannot exist before that adoption: the kernel's

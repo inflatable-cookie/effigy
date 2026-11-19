@@ -102,12 +102,9 @@ pub(super) fn run_selected_task(
     run_key: Option<&RunKey>,
     tree: Option<super::sequence_run::ResolvedSteps>,
 ) -> Result<String, RunnerError> {
-    // A production workspace guest re-checks the definition this run actually
-    // resolved, not the one its guest entry classified from the pinned snapshot.
-    // The two are normally the same bytes; a checkout that changed after
-    // publication can only make this refuse, never substitute a task.
-    crate::runner::workspace_client::legacy::verify_local_task(
-        &selection.catalog.manifest,
+    // A workspace guest runs this task here like any other, except the one
+    // declaration it cannot run: a task bound to the host.
+    crate::runner::workspace_client::legacy::refuse_host_bound_task(
         &preflight.selector.task_name,
         selection.task,
     )?;

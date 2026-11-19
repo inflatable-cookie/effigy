@@ -30,6 +30,28 @@ const UNKNOWN_TASK: &str = "workspace task policy unknown; no operation admitted
 /// Task requests require a second check after host-side resolution. Hidden
 /// producer entries are refused before they can reach the host.
 pub(crate) fn unsupported(cmd: &Command) -> Option<&'static str> {
+    hidden_internal_entry(cmd).or_else(|| channel_scope_unsupported(cmd))
+}
+
+/// A hidden producer entry point, which no guest runs.
+///
+/// This is the one refusal that is a property of the binary rather than of a
+/// channel's authority scope, so a legacy production guest — which holds no
+/// host authority and runs everything else locally (Tom, 2026-11-19) — keeps
+/// it while dropping the channel-scope filter below.
+pub(crate) fn hidden_internal_entry(cmd: &Command) -> Option<&'static str> {
+    match cmd {
+        Command::InternalScriptRun(_)
+        | Command::InternalGateway(_)
+        | Command::InternalGatewayIdentity(_)
+        | Command::InternalGuestProbe(_)
+        | Command::InternalContainerLeaseReaper(_) => Some(INTERNAL),
+        _ => None,
+    }
+}
+
+/// The Level 1 authority scope of the qualified workspace channel.
+fn channel_scope_unsupported(cmd: &Command) -> Option<&'static str> {
     match cmd {
         Command::Version | Command::Help(_) | Command::HelpGroup(_) => None,
         Command::Task(task)

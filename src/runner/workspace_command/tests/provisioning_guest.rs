@@ -2546,25 +2546,13 @@ impl crate::runner::workspace_client::identity::GuestIdentity for ObservedGuest 
     }
 }
 
-/// The mounted checkout, for a proof whose pins are all guest-store snapshots.
-struct EmptyCheckout;
-
-impl CheckoutReader for EmptyCheckout {
-    fn read_checkout_file(
-        &mut self,
-        _relative: &str,
-    ) -> Result<Option<Vec<u8>>, crate::runner::RunnerError> {
-        Ok(None)
-    }
-}
-
 #[test]
 fn production_publication_writes_what_the_legacy_guest_consumes_for_the_same_container() {
     // The ordinary publication and the guest's legacy reader are two halves of
     // one contract: this drives the real `prepare_workspace_guest` into a fake
     // guest (only the container filesystem and the pinned artifact are
     // fixtures), then reads the published generation with the production
-    // guest's reader and places a task from the pinned manifest.
+    // guest's reader and checks the one refusal that guest applies.
     let _lock = crate::contract_test_support::lock_test();
     let repo = fixture("legacy-production-publication");
     container_mode_manifest(&repo);
@@ -2637,15 +2625,10 @@ fn production_publication_writes_what_the_legacy_guest_consumes_for_the_same_con
     )
     .expect("the published generation reads as the production guest's context");
     assert_eq!(published.generation, prepared.context_generation);
-    assert_eq!(
-        crate::runner::workspace_client::legacy::prepared_container(&published).unwrap(),
-        policy.name,
-        "the context names the container it was prepared for"
-    );
 
-    // The checkout manifest the dispatch would read is the one the publication
-    // pinned, and the container-bound task in that pinned manifest is placed in
-    // this container while the host-bound task is refused.
+    // The checkout manifest the dispatch reads is the one the publication
+    // pinned, so the guest's ordinary dispatch resolves the same declarations
+    // the publisher approved.
     let checkout_pin = published
         .context
         .sources
@@ -2715,36 +2698,30 @@ fn production_publication_writes_what_the_legacy_guest_consumes_for_the_same_con
         "a changed included file changes the resolved declaration"
     );
 
-    let mut checkout = EmptyCheckout;
-    let placement = crate::runner::workspace_client::legacy::classify_task(
-        &published,
-        &mut guest,
-        &mut checkout,
-        &effigy_cli::TaskInvocation {
-            name: "hello".to_owned(),
-            args: Vec::new(),
-        },
+    // A workspace guest runs the checkout's declarations here like the host;
+    // only a task the checkout binds to the host refuses (Tom, 2026-11-19).
+    let tasks = &pinned.tasks;
+    crate::runner::workspace_client::legacy::remember_guest_host_checkout(&published);
+    let refusal = crate::runner::workspace_client::legacy::refuse_host_bound_task(
+        "hosted",
+        tasks
+            .get("hosted")
+            .expect("the pinned host-bound declaration"),
     )
-    .expect("the pinned manifest");
+    .expect_err("a host-bound task refuses in a workspace guest");
     assert_eq!(
-        placement,
-        crate::runner::workspace_client::legacy::LegacyTask::ContainerLocal
+        refusal.to_string(),
+        format!(
+            "`hosted` runs on the host (`run_in = \"host\"`); run it in `{}`",
+            published.context.paths.host_checkout
+        )
     );
-    let refusal = crate::runner::workspace_client::legacy::classify_task(
-        &published,
-        &mut guest,
-        &mut checkout,
-        &effigy_cli::TaskInvocation {
-            name: "hosted".to_owned(),
-            args: Vec::new(),
-        },
+    crate::runner::workspace_client::legacy::refuse_host_bound_task(
+        "hello",
+        tasks
+            .get("hello")
+            .expect("the pinned container-bound declaration"),
     )
-    .expect("the pinned manifest");
-    assert!(
-        matches!(
-            refusal,
-            crate::runner::workspace_client::legacy::LegacyTask::HostAuthority(_)
-        ),
-        "a host-bound task is never run here: {refusal:?}"
-    );
+    .expect("an ordinary declaration runs here");
+    crate::runner::workspace_client::legacy::forget_guest_host_checkout();
 }
