@@ -53,6 +53,8 @@ pub(in crate::runner) enum EngineEvent {
         process: String,
         chunk: effigy_core::terminal_text::StyledChunk,
     },
+    /// All live styles through this committed offset were offered first.
+    OutputReady { process: String, through: u64 },
     /// Wake readers after a complete wait snapshot was journalled. A lost
     /// event does not change what the polling front ends observe.
     WaitsChanged,

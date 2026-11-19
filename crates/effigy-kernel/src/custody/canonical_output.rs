@@ -312,8 +312,10 @@ impl CanonicalOutput {
     pub fn take_styled_output(&self) -> StyledOutput {
         let mut writer = lock(&self.0);
         writer.styled_bytes = 0;
+        let through = writer.log.committed_offset();
         StyledOutput {
             chunks: writer.styled.drain(..).collect(),
+            through,
             truncated: std::mem::take(&mut writer.truncated)
                 || writer.failed
                 || writer.incomplete(),
@@ -486,6 +488,7 @@ mod tests {
         }
         // Live styles stay in memory only; the committed log is plain text.
         let live = output.take_styled_output();
+        assert_eq!(live.through, read.bytes.len() as u64);
         assert_eq!(
             live.chunks
                 .iter()

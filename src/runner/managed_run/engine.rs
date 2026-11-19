@@ -234,6 +234,7 @@ struct Workload {
     process: Option<OwnedProcess>,
     exit: Option<i32>,
     starts: u32,
+    watermark_sent: Option<Instant>,
     /// The redacted output tail of its last exit, for the failure report.
     tail: String,
 }
@@ -624,6 +625,7 @@ impl Owner {
                 process: None,
                 exit: None,
                 starts: 0,
+                watermark_sent: None,
                 tail: String::new(),
             })
             .collect();
@@ -820,6 +822,7 @@ impl Owner {
         )?;
         let workload = &mut self.workloads[index];
         workload.starts += 1;
+        workload.watermark_sent = None;
         if let Some(group) = &workload.spec.exec_group {
             // K3: the remote group's intent precedes the exec client.
             let nonce = format!("{}:{}:{}", run.id(), workload.spec.name, workload.starts);
@@ -988,14 +991,22 @@ impl Owner {
     }
 
     fn poll(&mut self, run: &mut TaskRun, index: usize) -> Option<End> {
-        let (name, styled, exit) = {
+        let (name, styled, exit, send_watermark) = {
             let workload = &mut self.workloads[index];
             let process = workload.process.as_mut()?;
             // Output is already in the run log; only live styles travel in memory.
             let _ = process.take_output();
             let styled = process.take_styled_output();
             let exit = process.poll();
-            (workload.spec.name.clone(), styled, exit)
+            let send_watermark = !styled.chunks.is_empty()
+                || styled.truncated
+                || workload
+                    .watermark_sent
+                    .is_none_or(|sent| sent.elapsed() >= Duration::from_secs(1));
+            if send_watermark {
+                workload.watermark_sent = Some(Instant::now());
+            }
+            (workload.spec.name.clone(), styled, exit, send_watermark)
         };
         // Deliver styles on every poll, before a final exit makes the client
         // fold the remaining committed bytes into a plain read.
@@ -1003,6 +1014,14 @@ impl Owner {
             self.event(&EngineEvent::Styled {
                 process: name.clone(),
                 chunk,
+            });
+        }
+        // Repeating the watermark also lets a follower recover from a lost
+        // event without waiting for another output burst or process exit.
+        if send_watermark {
+            self.event(&EngineEvent::OutputReady {
+                process: name.clone(),
+                through: styled.through,
             });
         }
         let Observed::Verified(exit, _) = exit else {
