@@ -131,7 +131,9 @@ holder, recording residue for Unknown → admit, or refuse unless acknowledged
 
 `test:kernel:<area>` selectors own the narrow proof families; `check:kernel`
 compiles all kernel targets and runs strict Clippy; `qa:kernel-ratchet` enforces
-`config/kernel-ratchet.json` and its baseline regenerates only under
+`config/kernel-ratchet.json` by each construct's total across the production
+files, so a rise is new raw authority and fails while a fall or a move at the
+same total is bookkeeping; the baseline regenerates only under
 `qa:kernel-ratchet:baseline`. `lint:linux` is the required pre-native check: it
 runs strict Clippy for `aarch64-unknown-linux-gnu` across the workspace with
 zig as the cross C compiler, and needs zig on PATH for the full scope. It does
