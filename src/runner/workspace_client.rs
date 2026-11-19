@@ -178,7 +178,7 @@ impl CheckoutReader for MountedCheckout {
 }
 
 /// The version and digest this process runs as, so the context can be checked
-/// against the executable that is actually running (§8.9, §8.11).
+/// against the executable that is actually running (§8.9, §8).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RunningBinary {
     pub(crate) version: String,
@@ -229,7 +229,7 @@ fn digest_of_file(path: &Path) -> Result<String, RunnerError> {
     Ok(context::render_digest(digest))
 }
 
-/// The static read one guest command is, when it is one (§8.6).
+/// The static read one guest command is, when it is one (§8).
 ///
 /// Every other command runs here, in the container the process already is.
 /// The guest binary renders help itself and hidden internal entry points are

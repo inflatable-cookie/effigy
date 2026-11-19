@@ -100,7 +100,7 @@ pub(in crate::runner) use workspace_command::run_workspace;
 ///
 /// A container-mode workspace guest serves its static reads from the published
 /// context and sends everything with authority over the one host channel
-/// (contract 052 §8.6, §8.11), so the guest dispatch runs first. Anything else
+/// (contract 052 §8, §8), so the guest dispatch runs first. Anything else
 /// is an ordinary host command and takes the host dispatch unchanged. A typed
 /// Task retains its full argument tail; built-in guest requests need the original
 /// CLI arguments through [`run_command_with_context_and_args`].

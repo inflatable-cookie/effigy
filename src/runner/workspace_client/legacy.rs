@@ -1,6 +1,6 @@
 //! The production workspace context: the `effigy.workspace-context.v1` document
 //! `workspace_command::provisioning::publication` writes next to the pinned
-//! executable and the source snapshots (052 §8.2, §8.11).
+//! executable and the source snapshots (052 §8.2).
 //!
 //! This reader is deliberately separate and explicitly named. It parses the v1
 //! document under the v1 rules it was published with, and checks exactly the

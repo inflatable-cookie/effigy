@@ -1,5 +1,5 @@
 //! The materialised guest context and its version lock (contract 052 §8.2,
-//! §8.8, §8.9 and §8.11).
+//! §8, §8.9 and §8).
 //!
 //! The host's Prepare publishes one immutable generation of this context
 //! inside a container-mode workspace. Two publications write one: the qualified
@@ -26,11 +26,11 @@ use serde::{Deserialize, Serialize};
 use crate::runner::error::RunnerError;
 
 /// Wire schema of the published context. A context naming any other schema is
-/// unprepared, not a newer version to guess at (§8.11 unknown version).
+/// unprepared, not a newer version to guess at (§8 unknown version).
 pub(crate) const CONTEXT_SCHEMA: &str = "effigy.workspace-context.v1";
 
 /// Protocol version a context may pin. V1 selects protocol 1 only and there is
-/// no downgrade (§8.11).
+/// no downgrade (§8).
 pub(crate) const CHANNEL_PROTOCOL_VERSION: u32 = 1;
 
 /// Guest context root, outside the bind-mounted checkout.
@@ -106,7 +106,7 @@ pub(crate) struct GuestBinaryIdentity {
     pub(crate) protocol: u32,
 }
 
-/// The host Effigy that published this context. §8.11 requires the client, the
+/// The host Effigy that published this context. §8 requires the client, the
 /// context and the host to agree on version and protocol.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -236,7 +236,7 @@ pub(crate) struct WorkspaceRoute {
 }
 
 /// Where the host authority channel listens and which server identity the
-/// client pins before it sends a credential (§8.3, §8.11). Neither value is a
+/// client pins before it sends a credential (§8.3, §8). Neither value is a
 /// credential.
 ///
 /// One immutable context generation, as published by the host's Prepare.
@@ -264,7 +264,7 @@ pub(crate) struct WorkspaceContext {
     pub(crate) routes: Vec<WorkspaceRoute>,
 }
 
-/// Stable refusal codes from §8.11. A `response` carries one of these.
+/// Stable refusal codes from §8. A `response` carries one of these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ContextRefusalCode {
     /// The request's context generation is no longer published.
@@ -328,7 +328,7 @@ impl ContextRefusal {
     }
 
     /// A version or identity refusal is the one class a host re-prepare
-    /// actually clears (§8.11), so it is the only one that adds the host
+    /// actually clears (§8), so it is the only one that adds the host
     /// command. A stale generation asks the client to reread `current`, and an
     /// `unavailable` refusal already carries the guidance its own cause needs:
     /// re-preparing cannot grant an absent session, channel or provisioned
@@ -399,7 +399,7 @@ pub(crate) trait CheckoutReader {
     fn read_checkout_file(&mut self, relative: &str) -> Result<Option<Vec<u8>>, RunnerError>;
 }
 
-/// One local read a container-mode guest performs without the host (§8.6).
+/// One local read a container-mode guest performs without the host (§8).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum LocalRead {
     /// Version and the pinned identity this guest is running under.
@@ -464,7 +464,7 @@ impl From<RunnerError> for LocalReadError {
 /// There is exactly one canonical document a guest reads (the strict v2
 /// `WorkspaceContextDocument`), and this is the narrow view a local read needs
 /// from it. The v1 projection implements it so the producer's own focused
-/// tests keep their semantics; the guest entry reads v2 only (§8.11).
+/// tests keep their semantics; the guest entry reads v2 only (§8).
 pub(crate) trait LocalReadSource {
     fn context_generation(&self) -> u64;
     fn host_version(&self) -> &str;
@@ -728,7 +728,7 @@ pub(crate) trait GuestWorkspace: GuestReader {
             "guest adapter has no immutable executable operation",
         ))
     }
-    /// Give a published file to the workspace user (§8.2 grants, §8.8).
+    /// Give a published file to the workspace user (§8.2 grants, §8).
     fn set_owner(&mut self, path: &str, owner: &str) -> Result<(), RunnerError>;
     /// Copy a host file into a guest staging path before it is installed.
     fn stage_host_file(&mut self, host_path: &Path, guest_path: &str) -> Result<(), RunnerError>;
@@ -792,7 +792,7 @@ pub(crate) fn read_published_body(
 
 /// The `schema` a published document declares, read without interpreting any
 /// other field. The guest routes on this before it parses, so a document is
-/// never handed to a reader that would guess at its version (§8.11).
+/// never handed to a reader that would guess at its version (§8).
 pub(crate) fn declared_schema(bytes: &[u8]) -> Result<String, ContextRefusal> {
     let document: serde_json::Value = serde_json::from_slice(bytes).map_err(|error| {
         ContextRefusal::unavailable(format!(
@@ -905,7 +905,7 @@ impl WorkspaceContext {
     }
 
     /// Parse a published document. Unknown fields, another schema and a
-    /// non-protocol version are refused before any effect (§8.11).
+    /// non-protocol version are refused before any effect (§8).
     pub(crate) fn parse(body: &[u8]) -> Result<Self, ContextRefusal> {
         let context: Self = serde_json::from_slice(body).map_err(|error| {
             ContextRefusal::unavailable(format!(

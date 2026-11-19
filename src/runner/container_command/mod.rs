@@ -85,7 +85,7 @@ pub(super) fn render_container_report(report: ContainerCommandReport, output_jso
 /// How one `container up` invocation selected its environment.
 ///
 /// This is the reviewed intent boundary between the two `up` surfaces
-/// (contract 052 §8, §8.11): naming a container or accepting
+/// (contract 052 §8): naming a container or accepting
 /// `[containers].default` is the ordinary Compose invocation this command has
 /// always performed, including for a container a legacy bundle declares as its
 /// default system/workspace. Selecting the environment through `--system`

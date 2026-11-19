@@ -231,7 +231,7 @@ effigy#320). The workspace session is a separate detached run that outlives
 a workspace-invoked `dev` is its child and host/guest UIs can attach to that
 managed child. The kernel and runner session/channel/client/serving seams are
 implemented; the production activation caller and native qualification remain
-missing. See [052 §8.11](contracts/052-runtime-kernel-contract.md#8-host-and-guest-model)
+missing. See [052 §8](contracts/052-runtime-kernel-contract.md#8-host-and-guest-model)
 for implementation and coverage limits; this does not make the managed dev run
 the workspace session or claim the intended terminal relationship is wired in
 production.
@@ -659,7 +659,7 @@ ruling (Supervisor 2026-11-01)”.
   configuration-only Compose recreation must support the new exact workspace
   ID, including at the same image reference. The subsequent capability and
   desired-successor amendments preserve the narrowed foreign-creator exclusion.
-  [052 §8.11–§8.12](contracts/052-runtime-kernel-contract.md#812-gate-scoped-creation-inference-effigy510)
+  [052 §8](contracts/052-runtime-kernel-contract.md#8-host-and-guest-model)
   owns the exact identity, replacement and capability rules. These amendments
   do not replace Tom's base threat-model ruling or qualify a backend.
 - **Supervisor under Tom’s standing delegation, 2026-11-01 — cross-owner merge ruling for #506:**
@@ -667,7 +667,7 @@ ruling (Supervisor 2026-11-01)”.
   deadline. Gated reobserve must use an independent fresh backend read with
   that same deadline and exact ID/fence, never pass through an earlier
   observation, and fail closed on unknown, changed or missing evidence.
-  [052 §8.11](contracts/052-runtime-kernel-contract.md#8-host-and-guest-model)
+  [052 §8](contracts/052-runtime-kernel-contract.md#8-host-and-guest-model)
   and [053 §3](contracts/053-environment-reconciler-contract.md#3-transitions)
   apply this requirement to the integration. This records the existing
   Queue-held direction; it does not claim #506 or native #512 behavior is shipped.
@@ -857,7 +857,7 @@ its session are removed; host actions run in the host CLI, and the guest runs
 locally. The guest's identity observation and binary publication stay.)
 Asked: 2026-10-29
 Original seam owners: #482 (C identity/context/publication), #483 (A transport), #452 (glue).
-Authority: [contract 052 §8.11](contracts/052-runtime-kernel-contract.md#8-host-and-guest-model).
+Authority: [contract 052 §8](contracts/052-runtime-kernel-contract.md#8-host-and-guest-model).
 
 Tom's 2026-10-30 ruling (decision 8c0ef812) bounds the normative seam to 250 lines,
 tied to the merged #484 reservation/publication APIs. The detailed E-step,
@@ -866,7 +866,7 @@ candidate material and is retained in Git history only. It does not qualify any
 backend or waive Q-017.
 
 The three originally missing facts now have implemented seams in
-[052 §8.11](contracts/052-runtime-kernel-contract.md#8-host-and-guest-model):
+[052 §8](contracts/052-runtime-kernel-contract.md#8-host-and-guest-model):
 
 - **Guest-local identity:** `ProcGuestIdentity` and strict v2 context verification
   compare independently observed container/boot/platform/libc before credential
@@ -902,7 +902,7 @@ Rootless Linux and Apple Containers have no qualification claim. These
 implementation seams do not waive the production activation or native
 qualification gates.
 
-`052` §8.11 carries the current #506 detail: the answered render-preflight seal
+`052` §8 carries the current creation-attribution detail: the answered render-preflight seal
 (`Objects::seal_for_preflight` -> retained `SealedPreflight` -> the one apply
 promoting it through `EnvRun::publish_sealed_desired` under `Gate(Env)`) and the
 creator adapter that reads #510's journal-bound exact-new-ID receipt. Unknown

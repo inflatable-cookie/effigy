@@ -2330,7 +2330,7 @@ const ADDITIVE_TABLES: [(&str, &str); 9] = [
 CREATE INDEX IF NOT EXISTS foreground_terminals_closed
   ON foreground_terminals(closed_at)",
     ),
-    // 052 §8.11: one keyed workspace request per session generation, holding
+    // Retired channel: one keyed workspace request per session generation, holding
     // the canonical digest, the one run it reserved and that run's recorded
     // outcome. It has no foreign key on purpose: a pruned run must not take
     // the recorded answer with it, because replaying the key must never admit
@@ -2388,7 +2388,7 @@ CREATE INDEX IF NOT EXISTS run_attachments_run
   updated_at INTEGER NOT NULL
 ) STRICT;",
     ),
-    // 052 §8.7/§8.11: the successor environment generation a workspace
+    // Retired channel: the successor environment generation a workspace
     // activation reserved, plus the two runs it binds — the environment
     // activation run admitted at E and the Task-owned session staged against
     // it at its own generation S. One row per (environment, generation): a
@@ -2434,7 +2434,7 @@ CREATE INDEX IF NOT EXISTS workspace_activation_reservations_session
 ) STRICT;
 CREATE INDEX IF NOT EXISTS workspace_session_runs_owner ON workspace_session_runs(owner)",
     ),
-    // 052 §8.11: the durable selection a workspace activation committed. The
+    // Retired channel: the durable selection a workspace activation committed. The
     // obligation is written in the same transaction as `active(E)`, the
     // session mapping and the session's `Borrow` attachment, so there is no
     // window in which a generation is published without the record of the
@@ -2442,7 +2442,7 @@ CREATE INDEX IF NOT EXISTS workspace_session_runs_owner ON workspace_session_run
     // a reader that meets a state it does not know refuses instead of guessing;
     // `selection` and `publication` are the exact receipts the commit validated
     // and never carry secret bytes.
-    // 052 §8.11: the detached supervisor's custody registration for a session
+    // Retired channel: the detached supervisor's custody registration for a session
     // run. A run without one is not a custody owner, so a listener and key are
     // never launched for a run nobody supervises.
     (
@@ -2503,7 +2503,7 @@ const ADDITIVE_INDEXES: [(&str, &str); 11] = [
         "attachments_run",
         "CREATE INDEX IF NOT EXISTS attachments_run ON attachments(run_id)",
     ),
-    // 052 §8.11: one run identity belongs to at most one keyed request, so a
+    // Retired channel: one run identity belongs to at most one keyed request, so a
     // run can never be attributed to another session's key. The admission
     // transaction refuses a collision by name; this index holds the same line
     // for any writer that reaches the table another way. The earlier draft
