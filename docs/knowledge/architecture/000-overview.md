@@ -41,8 +41,6 @@ Use these docs intentionally:
   is the deploy/export architecture anchor
 - [023-local-dependency-linking-architecture.md](023-local-dependency-linking-architecture.md)
   is the active Cargo/Bun machine-local dependency-linking boundary
-- [024-repository-defined-documentation-graph.md](024-repository-defined-documentation-graph.md)
-  is the active generic documentation-graph and repository-profile boundary
 - [025-external-skill-task-execution.md](025-external-skill-task-execution.md)
   owns explicit installed-skill source versus consumer-target execution
 - [026-feature-placement-and-command-surface.md](026-feature-placement-and-command-surface.md)

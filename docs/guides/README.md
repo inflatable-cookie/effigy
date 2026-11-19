@@ -111,13 +111,10 @@ Read:
 - [`026-json-payload-examples.md`](026-json-payload-examples.md)
 - [`047-agent-and-cross-repo-adoption.md`](047-agent-and-cross-repo-adoption.md)
 - [`056-northstar-effigy-consumer-repo-contract.md`](056-northstar-effigy-consumer-repo-contract.md)
-- [`../architecture/024-repository-defined-documentation-graph.md`](../knowledge/architecture/024-repository-defined-documentation-graph.md)
-- [`../contracts/041-documentation-graph-profile-contract.md`](../knowledge/contracts/041-documentation-graph-profile-contract.md)
 
 Use when:
 - another tool is calling Effigy
 - you need stable JSON
-- you want the documentation profile alongside a wider agent flow
 - you are adopting Effigy across multiple repos
 - you want a periodic agent to inventory project papercut queues
 

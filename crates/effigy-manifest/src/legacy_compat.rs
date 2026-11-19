@@ -10,15 +10,8 @@
 //! - `[contracts].selection-contract` → `selection_contract`
 //! - `[sources.<name>].rev-file` → `rev_file`
 //!
-//! `docs_policy.graph.kinds.<kind>.default-currentness` is the contract 041
-//! spelling (`rename_all = "kebab-case"`). It is not in this window.
-//!
 //! Out of scope: user-global program preference aliases (`colima-nerdctl`,
 //! `docker-compose`) and snake_case aliases such as `threshold` / `js_ts`.
-//!
-//! 2026-10-28 scan: `default-currentness` in Effigy's docs config and Northstar
-//! starter (canonical); no active external consumer `effigy.toml` hit in
-//! projects/legacy.
 
 use toml::Value;
 
@@ -143,10 +136,6 @@ selection-contract = "selection.json"
 git = "git@example.com:acme/book.git"
 rev-file = "book.rev"
 path = "../book"
-
-[docs_policy.graph.kinds.guide]
-include = ["docs/guides/*.md"]
-default-currentness = "current"
 "#,
         )
         .expect("parse");
@@ -160,9 +149,6 @@ default-currentness = "current"
             .iter()
             .any(|item| item.contains("`selection-contract`")));
         assert!(statements.iter().any(|item| item.contains("`rev-file`")));
-        assert!(statements
-            .iter()
-            .all(|item| !item.contains("`default-currentness`")));
         assert!(statements
             .iter()
             .all(|item| item.contains("removed in v0.16")));
@@ -226,19 +212,6 @@ git = "git@example.com:acme/book.git"
 rev = "abc"
 path = "book"
 schema-index = "not-an-alias.json"
-"#,
-        )
-        .expect("parse");
-        assert!(scan(&value).is_empty());
-    }
-
-    #[test]
-    fn docs_policy_kind_default_currentness_is_canonical_and_silent() {
-        let value: toml::Value = toml::from_str(
-            r#"
-[docs_policy.graph.kinds.guide]
-include = ["docs/guides/*.md"]
-default-currentness = "current"
 "#,
         )
         .expect("parse");

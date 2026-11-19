@@ -24,15 +24,14 @@ use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::watch;
 use tracing::{debug, error, info};
 
-use crate::dns::{run_dns_server, run_dns_server_on, DnsCache, DnsConfig};
+use crate::dns::{run_dns_server_on, DnsCache, DnsConfig};
 use crate::error::GatewayError;
 use crate::identity::{self, GatewayIdentityProbe, GatewayRecordSnapshot};
 pub use crate::identity::{probe_gateway_process, GatewayProcessProbe};
 #[cfg(all(unix, test))]
 use crate::identity::{probe_gateway_process_with, PsProbeOutput};
 use crate::proxy::{
-    run_proxy_server, run_proxy_server_on, run_tls_proxy_server, run_tls_proxy_server_on,
-    ProxyConfig,
+    run_proxy_server_on, run_tls_proxy_server, run_tls_proxy_server_on, ProxyConfig,
 };
 use crate::routes::{LiveRouteTable, RouteTable};
 use crate::stats::GatewayStats;
@@ -126,11 +125,6 @@ pub struct GatewayConfig {
 
     /// State and host-effect policy for this gateway instance.
     pub mode: GatewayMode,
-
-    /// Opt the daemon into adopting launchd-activated loopback listeners
-    /// (HTTP `127.0.0.1:80`, HTTPS `127.0.0.1:443`) instead of binding them.
-    /// Only the administrator-installed launchd job sets this flag.
-    pub listener_handoff: bool,
 }
 
 /// Selects the operator gateway defaults or a caller-owned private instance.
@@ -175,7 +169,6 @@ impl GatewayConfig {
             route_table_path: gateway_dir.join("routes.json"),
             pid_file_path: gateway_dir.join("gateway.pid"),
             mode: GatewayMode::Operator,
-            listener_handoff: false,
         }
     }
 
@@ -197,12 +190,6 @@ impl GatewayConfig {
         let GatewayMode::Private(policy) = &self.mode else {
             return Ok(());
         };
-        if self.listener_handoff {
-            return Err(GatewayError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "private gateway mode never adopts launchd handoff listeners",
-            )));
-        }
         crate::private_state::validate_root(policy.state_root())?;
         let root = policy.state_root();
         let tls_paths_match = self.tls.as_ref().is_some_and(|tls| {
@@ -272,12 +259,6 @@ impl GatewayConfig {
     pub fn with_tls(mut self, certs_dir: PathBuf, https_addr: SocketAddr) -> Self {
         self.tls = Some(TlsConfig::new(certs_dir));
         self.proxy.tls_bind_addr = Some(https_addr);
-        self
-    }
-
-    /// Opt the daemon into adopting launchd-activated loopback listeners.
-    pub fn with_listener_handoff(mut self, enabled: bool) -> Self {
-        self.listener_handoff = enabled;
         self
     }
 }
@@ -1120,40 +1101,13 @@ async fn run_gateway_with_cancel(
             )));
         }
     }
-    let private_listeners = if config.is_private() || !config.listener_handoff {
-        let listeners = bind_private_gateway_listeners(&config).await?;
-        runtime_config.dns.bind_addr = listeners.dns_addr;
-        runtime_config.proxy.bind_addr = listeners.proxy_addr;
-        runtime_config.proxy.tls_bind_addr = Some(listeners.https_addr);
-        Some(listeners)
-    } else {
-        None
-    };
-
-    // The launchd handoff adopts the two administrator-owned loopback
-    // listeners before anything is published. A refusal here is fail-closed:
-    // no generation record, no adopted socket, no fallback bind, and the
-    // daemon exits so launchd reports the failed job instead of a gateway.
-    let handed_listeners = if config.listener_handoff {
-        if config.tls.is_none() || config.proxy.tls_bind_addr.is_none() {
-            return Err(GatewayError::ListenerHandoff(
-                crate::listener_handoff::ListenerHandoffError::HttpsEndpointUnserved,
-            ));
-        }
-        Some(crate::listener_handoff::adopt_handed_listeners()?)
-    } else {
-        None
-    };
-    let (handed_http, handed_https): (
-        Option<tokio::net::TcpListener>,
-        Option<tokio::net::TcpListener>,
-    ) = match handed_listeners {
-        Some(listeners) => {
-            let (http, https) = listeners.into_tokio()?;
-            (Some(http), Some(https))
-        }
-        None => (None, None),
-    };
+    // Every daemon binds its own loopback listeners before anything is
+    // published. A refusal here is fail-closed: no generation record and no
+    // fallback bind.
+    let listeners = bind_private_gateway_listeners(&config).await?;
+    runtime_config.dns.bind_addr = listeners.dns_addr;
+    runtime_config.proxy.bind_addr = listeners.proxy_addr;
+    runtime_config.proxy.tls_bind_addr = Some(listeners.https_addr);
 
     // Install Unix signal handlers before publishing the generation record.
     // A setup failure must not leave a record for a daemon that cannot shut
@@ -1205,7 +1159,7 @@ async fn run_gateway_with_cancel(
             &effigy_core::build_info::active_version(),
         )?;
     }
-    if let (Some(listeners), Some(guard)) = (&private_listeners, &mut private_record_guard) {
+    if let Some(guard) = &mut private_record_guard {
         let record = PrivateGatewayAddressRecord {
             pid: published_snapshot
                 .as_ref()
@@ -1279,109 +1233,55 @@ async fn run_gateway_with_cancel(
 
     // Run DNS and proxy concurrently. Keep every task in one owned set so a
     // shutdown signal can stop and join all listeners before identity cleanup.
-    // Handoff mode serves HTTP/HTTPS on the adopted launchd sockets and keeps
-    // DNS, its route watcher, and the TCP alias services on their ordinary
-    // unprivileged startup paths.
     let (publication_tx, publication_rx) = watch::channel(config.is_private());
     let mut server_tasks = tokio::task::JoinSet::new();
-    let prebound_https_listener = match private_listeners {
-        Some(listeners) => {
-            let dns_config = runtime_config.dns.clone();
-            let proxy_config = runtime_config.proxy.clone();
-            let dns_table = Arc::clone(&shared_table);
-            let proxy_table = Arc::clone(&shared_table);
-            let dns_stats = Arc::clone(&stats);
-            let proxy_stats = Arc::clone(&stats);
-            let dns_cache = Arc::clone(&dns_cache);
-            let dns_shutdown = shutdown_rx.clone();
-            let mut publication_rx = publication_rx.clone();
-            let proxy_shutdown = shutdown_rx.clone();
-            server_tasks.spawn(async move {
-                (
-                    "DNS server",
-                    async {
-                        while !*publication_rx.borrow() {
-                            if publication_rx.changed().await.is_err() {
-                                return Ok(());
-                            }
+    let prebound_https_listener = {
+        let dns_config = runtime_config.dns.clone();
+        let proxy_config = runtime_config.proxy.clone();
+        let dns_table = Arc::clone(&shared_table);
+        let proxy_table = Arc::clone(&shared_table);
+        let dns_stats = Arc::clone(&stats);
+        let proxy_stats = Arc::clone(&stats);
+        let dns_cache = Arc::clone(&dns_cache);
+        let dns_shutdown = shutdown_rx.clone();
+        let mut publication_rx = publication_rx.clone();
+        let proxy_shutdown = shutdown_rx.clone();
+        server_tasks.spawn(async move {
+            (
+                "DNS server",
+                async {
+                    while !*publication_rx.borrow() {
+                        if publication_rx.changed().await.is_err() {
+                            return Ok(());
                         }
-                        run_dns_server_on(
-                            listeners.dns,
-                            dns_config,
-                            dns_table,
-                            dns_stats,
-                            dns_cache,
-                            dns_shutdown,
-                        )
-                        .await
                     }
-                    .await,
-                )
-            });
-            server_tasks.spawn(async move {
-                (
-                    "proxy server",
-                    run_proxy_server_on(
-                        listeners.proxy,
-                        proxy_config,
-                        proxy_table,
-                        proxy_stats,
-                        proxy_shutdown,
+                    run_dns_server_on(
+                        listeners.dns,
+                        dns_config,
+                        dns_table,
+                        dns_stats,
+                        dns_cache,
+                        dns_shutdown,
                     )
-                    .await,
-                )
-            });
-            Some(listeners.https)
-        }
-        None => {
-            let dns_config = runtime_config.dns.clone();
-            let dns_table = Arc::clone(&shared_table);
-            let dns_stats = Arc::clone(&stats);
-            let dns_cache = Arc::clone(&dns_cache);
-            let dns_shutdown = shutdown_rx.clone();
-            server_tasks.spawn(async move {
-                (
-                    "DNS server",
-                    run_dns_server(dns_config, dns_table, dns_stats, dns_cache, dns_shutdown).await,
-                )
-            });
-            let proxy_config = runtime_config.proxy.clone();
-            let proxy_table = Arc::clone(&shared_table);
-            let proxy_stats = Arc::clone(&stats);
-            let proxy_shutdown = shutdown_rx.clone();
-            match handed_http {
-                Some(listener) => {
-                    server_tasks.spawn(async move {
-                        (
-                            "proxy server",
-                            run_proxy_server_on(
-                                listener,
-                                proxy_config,
-                                proxy_table,
-                                proxy_stats,
-                                proxy_shutdown,
-                            )
-                            .await,
-                        )
-                    });
+                    .await
                 }
-                None => {
-                    server_tasks.spawn(async move {
-                        (
-                            "proxy server",
-                            run_proxy_server(
-                                proxy_config,
-                                proxy_table,
-                                proxy_stats,
-                                proxy_shutdown,
-                            )
-                            .await,
-                        )
-                    });
-                }
-            }
-            handed_https
-        }
+                .await,
+            )
+        });
+        server_tasks.spawn(async move {
+            (
+                "proxy server",
+                run_proxy_server_on(
+                    listeners.proxy,
+                    proxy_config,
+                    proxy_table,
+                    proxy_stats,
+                    proxy_shutdown,
+                )
+                .await,
+            )
+        });
+        Some(listeners.https)
     };
 
     let alias_table = Arc::clone(&shared_table);

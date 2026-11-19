@@ -260,13 +260,13 @@ it cannot combine with `--json`. Contract:
 `docs/knowledge/contracts/042-external-skill-task-runner-contract.md`.
 
 **Documentation navigation** — v0.15 removed `effigy docs context`; use
-`docs/README.md` as the docs index and `rg` for exact text. The optional
-committed `[docs_policy.graph]` profile is still validated config, but it has no
-v0.15 reader. `effigy docs check` is unchanged.
+`docs/README.md` as the docs index and `rg` for exact text. `effigy docs check`
+is unchanged. The `[docs_policy.graph]` profile was retired in v0.16: delete
+the table if a manifest still carries it.
 
 **Config shapes** — `[tasks]`, `[systems]`, `[containers]`, `[bootstrap]`,
 `[release]`, `[bundle]`, `[secrets]`, `[state]`, `[deploy]`, and the optional
-`[docs_policy.graph]` repository-defined Markdown graph profile.
+`[docs_policy.sources]` cross-repository declaration.
 Details: `references/config-shapes.md`.
 
 **Program fallbacks** — `[programs.<name>]` is user-config only
@@ -310,7 +310,7 @@ Sequence: `references/release-protocol.md`.
 
 | Topic | Guide |
 |-------|-------|
-| Documentation profile | `docs/knowledge/architecture/024-repository-defined-documentation-graph.md`, `docs/knowledge/contracts/041-documentation-graph-profile-contract.md` |
+| Documentation policy | `docs/guides/025-command-reference-matrix.md` |
 | Agent adoption | `docs/guides/047-agent-and-cross-repo-adoption.md` |
 | Installed skill task execution | `docs/knowledge/contracts/042-external-skill-task-runner-contract.md`, `docs/knowledge/architecture/025-external-skill-task-execution.md` |
 | Rhai script steps | `docs/guides/061-rhai-script-steps-guide.md` |

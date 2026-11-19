@@ -50,8 +50,8 @@ pub use catalog_section::{
     env_schema_declaring_catalog, nearest_catalog, nearest_declaring_catalog,
 };
 pub use composition::{
-    load_docs_policy_graph_config, load_task_manifest_with_inspection, LoadedTaskManifest,
-    ManifestCompositionEdge, ManifestCompositionOverride, ManifestCompositionValueSource,
+    load_task_manifest_with_inspection, LoadedTaskManifest, ManifestCompositionEdge,
+    ManifestCompositionOverride, ManifestCompositionValueSource,
 };
 pub use config_sections::{
     load_committed_docs_policy_sources, secret_env_name, ManifestBootstrapConfig,
@@ -64,18 +64,15 @@ pub use config_sections::{
     ManifestContainerSecretDelivery, ManifestContainerSecretsConfig,
     ManifestContainerServiceConfig, ManifestContainerShutdownMode, ManifestContainerStartup,
     ManifestContainersConfig, ManifestContractsConfig, ManifestDataConfig,
-    ManifestDataTargetConfig, ManifestDocsPolicyConfig, ManifestDocsPolicyGraphCardinality,
-    ManifestDocsPolicyGraphConfig, ManifestDocsPolicyGraphCurrentnessClass,
-    ManifestDocsPolicyGraphCurrentnessConfig, ManifestDocsPolicyGraphFieldConfig,
-    ManifestDocsPolicyGraphKindConfig, ManifestDocsPolicyGraphRelationConfig,
-    ManifestDocsPolicySourcesConfig, ManifestEnvSchemaConfig,
-    ManifestInlineWorkspaceContainerConfig, ManifestIsolationAdoption, ManifestIsolationConfig,
-    ManifestJsPackageManager, ManifestPackageManagerConfig, ManifestPinnedSourceConfig,
-    ManifestReleaseConfig, ManifestScanConfig, ManifestSecretKeyConfig, ManifestSecretTarget,
-    ManifestSecretsBackend, ManifestSecretsConfig, ManifestSecretsExternalConfig,
-    ManifestSecretsVaultConfig, ManifestSourceUpdate, ManifestSystemConfig, ManifestSystemMount,
-    ManifestSystemMountSpec, ManifestSystemMountTable, ManifestSystemsConfig,
-    ManifestTaskDefaultsConfig, ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
+    ManifestDataTargetConfig, ManifestDocsPolicyConfig, ManifestDocsPolicySourcesConfig,
+    ManifestEnvSchemaConfig, ManifestInlineWorkspaceContainerConfig, ManifestIsolationAdoption,
+    ManifestIsolationConfig, ManifestJsPackageManager, ManifestPackageManagerConfig,
+    ManifestPinnedSourceConfig, ManifestReleaseConfig, ManifestScanConfig, ManifestSecretKeyConfig,
+    ManifestSecretTarget, ManifestSecretsBackend, ManifestSecretsConfig,
+    ManifestSecretsExternalConfig, ManifestSecretsVaultConfig, ManifestSourceUpdate,
+    ManifestSystemConfig, ManifestSystemMount, ManifestSystemMountSpec, ManifestSystemMountTable,
+    ManifestSystemsConfig, ManifestTaskDefaultsConfig, ManifestWorkspaceConfig,
+    ManifestWorkspaceContainerRef,
 };
 pub use execution_binding::{
     resolve_task_execution_binding, resolve_task_execution_binding_from_parts,

@@ -73,7 +73,7 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Bui
     emit_doc_lines(
         &mut renderer,
         color_enabled,
-        docs::docs_policy_graph_lines(ConfigDocProfile::Reference),
+        docs::docs_policy_sources_lines(),
     )?;
     emit_doc_lines(
         &mut renderer,

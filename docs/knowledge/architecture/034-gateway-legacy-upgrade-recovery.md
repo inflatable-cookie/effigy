@@ -71,9 +71,9 @@ Tom's 2026-10-13 ruling, relayed verbatim by the Acowtancy owner, is:
 The selected next route is a user-owned gateway with separately bounded
 administrator setup and an operator-run migration. This is design and private
 qualification authority; no live gateway restart, administrator action or
-machine configuration change is authorized for an agent. The root-daemon
-attestation proposal below remains unimplemented and is not this route's
-prerequisite.
+machine configuration change is authorized for an agent. The unimplemented
+root-daemon attestation proposal this route once carried has been removed; it
+never became a prerequisite.
 
 Legacy root dependencies that required separation:
 
@@ -117,187 +117,25 @@ live cross-UID stop or install new packet-filter, socket-activation or privilege
 helper machinery. A required new mechanism must be returned as a concrete
 bounded design boundary, with its compatibility and network exposure stated.
 
-### Source-only launchd handoff ruling
+### Direct daemon launchd handoff (task 156; retired in v0.16)
 
-Tom answered decision `235519af-aa5b-41b7-ac61-1a75579fb34e` version 2 through
-the operator board on 2026-10-13:
-"Implement source-only launchd handoff; Tom installs/tests later".
-This authorizes the bounded implementation and independent private review of
-the exact loopback listener handoff. It does not authorize an agent to register
-a system or user launchd job, run an administrator command, install network or
-CA configuration, stop the live root gateway, migrate live state or reboot.
+Task 156 built a source-only direct daemon handoff: an administrator launchd
+job owned TCP `127.0.0.1:80` and `443`, passed them to `__gateway-run
+--listener-handoff`, and the daemon validated and adopted them. v0.15 (Q-009)
+retired the definition generator and the `setup-listener-handoff`,
+`listener-handoff-status` and `remove-listener-handoff` commands. v0.16
+(delivery D2) retired the remaining direct mode — the internal opt-in flag, its
+startup branch and its adoption proofs. Historical detail is in Git.
 
-The new launchd definition must bind only TCP `127.0.0.1:80` and `443`, launch
-the daemon as the authenticated non-root operator, and preserve all route,
-loopback-registry, certificate and generation ownership contracts. No wildcard
-listener, packet filter, URL change, passwordless sudo, setuid program or new
-standing Effigy root helper is part of this ruling. Exact supported setup,
-activation, migration and rollback commands must come from implementation and
-review; source and private fixture qualification cannot establish live
-administrator installation or cross-boot behavior. Tom owns those later steps.
-
-### Retained adoption boundary (task 156, cut in v0.15)
-
-Task 156 implemented the capability as `crates/effigy-gateway/src/listener_handoff.rs`
-plus the `effigy gateway setup-listener-handoff` command and the internal
-`__gateway-run --listener-handoff` opt-in. v0.15 (Q-009) retired the definition
-generator, the command and the read-only status/removal plan; the internal
-`--listener-handoff` opt-in and the descriptor adoption boundary below remain,
-source-only and privately qualified only. The unexecuted set stays exactly as
-the ruling requires: no agent has registered a launchd job, bound the
-privileged endpoints, migrated a live gateway, or observed a boot. No command
-generates, inspects or removes a definition, so an operator who wrote one by
-hand is on their own. The retained surface:
-
-- Definition (retired): `ListenerHandoffSetup` rendered deterministic launchd
-  plist bytes — label `dev.effigy.gateway.user`, the canonical reviewed
-  executable, `__gateway-run --listener-handoff`, the operator's passwd user,
-  group and home (`HOME` pinned, never the calling shell's environment),
-  `RunAtLoad` and `KeepAlive`, and a `Sockets` dict owning exactly `http` = TCP
-  `127.0.0.1:80` and `https` = TCP `127.0.0.1:443` over IPv4. The generator, its
-  strict parser and `validate_launchd_definition` were removed in v0.15; use
-  `effigy gateway up` instead.
-- Activation: the daemon adopts sockets through launchd's documented
-  `launch_activate_socket` ABI (`<launch.h>`, macOS 10.10+; `ESRCH` outside a
-  launchd job, `ENOENT` for a missing socket name). Every handed descriptor is
-  validated — open, not a duplicate number or duplicate kernel socket object
-  (the libproc `soi_so` handle; macOS `fstat` cannot distinguish sockets), a
-  stream socket, listening (libproc TCP state; macOS has no `SO_ACCEPTCONN`),
-  exactly the expected IPv4 loopback endpoint — before adoption, and is marked
-  close-on-exec. Any refusal closes every handed descriptor exactly once,
-  adopts nothing, and publishes no generation record; DNS, route watching,
-  aliases and TLS keep their ordinary paths. Identity refusals are structural:
-  a root effective UID or a `SUDO_*` environment refuses the handoff, and no
-  environment value ever authorizes it. Private fixtures exercise this same
-  adoption boundary on ephemeral loopback endpoints with owned descriptors and
-  real accept round trips.
-- Operator shape: the standard operator gateway (`gateway setup`,
-  `gateway up|down|status`) installs and controls its own listeners; no launchd
-  install, verification or rollback plan is shipped.
-  Resolver files, `lo0` aliases and CA trust remain separate administrator
-  steps.
-
-Unexecuted, still required before any launchd handoff could be depended on:
-Tom's administrator install and activation, a live `gateway status` against the
-user-owned daemon, and one real cross-boot restore proof.
-
-### Handoff status and removal plan (task 157, retired in v0.15)
-
-Task 157 added the symmetric operator surface: read-only
-`effigy gateway listener-handoff-status` and an **unexecuted** administrator
-removal plan from `effigy gateway remove-listener-handoff`. v0.15 (Q-009)
-retired both commands with the rest of the experimental listener-handoff
-surface, and `crates/effigy-gateway/src/listener_handoff/maintenance.rs` with
-them. Neither command had installed, run, removed or migrated anything, so the
-retirement changes no live gateway state and needs no operator step. The
-semantics below record what the surface did while it existed.
-
-- Definition observation: the fixed path
-  `/Library/LaunchDaemons/dev.effigy.gateway.user.plist` is opened with
-  `O_NOFOLLOW`, bound to a single regular file's kernel identity (device,
-  inode, size, mtime, owner, group, mode), read within a 64 KiB bound, and
-  re-checked for a concurrent change. Ownership must be the administrator;
-  group/other write, symlinks, non-regular objects, oversized files and
-  permission refusals are distinct. The bytes must pass the strict parser and
-  the complete expected generator shape (now including unknown or duplicated
-  top-level keys), the resolved operator user/group/`HOME`, and the current
-  canonical executable. A moved or missing executable path is a read-only
-  finding, not authenticity: it reports stale/unverified and refuses a plan.
-- launchd observation: `launchctl print system/dev.effigy.gateway.user` runs
-  as a fixed literal argv (never a shell, never interpolated text) under one
-  absolute deadline and byte limit. Only the documented service header, the
-  top-level `state` and the on-disk `path` are read structurally; the output
-  is explicitly not API (`man launchctl`), so unrecognized structure, a
-  non-zero exit, a permission failure, a deadline, a truncated capture or an
-  unavailable/unsupported binary stay distinct from the documented
-  `Could not find service` absence. A loaded job whose `path` is not the fixed
-  definition path is an association mismatch. Label, PID, checksum and the
-  displayed executable path are observations only, never signal authority.
-- Removal: a plan is emitted only when the definition verifies as the exact
-  reviewed generator for the current operator and executable **and** the job
-  observation is determinate (loaded with the matching path, or confirmed
-  absent). The plan contains only the two fixed literal steps
-  `sudo launchctl bootout system/dev.effigy.gateway.user` and
-  `sudo rm /Library/LaunchDaemons/dev.effigy.gateway.user.plist`, in safe
-  order, with a required fresh identity recheck and a KeepAlive warning. It
-  states that its effects are UNEXECUTED, never that a gateway was stopped.
-  Foreign ownership, unsafe modes, symlinks, changed bytes, unknown or stale
-  shapes, operator/executable mismatches, a loaded job without a verified
-  definition, and every unknown or failed observation refuse before any
-  usable plan is produced.
-
-The unexecuted set is unchanged: no agent installed, booted out, removed or
-mutated a launchd job or plist, and the administrator execution, verification
-and reboot proofs remain Tom-run.
-
-## Proposed read-only root-daemon attestation
-
-This is a concrete proposal for a separate operator ruling if Q-002's
-interactive identity reader cannot support prompt-free reuse of a healthy
-root-owned gateway. It grants no authority under the current task. The proposed
-capability only authenticates `AlreadyRunning` reuse of the exact current
-generation; replacement, down, legacy adoption and every signal continue to
-require their existing generation checks and administrator lifecycle path.
-
-### Endpoint and peer binding
-
-- The root daemon creates one Unix-domain socket for the recorded operator UID
-  under a root-owned, non-symlink runtime directory such as
-  `/run/effigy/gateway/`. The directory is root-owned and not writable by
-  callers. The socket is root-owned and connectable by local users; the server
-  accepts requests only when kernel peer credentials identify the UID recorded
-  in the trusted gateway identity sidecar (or root itself). The endpoint path,
-  owner, mode, file type and parent chain are checked without following
-  symlinks. A socket pathname or its presence never authenticates a daemon.
-- The client connects to the endpoint selected from trusted local configuration
-  and obtains the kernel-reported peer PID and UID (`SO_PEERCRED` on Linux and
-  the platform peer-credential API on macOS). The returned PID and UID must
-  equal that peer tuple and the sidecar's recorded PID and owner policy. The
-  response also carries the boot identity, precise process start identity,
-  canonical executable path, canonical gateway target digest, sidecar digest,
-  and the existing supported gateway role/endpoints. The client accepts only
-  the exact generation and default role already supported by the current
-  identity checks; custom, partial or ambiguous endpoints stay unknown.
-- Each request includes a fresh 256-bit client nonce, protocol version, target
-  digest and sidecar digest. The daemon echoes the nonce and both digests in a
-  bounded, length-framed response. The client checks one response on the same
-  connected peer, rejects a nonce reuse or mismatch, and caches no attestation.
-  A captured response therefore cannot be replayed against another connection,
-  target or generation.
-- The operation is read-only. It cannot update PID/version/identity records,
-  register routes, request signals, authorize recovery, or cause a daemon to
-  start. Peer UID, PID, boot/start identity, target digest, sidecar digest and
-  role are all required; health responses, HTTP status, PID alone, socket
-  ownership alone and readable sidecar bytes alone remain insufficient.
-
-### Refusal, compatibility and qualification
-
-- Missing, stale, replaced, symlinked, wrongly owned, wrongly permissioned or
-  untrusted endpoints refuse. A peer UID/PID mismatch, stale boot/start
-  identity, target or record digest mismatch, unexpected role, malformed frame,
-  unknown protocol, replayed nonce, timeout or peer disconnect returns unknown
-  without deleting records or signalling. Local denial-of-service against the
-  endpoint is possible; it can cause refusal, never successful reuse.
-- New clients use this proof only when the root daemon advertises the versioned
-  endpoint and the trusted sidecar binds the same generation. Old daemons have
-  no endpoint and continue through Q-002's existing bounded interactive
-  administrator reader. A declined prompt, null stdin or unavailable proof
-  remains unknown. No protocol negotiation may downgrade a mismatched or
-  malformed new-daemon response to a PID or sidecar-only match.
-- A private cross-UID qualification must run a daemon under a distinct root
-  identity and an unprivileged client in an isolated disposable environment.
-  It must pass the exact peer/PID/UID/boot/start/record binding and exercise
-  endpoint replacement, symlink, wrong owner/mode, wrong peer, stale generation,
-  wrong target/role, malformed response, nonce replay, timeout and disconnect.
-  It must also qualify mixed old-client/new-daemon and new-client/old-daemon
-  behavior. Injected privilege controls alone cannot claim cross-UID proof.
-- Root compromise remains outside this mechanism's protection. A live
-  attestation proves which process answered and its current identity evidence;
-  it does not prove historical spawn ownership or eliminate the final
-  identity-check-to-signal TOCTOU. Any signal still requires the existing
-  immediate generation recheck. Endpoint installation, socket permissions,
-  runtime-directory lifecycle and the cross-platform peer APIs need an explicit
-  operator ruling before implementation.
+The supported macOS gateway runs as the operator and binds its own
+unprivileged loopback endpoints. Privileged low-port binds go through the
+production bind broker below: it activates its own root-owned Unix socket
+through launchd, and the operator validates and adopts the two descriptors it
+receives over that socket. Descriptor validation, fail-closed identity refusal
+and exact-once close behaviour stay on that broker boundary. No agent has
+registered a launchd job, bound the privileged endpoints, migrated a live
+gateway or observed a boot; a hand-written definition using the retired flag
+has no supported path.
 
 ## Operator daemon custody and privileged listeners
 

@@ -14,59 +14,22 @@ Effigy splits config across:
 **`qa:ci:fast`**. Built-in commands (`test`, `init`, `doctor`, …) come from Effigy
 itself; see `effigy --help` for the list.
 
-## `[docs_policy.graph]`
+## `[docs_policy.sources]`
 
-This optional repository-owned profile used to teach the local Markdown graph how
-to classify documentation, resolve currentness, and name typed relations. v0.15
-removed the `effigy graph` and `effigy docs context` readers, so the profile is
-validated config with no consumer; keep it in place until a decision retires or
-replaces it.
+Cross-repository documentation membership: `share = true` opts this repository
+in, and `front_doors` / `skill_roots` name the files and directories another
+checkout should read first. It is read from the committed root `effigy.toml`
+alone, never an include or `effigy.local.toml` overlay.
+
+The `[docs_policy.graph]` profile that preceded it was retired in v0.16 and no
+command reads it; delete that table if a manifest still carries it.
 
 ```toml
-[docs_policy.graph]
-roots = ["README.md", "docs"]
-
-[docs_policy.graph.fields.state]
-labels = ["State"]
-cardinality = "one"
-
-[docs_policy.graph.fields.maintainer]
-labels = ["Maintainer"]
-cardinality = "one"
-
-[docs_policy.graph.currentness]
-field = "state"
-current = ["current", "published"]
-historical = ["historical", "retired"]
-
-[docs_policy.graph.kinds.reference]
-include = ["docs/reference/*.md"]
-exclude = []
-authority = 100
-default-currentness = "unknown"
-
-[docs_policy.graph.kinds.archive]
-include = ["docs/archive/*.md"]
-exclude = []
-authority = 10
-default-currentness = "historical"
-
-[docs_policy.graph.relations.related]
-labels = ["Related", "See also"]
-headings = ["Related"]
+[docs_policy.sources]
+share = true
+front_doors = ["docs/README.md", "AGENTS.md"]
+skill_roots = [".agents/skills"]
 ```
-
-This generic example assumes no project's names; Effigy reserves none of these
-tokens.
-
-The profile is committed configuration, not inherited runtime behavior: the
-bytes in the consumer `effigy.toml` are the only runtime authority. No
-starter, installed skill directory or template cache is read while answering
-a query.
-
-The profile grammar and ranking rules live in
-`docs/knowledge/contracts/041-documentation-graph-profile-contract.md`; the architecture
-decision is `docs/knowledge/architecture/024-repository-defined-documentation-graph.md`.
 
 ## `[tasks]`
 

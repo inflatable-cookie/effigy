@@ -15,9 +15,8 @@ fn run_manifest_task_builtin_config_schema_prints_canonical_template() {
             "[manifest]",
             "minimum_effigy_version = \"0.6.2\"",
             "include = [",
-            "[docs_policy.graph]",
-            "[docs_policy.graph.fields.state]",
-            "[docs_policy.graph.kinds.reference]",
+            "[docs_policy.sources]",
+            "front_doors = [\"docs/README.md\", \"AGENTS.md\"]",
             "[containers]",
             "[containers.web]",
             "compose_file = \"infra/dev/docker-compose.yml\"",
@@ -71,7 +70,7 @@ fn run_manifest_task_builtin_config_schema_minimal_prints_starter_template() {
         &out,
         &[
             "concurrent = [",
-            "[docs_policy.graph]",
+            "[docs_policy.sources]",
             "strict-ready",
             "docs/knowledge/contracts",
         ],
@@ -115,7 +114,7 @@ fn run_manifest_task_builtin_config_schema_target_manifest_prints_composition_sn
 }
 
 #[test]
-fn run_manifest_task_builtin_config_schema_minimal_manifest_target_omits_graph_profile() {
+fn run_manifest_task_builtin_config_schema_minimal_manifest_target_omits_docs_policy() {
     let root = workspace_with_empty_manifest("builtin-config-schema-minimal-target-manifest");
 
     let out = run_config_ok(root, &["--schema", "--minimal", "--target", "manifest"]);
@@ -127,7 +126,7 @@ fn run_manifest_task_builtin_config_schema_minimal_manifest_target_omits_graph_p
             "minimum_effigy_version = \"0.6.2\"",
         ],
     );
-    assert_output_excludes_all(&out, &["[docs_policy.graph]", "docs/knowledge/contracts"]);
+    assert_output_excludes_all(&out, &["[docs_policy.sources]", "docs/knowledge/contracts"]);
 }
 
 #[test]

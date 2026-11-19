@@ -110,7 +110,7 @@ fn public_help_families_and_current_contract_paths_are_documented() {
         );
     }
 
-    assert!(matrix.contains("[docs_policy.graph]"));
+    assert!(matrix.contains("docs check"));
 
     let root = read("README.md");
     assert_contains_all(

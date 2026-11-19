@@ -309,9 +309,6 @@ boundary explicit:
   [`056-northstar-effigy-consumer-repo-contract.md`](056-northstar-effigy-consumer-repo-contract.md)
 - let Effigy own the generic validation and execution surfaces, for example:
   `docs check links`, `docs check paths`, JSON mode, and release orchestration
-- a documentation graph profile is one committed `[docs_policy.graph]` block
-  in the consumer manifest. Effigy resolves documentation semantics from the
-  consumer manifest only, never from an installed skill directory
 
 Do not collapse bootstrap logic into Effigy unless repeated adoption pain shows
 that the skill/template layer cannot cover the gap cleanly.

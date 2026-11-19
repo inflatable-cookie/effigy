@@ -1,21 +1,14 @@
-//! Launchd loopback listener handoff for the operator-owned gateway.
+//! Launchd socket activation for the privileged bind broker.
 //!
-//! Source implementation candidate for the `loopback-privileged-listener-handoff`
-//! capability returned by task 155 (architecture 034). An
-//! administrator-installed launchd definition owns two exact loopback sockets
-//! — TCP `127.0.0.1:80` and `127.0.0.1:443` — and hands them, through
-//! launchd's documented socket-activation ABI, to the gateway daemon running
-//! as the authenticated non-root operator. The daemon validates every handed
-//! descriptor before adopting it, refuses malformed or foreign input
-//! fail-closed, and keeps DNS (UDP `127.0.0.1:15353`) and the TCP alias
-//! services on their ordinary unprivileged startup paths.
+//! The root-owned broker that binds the operator gateway's loopback listeners
+//! is started by a launchd job and receives its single activation socket
+//! through launchd's documented socket-activation ABI. This module pins that
+//! ABI, validates every descriptor the broker hands on before the gateway
+//! adopts it, and closes every descriptor it refuses.
 //!
-//! SOURCE ONLY: this module retains the adoption boundary only. The generated
-//! setup definition and the experimental `setup-listener-handoff`,
-//! `listener-handoff-status` and `remove-listener-handoff` commands were retired
-//! in v0.15 (Q-009); the gateway runs as the operator through `effigy gateway
-//! up`. Nothing here registers a launchd job, binds the privileged endpoints,
-//! elevates, or migrates a live gateway.
+//! The retired direct daemon mode — the daemon itself adopting launchd-handed
+//! `127.0.0.1:80`/`443` listeners — is gone; the gateway runs as the operator
+//! and binds its own unprivileged loopback endpoints.
 //!
 //! # ABI pin
 //!
@@ -36,32 +29,14 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::os::fd::FromRawFd;
 use std::os::unix::io::RawFd;
 
-/// launchd Sockets-dictionary key for the plain HTTP listener.
-pub const HANDOFF_HTTP_SOCKET_NAME: &str = "http";
-/// launchd Sockets-dictionary key for the TLS-terminating HTTPS listener.
-pub const HANDOFF_HTTPS_SOCKET_NAME: &str = "https";
-
-/// Exact loopback endpoints the handoff supports, with their launchd names.
+/// One launchd-activated socket the broker hands on, and the one loopback
+/// endpoint its descriptor must present.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HandedSocketSpec {
     /// launchd socket name from the definition's Sockets dictionary.
     pub name: &'static str,
     /// The one loopback endpoint the descriptor must present.
     pub endpoint: SocketAddr,
-}
-
-/// The production handoff contract: exactly `127.0.0.1:80` and `127.0.0.1:443`.
-pub fn production_specs() -> [HandedSocketSpec; 2] {
-    [
-        HandedSocketSpec {
-            name: HANDOFF_HTTP_SOCKET_NAME,
-            endpoint: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 80),
-        },
-        HandedSocketSpec {
-            name: HANDOFF_HTTPS_SOCKET_NAME,
-            endpoint: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 443),
-        },
-    ]
 }
 
 /// Typed identity view for handoff admission.
@@ -149,25 +124,12 @@ pub enum DescriptorRefusal {
 /// descriptor is adopted, handed descriptors are closed, and records are kept.
 #[derive(Debug, thiserror::Error)]
 pub enum ListenerHandoffError {
-    /// launchd socket activation does not exist on this platform.
-    #[error("listener handoff requires launchd socket activation, which is unsupported on this platform")]
-    UnsupportedPlatform,
     /// The daemon would run as root instead of the operator.
     #[error("listener handoff refuses a root identity; launchd must run the daemon as the authenticated non-root operator")]
     RootIdentity,
     /// The invocation carries a sudo elevation environment.
     #[error("listener handoff refuses an elevated invocation; a sudo environment is not an operator launchd session")]
     ElevatedInvocation,
-    /// launchd activation refused or could not serve the named socket.
-    #[error("launchd activation failed for socket {socket:?}: {failure:?} (errno {errno})")]
-    ActivationFailed {
-        /// launchd socket name requested.
-        socket: &'static str,
-        /// Bounded failure label mapped from the errno.
-        failure: ActivationFailure,
-        /// Raw errno from `launch_activate_socket`.
-        errno: i32,
-    },
     /// launchd did not hand exactly one descriptor for the socket.
     #[error("launchd handed {count} descriptors for socket {socket:?}; expected exactly one")]
     UnexpectedDescriptorCount {
@@ -184,9 +146,6 @@ pub enum ListenerHandoffError {
         /// Bounded descriptor refusal label.
         refusal: DescriptorRefusal,
     },
-    /// The gateway has no HTTPS server for the handed `127.0.0.1:443` socket.
-    #[error("listener handoff requires an enabled HTTPS configuration for the handed 127.0.0.1:443 endpoint")]
-    HttpsEndpointUnserved,
 }
 
 /// The two adopted listeners, in daemon serving order.
@@ -215,41 +174,6 @@ impl HandedListeners {
         https.set_nonblocking(true)?;
         let https = tokio::net::TcpListener::from_std(https)?;
         Ok((http, https))
-    }
-}
-
-/// Adopt the production handoff from the running launchd job.
-///
-/// Reads the real process identity, then activates each production socket
-/// name through the launchd ABI and validates the handed descriptors against
-/// the exact production endpoints. Outside launchd (including tests and
-/// ordinary shells) this refuses with [`ActivationFailure::NotLaunchedByLaunchd`]
-/// or [`ListenerHandoffError::UnsupportedPlatform`]; it never binds, elevates,
-/// or retries.
-pub fn adopt_handed_listeners() -> Result<HandedListeners, ListenerHandoffError> {
-    #[cfg(target_os = "macos")]
-    {
-        let identity = HandoffIdentity::current();
-        // Refuse a disallowed identity before asking launchd for descriptors,
-        // so an elevated invocation never takes ownership of the sockets.
-        check_identity(&identity)?;
-        let specs = production_specs();
-        let mut activated = Vec::with_capacity(specs.len());
-        for spec in &specs {
-            let fds = activate_launchd_socket(spec.name).map_err(|(failure, errno)| {
-                ListenerHandoffError::ActivationFailed {
-                    socket: spec.name,
-                    failure,
-                    errno,
-                }
-            })?;
-            activated.push((spec.name, fds));
-        }
-        validate_and_adopt(&specs, &activated, &identity)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        Err(ListenerHandoffError::UnsupportedPlatform)
     }
 }
 

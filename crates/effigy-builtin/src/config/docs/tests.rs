@@ -1,5 +1,5 @@
 use super::{
-    containers_lines, docs_policy_graph_lines, package_manager_lines, secrets_lines,
+    containers_lines, docs_policy_sources_lines, package_manager_lines, secrets_lines,
     tasks_canonical_lines, test_section_lines, ConfigDocProfile,
 };
 
@@ -31,30 +31,25 @@ fn containers_reference_documents_optional_dns_base_domain() {
 }
 
 #[test]
-fn docs_policy_graph_profile_lines_are_repository_neutral() {
-    for profile in [ConfigDocProfile::Reference, ConfigDocProfile::Schema] {
-        let lines = docs_policy_graph_lines(profile);
-        let rendered = lines.join("\n");
+fn docs_policy_sources_profile_lines_are_repository_neutral() {
+    let lines = docs_policy_sources_lines();
+    let rendered = lines.join("\n");
 
-        assert!(lines.contains(&"[docs_policy.graph]"));
-        assert!(lines.contains(&"roots = [\"README.md\", \"docs\"]"));
-        assert!(lines.contains(&"[docs_policy.graph.fields.state]"));
-        assert!(lines.contains(&"[docs_policy.graph.kinds.reference]"));
-        assert!(lines.contains(&"[docs_policy.graph.relations.related]"));
-        assert!(lines.contains(&"default-currentness = \"historical\""));
-        assert!(!lines.contains(&"default_currentness = \"historical\""));
-        for northstar_token in [
-            "strict-ready",
-            "archived-spec",
-            "docs/knowledge/contracts",
-            "docs/knowledge/contracts/archive",
-            "Next move",
-        ] {
-            assert!(
-                !rendered.contains(northstar_token),
-                "generic graph profile contains Northstar token `{northstar_token}`"
-            );
-        }
+    assert!(lines.contains(&"[docs_policy.sources]"));
+    assert!(lines.contains(&"share = false"));
+    assert!(lines.contains(&"front_doors = [\"docs/README.md\", \"AGENTS.md\"]"));
+    assert!(!rendered.contains("docs_policy.graph"));
+    for northstar_token in [
+        "strict-ready",
+        "archived-spec",
+        "docs/knowledge/contracts",
+        "docs/knowledge/contracts/archive",
+        "Next move",
+    ] {
+        assert!(
+            !rendered.contains(northstar_token),
+            "generic docs policy profile contains Northstar token `{northstar_token}`"
+        );
     }
 }
 

@@ -3,7 +3,6 @@ use super::*;
 fn capabilities_with_effigy() -> ContainerCapabilities {
     ContainerCapabilities {
         has_effigy: true,
-        effigy_version: Some("0.2.13".to_string()),
         shell: Some("/bin/bash".to_string()),
     }
 }
@@ -11,16 +10,12 @@ fn capabilities_with_effigy() -> ContainerCapabilities {
 fn capabilities_without_effigy() -> ContainerCapabilities {
     ContainerCapabilities {
         has_effigy: false,
-        effigy_version: None,
         shell: Some("/bin/bash".to_string()),
     }
 }
 
-fn probe(success: bool, output: &str) -> ProbeResult {
-    ProbeResult {
-        success,
-        output: output.to_string(),
-    }
+fn probe(success: bool) -> ProbeResult {
+    ProbeResult { success }
 }
 
 #[test]
@@ -70,9 +65,8 @@ fn standard_probe_has_typed_checks() {
         kinds,
         [
             ProbeKind::EffigyInstallation,
-            ProbeKind::EffigyVersion,
             ProbeKind::Bash,
-            ProbeKind::Sh,
+            ProbeKind::Sh
         ]
     );
     let commands: Vec<Vec<String>> = spec
@@ -84,31 +78,20 @@ fn standard_probe_has_typed_checks() {
         commands,
         vec![
             vec!["which".to_string(), "effigy".to_string()],
-            vec!["effigy".to_string(), "version".to_string()],
             vec!["which".to_string(), "bash".to_string()],
             vec!["which".to_string(), "sh".to_string()],
         ]
     );
-    assert_eq!(
-        ProbeKind::EffigyVersion.interpreter(),
-        ProbeInterpreter::VersionOutput
-    );
-    assert_eq!(
-        ProbeKind::EffigyInstallation.interpreter(),
-        ProbeInterpreter::ExitCode
-    );
 }
 
 #[test]
-fn capabilities_from_probe_results_parse_version_and_fall_back_to_sh() {
+fn capabilities_from_probe_results_fall_back_to_sh() {
     let mut results = HashMap::new();
-    results.insert(ProbeKind::EffigyInstallation, probe(true, ""));
-    results.insert(ProbeKind::EffigyVersion, probe(true, "0.2.13"));
-    results.insert(ProbeKind::Bash, probe(false, ""));
-    results.insert(ProbeKind::Sh, probe(true, "/bin/sh"));
+    results.insert(ProbeKind::EffigyInstallation, probe(true));
+    results.insert(ProbeKind::Bash, probe(false));
+    results.insert(ProbeKind::Sh, probe(true));
     let caps = build_capabilities_from_results(&results);
     assert!(caps.has_effigy);
-    assert_eq!(caps.effigy_version.as_deref(), Some("0.2.13"));
     assert_eq!(caps.shell.as_deref(), Some("/bin/sh"));
 }
 
@@ -117,11 +100,10 @@ fn capabilities_from_probe_results_parse_version_and_fall_back_to_sh() {
 #[test]
 fn capabilities_from_probe_results_prefer_bash_when_present() {
     let mut results = HashMap::new();
-    results.insert(ProbeKind::Bash, probe(true, ""));
-    results.insert(ProbeKind::Sh, probe(true, ""));
+    results.insert(ProbeKind::Bash, probe(true));
+    results.insert(ProbeKind::Sh, probe(true));
     let caps = build_capabilities_from_results(&results);
     assert!(!caps.has_effigy);
-    assert_eq!(caps.effigy_version, None);
     assert_eq!(caps.shell.as_deref(), Some("/bin/bash"));
 }
 
@@ -131,8 +113,8 @@ fn capabilities_from_probe_results_prefer_bash_when_present() {
 #[test]
 fn neither_shell_probe_answering_claims_no_shell() {
     let mut results = HashMap::new();
-    results.insert(ProbeKind::Bash, probe(false, ""));
-    results.insert(ProbeKind::Sh, probe(false, ""));
+    results.insert(ProbeKind::Bash, probe(false));
+    results.insert(ProbeKind::Sh, probe(false));
     let caps = build_capabilities_from_results(&results);
     assert_eq!(caps.shell, None);
 }
@@ -143,26 +125,4 @@ fn an_unrun_shell_probe_claims_no_shell() {
     let caps = build_capabilities_from_results(&HashMap::new());
     assert_eq!(caps.shell, None);
     assert!(!caps.has_effigy);
-    assert_eq!(caps.effigy_version, None);
-}
-
-/// The version is read through the kind's own interpreter: a version probe that
-/// says nothing reports nothing, and an exit-code probe's stdout never becomes
-/// a version.
-#[test]
-fn only_a_version_probe_reports_a_version() {
-    let mut results = HashMap::new();
-    results.insert(ProbeKind::EffigyInstallation, probe(true, "0.2.13"));
-    results.insert(ProbeKind::EffigyVersion, probe(true, "  "));
-    let caps = build_capabilities_from_results(&results);
-    assert!(caps.has_effigy);
-    assert_eq!(caps.effigy_version, None);
-
-    let mut results = HashMap::new();
-    results.insert(ProbeKind::EffigyVersion, probe(false, "0.2.13"));
-    let caps = build_capabilities_from_results(&results);
-    assert_eq!(
-        caps.effigy_version, None,
-        "a failed version probe reports no version"
-    );
 }

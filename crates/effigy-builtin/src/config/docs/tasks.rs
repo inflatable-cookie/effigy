@@ -152,54 +152,10 @@ fn manifest_section(profile: ConfigDocProfile, include_docs_fragment: bool) -> V
     lines
 }
 
-fn docs_policy_graph_comment(profile: ConfigDocProfile) -> &'static str {
-    match profile {
-        ConfigDocProfile::Reference => {
-            "# Optional repository-defined Markdown graph profile for docs context and navigation."
-        }
-        ConfigDocProfile::Schema => {
-            "# Optional repository-defined Markdown graph profile for docs context and navigation."
-        }
-    }
-}
-
-pub(super) fn docs_policy_graph_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
+pub(super) fn docs_policy_sources_lines() -> Vec<&'static str> {
     vec![
-        "[docs_policy.graph]",
-        docs_policy_graph_comment(profile),
-        "roots = [\"README.md\", \"docs\"]",
-        "",
-        "[docs_policy.graph.fields.state]",
-        "labels = [\"State\"]",
-        "cardinality = \"one\"",
-        "",
-        "[docs_policy.graph.fields.maintainer]",
-        "labels = [\"Maintainer\"]",
-        "cardinality = \"one\"",
-        "",
-        "[docs_policy.graph.currentness]",
-        "field = \"state\"",
-        "current = [\"current\", \"published\"]",
-        "historical = [\"historical\", \"retired\"]",
-        "",
-        "[docs_policy.graph.kinds.reference]",
-        "include = [\"docs/reference/*.md\"]",
-        "exclude = []",
-        "authority = 100",
-        "default-currentness = \"unknown\"",
-        "",
-        "[docs_policy.graph.kinds.archive]",
-        "include = [\"docs/archive/*.md\"]",
-        "exclude = []",
-        "authority = 10",
-        "default-currentness = \"historical\"",
-        "",
-        "[docs_policy.graph.relations.related]",
-        "labels = [\"Related\", \"See also\"]",
-        "headings = [\"Related\"]",
-        "",
         "[docs_policy.sources]",
-        "# Opt this repository in to `docs context --sources` routing from a portfolio.",
+        "# Opt this repository in to cross-repository docs routing from a portfolio.",
         "share = false",
         "front_doors = [\"docs/README.md\", \"AGENTS.md\"]",
         "skill_roots = [\".agents/skills\"]",
