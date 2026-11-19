@@ -259,9 +259,8 @@ mod tests {
     use std::fs;
 
     use effigy_execution::{
-        QaGroupBudgetState, QaGroupMemberRecord, QaGroupMemberState, QaGroupRunCapabilities,
-        QaGroupRunGroupSnapshot, QaGroupRunHead, QaGroupRunRecord, QaGroupRunState,
-        QaGroupRunTiming, QA_GROUP_RUN_SCHEMA,
+        QaGroupBudgetState, QaGroupMemberRecord, QaGroupMemberState, QaGroupRunGroupSnapshot,
+        QaGroupRunHead, QaGroupRunRecord, QaGroupRunState, QaGroupRunTiming, QA_GROUP_RUN_SCHEMA,
     };
 
     use super::{
@@ -294,9 +293,6 @@ mod tests {
             scope_inputs: Vec::new(),
             scope_assessment: "not_requested".to_owned(),
             scope_matches: Vec::new(),
-            coverage_disclaimer:
-                "Declared mappings do not establish map truth or caller scope completeness"
-                    .to_owned(),
             state: QaGroupRunState::Running,
             outcome: None,
             budget_state: QaGroupBudgetState::Unknown,
@@ -325,10 +321,6 @@ mod tests {
             }],
             log_dir: ".effigy/reports/qa-groups/sample-run/members".to_owned(),
             warnings: Vec::new(),
-            capabilities: QaGroupRunCapabilities {
-                hard_timeout: false,
-                stop: false,
-            },
             backend: None,
         }
     }

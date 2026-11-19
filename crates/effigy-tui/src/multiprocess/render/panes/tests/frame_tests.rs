@@ -5,7 +5,6 @@
 //! the session derived; no process, terminal or runtime is involved.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use ratatui::backend::TestBackend;
@@ -72,7 +71,7 @@ fn render_frame_with_names(
         .into_iter()
         .map(|state| (state.entry.clone(), state))
         .collect::<HashMap<String, EntryState>>();
-    let state = SessionState::new(PathBuf::from("/fixture"), names.to_vec(), 40, 120, 500);
+    let state = SessionState::new(names.to_vec(), 40, 120, 500);
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).expect("test terminal");
     let active_entry_wait = entry_waits.get(active);
     terminal

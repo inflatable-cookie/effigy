@@ -1641,24 +1641,22 @@ A known host run whose journal or owner gate cannot be observed reports
 The neutral ordering and wait-clock model lives in `effigy-core`; panes render
 the same entry states as the scheduler and status readers.
 
-Tom's 2026-10-30 one-time cutover ruling accepts that safe appends cannot make
-an untrusted historical prefix safe. Under the newly admitted host owner gate,
-with predecessors settled, an owned regular no-follow legacy log moves to the
-same runtime directory's private `.legacy-host-logs` quarantine. Its name ends
-in `.legacy`, not `.log`; discovery never includes it. A new 0600 canonical
-inode is created exclusively in a private stage, bound to durable migration
-intent, then published with an atomic no-replace move at the same public path.
-A foreign empty file is never adopted. Intent, file and parent
-directory syncs precede producer admission. The durable private ready record
-`.<sha256(log basename)>.host-log-ready` is version 2, with an `owner` array of
-32 digest bytes, `canonical: {device, inode}` and a `committed` byte extent.
-A matching ready identity
-allows subsequent generations to append without another cutover. Changed,
-foreign, symlinked or uncertain identities fail closed, preserving operator
-data. Crash retries retain the original intent and quarantined identity and
-sync both rename directories even when the legacy entry was already moved.
-Exclusive rename plus moved-inode verification prevents destination clobbering;
-uncertain source or record replacements are retained privately and refused.
+Safe appends cannot make an untrusted historical prefix safe, and v0.16 stops
+converting one. Under the admitted host owner gate, with predecessors settled,
+a path holding content this writer cannot prove is refused: the bytes, their
+inode and their mode stay exactly as they are, are never read as canonical and
+are never moved or deleted automatically. The refusal names the path and asks
+its operator to move it aside once. A foreign empty file is never adopted.
+A new 0600 canonical inode is created exclusively in a private stage, bound to
+the durable ready record, and published with an atomic no-replace move at the
+public path; file and parent directory syncs precede producer admission. The
+durable private ready record `.<sha256(log basename)>.host-log-ready` is
+version 2, with an `owner` array of 32 digest bytes, `canonical:
+{device, inode}` and a `committed` byte extent. A matching ready identity
+allows subsequent generations to append. Changed, foreign, symlinked or
+uncertain identities fail closed, preserving operator data. A crash between the
+ready record and its rename leaves the bound private stage, which the next start
+publishes when its identity and size still match.
 
 Effigy readers require matching durable ready provenance before opening
 payload bytes and recheck identity before exposure. Bounded followers reset
@@ -1678,19 +1676,15 @@ Continuity across that transition is not guaranteed, and numeric offsets are
 never preserved by padding or replay of raw bytes.
 
 Style primitives and the existing ANSI line/parser/SGR implementation live in
-`effigy-core::terminal_text`; the TUI facade reuses them. The writer records SGR
-as bounded style data. Redaction clears style on masked ranges. A bounded
-private `.styled-tap` sidecar publishes a window of typed, already-redacted
-spans only after successful plain append. It is optional presentation data,
-not a log checkpoint: it grants no durability acknowledgement, changes no
-canonical offsets and never replays an untrusted prefix. Its publication keeps
-the atomic stage-and-rename visibility boundary but pays no fsync barriers
-(effigy#558): the sidecar costs as much as the durable commit it follows when
-a chatty producer rewrites its window per commit, and a lost or torn window
-only renders plain text, which is the designed fallback. A pane uses styles
-only where identity, byte offset and text exactly match its canonical read;
-missing, stale or expired style data renders plain. TUI typed ingest renders
-those spans directly, without ANSI interpretation or a second redactor.
+`effigy-core::terminal_text`; the TUI facade reuses them. Redaction clears style
+on masked ranges. Styles are live-only presentation data: the writer holds a
+bounded window of typed, already-redacted spans in memory and a supervisor
+forwards it to the client that is watching that run. Nothing persists them.
+A pane therefore has colour while it follows a live producer and plain committed
+text whenever it attaches to, or replays, a log: the canonical log holds only
+the redacted bytes, and no reader needs a second sidecar, identity match or
+expiry rule to render it. TUI typed ingest renders those spans directly,
+without ANSI interpretation or a second redactor.
 
 Host supervisors resolve project/child schemas once at their child boundary, union
 sensitivity, and retain typed environment provenance for replacement generations.
@@ -1715,9 +1709,9 @@ commit. TUI followers retry on their next poll without blocking all panes;
 one-shot consumers may retry within their own deadline or report temporary
 unavailability. They never fall back to raw or uncommitted suffixes. Tests wait
 for a committed extent, rather than a raw visible write, before asserting text.
-The full-pipe/unconsumed-tap stop proof requires closure before half the kernel
-drain margin and a non-truncated durable capture report, distinguishing prompt
-stop from waiting for a drain deadline.
+The full-pipe/unconsumed-style-reader stop proof requires closure before half the
+kernel drain margin and a non-truncated durable capture report, distinguishing
+prompt stop from waiting for a drain deadline.
 
 The initiating TUI capability is non-secret and fixed before detached host
 handoff. Cargo `always` and `CLICOLOR_FORCE=1` are selected only for that ANSI

@@ -25,7 +25,7 @@ pub use memory::{ForegroundRecord, Incarnation};
 #[path = "../objects/run.rs"]
 mod objects;
 mod provenance;
-pub use provenance::{Caller, OperatorAction};
+pub use provenance::OperatorAction;
 mod settle;
 mod socket;
 pub use socket::{connect_control_socket, control_socket_path};

@@ -477,11 +477,9 @@ fn qa_group_run_passes_all_members_and_records_the_ledger() {
         );
     }
 
-    // Timing: execution measured, admission fields null for a non-heavy
-    // group, cold/warm build unknown rather than inferred.
+    // Timing: execution measured, admission null for a non-heavy group.
     assert!(body["timing"]["execution_wall_ms"].as_u64().is_some());
     assert!(body["timing"]["admission_wait_ms"].is_null());
-    assert!(body["timing"]["cold_build_ms"].is_null());
     assert_eq!(body["timing"]["expected_wall_ms"], 120000);
 
     // Status reads the finalized record; JSON carries the status schema.
@@ -565,10 +563,6 @@ fn qa_group_scope_comparison_blocks_on_gaps_and_unmatched_tokens() {
     );
     let body = &payload["result"];
     assert_eq!(body["scope_assessment"], "declared_match");
-    assert_eq!(
-        body["coverage_disclaimer"],
-        "Declared mappings do not establish map truth or caller scope completeness"
-    );
     assert_eq!(body["members"].as_array().unwrap().len(), 1);
     assert_eq!(body["members"][0]["state"], "passed");
 }
@@ -816,10 +810,6 @@ run = "echo nested-ok"
     assert_eq!(
         body["admission"]["member_ids"],
         serde_json::json!(["heavy-one"])
-    );
-    assert_eq!(
-        body["capabilities"],
-        serde_json::json!({"hard_timeout": false, "stop": false, "prerequisite": "owned-run supervision (contract 052)"})
     );
 }
 

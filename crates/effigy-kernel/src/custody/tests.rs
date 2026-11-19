@@ -1487,7 +1487,6 @@ fn legacy_cutover_waits_for_the_existing_host_owner_gate() {
     .is_err());
     assert_eq!(std::fs::read(&path).unwrap(), raw);
     assert!(MergedLog::identity(&path).is_err());
-    assert!(!home.path().join(".legacy-host-logs").exists());
     prior
         .finish(crate::outcome::WorkloadOutcome::Succeeded)
         .unwrap();
@@ -1501,9 +1500,17 @@ fn legacy_cutover_waits_for_the_existing_host_owner_gate() {
         &mut Strict,
     )
     .unwrap();
+    // The old writer's bytes are never converted automatically: the operator
+    // moves them aside once, and only then does this path admit a writer.
+    assert!(MergedLog::prepare(&mut replacement, &path).is_err());
+    std::fs::rename(&path, home.path().join("app.log.legacy")).unwrap();
     let _log = MergedLog::prepare(&mut replacement, &path).unwrap();
     assert!(std::fs::read(&path).unwrap().is_empty());
     assert!(MergedLog::identity(&path).is_ok());
+    assert_eq!(
+        std::fs::read(home.path().join("app.log.legacy")).unwrap(),
+        raw
+    );
     replacement
         .finish(crate::outcome::WorkloadOutcome::Succeeded)
         .unwrap();
@@ -4054,18 +4061,6 @@ fn managed_standard_capture_keeps_merged_order_styles_and_complete_utf8_reads() 
         seen.extend(read.bytes);
     }
     assert_eq!(seen, expected);
-    let spans = crate::custody::read_styles(&capture.root, id(), 1, 0, expected);
-    assert_eq!(
-        spans
-            .iter()
-            .map(|span| span.text.as_str())
-            .collect::<String>()
-            .as_bytes(),
-        expected
-    );
-    assert!(spans
-        .iter()
-        .any(|span| span.text.contains("ready") && span.style != Default::default()));
 }
 
 /// One drain commits at most one bounded window per stream, not one append

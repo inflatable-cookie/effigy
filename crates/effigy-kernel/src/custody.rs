@@ -3,7 +3,6 @@ mod anchor;
 mod canonical_output;
 pub(crate) mod capture;
 pub(crate) mod merged;
-mod styled_tap;
 pub use canonical_output::CanonicalOutput;
 pub use merged::{FileIdentity, MergedLog, PlainLog, PlainRead};
 /// The one owner of the secret-bearing output path: sanitize, redact, then
@@ -21,7 +20,7 @@ pub fn signal_verified_process(
 ) -> Observed<SignalDelivered> {
     platform::signal_checked(identity, signal, authority)
 }
-pub use capture::{read_styles, Stream};
+pub use capture::Stream;
 pub(crate) mod spawn;
 use crate::ctx::{CleanupContext, EffectContext, OperationContext};
 use crate::ident::ProcessIdentity;
@@ -44,10 +43,9 @@ pub(crate) const KIND: &str = "kernel:process";
 /// grace and it never replaces observing the group (effigy#357).
 pub const STOP_MARGIN: Duration = Duration::from_secs(30);
 /// One drain commits at most this many observed bytes per stream before it
-/// sinks them, instead of one durable commit per read. The styled window is
-/// bounded to 64 KiB of text (styled_tap's own clamp), so a commit never
-/// exceeds the window a pane matches exactly, and a full pipe no longer pays
-/// the append-and-provenance dance sixteen times per drain (effigy#558).
+/// sinks them, instead of one durable commit per read, so a full pipe no
+/// longer pays the append-and-provenance dance sixteen times per drain
+/// (effigy#558).
 pub(crate) const DRAIN_COMMIT_BOUND: usize = 64 * 1024;
 /// The descriptor slot a spawn hands its optional one-shot reader to (K12).
 /// It sits above the capability reader (9) and cleanup pin (10) slots, so a

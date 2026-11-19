@@ -17,9 +17,8 @@ use std::time::Instant;
 use chrono::Utc;
 use effigy_execution::{
     ExecutionEnvironmentPlan, QaGroupBackend, QaGroupBudgetState, QaGroupGapSnapshot,
-    QaGroupMemberRecord, QaGroupMemberState, QaGroupOutcome, QaGroupRunCapabilities,
-    QaGroupRunGroupSnapshot, QaGroupRunHead, QaGroupRunRecord, QaGroupRunState, QaGroupRunTiming,
-    QA_GROUP_RUN_SCHEMA,
+    QaGroupMemberRecord, QaGroupMemberState, QaGroupOutcome, QaGroupRunGroupSnapshot,
+    QaGroupRunHead, QaGroupRunRecord, QaGroupRunState, QaGroupRunTiming, QA_GROUP_RUN_SCHEMA,
 };
 use effigy_tasks::{budget_state, QaGroupPlan, QaGroupPlanMember};
 
@@ -54,10 +53,7 @@ pub(super) fn execute_group_run(
     let mut record = initial_record(&run_id, plan);
     record.backend = run.admission_wait_ms().map(|waited| QaGroupBackend {
         kind: "admission_hook".to_owned(),
-        scheduler_run_id: None,
-        scheduler_epoch: None,
         queue_wait_ms: Some(waited),
-        settlement: None,
     });
     record.timing.admission_wait_ms = run.admission_wait_ms();
 
@@ -473,7 +469,6 @@ fn initial_record(run_id: &str, plan: &QaGroupPlan) -> QaGroupRunRecord {
             effigy_tasks::ScopeAssessment::NotRequested => "not_requested".to_owned(),
             effigy_tasks::ScopeAssessment::NeedsPlanner => "needs_planner".to_owned(),
         },
-        coverage_disclaimer: effigy_tasks::SCOPE_COVERAGE_DISCLAIMER.to_owned(),
         scope_matches: plan
             .scope_matches
             .iter()
@@ -518,10 +513,6 @@ fn initial_record(run_id: &str, plan: &QaGroupPlan) -> QaGroupRunRecord {
             .collect(),
         log_dir: format!(".effigy/reports/qa-groups/{run_id}/members"),
         warnings: Vec::new(),
-        capabilities: QaGroupRunCapabilities {
-            hard_timeout: false,
-            stop: false,
-        },
         backend: None,
     }
 }

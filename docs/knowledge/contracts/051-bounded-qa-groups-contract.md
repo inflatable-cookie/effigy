@@ -493,7 +493,6 @@ The run payload includes at least:
     }
   ],
   "unmatched_scope_inputs": [],
-  "coverage_disclaimer": "Declared mappings do not establish map truth or caller scope completeness",
   "state": "running",
   "outcome": null,
   "budget_state": "unknown",
@@ -504,9 +503,7 @@ The run payload includes at least:
     "ended_at": null,
     "admission_wait_ms": null,
     "execution_wall_ms": null,
-    "expected_wall_ms": 180000,
-    "cold_build_ms": null,
-    "warm_build_ms": null
+    "expected_wall_ms": 180000
   },
   "members": [
     {
@@ -530,15 +527,14 @@ The run payload includes at least:
 ```
 
 A heavy group that an admission hook admitted adds one optional object,
-`backend`: `kind` `admission_hook`, `queue_wait_ms` (the hook's wait), and
-`scheduler_run_id`, `scheduler_epoch` and `settlement`, which are always
-`null` now. v0.14 records may carry `host_scheduler` or
-`host_scheduler_override` with those fields set. Every metric is `null` when
-unavailable, never zero. The key is absent on light groups and on historical
-records that predate this field. The run schema stays `effigy.qa-group-run.v1`
-with `schema_version` 1: the
-field is additive and optional, readers must ignore unknown keys, and records
-written before it existed remain valid.
+`backend`: `kind` `admission_hook` and `queue_wait_ms` (the hook's wait). It is
+`null` when unavailable, never zero, absent on light groups, and absent on
+records written before it existed. The record carries declared members, one
+admitted run and member history; whether the run is still live is the run
+journal's answer, not a record field. The run schema stays
+`effigy.qa-group-run.v1` with `schema_version` 1: every removal above is a key
+this contract no longer publishes, readers must ignore unknown keys, and records
+written before it existed remain readable.
 
 `scope_assessment` in a run is `not_requested` or `declared_match`;
 `needs_planner` exists only in the non-executing plan response.

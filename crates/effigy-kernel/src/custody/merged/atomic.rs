@@ -38,21 +38,7 @@ pub(crate) fn publish(
     nonce: &str,
     expected: Option<FileIdentity>,
 ) -> io::Result<FileIdentity> {
-    publish_window(dir, name, value, nonce, expected, true)
-}
-
-/// Style data is optional presentation: it grants no durability
-/// acknowledgement (contract §capture), so its publication keeps the atomic
-/// stage-and-rename visibility boundary but pays no fsync barriers. A crash
-/// may lose or tear the window; readers then render plain text, which is the
-/// designed fallback, and the canonical log is unaffected (effigy#558).
-pub(crate) fn publish_style_data(
-    dir: &DirFd,
-    name: &FileName,
-    value: &impl Serialize,
-    expected: Option<FileIdentity>,
-) -> io::Result<FileIdentity> {
-    publish_window(dir, name, value, "styles", expected, false)
+    publish_window(dir, name, value, nonce, expected)
 }
 
 fn publish_window(
@@ -61,7 +47,6 @@ fn publish_window(
     value: &impl Serialize,
     nonce: &str,
     expected: Option<FileIdentity>,
-    durable: bool,
 ) -> io::Result<FileIdentity> {
     // A killed stage is private and ignored; it is retained for operator
     // handling rather than removing a file whose creation was not observed.
@@ -83,9 +68,7 @@ fn publish_window(
         .ok_or_else(|| rejected("stage creation missing"))?;
     fs::fchmod(&file, 0o600)?;
     file.write_all(&serde_json::to_vec(value).map_err(io::Error::other)?)?;
-    if durable {
-        file.sync_all()?;
-    }
+    file.sync_all()?;
     let identity = FileIdentity::of(&fs::fstat(file.as_raw_fd())?);
     rename(
         dir,
@@ -128,9 +111,7 @@ fn publish_window(
     {
         return Err(rejected("published record changed identity"));
     }
-    if durable {
-        dir.sync().map_err(io::Error::other)?;
-    }
+    dir.sync().map_err(io::Error::other)?;
     Ok(identity)
 }
 

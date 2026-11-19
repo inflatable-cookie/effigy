@@ -57,6 +57,8 @@ pub(in crate::runner) struct ManagedTab {
 struct Follower {
     sequence: i64,
     cursors: [Cursor; 2],
+    // None means the independent output tab or an exited workload.
+    ready_through: Option<u64>,
 }
 
 struct Shared {
@@ -71,6 +73,9 @@ struct Shared {
     hosts: BTreeMap<String, HostFollower>,
     queue: VecDeque<ProcessEvent>,
     exits: BTreeMap<String, SessionEntryState>,
+    /// Log offset already delivered as live styled output per tab, so the log
+    /// follower does not repeat those bytes plain.
+    styled_through: BTreeMap<String, u64>,
     startup_finished: bool,
     closed: Option<Closed>,
     stop: StopSender,
@@ -170,20 +175,56 @@ impl Shared {
                             Follower {
                                 sequence,
                                 cursors: Default::default(),
+                                ready_through: Some(0),
                             },
                         );
                         self.exits.remove(&process);
+                        // A restart writes a fresh log from offset zero, so no
+                        // earlier style coverage applies to it.
+                        self.styled_through.remove(&process);
                         self.queue
                             .push_back(event(&process, ProcessEventKind::Started, ""));
                     }
                     Some(EngineEvent::Exited { process, code }) => {
-                        // Bytes written before the exit reach the tab first.
+                        // The final read includes bytes committed after the last poll.
+                        if let Some(follower) = self.followers.get_mut(&process) {
+                            follower.ready_through = None;
+                        }
                         self.read_logs();
                         let payload = format!("exit={code}");
                         self.exits
                             .insert(process.clone(), SessionEntryState::from_exit_code(code));
                         self.queue
                             .push_back(event(&process, ProcessEventKind::Exit, &payload));
+                    }
+                    Some(EngineEvent::Styled { process, chunk }) => {
+                        let end = chunk.offset
+                            + chunk
+                                .spans
+                                .iter()
+                                .map(|span| span.text.len() as u64)
+                                .sum::<u64>();
+                        let cursor = self
+                            .followers
+                            .get(&process)
+                            .map(|follower| follower.cursors[0].offset)
+                            .unwrap_or(0);
+                        let through = self.styled_through.entry(process.clone()).or_insert(0);
+                        if !accept_style(through, cursor, chunk.offset, end) {
+                            continue;
+                        }
+                        self.queue.push_back(event(
+                            &process,
+                            ProcessEventKind::Styled,
+                            &serde_json::to_string(&chunk).expect("typed style event"),
+                        ));
+                    }
+                    Some(EngineEvent::OutputReady { process, through }) => {
+                        if let Some(follower) = self.followers.get_mut(&process) {
+                            if let Some(ready) = &mut follower.ready_through {
+                                *ready = (*ready).max(through);
+                            }
+                        }
                     }
                     Some(EngineEvent::WaitsChanged) => {}
                     Some(EngineEvent::StartupFinished) => self.startup_finished = true,
@@ -261,17 +302,21 @@ impl Shared {
     fn read_logs(&mut self) {
         for (name, follower) in &mut self.followers {
             for (slot, stream) in [Stream::Stdout, Stream::Stderr].into_iter().enumerate() {
+                let max = readable_bytes(follower.ready_through, follower.cursors[slot].offset);
+                if max == 0 {
+                    continue;
+                }
                 let Observed::Verified(read, _) = read_run_log(
                     &self.root,
                     self.run,
                     follower.sequence,
                     stream,
                     follower.cursors[slot].offset,
-                    READ_MAX,
+                    max,
                 ) else {
                     continue;
                 };
-                let output = follower.cursors[slot].consume(&read, false);
+                let mut output = follower.cursors[slot].consume(&read, false);
                 if output.truncated {
                     self.queue.push_back(event(name, ProcessEventKind::Stdout, "[effigy] capture truncated: log append failed; inspect this run before restarting"));
                 }
@@ -281,18 +326,21 @@ impl Shared {
                 if output.gap {
                     self.queue.push_back(event(name, ProcessEventKind::Stdout, "[effigy] output gap: older canonical bytes expired; resuming the retained log"));
                 }
+                // Bytes already sent as live styles keep their colour; only
+                // the rest of a followed log renders as plain text.
+                let covered = self.styled_through.get(name).copied().unwrap_or(0);
+                if let Some(cut) = covered.checked_sub(output.from).filter(|cut| *cut > 0) {
+                    let cut = cut as usize;
+                    if cut >= output.text.len() {
+                        continue;
+                    }
+                    output.text = output.text[cut..].to_owned();
+                    output.from = covered;
+                }
                 if output.text.is_empty() {
                     continue;
                 }
-                let chunk = output.styled(|from, bytes| {
-                    effigy_kernel::custody::read_styles(
-                        &self.root,
-                        self.run,
-                        follower.sequence,
-                        from,
-                        bytes,
-                    )
-                });
+                let chunk = output.chunk();
                 self.queue.push_back(event(
                     name,
                     ProcessEventKind::Styled,
@@ -300,6 +348,54 @@ impl Shared {
                 ));
             }
         }
+    }
+}
+
+// A live workload only follows the extent whose styles were offered first.
+fn readable_bytes(ready: Option<u64>, cursor: u64) -> usize {
+    ready.map_or(READ_MAX, |end| {
+        end.saturating_sub(cursor).min(READ_MAX as u64) as usize
+    })
+}
+
+// Only suppress canonical bytes that were actually delivered, in order.
+fn accept_style(through: &mut u64, cursor: u64, start: u64, end: u64) -> bool {
+    if start != (*through).max(cursor) || end < start {
+        return false;
+    }
+    *through = end;
+    true
+}
+
+#[cfg(test)]
+mod style_coverage_tests {
+    use super::{accept_style, readable_bytes};
+
+    #[test]
+    fn committed_bytes_wait_for_live_style_before_plain_following() {
+        let mut through = 0;
+        let mut cursor = 0;
+        // The producer commits bytes before the engine publishes its event.
+        assert_eq!(readable_bytes(Some(0), cursor), 0);
+        assert!(accept_style(&mut through, cursor, 0, 5));
+        // The engine publishes the watermark only after the style event.
+        assert_eq!(readable_bytes(Some(5), cursor), 5);
+        cursor += 5;
+        assert_eq!(through, cursor); // the plain follower suppresses these bytes
+        assert_eq!(readable_bytes(Some(5), cursor), 0);
+        // A missing style event is recovered as plain at the next watermark.
+        assert_eq!(readable_bytes(Some(9), cursor), 4);
+    }
+
+    #[test]
+    fn evicted_prefix_falls_back_to_plain_log_before_styles_resume() {
+        let mut through = 0;
+        assert!(!accept_style(&mut through, 0, 4, 8));
+        assert_eq!(through, 0);
+        // The follower delivers the missing canonical bytes through offset 8.
+        assert!(accept_style(&mut through, 8, 8, 12));
+        assert_eq!(through, 12);
+        assert!(!accept_style(&mut through, 8, 4, 8));
     }
 }
 
@@ -542,6 +638,7 @@ pub(in crate::runner) fn attach_tui(
                     Follower {
                         sequence: OUTPUT_SEQUENCE,
                         cursors: Default::default(),
+                        ready_through: None,
                     },
                 );
                 queue.push_back(event(&tab.name, ProcessEventKind::Started, ""));
@@ -562,6 +659,7 @@ pub(in crate::runner) fn attach_tui(
         hosts,
         queue,
         exits: BTreeMap::new(),
+        styled_through: BTreeMap::new(),
         startup_finished: false,
         closed: None,
         stop: StopSender::new(),
@@ -614,7 +712,6 @@ pub(in crate::runner) fn attach_tui(
         after_shutdown: &none,
     };
     let rendered = run_multiprocess_tui_with_source(
-        repo_root,
         Box::new(source),
         session_tabs,
         tab_order,

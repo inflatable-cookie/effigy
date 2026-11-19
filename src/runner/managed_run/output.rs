@@ -1,6 +1,6 @@
 //! Incremental consumption of verified canonical bytes. Presentation never
 //! advances a second offset or decodes producer terminal controls.
-use effigy_core::terminal_text::{StyledChunk, StyledSpan};
+use effigy_core::terminal_text::{Style, StyledChunk, StyledSpan};
 use effigy_kernel::custody::{FileIdentity, MergedLog};
 use effigy_kernel::run::LogRead;
 use std::path::Path;
@@ -28,11 +28,19 @@ pub(super) struct Output {
 }
 
 impl Output {
-    /// Style readers see exactly the validated scalar-aligned byte range.
-    pub(super) fn styled(&self, read: impl FnOnce(u64, &[u8]) -> Vec<StyledSpan>) -> StyledChunk {
+    /// Committed bytes reach a pane as plain text: a log holds no style, so an
+    /// attach or replay renders exactly the redacted canonical bytes.
+    pub(super) fn chunk(&self) -> StyledChunk {
         StyledChunk {
             offset: self.from,
-            spans: read(self.from, self.text.as_bytes()),
+            spans: if self.text.is_empty() {
+                Vec::new()
+            } else {
+                vec![StyledSpan {
+                    text: self.text.clone(),
+                    style: Style::default(),
+                }]
+            },
         }
     }
 }
@@ -111,7 +119,6 @@ impl Cursor {
     pub(super) fn host(&mut self, path: &Path) -> std::io::Result<(Output, StyledChunk)> {
         let read = MergedLog::read_plain(path, self.identity, self.offset, READ_MAX)?;
         self.identity = Some(read.log.identity);
-        let spans = MergedLog::styles(path, &read);
         let output = self.consume(
             &LogRead {
                 from: read.from,
@@ -121,7 +128,7 @@ impl Cursor {
             },
             read.cutover,
         );
-        let chunk = output.styled(|_, _| spans);
+        let chunk = output.chunk();
         Ok((output, chunk))
     }
 }
@@ -183,7 +190,7 @@ mod tests {
     }
 
     #[test]
-    fn interleaved_streams_warn_once_and_keep_redacted_style_ranges() {
+    fn interleaved_streams_warn_once_and_keep_redacted_plain_ranges() {
         let mut streams = [Cursor::default(), Cursor::default()];
         for (slot, from, bytes, truncated, expected) in [
             (0, 0, &b"[REDACTED]\xc3"[..], true, "[REDACTED]"),
@@ -199,17 +206,20 @@ mod tests {
             );
             assert_eq!(output.text, expected);
             assert_eq!(output.truncated, slot == 0 && from == 0);
-            let style = effigy_core::terminal_text::Style::default().fg(ratatui::style::Color::Red);
-            let chunk = output.styled(|offset, bytes| {
-                assert_eq!((offset, bytes), (from, expected.as_bytes()));
-                vec![StyledSpan {
-                    text: expected.to_owned(),
-                    style,
-                }]
-            });
+            let chunk = output.chunk();
             assert_eq!(chunk.offset, from);
-            assert_eq!(chunk.spans[0].text, expected);
-            assert_eq!(chunk.spans[0].style, style);
+            assert_eq!(
+                chunk
+                    .spans
+                    .iter()
+                    .map(|span| span.text.as_str())
+                    .collect::<String>(),
+                expected
+            );
+            assert!(chunk
+                .spans
+                .iter()
+                .all(|span| span.style == Style::default()));
             let lines = streams[slot].lines(&mut output, false);
             assert_eq!(
                 lines,

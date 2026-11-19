@@ -16,7 +16,6 @@ use effigy_containers::{
     BackendId, ContainerAction, ContainerBackendDetection, ContainerInterruptPolicy,
     ContainerManager, ContainerManagerRequest, EffectiveContainerPolicy,
 };
-use effigy_core::shell::shell_quote;
 
 use crate::runner::container_command::RunnerError;
 
@@ -90,9 +89,6 @@ pub(in crate::runner::container_command) fn run_runtime_volume_capture(
     }
     if command.program == "__effigy_volume_usage_batch" {
         return run_runtime_volume_usage_batch_capture(repo_root, profile, command);
-    }
-    if command.program == "__effigy_volume_cache_kind_batch" {
-        return run_runtime_volume_cache_kind_batch_capture(repo_root, profile, command);
     }
     let plan = runtime_volume_plan(repo_root, profile, command)?;
     capture_runtime(repo_root, &command.description, &plan.program, &plan.args)
@@ -195,71 +191,6 @@ fn run_runtime_volume_usage_batch_capture(
     capture_runtime(repo_root, &command.description, &program, &args)
 }
 
-fn run_runtime_volume_cache_kind_batch_capture(
-    repo_root: &Path,
-    profile: &str,
-    command: &DockerCommand,
-) -> Result<Output, RunnerError> {
-    if command.args.is_empty() {
-        return Err(RunnerError::task_invocation(
-            "runtime volume cache-kind batch command requires one or more mount-point arguments",
-        ));
-    }
-    let script = render_volume_cache_kind_script(&command.args);
-    let backend_id = endpoint_backend(profile);
-    let (program, args) = if backend_id == BackendId::docker_compose() {
-        (
-            OsString::from("sh"),
-            vec![OsString::from("-lc"), OsString::from(script)],
-        )
-    } else {
-        (
-            effigy_containers::compose::resolve_host_cli_program("colima"),
-            vec![
-                OsString::from("ssh"),
-                OsString::from("--profile"),
-                OsString::from(profile),
-                OsString::from("--"),
-                OsString::from("sudo"),
-                OsString::from("sh"),
-                OsString::from("-lc"),
-                OsString::from(script),
-            ],
-        )
-    };
-
-    capture_runtime(repo_root, &command.description, &program, &args)
-}
-
-fn render_volume_cache_kind_script(mount_points: &[String]) -> String {
-    let mut script = String::from(
-        r#"set -eu
-classify_cache_volume() {
-  path="$1"
-  kind=""
-  if [ -d "$path/debug/deps" ] || [ -d "$path/release/deps" ] || [ -f "$path/.rustc_info.json" ]; then
-    kind="rust-target"
-  fi
-  if [ -n "$kind" ]; then
-    printf '%s\t%s\n' "$path" "$kind"
-  fi
-}
-"#,
-    );
-    for mount_point in mount_points {
-        script.push_str("classify_cache_volume ");
-        script.push_str(&shell_quote(mount_point));
-        script.push('\n');
-    }
-    script
-}
-
-/// Run one resolved program and translate its own result.
-///
-/// A launch failure names the command that never started; a non-zero exit is
-/// the refusal a person reads, with both streams it wrote. Every runtime
-/// command this module runs goes through here, so "one command, one refusal"
-/// has one owner (effigy#933).
 fn capture_runtime(
     repo_root: &Path,
     description: &str,
