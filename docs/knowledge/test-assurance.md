@@ -77,8 +77,9 @@ tier, not the count.
   selectors, never in the default suite.
 - `endpoint-store-faults` gateway tests run through the `test:gateway:*`
   selectors.
-- The retired `workspace-serving-fixture` and `workspace-private-qualification`
-  features and their proofs are gone (Tom 2026-11-19, D1/D2).
+- The retired `workspace-serving-fixture`, `workspace-private-qualification`,
+  `signal-qualification-fixture` and `qualification-observer` features and
+  their proofs are gone (Tom 2026-11-19, D1/D2; effigy#1056).
 - Ignored cases are helpers spawned by their parents or named proofs with
   `--run-ignored only` selectors; the reason is the route that runs them.
 - Platform gates (`target_os`, negated forms included) leave single-sided

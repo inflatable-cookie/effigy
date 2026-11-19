@@ -90,8 +90,6 @@ workspace = true
 [features]
 # Engine fault points for run-control proofs; never in a product build.
 fault-injection = ["effigy-kernel/fault-injection"]
-# Disposable HostCli source fixture; absent from ordinary binaries.
-signal-qualification-fixture = ["effigy-kernel/qualification-observer"]
 
 [dependencies]
 base64 = "0.22"
