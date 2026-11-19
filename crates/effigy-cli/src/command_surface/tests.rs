@@ -1,7 +1,7 @@
 use super::{
     deferred_builtin_for_help_argument, deferred_builtin_for_help_topic, general_help_entries,
     general_help_entries_for_group, help_builtin_route, help_command_names, help_topic_for_command,
-    help_topic_for_help_argument, HelpGroup, HELP_COMMAND_BUILTIN_ROUTES, HELP_COMMAND_TOPICS,
+    help_topic_for_help_argument, HelpGroup, HELP_COMMAND_BUILTIN_ROUTES,
 };
 use crate::builtin_names::{
     builtin_command_name, builtin_escape_spelling, is_deferred_builtin_command,
@@ -221,21 +221,16 @@ fn group_inventories_match_the_contract_taxonomy() {
 #[test]
 fn help_command_topics_reuse_the_existing_typed_help_owner() {
     let names = help_command_names().collect::<Vec<_>>();
-    let mut expected = HELP_COMMAND_TOPICS
+    let mut unique = names.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(names.len(), unique.len(), "duplicate help owner");
+    for entry in BUILTIN_COMMAND_NAMES
         .iter()
-        .map(|(name, _)| *name)
-        .chain(HELP_COMMAND_BUILTIN_ROUTES.iter().copied())
-        .collect::<Vec<_>>();
-    assert_eq!(names, expected);
-    expected.sort_unstable();
-    expected.dedup();
-    assert_eq!(names.len(), expected.len(), "duplicate help owner");
-    for (name, topic) in HELP_COMMAND_TOPICS {
-        assert_eq!(help_topic_for_help_argument(name), Some(*topic));
-        assert!(
-            help_builtin_route(name).is_none(),
-            "`{name}` has a typed panel and must not also claim a built-in route"
-        );
+        .filter(|entry| entry.help_topic.is_some())
+    {
+        assert_eq!(help_topic_for_help_argument(entry.name), entry.help_topic);
+        assert!(help_builtin_route(entry.name).is_none());
     }
 }
 
@@ -334,9 +329,10 @@ const RETIRED_SHADOWABLE_WORDS: &[&str] = &["demo"];
 /// The complete built-in top-level inventory: every spelling a help route,
 /// built-in task row, or command descriptor can reach.
 fn builtin_top_level_inventory() -> Vec<&'static str> {
-    let mut inventory: Vec<&'static str> = HELP_COMMAND_TOPICS
+    let mut inventory: Vec<&'static str> = BUILTIN_COMMAND_NAMES
         .iter()
-        .map(|(name, _)| *name)
+        .filter(|entry| entry.help_topic.is_some())
+        .map(|entry| entry.name)
         // `run` is a public alias of `runs`, not a separate help topic.
         .chain(std::iter::once("run"))
         .chain(HELP_COMMAND_BUILTIN_ROUTES.iter().copied())

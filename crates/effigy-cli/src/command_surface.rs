@@ -335,41 +335,6 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
     },
 ];
 
-/// Names accepted by `effigy help <command>` and the typed panel each renders.
-///
-/// Every pair must render the same facts as `effigy <command> --help`; the
-/// parity test in this module parses both forms and compares them.
-pub const HELP_COMMAND_TOPICS: &[(&str, HelpTopic)] = &[
-    ("bootstrap", HelpTopic::Bootstrap),
-    ("bundle", HelpTopic::Bundle),
-    ("changelog", HelpTopic::Changelog),
-    ("container", HelpTopic::Container),
-    ("contracts", HelpTopic::Contracts),
-    ("defer", HelpTopic::Defer),
-    ("deploy", HelpTopic::Deploy),
-    ("deps", HelpTopic::Deps),
-    ("docs", HelpTopic::Docs),
-    ("doctor", HelpTopic::Doctor),
-    ("exec", HelpTopic::Exec),
-    ("fmt", HelpTopic::Fmt),
-    ("fmt-rust", HelpTopic::Fmt),
-    ("gateway", HelpTopic::Gateway),
-    ("help", HelpTopic::General),
-    ("init", HelpTopic::Init),
-    ("release", HelpTopic::Release),
-    ("rhai", HelpTopic::Rhai),
-    ("secrets", HelpTopic::Secrets),
-    ("service", HelpTopic::Service),
-    ("skill", HelpTopic::Skill),
-    ("state", HelpTopic::State),
-    ("runs", HelpTopic::Runs),
-    ("tasks", HelpTopic::Tasks),
-    ("test", HelpTopic::Test),
-    ("uninstall", HelpTopic::Uninstall),
-    ("version", HelpTopic::General),
-    ("workspace", HelpTopic::Workspace),
-];
-
 pub fn help_topic_for_command(command: &str) -> Option<HelpTopic> {
     // These commands own their direct help in their feature parser; aliases
     // are resolved there too. The help-argument table owns the names.
@@ -384,10 +349,7 @@ pub fn help_topic_for_command(command: &str) -> Option<HelpTopic> {
 
 /// Resolve `effigy help <command>` to its typed panel.
 pub fn help_topic_for_help_argument(name: &str) -> Option<HelpTopic> {
-    HELP_COMMAND_TOPICS
-        .iter()
-        .find(|(candidate, _)| *candidate == name)
-        .map(|(_, topic)| *topic)
+    crate::builtin_names::builtin_command_name(name).and_then(|entry| entry.help_topic)
 }
 
 /// Names accepted by `effigy help <command>` whose detailed help is owned by
@@ -409,9 +371,10 @@ pub fn help_builtin_route(name: &str) -> Option<&'static str> {
 /// Every name `effigy help <command>` accepts, typed panels and built-in-owned
 /// help alike.
 pub fn help_command_names() -> impl Iterator<Item = &'static str> {
-    HELP_COMMAND_TOPICS
+    crate::builtin_names::BUILTIN_COMMAND_NAMES
         .iter()
-        .map(|(name, _)| *name)
+        .filter(|entry| entry.help_topic.is_some())
+        .map(|entry| entry.name)
         .chain(HELP_COMMAND_BUILTIN_ROUTES.iter().copied())
 }
 

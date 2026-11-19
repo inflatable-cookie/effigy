@@ -380,9 +380,17 @@ fn task_manifest_parse_error_with_stale_install_names_recovery() {
 #[test]
 fn command_json_failure_survives_builtin_port_round_trip() {
     let rendered = r#"{"schema":"effigy.task.run.v1","ok":false,"stdout":"diagnostic"}"#;
-    let error = RunnerError::CommandJsonFailure {
-        rendered: rendered.to_owned(),
-    };
+    let error = RunnerError::task_json_failure(
+        rendered.to_owned(),
+        "build",
+        9,
+        effigy_kernel::outcome::WorkloadOutcome::Failed { code: 9 },
+        "diagnostic",
+        "error: failed",
+    );
+    assert_eq!(error.process_exit_code(), 9);
+    assert!(error.human_error().render_text().contains("error: failed"));
+    assert_eq!(error.json_error_details(), Some(rendered));
 
     let builtin = crate::runner::builtin_ports::runner_to_builtin(error);
     match &builtin {

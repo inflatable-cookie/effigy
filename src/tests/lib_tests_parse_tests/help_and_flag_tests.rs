@@ -2,7 +2,7 @@ use crate::tests::prelude::{
     parse_command, strip_global_json_flag, Command, DoctorArgs, HelpGroup, HelpTopic, PathBuf,
     TaskInvocation, TasksArgs,
 };
-use effigy_cli::command_surface::HELP_COMMAND_TOPICS;
+use effigy_cli::builtin_names::BUILTIN_COMMAND_NAMES;
 use effigy_cli::{RunsAction, RunsArgs, INTERNAL_RUN_ID_ARG};
 
 fn parse(args: &[&str]) -> Command {
@@ -369,15 +369,18 @@ fn parse_help_group_topics_resolve_to_discovery_panels() {
 
 #[test]
 fn parse_help_command_matches_direct_command_help() {
-    for (name, topic) in HELP_COMMAND_TOPICS {
+    for (name, topic) in BUILTIN_COMMAND_NAMES
+        .iter()
+        .filter_map(|entry| entry.help_topic.map(|topic| (entry.name, topic)))
+    {
         assert_eq!(
             parse(&["help", name]),
-            Command::Help(*topic),
+            Command::Help(topic),
             "`effigy help {name}` should render the typed panel"
         );
         assert_eq!(
             parse(&[name, "--help"]),
-            Command::Help(*topic),
+            Command::Help(topic),
             "`effigy {name} --help` should render the same typed panel"
         );
     }

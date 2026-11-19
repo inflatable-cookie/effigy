@@ -12,6 +12,8 @@
 //! set from it, and the drift test in `command_surface/tests.rs` fails when a
 //! built-in route is missing from it.
 
+use crate::HelpTopic;
+
 /// Who wins when a repository task and a built-in claim the same word.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinNameAuthority {
@@ -41,12 +43,15 @@ pub struct BuiltinCommandName {
     /// declare tasks with the name. It still answers with its retirement
     /// refusal, but it is not offered as a live command.
     pub retired: bool,
+    /// Typed panel accepted by `effigy help <name>`.
+    pub help_topic: Option<HelpTopic>,
 }
 
 const fn shadowable(
     name: &'static str,
     deferred_at_parse: bool,
     escape: Option<&'static str>,
+    help_topic: Option<HelpTopic>,
 ) -> BuiltinCommandName {
     BuiltinCommandName {
         name,
@@ -54,6 +59,7 @@ const fn shadowable(
         deferred_at_parse,
         escape,
         retired: false,
+        help_topic,
     }
 }
 
@@ -64,16 +70,18 @@ const fn retired_shadowable(name: &'static str, deferred_at_parse: bool) -> Buil
         deferred_at_parse,
         escape: None,
         retired: true,
+        help_topic: None,
     }
 }
 
-const fn reserved(name: &'static str) -> BuiltinCommandName {
+const fn reserved(name: &'static str, help_topic: HelpTopic) -> BuiltinCommandName {
     BuiltinCommandName {
         name,
         authority: BuiltinNameAuthority::Reserved,
         deferred_at_parse: false,
         escape: None,
         retired: false,
+        help_topic: Some(help_topic),
     }
 }
 
@@ -88,44 +96,44 @@ pub const BUILTIN_COMMAND_NAMES: &[BuiltinCommandName] = &[
     // these names, and a retirement must not start running the built-in over
     // the repository's own task.
     retired_shadowable("demo", true),
-    shadowable("distribution", false, None),
-    shadowable("bundle", true, None),
-    shadowable("changelog", true, None),
-    shadowable("fmt", true, Some("fmt-rust")),
+    shadowable("distribution", false, None, None),
+    shadowable("bundle", true, None, Some(HelpTopic::Bundle)),
+    shadowable("changelog", true, None, Some(HelpTopic::Changelog)),
+    shadowable("fmt", true, Some("fmt-rust"), Some(HelpTopic::Fmt)),
     // The escape spelling for a shadowed `fmt` is itself an ordinary built-in,
     // so a repository task named `fmt-rust` shadows it in turn.
-    shadowable("fmt-rust", true, None),
-    shadowable("deploy", true, None),
-    shadowable("deps", true, None),
-    shadowable("secrets", true, None),
-    shadowable("defer", true, None),
-    shadowable("exec", true, None),
-    shadowable("state", true, None),
-    shadowable("workspace", true, None),
-    shadowable("gateway", true, None),
-    shadowable("service", true, None),
-    shadowable("rhai", true, None),
-    shadowable("skill", true, None),
-    shadowable("docs", true, None),
-    shadowable("contracts", true, None),
-    shadowable("container", true, None),
-    shadowable("bootstrap", true, None),
-    shadowable("release", true, None),
-    shadowable("doctor", true, None),
-    shadowable("tasks", true, None),
-    shadowable("run", true, None),
-    shadowable("runs", true, None),
-    shadowable("uninstall", true, None),
+    shadowable("fmt-rust", true, None, Some(HelpTopic::Fmt)),
+    shadowable("deploy", true, None, Some(HelpTopic::Deploy)),
+    shadowable("deps", true, None, Some(HelpTopic::Deps)),
+    shadowable("secrets", true, None, Some(HelpTopic::Secrets)),
+    shadowable("defer", true, None, Some(HelpTopic::Defer)),
+    shadowable("exec", true, None, Some(HelpTopic::Exec)),
+    shadowable("state", true, None, Some(HelpTopic::State)),
+    shadowable("workspace", true, None, Some(HelpTopic::Workspace)),
+    shadowable("gateway", true, None, Some(HelpTopic::Gateway)),
+    shadowable("service", true, None, Some(HelpTopic::Service)),
+    shadowable("rhai", true, None, Some(HelpTopic::Rhai)),
+    shadowable("skill", true, None, Some(HelpTopic::Skill)),
+    shadowable("docs", true, None, Some(HelpTopic::Docs)),
+    shadowable("contracts", true, None, Some(HelpTopic::Contracts)),
+    shadowable("container", true, None, Some(HelpTopic::Container)),
+    shadowable("bootstrap", true, None, Some(HelpTopic::Bootstrap)),
+    shadowable("release", true, None, Some(HelpTopic::Release)),
+    shadowable("doctor", true, None, Some(HelpTopic::Doctor)),
+    shadowable("tasks", true, None, Some(HelpTopic::Tasks)),
+    shadowable("run", true, None, None),
+    shadowable("runs", true, None, Some(HelpTopic::Runs)),
+    shadowable("uninstall", true, None, Some(HelpTopic::Uninstall)),
     // Reached through ordinary task routing, so a declared task wins without
     // any parse-time deferral.
-    shadowable("config", false, None),
-    shadowable("init", false, None),
-    shadowable("scan", false, None),
+    shadowable("config", false, None, None),
+    shadowable("init", false, None, Some(HelpTopic::Init)),
+    shadowable("scan", false, None, None),
     // Reserved: contract 038 owns `test`; `help` and `version` are how an
     // operator asks Effigy about itself.
-    reserved("test"),
-    reserved("help"),
-    reserved("version"),
+    reserved("test", HelpTopic::Test),
+    reserved("help", HelpTopic::General),
+    reserved("version", HelpTopic::General),
 ];
 
 /// The classification of a built-in top-level command name.
