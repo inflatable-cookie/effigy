@@ -7,7 +7,6 @@ use effigy_manifest::LoadedCatalog;
 
 mod fixers;
 mod scan;
-mod schema;
 
 type ManifestScanResult = (
     Vec<PathBuf>,
