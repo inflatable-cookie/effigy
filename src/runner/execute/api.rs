@@ -137,14 +137,7 @@ pub(in crate::runner) fn run_inline_task_with_cwd_and_env(
         evidence: vec!["inline task".to_owned()],
         surface: effigy_tasks::TaskSurface::Published,
     };
-    let selection_plan = super::selection::build_execution_selection_plan(&preflight, &selection);
-    super::pipeline::standard::run_standard_task(
-        &preflight,
-        &selection,
-        &selection_plan,
-        None,
-        None,
-    )
+    super::pipeline::standard::run_standard_task(&preflight, &selection, None, None)
 }
 
 #[cfg(test)]
