@@ -23,8 +23,7 @@
 //! the hook is not sent acknowledged reports, and Effigy keeps no claim it
 //! would have to re-check against them.
 //!
-//! An admitted run writes nothing durable on a normal settle, as before the
-//! reported protocol: the hook keeps its stdin at EOF and sees no reports.
+//! The hook's stdin stays at EOF through settlement.
 
 use effigy_ui::steps::ProgressFrame;
 

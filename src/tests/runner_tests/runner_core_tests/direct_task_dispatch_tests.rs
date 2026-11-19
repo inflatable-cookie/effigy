@@ -1,6 +1,6 @@
 use crate::runner::entrypoints::run_command_with_context;
 use crate::runner::error::RunnerError;
-use crate::runner::task_engine::{root_task_status_for_tests, TaskRun};
+use crate::runner::task_engine::{list_runs, root_task_status_for_tests, TaskRun};
 use crate::runner::tests::prelude::{assert_file_text_equals, temp_workspace, write_root_manifest};
 use effigy_cli::{Command, TaskInvocation};
 use effigy_context::EffigyRuntimeContext;
@@ -110,7 +110,11 @@ fn direct_foreground_dispatch_succeeds_without_recording_runtime_history() {
     assert_eq!(status.state.as_str(), "not-recorded", "{status:?}");
     assert!(status.latest.is_none());
     assert!(status.history.is_empty());
-    assert!(!root.join(".effigy/state/kernel.db").exists());
+    let listing = list_runs(Some(&root), 2).expect("run listing");
+    assert_eq!(listing.runs.len(), 1, "{listing:?}");
+    let run = &listing.runs[0];
+    assert!(run.is_terminal_record(), "{run:?}");
+    assert_eq!(run.view.state, "succeeded");
     assert!(status.current.is_none());
     assert!(!root.join(".effigy/reports").exists());
     assert!(!root.join(".effigy/runtime/tasks").exists());

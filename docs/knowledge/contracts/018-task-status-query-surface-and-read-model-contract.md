@@ -6,16 +6,15 @@ Rebuilt: 2026-10-19 on run records ([017](017-task-status-record-and-active-run-
 
 Q-010 follows the storage and custody model approved by planner and Tom
 (2026-10-22: "Approve") in [052 §3.1](052-runtime-kernel-contract.md#31-q-010-run-classes-and-the-durability-boundary).
-Foreground evidence stays in memory; durable runs use checkout journals. The
-foreground-aware task status surface uses v3 envelopes (contract 018).
+The foreground-aware task status surface uses v3 envelopes.
 
 ## Purpose
 
 `effigy tasks status` reports current custody and retained outcomes truthfully.
-A task may run in foreground memory without creating a token, journal row or
-completion record. The view therefore combines verified live gate evidence with
-checkout-durable runs. History never stands in for current state, and age never
-makes a live run stale. A missing row cannot prove the task never ran.
+The view combines verified live gate evidence with checkout-durable runs.
+Foreground terminal rows are available through `run status` (052 §3.1).
+History never stands in for current state, and age never makes a live run stale.
+A missing row cannot prove the task never ran.
 
 ## Command surface
 

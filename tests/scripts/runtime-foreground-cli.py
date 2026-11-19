@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Private binary proof: foreground commands, live views and hook custody."""
 from concurrent.futures import ThreadPoolExecutor
-import hashlib
+from contextlib import closing
 import json
 import os
 from pathlib import Path
 import signal
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -91,18 +92,37 @@ run = "touch suite-ready; sleep 300"
         assert (result.returncode == 0) == success, (args, result.returncode, result.stdout, result.stderr)
         return result
 
-    def assert_memory_only():
+    def assert_foreground_journals():
+        databases = set()
+        terminal_count = 0
         for project in projects:
             assert not list((project / ".git").iterdir()), "foreground minted Git identity"
-            assert not (project / ".effigy/state/runs").exists()
-        assert not list(base.rglob("*.db*")), "foreground opened a database"
+            state = project / ".effigy/state"
+            assert not (state / "runs").exists()
+            assert not (state / "objects").exists()
+            journal = state / "kernel.db"
+            assert journal.is_file(), "foreground settlement did not create its checkout journal"
+            databases.update(state / f"kernel.db{suffix}" for suffix in ("", "-shm", "-wal"))
+            with closing(sqlite3.connect(f"{journal.as_uri()}?mode=ro", uri=True)) as db:
+                terminal_count += db.execute("SELECT count(*) FROM foreground_terminals").fetchone()[0]
+                for table in ("runs", "logs", "objects"):
+                    assert db.execute(f"SELECT count(*) FROM {table}").fetchone() == (0,), table
+        assert not set(base.rglob("*.db*")) - databases, "foreground opened another database"
         assert not list(home.iterdir()), "foreground initialized machine state"
+        return terminal_count
+
+    def terminal(project, run_id):
+        result = run(project, "run", "status", run_id, "--json")
+        row = frame(json.loads(result.stdout), "effigy.run.v1")["run"]
+        assert row["evidence_source"] == "foreground-terminal-record.v1", row
+        return row
 
     started = time.monotonic()
     with ThreadPoolExecutor(max_workers=24) as pool:
         futures = [pool.submit(run, project, f"short{i}") for project in projects for i in range(8)]
         for future in futures:
             future.result()
+    assert assert_foreground_journals() == 24
     for project in projects:
         run(project, "sequence")
         run(project, "diagnostics")
@@ -116,7 +136,7 @@ run = "touch suite-ready; sleep 300"
         run(project, "test", "local")
         run(project, "test_ref")
         run(project, "test", "loop", success=False)
-    assert_memory_only()
+    assert_foreground_journals()
     concurrent_seconds = round(time.monotonic() - started, 3)
 
     project = projects[0]
@@ -133,7 +153,7 @@ exec sleep 300
     run(project, "outer_test", extra=hook_env)
     assert len((project / "hook-pids").read_text().splitlines()) == count + 1, "suite worker acquired another heavy slot"
     assert (project / "inner.txt").exists()
-    assert_memory_only()
+    assert_foreground_journals()
 
     child = subprocess.Popen([str(binary), "hold"], cwd=project, env=env | hook_env,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -164,7 +184,7 @@ exec sleep 300
         result = run(project, "run", "logs", run_id, "--follow", "--json")
         logs = frame(json.loads(result.stdout), "effigy.run.logs.v1")
         assert not logs["logs_available"] and logs["reason"] == "foreground-no-retained-log", logs
-        assert_memory_only()
+        assert_foreground_journals()
         hook_pid = int((project / "hook-pids").read_text().splitlines()[-1])
         # This is the exact hook spawned by our owned fixture invocation.
         os.kill(hook_pid, signal.SIGKILL)
@@ -177,17 +197,17 @@ exec sleep 300
     result = run(project, "tasks", "status", "hold", "--json")
     view = frame(json.loads(result.stdout), "effigy.tasks-status.v3")
     assert view["state"] == "not-recorded" and view["current"] is None, view
-    result = run(project, "run", "status", run_id, "--json", success=False)
-    assert "not-recorded" in result.stdout or "not recorded" in result.stderr, result
+    hook_loss = terminal(project, run_id)
+    assert hook_loss["state"] in {"failed", "cancelled", "interrupted"}, hook_loss
     # Q-011: a nested invocation is ordinary, so a child run from a foreground
-    # task runs and the whole tree still records nothing for it. The retained
+    # task retains its own terminal evidence. The durable
     # variant (a `--run-id` child that journals in its own checkout) is
     # `secrets_hook_admission_cli_tests::an_undeclared_late_durable_child_runs_and_journals`.
     nested = run(project, "nested")
     assert "short-1" in nested.stdout, nested.stdout
-    assert_memory_only()
-    # Stop a separate foreground owner through its fresh gate identity. No
-    # stop request, result, checkout token or database is retained.
+    assert_foreground_journals()
+    # Stop a separate foreground owner through its fresh gate identity and
+    # read the cancellation the owner recorded.
     (project / "ready").unlink()
     child = subprocess.Popen([str(binary), "hold"], cwd=project, env=env,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -202,9 +222,10 @@ exec sleep 300
         result = run(project, "run", "stop", run_id, "--wait-ms", "10000", "--json")
         stopped = frame(json.loads(result.stdout), "effigy.run.v1")
         assert stopped["stop"] == "signalled-owner" and stopped["custody"] == "released", stopped
-        assert stopped["outcome"] == "not-recorded" and stopped["run"]["exit_code"] is None, stopped
         child.communicate(timeout=15)
-        assert_memory_only()
+        cancelled = terminal(project, run_id)
+        assert cancelled["state"] == "cancelled" and cancelled["signal"] == signal.SIGTERM, cancelled
+        assert_foreground_journals()
     finally:
         if child.poll() is None:
             child.terminate()
@@ -230,7 +251,7 @@ exec sleep 300
                      "effigy.tasks-status.v3")
         assert view["state"] == "running" and view["current"]["pid"] == child.pid, view
         assert not list((project / ".git").iterdir()), "replacing Git metadata recorded a generation"
-        assert_memory_only()
+        assert_foreground_journals()
     finally:
         if child.poll() is None:
             # The owner is ours; end it and let the CLI settle its own custody.
@@ -257,7 +278,7 @@ exec sleep 300
         if child.poll() is None:
             child.terminate()
             child.communicate(timeout=30)
-    assert_memory_only()
+    foreground_terminal_records = assert_foreground_journals()
     # A declared script may launch a retained child. Its static ancestor is
     # durable before go, while all undeclared late-effect refusals above stay.
     declared = base / "declared-durable"
@@ -277,7 +298,8 @@ run = 'touch completed'
     assert not (home / ".effigy/state").exists()
     print(json.dumps({"schema": "q010.foreground-proof.v1", "short_runs": 24,
                       "checkouts": 3, "seconds": concurrent_seconds,
-                      "database_files_created": 0, "retained_run_records": 0,
+                      "database_files_created": len(projects), "retained_run_records": 0,
+                      "foreground_terminal_records": foreground_terminal_records,
                       "sequence": "passed", "nested_hook_count": 1,
                       "builtin_suites": "passed", "suite_stop": "released", "suite_hook_count": 1,
                       "hook_loss": "stopped", "checkout_replacement": "survived", "nested_foreground_child": "ran", "declared_durable_descendant": "passed"}, sort_keys=True))

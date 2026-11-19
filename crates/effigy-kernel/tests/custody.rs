@@ -2095,8 +2095,43 @@ fn foreground_begin(cx: &EffectContext, root: &StateRoot) -> ForegroundRun {
     .unwrap()
 }
 
+fn checkout_journal(root: &StateRoot) -> rusqlite::Connection {
+    rusqlite::Connection::open_with_flags(
+        root.path().join(effigy_kernel::store::DB_NAME),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .expect("open checkout journal for verification")
+}
+
+fn assert_foreground_terminals(root: &StateRoot, expected: &[(RunId, &str)], durable_runs: i64) {
+    let journal = checkout_journal(root);
+    let counts: (i64, i64, i64, i64) = journal
+        .query_row(
+            "SELECT (SELECT count(*) FROM foreground_terminals), (SELECT count(*) FROM runs), \
+                    (SELECT count(*) FROM logs), (SELECT count(*) FROM objects)",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        counts,
+        (expected.len() as i64, durable_runs, 0, 0),
+        "row counts for foreground terminals, durable runs, logs and objects"
+    );
+    for &(id, outcome) in expected {
+        let (state, cleanup): (String, String) = journal
+            .query_row(
+                "SELECT outcome, cleanup FROM foreground_terminals WHERE run_id = ?1",
+                [id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap_or_else(|error| panic!("foreground terminal row for {id}: {error}"));
+        assert_eq!((state.as_str(), cleanup.as_str()), (outcome, "complete"));
+    }
+}
+
 #[test]
-fn foreground_custody_completes_without_database_or_logs() {
+fn foreground_custody_keeps_one_terminal_row_without_durable_history() {
     let home = home();
     let cx = context();
     let root = StateRoot::effects(&cx, home.path()).unwrap();
@@ -2113,7 +2148,7 @@ fn foreground_custody_completes_without_database_or_logs() {
             .unwrap();
         assert_eq!(outcome.cleanup(), CleanupOutcome::Complete);
         assert_eq!(outcome.workload(), &WorkloadOutcome::Succeeded);
-        assert!(!root.path().join("kernel.db").exists());
+        assert_foreground_terminals(&root, &[(id(1), "succeeded")], 0);
         assert!(!root.path().join("runs").exists());
         assert!(!root.path().join("sock").exists());
         assert!(!root.path().join("objects").exists());
@@ -2418,9 +2453,10 @@ fn foreground_owner_kill(tree: bool) {
 /// A durable run that crashed and left unsettled residue is not a refusal for
 /// the foreground form of the same task: the foreground run holds the owner
 /// flock, which proves no predecessor can still be live (F11). The residue is
-/// left for the durable path to settle and the journal is not written.
+/// left for the durable path to settle. Foreground settlement adds its own
+/// terminal row.
 #[test]
-fn foreground_runs_beside_unsettled_durable_residue_without_database_writes() {
+fn foreground_settlement_preserves_unsettled_durable_residue() {
     let home = home();
     let cx = context();
     let root = StateRoot::effects(&cx, home.path()).unwrap();
@@ -2440,7 +2476,26 @@ fn foreground_runs_beside_unsettled_durable_residue_without_database_writes() {
     )
     .unwrap();
     drop(previous);
-    let before = std::fs::read(root.path().join("kernel.db")).unwrap();
+    // Compare stored values, including the serialized payloads. SQLite may
+    // change the database file when it commits the foreground row.
+    let durable_rows = || {
+        let journal = checkout_journal(&root);
+        ["runs", "resources", "events"].map(|table| {
+            let mut statement = journal
+                .prepare(&format!("SELECT * FROM {table} ORDER BY rowid"))
+                .unwrap();
+            let columns = statement.column_count();
+            let rows = statement
+                .query_map([], |row| {
+                    (0..columns)
+                        .map(|index| row.get::<_, rusqlite::types::Value>(index))
+                        .collect::<rusqlite::Result<Vec<_>>>()
+                })
+                .unwrap();
+            rows.collect::<rusqlite::Result<Vec<_>>>().unwrap()
+        })
+    };
+    let before = durable_rows();
     let mut running = ForegroundRun::begin(
         &cx,
         &root,
@@ -2462,10 +2517,11 @@ fn foreground_runs_beside_unsettled_durable_residue_without_database_writes() {
         .settle(&cx.operation().cleanup(Duration::from_secs(5)).unwrap())
         .unwrap();
     assert_eq!(
+        durable_rows(),
         before,
-        std::fs::read(root.path().join("kernel.db")).unwrap(),
-        "a foreground run reads the residue and writes nothing"
+        "the durable predecessor is unchanged"
     );
+    assert_foreground_terminals(&root, &[(id(1), "not-started")], 1);
 }
 
 #[test]
@@ -2966,11 +3022,12 @@ fn foreground_parent_requires_positive_child_completion() {
             parent
                 .settle(&cx.operation().cleanup(Duration::from_secs(10)).unwrap())
                 .unwrap();
+            assert_foreground_terminals(&root, &[(id(1), "succeeded"), (id(2), "succeeded")], 0);
         } else {
             drop(child);
             assert!(parent.finish(WorkloadOutcome::Succeeded).is_err());
+            assert!(!root.path().join("kernel.db").exists());
         }
-        assert!(!root.path().join("kernel.db").exists());
     }
 }
 
@@ -2993,7 +3050,7 @@ fn foreground_auxiliary_custody_is_not_a_completion_obligation() {
         effigy_kernel::ident::process_identity(identity.pid).verified(),
         Some(&identity)
     );
-    assert!(!root.path().join("kernel.db").exists());
+    assert_foreground_terminals(&root, &[(id(1), "succeeded")], 0);
 }
 
 /// Q-011: custody hands a workload no parent capability, leaves slot 9 empty
@@ -3027,7 +3084,7 @@ fn a_foreground_child_receives_no_parent_capability_and_opens_its_own_journal() 
         journal_home.join(".effigy/state/kernel.db").is_file(),
         "a nested workload journals on its own"
     );
-    assert!(!root.path().join("kernel.db").exists());
+    assert_foreground_terminals(&root, &[(id(1), "succeeded")], 0);
 }
 
 #[test]
@@ -3140,7 +3197,11 @@ fn foreground_git_replacement_keeps_directory_exclusion_until_old_custody_closes
     new.finish(WorkloadOutcome::Succeeded).unwrap();
     new.settle(&cx.operation().cleanup(Duration::from_secs(5)).unwrap())
         .unwrap();
-    assert!(!new_root.path().join("kernel.db").exists());
+    assert_foreground_terminals(
+        &new_root,
+        &[(id(18), "not-started"), (id(19), "succeeded")],
+        0,
+    );
 }
 
 #[test]

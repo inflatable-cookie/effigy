@@ -96,9 +96,8 @@ own predecessor (K5).
 The phase table below describes durable runs. Foreground runs keep admission,
 intents and receipts in memory, with the same pre-go barrier and verified
 process-group retention; the owner and memory guard acknowledge custody before
-execution (052 §3.1, I-P2/I-P3). They create no journal rows or retained outcomes.
-A lost owner/guard is not a durable `interrupted` record; survivors are
-observational residue and grant no numeric signalling authority. Foreground
+execution (052 §3.1, I-P2/I-P3). The terminal row described in 052 §3.1
+answers run status. Task history uses the durable lifecycle rows below. Foreground
 status is defined in 018, including the no-token first-run case. These durable
 run projections populate recorded run fields; 018 defines the top-level task
 state separately so a closed result never masks a later unrecorded invocation.
@@ -120,9 +119,8 @@ state separately so a closed result never masks a later unrecorded invocation.
   the run if the owner is SIGKILLed, and a settle that verifies the group
   closed. INT, TERM and HUP reach the group through the one signal router;
   the owner exits 128 + n with the run recorded `cancelled`.
-- A durable workload outcome is recorded before settle; foreground outcomes
-  exist only in the living run and the invoking stream. A failed journal write
-  is a warning on stderr and never changes the task's exit code (K10).
+- A durable workload outcome is recorded before settle. A failed journal write
+  warns on stderr and preserves the task's exit code (K10).
 - Retention keeps the newest 20 settled durable runs per task (K15).
   Foreground completion contributes no `latest` or `history` entry.
 - Durable task runs live in `<checkout>/.effigy/state/kernel.db`; foreground

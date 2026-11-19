@@ -394,7 +394,5 @@ the variable. Queue's migration to the hook is described in
 | Log segments, offsets, expiry, truncation, read fault | `test:kernel:run` |
 | One foreground admission writes a fixed, bounded gate set, and a gate body stays inside its bound whatever the holder's `argv0` is | `test:kernel:gate` (`gate_foreground_admission_writes_a_fixed_bounded_set`); `test:kernel:gate` (unit: `a_gate_body_is_bounded_whatever_the_holder_looks_like`) |
 
-
-Q-010 implementation adds the classification, zero-write and multi-checkout
-discovery proofs in contract 052 §12.6 to these same run-control selectors. These are future acceptance requirements, not Phase 1
-proof results.
+Contract 052 §12.6 specifies the classification, settlement write count and
+multi-checkout discovery proofs.

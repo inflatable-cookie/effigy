@@ -397,7 +397,8 @@ grew by about 18,700 runs in four days and about 20 MB in 15 minutes. The ruling
   kernel's crash-recovery guarantees still hold for every run that outlives its
   terminal.
 
-The storage model is owned by [052 §3.1](contracts/052-runtime-kernel-contract.md#31-q-010-run-classes-and-the-durability-boundary),
+The v0.16 D3 ruling changed foreground settlement. The current storage model
+is owned by [052 §3.1](contracts/052-runtime-kernel-contract.md#31-q-010-run-classes-and-the-durability-boundary),
 with storage in §7, the v0.14.1 importers in §11 and acceptance proofs in §12.6; contracts
 [053](contracts/053-environment-reconciler-contract.md) and
 [049](contracts/049-heavy-validation-admission-contract.md) specify environment

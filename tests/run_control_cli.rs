@@ -498,7 +498,7 @@ fn a_nested_durable_run_from_a_foreground_task_step_journals() {
     git(&fixture.repo, &["init", "-q"]);
     assert!(
         !fixture.has_journal(),
-        "a foreground tree writes no journal"
+        "the new checkout has no journal yet"
     );
     let output = fixture.run(&["foreground-durable"]);
     assert!(output.status.success(), "{}", text(&output));
@@ -945,9 +945,8 @@ fn an_unreadable_journal_is_unknown_and_names_the_run() {
     }
 }
 
-/// A journal that is not a store is reported, never repaired and never a
-/// reason to refuse work. A foreground run reads no journal at all, so it runs
-/// and says nothing; `runs` names the journal as unavailable (K1, F11).
+/// A damaged journal does not prevent foreground work and remains intact.
+/// `runs` reports the unreadable journal (K1, F11).
 #[test]
 fn a_damaged_journal_does_not_stop_the_task() {
     let fixture = Fixture::new();
