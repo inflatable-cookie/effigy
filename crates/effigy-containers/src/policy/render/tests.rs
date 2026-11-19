@@ -1,9 +1,4 @@
 use super::*;
-// Fixtures predate the v0.16 `compose_file` retirement: each policy load
-// migrates a declaration that still uses the retired key first.
-use crate::tests::{
-    fixture_policy as load_container_policy, fixture_prepared_policy as prepare_container_policy,
-};
 use std::os::unix::fs::PermissionsExt;
 
 fn fixture() -> (effigy_test_support::Fixture, PathBuf, PathBuf) {

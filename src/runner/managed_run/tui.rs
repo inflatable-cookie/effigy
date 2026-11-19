@@ -367,38 +367,6 @@ fn accept_style(through: &mut u64, cursor: u64, start: u64, end: u64) -> bool {
     true
 }
 
-#[cfg(test)]
-mod style_coverage_tests {
-    use super::{accept_style, readable_bytes};
-
-    #[test]
-    fn committed_bytes_wait_for_live_style_before_plain_following() {
-        let mut through = 0;
-        let mut cursor = 0;
-        // The producer commits bytes before the engine publishes its event.
-        assert_eq!(readable_bytes(Some(0), cursor), 0);
-        assert!(accept_style(&mut through, cursor, 0, 5));
-        // The engine publishes the watermark only after the style event.
-        assert_eq!(readable_bytes(Some(5), cursor), 5);
-        cursor += 5;
-        assert_eq!(through, cursor); // the plain follower suppresses these bytes
-        assert_eq!(readable_bytes(Some(5), cursor), 0);
-        // A missing style event is recovered as plain at the next watermark.
-        assert_eq!(readable_bytes(Some(9), cursor), 4);
-    }
-
-    #[test]
-    fn evicted_prefix_falls_back_to_plain_log_before_styles_resume() {
-        let mut through = 0;
-        assert!(!accept_style(&mut through, 0, 4, 8));
-        assert_eq!(through, 0);
-        // The follower delivers the missing canonical bytes through offset 8.
-        assert!(accept_style(&mut through, 8, 8, 12));
-        assert_eq!(through, 12);
-        assert!(!accept_style(&mut through, 8, 4, 8));
-    }
-}
-
 fn event(process: &str, kind: ProcessEventKind, payload: &str) -> ProcessEvent {
     ProcessEvent {
         process: process.to_owned(),
@@ -736,5 +704,37 @@ pub(in crate::runner) fn attach_tui(
         None => Ok(Some(super::control::render(&super::control::status_view(
             addressed,
         )))),
+    }
+}
+
+#[cfg(test)]
+mod style_coverage_tests {
+    use super::{accept_style, readable_bytes};
+
+    #[test]
+    fn committed_bytes_wait_for_live_style_before_plain_following() {
+        let mut through = 0;
+        let mut cursor = 0;
+        // The producer commits bytes before the engine publishes its event.
+        assert_eq!(readable_bytes(Some(0), cursor), 0);
+        assert!(accept_style(&mut through, cursor, 0, 5));
+        // The engine publishes the watermark only after the style event.
+        assert_eq!(readable_bytes(Some(5), cursor), 5);
+        cursor += 5;
+        assert_eq!(through, cursor); // the plain follower suppresses these bytes
+        assert_eq!(readable_bytes(Some(5), cursor), 0);
+        // A missing style event is recovered as plain at the next watermark.
+        assert_eq!(readable_bytes(Some(9), cursor), 4);
+    }
+
+    #[test]
+    fn evicted_prefix_falls_back_to_plain_log_before_styles_resume() {
+        let mut through = 0;
+        assert!(!accept_style(&mut through, 0, 4, 8));
+        assert_eq!(through, 0);
+        // The follower delivers the missing canonical bytes through offset 8.
+        assert!(accept_style(&mut through, 8, 8, 12));
+        assert_eq!(through, 12);
+        assert!(!accept_style(&mut through, 8, 4, 8));
     }
 }

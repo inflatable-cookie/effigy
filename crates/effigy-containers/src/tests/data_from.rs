@@ -1,7 +1,7 @@
 //! `data_from` behavior: volume identity, compose output and reset safety for
 //! environments borrowing another environment's service data volumes.
 
-use super::{load_container_policy, temp_repo, with_temp_effigy_home, with_test_compose_backend};
+use super::{temp_repo, with_temp_effigy_home, with_test_compose_backend};
 use crate::compose::ComposeBackend;
 use crate::ContainerPolicyError;
 use crate::EffectiveContainerPolicy;

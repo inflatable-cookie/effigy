@@ -267,10 +267,10 @@ pub fn run_finite_shell_attempts<T, E>(
 ) -> Result<(T, bool), E> {
     let identity = optimistic_workspace_exec_identity(policy, service);
     let first = launch(identity.as_ref())?;
-    if identity.is_some() && missing_user(&first) {
+    if let Some(identity) = identity.as_ref().filter(|_| missing_user(&first)) {
         emit_warning_lines(&[format!(
             "workspace user `{}` is not present in running service `{service}` for container `{}`; falling back to root shell",
-            identity.as_ref().expect("identity exists").user, policy.name
+            identity.user, policy.name
         )]);
         return Ok((launch(None)?, true));
     }

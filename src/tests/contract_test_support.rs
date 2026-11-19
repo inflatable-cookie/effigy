@@ -458,21 +458,42 @@ fn hosted_prerequisite_summary_serializes_concurrent_records() {
 /// The exact same test executes its assertions in the child; no test is ignored.
 pub(super) fn run_in_isolated_test_process(test_name: &str) -> bool {
     use effigy_test_support::process::FixtureCommandExt;
+    use std::os::unix::process::CommandExt as _;
     const MARKER: &str = "EFFIGY_TEST_ISOLATED_CASE";
     let child = {
         let _environment = lock_test();
         if std::env::var(MARKER).ok().as_deref() == Some(test_name) {
             return false;
         }
-        std::process::Command::new(std::env::current_exe().expect("test image"))
+        let mut command = std::process::Command::new(std::env::current_exe().expect("test image"));
+        command
             .args(["--exact", test_name, "--nocapture"])
             .env(MARKER, test_name)
             .env_remove("EFFIGY_INTERNAL_SECRET_GRANT")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn_owned()
-            .expect("isolated test process")
+            .stderr(std::process::Stdio::piped());
+        // Relocate any inheritable non-stdio descriptors (for example, shell or
+        // runner pipes occupying slot 10/11) above the kernel's handoff slot
+        // before exec so slot-claiming proofs start with 3..=HANDOFF_FD free
+        // without dropping inherited runner evidence.
+        unsafe {
+            command.pre_exec(|| {
+                let first_free = effigy_kernel::custody::HANDOFF_FD + 1;
+                for fd in 3..=effigy_kernel::custody::HANDOFF_FD {
+                    let flags = libc::fcntl(fd, libc::F_GETFD);
+                    if flags >= 0 && (flags & libc::FD_CLOEXEC) == 0 {
+                        let moved = libc::fcntl(fd, libc::F_DUPFD, first_free);
+                        if moved < 0 {
+                            return Err(std::io::Error::last_os_error());
+                        }
+                        libc::close(fd);
+                    }
+                }
+                Ok(())
+            });
+        }
+        command.spawn_owned().expect("isolated test process")
     };
     let output = child.wait_with_output().expect("bounded isolated test");
     assert!(

@@ -2261,7 +2261,7 @@ tls = false
 "#
         .to_owned();
         fs::write(checkout.join("effigy.toml"), manifest).unwrap();
-        crate::compose_migration::migrate_declared(&checkout);
+        crate::compose_migration::migrate_declared(checkout);
     }
     let mut cleanup = ManagedContainerCleanup {
         checkouts: vec![primary.clone(), linked.clone()],
@@ -4499,7 +4499,7 @@ fn write_listener_fixture_manifest(fixture: ListenerFixtureManifest<'_>) {
         toml_quote(domain),
     );
     fs::write(checkout.join("effigy.toml"), manifest).expect("write managed listener config");
-    crate::compose_migration::migrate_declared(&checkout);
+    crate::compose_migration::migrate_declared(checkout);
 }
 
 /// One managed listener in the leader-exit fixture: its declared restart
@@ -4565,7 +4565,7 @@ fn write_leader_exit_manifest(
         ));
     }
     fs::write(checkout.join("effigy.toml"), manifest).expect("write leader exit config");
-    crate::compose_migration::migrate_declared(&checkout);
+    crate::compose_migration::migrate_declared(checkout);
 }
 
 fn toml_quote(value: &str) -> String {
