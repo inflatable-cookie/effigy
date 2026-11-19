@@ -1718,8 +1718,6 @@ fn a_plain_task_run_acquires_missing_pins() {
         lock["sources"]["catalog:team"]["declaration"]["type"],
         "path"
     );
-
-
 }
 
 /// A new ordinary task selects a changed path bundle before resolving its command.

@@ -139,9 +139,8 @@ pub fn prepare_bundle_sources(
     prepare(manifest, preparation, Mode::Refresh)
 }
 
-/// A plain task run fills a gap: it acquires a declared source that has no pin
-/// at all and never moves an existing one, so a fresh checkout runs a task
-/// instead of refusing (contract 020 §Behaviour rule 1).
+/// Read-only discovery fills missing pins without moving usable ones
+/// (contract 020 §Behaviour rule 1).
 pub fn prepare_missing_bundle_sources(
     manifest: &Path,
     preparation: &SourcePreparation,
@@ -156,7 +155,7 @@ enum Mode {
     /// `dev`, `bootstrap`, `container up`: acquire what is missing and refresh
     /// what is behind.
     Refresh,
-    /// Any other task run: acquire only a source with no pin at all.
+    /// Read-only discovery: acquire only a source without a usable pin.
     Missing,
 }
 
@@ -462,6 +461,9 @@ fn plan_source(
     let Some(pin) = pin else {
         return Ok(SourcePlan::Acquire(RefreshReason::Missing));
     };
+    if !parent(manifest).join(".effigy").join(&pin.object).is_dir() {
+        return Ok(SourcePlan::Acquire(RefreshReason::Missing));
+    }
     if policy.is_manual() {
         return Ok(SourcePlan::Keep);
     }
@@ -922,9 +924,10 @@ fn acquire_and_publish(
                 // Contract 020 §Failure: a pin whose declaration is unchanged
                 // survives a failed refresh. A changed declaration with no
                 // usable pin is the acquisition error.
-                let keepable = pinned
-                    .as_ref()
-                    .is_some_and(|pin| same_declaration(&pin.declaration, selection));
+                let keepable = pinned.as_ref().is_some_and(|pin| {
+                    same_declaration(&pin.declaration, selection)
+                        && parent(manifest).join(".effigy").join(&pin.object).is_dir()
+                });
                 if let Some(pin) = pinned
                     .as_ref()
                     .filter(|_| mode == Mode::Refresh && keepable)
@@ -940,8 +943,8 @@ fn acquire_and_publish(
                 return Err(match mode {
                     // A task run keeps the strict parse's guidance when its own
                     // first acquisition cannot reach the source.
-                    Mode::Missing => with_sync_hint(manifest, failure),
-                    Mode::Sync | Mode::Refresh => failure,
+                    Mode::Missing | Mode::Refresh => with_sync_hint(manifest, failure),
+                    Mode::Sync => failure,
                 });
             }
         };
