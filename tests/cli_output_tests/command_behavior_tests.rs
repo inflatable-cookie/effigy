@@ -5134,6 +5134,7 @@ detach_timeout_secs = 1
         ),
     )
     .expect("write managed headless manifest");
+    crate::compose_migration::migrate_declared(&root);
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let wrapper = root.join("effigy-path-wrapper.sh");
     fs::write(

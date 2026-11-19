@@ -1463,9 +1463,8 @@ fn create_container_status_contract_fixture(
         &[
             (
                 "effigy.toml",
-                "[containers]\ndefault='web'\n[containers.web]\ncompose_file='compose.yml'\nprimary_service='app'\nprofile='effigy'\nproject_name='fixture-web-dev'\nworking_dir='/workspace'\n",
+                "[containers]\ndefault='web'\n[containers.web]\nprimary_service='app'\nprofile='effigy'\nproject_name='fixture-web-dev'\nworking_dir='/workspace'\n[containers.web.services.app]\ncatalog='redis'\n",
             ),
-            ("compose.yml", "services:\n  app:\n    image: example\n"),
             ("bin/colima", status_fixture_colima_script(mode)),
             (
                 "bin/docker",
