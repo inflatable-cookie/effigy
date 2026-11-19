@@ -9,14 +9,11 @@ use crate::runner::error::RunnerError;
 
 pub(super) fn maybe_confirm_container_reset_wipe_data(
     policy: &EffectiveContainerPolicy,
-    confirmation: effigy_containers::ContainerConfirmationPolicy,
+    wipe_data: bool,
     output_json: bool,
     yes: bool,
 ) -> Result<(), RunnerError> {
-    if matches!(
-        confirmation,
-        effigy_containers::ContainerConfirmationPolicy::NoConfirmationRequired
-    ) {
+    if !wipe_data {
         return Ok(());
     }
     super::data::maybe_confirm_destructive_container_action(

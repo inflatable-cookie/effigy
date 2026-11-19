@@ -80,10 +80,7 @@ gateway, or lease behavior.
 
 ## Container Operation Rules
 
-Container operation planning belongs to `effigy-containers`.
-
-Operation plans carry the destructive-operation safety policy and the
-backend/manager boundary. The fields are owned by `effigy-containers`.
+Destructive operations require explicit consent before runtime effects.
 
 Backend behavior belongs behind `ContainerManager` and runtime adapters. Runner
 command code should not branch on Docker Compose versus Colima/nerdctl.
@@ -110,8 +107,7 @@ CLI surfaces.
 
 Rhai `exec::run(...)` uses the execution request builder, and its environment
 and route options travel as typed plan data. Direct `container::*` callbacks
-remain compatibility surfaces until they move behind container operation
-requests.
+remain compatibility surfaces until they move behind shared execution requests.
 
 ## Drift Guards
 

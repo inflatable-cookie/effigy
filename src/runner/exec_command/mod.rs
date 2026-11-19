@@ -49,13 +49,13 @@ pub(in crate::runner) use transport::{
     probe_container_capabilities, run_compose_exec, run_compose_exec_plan_with_credentials,
     run_compose_exec_plan_with_deadline, run_compose_exec_plan_with_options,
     run_managed_compose_exec_plan, run_verified_compose_exec_plan,
-    runtime_backend_is_running_bounded, verified_target_exec_args,
+    runtime_backend_is_running_bounded, verified_target_exec_args, verified_target_exec_tail_args,
 };
 
 pub(in crate::runner) use bounded::{
-    BoundedCapture, BoundedCaptureFailure, BoundedCommandBudget, BoundedCommandPhase,
-    BoundedObservedBytes, BoundedRefusalObservations, BoundedScopedCaptureFailure, BoundedStream,
-    BoundedStreamRefusalObservation,
+    run_bounded_finite_capture, BoundedCapture, BoundedCaptureFailure, BoundedCommandBudget,
+    BoundedCommandPhase, BoundedObservedBytes, BoundedRefusalObservations,
+    BoundedScopedCaptureFailure, BoundedStream, BoundedStreamRefusalObservation,
 };
 // Observation vocabulary and construction used by the private refusal
 // accounting proofs; not part of the non-test runtime surface.

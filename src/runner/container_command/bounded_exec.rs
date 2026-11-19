@@ -33,7 +33,7 @@ use effigy_cli::BoundedExecLimits;
 use effigy_containers::{ContainerAction, EffectiveContainerPolicy};
 use effigy_runtime::shell::{
     build_container_shell_args, command_mode_failure_looks_like_missing_workspace_user,
-    ResolvedWorkspaceExecIdentity,
+    run_finite_shell_attempts, ResolvedWorkspaceExecIdentity,
 };
 
 use super::shell_prep::{
@@ -42,8 +42,9 @@ use super::shell_prep::{
 use super::RunnerError;
 use crate::runner::container_runtime::{resolve_handoff_local_execution, HandoffLocalExecution};
 use crate::runner::exec_command::{
-    BoundedCapture, BoundedCaptureFailure, BoundedCommandBudget, BoundedCommandPhase,
-    BoundedObservedBytes, BoundedRefusalObservations, BoundedScopedCaptureFailure, BoundedStream,
+    run_bounded_finite_capture, verified_target_exec_tail_args, BoundedCapture,
+    BoundedCaptureFailure, BoundedCommandBudget, BoundedCommandPhase, BoundedObservedBytes,
+    BoundedRefusalObservations, BoundedScopedCaptureFailure, BoundedStream,
     BoundedStreamRefusalObservation,
 };
 
@@ -144,7 +145,7 @@ fn run_container_shell_bounded_with_deadline(
         repo_root,
         policy,
         service,
-        &session.target_id,
+        session.target_id.as_deref().expect("bounded target"),
         &mut budget,
     )?;
     if Instant::now() >= deadline {
@@ -161,7 +162,7 @@ fn run_container_shell_bounded_with_deadline(
             repo_root,
             policy,
             service,
-            target_id: &session.target_id,
+            target_id: session.target_id.as_deref().expect("bounded target"),
             working_dir: working_dir.as_deref(),
             command,
             output_json,
@@ -221,39 +222,26 @@ fn run_bounded_command_with_budget(
         command,
         output_json,
     } = request;
-    let optimistic = optimistic_workspace_identity(policy, service);
-    let first = run_attempt(
-        repo_root,
+    let (capture, workspace_user_fallback) = run_finite_shell_attempts(
         policy,
         service,
-        target_id,
-        working_dir,
-        command,
-        optimistic.as_ref(),
-        &mut budget,
+        |identity| {
+            run_attempt(
+                repo_root,
+                policy,
+                service,
+                target_id,
+                working_dir,
+                command,
+                identity,
+                &mut budget,
+            )
+        },
+        |capture: &BoundedCapture| {
+            !capture.status.success()
+                && command_mode_failure_looks_like_missing_workspace_user(&capture.as_output())
+        },
     )?;
-
-    let mut workspace_user_fallback = false;
-    let capture = if first.status.success() {
-        first
-    } else if optimistic.is_some()
-        && command_mode_failure_looks_like_missing_workspace_user(&first.as_output())
-    {
-        warn_missing_workspace_user(policy, service, optimistic.as_ref());
-        workspace_user_fallback = true;
-        run_attempt(
-            repo_root,
-            policy,
-            service,
-            target_id,
-            working_dir,
-            command,
-            None,
-            &mut budget,
-        )?
-    } else {
-        first
-    };
 
     if !output_json && capture.status.success() {
         emit_captured_output(&capture)?;
@@ -289,18 +277,13 @@ fn run_handoff_local_bounded_command(
 ) -> Result<String, RunnerError> {
     let container = execution.container.as_str();
     let service = execution.service.as_str();
-    let capture = budget
-        .run_command(
-            &execution.working_dir,
-            OsStr::new("sh"),
-            &[OsString::from("-lc"), OsString::from(command)],
-            None,
-            &[],
-            BoundedCommandPhase::CommandExecution,
-        )
-        .map_err(|failure| {
-            bounded_failure_error_for_container(container, service, &budget, failure)
-        })?;
+    let capture = run_bounded_finite_capture(
+        &execution.working_dir,
+        OsStr::new("sh"),
+        &[OsString::from("-lc"), OsString::from(command)],
+        &mut budget,
+    )
+    .map_err(|failure| bounded_failure_error_for_container(container, service, &budget, failure))?;
     if !output_json && capture.status.success() {
         emit_captured_output(&capture)?;
     }
@@ -328,10 +311,10 @@ fn run_attempt(
     identity: Option<&ResolvedWorkspaceExecIdentity>,
     budget: &mut BoundedCommandBudget,
 ) -> Result<BoundedCapture, RunnerError> {
-    let args = verified_exec_args(
-        build_container_shell_args(service, Some(command), working_dir, "/bin/sh", identity),
+    let args = verified_target_exec_tail_args(
+        &build_container_shell_args(service, Some(command), working_dir, "/bin/sh", identity),
         target_id,
-    );
+    )?;
     let plan = effigy_runtime::container_manager::runtime_invocation_plan(
         repo_root,
         policy,
@@ -341,57 +324,13 @@ fn run_attempt(
         "runtime exec",
     )
     .map_err(RunnerError::from)?;
-    budget
-        .run_command(
-            &plan.repo_root,
-            plan.program.as_os_str(),
-            &plan.args,
-            None,
-            &[],
-            BoundedCommandPhase::CommandExecution,
-        )
-        .map_err(|failure| bounded_failure_error(policy, service, budget, failure))
-}
-
-/// Turn Compose exec tail arguments (`exec -T [opts] <service> sh -lc <cmd>`)
-/// into runtime exec arguments for the verified container. Runtime exec has no
-/// TTY unless asked, so Compose's `-T` is dropped.
-fn verified_exec_args(mut args: Vec<OsString>, target_id: &str) -> Vec<OsString> {
-    if args.get(1).is_some_and(|arg| arg == "-T") {
-        args.remove(1);
-    }
-    let service_index = args.len() - 4;
-    args[service_index] = OsString::from(target_id);
-    args
-}
-
-fn optimistic_workspace_identity(
-    policy: &EffectiveContainerPolicy,
-    service: &str,
-) -> Option<ResolvedWorkspaceExecIdentity> {
-    if service != policy.primary_service {
-        return None;
-    }
-    policy
-        .workspace_user
-        .as_ref()
-        .map(|user| ResolvedWorkspaceExecIdentity {
-            user: user.clone(),
-            home: policy.workspace_home.clone(),
-        })
-}
-
-fn warn_missing_workspace_user(
-    policy: &EffectiveContainerPolicy,
-    service: &str,
-    identity: Option<&ResolvedWorkspaceExecIdentity>,
-) {
-    if let Some(identity) = identity {
-        eprintln!(
-            "[warn] workspace user `{}` is not present in running service `{service}` for container `{}`; falling back to root shell",
-            identity.user, policy.name
-        );
-    }
+    run_bounded_finite_capture(
+        &plan.repo_root,
+        plan.program.as_os_str(),
+        &plan.args,
+        budget,
+    )
+    .map_err(|failure| bounded_failure_error(policy, service, budget, failure))
 }
 
 fn emit_captured_output(capture: &BoundedCapture) -> Result<(), RunnerError> {

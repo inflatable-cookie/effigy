@@ -71,7 +71,6 @@ Current shared ownership should converge around:
 | Standard routing policy | `src/runner/execute/routing.rs`, `crates/effigy-exec`, and `effigy-execution` dispatch plans |
 | Runtime activation planning | `effigy-runtime-plan`; contract `015-runtime-operation-pipeline-contract.md` |
 | Runtime activation side effects | `src/runner/container_runtime_prep/*` stage adapters |
-| Container operation planning | `effigy-containers`; contract `015-runtime-operation-pipeline-contract.md` |
 | Container backend operations | `effigy-containers` and `effigy-runtime` adapters |
 | Data seed/dump planning | `effigy-data`; artifact transport through `effigy_state::artifact` |
 | Handoff marker and recursion guard | `src/runner/container_runtime.rs` |
