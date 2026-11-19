@@ -105,7 +105,7 @@ docs selector once when docs changed. Record exits and stop only background
 processes you started.
 
 Do not default to a full QA or CI aggregator before each PR. The planner runs
-full `effigy qa` on `main` at Queue milestones. Keep the distinction in the
+full `effigy qa` on `main` at Nucleus milestones. Keep the distinction in the
 task brief and use Effigy selectors so admission-aware work enters the shared
 coordinator.
 
