@@ -189,7 +189,6 @@ fn runtime_diagnostics_run_when_budget_already_expired() {
         mode: crate::DoctorMode::Fast,
         catalog: None,
         all_catalogs: false,
-        refresh: false,
         budget: Some(Duration::ZERO),
     };
     let mut handler = handler::DefaultWorkflowPhaseHandler::new(

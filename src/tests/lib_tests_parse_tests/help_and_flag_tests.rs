@@ -48,7 +48,6 @@ fn leading_repo_and_version_argv_parse() {
             deep: false,
             catalog: None,
             all_catalogs: false,
-            refresh: false,
             explain: None,
         })
     };

@@ -117,7 +117,6 @@ pub(in crate::runner::tests) fn run_doctor_err_from_cwd(root: &Path, fix: bool) 
             deep: false,
             catalog: None,
             all_catalogs: false,
-            refresh: false,
             explain: None,
         })
     })

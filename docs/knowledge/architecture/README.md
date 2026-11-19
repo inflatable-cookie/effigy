@@ -13,7 +13,7 @@ Current technical authority for Effigy.
 | External Skill Task Execution | [025-external-skill-task-execution.md](025-external-skill-task-execution.md) |
 | Feature Placement And Command Surface Architecture | [026-feature-placement-and-command-surface.md](026-feature-placement-and-command-surface.md) |
 | Task Visibility And Grouping | [028-published-and-draft-task-surfaces.md](028-published-and-draft-task-surfaces.md) |
-| Bounded Doctor and Incremental Scan Architecture | [029-bounded-doctor-and-scan-cache.md](029-bounded-doctor-and-scan-cache.md) |
+| Bounded Doctor and Shared Scan Inventory Architecture | [029-bounded-doctor.md](029-bounded-doctor.md) |
 | Docs-check source traversal | [030-docs-check-source-traversal.md](030-docs-check-source-traversal.md) |
 | Bounded QA groups runtime | [031-bounded-qa-groups-runtime.md](031-bounded-qa-groups-runtime.md) |
 | Runtime kernel architecture | [032-runtime-kernel-architecture.md](032-runtime-kernel-architecture.md) |

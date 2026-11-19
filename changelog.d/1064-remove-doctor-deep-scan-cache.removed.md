@@ -1,0 +1,1 @@
+`effigy doctor --deep` keeps no persistent scan cache: every deep run reads the selected scope and writes nothing under `.effigy/doctor/`. The `--refresh` flag, the JSON `run.cache` counters and the `cached` per-check state are gone; an existing `.effigy/doctor/cache/` directory is ignored and safe to delete by hand.

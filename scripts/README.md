@@ -35,8 +35,8 @@ pool instead of `target/`, so the bulk of the writes stay off the internal SSD
   tasks they selected: `qa:gates`, `qa:docs`, `qa:json`, `qa:json:ci`,
   `release gates` and `prepush:ci`.
 - Selectors that pin a `target/` binary path, a non-Oxide Cargo profile
-  (`discovery-proof`, `fixture-proof`, `doctor-process`) or a scrubbed `HOME`
-  keep calling Cargo directly.
+  (`discovery-proof`, `fixture-proof`) or a scrubbed `HOME` keep calling Cargo
+  directly.
 
 ## Layout
 

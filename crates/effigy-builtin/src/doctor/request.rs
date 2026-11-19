@@ -10,7 +10,6 @@ pub(super) struct DoctorRequest {
     pub(super) deep: bool,
     pub(super) catalog: Option<String>,
     pub(super) all_catalogs: bool,
-    pub(super) refresh: bool,
     pub(super) explain: Option<TaskInvocation>,
 }
 
@@ -25,7 +24,6 @@ pub(super) fn parse_doctor_request(
     let mut deep = false;
     let mut catalog = None;
     let mut all_catalogs = false;
-    let mut refresh = false;
     let mut explain: Option<TaskInvocation> = None;
     parser.parse_loop_require_no_unknown(&task.name, |parser, arg| {
         if parser.consume_any_bool_flag(
@@ -36,7 +34,6 @@ pub(super) fn parse_doctor_request(
                 ("--verbose", &mut verbose),
                 ("--deep", &mut deep),
                 ("--all-catalogs", &mut all_catalogs),
-                ("--refresh", &mut refresh),
             ],
         ) {
             return Ok(ParseLoopAction::Handled);
@@ -56,14 +53,14 @@ pub(super) fn parse_doctor_request(
             "`--catalog` and `--all-catalogs` are mutually exclusive",
         ));
     }
-    if !deep && (catalog.is_some() || all_catalogs || refresh) {
+    if !deep && (catalog.is_some() || all_catalogs) {
         return Err(BuiltinError::task_invocation(
-            "`--catalog`, `--all-catalogs`, and `--refresh` require `--deep`",
+            "`--catalog` and `--all-catalogs` require `--deep`",
         ));
     }
-    if explain.is_some() && (deep || catalog.is_some() || all_catalogs || refresh) {
+    if explain.is_some() && (deep || catalog.is_some() || all_catalogs) {
         return Err(BuiltinError::task_invocation(
-            "doctor explanation mode cannot combine with `--deep`, `--catalog`, `--all-catalogs`, or `--refresh`",
+            "doctor explanation mode cannot combine with `--deep`, `--catalog`, or `--all-catalogs`",
         ));
     }
 
@@ -74,7 +71,6 @@ pub(super) fn parse_doctor_request(
         deep,
         catalog,
         all_catalogs,
-        refresh,
         explain,
     })
 }

@@ -26,7 +26,6 @@ pub struct DoctorReport {
     pub complete: bool,
     pub timeout_phase: Option<String>,
     pub check_runs: Vec<DoctorCheckRun>,
-    pub cache: DoctorCacheSummary,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,7 +52,6 @@ pub struct DoctorScope {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DoctorCheckRunState {
     Complete,
-    Cached,
     Skipped,
     BudgetExhausted,
 }
@@ -62,7 +60,6 @@ impl DoctorCheckRunState {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Complete => "complete",
-            Self::Cached => "cached",
             Self::Skipped => "skipped",
             Self::BudgetExhausted => "budget-exhausted",
         }
@@ -74,13 +71,6 @@ pub struct DoctorCheckRun {
     pub name: String,
     pub state: DoctorCheckRunState,
     pub duration_ms: u64,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct DoctorCacheSummary {
-    pub hits: usize,
-    pub misses: usize,
-    pub invalid_entries: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,7 +103,6 @@ pub struct DoctorState {
     pub check_runs: Vec<DoctorCheckRun>,
     complete: bool,
     timeout_phase: Option<String>,
-    cache: DoctorCacheSummary,
 }
 
 impl Default for DoctorState {
@@ -131,7 +120,6 @@ impl DoctorState {
             check_runs: Vec::new(),
             complete: true,
             timeout_phase: None,
-            cache: DoctorCacheSummary::default(),
         }
     }
 
@@ -226,14 +214,6 @@ impl DoctorState {
         });
     }
 
-    pub fn record_cached_check(&mut self, name: &str, duration: Duration) {
-        self.check_runs.push(DoctorCheckRun {
-            name: name.to_owned(),
-            state: DoctorCheckRunState::Cached,
-            duration_ms: duration.as_millis().min(u128::from(u64::MAX)) as u64,
-        });
-    }
-
     pub fn record_skipped_check(&mut self, name: &str) {
         self.check_runs.push(DoctorCheckRun {
             name: name.to_owned(),
@@ -254,12 +234,6 @@ impl DoctorState {
 
     pub fn is_complete(&self) -> bool {
         self.complete
-    }
-
-    pub fn record_cache_summary(&mut self, hits: usize, misses: usize, invalid_entries: usize) {
-        self.cache.hits += hits;
-        self.cache.misses += misses;
-        self.cache.invalid_entries += invalid_entries;
     }
 
     pub fn into_report(
@@ -283,7 +257,6 @@ impl DoctorState {
             complete: self.complete,
             timeout_phase: self.timeout_phase,
             check_runs: self.check_runs,
-            cache: self.cache,
         }
     }
 }

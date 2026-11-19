@@ -40,11 +40,6 @@ pub(super) fn doctor_json_payload(
                 "state": check.state.as_str(),
                 "duration_ms": check.duration_ms,
             })).collect::<Vec<_>>(),
-            "cache": {
-                "hits": report.cache.hits,
-                "misses": report.cache.misses,
-                "invalid_entries": report.cache.invalid_entries,
-            },
         },
         "summary": {
             "checks": report.summary.checks,
