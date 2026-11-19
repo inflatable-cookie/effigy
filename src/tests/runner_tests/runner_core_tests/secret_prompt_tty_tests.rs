@@ -703,7 +703,7 @@ while [ $# -gt 0 ]; do
     *) break ;;
   esac
 done
-shift || exit 0
+if [ $# -gt 0 ]; then shift; fi
 if [ "$1" = sh ] && [ "$2" = -lc ]; then
   sh -lc "$3"
   exit $?

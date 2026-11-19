@@ -2590,8 +2590,13 @@ fn workspace_control_schema_migration_keeps_the_caller_deadline() {
         .is_err());
     let elapsed = started.elapsed();
     conn.execute_batch("ROLLBACK").unwrap();
+    // The caller's own 100ms deadline governs this control. A store that waited
+    // on its own budget instead would hold the call for the store's window
+    // (minutes), so a bound well below that still proves the deadline; the
+    // hosted macOS runner has measured 1.2s from scheduling alone, which is not
+    // a deadline expansion.
     assert!(
-        elapsed < std::time::Duration::from_secs(1),
+        elapsed < std::time::Duration::from_secs(10),
         "schema migration expanded a control deadline: {elapsed:?}"
     );
     attachment

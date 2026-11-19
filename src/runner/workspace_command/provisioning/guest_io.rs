@@ -4,7 +4,7 @@ use crate::runner::container_command::{bounded_failure_error, bounded_phase_erro
 use crate::runner::error::WorkspaceGuestFailure;
 use crate::runner::exec_command::{
     copy_file_into_service, copy_file_into_service_bounded, run_command_capture_until,
-    BoundedCapture, BoundedCaptureFailure, BoundedCommandBudget, BoundedCommandPhase,
+    BoundedCapture, BoundedCommandBudget, BoundedCommandPhase,
 };
 use crate::runner::workspace_client::context::{
     GuestReader, GuestWorkspace, WorkspaceContainerIdentity, HOST_REPREPARE_COMMAND,
@@ -58,16 +58,14 @@ fn run_workspace_compose_capture_bounded(
             BoundedCommandPhase::WorkspacePreparation,
         )
         .map_err(|failure| {
-            let class = match &failure.failure {
-                BoundedCaptureFailure::Deadline => WorkspaceGuestFailure::TimedOut,
-                _ => WorkspaceGuestFailure::Unavailable,
-            };
-            guest_failure(
-                "running a guest command",
-                class,
-                bounded_failure_error(policy, policy.primary_service.as_str(), budget, failure)
-                    .to_string(),
-            )
+            // A bounded capture failure is the bounded command's own verdict
+            // (deadline, overflow, launch) for the workspace-preparation phase,
+            // and the caller reads that verdict to classify the run. Wrapping it
+            // as a guest I/O refusal would report `workspace_preparation_failed`
+            // and hide which bound fired, so the closed-class classification is
+            // only for the adapter calls that have no bound of their own
+            // (effigy#1014 kept the call name; it does not replace the verdict).
+            bounded_failure_error(policy, policy.primary_service.as_str(), budget, failure)
         })
 }
 

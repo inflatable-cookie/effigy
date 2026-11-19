@@ -27,8 +27,9 @@ pub(super) fn build(
     declaration: &PostPrepDeclaration,
 ) -> Result<SupervisorPlan, RunError> {
     validation.recheck_directory()?;
-    let mut observation = prepare_observation(&validation.policy)
-        .map_err(|error| unavailable_with_cause("workspace planning backend observation unavailable", error))?;
+    let mut observation = prepare_observation(&validation.policy).map_err(|error| {
+        unavailable_with_cause("workspace planning backend observation unavailable", error)
+    })?;
     let plan = inputs::plan(
         ReservedPlanRequest {
             policy: &validation.policy,
@@ -36,7 +37,9 @@ pub(super) fn build(
         },
         observation.as_mut(),
     )
-    .map_err(|error| unavailable_with_cause("workspace frozen publication planning refused", error))?
+    .map_err(|error| {
+        unavailable_with_cause("workspace frozen publication planning refused", error)
+    })?
     .ok_or_else(|| RunError::refused("workspace declaration changed before sealing"))?;
     if plan.backend().kind != validation.backend.kind
         || plan.backend().engine != validation.backend.engine

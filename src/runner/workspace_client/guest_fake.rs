@@ -365,6 +365,55 @@ impl GuestWorkspace for DiskGuest {
         set_mode(&host, mode)
     }
 
+    /// Create the object without replacing any live inode, the way the
+    /// production adapter does (effigy#1014 publishes the pinned version
+    /// beside the executable through this call).
+    fn write_no_replace(&mut self, path: &str, bytes: &[u8], mode: u32) -> Result<(), RunnerError> {
+        use std::io::Write as _;
+        let host = self.host_path(path)?;
+        if let Some(parent) = host.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                RunnerError::task_invocation(format!(
+                    "cannot create guest directory for `{path}`: {error}"
+                ))
+            })?;
+        }
+        let created = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&host);
+        let mut file = match created {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Err(RunnerError::task_invocation(format!(
+                    "immutable guest object `{path}` already exists"
+                )));
+            }
+            Err(error) => {
+                return Err(RunnerError::task_invocation(format!(
+                    "cannot create immutable guest object `{path}`: {error}"
+                )));
+            }
+        };
+        file.write_all(bytes).map_err(|error| {
+            RunnerError::task_invocation(format!("cannot write guest file `{path}`: {error}"))
+        })?;
+        drop(file);
+        set_mode(&host, mode)
+    }
+
+    fn install_no_replace(&mut self, staging: &str, path: &str) -> Result<(), RunnerError> {
+        let staged = self.host_path(staging)?;
+        let bytes = std::fs::read(&staged).map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "cannot install `{path}`: staging `{staging}` is unreadable: {error}"
+            ))
+        })?;
+        self.write_no_replace(path, &bytes, 0o555)?;
+        let _ = std::fs::remove_file(&staged);
+        Ok(())
+    }
+
     fn set_owner(&mut self, _path: &str, _owner: &str) -> Result<(), RunnerError> {
         Ok(())
     }

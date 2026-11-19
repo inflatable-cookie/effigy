@@ -209,7 +209,7 @@ fn host_point_refusal(point: &IsolatedMountPoint, error: FsError) -> ContainerEx
             let target = std::fs::read_link(&offending)
                 .map(|target| target.display().to_string())
                 .unwrap_or_else(|error| format!("<unreadable: {error}>"));
-            if offending == point.host_path {
+            if names_the_mount_point(&offending, &point.host_path) {
                 unavailable(format!(
                     "isolated mount point `{}` is a symlink to `{target}`; refusing to follow it. {follow_advice}",
                     point.host_path.display()
@@ -232,6 +232,24 @@ fn host_point_refusal(point: &IsolatedMountPoint, error: FsError) -> ContainerEx
             point.host_path.display()
         )),
     }
+}
+
+/// Whether the blocking path *is* the mount point, not an ancestor of it.
+///
+/// The no-follow walk reports the path it actually opened, which on a host whose
+/// temporary root is itself reached through a link (macOS `/var` to
+/// `/private/var`) is the resolved spelling. Compare the parent directories by
+/// identity-ish name and the leaf by name, so the distinction is the same on
+/// every host: resolving the whole path would follow the very link being judged.
+fn names_the_mount_point(offending: &Path, point: &Path) -> bool {
+    if offending == point {
+        return true;
+    }
+    let parent = |path: &Path| {
+        path.parent()
+            .map(|parent| std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf()))
+    };
+    offending.file_name() == point.file_name() && parent(offending) == parent(point)
 }
 
 #[cfg(test)]
@@ -360,10 +378,18 @@ mod tests {
             .expect_err("a symlinked ancestor refuses the mount point");
         let error = error.to_string();
         assert!(error.contains("reached through a symlink"), "{error}");
+        // The walk reports the path it opened, which is the checkout's resolved
+        // spelling on a host whose temporary root is itself a link (macOS
+        // `/var` to `/private/var`); the target is the link's own bytes.
+        let ancestor = fixture
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| fixture.path().to_path_buf())
+            .join("apps/farmyard");
         assert!(
             error.contains(&format!(
                 "at `{}` to `{}`",
-                link.display(),
+                ancestor.display(),
                 outside.path().display()
             )),
             "the refusal names the ancestor link and its target: {error}"

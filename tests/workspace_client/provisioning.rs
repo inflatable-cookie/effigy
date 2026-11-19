@@ -78,6 +78,23 @@ impl GuestWorkspace for TracedGuest {
         self.call("write", path);
         self.inner.write_file(path, bytes, mode)
     }
+    fn write_no_replace(
+        &mut self,
+        path: &str,
+        bytes: &[u8],
+        mode: u32,
+    ) -> Result<(), crate::runner::error::RunnerError> {
+        self.call("write-no-replace", path);
+        self.inner.write_no_replace(path, bytes, mode)
+    }
+    fn install_no_replace(
+        &mut self,
+        staging: &str,
+        path: &str,
+    ) -> Result<(), crate::runner::error::RunnerError> {
+        self.call("install-no-replace", path);
+        self.inner.install_no_replace(staging, path)
+    }
     fn set_owner(
         &mut self,
         path: &str,

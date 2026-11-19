@@ -187,7 +187,19 @@ pub(in crate::runner) fn publish_guest_active_version(
             "the guest records another version beside the executable `{executable}` it runs"
         )));
     }
+    // The store directory beside the object is sealed to 0555 after a
+    // publication, and the guest normally writes as root. An adapter that does
+    // not model root (the disk and fake guests, and a fixture running as the
+    // operator) needs the directory writable for this one creation, so open it,
+    // publish the immutable object, and seal it again. The final state is the
+    // same seal; the object itself is never replaced.
+    if let Some(parent) = Path::new(&path).parent().and_then(Path::to_str) {
+        guest.ensure_dir(parent, 0o755)?;
+    }
     guest.write_no_replace(&path, bytes, 0o444)?;
+    if let Some(parent) = Path::new(&path).parent().and_then(Path::to_str) {
+        guest.ensure_dir(parent, 0o555)?;
+    }
     if guest.read_file(&path)?.as_deref() != Some(bytes) {
         return Err(RunnerError::task_invocation(format!(
             "the guest did not record its pinned version beside `{executable}`"
