@@ -389,7 +389,7 @@ After this guide, you should be able to:
 - [`063-container-system-guide.md`](063-container-system-guide.md)
 - [`059-manifest-composition-guide.md`](059-manifest-composition-guide.md)
 - [`075-secrets-and-vault-guide.md`](075-secrets-and-vault-guide.md)
-- [`073-state-stack-guide.md`](073-state-stack-guide.md)
+- [Deployment data workflows](../knowledge/deployment-data-workflows.md)
 - [`074-deployment-guide.md`](074-deployment-guide.md)
 
 ## Next Step

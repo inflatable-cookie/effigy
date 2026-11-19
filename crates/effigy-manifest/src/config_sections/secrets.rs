@@ -147,6 +147,5 @@ pub enum ManifestSecretTarget {
     Containers,
     Rhai,
     Deploy,
-    State,
     Artifacts,
 }

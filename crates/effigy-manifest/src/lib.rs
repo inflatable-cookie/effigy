@@ -170,7 +170,6 @@ pub const MANIFEST_TOP_LEVEL_KEYS: &[&str] = &[
     "defer",
     "env",
     "data",
-    "state",
     "deploy",
     "test",
     "package_manager",
@@ -211,8 +210,6 @@ pub struct TaskManifest {
     pub env: BTreeMap<String, ManifestEnvEntry>,
     #[serde(default)]
     pub data: Option<ManifestDataConfig>,
-    #[serde(default)]
-    pub state: Option<toml::Value>,
     /// Raw deployment transaction config keyed by environment.
     ///
     /// This intentionally remains a raw TOML value in the manifest crate so

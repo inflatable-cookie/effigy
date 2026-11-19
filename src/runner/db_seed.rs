@@ -265,56 +265,6 @@ pub(in crate::runner) fn stage_db_seed_files(
     stage_db_seed_files_with_adapter(repo_root, db_seeds, &adapter)
 }
 
-pub(in crate::runner) fn validate_db_seed_import_inputs(
-    repo_root: &Path,
-    db_seeds: &[BootstrapDbSeedInput],
-) -> Result<(), RunnerError> {
-    let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
-    resolve_db_seed_targets(repo_root, &manifest, db_seeds)?;
-    Ok(())
-}
-
-pub(in crate::runner) fn run_db_seed_import_report(
-    repo_root: &Path,
-    source: PathBuf,
-    target: Option<String>,
-) -> Result<serde_json::Value, RunnerError> {
-    let adapter = OrasCliArtifactAdapter::default();
-    let stage_report = stage_db_seed_files_report_with_adapter(
-        repo_root,
-        &[BootstrapDbSeedInput {
-            target: target.clone(),
-            path: source.clone(),
-        }],
-        &adapter,
-    )?;
-    let env = db_seed_env(&stage_report.staged);
-    run_db_seed_task(repo_root, &env)?;
-    Ok(json!({
-        "schema": "effigy.state-stack.sql-import.v1",
-        "schema_version": 1,
-        "ok": true,
-        "target": target,
-        "source": source.display().to_string(),
-        "artifact_reports": stage_report.artifact_reports,
-        "staged": stage_report.staged.iter().map(|seed| {
-            json!({
-                "target": seed.target,
-                "source_path": seed.source_path.display().to_string(),
-                "staged_path": seed.staged_path.display().to_string(),
-            })
-        }).collect::<Vec<_>>(),
-    }))
-}
-
-fn stage_db_seed_files_with_adapter(
-    repo_root: &Path,
-    db_seeds: &[BootstrapDbSeedInput],
-    adapter: &dyn OciArtifactAdapter,
-) -> Result<Vec<StagedDbSeed>, RunnerError> {
-    Ok(stage_db_seed_files_report_with_adapter(repo_root, db_seeds, adapter)?.staged)
-}
-
 /// Bytes preserved verbatim in a staged seed file name; every other byte
 /// (including `%`, path separators and control bytes) is percent-encoded.
 fn is_staged_seed_name_byte(byte: u8) -> bool {
@@ -360,17 +310,11 @@ fn staged_seed_repo_path(staged_path: &Path) -> PathBuf {
     )
 }
 
-#[derive(Debug)]
-struct DbSeedStageReport {
-    staged: Vec<StagedDbSeed>,
-    artifact_reports: Vec<serde_json::Value>,
-}
-
-fn stage_db_seed_files_report_with_adapter(
+fn stage_db_seed_files_with_adapter(
     repo_root: &Path,
     db_seeds: &[BootstrapDbSeedInput],
     adapter: &dyn OciArtifactAdapter,
-) -> Result<DbSeedStageReport, RunnerError> {
+) -> Result<Vec<StagedDbSeed>, RunnerError> {
     let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
     let seed_plans = bootstrap_db_seed_plans(repo_root, &manifest, db_seeds)?;
     let staging_dir = repo_root.join(DB_SEEDS_DIR);
@@ -383,7 +327,6 @@ fn stage_db_seed_files_report_with_adapter(
 
     let mut seen_names = BTreeSet::new();
     let mut staged = Vec::with_capacity(seed_plans.len());
-    let mut artifact_reports = Vec::with_capacity(seed_plans.len());
     for plan in &seed_plans {
         let source = data_seed_source_display(&plan.input.source);
         let artifact_report = stage_seed_artifact(repo_root, plan, adapter)?;
@@ -430,17 +373,11 @@ fn stage_db_seed_files_report_with_adapter(
                 destination.display(),
             ))
         })?;
-        let encoded_artifact_report = serde_json::to_value(&artifact_report).map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "failed to encode db seed artifact staging report: {error}"
-            ))
-        })?;
         staged.push(StagedDbSeed {
             target: plan.input.target.as_ref().map(ToString::to_string),
             source_path: PathBuf::from(artifact_report.metadata.source),
             staged_path: destination,
         });
-        artifact_reports.push(encoded_artifact_report);
     }
 
     let metadata = serde_json::to_string(
@@ -470,10 +407,7 @@ fn stage_db_seed_files_report_with_adapter(
             ))
         })?;
     }
-    Ok(DbSeedStageReport {
-        staged,
-        artifact_reports,
-    })
+    Ok(staged)
 }
 
 fn stage_seed_artifact(
@@ -612,20 +546,6 @@ pub(in crate::runner) fn db_seed_env(staged_db_seeds: &[StagedDbSeed]) -> BTreeM
         }
     }
     env
-}
-
-pub(in crate::runner) fn run_db_seed_task(
-    repo_root: &Path,
-    env_overrides: &BTreeMap<String, String>,
-) -> Result<(), RunnerError> {
-    let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
-    if manifest.tasks.contains_key(DB_SEED_TASK) {
-        prepare_db_seed_runtime(repo_root, &manifest)?;
-        return run_manifest_db_seed_task(repo_root, env_overrides);
-    }
-    let policy = effigy_containers::load_container_policy(repo_root, None)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    run_db_seed_task_for_policy(repo_root, env_overrides, &policy)
 }
 
 /// Run the database seed for one already-selected environment.
@@ -1258,10 +1178,10 @@ mod tests {
     use super::{
         cleanup_builtin_seed_staging, db_seed_env, db_seed_runtime_activation_plan,
         encode_staged_seed_name, logical_database_targets, resolve_db_seed_input_paths,
-        resolve_db_seed_targets, stage_db_seed_files, stage_db_seed_files_report_with_adapter,
-        stage_db_seed_files_with_adapter, SeedMetadataEntry, DB_SEEDS_DIR, DB_SEEDS_DIR_ENV,
-        DB_SEEDS_JSON_ENV, DB_SEEDS_METADATA_FILE, DB_SEED_COUNT_ENV, DB_SEED_FILES_ENV,
-        DB_SEED_FILE_ENV, DB_SEED_TARGET_ENV, LEGACY_BOOTSTRAP_DB_SEEDS_METADATA_FILE,
+        resolve_db_seed_targets, stage_db_seed_files, stage_db_seed_files_with_adapter,
+        SeedMetadataEntry, DB_SEEDS_DIR, DB_SEEDS_DIR_ENV, DB_SEEDS_JSON_ENV,
+        DB_SEEDS_METADATA_FILE, DB_SEED_COUNT_ENV, DB_SEED_FILES_ENV, DB_SEED_FILE_ENV,
+        DB_SEED_TARGET_ENV, LEGACY_BOOTSTRAP_DB_SEEDS_METADATA_FILE,
         LEGACY_BOOTSTRAP_DB_SEED_FILE_ENV,
     };
     use effigy_cli::BootstrapDbSeedInput;
@@ -1942,7 +1862,7 @@ database = "app"
             pulls: AtomicUsize::new(0),
         };
 
-        let error = stage_db_seed_files_report_with_adapter(
+        let error = stage_db_seed_files_with_adapter(
             &repo,
             &[
                 BootstrapDbSeedInput {

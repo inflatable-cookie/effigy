@@ -68,11 +68,6 @@ fn every_registered_rhai_feature_has_a_runner_dispatch_branch() {
                 "feature `{}` is marked runner-dispatched but has no runner dispatch branch",
                 descriptor.id
             ),
-            RhaiFeatureDispatch::HostHandled => assert!(
-                !is_runner_dispatch_feature(descriptor.id),
-                "feature `{}` is marked host-handled but is also runner-dispatched",
-                descriptor.id
-            ),
         }
     }
 }

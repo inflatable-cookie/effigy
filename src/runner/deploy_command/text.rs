@@ -10,9 +10,6 @@ pub(super) fn render_deploy_plan_text(report: &DeployPlanReport) -> String {
         format!("code: {}", report.code.requested_ref),
         format!("release_policy: {}", report.release_policy.mode),
     ];
-    if let Some(state) = &report.state {
-        lines.push(format!("state: {} ({})", state.stack, state.lineage_id));
-    }
     if let Some(provider) = &report.provider_provenance {
         lines.push(format!("provider: {}", provider.describe()));
     }

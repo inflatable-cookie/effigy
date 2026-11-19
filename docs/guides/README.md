@@ -74,12 +74,12 @@ Use when:
 ### Build and manage environment state
 
 Read:
-- [`073-state-stack-guide.md`](073-state-stack-guide.md)
+- [`072-artifact-commands-guide.md`](072-artifact-commands-guide.md)
+- [Deployment data workflows](../knowledge/deployment-data-workflows.md)
 
 Use when:
-- you need ordered database schema, seed, and migration layers
-- you run UAT environments from imported legacy baselines
-- you capture and replay changes across environment rebuilds
+- you need database schema, seed, and imported snapshot data in a defined order
+- you capture a snapshot and publish it as an immutable artifact
 
 ### Manage secrets and credentials
 
@@ -220,7 +220,6 @@ This section is inventory, not a recommended reading order.
 - [`066-local-manifest-bundles.md`](066-local-manifest-bundles.md)
 - [`067-catalog-services-reference.md`](067-catalog-services-reference.md)
 - [`071-catalog-service-authoring.md`](071-catalog-service-authoring.md)
-- [`073-state-stack-guide.md`](073-state-stack-guide.md)
 - [`074-deployment-guide.md`](074-deployment-guide.md)
 - [`075-secrets-and-vault-guide.md`](075-secrets-and-vault-guide.md)
 - [`080-host-wide-validation-admission.md`](080-host-wide-validation-admission.md)

@@ -247,9 +247,6 @@
     "crates/effigy-state/src/artifact/staging.rs": {
       "std::fs::write": 1
     },
-    "crates/effigy-state/src/paths.rs": {
-      "std::fs::write": 2
-    },
     "crates/effigy-tasks/src/testing/oxide.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.output": 1
@@ -757,9 +754,6 @@
     "crates/effigy-state/src/artifact/tests.rs": {
       "std::fs::write": 10
     },
-    "crates/effigy-state/src/tests.rs": {
-      "std::fs::write": 2
-    },
     "crates/effigy-tasks/src/testing/oxide/tests.rs": {
       "std::env::remove_var": 2,
       "std::env::set_var": 2
@@ -920,11 +914,6 @@
     },
     "src/runner/secrets_command.rs": {
       "std::fs::write": 2
-    },
-    "src/runner/state_command.rs": {
-      "std::env::remove_var": 1,
-      "std::env::set_var": 2,
-      "std::fs::write": 28
     },
     "src/runner/task_engine/checkout.rs": {
       "std::fs::write": 2

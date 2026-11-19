@@ -892,8 +892,8 @@ fn every_named_payload_schema_is_in_the_index_map() {
         }
     }
     assert!(
-        named >= 9,
-        "expected the deps, plan, help, state-stack and container rows to name payload schemas, got {named}"
+        named >= 6,
+        "expected the deps, plan, help and container rows to name payload schemas, got {named}"
     );
 }
 

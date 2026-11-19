@@ -103,13 +103,13 @@ description = "Application encryption key for local/API runtime."
 
 [secrets.keys.aws_access_key_id]
 required = false
-targets = ["tasks", "containers", "state", "artifacts", "rhai"]
-description = "S3-compatible object-store access key id for media state/artifact workflows."
+targets = ["tasks", "containers", "artifacts", "rhai"]
+description = "S3-compatible object-store access key id for media artifact workflows."
 
 [secrets.keys.aws_secret_access_key]
 required = false
-targets = ["tasks", "containers", "state", "artifacts", "rhai"]
-description = "S3-compatible object-store secret access key for media state/artifact workflows."
+targets = ["tasks", "containers", "artifacts", "rhai"]
+description = "S3-compatible object-store secret access key for media artifact workflows."
 
 [secrets.keys.smtp_password]
 required = false

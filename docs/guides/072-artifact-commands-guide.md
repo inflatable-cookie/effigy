@@ -9,8 +9,9 @@ artifact surfaces inside `effigy container ...` and `effigy bootstrap ...`.
 > **Moved in v0.15.** The top-level `effigy artifact` command was removed.
 > `inspect`, `stage` and `capture` keep their behaviour, flags, and JSON
 > payloads under `effigy state artifact`; the old form fails with this
-> replacement. Layered captures were always `effigy state capture` and did not
-> move.
+> replacement. The layered state verbs themselves retired in v0.16; see
+> [deployment data workflows](../knowledge/deployment-data-workflows.md). These
+> three plain artifact verbs did not.
 
 Use:
 

@@ -1,13 +1,9 @@
-//! Atomic publication for the JSON files the state surface writes.
+//! Atomic publication for staged artifact metadata.
 //!
-//! State reports (`.effigy/reports/state/<stack>/latest-<kind>.json`, their
-//! history and compatibility copies) and staged artifact metadata are read
-//! while another process may be rewriting them: `StateStackHistoryReport::scan`
-//! lists and parses every report in a stack directory, and a later state apply
-//! reads a staged `effigy-artifact.json` while a re-stage of the same source
-//! rewrites it. A plain `fs::write` truncates the destination first, so a
-//! concurrent reader can parse an empty or partial report and report the
-//! generation as malformed.
+//! A consumer reads a staged `effigy-artifact.json` while another process may
+//! be re-staging the same source. A plain `fs::write` truncates the destination
+//! first, so a concurrent reader can parse an empty or partial document. This
+//! is also the general atomic-write helper for anything else in this crate.
 //!
 //! Writing one complete generation to a uniquely named temporary file beside
 //! the destination, syncing it, renaming it over the destination and syncing

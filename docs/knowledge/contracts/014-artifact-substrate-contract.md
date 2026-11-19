@@ -253,7 +253,9 @@ effigy container data dump <TARGET>=oci://<REF> [--push]
 The standalone artifact verbs moved from the retired top-level `effigy artifact`
 command to `effigy state artifact inspect|stage|capture` in v0.15. Behaviour,
 flags, and payload schemas are unchanged; `effigy artifact` fails with the
-replacement. Layered captures remain `effigy state capture`.
+replacement. The layered state surface retired in v0.16, so these three plain
+verbs are what remains of the `effigy state` command family; see
+[deployment data workflows](../deployment-data-workflows.md).
 
 Implementation rule:
 
