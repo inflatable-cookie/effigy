@@ -1000,20 +1000,6 @@ fn detached_gateway_registration_failure_keeps_started_scope() {
 }
 
 #[test]
-fn workspace_integration_failure_retains_owner_without_lifecycle_cleanup() {
-    let policy = test_policy(Vec::new());
-    let error = IntegrationOutcomePolicy::Workspace.failure(
-        &policy,
-        RunnerError::task_invocation("integration effects unsettled; re-run up"),
-        || panic!("workspace recovery owns cleanup"),
-    );
-    assert_eq!(
-        error.to_string(),
-        "integration effects unsettled; re-run up"
-    );
-}
-
-#[test]
 fn attached_gateway_registration_failure_still_tears_scope_down() {
     let (temp, _lease_home) = isolated_lease_home();
     let policy = prepared_marker_policy(temp.path());

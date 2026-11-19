@@ -803,10 +803,6 @@ impl Custody {
             Some(output),
         )
     }
-    /// Explicit test-only qualification entry. Ordinary spawn still refuses
-    /// Discard, even in this build. All helpers must match the entry snapshot;
-    /// file custody and process ownership use the normal retained machinery.
-
     /// Spawn only after the same checkout backup holds the exact prepared file
     /// descriptions and their synced process binding. Drop never unlinks it.
     pub fn spawn_interpolated(
@@ -1306,10 +1302,8 @@ impl OwnedProcess {
     /// Qualification apply may advance only after a fresh group-closure
     /// observation. Leader exit alone leaves delayed descendants unresolved.
     /// This opens no cleanup window and retains the original descriptors.
-
     /// Retry only fresh closure observations within the caller's bounded
     /// context. Unknown never becomes absence merely because time passes.
-
     pub fn complete(&self, run: &mut Run<'_>, exit: Exit) -> Result<(), RunError> {
         let core = lock(&self.core);
         if core.exit != Some(exit) {
@@ -1758,12 +1752,9 @@ impl ProcessCore {
         }
     }
 }
-/// Fresh closure of the exact live core; a leader exit is insufficient.
-
 /// Authenticate a qualification preparation child against the actual applied
 /// process receipt, purpose-tagged intent digest, current Env fence, live parent/sentinel
 /// and held Env gate. Declarative argv or a copied nonce alone cannot authorize preparation.
-
 /// The memory backup independently validates the complete pre-go receipt.
 /// Only a ready, tagged anchor and the exact run/sequence nonce can be acked.
 pub(crate) fn verify_foreground_receipt(

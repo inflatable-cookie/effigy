@@ -235,20 +235,6 @@ pub(crate) fn duplicate_custody(
     Ok(unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) })
 }
 impl GateGuard {
-    /// Release an unshared guard without running custody callbacks. A parked
-    /// environment must not carry listener custody or shared descriptors.
-    pub(crate) fn park(&mut self) -> Result<Vec<ResourceId>, &'static str> {
-        if !self.release_actions.is_empty()
-            || self.gates.iter().any(|(_, file)| !file.unlock_on_drop)
-            || self.scopes.iter().any(|(_, file)| !file.unlock_on_drop)
-        {
-            return Err("gate has shared custody or release actions");
-        }
-        let ids = self.gates.iter().map(|(id, _)| id.clone()).collect();
-        self.gates.clear();
-        self.scopes.clear();
-        Ok(ids)
-    }
     /// The Run has closed its exact backup and all registered workloads.
     /// Close our descriptions without an explicit unlock; this never releases
     /// any description another custodian might still hold. Ordinary park

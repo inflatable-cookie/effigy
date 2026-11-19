@@ -130,29 +130,6 @@ impl CanonicalOutput {
     }
     /// The workspace's separate streams are projections of the same merged
     /// sanitize/redact pass, redacted again after removing the other stream.
-    pub(crate) fn for_workspace(
-        log: super::capture::Log,
-        mut projections: [super::capture::Log; 2],
-        secrets: Vec<Vec<u8>>,
-        limits: &crate::ctx::Limits,
-    ) -> io::Result<Self> {
-        for projection in &mut projections {
-            if let Err(error) = projection.enable_plain(true) {
-                for log in &projections {
-                    log.mark_truncated();
-                }
-                return Err(error);
-            }
-        }
-        let output = Self::for_run(log, secrets.clone(), limits)?;
-        {
-            let mut writer = lock(&output.0);
-            writer.pipeline = OutputPipeline::for_capture(secrets, true, true);
-            writer.projections = Some(projections);
-            writer.projection_line_max = limits.line_max;
-        }
-        Ok(output)
-    }
     fn with_destination(
         log: Destination,
         secrets: Vec<Vec<u8>>,

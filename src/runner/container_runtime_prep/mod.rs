@@ -13,7 +13,6 @@
 //! - [`checkout_mount`] and [`cargo_inputs`] prove the selected checkout is
 //!   what the container will execute against.
 //! - [`host_mounts`] prepares the host side of Compose bind mounts.
-//! - [`image_platform`] is the preflight image observation.
 
 mod activation;
 mod binding;
@@ -22,12 +21,10 @@ mod checkout_mount;
 mod exec_prep;
 mod gateway;
 mod host_mounts;
-mod image_platform;
 mod prep;
 mod running;
 mod validation;
 
-pub(in crate::runner) use crate::runner::workspace_command::provisioning::BoundedReadRefusal;
 #[cfg(test)]
 pub(in crate::runner) use activation::activate_routed_container_runtime_with;
 pub(in crate::runner) use activation::{
@@ -39,7 +36,6 @@ pub(in crate::runner) use binding::{
     ensure_primary_service_binding, verify_service_binding, OWNED_EXEC_VERIFICATION_TIMEOUT,
 };
 pub(in crate::runner) use gateway::container_policy_uses_gateway_surface;
-pub(in crate::runner) use image_platform::{observed_image_platform, ObservedImagePlatform};
 
 #[cfg(test)]
 pub(in crate::runner) use activation::StartPolicy;

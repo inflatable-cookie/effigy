@@ -90,7 +90,7 @@ pub fn publish_active_for_fixture(
 ) -> Result<(), RunError> {
     let mut store = crate::store::Store::open(cx, root)?;
     store.transaction(cx, |txn| {
-        attachments::check_activation_fence(txn.conn(), owner)?;
+        journal::check_fence(txn.conn(), owner)?;
         attachments::publish_active_state(txn, owner)
     })
 }
@@ -441,13 +441,6 @@ pub struct Run<'a> {
 }
 
 impl<'a> Run<'a> {
-    #[cfg(test)]
-    pub(crate) fn share_workspace_gate_for_test(
-        &mut self,
-    ) -> std::io::Result<Vec<std::os::fd::OwnedFd>> {
-        self.guard.share_custody()
-    }
-
     pub fn begin(
         cx: &EffectContext,
         root: &'a StateRoot,
@@ -651,14 +644,10 @@ impl<'a> Run<'a> {
             prelaunch_interpolations: Default::default(),
             processes: Default::default(),
         };
-        if let Err(error) = admitted_fault {
-            return Err(error);
-        }
+        admitted_fault?;
         if inv.spec().owner.kind() == crate::id::ResourceKind::Env {
             if let crate::id::Scope::Checkout(checkout) = inv.spec().owner.scope() {
-                if let Err(error) = run.protect_checkout(checkout, opts.wait) {
-                    return Err(error);
-                }
+                run.protect_checkout(checkout, opts.wait)?;
             }
         }
         if let Some(plan) = opts.custody {

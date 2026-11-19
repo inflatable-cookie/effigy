@@ -16,7 +16,6 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(super) fn test_policy(compose_file: PathBuf) -> EffectiveContainerPolicy {

@@ -32,7 +32,7 @@ use super::context::{
     declared_schema, read_published_body, ContextReadError, ContextRefusal, GuestReader,
     WorkspaceContainerIdentity, WorkspaceContext, CONTEXT_SCHEMA, HOST_REPREPARE_COMMAND,
 };
-use super::identity::{GuestIdentity, GuestIdentityRefusal, GuestSelfObservation};
+use super::identity::{GuestIdentity, GuestIdentityRefusal};
 use super::RunningBinary;
 
 use crate::runner::error::RunnerError;
@@ -43,7 +43,6 @@ use crate::runner::error::RunnerError;
 pub(crate) struct PublishedLegacyGuestContext {
     pub(crate) generation: u64,
     pub(crate) context: WorkspaceContext,
-    pub(crate) observation: GuestSelfObservation,
 }
 
 /// Read and check one already-read legacy document.
@@ -113,7 +112,6 @@ pub(crate) fn published_legacy_at(
     Ok(PublishedLegacyGuestContext {
         generation,
         context,
-        observation: observed,
     })
 }
 

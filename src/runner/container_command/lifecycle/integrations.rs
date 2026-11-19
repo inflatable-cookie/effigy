@@ -1,20 +1,15 @@
-use super::report::{annotate_managed_host_listeners, detached_activation_error};
+use super::report::detached_activation_error;
 use crate::runner::container_command::closeout::finish_container_up_failure;
 use crate::runner::container_command::secret_env::{
-    materialize_container_secret_runtime, resolve_container_secret_runtime, secrets_required,
-    ResolvedContainerSecretRuntime,
+    materialize_container_secret_runtime, ResolvedContainerSecretRuntime,
 };
 use crate::runner::container_command::steps::ProgressSource;
-use crate::runner::container_command::support::{
-    annotate_registered_gateway_routes, annotate_tcp_alias_host_notes, annotate_warning_lines,
-    reconcile_primary_service_tcp_alias_hosts, wait_for_container_ready,
-};
+use crate::runner::container_command::support::reconcile_primary_service_tcp_alias_hosts;
 use crate::runner::container_command::{
-    gateway_registration, secret_env, support, workspace_integrations, RunnerError,
+    gateway_registration, support, workspace_integrations, RunnerError,
 };
-use effigy_containers::{up_detached_report, EffectiveContainerPolicy};
+use effigy_containers::EffectiveContainerPolicy;
 use effigy_ui::steps::ProgressFrame;
-use std::ffi::OsString;
 use std::path::Path;
 
 #[derive(Default)]
@@ -92,7 +87,6 @@ pub(super) fn gateway_port_wait_stage(
 pub(super) enum IntegrationOutcomePolicy {
     Attached,
     Detached,
-    Workspace,
 }
 
 impl IntegrationOutcomePolicy {
@@ -105,8 +99,6 @@ impl IntegrationOutcomePolicy {
         match self {
             Self::Attached => finish_container_up_failure(error, cleanup()),
             Self::Detached => detached_activation_error(policy, error),
-            // The journal adapter redacts the diagnostic and retains custody.
-            Self::Workspace => error,
         }
     }
 }
@@ -175,10 +167,7 @@ impl RuntimeIntegrationContext<'_> {
                         None,
                     )
                 };
-                match self.outcome {
-                    IntegrationOutcomePolicy::Workspace => prepare()?,
-                    _ => ensure_up_workspace_permissions(policy, prepare)?,
-                }
+                ensure_up_workspace_permissions(policy, prepare)?;
             }
             Step::Secrets => {
                 self.stage(2, "materializing secrets");

@@ -44,9 +44,6 @@ pub(crate) const BINARY_ROOT: &str = "/run/effigy/bin";
 pub(crate) const SNAPSHOT_ROOT: &str = "/run/effigy/snapshots";
 /// File naming the executable generation new guest invocations run.
 pub(crate) const BINARY_CURRENT_PATH: &str = "/run/effigy/bin/current";
-/// Guest-private storage for a client session capability (never the checkout).
-/// Guest-private storage for the narrow enrolment credential (§8.8).
-
 /// The command a client names when its identity or version no longer matches
 /// what the host prepared (§8.9).
 pub(crate) const HOST_REPREPARE_COMMAND: &str = "effigy container up";

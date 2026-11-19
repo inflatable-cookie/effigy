@@ -12,6 +12,11 @@ pub enum AttachMode {
     Exclusive { stop_on_release: bool },
 }
 impl AttachMode {
+    /// Decode the stored text back into the typed mode it was written from.
+    #[cfg(test)]
+    pub(crate) fn decode_stored(text: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(text)
+    }
     /// The exact text `attachments.mode` stores.
     ///
     /// The column holds this enum's JSON encoding. Every writer and every
@@ -20,10 +25,6 @@ impl AttachMode {
     /// leaving a literal that silently matches nothing.
     pub(crate) fn stored(self) -> String {
         serde_json::to_string(&self).expect("attachment mode encoding")
-    }
-    /// Decode the stored text back into the typed mode it was written from.
-    pub(crate) fn decode_stored(text: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(text)
     }
 }
 #[derive(Debug, Clone)]
@@ -98,15 +99,6 @@ pub(crate) fn publish_active_state(
         ],
     )?;
     Ok(())
-}
-
-/// The activation commit's fence check, so the reservation seam verifies the
-/// environment generation with the kernel's own rule rather than a copy.
-pub(crate) fn check_activation_fence(
-    conn: &rusqlite::Connection,
-    owner: &Fence,
-) -> Result<(), RunError> {
-    journal::check_fence(conn, owner)
 }
 
 /// One holder's `Borrow` attachment, written as an `Applied` effect of that

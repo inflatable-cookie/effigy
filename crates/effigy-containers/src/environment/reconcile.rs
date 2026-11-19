@@ -1455,12 +1455,6 @@ impl<'r> EnvRun<'r> {
         self.finish_with_policy(ok, false)
     }
 
-    /// A workspace activation must retain the run even when cleanup is
-    /// incomplete; ordinary environment settlement keeps its existing policy.
-    pub(super) fn owns_root(&self, root: &StateRoot) -> bool {
-        std::ptr::eq(self.root, root)
-    }
-
     fn finish_with_policy(
         mut self,
         ok: bool,
