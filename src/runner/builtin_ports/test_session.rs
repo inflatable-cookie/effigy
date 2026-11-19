@@ -537,10 +537,11 @@ mod tests {
     }
 
     #[test]
-    fn input_exit_and_retry_use_the_same_memory_run_without_a_database() {
+    fn input_exit_and_retry_use_the_same_memory_run_and_settle_one_terminal_row() {
         let fixture = tempfile::tempdir().expect("private checkout");
         let mut run =
             TaskRun::standalone_foreground(fixture.path(), "effigy test").expect("memory owner");
+        let run_id = run.id();
         {
             let parent = RefCell::new(&mut run);
             let source = source(
@@ -595,7 +596,24 @@ mod tests {
             );
         }
         assert!(run.close(WorkloadOutcome::Succeeded).is_empty());
-        assert!(!fixture.path().join(".effigy/state/kernel.db").exists());
+        // Contract 052 §3.1: the attempts keep their lifecycle in memory and
+        // settlement writes the run's one terminal row to the checkout journal.
+        let row = match crate::runner::task_engine::lookup_checkout(fixture.path(), run_id) {
+            crate::runner::task_engine::Lookup::Found(record) => record,
+            crate::runner::task_engine::Lookup::NotFound => {
+                panic!("the settled run left no terminal row in its checkout journal")
+            }
+            crate::runner::task_engine::Lookup::Unknown(reason) => {
+                panic!("the settled run's journal is unreadable: {reason}")
+            }
+        };
+        assert!(
+            row.is_terminal_record(),
+            "a settled foreground run is a row"
+        );
+        assert_eq!(row.view.state, "succeeded");
+        assert_eq!(row.view.exit_code, Some(0));
+        assert_eq!(row.view.cleanup, Some("complete"));
     }
     #[test]
     fn stopping_an_unfinished_suite_never_reports_success() {

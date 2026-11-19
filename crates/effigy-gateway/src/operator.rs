@@ -1075,9 +1075,9 @@ mod tests {
             "stopped"
         );
     }
-    /// A stop is never silent: the gateway's log names the pid, argv and cwd of
-    /// the process that asked for it (papercut 06d1cd9e), and the bounded caller
-    /// provenance that tells two hosts or agents apart (effigy#450).
+    /// A stop is never silent: the gateway's log names the pid, cwd and bounded
+    /// cause of the process that asked for it, with the fixed caller identifier
+    /// and no argv token or ancestor chain (effigy#1062, contract 005).
     #[test]
     fn a_stop_request_is_recorded_in_the_gateway_log_with_its_caller() {
         let home = tempfile::tempdir().unwrap();
@@ -1099,39 +1099,16 @@ mod tests {
         assert_eq!(record["event"], "gateway_stop");
         assert_eq!(record["action"], "down");
         assert_eq!(record["pid"], std::process::id());
+        assert_eq!(record["caller"], "effigy");
         assert_eq!(record["cause"], "gateway down command");
         assert!(
             log.contains(&std::env::current_dir().unwrap().display().to_string()),
             "{log}"
         );
         assert!(
-            record["argv"]
-                .as_array()
-                .is_some_and(|args| !args.is_empty()),
-            "{log}"
+            record.get("argv").is_none() && record.get("parents").is_none(),
+            "the event keeps no argument token and walks no ancestor: {log}"
         );
-        let caller = &record["caller"];
-        assert_eq!(caller["pid"], std::process::id());
-        assert!(caller["start"].is_string(), "{log}");
-        assert!(caller["markers"].is_object(), "{log}");
-        assert!(caller["unknown"].is_array(), "{log}");
-        // The chain reaches the parent this harness was started from, with the
-        // parent's own start identity so a reused pid stays distinguishable.
-        let parents = caller["parents"].as_array().expect("a caller chain");
-        assert!(
-            parents.iter().all(|link| link["start"].is_string()),
-            "{log}"
-        );
-        let parent = std::os::unix::process::parent_id();
-        let first = parents.first().and_then(|link| link["pid"].as_u64());
-        let parent_unreadable = caller["unknown"].as_array().is_some_and(|reasons| {
-            reasons.iter().any(|reason| {
-                reason
-                    .as_str()
-                    .is_some_and(|reason| reason.contains(&format!("parent {parent}")))
-            })
-        });
-        assert!(first == Some(parent as u64) || parent_unreadable, "{log}");
     }
 
     fn self_test_error(bind_addr: std::net::SocketAddr, budget: Duration) -> String {

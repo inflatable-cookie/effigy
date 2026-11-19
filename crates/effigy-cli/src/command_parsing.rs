@@ -113,7 +113,7 @@ where
             }
         }
         "artifact" | "artefact" => Err(CliParseError::InvalidArguments(
-            "`effigy artifact` was removed in v0.15: the standalone data-artifact verbs live under `effigy state artifact inspect|stage|capture`, and layered captures stay on `effigy state capture` (see CHANGELOG.md)".to_owned(),
+            "`effigy artifact` was removed in v0.15: the standalone data-artifact verbs live under `effigy state artifact inspect|stage|capture` (see CHANGELOG.md), and layered captures retired with the state stack in v0.16, leaving ordinary repository tasks (see docs/knowledge/deployment-data-workflows.md)".to_owned(),
         )),
         "drafts" => Err(CliParseError::InvalidArguments(
             "`effigy drafts` was removed in v0.15; use `effigy tasks --all` or `effigy tasks --json`, and move each `[drafts]` definition to `[tasks.<name>]` with `visibility = \"internal\"` (see CHANGELOG.md)".to_owned(),
