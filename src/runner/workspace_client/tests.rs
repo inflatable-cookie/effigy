@@ -699,47 +699,12 @@ fn publish_production_with(guest: &mut FakeGuest, context: &WorkspaceContext, ma
     guest.put_file(&snapshot_path(&sha256_text(manifest)), manifest, 0o444);
 }
 
-/// A production guest placement over one manifest's context.
-///
-/// The context pins the checkout manifest and the rendered composed document,
-/// exactly as `workspace_source_closure` does, and the checkout holds the bytes
-/// the pins name.
+/// A production guest over one manifest's context: the document the ordinary
+/// publication writes, and an empty mounted checkout.
 fn production_guest(
     manifest: &[u8],
-) -> (
-    legacy::PublishedLegacyGuestContext,
-    FakeGuest,
-    FakeCheckout,
-    WorkspaceContext,
-) {
-    production_guest_prepared_for(manifest, "env:web")
-}
-
-/// [`production_guest`] for a context prepared for one container policy.
-fn production_guest_prepared_for(
-    manifest: &[u8],
-    prepared: &str,
-) -> (
-    legacy::PublishedLegacyGuestContext,
-    FakeGuest,
-    FakeCheckout,
-    WorkspaceContext,
-) {
-    let mut context = production_context_over(manifest);
-    context.activation.environment.resource_id = prepared.to_owned();
-    // The publication pins the root manifest, each included manifest and the
-    // composed document it rendered.
-    for (relative, bytes) in [
-        ("effigy.toml", PRODUCTION_ROOT_MANIFEST),
-        ("config/tasks.toml", PRODUCTION_INCLUDED_TASKS),
-    ] {
-        context.sources.push(WorkspacePinnedSource {
-            kind: "manifest".to_owned(),
-            name: relative.to_owned(),
-            digest: sha256_text(bytes),
-            snapshot: Some(format!("{GUEST_CHECKOUT}/{relative}")),
-        });
-    }
+) -> (legacy::PublishedLegacyGuestContext, FakeGuest, FakeCheckout) {
+    let context = production_context_over(manifest);
     let mut guest = FakeGuest::new();
     publish_production_with(&mut guest, &context, manifest);
     let published = legacy::published_legacy_at(
@@ -749,35 +714,24 @@ fn production_guest_prepared_for(
         &running_binary(),
     )
     .expect("the production context");
-    let checkout = production_checkout();
-    (published, guest, checkout, context)
+    (published, guest, FakeCheckout::default())
 }
 
-/// The mounted checkout the publication pinned: the root manifest and the file
-/// it includes.
-fn production_checkout() -> FakeCheckout {
-    let mut checkout = FakeCheckout::with_file("effigy.toml", PRODUCTION_ROOT_MANIFEST);
-    checkout.files.insert(
-        "config/tasks.toml".to_owned(),
-        PRODUCTION_INCLUDED_TASKS.to_vec(),
-    );
-    checkout
-}
+/// The legacy guest facts one command records. One command runs on one thread,
+/// so a proof clears them before and after sharing that thread with the next
+/// one.
+struct GuestFactsGuard;
 
-/// One command records one placement on its own thread, so a proof clears it
-/// before and after sharing that thread with the next one.
-struct PlacementGuard;
-
-impl PlacementGuard {
+impl GuestFactsGuard {
     fn take() -> Self {
-        legacy::forget_local_task_placement();
+        legacy::forget_guest_host_checkout();
         Self
     }
 }
 
-impl Drop for PlacementGuard {
+impl Drop for GuestFactsGuard {
     fn drop(&mut self) {
-        legacy::forget_local_task_placement();
+        legacy::forget_guest_host_checkout();
     }
 }
 
@@ -815,612 +769,233 @@ fn a_production_v1_context_is_a_guest_and_serves_its_local_reads() {
 }
 
 #[test]
-fn a_production_v1_context_refuses_host_authority_and_names_what_serves_it() {
-    let context = production_context();
-    let mut guest = FakeGuest::new();
-    publish_production(&mut guest, &context);
-    let before = guest.tree_digest();
-    let published = legacy::published_legacy_at(
-        &context.render().expect("render"),
-        GENERATION,
-        &mut ObservedIt(Some(guest_observation())),
-        &running_binary(),
-    )
-    .expect("the production context");
-    let mut checkout = FakeCheckout::default();
-
-    let error = legacy_command(&parsed(&["doctor"]), &published, &mut guest, &mut checkout)
-        .expect_err("a live observation needs host authority");
-    let message = error.to_string();
-    assert!(message.contains("production context"), "{message}");
-    assert!(message.contains("no host authority channel"), "{message}");
-    assert!(message.contains("run on the host"), "{message}");
-    assert!(
-        message.contains("cannot grant host authority"),
-        "the refusal must not claim a re-prepare fixes it: {message}"
-    );
-    assert_eq!(guest.tree_digest(), before, "a refusal writes nothing");
-    assert_eq!(checkout.reads, 0, "a refusal never falls back to a read");
-}
-
-#[test]
-fn a_container_bound_task_runs_in_the_container_the_context_proved() {
-    // The planner's 2026-11-16 ruling: a declared task whose steps are bound to
-    // this workspace container runs here, where the process already is.
-    let _placement = PlacementGuard::take();
-    let (published, mut guest, mut checkout, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
-
-    let placement = legacy::classify_task(
-        &published,
-        &mut guest,
-        &mut checkout,
-        &TaskInvocation {
-            name: "build".to_owned(),
-            args: Vec::new(),
-        },
-    )
-    .expect("the pinned manifest");
-    assert_eq!(placement, legacy::LegacyTask::ContainerLocal);
-
-    // The guest entry hands a container-local task to the ordinary dispatch in
-    // this container, under the runner's existing handoff switch.
+fn a_production_v1_context_runs_every_command_here_like_the_host() {
+    // Tom's 2026-11-19 ruling: a guest carrying this document holds no host
+    // authority, so it needs no placement policy. A task, a bundle task and a
+    // deferred request are all handed to the ordinary dispatch in this
+    // container; the guest entry refuses nothing and answers nothing itself.
+    let _facts = GuestFactsGuard::take();
+    let _lock = crate::contract_test_support::lock_test();
     let _marker = EnvGuard::set_many(&[(CONTAINER_HANDOFF_ENV_NAME, None)]);
-    assert!(std::env::var_os(CONTAINER_HANDOFF_ENV_NAME).is_none());
-    assert!(
-        legacy_command(&parsed(&["build"]), &published, &mut guest, &mut checkout)
-            .expect("a container-local task")
-            .is_none(),
-        "a container-local task is dispatched by the ordinary runner"
-    );
+    let (published, mut guest, mut checkout) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
+
+    // A declared task, a bundle task, a deferred request, the explicit
+    // deferral surface and a channel-scope operation all run here: the Level 1
+    // filter describes an authority this context does not have.
+    for words in [
+        &["build"][..],
+        &["bundle-task"],
+        &["prep"],
+        &["defer", "prep"],
+        &["container", "status"],
+    ] {
+        assert!(
+            legacy_command(&parsed(words), &published, &mut guest, &mut checkout)
+                .expect("the legacy guest resolves every command")
+                .is_none(),
+            "`{}` is dispatched here, not answered from the context",
+            words.join(" ")
+        );
+    }
     assert_eq!(
         std::env::var_os(CONTAINER_HANDOFF_ENV_NAME).as_deref(),
         Some(std::ffi::OsStr::new("1")),
-        "the dispatch runs where the verified context says it is"
-    );
-    let recorded = legacy::local_task_placement().expect("the placement is recorded");
-    assert_eq!(recorded.container, "web");
-    assert_eq!(recorded.generation, GENERATION);
-    let manifest: effigy_manifest::TaskManifest =
-        toml::from_str(std::str::from_utf8(PRODUCTION_WORKSPACE_MANIFEST).expect("utf-8"))
-            .expect("the pinned manifest parses");
-    assert!(
-        legacy::verify_local_task(
-            &manifest,
-            "build",
-            manifest.tasks.get("build").expect("build")
-        )
-        .is_ok(),
-        "the permitted declaration passes the execution-time check too"
-    );
-}
-
-/// [`production_guest`] whose mounted checkout is a real directory, so a
-/// deferral the guest runs has the working directory it names.
-fn production_guest_mounted_at(
-    manifest: &[u8],
-    checkout: &std::path::Path,
-) -> (legacy::PublishedLegacyGuestContext, FakeGuest, FakeCheckout) {
-    let mut context = production_context_over(manifest);
-    context.paths.guest_checkout = checkout.display().to_string();
-    context.paths.workdir = checkout.display().to_string();
-    let mut guest = FakeGuest::new();
-    publish_production_with(&mut guest, &context, manifest);
-    let published = legacy::published_legacy_at(
-        &context.render().expect("render"),
-        GENERATION,
-        &mut ObservedIt(Some(guest_observation())),
-        &running_binary(),
-    )
-    .expect("the production context");
-    (published, guest, FakeCheckout::default())
-}
-
-#[test]
-fn an_undeclared_name_runs_the_pinned_container_deferral_here() {
-    // effigy#1044: a name the pinned manifest does not declare, which that
-    // manifest's `[defer]` resolves to a container command, runs in the
-    // container this process proved it is — the host's fallback behaviour
-    // without the host.
-    let fixture =
-        effigy_test_support::Fixture::new("legacy-guest-deferral-").expect("fixture root");
-    let marker = fixture.path().join("deferral-ran");
-    let manifest = format!(
-        "[defer]\nrun = \"printf '%s %s %s' \\\"$EFFIGY_DEFER_DEPTH\\\" {{request}} {{args}} > {}\"\nrun_in = \"container\"\n\n[tasks]\nbuild = \"cargo build\"\n",
-        marker.display()
-    );
-    let (published, mut guest, mut checkout) =
-        production_guest_mounted_at(manifest.as_bytes(), fixture.path());
-
-    let output = legacy_command(
-        &parsed(&["prep", "--dry-run"]),
-        &published,
-        &mut guest,
-        &mut checkout,
-    )
-    .expect("the pinned deferral resolves the request")
-    .expect("the deferral answers the command here");
-    assert!(
-        output.is_empty(),
-        "a non-verbose deferral returns no extra output: {output}"
+        "the dispatch runs here, not by spawning a container client"
     );
     assert_eq!(
-        std::fs::read_to_string(&marker).expect("the deferred command ran in this container"),
-        "1 prep --dry-run",
-        "the child carries the request tail and the one-hop depth guard"
+        legacy::guest_host_checkout().as_deref(),
+        Some("/Users/operator/app"),
+        "the recorded host checkout is what a host-bound refusal names"
     );
-    assert_eq!(
-        checkout.reads, 0,
-        "the deferral is resolved from the pinned manifest, never the checkout"
-    );
-    assert!(
-        legacy::local_task_placement().is_none(),
-        "a deferred name records no task placement"
-    );
+    assert_eq!(checkout.reads, 0, "the guest entry reads no checkout file");
 }
 
-#[test]
-fn a_bundle_deferral_reaches_the_guest_through_the_composed_manifest() {
-    // The decodelabs/php bundle declares the legacy deferral in its export, so
-    // composition puts it in the document the publication pins: the guest
-    // resolves the same deferral the host does, from pinned bytes only.
+/// A workspace fixture with one plain task, one host-bound task, one sequence
+/// whose only step is the host-bound task, and the two markers they write.
+fn host_bound_guest_fixture() -> (effigy_test_support::Fixture, std::path::PathBuf) {
     let fixture =
-        effigy_test_support::Fixture::new("legacy-guest-bundle-deferral-").expect("fixture root");
-    copy_fixture_dir(
-        &php_library_bundle_fixture(),
-        &fixture.path().join("bundles/php-library"),
-    );
-    let manifest_path = fixture.path().join("effigy.toml");
+        effigy_test_support::Fixture::new("legacy-guest-host-bound-").expect("fixture root");
+    let marker = fixture.path().join("ran");
     std::fs::write(
-        &manifest_path,
-        "[bundle]\nbase = { type = \"path\", dir = \"bundles/php-library\" }\n",
+        fixture.path().join("effigy.toml"),
+        format!(
+            "[tasks]\nplain = \"printf '%s' plain > {marker}\"\nhosted = {{ run = \"printf '%s' hosted > {host}\", run_in = \"host\" }}\nnested = [{{ task = \"hosted\" }}]\n",
+            marker = marker.display(),
+            host = marker.with_extension("host").display(),
+        ),
     )
-    .expect("the bundle root manifest");
-    let composed = effigy_manifest::load_task_manifest_with_inspection(&manifest_path)
-        .expect("the bundle composes")
-        .effective_manifest;
-    assert!(
-        composed.contains("[defer]"),
-        "the composed document carries the bundle's deferral: {composed}"
-    );
+    .expect("fixture manifest");
+    (fixture, marker)
+}
 
-    let (published, mut guest, mut checkout) =
-        production_guest_mounted_at(composed.as_bytes(), fixture.path());
-    let placement = legacy::classify_task(
-        &published,
-        &mut guest,
-        &mut checkout,
+#[test]
+fn a_host_bound_task_refuses_in_one_line_and_names_the_host_checkout() {
+    let _facts = GuestFactsGuard::take();
+    let _lock = crate::contract_test_support::lock_test();
+    let (fixture, marker) = host_bound_guest_fixture();
+    let (published, _, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
+    legacy::remember_guest_host_checkout(&published);
+
+    // A task the checkout does not bind to the host runs here, in this process,
+    // with no container and no host authority.
+    crate::runner::execute::api::run_manifest_task_with_cwd(
         &TaskInvocation {
-            name: "prep".to_owned(),
+            name: "plain".to_owned(),
             args: Vec::new(),
         },
+        fixture.path().to_path_buf(),
     )
-    .expect("the pinned manifest");
-    match placement {
-        legacy::LegacyTask::Deferred(deferral) => {
-            assert_eq!(
-                deferral.template,
-                "\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" {request} {args}",
-                "the deferred command is the bundle's own"
-            );
-            assert_eq!(
-                deferral.run_in,
-                effigy_manifest::ManifestTaskRunIn::Container
-            );
-            assert_eq!(
-                deferral.working_dir,
-                fixture.path(),
-                "the deferral runs from the checkout the context mounted"
-            );
-        }
-        other => panic!("the bundle deferral should run here, got {other:?}"),
-    }
+    .expect("a plain task runs in the container");
     assert_eq!(
-        checkout.reads, 0,
-        "nothing is read from the writable checkout"
+        std::fs::read_to_string(&marker).expect("the plain task ran"),
+        "plain"
     );
-}
 
-#[test]
-fn a_pinned_deferral_that_targets_the_host_still_refuses() {
-    // `run_in` omitted keeps its host-only default, and an explicit
-    // `run_in = "host"` is the same fact: the backward-compatible deferral is
-    // host work this guest has no authority for.
-    for run_in in ["", "run_in = \"host\"\n"] {
-        let manifest = format!(
-            "[defer]\nrun = \"printf deferred\"\n{run_in}\n[tasks]\nbuild = \"cargo build\"\n"
-        );
-        let (published, mut guest, mut checkout, _) = production_guest(manifest.as_bytes());
-        let error = legacy_command(&parsed(&["prep"]), &published, &mut guest, &mut checkout)
-            .expect_err("a host deferral needs host authority");
-        let message = error.to_string();
-        assert!(message.contains("not a task in the manifest"), "{message}");
-        assert!(message.contains("runs on the host"), "{message}");
-        assert!(message.contains("run on the host"), "{message}");
-        assert_eq!(checkout.reads, 0, "a refusal reads no checkout file");
-    }
-}
-
-#[test]
-fn an_undeclared_name_without_a_pinned_deferral_keeps_the_refusal() {
-    let (published, mut guest, mut checkout, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
-    let error = legacy_command(&parsed(&["prep"]), &published, &mut guest, &mut checkout)
-        .expect_err("an unknown name with no deferral refuses");
-    let message = error.to_string();
-    assert!(message.contains("not a task in the manifest"), "{message}");
-    assert!(message.contains("no host authority channel"), "{message}");
-    assert!(message.contains("cannot grant host authority"), "{message}");
-    assert_eq!(checkout.reads, 0, "a refusal reads no checkout file");
-    assert!(legacy::local_task_placement().is_none());
-}
-
-/// The bundle fixture the decodelabs/php cohorts publish from.
-fn php_library_bundle_fixture() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("crates/effigy-manifest/tests/fixtures/php-library-bundle")
-}
-
-fn copy_fixture_dir(src: &std::path::Path, dst: &std::path::Path) {
-    std::fs::create_dir_all(dst).expect("create fixture directory");
-    for entry in std::fs::read_dir(src).expect("read fixture directory") {
-        let entry = entry.expect("fixture entry");
-        let target = dst.join(entry.file_name());
-        if entry.path().is_dir() {
-            copy_fixture_dir(&entry.path(), &target);
-        } else {
-            std::fs::copy(entry.path(), &target).expect("copy fixture file");
-        }
-    }
-}
-
-#[test]
-fn a_task_bound_to_another_container_than_the_prepared_one_refuses() {
-    // A guest prepared for container `web` may only run a task bound to `web`.
-    let _placement = PlacementGuard::take();
-    let (published, mut guest, mut checkout, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
-
-    let error = legacy_command(
-        &parsed(&["elsewhere"]),
-        &published,
-        &mut guest,
-        &mut checkout,
+    let refusal =
+        "`hosted` runs on the host (`run_in = \"host\"`); run it in `/Users/operator/app`";
+    let error = crate::runner::execute::api::run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "hosted".to_owned(),
+            args: Vec::new(),
+        },
+        fixture.path().to_path_buf(),
     )
-    .expect_err("a task bound to another container refuses");
-    let message = error.to_string();
-    assert!(message.contains("container `other`"), "{message}");
-    assert!(message.contains("`web`"), "{message}");
-}
-
-#[test]
-fn a_task_bound_to_the_prepared_non_default_container_runs() {
-    // Production can prepare a selected non-default workspace; the container the
-    // context names decides, not the manifest's default system or workspace.
-    let _placement = PlacementGuard::take();
-    let (published, mut guest, mut checkout, _) =
-        production_guest_prepared_for(PRODUCTION_WORKSPACE_MANIFEST, "env:other");
-
+    .expect_err("a host-bound task refuses in a workspace guest");
     assert_eq!(
-        legacy::classify_task(
-            &published,
-            &mut guest,
-            &mut checkout,
-            &TaskInvocation {
-                name: "elsewhere".to_owned(),
-                args: Vec::new(),
-            },
-        )
-        .expect("the pinned manifest"),
-        legacy::LegacyTask::ContainerLocal,
-        "a task bound to the prepared non-default container runs here"
+        error.to_string(),
+        refusal,
+        "the refusal is the one plain line"
     );
-
-    let error = legacy_command(&parsed(&["build"]), &published, &mut guest, &mut checkout)
-        .expect_err("a task bound to the default container refuses here");
-    let message = error.to_string();
-    assert!(message.contains("container `web`"), "{message}");
-    assert!(message.contains("`other`"), "{message}");
+    // A step that is host-bound refuses through its own declaration; the
+    // sequence reports the step that failed.
+    let error = crate::runner::execute::api::run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "nested".to_owned(),
+            args: Vec::new(),
+        },
+        fixture.path().to_path_buf(),
+    )
+    .expect_err("a host-bound step refuses in a workspace guest");
+    assert!(
+        error.to_string().contains(refusal),
+        "the step's refusal is the same line: {error}"
+    );
+    assert!(
+        !marker.with_extension("host").exists(),
+        "the host-bound command never ran here"
+    );
 }
 
 #[test]
-fn a_checkout_manifest_changed_after_publication_refuses_before_any_effect() {
-    // Review findings 1 and 4: the dispatch resolves the task from the checkout,
-    // so a changed root manifest *or a changed included file* must refuse
-    // instead of running a definition the host never approved.
-    let _placement = PlacementGuard::take();
-    let (published, mut guest, _, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
-
-    let mut changed_root = production_checkout();
-    changed_root.files.insert(
-        "effigy.toml".to_owned(),
-        b"[containers]\ndefault = \"web\"\n\n[systems]\ndefault = \"dev\"\n\n[systems.dev]\ndefault_workspace = \"app\"\n\n[systems.dev.workspaces.app]\n\n[tasks]\nbuild = { run = \"echo swapped\", secrets = \"required\" }\n".to_vec(),
-    );
-    let error = legacy_command(
-        &parsed(&["build"]),
-        &published,
-        &mut guest,
-        &mut changed_root,
+fn a_host_bound_task_is_not_refused_outside_a_workspace_guest() {
+    // The refusal belongs to the guest, not to the declaration: the same task
+    // runs normally when no guest facts are recorded.
+    let _facts = GuestFactsGuard::take();
+    let (fixture, marker) = host_bound_guest_fixture();
+    crate::runner::execute::api::run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "hosted".to_owned(),
+            args: Vec::new(),
+        },
+        fixture.path().to_path_buf(),
     )
-    .expect_err("a changed root manifest refuses");
-    assert!(error.to_string().contains("never approved"), "{error}");
-    assert!(
-        legacy::local_task_placement().is_none(),
-        "a refused checkout records no placement"
+    .expect("a host-bound task runs normally outside a workspace guest");
+    assert_eq!(
+        std::fs::read_to_string(marker.with_extension("host")).expect("the task ran"),
+        "hosted"
     );
-
-    // The root manifest is untouched and only the included file changed.
-    let mut changed_include = production_checkout();
-    changed_include.files.insert(
-        "config/tasks.toml".to_owned(),
-        PRODUCTION_INCLUDED_TASKS.to_vec(),
-    );
-    let swapped = String::from_utf8(PRODUCTION_INCLUDED_TASKS.to_vec())
-        .expect("utf-8")
-        .replace("cargo build", "echo swapped");
-    changed_include
-        .files
-        .insert("config/tasks.toml".to_owned(), swapped.into_bytes());
-    let error = legacy_command(
-        &parsed(&["build"]),
-        &published,
-        &mut guest,
-        &mut changed_include,
-    )
-    .expect_err("a changed included file refuses");
-    assert!(error.to_string().contains("never approved"), "{error}");
-    assert!(
-        legacy::local_task_placement().is_none(),
-        "a refused checkout records no placement"
-    );
-}
-
-/// A prepared placement over one checkout and its pinned snapshot, so a proof
-/// can exercise the fences that run before any task does.
-fn record_placement_for(checkout: &std::path::Path, snapshot: &std::path::Path, pinned: &[u8]) {
-    let manifest: effigy_manifest::TaskManifest =
-        toml::from_str(std::str::from_utf8(pinned).expect("utf-8")).expect("the manifest parses");
-    legacy::record_local_task_placement(legacy::LocalTaskPlacement {
-        container: "web".to_owned(),
-        generation: GENERATION,
-        host_checkout: "/Users/operator/app".to_owned(),
-        checkout_pins: Vec::new(),
-        manifest_path: checkout.join("effigy.toml"),
-        pinned_manifest_path: snapshot.to_path_buf(),
-        pinned_tasks: manifest.tasks,
-    });
 }
 
 #[test]
-fn an_alternate_repository_with_a_deferred_route_never_runs_in_a_guest() {
-    // Review finding: a pinned task name plus `--repo` pointing at another
-    // repository used to let the resolver miss the selector and execute that
-    // repository's `[defer]` command before any task comparison. The resolved
-    // repository is fenced first, and the deferred command never runs.
-    let _placement = PlacementGuard::take();
-    let _lock = crate::contract_test_support::lock_test();
+fn a_legacy_guest_runs_its_bundle_task_locally() {
+    let _facts = GuestFactsGuard::take();
     let fixture =
-        effigy_test_support::Fixture::new("legacy-alternate-repository-").expect("fixture root");
-    let pinned = fixture.path().join("pinned");
-    let alternate = fixture.path().join("alternate");
-    std::fs::create_dir_all(pinned.join(".git")).expect("pinned checkout");
-    std::fs::create_dir_all(alternate.join(".git")).expect("alternate checkout");
-    std::fs::write(pinned.join("effigy.toml"), PRODUCTION_ROOT_MANIFEST).expect("pinned manifest");
-    let marker = fixture.path().join("deferred-ran");
+        effigy_test_support::Fixture::new("legacy-guest-bundle-task-").expect("fixture root");
+    let marker = fixture.path().join("bundle-ran");
+    let bundle_root = fixture.path().join("bundles/marker");
+    std::fs::create_dir_all(&bundle_root).expect("create bundle");
     std::fs::write(
-        alternate.join("effigy.toml"),
+        bundle_root.join("bundle.toml"),
+        "[bundle]\nname = \"marker\"\ndefaults = \"export.toml\"\n",
+    )
+    .expect("bundle declaration");
+    std::fs::write(
+        bundle_root.join("export.toml"),
         format!(
-            "[defer]\nrun = \"touch {}\"\n\n[containers]\ndefault = \"web\"\n\n[containers.web]\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\n",
+            "[tasks]\nbundle-task = \"printf '%s' bundled > {}\"\n",
             marker.display()
         ),
     )
-    .expect("alternate manifest");
-    let pinned_snapshot = fixture.path().join("pinned-snapshot.toml");
-    std::fs::write(&pinned_snapshot, PRODUCTION_WORKSPACE_MANIFEST).expect("pinned snapshot");
-    record_placement_for(&pinned, &pinned_snapshot, PRODUCTION_WORKSPACE_MANIFEST);
-
-    let error = crate::runner::execute::api::run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "build".to_owned(),
-            args: Vec::new(),
-        },
-        alternate.clone(),
-    )
-    .expect_err("an alternate repository refuses before its deferred route runs");
-    let message = error.to_string();
-    assert!(message.contains("never published"), "{message}");
-    assert!(message.contains("alternate"), "{message}");
-    assert!(
-        !marker.exists(),
-        "the alternate repository's deferred command never ran"
-    );
-
-    // A fallback route in the resolved repository refuses too: the guest
-    // resolves its selector only against the pinned snapshot, which declares no
-    // `build` task for this placement, so no `[defer]`, built-in or exec alias
-    // runs.
-    let fallback_snapshot = fixture.path().join("fallback-snapshot.toml");
+    .expect("bundle export");
     std::fs::write(
-        &fallback_snapshot,
-        "[containers]\ndefault = \"web\"\n\n[containers.web]\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\n",
+        fixture.path().join("effigy.toml"),
+        "[bundle]\nbase = { type = \"path\", dir = \"bundles/marker\" }\n",
     )
-    .expect("fallback snapshot");
-    record_placement_for(
-        &alternate,
-        &fallback_snapshot,
-        b"[containers]\ndefault = \"web\"\n\n[containers.web]\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\n",
-    );
-    let error = crate::runner::execute::api::run_manifest_task_with_cwd(
+    .expect("root manifest");
+    let (published, _, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
+    legacy::remember_guest_host_checkout(&published);
+
+    crate::runner::execute::api::run_manifest_task_with_cwd(
         &TaskInvocation {
-            name: "build".to_owned(),
+            name: "bundle-task".to_owned(),
             args: Vec::new(),
         },
-        alternate.clone(),
+        fixture.path().to_path_buf(),
     )
-    .expect_err("a fallback route refuses");
-    let message = error.to_string();
-    assert!(message.contains("not a declared task"), "{message}");
-    assert!(
-        !marker.exists(),
-        "the deferred command never ran for a fallback route either"
-    );
-}
-
-#[test]
-fn a_qualified_selector_is_refused_by_a_production_guest() {
-    // A qualified `<catalog>/<task>` selector is never in the pinned snapshot, so
-    // the guest refuses it before any routing or repository resolution.
-    let _placement = PlacementGuard::take();
-    let (published, mut guest, mut checkout, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
-    for selector in ["catalog_a/build", "../alternate/build", "not-a-pinned-task"] {
-        let error = legacy_command(&parsed(&[selector]), &published, &mut guest, &mut checkout)
-            .expect_err("a selector the pinned manifest does not declare refuses");
-        let message = error.to_string();
-        assert!(
-            message.contains("not a task in the manifest"),
-            "{selector}: {message}"
-        );
-        assert!(message.contains("run on the host"), "{selector}: {message}");
-    }
-    assert!(
-        legacy::local_task_placement().is_none(),
-        "no placement is recorded for a refused selector"
-    );
-}
-
-#[test]
-fn a_task_declaration_that_differs_from_the_pin_refuses_before_the_run() {
-    // Review finding 4: the dispatch resolves the task from the checkout's
-    // composed manifest, so a changed root manifest *or any file it includes*
-    // can hand the run a different command. The guard compares the definition
-    // the run resolved with the one the context pinned.
-    let _placement = PlacementGuard::take();
-    let (published, mut guest, mut checkout, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
-    assert!(
-        legacy_command(&parsed(&["build"]), &published, &mut guest, &mut checkout)
-            .expect("a container-local task")
-            .is_none()
-    );
-
-    let manifest: effigy_manifest::TaskManifest =
-        toml::from_str(std::str::from_utf8(PRODUCTION_WORKSPACE_MANIFEST).expect("utf-8"))
-            .expect("the pinned manifest parses");
-    // The pinned declaration is what runs.
-    assert!(legacy::verify_local_task(
-        &manifest,
-        "build",
-        manifest.tasks.get("build").expect("build")
-    )
-    .is_ok());
-
-    // A declaration changed after publication refuses, whatever file it came
-    // from: the resolved definition is compared, not just the root manifest.
-    let swapped: effigy_manifest::TaskManifest = toml::from_str(
-        "[containers]\ndefault = \"web\"\n\n[systems]\ndefault = \"dev\"\n\n[systems.dev]\ndefault_workspace = \"app\"\n\n[systems.dev.workspaces.app]\n\n[tasks]\nbuild = \"echo swapped\"\n",
-    )
-    .expect("the swapped manifest parses");
-    let error = legacy::verify_local_task(
-        &swapped,
-        "build",
-        swapped.tasks.get("build").expect("build"),
-    )
-    .expect_err("a changed declaration refuses");
-    let message = error.to_string();
-    assert!(message.contains("changed after publication"), "{message}");
-    assert!(message.contains("build"), "{message}");
-
-    // A task the pinned manifest does not declare is never run either.
-    let extra: effigy_manifest::TaskManifest =
-        toml::from_str("[tasks]\ninvented = \"echo invented\"\n")
-            .expect("the extra manifest parses");
-    let error = legacy::verify_local_task(
-        &extra,
-        "invented",
-        extra.tasks.get("invented").expect("invented"),
-    )
-    .expect_err("an unpinned task refuses");
-    assert!(
-        error.to_string().contains("not a task in the manifest"),
-        "{error}"
-    );
-}
-
-#[test]
-fn the_resolved_definition_is_rechecked_before_the_run() {
-    // A swap between the guest's classification and the run is caught here: the
-    // check sees the definition the runner actually resolved.
-    let _placement = PlacementGuard::take();
-    let (published, mut guest, mut checkout, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
-    assert!(
-        legacy_command(&parsed(&["build"]), &published, &mut guest, &mut checkout)
-            .expect("a container-local task")
-            .is_none()
-    );
-    let manifest: effigy_manifest::TaskManifest =
-        toml::from_str(std::str::from_utf8(PRODUCTION_WORKSPACE_MANIFEST).expect("utf-8"))
-            .expect("the pinned manifest parses");
-    let error = legacy::verify_local_task(
-        &manifest,
-        "hosted",
-        manifest.tasks.get("hosted").expect("hosted"),
-    )
-    .expect_err("a host-bound declaration cannot run here");
-    assert!(error.to_string().contains("run_in = \"host\""), "{error}");
-}
-
-#[test]
-fn a_task_whose_steps_need_host_authority_refuses_by_name() {
-    let _placement = PlacementGuard::take();
-    let (published, mut guest, _, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
-    for (name, reason) in [
-        ("hosted", "run_in = \"host\""),
-        ("secretive", "secrets"),
-        ("gated", "gateway"),
-        ("lifecycle", "container_lifecycle"),
-        ("heavy", "admission"),
-        ("durable", "durable"),
-        ("elsewhere", "container `other`"),
-        ("nested_host", "`hosted`"),
-    ] {
-        let mut checkout = FakeCheckout::default();
-        let error = legacy_command(&parsed(&[name]), &published, &mut guest, &mut checkout)
-            .expect_err("a host facility keeps this task off the container");
-        let message = error.to_string();
-        assert!(message.contains(reason), "`{name}`: {message}");
-        assert!(message.contains("run on the host"), "`{name}`: {message}");
-        assert!(
-            message.contains("cannot grant host authority"),
-            "`{name}`: {message}"
-        );
-    }
-    // A task the pinned manifest does not declare is never guessed at.
-    let mut checkout = FakeCheckout::default();
-    let error = legacy_command(
-        &parsed(&["invented"]),
-        &published,
-        &mut guest,
-        &mut checkout,
-    )
-    .expect_err("an unpinned task refuses");
-    assert!(
-        error.to_string().contains("not a task in the manifest"),
-        "{error}"
-    );
-}
-
-#[test]
-fn a_container_bound_task_through_a_referenced_container_task_runs_here() {
-    let _placement = PlacementGuard::take();
-    let (published, mut guest, mut checkout, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
+    .expect("a bundle task runs in the container this process is");
     assert_eq!(
-        legacy::classify_task(
-            &published,
-            &mut guest,
-            &mut checkout,
-            &TaskInvocation {
-                name: "nested".to_owned(),
-                args: Vec::new(),
-            },
+        std::fs::read_to_string(&marker).expect("the bundle task ran"),
+        "bundled"
+    );
+}
+
+#[test]
+fn a_legacy_guest_runs_its_deferred_task_locally() {
+    // effigy#1044: `prep` in a legacy workspace is a deferred request. The guest
+    // resolves it like the host and runs the deferred command in the container
+    // it already is, with no host authority and no refusal.
+    let _facts = GuestFactsGuard::take();
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture =
+        effigy_test_support::Fixture::new("legacy-guest-deferred-").expect("fixture root");
+    let marker = fixture.path().join("deferred-ran");
+    std::fs::write(
+        fixture.path().join("effigy.toml"),
+        format!(
+            "[containers]\ndefault = \"web\"\n\n[containers.web]\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\n\n[systems]\ndefault = \"dev\"\n\n[systems.dev]\ndefault_workspace = \"app\"\n\n[systems.dev.workspaces.app]\ncontainer = \"web\"\n\n[defer]\nrun = \"printf '%s %s' {{request}} {{args}} > {}\"\nrun_in = \"container\"\n",
+            marker.display()
+        ),
+    )
+    .expect("fixture manifest");
+    let (published, _, _) = production_guest(PRODUCTION_WORKSPACE_MANIFEST);
+    legacy::remember_guest_host_checkout(&published);
+
+    let context = effigy_context::EffigyRuntimeContext::builder()
+        .cwd_override(Some(fixture.path().to_path_buf()))
+        .captured_env(effigy_context::CapturedEnv {
+            container_handoff: Some("1".into()),
+            ..Default::default()
+        })
+        .capture()
+        .expect("capture the guest runtime context");
+    let request = effigy_execution::TaskExecutionRequestBuilder::new()
+        .runtime_context(context.clone())
+        .task("prep", vec!["--dry-run".to_owned()])
+        .surface(effigy_execution::ExecutionSurface::DirectCli)
+        .environment(
+            effigy_execution::ExecutionEnvironmentPlan::default().cwd(fixture.path().to_path_buf()),
         )
-        .expect("the pinned manifest"),
-        legacy::LegacyTask::ContainerLocal
+        .build()
+        .expect("build the deferred request");
+    let output = crate::runner::command_context::with_runtime_context(&context, || {
+        crate::runner::execute::api::run_manifest_task_request(request)
+    })
+    .expect("the deferred request runs in the container");
+    assert_eq!(output, "");
+    assert_eq!(
+        std::fs::read_to_string(&marker).expect("the deferred command ran"),
+        "prep --dry-run",
+        "the deferred command receives the request and its arguments"
     );
 }
 

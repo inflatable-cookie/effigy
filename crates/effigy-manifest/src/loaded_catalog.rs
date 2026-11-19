@@ -123,7 +123,7 @@ pub struct TaskSelection<'a> {
     pub surface: effigy_core::task_selection::TaskSurface,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct DeferredCommand {
     pub template: String,
     pub working_dir: PathBuf,

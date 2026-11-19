@@ -13,5 +13,5 @@ pub(crate) use builtins::{
     deferred_builtins_for_root, deferred_builtins_from_catalogs, root_manifest_declares_task,
 };
 pub(super) use policy::should_attempt_deferral;
-pub(super) use run::{run_deferred_request, run_deferred_request_in_this_container};
+pub(super) use run::run_deferred_request;
 pub(super) use select::select_deferral;

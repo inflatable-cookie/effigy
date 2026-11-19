@@ -49,8 +49,12 @@ struct DeferredLocalCommand<'a> {
     semantic: &'a str,
 }
 
-/// The depth this process already deferred at, refusing a second hop.
-fn deferral_depth() -> Result<u8, RunnerError> {
+pub(in crate::runner) fn run_deferred_request(
+    task: &TaskInvocation,
+    runtime_args: &TaskRuntimeArgs,
+    deferral: &DeferredCommand,
+    cause: &RunnerError,
+) -> Result<String, RunnerError> {
     let current_depth = std::env::var(DEFER_DEPTH_ENV)
         .ok()
         .and_then(|value| value.parse::<u8>().ok())
@@ -60,16 +64,6 @@ fn deferral_depth() -> Result<u8, RunnerError> {
             depth: current_depth,
         });
     }
-    Ok(current_depth)
-}
-
-pub(in crate::runner) fn run_deferred_request(
-    task: &TaskInvocation,
-    runtime_args: &TaskRuntimeArgs,
-    deferral: &DeferredCommand,
-    cause: &RunnerError,
-) -> Result<String, RunnerError> {
-    let current_depth = deferral_depth()?;
 
     match deferral.run_in {
         ManifestTaskRunIn::Host => run_deferred_request_on_host(
@@ -78,12 +72,7 @@ pub(in crate::runner) fn run_deferred_request(
             deferral,
             cause,
             current_depth,
-            &build_deferred_command(
-                task,
-                &runtime_args.passthrough,
-                deferral,
-                &deferral.working_dir,
-            )?,
+            &build_deferred_command(task, runtime_args, deferral, &deferral.working_dir)?,
         ),
         ManifestTaskRunIn::Container | ManifestTaskRunIn::Either => {
             match run_deferred_request_with_binding(
@@ -117,7 +106,7 @@ fn run_deferred_request_on_host(
 ) -> Result<String, RunnerError> {
     run_deferred_request_locally(
         task,
-        runtime_args.verbose_root,
+        runtime_args,
         deferral,
         cause,
         current_depth,
@@ -130,42 +119,9 @@ fn run_deferred_request_on_host(
     )
 }
 
-/// Run one deferral in the container this process is already in.
-///
-/// This is the container-mode guest's deferral. The guest entry has already
-/// proved this process runs inside the workspace container the published
-/// context was prepared for, so a container deferral needs none of the host
-/// work the ordinary route does — no catalog or checkout read, no binding
-/// resolution, no runtime activation and no `compose exec`. It runs through the
-/// same local execution as the host's handoff-local container branch, so the
-/// depth guard, the composer-global PATH preference and the local node bin path
-/// behave identically, and `passthrough` is the frozen request tail this
-/// invocation carries rather than a re-parse of the process arguments.
-pub(in crate::runner) fn run_deferred_request_in_this_container(
-    task: &TaskInvocation,
-    passthrough: &[String],
-    deferral: &DeferredCommand,
-    cause: &RunnerError,
-) -> Result<String, RunnerError> {
-    let current_depth = deferral_depth()?;
-    let command = build_deferred_command(task, passthrough, deferral, &deferral.working_dir)?;
-    run_deferred_request_locally(
-        task,
-        false,
-        deferral,
-        cause,
-        current_depth,
-        &DeferredLocalCommand {
-            rendered: &command,
-            semantic: &command,
-        },
-        &deferral.working_dir,
-    )
-}
-
 fn run_deferred_request_locally(
     task: &TaskInvocation,
-    verbose_root: bool,
+    runtime_args: &TaskRuntimeArgs,
     deferral: &DeferredCommand,
     cause: &RunnerError,
     current_depth: u8,
@@ -199,7 +155,7 @@ fn run_deferred_request_locally(
         })?;
 
     if status.success() {
-        if verbose_root {
+        if runtime_args.verbose_root {
             return Ok(render_deferral_trace(
                 task,
                 deferral,
@@ -251,7 +207,7 @@ fn run_deferred_request_with_binding(
     if !manifest_path.is_file() {
         return match deferral.run_in {
             ManifestTaskRunIn::Either => Ok(DeferredExecutionPlan::HostCommand(
-                build_deferred_command(task, &runtime_args.passthrough, deferral, &deferral.working_dir)?,
+                build_deferred_command(task, runtime_args, deferral, &deferral.working_dir)?,
             )),
             ManifestTaskRunIn::Container => Err(RunnerError::task_invocation(format!(
                 "deferred command from {} sets `[defer].run_in = \"container\"`, but {} does not contain an `effigy.toml` manifest to resolve a workspace container binding",
@@ -304,7 +260,7 @@ fn run_deferred_request_with_binding(
             if deferral.run_in == ManifestTaskRunIn::Either {
                 return Ok(DeferredExecutionPlan::HostCommand(build_deferred_command(
                     task,
-                    &runtime_args.passthrough,
+                    runtime_args,
                     deferral,
                     &deferral.working_dir,
                 )?));
@@ -317,19 +273,15 @@ fn run_deferred_request_with_binding(
         }
         ContainerExecutionBinding::Container { .. } | ContainerExecutionBinding::Inline { .. } => {
             if let Some(local_working_dir) = local_working_dir {
-                let command = build_deferred_command(
-                    task,
-                    &runtime_args.passthrough,
-                    deferral,
-                    &local_working_dir,
-                )?;
+                let command =
+                    build_deferred_command(task, runtime_args, deferral, &local_working_dir)?;
                 let rendered_command = render_deferred_runtime_command(
                     &command,
                     local_container_secret_runtime_env_path(&manifest, binding),
                 );
                 let output = run_deferred_request_locally(
                     task,
-                    runtime_args.verbose_root,
+                    runtime_args,
                     deferral,
                     cause,
                     current_depth,
@@ -358,12 +310,7 @@ fn run_deferred_request_with_binding(
                         deferral.source
                     ))
                 })?;
-            let command = build_deferred_command(
-                task,
-                &runtime_args.passthrough,
-                deferral,
-                &exec_working_dir,
-            )?;
+            let command = build_deferred_command(task, runtime_args, deferral, &exec_working_dir)?;
             let rendered_command = render_deferred_runtime_command(
                 &command,
                 container_secret_runtime_env_path(&policy),
@@ -540,13 +487,13 @@ fn render_deferred_runtime_command(command: &str, runtime_env_path: Option<Strin
 
 fn build_deferred_command(
     task: &TaskInvocation,
-    passthrough: &[String],
+    runtime_args: &TaskRuntimeArgs,
     deferral: &DeferredCommand,
     repo_root: &Path,
 ) -> Result<String, RunnerError> {
     // Each argument stays one word with its shell syntax inert, matching how
     // ordinary task `{args}` are rendered.
-    let args_rendered = crate::runner::util::render_passthrough_args(passthrough);
+    let args_rendered = crate::runner::util::render_passthrough_args(&runtime_args.passthrough);
     let request_rendered = shell_quote(&task.name);
     let repo_rendered = shell_quote(&repo_root.display().to_string());
     Ok(deferral
