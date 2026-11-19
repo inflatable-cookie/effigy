@@ -17,15 +17,15 @@ pub struct ManifestDocsPolicyConfig {
     /// Retired in v0.16 (delivery D1): the repository-defined documentation
     /// graph. Accepted only so an older manifest still loads; nothing reads it
     /// and validation names it once so the owner can delete the table.
-    #[serde(default)]
-    pub graph: Option<toml::Value>,
+    #[serde(default, deserialize_with = "retired_table_present")]
+    pub graph: bool,
     #[serde(default)]
     pub sources: Option<ManifestDocsPolicySourcesConfig>,
 }
 
 impl ManifestDocsPolicyConfig {
     pub fn validate(&self, manifest_path: &Path) -> Result<(), ManifestError> {
-        if self.graph.is_some() {
+        if self.graph {
             crate::retired_notice::warn(format!(
                 "{}: `[docs_policy.graph]` was retired in v0.16 and no command reads it; delete the table. See CHANGELOG.md `[Unreleased]`",
                 manifest_path.display()
@@ -188,21 +188,6 @@ pub struct ManifestDocsPolicyNextActionConfig {
     pub allowlist_file: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-#[serde(deny_unknown_fields)]
-pub struct ManifestDocsPolicyGraphConfig {
-    pub roots: Vec<String>,
-    #[serde(default)]
-    pub fields: BTreeMap<String, ManifestDocsPolicyGraphFieldConfig>,
-    #[serde(default)]
-    pub currentness: Option<ManifestDocsPolicyGraphCurrentnessConfig>,
-    #[serde(default)]
-    pub kinds: BTreeMap<String, ManifestDocsPolicyGraphKindConfig>,
-    #[serde(default)]
-    pub relations: BTreeMap<String, ManifestDocsPolicyGraphRelationConfig>,
-}
-
 fn validate_repo_relative_path(
     manifest_path: &Path,
     field_path: &str,
@@ -244,6 +229,16 @@ fn validate_repo_relative_path(
         }
     }
     Ok(())
+}
+
+/// Record that a retired table is present, whatever its shape: the value is
+/// never read, only named once by [`ManifestDocsPolicyConfig::validate`].
+fn retired_table_present<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let _ = <toml::Value as serde::Deserialize>::deserialize(deserializer)?;
+    Ok(true)
 }
 
 fn policy_error(manifest_path: &Path, detail: impl Into<String>) -> ManifestError {

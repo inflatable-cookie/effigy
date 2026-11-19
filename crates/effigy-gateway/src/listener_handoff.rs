@@ -29,6 +29,16 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::os::fd::FromRawFd;
 use std::os::unix::io::RawFd;
 
+/// One launchd-activated socket the broker hands on, and the one loopback
+/// endpoint its descriptor must present.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HandedSocketSpec {
+    /// launchd socket name from the definition's Sockets dictionary.
+    pub name: &'static str,
+    /// The one loopback endpoint the descriptor must present.
+    pub endpoint: SocketAddr,
+}
+
 /// Typed identity view for handoff admission.
 ///
 /// The daemon must run as the authenticated non-root operator. Membership is

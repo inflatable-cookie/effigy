@@ -24,15 +24,14 @@ use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::watch;
 use tracing::{debug, error, info};
 
-use crate::dns::{run_dns_server, run_dns_server_on, DnsCache, DnsConfig};
+use crate::dns::{run_dns_server_on, DnsCache, DnsConfig};
 use crate::error::GatewayError;
 use crate::identity::{self, GatewayIdentityProbe, GatewayRecordSnapshot};
 pub use crate::identity::{probe_gateway_process, GatewayProcessProbe};
 #[cfg(all(unix, test))]
 use crate::identity::{probe_gateway_process_with, PsProbeOutput};
 use crate::proxy::{
-    run_proxy_server, run_proxy_server_on, run_tls_proxy_server, run_tls_proxy_server_on,
-    ProxyConfig,
+    run_proxy_server_on, run_tls_proxy_server, run_tls_proxy_server_on, ProxyConfig,
 };
 use crate::routes::{LiveRouteTable, RouteTable};
 use crate::stats::GatewayStats;

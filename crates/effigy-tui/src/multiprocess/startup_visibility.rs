@@ -485,13 +485,6 @@ impl PtySession {
         }
     }
 
-    fn collect_for(&mut self, duration: Duration) {
-        let deadline = Instant::now() + duration;
-        while Instant::now() < deadline {
-            self.read_chunk(Duration::from_millis(25));
-        }
-    }
-
     fn drain_after_exit(&mut self) {
         for _ in 0..4 {
             self.read_chunk(Duration::from_millis(25));

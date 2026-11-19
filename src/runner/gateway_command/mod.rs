@@ -385,7 +385,7 @@ fn run_managed_gateway_start(command: &str) -> Result<(), RunnerError> {
 }
 
 pub(super) fn run_internal_gateway(args: InternalGatewayArgs) -> Result<String, RunnerError> {
-    let mut config = gateway_config_with_private(args.private.as_ref())?;
+    let config = gateway_config_with_private(args.private.as_ref())?;
     refuse_a_fixtures_operator_gateway_mutation(&config)?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

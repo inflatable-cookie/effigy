@@ -8,14 +8,6 @@ use super::render::{main_areas, render_ui, RenderUiState};
 use super::view_model::build_active_view_model;
 use super::{MultiProcessTuiError, MultiProcessTuiOptions, SessionRuntime};
 
-#[cfg(test)]
-pub(super) fn run_event_loop(
-    runtime: &mut SessionRuntime<'_>,
-    options: MultiProcessTuiOptions,
-) -> Result<(), MultiProcessTuiError> {
-    run_event_loop_with_control(runtime, options, None).map(|_| ())
-}
-
 pub(super) fn run_event_loop_with_control(
     runtime: &mut SessionRuntime<'_>,
     options: MultiProcessTuiOptions,
