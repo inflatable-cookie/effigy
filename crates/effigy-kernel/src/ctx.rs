@@ -385,10 +385,6 @@ impl std::error::Error for ClassError {}
 ///     store.txn(cx, |_| Ok(()));
 /// }
 /// ```
-/// ```compile_fail
-/// # use effigy_kernel::{ctx::ObserveContext, probe::maintain};
-/// fn maintenance(cx: &ObserveContext) { maintain(cx); }
-/// ```
 #[derive(Debug, Clone)]
 pub struct ObserveContext {
     pub(crate) operation: OperationContext,

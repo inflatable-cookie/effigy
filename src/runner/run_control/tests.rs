@@ -1435,13 +1435,7 @@ fn checkout_identity(checkout: &Path, run: RunId) -> String {
     .text()
 }
 
-fn write_parked_snapshot(
-    checkout: &Path,
-    run: &str,
-    task: &str,
-    pgids: Vec<u32>,
-    live_pids: Vec<u32>,
-) {
+fn write_parked_snapshot(checkout: &Path, run: &str, task: &str, pgids: Vec<u32>) {
     let root = checkout_effects_root(checkout).expect("checkout journal");
     effigy_kernel::supervise::park::write_snapshot(
         root,
@@ -1453,7 +1447,6 @@ fn write_parked_snapshot(
             owner_pid: 1,
             checkout: checkout.display().to_string(),
             pgids,
-            live_pids,
             state: "parked".into(),
         },
     )
@@ -1480,13 +1473,7 @@ fn run_release_refuses_named_live_members_then_releases_once_gone() {
     let mut child = command.spawn().expect("setsid sleep");
     let pid = child.id();
     let run = "releasefixture0000000001";
-    write_parked_snapshot(
-        directory.path(),
-        run,
-        "validate:release",
-        vec![pid],
-        vec![pid],
-    );
+    write_parked_snapshot(directory.path(), run, "validate:release", vec![pid]);
     let error =
         release(directory.path(), run, Duration::from_millis(200), false).expect_err("live member");
     let crate::runner::error::RunnerError::TaskInvocation(detail) = error else {
@@ -1536,13 +1523,7 @@ fn run_stop_names_a_parked_holder_when_custody_stays() {
     .expect("foreground admitted");
     let id = memory.id();
     rewrite_holder_as_gone(directory.path(), id);
-    write_parked_snapshot(
-        directory.path(),
-        &id.to_string(),
-        "parked-stop",
-        Vec::new(),
-        Vec::new(),
-    );
+    write_parked_snapshot(directory.path(), &id.to_string(), "parked-stop", Vec::new());
     let error = stop(
         directory.path(),
         &id.to_string(),
@@ -1590,7 +1571,6 @@ fn run_stop_names_a_parked_holder_when_the_owner_is_unverified() {
         directory.path(),
         &id.to_string(),
         "parked-unknown",
-        Vec::new(),
         Vec::new(),
     );
     let error = stop(
@@ -1642,7 +1622,6 @@ fn run_status_names_a_parked_holder() {
         &id.to_string(),
         "parked-status",
         Vec::new(),
-        Vec::new(),
     );
     let text = status(directory.path(), &id.to_string(), false).expect("status");
     assert!(text.contains("holder   run"), "{text}");
@@ -1675,13 +1654,7 @@ fn a_parked_foreground_holder_names_the_release_command() {
     .expect("foreground admitted");
     let id = memory.id();
     rewrite_holder_as_gone(directory.path(), id);
-    write_parked_snapshot(
-        directory.path(),
-        &id.to_string(),
-        "parked-lock",
-        Vec::new(),
-        Vec::new(),
-    );
+    write_parked_snapshot(directory.path(), &id.to_string(), "parked-lock", Vec::new());
     let error = TaskRun::begin(TaskRunRequest {
         target: &target,
         lock_wait_ms: 0,

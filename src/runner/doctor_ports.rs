@@ -768,7 +768,6 @@ mod tests {
             owner_pid: 44690,
             checkout: root.display().to_string(),
             pgids: Vec::new(),
-            live_pids: Vec::new(),
             state: "parked".into(),
         };
         effigy_kernel::supervise::park::write_snapshot(&state, &holder).expect("snapshot");

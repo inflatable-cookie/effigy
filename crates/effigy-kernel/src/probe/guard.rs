@@ -1,6 +1,6 @@
 //! In-memory backup custody. Registration is acknowledged before the go byte.
 use super::{check, evidence, failure};
-use crate::ctx::{CancelToken, Capability, EffectClass, EffectContext, ObserveContext};
+use crate::ctx::{CancelToken, ObserveContext};
 use crate::custody::{platform, ProcessReceipt, SignalDelivered};
 use crate::ident::{self, ProcessIdentity, ProcessState};
 use crate::observe::{Observed, UnknownReason};
@@ -592,81 +592,6 @@ fn signal_nonce(identity: &ProcessIdentity, receipt: &ProcessReceipt) -> Observe
     #[cfg(target_os = "macos")]
     platform::numeric(identity.pid, false, libc::SIGKILL)
 }
-#[derive(Debug)]
-pub struct MaintenanceReport {
-    pub signals: Vec<Observed<SignalDelivered>>,
-    pub uncertain: Vec<UnknownReason>,
-}
-/// Explicit Mutate maintenance; Observe cannot reach this API. No state writes
-/// or group signals: only a valid nonce whose two exact owners are absent.
-pub fn maintain(cx: &EffectContext) -> Result<MaintenanceReport, UnknownReason> {
-    if cx.operation().class() != EffectClass::Mutate
-        || cx.require(Capability::HostAuthority).is_err()
-    {
-        return Err(UnknownReason::HostAuthorityRequired);
-    }
-    let pids = platform::group_pids(0).map_err(failure)?;
-    let mut report = MaintenanceReport {
-        signals: Vec::new(),
-        uncertain: Vec::new(),
-    };
-    for pid in pids {
-        cx.operation()
-            .check("probe maintenance")
-            .map_err(|e| UnknownReason::Inconsistent(format!("{e:?}")))?;
-        let Some(nonce) = platform::read_nonce_key(pid, b"EFFIGY_PROBE_NONCE=")
-            .verified()
-            .cloned()
-        else {
-            continue;
-        };
-        if nonce.len() > 2048 {
-            continue;
-        }
-        let Ok(owners) = serde_json::from_str::<Nonce>(&nonce) else {
-            continue;
-        };
-        if owners.sequence == 0 || !owner_absent(&owners.observer) || !owner_absent(&owners.guard) {
-            continue;
-        }
-        let identity = match ident::process_identity(pid) {
-            Observed::Verified(id, _) => id,
-            Observed::Unknown(r) => {
-                report.uncertain.push(r);
-                continue;
-            }
-            _ => continue,
-        };
-        let observer_receipt = ProcessReceipt {
-            identity: owners.observer,
-            pgid: pid,
-            nonce,
-            grace_millis: 0,
-        };
-        let guard_receipt = ProcessReceipt {
-            identity: owners.guard,
-            ..observer_receipt.clone()
-        };
-        if platform::not_earlier(&identity, &observer_receipt)
-            && platform::not_earlier(&identity, &guard_receipt)
-        {
-            report.signals.push(signal_nonce(&identity, &guard_receipt));
-        }
-    }
-    Ok(report)
-}
-fn owner_absent(owner: &ProcessIdentity) -> bool {
-    match ident::process_identity(owner.pid) {
-        Observed::Absent(_) => true,
-        Observed::Verified(current, _) if current != *owner => true,
-        Observed::Verified(_, _) => matches!(
-            ident::process_state(owner.pid),
-            Observed::Verified(ProcessState::Zombie, _)
-        ),
-        Observed::Unknown(_) => false,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -691,17 +616,6 @@ mod tests {
         fn nonce_members(&mut self) {
             self.nonce += 1;
         }
-    }
-    #[cfg(feature = "fault-injection")]
-    #[test]
-    fn probe_unknown_owner_never_authorizes_maintenance() {
-        let owner = ident::process_identity(std::process::id())
-            .verified()
-            .unwrap()
-            .clone();
-        crate::fault::set_unknown(true);
-        assert!(!owner_absent(&owner));
-        crate::fault::set_unknown(false);
     }
     #[cfg(target_os = "linux")]
     #[test]
