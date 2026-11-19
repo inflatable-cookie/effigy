@@ -42,9 +42,10 @@ use super::shell_prep::{
 use super::RunnerError;
 use crate::runner::container_runtime::{resolve_handoff_local_execution, HandoffLocalExecution};
 use crate::runner::exec_command::{
-    verified_target_exec_tail_args, BoundedCapture, BoundedCaptureFailure, BoundedCommandBudget,
-    BoundedCommandPhase, BoundedObservedBytes, BoundedRefusalObservations,
-    BoundedScopedCaptureFailure, BoundedStream, BoundedStreamRefusalObservation,
+    run_bounded_finite_capture, verified_target_exec_tail_args, BoundedCapture,
+    BoundedCaptureFailure, BoundedCommandBudget, BoundedCommandPhase, BoundedObservedBytes,
+    BoundedRefusalObservations, BoundedScopedCaptureFailure, BoundedStream,
+    BoundedStreamRefusalObservation,
 };
 
 pub(in crate::runner) const BOUNDED_EXEC_SCHEMA: &str = "effigy.container.bounded-exec.v1";
@@ -276,18 +277,13 @@ fn run_handoff_local_bounded_command(
 ) -> Result<String, RunnerError> {
     let container = execution.container.as_str();
     let service = execution.service.as_str();
-    let capture = budget
-        .run_command(
-            &execution.working_dir,
-            OsStr::new("sh"),
-            &[OsString::from("-lc"), OsString::from(command)],
-            None,
-            &[],
-            BoundedCommandPhase::CommandExecution,
-        )
-        .map_err(|failure| {
-            bounded_failure_error_for_container(container, service, &budget, failure)
-        })?;
+    let capture = run_bounded_finite_capture(
+        &execution.working_dir,
+        OsStr::new("sh"),
+        &[OsString::from("-lc"), OsString::from(command)],
+        &mut budget,
+    )
+    .map_err(|failure| bounded_failure_error_for_container(container, service, &budget, failure))?;
     if !output_json && capture.status.success() {
         emit_captured_output(&capture)?;
     }
@@ -328,16 +324,13 @@ fn run_attempt(
         "runtime exec",
     )
     .map_err(RunnerError::from)?;
-    budget
-        .run_command(
-            &plan.repo_root,
-            plan.program.as_os_str(),
-            &plan.args,
-            None,
-            &[],
-            BoundedCommandPhase::CommandExecution,
-        )
-        .map_err(|failure| bounded_failure_error(policy, service, budget, failure))
+    run_bounded_finite_capture(
+        &plan.repo_root,
+        plan.program.as_os_str(),
+        &plan.args,
+        budget,
+    )
+    .map_err(|failure| bounded_failure_error(policy, service, budget, failure))
 }
 
 fn emit_captured_output(capture: &BoundedCapture) -> Result<(), RunnerError> {

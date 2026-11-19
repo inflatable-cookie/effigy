@@ -53,9 +53,9 @@ pub(in crate::runner) use transport::{
 };
 
 pub(in crate::runner) use bounded::{
-    BoundedCapture, BoundedCaptureFailure, BoundedCommandBudget, BoundedCommandPhase,
-    BoundedObservedBytes, BoundedRefusalObservations, BoundedScopedCaptureFailure, BoundedStream,
-    BoundedStreamRefusalObservation,
+    run_bounded_finite_capture, BoundedCapture, BoundedCaptureFailure, BoundedCommandBudget,
+    BoundedCommandPhase, BoundedObservedBytes, BoundedRefusalObservations,
+    BoundedScopedCaptureFailure, BoundedStream, BoundedStreamRefusalObservation,
 };
 // Observation vocabulary and construction used by the private refusal
 // accounting proofs; not part of the non-test runtime surface.
