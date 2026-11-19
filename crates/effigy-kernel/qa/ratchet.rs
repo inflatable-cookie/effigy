@@ -18,6 +18,9 @@ pub struct Inventory {
     pub tests: Counts,
 }
 impl Inventory {
+    /// Rejects new raw authority, not bookkeeping. A construct's total across
+    /// the scanned production files may fall or move between files; it may not
+    /// rise above the recorded baseline.
     pub fn compare(&self, baseline: &Self) -> Result<(), String> {
         if self.schema != 1 || baseline.schema != 1 {
             return Err("unsupported kernel-ratchet schema".into());
@@ -25,29 +28,40 @@ impl Inventory {
         if self.production == baseline.production {
             return Ok(());
         }
-        let mut differences = Vec::new();
-        let mut pairs = BTreeMap::new();
-        for (file, constructs) in &baseline.production {
+        let mut baseline_totals: BTreeMap<&str, usize> = BTreeMap::new();
+        for constructs in baseline.production.values() {
             for (kind, count) in constructs {
-                pairs.insert((file, kind), (*count, 0));
+                *baseline_totals.entry(kind.as_str()).or_insert(0) += count;
             }
         }
+        let mut totals: BTreeMap<&str, usize> = BTreeMap::new();
+        let mut carriers: BTreeMap<&str, Vec<String>> = BTreeMap::new();
         for (file, constructs) in &self.production {
             for (kind, count) in constructs {
-                pairs.entry((file, kind)).or_insert((0, 0)).1 = *count;
+                *totals.entry(kind.as_str()).or_insert(0) += count;
+                carriers
+                    .entry(kind.as_str())
+                    .or_default()
+                    .push(format!("{file} ({count})"));
             }
         }
-        for ((file, kind), (old, new)) in pairs {
+        let mut rises = Vec::new();
+        for (kind, new) in totals {
+            let old = baseline_totals.get(kind).copied().unwrap_or(0);
             if new > old {
-                differences.push(format!("{file}: {kind} rose {old} -> {new}"));
-            }
-            if new < old {
-                differences.push(format!(
-                    "{file}: {kind} fell {old} -> {new}; lower baseline in the same change"
+                let mut at = carriers.remove(kind).unwrap_or_default();
+                at.sort();
+                rises.push(format!(
+                    "{kind} rose {old} -> {new}; new raw authority is not allowed at {}",
+                    at.join(", ")
                 ));
             }
         }
-        Err(differences.join("\n"))
+        if rises.is_empty() {
+            Ok(())
+        } else {
+            Err(rises.join("\n"))
+        }
     }
 }
 
