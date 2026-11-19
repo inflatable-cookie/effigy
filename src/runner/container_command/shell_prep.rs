@@ -22,39 +22,74 @@ use crate::runner::workspace_command::ensure_workspace_effigy_available_for_poli
 
 const DOCKER_PS_FORMAT: &str = "{{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.docker.compose.service\"}}\t{{.Label \"com.docker.compose.oneoff\"}}";
 
+/// Capture determines which discovery operations and target proof are used.
+pub(super) enum CapturePolicy<'a> {
+    Finite,
+    Bounded(&'a mut BoundedCommandBudget),
+}
+
+pub(super) struct ShellSession {
+    pub policy: EffectiveContainerPolicy,
+    pub service: String,
+    pub working_dir: Option<PathBuf>,
+    /// Bounded execution pins the exact owned target throughout preparation and launch.
+    pub target_id: Option<String>,
+}
+
+fn resolve_shell_session(
+    repo_root: &Path,
+    name: Option<&str>,
+    service: Option<&str>,
+    capture: CapturePolicy<'_>,
+) -> Result<ShellSession, RunnerError> {
+    let policy = load_container_policy(repo_root, name)?;
+    validate_container_policy(repo_root, &policy)?;
+    let service = service
+        .unwrap_or(policy.primary_service.as_str())
+        .to_owned();
+    let target_id = match capture {
+        CapturePolicy::Finite => {
+            if !runtime_backend_is_running(&policy, repo_root)? {
+                return Err(RunnerError::task_invocation(format!(
+                    "{} runtime is not available for container `{}`",
+                    selected_backend_label(&policy, repo_root),
+                    policy.name
+                )));
+            }
+            validate_running_container_runtime_match(repo_root, &policy)?;
+            None
+        }
+        CapturePolicy::Bounded(budget) => {
+            if !runtime_backend_is_running_bounded(repo_root, &policy, budget)? {
+                return Err(RunnerError::task_invocation(format!(
+                    "{} runtime is not available for container `{}`",
+                    selected_backend_label(&policy, repo_root),
+                    policy.name
+                )));
+            }
+            validate_running_container_runtime_match_bounded(repo_root, &policy, budget)?;
+            Some(verify_bounded_service_binding(
+                repo_root, &policy, &service, budget,
+            )?)
+        }
+    };
+    let working_dir =
+        resolve_container_exec_working_dir_for_service(repo_root, name, &policy, &service)?;
+    Ok(ShellSession {
+        policy,
+        service,
+        working_dir,
+        target_id,
+    })
+}
+
 pub(super) fn resolve_container_shell_session(
     repo_root: &Path,
     name: Option<&str>,
     service: Option<&str>,
 ) -> Result<(EffectiveContainerPolicy, String, Option<PathBuf>), RunnerError> {
-    let policy = load_container_policy(repo_root, name)?;
-    validate_container_policy(repo_root, &policy)?;
-    // A shell session attaches to an already-running stack whose mounts were
-    // admitted when it was created; the session applies nothing, so the
-    // apply-time backend preflight has no effect to admit here.
-    if !runtime_backend_is_running(&policy, repo_root)? {
-        return Err(RunnerError::task_invocation(format!(
-            "{} runtime is not available for container `{}`",
-            selected_backend_label(&policy, repo_root),
-            policy.name
-        )));
-    }
-    validate_running_container_runtime_match(repo_root, &policy)?;
-    let service = service
-        .unwrap_or(policy.primary_service.as_str())
-        .to_owned();
-    let working_dir =
-        resolve_container_exec_working_dir_for_service(repo_root, name, &policy, &service)?;
-    Ok((policy, service, working_dir))
-}
-
-/// A resolved bounded shell session and the owned container it will target.
-pub(super) struct BoundedShellSession {
-    pub policy: EffectiveContainerPolicy,
-    pub service: String,
-    pub working_dir: Option<PathBuf>,
-    /// Full ID of the owned container every bounded effect targets.
-    pub target_id: String,
+    let session = resolve_shell_session(repo_root, name, service, CapturePolicy::Finite)?;
+    Ok((session.policy, session.service, session.working_dir))
 }
 
 pub(super) fn resolve_container_shell_session_bounded(
@@ -62,29 +97,8 @@ pub(super) fn resolve_container_shell_session_bounded(
     name: Option<&str>,
     service: Option<&str>,
     budget: &mut BoundedCommandBudget,
-) -> Result<BoundedShellSession, RunnerError> {
-    let policy = load_container_policy(repo_root, name)?;
-    validate_container_policy(repo_root, &policy)?;
-    if !runtime_backend_is_running_bounded(repo_root, &policy, budget)? {
-        return Err(RunnerError::task_invocation(format!(
-            "{} runtime is not available for container `{}`",
-            selected_backend_label(&policy, repo_root),
-            policy.name
-        )));
-    }
-    validate_running_container_runtime_match_bounded(repo_root, &policy, budget)?;
-    let service = service
-        .unwrap_or(policy.primary_service.as_str())
-        .to_owned();
-    let target_id = verify_bounded_service_binding(repo_root, &policy, &service, budget)?;
-    let working_dir =
-        resolve_container_exec_working_dir_for_service(repo_root, name, &policy, &service)?;
-    Ok(BoundedShellSession {
-        policy,
-        service,
-        working_dir,
-        target_id,
-    })
+) -> Result<ShellSession, RunnerError> {
+    resolve_shell_session(repo_root, name, service, CapturePolicy::Bounded(budget))
 }
 
 /// Prove inside the budget that exactly one running container of `service`
@@ -243,15 +257,37 @@ fn validate_running_container_runtime_match_bounded(
     Ok(())
 }
 
+fn refresh_workspace_for_shell(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+    target_id: Option<&str>,
+    capture: CapturePolicy<'_>,
+) -> Result<(), RunnerError> {
+    if !service_requires_workspace_effigy_refresh(policy, service) {
+        return Ok(());
+    }
+    match capture {
+        CapturePolicy::Finite => {
+            ensure_workspace_effigy_available_for_policy(repo_root, policy, None)
+        }
+        CapturePolicy::Bounded(budget) => {
+            crate::runner::workspace_command::ensure_workspace_effigy_available_for_policy_bounded(
+                repo_root,
+                policy,
+                target_id.expect("bounded target"),
+                budget,
+            )
+        }
+    }
+}
+
 pub(super) fn maybe_refresh_workspace_effigy_for_shell(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     service: &str,
 ) -> Result<(), RunnerError> {
-    if !service_requires_workspace_effigy_refresh(policy, service) {
-        return Ok(());
-    }
-    ensure_workspace_effigy_available_for_policy(repo_root, policy, None)
+    refresh_workspace_for_shell(repo_root, policy, service, None, CapturePolicy::Finite)
 }
 
 pub(super) fn maybe_refresh_workspace_effigy_for_shell_bounded(
@@ -261,11 +297,12 @@ pub(super) fn maybe_refresh_workspace_effigy_for_shell_bounded(
     target_id: &str,
     budget: &mut BoundedCommandBudget,
 ) -> Result<(), RunnerError> {
-    if !service_requires_workspace_effigy_refresh(policy, service) {
-        return Ok(());
-    }
-    crate::runner::workspace_command::ensure_workspace_effigy_available_for_policy_bounded(
-        repo_root, policy, target_id, budget,
+    refresh_workspace_for_shell(
+        repo_root,
+        policy,
+        service,
+        Some(target_id),
+        CapturePolicy::Bounded(budget),
     )
 }
 

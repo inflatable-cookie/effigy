@@ -80,6 +80,19 @@ pub(super) fn test_policy(shared_services: Vec<SharedServiceBinding>) -> Effecti
 }
 
 #[test]
+fn reset_wipe_requires_explicit_consent() {
+    let policy = test_policy(Vec::new());
+    let confirm =
+        crate::runner::container_command::closeout::maybe_confirm_container_reset_wipe_data;
+    assert!(confirm(&policy, false, true, false).is_ok());
+    assert!(confirm(&policy, true, true, true).is_ok());
+    assert!(confirm(&policy, true, true, false)
+        .expect_err("wipe needs consent")
+        .to_string()
+        .contains("requires confirmation"));
+}
+
+#[test]
 fn up_workspace_permission_preparation_names_container_on_failure() {
     let policy = test_policy(Vec::new());
 
