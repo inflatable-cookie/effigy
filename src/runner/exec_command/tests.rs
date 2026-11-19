@@ -590,13 +590,10 @@ fn build_routed_task_exec_args_handoff_uses_installed_effigy_path() {
 #[test]
 fn build_routed_task_exec_args_forwards_task_env_to_handoff() {
     let mut task_env = std::collections::BTreeMap::new();
-    task_env.insert(
-        "EFFIGY_STATE_CAPTURE_CONTEXT".to_owned(),
-        ".effigy/context.json".to_owned(),
-    );
+    task_env.insert("APP_CONFIG".to_owned(), "config/app.json".to_owned());
     let args = build_routed_task_exec_args(
         &effigy_exec::ExecStrategy::Handoff {
-            args: vec!["state:capture-proof".to_owned()],
+            args: vec!["app:build".to_owned()],
         },
         Some(&task_env),
         None,
@@ -604,8 +601,9 @@ fn build_routed_task_exec_args_forwards_task_env_to_handoff() {
         "workspace",
         "/workspace-root/repo",
     );
-    assert!(args.windows(2).any(|window| window[0] == "-e"
-        && window[1] == "EFFIGY_STATE_CAPTURE_CONTEXT=.effigy/context.json"));
+    assert!(args
+        .windows(2)
+        .any(|window| window[0] == "-e" && window[1] == "APP_CONFIG=config/app.json"));
 }
 
 #[test]

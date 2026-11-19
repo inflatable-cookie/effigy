@@ -230,8 +230,6 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.run.prepare.v1` (`run prepare --json`, including `--check`)
 - `effigy.admission.v1` (error details when a heavy run is not admitted)
 - `effigy.admission-request.v1` (the `EFFIGY_ADMISSION_REQUEST` hook input)
-- `effigy.state-stack.lineage.v1`
-- `effigy.state-stack.apply.v1`
 
 In v0.15, `deploy apply` and `deploy redeploy` exit nonzero with the existing
 `effigy.command.v1` envelope, `ok: false`, and `error.details.reason` set to
@@ -270,12 +268,8 @@ effigy --json test
 effigy --json init --dry-run
 effigy --json config completion bash --export
 effigy --json config completion candidates --prefix farm
-effigy --json state plan ./state/example-app-uat.toml
-effigy --json state plan uat --write-report
-effigy --json state apply uat
-effigy --json state capture uat new-content
-effigy --json state capture uat --role uat-capture --source-env uat --key uat-capture-2026-05-08
-effigy --json state history uat --kind capture --limit 5
+effigy --json state artifact stage oci://ghcr.io/acme/legacy-db:2026-05-01
+effigy --json state artifact capture ./dumps/uat.sql.gz --ref oci://ghcr.io/acme/uat-content:2026-05-06 --push
 effigy --json --repo /path/to/workspace build
 effigy --json --plan --repo /path/to/workspace build
 ```
@@ -456,14 +450,11 @@ Rule of thumb:
   `effigy.release.plan.v1`, `effigy.release.prepare.v1` and the matching plan
   payloads) may
   include additive optional `log_path` on each gate result and
-  `environment_path` for the run. Named hosted reuse may add optional
-  `reused`, `hosted_run_url`, `hosted_head_sha`, and `hosted_repository` on a
-  gate result, and `gates.reused_gates` on execute/resume payloads.
+  `environment_path` for the run.
   `effigy.release.gates.v1` also carries `gates[]` (name, stage, command, task,
-  description, `reuse_hosted_evidence`) as the configured inventory it ran, so
-  a JSON reader sees the same gates the progress lines named. Streaming
-  progress lines stay on stderr and never on JSON stdout. Schema ids are
-  unchanged.
+  description) as the configured inventory it ran, so a JSON reader sees the
+  same gates the progress lines named. Streaming progress lines stay on stderr
+  and never on JSON stdout. Schema ids are unchanged.
 - `effigy.release.plan.v1` is the `effigy release --plan` payload (contract 054
   §5), replacing the retired simulate payload. It reports
   `identities[]` (name, kind, current and next version, tag, `follows`,

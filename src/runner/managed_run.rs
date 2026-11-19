@@ -22,20 +22,14 @@ mod settlement;
 mod tui;
 mod wire;
 
-#[cfg(test)]
-pub(in crate::runner) use client::start_reserved_with_executable;
-#[cfg(all(test, feature = "workspace-serving-fixture"))]
-pub(in crate::runner) use client::take_reserved_handoff_observation;
-pub(in crate::runner) use client::{
-    attach_text, detach, start, start_reserved, ClientStart, Started,
-};
+pub(in crate::runner) use client::{attach_text, detach, start, ClientStart};
 #[cfg(test)]
 pub(in crate::runner) use control::wait_views;
 pub(in crate::runner) use control::OUTPUT_LOG;
 pub(in crate::runner) use control::{logs, status, stop, stop_run, Addressed};
 pub(in crate::runner) use engine::{
-    own, record_gateway, take_owner, workload_env, workspace_resolution, ExecGroupSpec, OwnedRun,
-    OwnerSession, WorkloadSpec, EXEC_NONCE,
+    own, record_gateway, take_owner, workload_env, ExecGroupSpec, OwnedRun, OwnerSession,
+    WorkloadSpec, EXEC_NONCE,
 };
 pub(in crate::runner) use environment::EnvironmentPlan;
 #[cfg(test)]
@@ -43,7 +37,7 @@ pub(in crate::runner) use host_tabs::HostFollower;
 pub(in crate::runner) use host_tabs::HostProcessTab;
 pub(in crate::runner) use settlement::Binding;
 pub(in crate::runner) use tui::{attach_tui, ManagedTab, TabSource};
-pub(in crate::runner) use wire::{Front, WorkspaceResolution};
+pub(in crate::runner) use wire::Front;
 
 use effigy_kernel::ctx::CleanupContext;
 use effigy_kernel::observe::Observed;
@@ -52,12 +46,6 @@ use effigy_kernel::supervise::EngineSession;
 
 /// The managed engine's entry in its detached supervisor process.
 pub(in crate::runner) fn supervise(session: EngineSession) -> Result<(), RunError> {
-    // #507: a workspace serving host is its own detached engine, so a session's
-    // run, listener, key, grants and admitted clients are created in the process
-    // that keeps them.
-    if super::workspace_client::serving_host::owns_payload(session.payload()) {
-        return super::workspace_client::serving_host::supervise(session);
-    }
     // An environment-owned host process is another engine over the same
     // detached supervisor: its payload is one host-process spec.
     if super::host_process::owns_supervise_payload(session.payload()) {

@@ -1550,23 +1550,13 @@ output is still captured, so a logical dump is never truncated.
 build cache volumes. These are disposable build artifacts, not persistent app
 data.
 
-Cache kinds Effigy recognizes:
-
-- `rust-target` — Rust `target` directories
-- `node-modules` — package manager `node_modules` directories
-- `pnpm-store` — pnpm content-addressable store volumes outside the repo bind mount
-
 Cache volumes are created by catalog-generated compose files based on mount
-target heuristics. Legacy generated compose volumes with opaque `efv-*` names
-are also classified by their mounted contents, so old Rust target volumes show
-up as `rust-target` even when the volume name does not contain `target`.
-`cache list` inventories that diagnostic classification and reports
-reclaimable and in-use size totals in text and JSON. Missing per-volume sizes
-keep `size_complete` false instead of pretending the total is complete.
+targets. Global inventory does not classify volume kinds, and rejects the
+former `--kind` filter. Missing per-volume sizes keep `size_complete` false
+instead of pretending the total is complete.
 `cache prune` deletes only volumes whose own Effigy labels prove ownership
 (`com.effigy.managed=true`, `com.effigy.project`, `com.effigy.volume-name`)
-whose labelled project is not running: cache-like names and legacy content
-classification never authorize deletion, a lookalike or unlabelled legacy
+whose labelled project is not running: cache-like names never authorize deletion, a lookalike or unlabelled legacy
 volume is reported as a warning and left alone, and a failed listing,
 inspection or running-project discovery is an error rather than an empty or
 removable inventory.
@@ -1582,15 +1572,12 @@ effigy container cache list
 # List caches across all projects on the Colima profile
 effigy container cache list --global
 
-# Filter by project or kind
+# Filter by project
 effigy container cache list --project example-app-dev
-effigy container cache list --kind rust-target
 
 # Prune (requires confirmation)
 effigy container cache prune --yes
-effigy container cache prune --kind node-modules --yes
 effigy container cache prune --global --yes
-effigy container cache prune --kind rust-target --yes
 ```
 
 Safety rules:

@@ -16,7 +16,6 @@ mod runtime_loop;
 mod setup;
 mod state;
 pub(crate) mod terminal_text;
-mod transcript;
 mod view_model;
 
 use diagnostics::RuntimeDiagnostics;
@@ -294,7 +293,6 @@ pub fn run_multiprocess_tui_with_control(
 
 /// A TUI over processes `source` supervises; `tabs` name them in order.
 pub fn run_multiprocess_tui_with_source<'a>(
-    repo_root: PathBuf,
     source: Box<dyn SessionProcesses + 'a>,
     tabs: Vec<SessionTab>,
     tab_order: Vec<String>,
@@ -304,7 +302,7 @@ pub fn run_multiprocess_tui_with_source<'a>(
     if tabs.is_empty() {
         return Err(MultiProcessTuiError::NoProcesses);
     }
-    let runtime = setup::prepare_source_session(repo_root, source, tabs, tab_order)?;
+    let runtime = setup::prepare_source_session(source, tabs, tab_order)?;
     run_session(runtime, options, control)
 }
 

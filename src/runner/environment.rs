@@ -5,9 +5,6 @@
 //! and a command that uses an environment holds it through a session run
 //! (or, for a managed run, through its own task run).
 
-#[path = "environment_workspace.rs"]
-pub(in crate::runner) mod workspace;
-
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -165,75 +162,6 @@ pub(in crate::runner) fn record_until(
         Observed::Unknown(reason) => return Observed::Unknown(reason),
     };
     EnvRecord::read(&cx, &root, &env.resource)
-}
-
-/// A checkout and environment established before a deadline-bound observer starts.
-/// Its read methods do not allocate a checkout token or open an effects root.
-#[derive(Clone)]
-pub(in crate::runner) struct PreparedEnvironmentObservation {
-    root: effigy_kernel::root::StateRoot,
-    env: EnvRef,
-    checkout: PathBuf,
-}
-
-impl PreparedEnvironmentObservation {
-    pub(in crate::runner) fn state_root(&self) -> &effigy_kernel::root::StateRoot {
-        &self.root
-    }
-    pub(in crate::runner) fn checkout_id(&self) -> effigy_kernel::id::CheckoutId {
-        self.env.checkout
-    }
-    pub(in crate::runner) fn prepare(
-        policy: &EffectiveContainerPolicy,
-    ) -> Result<Self, RunnerError> {
-        let env = env_ref(policy)?;
-        let root = root(&policy.repo_root)?.clone();
-        Ok(Self {
-            root,
-            env,
-            checkout: policy.repo_root.clone(),
-        })
-    }
-
-    pub(in crate::runner) fn record(&self, until: Instant) -> Observed<EnvRecord> {
-        let remaining = until.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Observed::Unknown(UnknownReason::TimedOut {
-                phase: "environment record".into(),
-            });
-        }
-        let cx = super::task_engine::observe_context(remaining);
-        EnvRecord::read(&cx, &self.root, &self.env.resource)
-    }
-
-    pub(in crate::runner) fn backend(
-        &self,
-        policy: &EffectiveContainerPolicy,
-        until: Instant,
-    ) -> Observed<BackendSelection> {
-        if policy.repo_root != self.checkout || policy.name != self.env.name {
-            return Observed::Unknown(UnknownReason::Inconsistent(
-                "prepared environment does not match policy".into(),
-            ));
-        }
-        let recorded = match self.record(until) {
-            Observed::Verified(record, _) => match record.backend {
-                Some(Observed::Verified(recorded, _)) => Some(recorded),
-                Some(Observed::Absent(proof)) => return Observed::Absent(proof),
-                Some(Observed::Unknown(reason)) => return Observed::Unknown(reason),
-                None => None,
-            },
-            Observed::Absent(_) => None,
-            Observed::Unknown(reason) => return Observed::Unknown(reason),
-        };
-        match effigy_kernel::observe::Evidence::new("environment backend selection".into(), None) {
-            Ok(evidence) => Observed::Verified(
-                engine::effective_backend(&policy.repo_root, policy, recorded.as_ref()),
-                evidence,
-            ),
-            Err(reason) => Observed::Unknown(reason),
-        }
-    }
 }
 
 /// The exact backend: the record's, unless this invocation names one.
@@ -663,10 +591,6 @@ pub(in crate::runner) fn stop_hook_exempting(
     effigy_runtime::write::ShutdownEffect<'_>,
 ) -> Result<(), effigy_runtime::EffigyRuntimeError> {
     move |repo_root, policy, effect| {
-        #[cfg(feature = "workspace-private-qualification")]
-        if op == Operation::Down && exempt.is_none() {
-            workspace::down::retire_selected_session(repo_root, policy).map_err(runtime_error)?;
-        }
         stop_exempting(repo_root, policy, op, exempt, |progress| {
             report_host_process_stop(
                 crate::runner::host_process::stop_host_processes_for_container(repo_root, policy),
@@ -720,7 +644,7 @@ pub(in crate::runner) struct Held {
 impl Held {
     /// Begins the session before any bring-up, so the bring-up's activation
     /// can attach it. A failed local journal refuses the operation before
-    /// backend effects; guest work continues through host authority.
+    /// backend effects. Guest work uses its own local state.
     pub(in crate::runner) fn begin(
         repo_root: &Path,
         policy: &EffectiveContainerPolicy,

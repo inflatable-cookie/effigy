@@ -179,11 +179,6 @@ pub struct QaGroupRunTiming {
     pub execution_wall_ms: Option<u64>,
     #[serde(default)]
     pub expected_wall_ms: Option<u64>,
-    /// Always null until the runtime measures phase costs.
-    #[serde(default)]
-    pub cold_build_ms: Option<u64>,
-    #[serde(default)]
-    pub warm_build_ms: Option<u64>,
 }
 
 /// One member's record in the run ledger.
@@ -232,9 +227,6 @@ pub struct QaGroupRunRecord {
     /// result; `needs_planner` never creates a run.
     pub scope_assessment: String,
     pub scope_matches: Vec<QaGroupScopeMatchRecord>,
-    /// Repeated on every run record: declared mappings are not proof of map
-    /// truth or caller scope completeness.
-    pub coverage_disclaimer: String,
     pub state: QaGroupRunState,
     /// Null until the run reaches a terminal aggregate state.
     #[serde(default)]
@@ -256,8 +248,6 @@ pub struct QaGroupRunRecord {
     pub log_dir: String,
     #[serde(default)]
     pub warnings: Vec<String>,
-    /// The plan's capability declaration, repeated for honest records.
-    pub capabilities: QaGroupRunCapabilities,
     /// Which admission covered a heavy group. Absent on light groups, on a
     /// heavy group run with no hook set, and on records written before the
     /// field existed; readers must treat absence as "not recorded".
@@ -265,31 +255,15 @@ pub struct QaGroupRunRecord {
     pub backend: Option<QaGroupBackend>,
 }
 
-/// Admission backend correlation for a heavy group run. Every metric is null
-/// when unavailable; null is never zero.
+/// Admission backend correlation for a heavy group run. A metric that was not
+/// observed is null, never zero.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QaGroupBackend {
-    /// `admission_hook` (Q-006). Records from v0.14 may say
-    /// `host_scheduler` or `host_scheduler_override`.
+    /// `admission_hook` (Q-006).
     pub kind: String,
-    /// Always null since the host-run client was retired; v0.14 records
-    /// carry the scheduler run that covered them.
-    #[serde(default)]
-    pub scheduler_run_id: Option<String>,
-    #[serde(default)]
-    pub scheduler_epoch: Option<u64>,
     /// Time the admission hook took to admit the group.
     #[serde(default)]
     pub queue_wait_ms: Option<u64>,
-    /// Always null since the host-run client was retired.
-    #[serde(default)]
-    pub settlement: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QaGroupRunCapabilities {
-    pub hard_timeout: bool,
-    pub stop: bool,
 }
 
 /// Classification for one member's exit, derived by the runner from the

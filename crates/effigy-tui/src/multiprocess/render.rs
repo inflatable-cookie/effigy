@@ -196,13 +196,7 @@ pub struct FrameSnapshot<'a> {
 
 /// Draws one frame of a session from [`FrameSnapshot`] and returns its text.
 pub fn render_snapshot_frame(snapshot: FrameSnapshot<'_>) -> Result<String, String> {
-    let mut state = super::state::SessionState::new(
-        std::path::PathBuf::new(),
-        snapshot.process_names.to_vec(),
-        40,
-        120,
-        500,
-    );
+    let mut state = super::state::SessionState::new(snapshot.process_names.to_vec(), 40, 120, 500);
     state.apply_entry_waits(snapshot.entry_waits.to_vec());
     let names = snapshot.process_names;
     let active_index = names
@@ -386,7 +380,6 @@ mod tests {
         assert!(text.contains("Options"), "{text}");
         assert!(text.contains("process: build"), "{text}");
         assert!(text.contains("Disable follow (f)"), "{text}");
-        assert!(text.contains("Export transcript (y)"), "{text}");
     }
 
     #[test]
@@ -394,12 +387,12 @@ mod tests {
         let text = frame_text(|state| {
             state.input_mode = InputMode::Insert;
             state.input_line = "git status";
-            state.footer_message = Some("transcript exported");
+            state.footer_message = Some("output ready");
         });
         assert!(text.contains("Input (Esc command, Enter send)"), "{text}");
         assert!(text.contains("> git status"), "{text}");
         assert!(text.contains("mode:insert (tab)"), "{text}");
-        assert!(text.contains("transcript exported"), "{text}");
+        assert!(text.contains("output ready"), "{text}");
     }
 
     #[test]

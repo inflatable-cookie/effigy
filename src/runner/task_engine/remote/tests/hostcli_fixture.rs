@@ -301,7 +301,6 @@ fn hostcli_fixture_child() {
         args: &[],
         key: Some(&key),
         admission: None,
-        workspace_admission: None,
         cwd: None,
     })
     .unwrap();

@@ -114,7 +114,7 @@ an explicit execution context:
 
 ```toml
 [tasks]
-"state:capture-new-content" = { rhai = "scripts/tasks/state-capture-new-content.rhai", run_in = "host" }
+"snapshot:media" = { rhai = "scripts/tasks/snapshot-media.rhai", run_in = "host" }
 ```
 
 ### Split One Manifest Into Focused Fragments
@@ -1036,31 +1036,18 @@ description = "Application database connection URL"
 ```
 
 Store values with `effigy secrets set database_url`. Values inject into task
-processes, containers, Rhai scripts, deploy hooks, and state hooks without
+processes, containers, Rhai scripts and deploy hooks without
 writing plaintext to repo files. See
 [`075-secrets-and-vault-guide.md`](075-secrets-and-vault-guide.md).
 
-## State Stacks
+## Deployment Data
 
-Declare ordered schema/seed/import/capture layers:
-
-```toml
-[state.uat]
-schema = "effigy.state-stack.v1"
-name = "acme-uat"
-environment = "uat"
-
-[[state.uat.layers]]
-key = "structure"
-role = "structure"
-source = "db:migrate"
-apply_mode = "task"
-environment_policy = "all"
-```
-
-Plan with `effigy state plan uat`, apply with `effigy state apply uat --yes`,
-capture with `effigy state capture uat new-content --yes`. See
-[`073-state-stack-guide.md`](073-state-stack-guide.md).
+Declare schema, seed, import and snapshot steps as ordinary tasks; the v0.16
+retirement removed the layered `[state.*]` stack and its commands. A seed runs
+through `effigy container data seed`, a snapshot through
+`effigy container data dump` plus `effigy state artifact capture`. See
+[deployment data workflows](../knowledge/deployment-data-workflows.md) for the
+simple form and a worked example.
 
 ## Deploy Config
 
@@ -1128,7 +1115,7 @@ api = "services/api"
 - [`055-everyday-workflows.md`](055-everyday-workflows.md)
 - [`063-container-system-guide.md`](063-container-system-guide.md)
 - [`064-system-workspace-and-dev-contract.md`](064-system-workspace-and-dev-contract.md)
-- [`073-state-stack-guide.md`](073-state-stack-guide.md)
+- [Deployment data workflows](../knowledge/deployment-data-workflows.md)
 - [`074-deployment-guide.md`](074-deployment-guide.md)
 - [`075-secrets-and-vault-guide.md`](075-secrets-and-vault-guide.md)
 

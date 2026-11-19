@@ -192,18 +192,6 @@ pub fn load_container_policy_for_creation_observed(
     creation_policy(repo_root, requested_name, stage, super::render::prepare)
 }
 
-/// Prepare the existing input closure without reacquiring the Env gate.
-/// The qualification owner publishes that closure with its actual Run before
-/// the custodied child validates it. Ordinary callers retain normal admission.
-#[cfg(feature = "workspace-private-qualification")]
-pub fn load_container_policy_for_qualification_inputs(
-    repo_root: &Path,
-    requested_name: Option<&str>,
-    stage: &mut dyn FnMut(CreationPolicyStage),
-) -> Result<(EffectiveContainerPolicy, Vec<WorkspaceExtraMountDecision>), ContainerPolicyError> {
-    creation_policy(repo_root, requested_name, stage, |_| Ok(()))
-}
-
 fn creation_policy(
     repo_root: &Path,
     requested_name: Option<&str>,

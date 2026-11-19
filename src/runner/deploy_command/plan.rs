@@ -44,10 +44,8 @@ pub(super) fn run_deploy_plan(
 /// The id of one deployment attempt: the second it started, the environment
 /// and the commit it resolved, so two attempts never share a report path.
 ///
-/// The clock prefix is whole seconds since the Unix epoch, not
-/// `effigy_state`'s `YYYYMMDDThhmmssZ` stamp: the id is a file name that must
-/// sort attempts lexically, and `effigy_state::paths` owns the canonical
-/// timestamp format.
+/// The clock prefix is whole seconds since the Unix epoch so the id sorts
+/// attempts lexically.
 fn deployment_id(env: &str, resolved_commit: Option<&str>, started: SystemTime) -> String {
     format!(
         "{}-{}-{}",
@@ -90,11 +88,6 @@ fn build_deploy_plan(repo_root: &Path, env: &str) -> Result<DeployPlanReport, Ru
     if env_config.artifact_policy == ArtifactPolicy::DigestPinned {
         warnings.push("digest-pinned artifact policy will be enforced against state artifact refs in the provider execution slice".to_owned());
     }
-    let state = env_config.state.as_ref().map(|stack| DeployStatePlan {
-        stack: stack.clone(),
-        lineage_id: format!("{stack}-planned"),
-        planned_report_path: format!(".effigy/reports/state/{stack}/latest-plan.json"),
-    });
     let provider_preflight = provider_preflight_report(
         repo_root,
         env,
@@ -107,17 +100,9 @@ fn build_deploy_plan(repo_root: &Path, env: &str) -> Result<DeployPlanReport, Ru
         .hooks
         .iter()
         .flat_map(|hooks| {
-            [
-                ("before_state", hooks.before_state.clone()),
-                ("after_state", hooks.after_state.clone()),
-                ("after_deploy", hooks.after_deploy.clone()),
-            ]
-            .into_iter()
-            .filter_map(|(stage, task)| {
-                task.map(|task| DeployHookPlan {
-                    stage: stage.to_owned(),
-                    task,
-                })
+            hooks.after_deploy.clone().map(|task| DeployHookPlan {
+                stage: "after_deploy".to_owned(),
+                task,
             })
         })
         .collect();
@@ -159,7 +144,6 @@ fn build_deploy_plan(repo_root: &Path, env: &str) -> Result<DeployPlanReport, Ru
                 .map(|preflight| preflight.require_release_gates)
                 .unwrap_or(false),
         },
-        state,
         artifact_policy: DeployArtifactPolicyReport {
             mode: env_config.artifact_policy.as_str().to_owned(),
             blockers: Vec::new(),

@@ -11,10 +11,6 @@
     "effigy.help.v1": "payload-schemas/effigy.help.v1.json",
     "effigy.release.input.v1": "payload-schemas/effigy.release.input.v1.json",
     "effigy.release.output.v1": "payload-schemas/effigy.release.output.v1.json",
-    "effigy.state-stack.apply.v1": "payload-schemas/effigy.state-stack.apply.v1.json",
-    "effigy.state-stack.capture.v1": "payload-schemas/effigy.state-stack.capture.v1.json",
-    "effigy.state-stack.history.v1": "payload-schemas/effigy.state-stack.history.v1.json",
-    "effigy.state-stack.lineage.v1": "payload-schemas/effigy.state-stack.lineage.v1.json",
     "effigy.task.plan.v1": "payload-schemas/effigy.task.plan.v1.json"
   },
   "schemas": [
@@ -153,38 +149,6 @@
       "surface": "catalog task help",
       "status": "active",
       "payload_schema": "effigy.help.v1"
-    },
-    {
-      "schema": "effigy.command.v1",
-      "schema_version": 1,
-      "command": "effigy --json state plan docs/knowledge/contracts/fixtures/state-stack/example-app-uat.toml",
-      "surface": "built-in task",
-      "status": "active",
-      "payload_schema": "effigy.state-stack.lineage.v1"
-    },
-    {
-      "schema": "effigy.command.v1",
-      "schema_version": 1,
-      "command": "effigy --json state apply docs/knowledge/contracts/fixtures/state-stack/example-app-uat.toml",
-      "surface": "built-in task",
-      "status": "active",
-      "payload_schema": "effigy.state-stack.apply.v1"
-    },
-    {
-      "schema": "effigy.command.v1",
-      "schema_version": 1,
-      "command": "effigy --json state capture docs/knowledge/contracts/fixtures/state-stack/example-app-uat.toml --role uat-capture --source-env uat --key uat-capture-2026-05-08 --ref oci://ghcr.io/example-app/content:uat-capture-2026-05-08",
-      "surface": "built-in task",
-      "status": "active",
-      "payload_schema": "effigy.state-stack.capture.v1"
-    },
-    {
-      "schema": "effigy.command.v1",
-      "schema_version": 1,
-      "command": "effigy --json state history --stack example-app-uat",
-      "surface": "built-in task",
-      "status": "active",
-      "payload_schema": "effigy.state-stack.history.v1"
     },
     {
       "schema": "effigy.command.v1",

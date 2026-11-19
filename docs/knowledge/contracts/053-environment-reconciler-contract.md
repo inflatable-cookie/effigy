@@ -2,145 +2,11 @@
 
 Status: implemented in `crates/effigy-containers/src/environment/` (engine)
 and `src/runner/environment.rs` (runner cutover), effigy#232. The
-`data_from` data claim and retire as a transition are later work (§9). The
-workspace session run and its host authority channel are implemented at the
-kernel and runner seam (052 §8.3, §8.7, §8.11); ordinary production activation
-remains refused. The uninstalled #531 qualification path is described below;
-native backend qualification remains outstanding.
-
-For v0.15, workspace Level 1 forwards non-interactive commands only;
-guest PTY, attach, reconnect and detach acknowledgement are deferred to
-Level 2 as specified in 052 §8.11. This does not remove the environment
-activation or its detached session supervisor.
-
-### Workspace apply boundary (effigy#533, 2026-11-02)
-
-The one ordinary Compose apply is an explicit boundary
-(`src/runner/environment_workspace/private_apply.rs`). The owner resolves the
-frozen command and the guarded Env run hands the strategy its own `Run`, child
-`EffectContext` and absolute deadline through
-`WorkspaceActivation::apply_sealed_with_owner`; nothing downstream can reopen a
-budget. Production supplies `private_apply::qualified`. A proof substitutes a
-fake backend at that same external process boundary, so the publication
-sequence is exercised against the real owner — journal, gate order, binding,
-gated re-observation, commit, selector switch and recovery — while the process
-custody of the apply is not claimed.
-
-The qualified invocation is still refused. Recoverable Env admission now accepts
-an explicit custody plan and starts it through the recoverable workspace
-sentinel path. A startup failure returns the exact cleanup-only owner, including
-any partial sentinel and checkout backup, rather than settling or dropping it
-behind the reservation caller. The kernel controls
-`reserved_env_admission_retains_interpolation_under_its_own_custody` and
-`reserved_env_admission_failure_returns_the_exact_partial_custodian` cover
-reserved admission, exact descriptor custody through handle drop, verified
-closure cleanup, and retained ownership on partial startup. They use real
-kernel helpers in disposable fixtures; they do not qualify a native backend,
-Discard, or a full workspace session.
-
-The default production activation does not supply that custody plan or execute a
-private apply. The separate `workspace-private-qualification` compile-time
-feature supplies a custody plan to the guarded activation and selects the
-explicit `private_apply::qualification_only` strategy. No installed CLI,
-configuration or environment toggle enables it. Qualification preparation
-requires an already prepared checkout identity and current source closure;
-missing/stale sources and shared-service preparation refuse before effects.
-The parent admits a separate reserved Env Run for preparation and runs
-same-executable children with discarded streams. Each child authenticates its
-actual applied process receipt, purpose-tagged intent digest, current Env fence,
-held gate and live same-image parent/sentinel before effects. A nonce or
-declarative intent is insufficient; a receipt for another intent or purpose
-cannot authorize this preparation entry.
-Input preparation and validation reuse the ordinary preparation implementation;
-the parent publishes the reobserved render through its actual Env Run between
-those children. The exact render digest is rechecked before and after validation.
-Session access crosses the existing one-shot descriptor grant, never ambient
-credential bytes. Failed preparation settles that same owner before cancelling
-its reservation; Unknown retains the owner and exclusion.
-
-The qualification spawn requires the creator image captured at process entry,
-the exact live detached Env sentinel, checkout backup and anchor, and the
-original activation deadline. The image observations retain the documented
-macOS accidental-skew limit: path/vnode observations cannot prove a mapped
-image against an adversarial ABA replacement. Missing entry capture, foreign
-images, expired budgets and ordinary Discard calls refuse before a workload process
-intent. Helpers and anchors are re-observed before GO. Leader exit does not
-qualify apply success without a separate fresh group-closure observation. The
-exact interpolation descriptors remain on the Env owner until its verified
-settlement, including on unknown results and caller-handle drop.
-
-The actual activation Env Run receives the helper plan separately from its
-Session owner. Named recovery commands use the CLI's `container <NAME> <verb>`
-grammar. Before gate-free integrations, qualification verifies actual workload
-completion and fresh group closure, retires each exact process/anchor and closes
-the backup with verified interpolation cleanup. Only then may it close its own
-shared gate descriptions, without explicitly unlocking another description.
-The checkout fence lease and sentinel remain on the same parked Run. Unknown
-closure, helper acknowledgement, cleanup, deadline or cancellation keeps Env
-held. Retirement stays inside the original absolute deadline and cancellation;
-it creates no fresh cleanup window. Required apply effects remain Applied until
-final settlement, preserving the existing publication predicate and real exit
-obligation.
-
-
-An already created interpolation file first enters an exact Run-owned prelaunch
-slot with a durable, non-executable pending custody obligation. Its intent and
-unreadable pending receipt commit atomically, including across a lost post-commit
-result; old process readers cannot see a receipt-less row and infer non-execution.
-After helper-image
-checks and before any fork, the private SCM_RIGHTS channel gives the checkout
-backup hold-only descriptions; caller drop retains that exact file and Env gate.
-A real registered process receipt, synced binding and verified exact-object
-handoff replace the hold. Never-forked refusals may clean the same live file
-through no-clobber quarantine/unlink/sync before releasing its hold. Partial
-fork, missing owner and unknown acknowledgement remain unresolved. The pending
-envelope is not a process receipt, preparation capability or cleanup authority.
-
-An interpolation-bound Discard receipt has an explicit combined envelope. The
-new decoder accepts it; legacy readers cannot interpret it as an ordinary
-process, and recovery without the live descriptor owner preserves residue.
-`test:workspace:private-qualification:kernel` exercises source/fixture custody
-only. The qualification CLI control uses the real front end, reserved Env
-custody, apply, guest publication, commit and selected session with doubled
-external backend/guest I/O; it is not native evidence. Native backend,
-genuine old-binary and consumer qualification, retained-review acceptance and the final production GO remain
-separate requirements. Ordinary private backend invocation and Discard remain
-refused.
-
-Qualification preparation uses read-only running/status/containerd/BuildKit
-checks. It refuses a stopped or unknown backend and never starts a profile,
-repairs shared runtime units or rewrites managed VM settings. The ordinary
-backend ensure remains unchanged. The real CLI fixture now delivers a synthetic
-vault canary through both host environment delivery and the Colima-shaped
-interpolation-file route; the latter asserts the combined custody receipt,
-backend file read, verified file cleanup and absent diagnostic/durable plaintext.
-Neither external-I/O double is native qualification evidence.
-
-The qualification down uses the kernel's `DownCoordination`: foreign live or
-unresolved holders refuse before stop requests; only this session's children
-are stopped, their completed cleanup is checked, and the selected session must
-close with complete cleanup before the ordinary Env stop rechecks R4. The
-serving loop observes the adopted session's own fenced stop request as well as
-the outer supervisor's controls. Explicit interrupted-session recovery takes
-its recorded private slot through `settle_interrupted` before Env admission;
-a dead creator alone does not prove group closure or release that slot.
-
-The nine deferred `workspace_reserved_*` publication controls now have a
-qualification-feature selector that uses `private_apply::qualification_only`
-with real helpers and the same activation owner/deadline. Guest/backend I/O is
-doubled. The actual CLI fixture covers committed publication, guarded failures,
-down/fresh-up, and a killed selected supervisor. Existing-target artifact reuse
-still refuses at `observe_decision_artifact`'s descriptor-pinned probe gate;
-the crash control requires unchanged selection on that refusal, followed by
-explicit down and fresh up. It does not weaken that gate or claim successful
-reuse. Shared-service and stale-source preparation remain refused.
-
-The [531 full-session packet](../../qualification/workspace-private-531/README.md)
-provides one aggregate source-immutable selector for separately GO-armed Colima,
-Desktop and native Linux cells. Its runtime inputs and GO index are separately
-hash bound to avoid a circular hash dependency. Actual native artifacts, scoped
-GOs, receipts, consumer evidence, retained review acceptance and final production
-GO are still required. Packet boundary tests are source evidence only.
+`data_from` data claim and retire as a transition are later work (§9). Host
+actions run in the host CLI (Tom 2026-11-19, D1): the workspace session run, its
+host authority channel and the private activation fork are removed, so there is
+one ordinary activation path. The retired #531 qualification path is not
+described here; native backend qualification remains outstanding.
 
 Q-010 storage follows contract [052](052-runtime-kernel-contract.md) §3.1,
 §7 and §11, approved by planner and Tom (2026-10-22: "Approve"). Environment
@@ -177,39 +43,6 @@ Supersedes: the lease, lifecycle-marker and per-site holder-check sections of
 Related: [006](006-compose-backend-compatibility.md),
 [049](049-heavy-validation-admission-contract.md), [questions](../questions.md)
 Q-004, Q-005 and Q-010
-
-### Inherited dispositions (effigy#533, 2026-11-02)
-
-Every item #533's brief named has one recorded disposition. "In place" means
-the mechanism exists in this tree and the cited proof passes at this head;
-"partly proven" names exactly which cited proof does not, and "deferred" names
-the owner or capability that can finish it. Nothing below claims native
-qualification, Discard, or a workspace apply, and no row cites a selector that
-fails without saying so.
-
-| Item | Disposition and evidence |
-| --- | --- |
-| Exact original-root worker | In place. `WorkspaceOwner` carries the checkout `StateRoot` (`root: &'static StateRoot`) and the whole sequence runs under it; the reserved proofs drive that owner. |
-| Host/session/Env admission once | In place and proven. The session is admitted before Env and one activation holds it: `workspace_activation::tests::reserved_owner_admits_task_before_env_and_refuses_concurrent_or_unselected_success`. |
-| Consuming transition and unwind ownership | In place. `WorkspaceFinishCustody::{Activation,Session}`, `GuardedAbortCustody` and `ParkedWorkspaceActivation` hand the exact owner back on every failure; `WorkspaceUpError::{Owner,Finish}` names which one. |
-| Bounded truly read-only external observation | In place. `TargetProbe`/`ServingProbe` facts and backend reads run under `observation_deadline`/`bounded_until`; the gated re-observation proofs read no selector. |
-| Owner-local finalization | In place. `finish_selected` ends Env before the session is handed over; `recover_selection` completes a committed obligation; proven by the crash-after-commit and partial-switch resume proof. |
-| One sealed original-root lease | In place. `Objects::seal_for_preflight`, the retained `predecessor_seal`, `SealedPreflight::matches(&closure)` and the "decision differs from its frozen plan" refusal. |
-| Attempt-scoped stage, tag/claim, cancellation, competing-attempt fencing | Partly proven, one inherited failure named. `ActivationClaim::{Environment,Session}` admits only the session staged by this attempt; staging is a prediction under `Gate(owner)`; a competing activation is refused. In `test:kernel:workspace-session`, 117 of 118 pass, including `three_overlapping_sessions_keep_their_exact_liveness_and_lifecycle_fences`; `workspace_stage_crash_retry_keeps_predecessor_selectors_and_immutable_bytes` covers staging retry. The remaining failure is `every_activation_boundary_recovers_without_displacing_the_live_predecessor` at `Point::BeginAdmitted`: it settles the activation run with `settle_interrupted` from inside the process whose identity that run recorded, and `verify_reserved_owner_dead` correctly refuses to declare a live owner dead. That is the deferred second-process owner-death proof (#659 "Kernel and CLI recovery"), not a passing proof. No kernel byte differs from base in this change (`git diff --name-only ed2a21007 -- crates/` is empty), so the failure is inherited. |
-| Reserved activation gate ordering/deadline | In place and now proven at the apply too. `apply_sealed_with_owner` hands the activation's own absolute deadline, and `workspace_reserved_callback_keeps_the_original_activation_deadline` asserts the strategy received exactly that deadline. Gated re-observation refuses a replaced target, another valid id, and a spent deadline before any read. |
-| Reverse unwind | In place. `unwind_workspace_integrations` unwinds in reverse in the integrated sequence; a failure keeps the exact guarded or parked owner (`integrated::IntegratedFailure`). |
-| Idempotent recovery | In place. `unfinished_selection`/`selection_recovered`/`selection_abandoned` with `workspace_reserved_crash_after_commit_and_each_partial_switch_resumes_under_real_env_guard` and the unknown-liveness/dead-listener proof. |
-| Authenticated receipts | Guest publication receipts are authenticated (pinned TLS-only dial, `WorkspaceContextV2::verify`, canonical enrolment credential, `SelectionReceipt`/`SessionRef`). Integration effects are reconcilable, not authenticated receipts, as the slice interface records — an intent, not a claim. |
-| Absent ChildGrant real startup | Proven at this head. `test:workspace:effigy-build` builds the binary, then `effigy test:focused -- -p effigy --lib --features workspace-serving-fixture --run-ignored only -E 'test(reserved_engine_admits_default_and_named_profile_under_the_reserved_id)'` passes: the real reserved engine admits default and named profiles with no session passphrase and no ChildGrant. The test stays `#[ignore]`d because it needs that built binary, not because it is unproven. |
-| Checkout symlink/catalog identity | Not proven here. Source pins are frozen at reservation (`workspace_source_closure`, `PostPrepDeclaration::verify_sources`) and source refresh rechecks workspace mode, but a canonical symlink/catalog identity proof across guest routes needs the qualified private apply plus the native identity gate (052 §8.11). Deferred with them; no claim. |
-| Frozen plan/manifest drift | In place. Planned-policy equality, `plan.publish_inputs` equality, the retained seal match, and `PostPrepDeclaration::verify_policy`/`verify_sources` at the supervisor boundary all refuse drift. |
-| Observe status/context | Partly in place, proof deferred. The channel carries `ObserveQuery`/`ObserveBody` under `ObserveContext` and `run::status` returns `Observed<RunStatus>`; v2 context verification binds the exact session generation. The production-route exact-status/context proof needs the same apply capability as the production E2E, so it stays with #531; unproved adapters refuse by name (052 §8.6). |
-| Level 1 coverage and missing adapters | Recorded and implemented as policy. Tom's 2026-11-01 ruling in 052 §8.6, `workspace_client/coverage_policy.rs` and `tests/workspace_client_coverage_policy.rs`: Level 1 forwards; every other guest request refuses with a stable unsupported diagnostic. |
-| Level 2 PTY work | Not conflated. 052 §8.6/§8.11 keep attach, reconnect, terminal input and real PTY as Level 2; nothing in #533 claims them. |
-| #529 helper custody | Its landed identity/ACK and anchor checks are preserved. Ordinary `Terminal::Discard` remains refused; the compile-time qualification candidate and its current limits are described above. |
-| #526 interpolation cleanup | Not this task's owner and untouched. Interpolation files are already per-invocation with a lock and a sweep (`policy/render/vm.rs`); #533 neither changes nor claims them. |
-| Discard refused | Unchanged. `run_private_detached_command` and `Terminal::Discard` still refuse; no Discard route was enabled. The unowned runner-side `support/workspace_private.rs` scaffold was retired in effigy#971, leaving the containers-side owner as the only refusal definition. |
-| Production workspace apply | Refused by name, as the section above records. No backend process starts. |
 
 ## 1. Purpose
 
@@ -301,7 +134,7 @@ A transition waits up to 10 minutes for the gate; idle stop does not wait.
   outcome; only the sealed workspace route may attribute creation. Complete
   before/after project inventories bind exact
   full IDs to frozen service, project, managed, scope and checkout labels and
-  explicit image capabilities (052 §8.12): container image ID; reference plus
+  explicit image capabilities (052 §8.7): container image ID; reference plus
   stable resolved image-inspect ID only for IDs created in this gate; digest-pinned
   reference; or attached reference/config-hash with no resolved container-image ID.
   Attached reference-only rows must match Compose's config hash for the merged
@@ -321,7 +154,7 @@ A transition waits up to 10 minutes for the gate; idle stop does not wait.
   new-ID difference must equal that optional workspace replacement plus the
   required fresh/recreated services; other attached dependencies retain their
   exact IDs (Supervisor under Tom’s standing delegation, 2026-10-31;
-  [Q-017 amendments](../questions.md#workspace-activation-amendments); 052 §8.12). The record is
+  [Q-017 amendments](../questions.md#workspace-activation-amendments); 052 §8.7). The record is
   explicitly a gate-scoped inference, never an engine create response. A same-user
   actor forging identical labels inside this exclusive window is outside the
   v0.15 guarantee (Operator ruling (Tom, 2026-10-31, on the Supervisor’s recommendation);
@@ -335,7 +168,7 @@ A transition waits up to 10 minutes for the gate; idle stop does not wait.
   fresh backend read on that same deadline, fenced to the exact ID, never a
   pass-through of an earlier observation, and it fails closed on unknown, changed
   or missing evidence (Supervisor under Tom’s standing delegation, 2026-11-01;
-  [Q-017 amendments](../questions.md#workspace-activation-amendments); 052 §8.11).
+  [Q-017 amendments](../questions.md#workspace-activation-amendments)).
   Every actual Compose input, including the generated Compose file, belongs to
   the frozen render closure. Before hashing/apply the adapter verifies the file
   list and exact bytes against that closure; a missing input refuses rather than
@@ -344,15 +177,8 @@ A transition waits up to 10 minutes for the gate; idle stop does not wait.
   Failed apply or incomplete observations produce no creation
   receipt. A retry reads only this run's journalled result and never reapplies or
   invents a later receipt. `created_by(project, full_id)` reads that journal;
-  missing evidence is Unknown, never a global NoCreator claim. Bare Active
-  publication refuses a reserved generation, including its claiming run; the
-  sanctioned reserved Active route is the merged `commit_selection`/
-  `commit_activation` transaction with guest/serving receipts (052 §8.11), while
-  the production activation caller (#506) and native guest E2E (#512) stay
-  separate, unmerged work. #510's native target-binding proof does NOT prove
-  guest workspace-session
-  commit/publication. Retained records
-  remain readable after settle (effigy#510, 052 §8.12).
+  missing evidence is Unknown, never a global NoCreator claim. Retained records
+  remain readable after settle (effigy#510, 052 §8.7).
 - **Failed admission.** Once admission owns a run, its refusal retains the
   original cause and the typed cleanup outcome, including residue and recovery
   commands. Cleanup-context and settlement errors are reported alongside the
@@ -563,16 +389,16 @@ v0.15 deletes them; `effigy doctor` lists what it finds.
 ## 8. Guest
 
 Inside a workspace container the engine runs with guest placement: every
-transition refuses `HostAuthorityRequired` before touching state (R1), and
-the record reads as kept on the host. Reading it through the host authority
-channel waits for that channel (052 §8.3).
+transition refuses `HostAuthorityRequired` before touching state (R1), and the
+record reads as kept on the host. A guest holds no host authority and requests
+nothing from the host: host actions run in the host CLI (052 §8).
 
-**Operator ruling (Tom, 2026-11-01):** v0.15 requires Level 1 of
-[052 §8.6](052-runtime-kernel-contract.md#86-coverage); unsupported Level 2
-guest operations refuse by name. Channel or identity failure never permits
-guest-state mutation, local fallback or resending an indeterminate request
-after `Unknown`. An independently invoked host CLI is not a guest retry and
-remains subject to the owning engine's session/reservation, canonical-gate,
+**Retired (Tom 2026-11-19, D1):** the guest-to-host channel, its Level 1/Level 2
+split, the guest PTY and the session reservation are removed; a guest runs
+locally and host actions run in the host CLI
+([052 §8](052-runtime-kernel-contract.md#8-host-and-guest-model)). An
+independently invoked host CLI remains subject to the owning engine's canonical
+gate,
 custody and authorization checks. The session-aware down and reserved
 outside-gate ordering in §3 remain mandatory.
 
@@ -660,12 +486,10 @@ a projection, never authority (effigy#458).
   guarded before preparation/admission until private-output runner and
   workspace-preparation paths are qualified and connected; review of cleanup-only
   guarded unwind and the integration-budget recheck after observation remains
-  required. This evidence does not qualify a real backend. Remaining Level 1
-  command and Observe coverage beyond `runs:list`, including run-specific
-  `runs:status`, and native backend qualification remain outstanding
-  (052 §8.6, §8.11, §8.12). Level 2 command coverage follows
-  v0.15. The session run and channel are implemented as kernel and runner
-  seams; those seams do not qualify the production caller or a backend.
+  required. This evidence does not qualify a real backend. The retired private
+  activation's command coverage no longer applies: a guest runs locally and host
+  actions run in the host CLI (052 §8). Native backend qualification remains
+  outstanding.
 
 ## 10. Proofs
 
@@ -703,8 +527,10 @@ runtime recovery or migration proof is claimed by this amendment.
 
 ## 11. Future detached-owner journal boundary
 
-The Supervisor's 2026-11-01 Level 1 ruling in 052 §8.7 requires lifecycle E to
-introduce a v2 owner-claim journal boundary, including read-only v1 observation,
+The retired 2026-11-01 Level 1 ruling required lifecycle E to introduce a v2
+owner-claim journal boundary; that detached-owner claim path is retired (Tom
+2026-11-19, D1), so this boundary is not introduced. Should a future feature
+need a claim journal, it would including read-only v1 observation,
 a verified, transactionally consistent adjacent 0600 SQLite backup including
 committed WAL state, atomic idempotent migration, explicit old-writer refusal and
 tested backup restoration for supported rollback. A crash before commit leaves

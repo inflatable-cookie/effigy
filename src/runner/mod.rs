@@ -53,7 +53,6 @@ mod service_command;
 mod skill_command;
 mod state_command;
 mod state_command_artifact;
-mod state_command_render;
 mod task_engine;
 mod task_secrets;
 mod tasks_command;
@@ -63,10 +62,6 @@ mod uninstall_command;
 mod util;
 mod workspace_client;
 mod workspace_command;
-#[cfg(feature = "workspace-serving-fixture")]
-#[doc(hidden)]
-pub mod workspace_serving_fixture;
-mod workspace_transport;
 
 pub(in crate::runner) use bundle_command::run_bundle;
 pub(in crate::runner) use changelog_command::run_changelog;
@@ -104,7 +99,7 @@ pub(in crate::runner) use workspace_command::run_workspace;
 ///
 /// A container-mode workspace guest serves its static reads from the published
 /// context and sends everything with authority over the one host channel
-/// (contract 052 §8.6, §8.11), so the guest dispatch runs first. Anything else
+/// (contract 052 §8, §8), so the guest dispatch runs first. Anything else
 /// is an ordinary host command and takes the host dispatch unchanged. A typed
 /// Task retains its full argument tail; built-in guest requests need the original
 /// CLI arguments through [`run_command_with_context_and_args`].
@@ -156,13 +151,11 @@ fn run_command_in(
 ///
 /// The caller must not render Effigy output around this result: the task owns
 /// raw stdin/stdout/stderr, and only preflight or launch failures surface as
-/// `Err` for a stderr diagnostic. A container-mode guest has no host authority
-/// to admit or run that task, so it refuses before the workload starts.
+/// `Err` for a stderr diagnostic.
 pub fn run_skill_passthrough_with_context(
     cmd: effigy_cli::Command,
     context: &effigy_context::EffigyRuntimeContext,
 ) -> Result<i32, RunnerError> {
-    workspace_client::guest_passthrough_refusal()?;
     entrypoints::run_skill_passthrough_with_context(cmd, context)
 }
 
@@ -181,14 +174,4 @@ mod task_ref_parser_tests;
 /// Dispose only provably stale managed secret deliveries at CLI startup.
 pub(crate) fn cleanup_managed_secrets() -> std::io::Result<()> {
     managed_secrets::sweep()
-}
-
-/// Declarative prepared-file fingerprints for the detached-entry fixture.
-/// Never backend evidence or transferable activation custody.
-#[cfg(feature = "workspace-serving-fixture")]
-pub fn workspace_prepared_declaration_fixture(
-    policy: &effigy_containers::EffectiveContainerPolicy,
-    selected: &effigy_containers::environment::BackendSelection,
-) -> Result<serde_json::Value, String> {
-    workspace_client::container_up::fixture_prepared_declaration(policy, selected)
 }

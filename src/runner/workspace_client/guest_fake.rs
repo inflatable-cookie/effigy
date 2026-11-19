@@ -63,10 +63,6 @@ impl FakeGuest {
         self
     }
 
-    pub(crate) fn node(&self, path: &str) -> Option<&FakeNode> {
-        self.nodes.get(path)
-    }
-
     pub(crate) fn text(&self, path: &str) -> Option<String> {
         self.nodes
             .get(path)
@@ -83,10 +79,6 @@ impl FakeGuest {
 
     pub(crate) fn mode(&self, path: &str) -> Option<u32> {
         self.nodes.get(path).map(|node| node.mode)
-    }
-
-    pub(crate) fn owner(&self, path: &str) -> Option<&str> {
-        self.nodes.get(path)?.owner.as_deref()
     }
 
     /// Paths the guest holds, in order. Used to prove nothing new appeared.

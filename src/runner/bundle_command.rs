@@ -515,14 +515,31 @@ pub(in crate::runner) fn prepare_sources_at(root: &Path) -> Result<(), RunnerErr
     prepare_sources_for_manifest(&manifest)
 }
 
+/// Whether this process has not yet refreshed the manifest's sources. The
+/// command's start is the one switch (contract 020): a later Prepare in the same
+/// process only fills a missing pin, so nothing it resolves moves under it.
+fn first_refresh_in_process(manifest: &Path) -> bool {
+    static REFRESHED: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
+    let key = std::fs::canonicalize(manifest).unwrap_or_else(|_| manifest.to_path_buf());
+    REFRESHED
+        .lock()
+        .map(|mut refreshed| refreshed.insert(key))
+        .unwrap_or(true)
+}
+
 /// Acquire missing bundle and catalog sources and refresh a stale pin through
 /// the kernel Prepare owner (contract 020). Nothing to do is the cheap path:
 /// `prepare_bundle_sources` returns before any gate or file creation.
 pub(in crate::runner) fn prepare_bundle_sources_for_manifest(
     manifest: &Path,
 ) -> Result<(), RunnerError> {
-    effigy_manifest::prepare_bundle_sources(manifest, &source_preparation()?)
-        .map_err(|err| RunnerError::task_invocation(err.to_string()))?;
+    let preparation = source_preparation()?;
+    let prepared = if first_refresh_in_process(manifest) {
+        effigy_manifest::prepare_bundle_sources(manifest, &preparation)
+    } else {
+        effigy_manifest::prepare_missing_bundle_sources(manifest, &preparation)
+    };
+    prepared.map_err(|err| RunnerError::task_invocation(err.to_string()))?;
     Ok(())
 }
 
@@ -543,16 +560,24 @@ fn prepare_missing_pinned_sources_for_manifest(manifest: &Path) -> Result<(), Ru
         .map_err(|err| RunnerError::task_invocation(err.to_string()))
 }
 
-/// Prepare every missing pinned source for bootstrap and the first `dev`
-/// (contract 020): bundle and catalog sources first, then extra sources.
+/// Select sources at command start: bundle and catalog sources first, then
+/// extra sources (contract 020).
 pub(in crate::runner) fn prepare_sources_for_manifest(manifest: &Path) -> Result<(), RunnerError> {
     prepare_bundle_sources_for_manifest(manifest)?;
     prepare_pinned_sources_for_manifest(manifest)
 }
 
-/// Any other task run acquires only what this checkout is missing and never
-/// moves a pin (contract 020 §Behaviour rule 1): a fresh worktree runs its
-/// tasks, and lists them, instead of refusing on an unprepared source.
+/// Refresh bundle and catalog pins, while leaving existing pinned working
+/// copies alone on an ordinary task run (contract 020).
+pub(in crate::runner) fn prepare_task_sources_for_manifest(
+    manifest: &Path,
+) -> Result<(), RunnerError> {
+    prepare_bundle_sources_for_manifest(manifest)?;
+    prepare_missing_pinned_sources_for_manifest(manifest)
+}
+
+/// Read-only discovery acquires missing sources without moving usable pins
+/// (contract 020), so a fresh checkout can list and plan tasks.
 pub(in crate::runner) fn prepare_missing_sources_for_manifest(
     manifest: &Path,
 ) -> Result<(), RunnerError> {

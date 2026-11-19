@@ -40,9 +40,8 @@ pub use docs_policy::{
 };
 pub use release::{
     ManifestReleaseArtifactConfig, ManifestReleaseConfig, ManifestReleaseGateConfig,
-    ManifestReleaseGateDetails, ManifestReleaseGateStage, ManifestReleaseHostedEvidenceConfig,
-    ManifestReleaseIdentityConfig, ManifestReleaseIdentityKind, ManifestReleaseTargetConfig,
-    ManifestReleaseTargetKind,
+    ManifestReleaseGateDetails, ManifestReleaseGateStage, ManifestReleaseIdentityConfig,
+    ManifestReleaseIdentityKind, ManifestReleaseTargetConfig, ManifestReleaseTargetKind,
 };
 pub(crate) use secrets::{
     reject_retired_vault_keys, retired_vault_policy_key, retired_vault_policy_line,

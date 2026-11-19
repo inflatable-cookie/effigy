@@ -11,6 +11,8 @@ use super::terminal;
 #[derive(Debug, Clone, Default)]
 pub struct StyledOutput {
     pub chunks: Vec<effigy_core::terminal_text::StyledChunk>,
+    /// Committed extent observed atomically with the drained chunks.
+    pub through: u64,
     pub truncated: bool,
 }
 /// The one path from a secret-bearing process's merged raw output to every

@@ -52,19 +52,14 @@ pub(super) fn run_skill_passthrough_with_context(
 }
 
 pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, RunnerError> {
-    // Both a task run and the task listing read the checkout's sources. Neither
-    // refuses over a pin this checkout does not hold yet: a missing one is
-    // acquired (rule 1 only), and only a Prepare path refreshes what is behind.
-    // Managed TUI status/logs/stop inspect or stop an existing session and
-    // never acquire. Any other task, including one whose first argument is
-    // those words, still acquires.
+    // Select sources before resolving an executing task. Read-only discovery
+    // only fills missing pins, and managed session controls do neither.
     let root = crate::runner::command_context::active_runtime_context()
         .map(|context| context.command_root().to_path_buf())
         .unwrap_or_else(|| cwd.into());
-    // A reserved workspace engine must verify its dispatcher-owned selection
-    // before any preparation or fallback can produce effects. Its first
-    // resolver already observed the sources; missing sources now refuse.
-    let reserved_workspace = crate::runner::managed_run::workspace_resolution()?.is_some();
+    // The command's own hold on the sources it selected. It lives until the
+    // command finishes, so a refresh by another invocation cannot remove them.
+    let mut _source_hold: Option<effigy_manifest::SourceHold> = None;
     if let Some(manifest) = root
         .ancestors()
         .map(|root| root.join("effigy.toml"))
@@ -81,9 +76,22 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
             Command::Task(_) | Command::Tasks(_) => true,
             _ => false,
         };
-        if reads_sources && !reserved_workspace {
-            if crate::runner::bundle_command::is_source_prepare_command(&cmd) {
-                crate::runner::bundle_command::prepare_sources_for_manifest(&manifest)?;
+        if reads_sources {
+            // Listing, `--plan` and built-in discovery only fill missing pins.
+            let executes = matches!(
+                &cmd,
+                Command::Task(task)
+                    if !crate::runner::bundle_command::is_read_only_task_invocation(task)
+                        && !effigy_core::builtin_tasks::is_builtin_task_name(&task.name)
+            );
+            if executes {
+                if crate::runner::bundle_command::is_source_prepare_command(&cmd) {
+                    crate::runner::bundle_command::prepare_sources_for_manifest(&manifest)?;
+                } else {
+                    crate::runner::bundle_command::prepare_task_sources_for_manifest(&manifest)?;
+                }
+                _source_hold = effigy_manifest::hold_selected_sources(&manifest)
+                    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
             } else {
                 crate::runner::bundle_command::prepare_missing_sources_for_manifest(&manifest)?;
             }

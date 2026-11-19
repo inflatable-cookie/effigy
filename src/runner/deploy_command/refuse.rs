@@ -17,8 +17,7 @@ pub(super) fn refuse_deploy_execution(
     // `next_action`. The first command is runnable as written in this checkout.
     let next_action = "run `effigy deploy model --json` to read the deployment model, or `effigy deploy export <PROVIDER> --path <DIR> --plan` to export a provider plan";
     let obligations = [
-        "state: state stacks and migrations are not executed",
-        "hooks: before_state, after_state and after_deploy hooks are not executed",
+        "hooks: after_deploy hooks are not executed",
         "health: service health checks are not executed",
         "release gates: required release evidence is not verified",
         "digest pins: immutable artifact and code identities are not enforced",
@@ -64,7 +63,7 @@ mod tests {
         assert_eq!(body["operation"], "apply");
         assert_eq!(body["env"], "production");
         let blockers = body["blockers"].as_array().expect("obligation list");
-        assert_eq!(blockers.len(), 6);
+        assert_eq!(blockers.len(), 5);
         assert!(body["next_action"]
             .as_str()
             .expect("next action")
@@ -77,7 +76,7 @@ mod tests {
             .expect_err("deploy execution is refused");
         let message = error.to_string();
         assert!(message.contains("`deploy redeploy` is not yet supported in v0.15"));
-        assert!(message.contains("hooks: before_state, after_state"));
+        assert!(message.contains("hooks: after_deploy hooks are not executed"));
         assert!(message.contains("\nnext: run `effigy deploy model --json`"));
     }
 }

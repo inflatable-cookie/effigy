@@ -32,8 +32,6 @@ pub struct ManifestReleaseConfig {
     pub gates: IndexMap<String, ManifestReleaseGateConfig>,
     #[serde(default)]
     pub tag_format: Option<String>,
-    #[serde(default)]
-    pub hosted_evidence: Option<ManifestReleaseHostedEvidenceConfig>,
     /// Named identities (contract 054 §4.2, §4.3). Absent or empty means the
     /// shorthand's single identity.
     #[serde(default)]
@@ -65,16 +63,6 @@ pub enum ManifestReleaseGateConfig {
     Detailed(ManifestReleaseGateDetails),
 }
 
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ManifestReleaseHostedEvidenceConfig {
-    pub workflow: String,
-    #[serde(default)]
-    pub event: Option<String>,
-    #[serde(default)]
-    pub branch: Option<String>,
-}
-
 /// A gate runs either a shell `command` or an Effigy `task`, in one `stage`.
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -85,8 +73,6 @@ pub struct ManifestReleaseGateDetails {
     pub task: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
-    #[serde(default, rename = "reuse-hosted-evidence")]
-    pub reuse_hosted_evidence: bool,
     #[serde(default)]
     pub stage: Option<ManifestReleaseGateStage>,
 }
@@ -178,44 +164,6 @@ alpha = "printf alpha"
             parsed.gates.keys().cloned().collect::<Vec<_>>(),
             vec!["zoo".to_owned(), "alpha".to_owned()]
         );
-    }
-
-    #[test]
-    fn release_hosted_evidence_and_named_reuse_parse() {
-        let parsed: ManifestReleaseConfig = toml::from_str(
-            r#"
-[hosted-evidence]
-workflow = "ci.yml"
-event = "workflow_dispatch"
-branch = "main"
-
-[gates.test]
-command = "cargo test"
-description = "Run tests"
-reuse-hosted-evidence = true
-
-[gates.smoke]
-command = "printf smoke"
-"#,
-        )
-        .expect("parse hosted evidence");
-        let hosted = parsed.hosted_evidence.expect("hosted-evidence");
-        assert_eq!(hosted.workflow, "ci.yml");
-        assert_eq!(hosted.event.as_deref(), Some("workflow_dispatch"));
-        assert_eq!(hosted.branch.as_deref(), Some("main"));
-        match parsed.gates.get("test") {
-            Some(ManifestReleaseGateConfig::Detailed(details)) => {
-                assert!(details.reuse_hosted_evidence);
-                assert_eq!(details.command.as_deref(), Some("cargo test"));
-            }
-            other => panic!("expected detailed test gate, got {other:?}"),
-        }
-        match parsed.gates.get("smoke") {
-            Some(ManifestReleaseGateConfig::Detailed(details)) => {
-                assert!(!details.reuse_hosted_evidence);
-            }
-            other => panic!("expected detailed smoke gate, got {other:?}"),
-        }
     }
 
     #[test]

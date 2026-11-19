@@ -55,8 +55,7 @@ Policy:
 | Container data | `container::data`, `container::data_dump`, `container::data_seed`, `container::data_pull_production` | Exposed |
 | Container reset | `container::reset` | Exposed |
 | Retired container eject | `container::eject` | Errors with the `effigy container render` replacement |
-| State stack orchestration | `state::plan`, `state::apply`, `state::capture`, `state::capture_set`, `state::history` | Exposed |
-| State capture context | `state::capture_context`, `state::capture_context_path`, `state::capture_source`, `state::capture_destination_ref` | Exposed |
+| Layered state stack | `state::plan`, `state::apply`, `state::capture`, `state::capture_set`, `state::history`, `state::capture_context*`, `state::apply_context*` | Removed in v0.16 with the layered stack; a repository declares these as tasks (see [deployment data workflows](../knowledge/deployment-data-workflows.md)) |
 | State artifacts | `state::artifact_inspect`, `state::artifact_stage`, `state::artifact_capture` | Exposed; moved from the retired `artifact` module in v0.15 |
 | Docs checks | `docs::check_links`, `docs::check_json_examples`, `docs::check_headings`, `docs::check_paths`, `docs::check_contains`, `docs::check_forbidden`, `docs::check_index`, `docs::check_next_action`, `docs::check_workflow_paths`, `docs::add_log_index` | Exposed |
 | Bundles | `bundle::inspect` | Exposed |
@@ -204,18 +203,15 @@ also returns it:
 These are the first-party patterns worth preferring now that the typed helpers
 exist.
 
-### Aggregate state capture from a capture hook
+### Stage and publish a snapshot
 
 ```rhai
-let ctx = state::capture_context();
-let result = state::capture_set(#{
-    stack: ctx["stack_name"],
-    profiles: ["new-content", "media"],
-    key: ctx["key"],
-    yes: true,
-    push: true,
-});
-if !result["ok"] { throw("capture-set failed"); }
+let result = state::artifact_capture(
+    "./data/exports/uat.sql",
+    "oci://ghcr.io/acme/uat-content:2026-05-06",
+    #{ kind: "sql-dump", environment_label: "uat", push: true },
+);
+if !result["ok"] { throw("publish failed"); }
 ```
 
 ### Deploy inspection
@@ -232,8 +228,7 @@ Model/export remain supported. Full execution design is in Queue's deploy lane
 (Q-003); see [guide 074](074-deployment-guide.md).
 
 For fuller task-shape guidance, use
-[`061-rhai-script-steps-guide.md`](061-rhai-script-steps-guide.md),
-[`073-state-stack-guide.md`](073-state-stack-guide.md), and
+[`061-rhai-script-steps-guide.md`](061-rhai-script-steps-guide.md) and
 [`074-deployment-guide.md`](074-deployment-guide.md).
 
 ## Runtime and Execution Surface

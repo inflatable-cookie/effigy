@@ -1188,8 +1188,16 @@ fn gateway_operator_events_write_one_private_record_per_action() {
         assert_eq!(event["event"], name, "{log}");
         assert_eq!(event["cause"], cause, "{log}");
         assert_eq!(event["pid"], std::process::id(), "{log}");
-        assert_eq!(event["caller"]["pid"], std::process::id(), "{log}");
-        assert!(event["caller"]["markers"].is_object(), "{log}");
+        assert!(
+            event["caller"]
+                .as_str()
+                .is_some_and(|caller| !caller.is_empty()),
+            "{log}"
+        );
+        assert!(
+            event.get("argv").is_none() && event.get("parents").is_none(),
+            "{log}"
+        );
     }
     // A stop keeps the event name earlier records already use.
     assert_eq!(events[1]["action"], "down", "{log}");
@@ -1241,39 +1249,6 @@ fn gateway_operator_new_log_is_private_under_restrictive_umask() {
 }
 
 #[test]
-fn workspace_recoverable_settlement_refuses_machine_run_without_releasing_owner() {
-    let home = effigy_test_support::Fixture::new("workspace-machine-refusal-").unwrap();
-    let cx = context();
-    let root = StateRoot::machine_effects(&cx, home.path()).unwrap();
-    let resource = ResourceId::gateway("workspace-refusal").unwrap();
-    let mut specification = inv(resource.clone()).spec().clone();
-    specification.task = TaskId::new(
-        CheckoutId::new(CheckoutKind::Machine, [0; 16]),
-        "",
-        Surface::Published,
-        "gateway",
-        None,
-    )
-    .unwrap();
-    let invocation = ResolvedInvocation::new(specification).unwrap();
-    let mut fake = Fake::new(home.path());
-    let mut run = Run::begin(&cx, &root, &invocation, opts(83), &cleanup(&cx), &mut fake).unwrap();
-    let releases = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let action = releases.clone();
-    run.on_settle(move || {
-        action.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    });
-    let (error, run) = run
-        .settle_workspace_recoverable(&cleanup(&cx), &mut fake)
-        .expect_err("machine store is outside workspace settlement domain");
-    assert!(error.to_string().contains("checkout workspace"));
-    assert_eq!(releases.load(std::sync::atomic::Ordering::SeqCst), 0);
-    assert!(Gate::acquire(&cx, &root, &[resource], Wait::FailFast).is_err());
-    run.settle(&cleanup(&cx), &mut fake).unwrap();
-    assert_eq!(releases.load(std::sync::atomic::Ordering::SeqCst), 1);
-}
-
-#[test]
 fn gateway_custody_settlement_logs_caller_and_owner_loss() {
     let home = effigy_test_support::Fixture::new("g382-").unwrap();
     let cx = context();
@@ -1310,9 +1285,9 @@ fn gateway_custody_settlement_logs_caller_and_owner_loss() {
         record["cwd"],
         std::env::current_dir().unwrap().to_string_lossy().as_ref()
     );
-    assert!(record["argv"]
-        .as_array()
-        .is_some_and(|args| !args.is_empty()));
+    assert!(record["caller"]
+        .as_str()
+        .is_some_and(|caller| !caller.is_empty()));
     assert!(record["cause"]
         .as_str()
         .unwrap()

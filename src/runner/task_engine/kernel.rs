@@ -679,105 +679,6 @@ pub fn run_internal_kernel_entry(entry: &str) -> Option<i32> {
     // The workspace-serving process-lifetime proof's initiating front end: it
     // starts one detached serving host, acknowledges the kernel detach and
     // returns, leaving the host serving. Present only in a fixture build.
-    #[cfg(feature = "workspace-serving-fixture")]
-    if entry == "__workspace-serving-fixture" {
-        return Some(
-            match crate::runner::workspace_serving_fixture::initiate_from_stdin() {
-                Ok(result) => {
-                    println!("{result}");
-                    0
-                }
-                Err(error) => {
-                    eprintln!("{error}");
-                    1
-                }
-            },
-        );
-    }
-    #[cfg(feature = "workspace-serving-fixture")]
-    if entry == "__workspace-serving-fixture-abandon" {
-        return Some(
-            match crate::runner::workspace_serving_fixture::initiate_abandoning_from_stdin() {
-                Ok(result) => {
-                    println!("{result}");
-                    0
-                }
-                Err(error) => {
-                    eprintln!("{error}");
-                    1
-                }
-            },
-        );
-    }
-    #[cfg(feature = "workspace-serving-fixture")]
-    if entry == "__workspace-serving-fixture-deadline" {
-        return Some(
-            match crate::runner::workspace_serving_fixture::initiate_deadline_from_stdin() {
-                Ok(result) => {
-                    println!("{result}");
-                    0
-                }
-                Err(error) => {
-                    eprintln!("{error}");
-                    1
-                }
-            },
-        );
-    }
-    #[cfg(feature = "workspace-serving-fixture")]
-    if entry == "__workspace-serving-fixture-drop" {
-        return Some(
-            match crate::runner::workspace_serving_fixture::initiate_and_drop_stdin() {
-                Ok(_) => 0,
-                Err(error) => {
-                    eprintln!("{error}");
-                    1
-                }
-            },
-        );
-    }
-    #[cfg(feature = "workspace-serving-fixture")]
-    if entry == "__workspace-serving-fixture-crash" {
-        return Some(
-            match crate::runner::workspace_serving_fixture::initiate_then_crash_stdin() {
-                Ok(_) => 0,
-                Err(error) => {
-                    eprintln!("{error}");
-                    1
-                }
-            },
-        );
-    }
-    #[cfg(feature = "workspace-serving-fixture")]
-    if entry == "__workspace-serving-fixture-client" {
-        return Some(
-            match crate::runner::workspace_serving_fixture::client_identity_stdin() {
-                Ok(identity) => {
-                    println!("{identity}");
-                    0
-                }
-                Err(error) => {
-                    eprintln!("{error}");
-                    1
-                }
-            },
-        );
-    }
-    #[cfg(feature = "workspace-serving-fixture")]
-    if entry == "__workspace-serving-fixture-compete" {
-        return Some(
-            match crate::runner::workspace_serving_fixture::compete_detached_stdin() {
-                Ok(result) => {
-                    println!("{result}");
-                    0
-                }
-                Err(error) => {
-                    eprintln!("{error}");
-                    1
-                }
-            },
-        );
-    }
     if !entry.starts_with("__kernel-") {
         return None;
     }
@@ -794,11 +695,6 @@ pub fn run_internal_kernel_entry(entry: &str) -> Option<i32> {
         Ok(router) => router,
         Err(_) => return Some(70),
     };
-    #[cfg(feature = "workspace-private-qualification")]
-    if entry == "__kernel-workspace-private-prepare" {
-        adopt_signal_router(router);
-        return Some(crate::runner::container_command::qualification::entry());
-    }
     if let Some(result) = effigy_kernel::probe::internal_entry(entry, router.root_cancel()) {
         return Some(i32::from(result.is_err()));
     }
@@ -840,10 +736,6 @@ pub(super) fn relative(root: &Path, path: &Path) -> Option<String> {
 #[cfg_attr(target_os = "macos", link_section = "__DATA,__mod_init_func")]
 static TEST_BINARY_KERNEL_ENTRY: extern "C" fn() = {
     extern "C" fn dispatch() {
-        #[cfg(feature = "workspace-private-qualification")]
-        if effigy_kernel::supervise::initialize_private_qualification_image().is_err() {
-            std::process::exit(70);
-        }
         // Linux std may populate `env::args` after this constructor runs.
         #[cfg(target_os = "linux")]
         let entry = std::fs::read("/proc/self/cmdline").ok().and_then(|raw| {

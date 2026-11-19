@@ -51,23 +51,24 @@ scrollbar uses its own rightmost column so it does not cover output text.
 
 Managed Cargo/Oxide producers use the initiating ANSI pane capability and
 respect `NO_COLOR`, CI and explicit colour preferences. Their canonical logs
-contain sanitized, redacted plain text; panes receive optional typed styles
-from the same writer result. A missing or expired style window renders plain
-text, and plain/JSON readers do not interpret terminal controls.
+contain sanitized, redacted plain text, and colour is live-only: a pane shows
+typed styles while it follows the running producer, and a log you attach to or
+replay later is plain. Plain/JSON readers do not interpret terminal controls.
 Effigy readers show only the committed extent. A failed or interrupted append
 stops capture and can refuse restart; preserve its files for operator recovery.
 Underlay and direct file reads are presentation-only: they can show a safe line
 awaiting sync that is later lost on crash, and acknowledge no durability.
 
-On the first host-process start after upgrading from the raw-log writer,
-Effigy settles the prior owner, retains its old log in private
-`.legacy-host-logs` quarantine, and creates a fresh inode at the same public
-log path. **Stop and reopen pre-upgrade attached log followers after upgrading.**
-An already-open POSIX descriptor cannot be revoked by that rename. The bundled
-Underlay follower detects the new inode and reports a log-restarted gap,
-including when the replacement grew beyond the old byte offset. Old bytes
-are not replayed, and continuity across this one-time transition is not
-promised. Quarantined data is retained for explicit operator handling.
+A host log left by the raw-log writer is never converted automatically. On the
+first start after upgrading, Effigy refuses to append to it and names the path;
+move that file aside once and start again, and the same public path admits a
+fresh canonical log. The old file keeps its bytes and permissions, and no
+Effigy reader serves it as canonical. **Stop and reopen pre-upgrade attached log
+followers after upgrading** as well: an already-open POSIX descriptor cannot be
+revoked. The bundled Underlay follower detects the new inode and reports a
+log-restarted gap, including when the replacement grew beyond the old byte
+offset. Old bytes are not replayed, and continuity across this one-time
+transition is not promised.
 
 ## 2) Two Valid Shapes
 

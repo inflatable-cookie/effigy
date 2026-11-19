@@ -625,7 +625,7 @@ operations require confirmation.
 
 ```sh
 effigy container cache list --global
-effigy container cache prune --kind rust-target --yes
+effigy container cache prune --global --yes
 effigy container volume list --dormant
 effigy container volume list --global --orphans
 effigy container volume prune --global --orphans --yes

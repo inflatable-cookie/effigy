@@ -47,10 +47,6 @@ use effigy_kernel::outcome::WorkloadOutcome;
 use effigy_manifest::{ManifestManagedRun, ManifestTaskRunIn, TaskSelection};
 use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRoute};
 
-#[path = "standard/reserved.rs"]
-mod reserved;
-pub(in crate::runner) use reserved::{run_reserved_shell, validate_reserved_shell};
-
 pub(in crate::runner) fn run_standard_task(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
@@ -112,7 +108,6 @@ pub(in crate::runner) fn run_standard_task(
         args: &preflight.runtime_args_exec.passthrough,
         key: run_key,
         admission: selection.task.admission,
-        workspace_admission: None,
         cwd: Some(&preflight.invocation_cwd),
     })?;
     let mut workload = None;

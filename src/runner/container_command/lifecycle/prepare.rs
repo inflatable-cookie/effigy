@@ -107,11 +107,7 @@ fn prepare_container_up_with_loader(
             prepared
         }
         Err(error) => {
-            ports_step.fail(if operation.workspace_mode {
-                "workspace ordinary policy preparation failed".to_owned()
-            } else {
-                error.to_string()
-            });
+            ports_step.fail(error.to_string());
             return Err(error.into());
         }
     };
@@ -138,13 +134,6 @@ fn prepare_container_up_with_loader(
     emit_warning_lines(&warnings);
     let attach_mode = effective_attach_mode(&policy, attach, detach);
     operation.preparation_step = Some("runtime");
-    #[cfg(feature = "workspace-private-qualification")]
-    let colima_started = if operation.workspace_mode {
-        effigy_containers::exec::require_qualification_backend_running(&policy, repo_root)?
-    } else {
-        ensure_runtime_backend_running(&policy, repo_root)?
-    };
-    #[cfg(not(feature = "workspace-private-qualification"))]
     let colima_started = ensure_runtime_backend_running(&policy, repo_root)?;
     emit_ssh_agent_socket_warning(&policy, repo_root);
     operation.preparation_step = Some("mounts");
@@ -234,26 +223,4 @@ fn emit_ssh_agent_socket_warning(policy: &EffectiveContainerPolicy, repo_root: &
             profile = policy.profile,
         )]);
     }
-}
-
-/// Only the authenticated private preparation child calls this body. Its
-/// stdout/stderr already belong to the parent's qualified Discard custody.
-#[cfg(feature = "workspace-private-qualification")]
-pub(in crate::runner::container_command) fn qualification_prepare_body(
-    root: &Path,
-    name: &str,
-) -> Result<(), RunnerError> {
-    let mut operation = DetachedOperationState {
-        workspace_mode: true,
-        ..Default::default()
-    };
-    prepare_container_up_with_loader(
-        root,
-        Some(name),
-        false,
-        true,
-        &mut operation,
-        effigy_containers::load_container_policy_for_qualification_inputs,
-    )
-    .map(|_| ())
 }

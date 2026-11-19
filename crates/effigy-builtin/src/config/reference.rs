@@ -93,13 +93,6 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Bui
         docs::secrets_lines(ConfigDocProfile::Reference),
     )?;
 
-    renderer.section("State Stacks")?;
-    emit_doc_lines(
-        &mut renderer,
-        color_enabled,
-        docs::state_lines(ConfigDocProfile::Reference),
-    )?;
-
     renderer.section("Deploy")?;
     emit_doc_lines(
         &mut renderer,

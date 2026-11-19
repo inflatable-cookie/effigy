@@ -1,6 +1,6 @@
 # 054 - Release Platform Contract
 
-Status: accepted by Tom on 2026-10-22 ("I'll go with your recommendation … release draft questions"). §2, §4 and §5, and the Run of §3, §6 and §7, are implemented for `tag` and `task` targets, including `check`, `verify`, approval and decision checkpoints and hosted waits; §4.4's Effigy release is implemented (§13); native providers are v0.16.
+Status: accepted by Tom on 2026-10-22 ("I'll go with your recommendation … release draft questions"). §2, §4 and §5, and the Run of §3, §6 and §7, are implemented for `tag` and `task` targets, including `check`, `verify`, approval and decision checkpoints and repo-declared gate tasks; §4.4's Effigy release is implemented (§13); native providers are v0.16.
 It supersedes the generic mechanics in guide 051 when implemented. Effigy's own release
 policy stays in [release.md](release.md).
 
@@ -11,13 +11,13 @@ reconciled, never replayed)
 Ruling: [questions](../questions.md) Q-009, the release platform bullet
 Evidence: the planner's portfolio inventory (2026-10, `release-audits/effigy/release-platform-inventory-2026-10/`). These cover 38 project roots and 101 legacy roots.
 
-Q-010 process custody: Git operations, hosted evidence lookups and stage tasks receive the admitted
+Q-010 process custody: Git operations and stage tasks receive the admitted
 checkout run explicitly. Before launch, the run registers its sentinel and each
 process receipt; closure and bounded output are verified before a stage consumes
 the result. Adapter exit codes are interpreted by the stage (a missing tag is
 an observed absence), while unknown closure refuses completion. Settlement refusals report categorical group and capture states and a residue count. A bounded diagnostic appends fixed operation and stage labels, leader and group categories, and up to eight residue reason categories with an omitted count; it never exposes observation payloads. The symbolic-ref operation identifies validate; other stages are unspecified. Workspace guests
 cannot mutate release state through the host-only release API.
-The synthetic full-run and hosted-wait proofs record the returned live stop report's
+The synthetic full-run proofs record the returned live stop report's
 leader/group states and residue reason categories before fixture cleanup. Synthetic
 TestEffects also record those categories for a settlement refusal, including the
 checkpoint-resume fixture, with Run versus Resume action and baseline versus `--to`
@@ -72,26 +72,27 @@ artifacts. It never silently restarts from the beginning.
 | **verify** | Runs each target's `verify` task and any release-level `verify` tasks against what was published. | Nothing external. | A verification fails. The release is published but marked unverified; see §7. |
 | **closeout** | Pushes the release commit, if not already done by a target; writes the receipt; prints the summary. | The receipt. | n/a |
 
-**Approval and hosted waits.** Any stage boundary can be declared an approval
+**Approval checkpoints.** Any stage boundary can be declared an approval
 checkpoint (`approve = ["publish"]`, the default for releases with a non-`tag` target; §10). The Run stops there with status
 `awaiting_approval`, and `effigy release approve <run>` continues it,
-recording who approved and when. A gate may also be a **hosted wait**, such as
-exact-commit CI evidence on GitHub. A Run waiting on it is resumable and
-doesn't hold a process open. The current `reuse-hosted-evidence` gate option
-becomes this mechanism.
+recording who approved and when.
 
-**A hosted wait binds one run, never a sibling.** The wait opens a dispatch
-window the first time the gate needs evidence ("no run created before this
-instant is this release's") and records it in the Run's record. Exactly one run
-of the configured workflow and event, for the exact commit and repository, may
-be created inside that window: that run becomes the **bound run**, and its id
-is journalled on the gate and in the wait entry. From then on the wait
-re-checks the bound run only, so a newer dispatch — another release, an
-operator's re-dispatch, a re-run — can never substitute for it. Zero matches
-wait (`awaiting-hosted-evidence`), and several matches inside one window fail
-the gate closed with the candidates named. A one-shot `effigy release gates`
-check has no record to open a window in, so it accepts only a commit's single
-matching run and refuses the same way.
+**A gate is an ordinary command or repo task.** Effigy core knows no provider:
+a gate such as exact-commit CI evidence on GitHub is a `[tasks]` entry the
+project declares, wired into `[release.gates]` with `task = "<name>"`. The
+runner exports the exact commit the gate must prove as
+`EFFIGY_RELEASE_COMMIT` — the source commit for `pre` gates, the prepared
+candidate for `certify` gates — so the task verifies that commit rather than
+whichever commit its work tree holds. A provider task binds its own evidence:
+for a dispatched workflow, exactly one run of that workflow, event, repository
+and commit, never the newest run on the ref, because a sibling dispatch,
+re-dispatch or re-run is a different run.
+
+**A gate without evidence fails where it runs.** Missing, pending, failed,
+ambiguous or wrong-commit evidence is the gate's non-zero exit, so the Run
+stops at that stage: certify captures no artifacts, publish runs no target,
+and nothing is left running. `effigy release resume <run>` re-runs that gate
+and skips the gates already recorded as passed.
 
 ## 4. Configuration
 
@@ -252,7 +253,7 @@ answers each:
 | No SemVer (Contact Patch, Paseo Queue, Northstar, Finch, Bovine content, Silo suite IDs) | §4.3 `kind = digest\|source\|task` |
 | Exact artifact continuity (Convergence, Keepsake, Effigy, Bovine Desktop, Longhorn, Nightfire, Poodle, Catalog Pack) | §3 certify records digests; §6 the input carries them and they're re-hashed before publish |
 | Multiple or external destinations (Bovine Desktop's private repo and channels, Catalog Pack OCI promotion, multi-package npm) | §4.2 named targets; `task` targets in v0.15; native providers in v0.16 |
-| Approval and asynchronous work (protected environments, operator tag authority) | §3 `approve` checkpoints and hosted waits; `release approve` |
+| Approval and asynchronous work (protected environments, operator tag authority) | §3 `approve` checkpoints; `release approve` |
 | Retry and idempotency | §7 |
 | Deployment semantics (Contact Patch, Market, Paseo Queue) | A `task` target plus `verify`. Rollout and rollback policy stay project-owned (the deploy lane). The release records what was deployed and its health |
 | Source and destination separation (Bovine Desktop, Northstar packs) | Receipts record the destination identity and owner; `task` targets handle cross-repo publication |
@@ -277,7 +278,7 @@ Projects with an explicit no-release ruling stay out.
 - the gates `stage` option;
 - artifacts with digests;
 - `tag` and `task` targets with `check` and `verify`;
-- approval checkpoints and hosted waits;
+- approval checkpoints and repo-declared gate tasks;
 - receipts;
 - the CLI in §5;
 - shorthand compatibility for today's `[release]`;
@@ -451,9 +452,8 @@ already at the destination, so `check` writes `effigy.release.output.v1` too:
 not, and `"unknown"` (or an unusable answer) stops the Run at
 `awaiting-decision`.
 
-**Decisions and hosted waits are stops, not failures.** A stop records
-`waiting_on`: the stage boundary for an approval, the gate name for hosted
-evidence, and the target name for a decision. `release decide <run>
+**Decisions are stops, not failures.** A stop records `waiting_on`: the stage
+boundary for an approval and the target name for a decision. `release decide <run>
 --published|--not-published` records the operator (same identity rule as an
 approval) and the time in the record's `decisions`, sets the target published
 or pending, and continues at `publish`.
@@ -468,14 +468,12 @@ whose last outcome is unknown is first reconciled". A wait also stops the
 publish fan-out: every later target stays pending, and none of them publishes
 until the outcome it is waiting behind is resolved.
 
-A hosted gate is checked before its command would run, for the candidate commit
-at `certify` and the source commit at `pre-gates`. Missing or still-running
-evidence stops the Run at `awaiting-hosted-evidence` with no process open, and
-it stops the gate stage itself: `certify` captures no artifacts until the gate
-has its exact-commit evidence. A resume re-checks the evidence, skips the gates
-it already recorded as passed, and continues the stage. A failed run, the wrong
-commit or repository, an ambiguous answer or an unusable lookup fails the gate
-closed, exactly as the previous synchronous `reuse-hosted-evidence` did.
+A gate runs as a command or task with `EFFIGY_RELEASE_COMMIT` set to the
+commit its evidence must be for: the source commit at `pre-gates` and the
+candidate at `certify`. A gate that cannot prove that commit fails the gate
+stage itself, so `certify` captures no artifacts and `publish` runs no target;
+a resume re-runs the failed gate and skips the gates already recorded as
+passed.
 
 **Task targets publish in declared order.** A target that succeeded stays
 recorded, so a resume continues with the remaining targets. Before a task
@@ -580,9 +578,9 @@ condition, so the retired CLI spelling cannot return unnoticed.
 
 **The proof is a fixture, not a publication.** `tests/cli_output_tests/
 release_platform_tests.rs` copies this repository's `config/release.toml` byte
-for byte and stubs only what a temporary workspace cannot reproduce: the hosted
-CI probe, the fixture's own `build:release` leaf, and the `task` target's
-dispatch. The tests run `release --plan`, then `run --to certify` on a local bare
+for byte and stubs only what a temporary workspace cannot reproduce: the `ci`
+gate's GitHub query (the stub asserts the candidate the runner bound it to),
+the fixture's own `build:release` leaf, and the `task` target's dispatch. The tests run `release --plan`, then `run --to certify` on a local bare
 remote, assert nothing was dispatched or tagged, continue to the approval stop,
 approve, and complete the Run through the fake dispatch — so the whole
 declaration is exercised without publishing anything.

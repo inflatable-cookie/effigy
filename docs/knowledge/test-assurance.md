@@ -77,8 +77,8 @@ tier, not the count.
   selectors, never in the default suite.
 - `endpoint-store-faults` gateway tests run through the `test:gateway:*`
   selectors.
-- `workspace-serving-fixture` gates the detached serving proofs (31
-  declarations, several named `deferred to #531` uncovered flows).
+- The retired `workspace-serving-fixture` and `workspace-private-qualification`
+  features and their proofs are gone (Tom 2026-11-19, D1/D2).
 - Ignored cases are helpers spawned by their parents or named proofs with
   `--run-ignored only` selectors; the reason is the route that runs them.
 - Platform gates (`target_os`, negated forms included) leave single-sided
@@ -90,9 +90,9 @@ tier, not the count.
   real collection, the fence count is triage.
 - T6 routes are the Python, Rhai and shell payloads a `config/tasks.toml` route
   names. The named feature and native families are the `fault-injection` and
-  `endpoint-store-faults` targets, the `workspace-serving-fixture` serving
-  proofs, the ignored `proof:`/`test:*:linux` routes, and the platform-gated
-  cases above; each is listed once, by its route, not re-enumerated per wave.
+  `endpoint-store-faults` targets, the ignored `proof:`/`test:*:linux` routes,
+  and the platform-gated cases above; each is listed once, by its route, not
+  re-enumerated per wave.
 
 ## Census
 
