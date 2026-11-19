@@ -2933,7 +2933,7 @@ case "$*" in
                   EFFIGY_FIXTURE_PROCESS_OWNER="$EFFIGY_TEST_REMOTE_OWNER" \
                   EFFIGY_FIXTURE_PROCESS_DONE="$done_marker" \
                   EFFIGY_FIXTURE_PROCESS_SCRIPT="$last_arg" \
-                  "$EFFIGY_TEST_FIXTURE_PROCESS_BINARY" --ignored --exact support::fixture_remote_process_child --nocapture >/dev/null 2>&1 &
+                  "$EFFIGY_TEST_FIXTURE_PROCESS_BINARY" --ignored --exact support::fixture_remote_process_child --nocapture >"$EFFIGY_TEST_REMOTE_DONE_DIR/exec-$$.log" 2>&1 &
                   i=0
                   while [ ! -f "$done_marker" ] && [ "$i" -lt 1500 ]; do
                     sleep 0.2
@@ -5218,13 +5218,6 @@ detach_timeout_secs = 1
             remote_done_dir.display().to_string(),
         ),
     ];
-    let wait_for = |condition: &dyn Fn() -> bool, what: &str| {
-        let deadline = Instant::now() + Duration::from_secs(60);
-        while !condition() {
-            assert!(Instant::now() < deadline, "timed out waiting for {what}");
-            std::thread::sleep(Duration::from_millis(200));
-        }
-    };
 
     let mut first = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("--repo")
@@ -5287,10 +5280,34 @@ detach_timeout_secs = 1
         .next()
         .and_then(|pgid| pgid.parse().ok())
         .expect("session leader pgid");
-    wait_for(
-        &|| hold_state().as_deref() == Some("running"),
-        "the remote holder's run to hold its gate",
-    );
+    let remote_logs = || -> String {
+        let mut logs = String::new();
+        for entry in fs::read_dir(&remote_done_dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            let path = entry.path();
+            if path.extension().is_some_and(|extension| extension == "log") {
+                logs.push_str(&format!(
+                    "\n--- {} ---\n{}",
+                    path.display(),
+                    fs::read_to_string(&path).unwrap_or_default()
+                ));
+            }
+        }
+        logs
+    };
+    let hold_deadline = Instant::now() + Duration::from_secs(60);
+    while hold_state().as_deref() != Some("running") {
+        assert!(
+            Instant::now() < hold_deadline,
+            "timed out waiting for the remote holder's run to hold its gate; state={:?} remote={}",
+            hold_state(),
+            remote_logs()
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    }
     assert!(
         effigy_process::process_is_running(pgid),
         "the remote holder process (pgid {pgid}) is live before the stop"

@@ -4524,11 +4524,11 @@ names, the SHA-256 of the executable actually running against the pin, and the
 container id, VM boot, image platform and libc against `ProcGuestIdentity`'s
 independent observation. The host and guest version and protocol stay the
 document's own claims, validated by that parser; the running binary's
-*self-reported* version is deliberately not compared, because production writes
-the artifact's `effigy.active-version` sidecar beside the stable entry link while
-the process resolves through the link to the digest-addressed executable, so its
-version string is the artifact's packaged version (`0.14.1`) and never the
-local-install identity the host pins (`0.14.1+local.<hash>`). It infers no
+*self-reported* version is deliberately not compared, because a legacy
+document was written before the host recorded the authenticated version beside
+the digest-addressed executable (effigy#1014), so that file is absent for the
+executables this reader serves and its version string is whatever the artifact
+was packaged with (`0.14.1`), never a host claim this reader may rely on. It infers no
 session, credential, locator or selection, because the v1 document names none,
 and it grants no `VerifiedWorkspaceContext`. A v1 document is never handed to
 the v2 reader: `WorkspaceContextV2::parse` still refuses it, with a message that
