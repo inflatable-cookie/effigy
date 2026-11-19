@@ -82,7 +82,7 @@ complexity.
 - **Bounded QA:** explicit groups should name a work context, its proof limits
   and expected execution cost, reusing the ordinary task runtime. Tom's
   2026-09-30 direction puts these groups before automatic diff selection.
-  Workers use targeted checks; planners run milestone QA through Queue.
+  Workers use targeted checks; planners run milestone QA through Nucleus.
   Tom's 2026-09-30 implementation ruling keeps group execution on the existing
   pipeline and repairs explicit Cargo package scope. General stopping and hard
   timeouts require a separately reviewed supervision contract and implementation;
@@ -111,7 +111,7 @@ not a production deployment topology.
 
 Those rules outlive their former vision decision records. Planning selections
 about past governance and consumer cohorts remain in Git history; current
-intent lives in the Queue plan.
+intent lives in the Nucleus plan.
 
 ## Quality Knowledge
 

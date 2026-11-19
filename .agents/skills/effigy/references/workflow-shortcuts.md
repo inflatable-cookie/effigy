@@ -77,7 +77,7 @@ matching gap takes precedence over member coverage, see the QA-group scope
 section in `docs/guides/081-bounded-qa-groups-workflow.md` and its linked
 contract and architecture references.
 
-The planner owns full `effigy qa` on `main` at Queue milestones. It is not the
+The planner owns full `effigy qa` on `main` at Nucleus milestones. It is not the
 default per-task or pre-push recommendation. See
 `docs/guides/080-host-wide-validation-admission.md` for binary and admission
 proof.

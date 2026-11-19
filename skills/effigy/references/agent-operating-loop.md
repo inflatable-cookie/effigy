@@ -62,7 +62,7 @@ once when documentation changed. Capture each exit status. For background
 processes, record the PID you started and stop only that PID or process group.
 Use Effigy selectors so admission-aware execution stays in effect.
 
-Full `effigy qa` belongs to the planner on `main` at Queue milestones, not the
+Full `effigy qa` belongs to the planner on `main` at Nucleus milestones, not the
 default per-task check. See the current host-wide admission guide at
 `docs/guides/080-host-wide-validation-admission.md`.
 
