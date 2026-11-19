@@ -110,7 +110,7 @@ impl phases::WorkflowPhaseHandler for DefaultWorkflowPhaseHandler<'_> {
                 })
                 .map(|(_, catalog)| catalog.catalog_root.clone())
                 .collect::<Vec<_>>();
-            crate::deep_inventory::run_deep_inventory(
+            let scan = crate::deep_inventory::begin_deep_inventory(
                 crate::deep_inventory::DeepInventoryRequest {
                     scope_root: &selected.catalog_root,
                     catalogs: &manifest.parsed_catalogs,
@@ -120,19 +120,55 @@ impl phases::WorkflowPhaseHandler for DefaultWorkflowPhaseHandler<'_> {
                 state,
                 self.progress.as_deref_mut(),
             );
-            if !state.is_complete() {
+            if scan.is_none() && !state.is_complete() {
                 state.record_skipped_check("health_task");
                 break;
             }
-            crate::checks::run_health_check(
+            // The health task does not depend on the walk, so it runs on this
+            // thread while the walk runs on a worker. Its findings still land
+            // after the walk's, in the same order as before.
+            let health = crate::checks::begin_health_check(
                 &selected.catalog_root,
                 resolved_root,
                 std::slice::from_ref(selected),
-                state,
-                self.progress.as_deref_mut(),
-                self.ports,
                 deadline,
+                self.progress.as_deref_mut(),
             );
+            let ports = self.ports;
+            let (pending, work) = match scan {
+                Some((pending, work)) => (Some(pending), Some(work)),
+                None => (None, None),
+            };
+            let (scan_run, health_run) = std::thread::scope(|scope| {
+                let walk = work.map(|work| scope.spawn(move || work.run()));
+                let health_run =
+                    health.map(|step| step.invoke(&selected.catalog_root, ports, deadline));
+                let scan_run = walk.map(|walk| {
+                    walk.join()
+                        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+                });
+                (scan_run, health_run)
+            });
+            if let (Some(pending), Some(run)) = (pending, scan_run) {
+                crate::deep_inventory::finish_deep_inventory(
+                    pending,
+                    run,
+                    state,
+                    self.progress.as_deref_mut(),
+                );
+            }
+            // A walk that ran out of budget leaves the state incomplete, but the
+            // health task ran alongside it under the same deadline. Its
+            // completed evidence is kept and its own state is reported. A health
+            // task the deadline cut off is reported as budget-exhausted. If the
+            // health task never started, the walk's incomplete state skips it.
+            match health_run {
+                Some(run) => {
+                    crate::checks::finish_health_check(run, state, self.progress.as_deref_mut())
+                }
+                None if state.is_complete() => crate::checks::record_health_budget_exhausted(state),
+                None => state.record_skipped_check("health_task"),
+            }
             if !state.is_complete() {
                 break;
             }

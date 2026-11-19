@@ -29,28 +29,85 @@ pub(super) struct DeepInventoryRequest<'a> {
     pub(super) deadline: Option<Instant>,
 }
 
-pub(super) fn run_deep_inventory(
+/// The shared scan's walk, owned so it can run on a worker while the caller
+/// does other doctor work (the health task).
+pub(super) struct ScanWork {
+    scope_root: PathBuf,
+    pruned_roots: Vec<PathBuf>,
+    options: DoctorScanInventoryOptions,
+    deadline: Option<Instant>,
+}
+
+/// What `finish_deep_inventory` needs from `begin_deep_inventory`.
+pub(super) struct PendingScan {
+    enabled: [bool; 2],
+    findings_before: usize,
+}
+
+/// The worker's result: the walk's outcome and how long it took.
+pub(super) struct ScanRun {
+    elapsed: Duration,
+    result: Result<DoctorScanInventoryResult, effigy_scan::ScanError>,
+}
+
+impl ScanWork {
+    pub(super) fn run(self) -> ScanRun {
+        let started = Instant::now();
+        let result = run_doctor_scan_inventory(
+            &self.scope_root,
+            &self.pruned_roots,
+            &self.options,
+            self.deadline,
+        );
+        ScanRun {
+            elapsed: started.elapsed(),
+            result,
+        }
+    }
+}
+
+/// Loads the scan options and opens the scan's progress steps. `None` means
+/// the options are invalid: both checks are recorded as skipped and there is
+/// no walk to run.
+pub(super) fn begin_deep_inventory(
     request: DeepInventoryRequest<'_>,
     state: &mut DoctorState,
-    mut progress: Option<&mut DoctorProgressReporter>,
-) {
+    progress: Option<&mut DoctorProgressReporter>,
+) -> Option<(PendingScan, ScanWork)> {
     let Some(options) = load_options(request.scope_root, request.catalogs, state) else {
         for (name, _) in SCAN_CHECK_NAMES {
             state.record_skipped_check(name);
         }
-        return;
+        return None;
     };
     let enabled = enabled_checks(&options);
-    start_scan_steps(progress.as_deref_mut(), &enabled);
-    let findings_before = state.findings.len();
-    let started = Instant::now();
-    let result = run_doctor_scan_inventory(
-        request.scope_root,
-        request.pruned_roots,
-        &options,
-        request.deadline,
-    );
-    let elapsed = started.elapsed();
+    start_scan_steps(progress, &enabled);
+    let pending = PendingScan {
+        enabled,
+        findings_before: state.findings.len(),
+    };
+    let work = ScanWork {
+        scope_root: request.scope_root.to_path_buf(),
+        pruned_roots: request.pruned_roots.to_vec(),
+        options,
+        deadline: request.deadline,
+    };
+    Some((pending, work))
+}
+
+/// Applies the walk's result to doctor state and closes the scan's progress
+/// steps. Run it after the walk, on the thread that owns the state.
+pub(super) fn finish_deep_inventory(
+    pending: PendingScan,
+    run: ScanRun,
+    state: &mut DoctorState,
+    mut progress: Option<&mut DoctorProgressReporter>,
+) {
+    let PendingScan {
+        enabled,
+        findings_before,
+    } = pending;
+    let ScanRun { elapsed, result } = run;
     let result = match result {
         Ok(result) => result,
         Err(error) if error.is_budget_exhausted() => {
@@ -102,6 +159,19 @@ pub(super) fn run_deep_inventory(
         } else {
             state.record_skipped_check(name);
         }
+    }
+}
+
+/// The whole scan in one call, for tests. Production overlaps the walk with
+/// the health task, so it calls `begin_`, `ScanWork::run` and `finish_` itself.
+#[cfg(test)]
+pub(super) fn run_deep_inventory(
+    request: DeepInventoryRequest<'_>,
+    state: &mut DoctorState,
+    mut progress: Option<&mut DoctorProgressReporter>,
+) {
+    if let Some((pending, work)) = begin_deep_inventory(request, state, progress.as_deref_mut()) {
+        finish_deep_inventory(pending, work.run(), state, progress);
     }
 }
 
