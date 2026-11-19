@@ -5,9 +5,6 @@
 //! and a command that uses an environment holds it through a session run
 //! (or, for a managed run, through its own task run).
 
-#[path = "environment_workspace.rs"]
-pub(in crate::runner) mod workspace;
-
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -663,10 +660,6 @@ pub(in crate::runner) fn stop_hook_exempting(
     effigy_runtime::write::ShutdownEffect<'_>,
 ) -> Result<(), effigy_runtime::EffigyRuntimeError> {
     move |repo_root, policy, effect| {
-        #[cfg(feature = "workspace-private-qualification")]
-        if op == Operation::Down && exempt.is_none() {
-            workspace::down::retire_selected_session(repo_root, policy).map_err(runtime_error)?;
-        }
         stop_exempting(repo_root, policy, op, exempt, |progress| {
             report_host_process_stop(
                 crate::runner::host_process::stop_host_processes_for_container(repo_root, policy),

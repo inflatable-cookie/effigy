@@ -78,10 +78,7 @@ impl LinuxWorkspaceTarget {
     /// The image facts this artifact family was built for. The release triple in
     /// the producer's receipt is its own record, so this is the artifact side of
     /// the independent platform comparison, never a read of the image.
-    pub(in crate::runner) fn image_platform(
-        self,
-    ) -> effigy_kernel::workspace_session::ImagePlatform {
-        use effigy_kernel::workspace_session::{ImagePlatform, LoaderFamily};
+    pub(in crate::runner) fn image_platform(self) -> ImagePlatform {
         let (architecture, loader) = match self {
             Self::X86_64Gnu => ("amd64", LoaderFamily::Gnu),
             Self::Aarch64Gnu => ("arm64", LoaderFamily::Gnu),
@@ -330,4 +327,23 @@ pub(super) fn looks_like_effigy_repo_root(path: &Path) -> bool {
     has_task_manifest(path)
         && path.join("config/tasks.toml").is_file()
         && path.join("config/containers.toml").is_file()
+}
+
+/// The single loader family observed in the image root, never inferred from the
+/// host or from an executable that has already been staged.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(in crate::runner) enum LoaderFamily {
+    Gnu,
+    Musl,
+}
+
+/// Image OS/architecture/variant as reported by the backend, plus its loader.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::runner) struct ImagePlatform {
+    pub(in crate::runner) os: String,
+    pub(in crate::runner) architecture: String,
+    pub(in crate::runner) variant: String,
+    pub(in crate::runner) loader: LoaderFamily,
 }

@@ -67,7 +67,7 @@ pub(super) fn check_run_target(
     effect: &Effect,
 ) -> Result<(), RunError> {
     if effect.spec.target == *owner {
-        crate::workspace_session::check_run_fence(conn, id, owner)
+        check_workspace_fence(conn, owner)
     } else {
         check_target(conn, effect)
     }

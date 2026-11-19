@@ -96,23 +96,10 @@ pub(in crate::runner) struct TaskRunRequest<'a> {
     pub(in crate::runner) key: Option<&'a RunKey>,
     /// The task's declared admission class (Q-006).
     pub(in crate::runner) admission: Option<effigy_manifest::ManifestTaskAdmission>,
-    /// A keyed workspace request's reservation, when a host dispatcher holds
-    /// one for this exact run (052 §8.11, `EngineLaunch::admission`).
-    ///
-    /// Only a top-level task run may carry it: the run then begins with
-    /// [`Run::begin_admitted`] under the ticket's own id and never mints one
-    /// itself. A nested run, a caller key and a shared-lock run each own
-    /// another run or another id, so they refuse a ticket before any effect.
-    pub(in crate::runner) workspace_admission: Option<WorkspaceAdmission>,
     /// The resolved invocation directory, reported to the admission hook.
     pub(in crate::runner) cwd: Option<&'a std::path::Path>,
 }
 
-#[derive(Clone)]
-pub(in crate::runner) struct WorkspaceAdmission {
-    pub(in crate::runner) ticket: effigy_kernel::run::AdmissionTicket,
-    pub(in crate::runner) catalog_snapshot: Option<Digest>,
-}
 
 /// A validated caller key. Admission binds it to the checkout before using
 /// its id. The unbound digest is retained solely to locate imported old runs.
@@ -261,31 +248,6 @@ enum Standalone {
     Journal { scratch: bool, custody: bool },
 }
 
-/// Why this run shape cannot honour an exact keyed reservation, if it cannot.
-///
-/// A ticket names exactly one run, so a shape that owns a different run — an
-/// engine-internal or standalone run, a nested task, a caller-keyed run, or a
-/// run that takes a task-declared shared lock first — cannot admit it. Each of
-/// those refuses before any effect instead of admitting a second run or
-/// discarding the reservation (052 §8.11).
-pub(super) fn workspace_admission_refusal(
-    task_gate: bool,
-    nested: bool,
-    keyed: bool,
-    shared_lock: bool,
-) -> Option<RunnerError> {
-    let reason = match () {
-        _ if !task_gate => "be an engine-internal or standalone run",
-        _ if nested => "be a nested task run",
-        _ if keyed => "carry a caller run key",
-        _ if shared_lock => "hold a task-declared shared lock",
-        _ => return None,
-    };
-    Some(RunnerError::task_invocation(format!(
-        "a workspace-admitted run cannot {reason}; the reserved request names another run. Retry \
-         the command from the workspace session"
-    )))
-}
 
 impl TaskRun {
     pub(in crate::runner) fn begin(request: TaskRunRequest<'_>) -> Result<Self, RunnerError> {
@@ -340,7 +302,6 @@ impl TaskRun {
                 args: &[],
                 key: None,
                 admission: None,
-                workspace_admission: None,
                 cwd: None,
             },
             false,
@@ -442,7 +403,6 @@ impl TaskRun {
             args: &[],
             key: None,
             admission,
-            workspace_admission: None,
             cwd: Some(root),
         };
         match storage {
@@ -483,24 +443,9 @@ impl TaskRun {
                 "task reference cycle at `{}`: a nested reference cannot reacquire an ancestor's Task gate; remove the recursive reference",
                 request.target.label)));
         }
-        // A ticketed run is admitted exactly as reserved: its id, its key and
-        // its durable reservation are the dispatcher's, so nothing here may
-        // mint another id or start a second run (052 §8.11). Every shape that
-        // would own a different run refuses before any effect.
         let shared_lock = request.target.shared_lock_owner(checkout)?;
-        if request.workspace_admission.is_some() {
-            if let Some(refusal) = workspace_admission_refusal(
-                task_gate,
-                parent.is_some(),
-                request.key.is_some(),
-                shared_lock.is_some(),
-            ) {
-                return Err(refusal);
-            }
-        }
-        let run_id = match (&request.workspace_admission, request.key) {
-            (Some(admission), _) => admission.ticket.run(),
-            (None, Some(key)) => {
+        let run_id = match request.key {
+            Some(key) => {
                 refuse_bound_key(key, &task_id, &request.target.root)?;
                 #[cfg(test)]
                 AFTER_KEY_LOOKUP.with(|slot| {
@@ -510,7 +455,7 @@ impl TaskRun {
                 });
                 key.id()
             }
-            (None, None) => new_run_id()?,
+            None => new_run_id()?,
         };
         let needs_custody = request.custody || admission.needs_custody();
         let custody = if needs_custody {
@@ -533,13 +478,6 @@ impl TaskRun {
         let cx = kernel::effects();
         let cleanup = kernel::cleanup()?;
         let mut provenance = BTreeMap::new();
-        if let Some(snapshot) = request
-            .workspace_admission
-            .as_ref()
-            .and_then(|admission| admission.catalog_snapshot.as_ref())
-        {
-            provenance.insert("workspace:catalog-snapshot".to_owned(), snapshot.clone());
-        }
         if let Some(token) = request.managed_run_token {
             provenance.insert(
                 MANAGED_RUN_PROVENANCE.to_owned(),
@@ -618,20 +556,8 @@ impl TaskRun {
             next,
             custody,
         };
-        let run = match (request.workspace_admission.clone(), parent) {
-            // The dispatcher's reservation, unchanged, under the same gates
-            // and the same durable transaction: this is the only admission
-            // this request gets.
-            (Some(admission), _) => Run::begin_admitted(
-                &cx,
-                root,
-                &invocation,
-                opts,
-                &cleanup,
-                &mut TaskSettlement::default(),
-                admission.ticket,
-            ),
-            (None, Some(parent)) => parent
+        let run = match parent {
+            Some(parent) => parent
                 .run
                 .expect("durable parent checked before effects")
                 .lock()
@@ -645,7 +571,7 @@ impl TaskRun {
                     &cleanup,
                     &mut TaskSettlement::default(),
                 ),
-            (None, None) => Run::begin(
+            None => Run::begin(
                 &cx,
                 root,
                 &invocation,
@@ -1164,7 +1090,6 @@ impl TaskRun {
             args: &[],
             key: None,
             admission: None,
-            workspace_admission: None,
             cwd: None,
         })
         .expect("live task fixture")

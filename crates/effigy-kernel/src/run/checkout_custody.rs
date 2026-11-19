@@ -97,35 +97,6 @@ impl Run<'_> {
         }
         Ok(())
     }
-    #[cfg(feature = "workspace-private-qualification")]
-    pub(crate) fn qualify_workspace_discard_images(
-        &mut self,
-    ) -> Result<&'static crate::supervise::image_identity::CreatorImage, RunError> {
-        self.can_effect()?;
-        self.require_environment_gate()?;
-        self.inspect_workspace_lifecycle()?;
-        self.verify_custody()?;
-        self.cx.operation().check("workspace helper images")?;
-        let image = crate::supervise::image_identity::creator()?;
-        let sentinel = self
-            .sentinel
-            .as_ref()
-            .ok_or_else(|| RunError::refused("workspace sentinel missing"))?;
-        image.verify_process(&sentinel.identity)?;
-        let backup = self
-            .checkout_custody
-            .as_mut()
-            .and_then(|custody| custody.backup.as_mut())
-            .ok_or_else(|| RunError::refused("workspace checkout backup missing"))?;
-        backup.verify_retained()?;
-        let identity = backup
-            .identity
-            .as_ref()
-            .ok_or_else(|| RunError::refused("workspace backup identity missing"))?;
-        image.verify_process(identity)?;
-        self.cx.operation().check("workspace helper images")?;
-        Ok(image)
-    }
 
     pub(crate) fn hold_prelaunch_interpolation(
         &mut self,
@@ -179,7 +150,7 @@ impl Run<'_> {
         if process_receipt.get("interpolation_v1").is_none() {
             let pending = serde_json::json!({"interpolation_v1": process_receipt, "binding": {"pending": true}});
             let publication = self.store.transaction(&self.cx, |txn| {
-                crate::workspace_session::check_run_fence(txn.conn(), self.id, &self.owner)?;
+                check_workspace_fence(txn.conn(), &self.owner)?;
                 journal::write_effect(
                     txn,
                     self.id,
@@ -214,7 +185,7 @@ impl Run<'_> {
         if receipt.get("interpolation_v1").is_none() {
             receipt = serde_json::json!({"interpolation_v1": receipt, "binding": file.binding()?});
             let publication = self.store.transaction(&self.cx, |txn| {
-                crate::workspace_session::check_run_fence(txn.conn(), self.id, &self.owner)?;
+                check_workspace_fence(txn.conn(), &self.owner)?;
                 journal::write_effect(
                     txn,
                     self.id,
@@ -385,58 +356,6 @@ impl Run<'_> {
     /// Parking may close shared Env descriptions only after every private
     /// workload and its exact backup have positively closed. The checkout
     /// lease and sentinel stay on this same Run across gate-free integrations.
-    #[cfg(feature = "workspace-private-qualification")]
-    pub(super) fn prepare_qualification_park(
-        &mut self,
-        deadline: std::time::Instant,
-    ) -> Result<(), RunError> {
-        self.can_effect()?;
-        let cx = self.cx.child_until(deadline);
-        cx.operation().check("workspace private park")?;
-        let cleanup = cx.operation().cleanup_within();
-        let effects = self.effects()?;
-        for effect in effects
-            .iter()
-            .filter(|effect| effect.spec.kind == crate::custody::KIND && !effect.state.terminal())
-        {
-            if !matches!(
-                self.completed.get(&effect.sequence),
-                Some(crate::outcome::RequiredObligation::ProcessExit(_))
-            ) {
-                return Err(RunError::unavailable(
-                    "workspace private workload completion unavailable",
-                ));
-            }
-            let core = self.processes.get(&effect.sequence).ok_or_else(|| {
-                RunError::unavailable("workspace private workload owner unavailable")
-            })?;
-            crate::custody::verify_qualification_closure(core, cx.operation())?;
-        }
-        for effect in effects
-            .iter()
-            .rev()
-            .filter(|effect| effect.spec.kind == crate::custody::KIND && !effect.state.terminal())
-        {
-            let (state, _) = crate::custody::settle_effect(
-                effect,
-                self.processes.get(&effect.sequence).cloned(),
-                &cleanup,
-                || false,
-            );
-            if state != crate::run::EffectState::Released {
-                return Err(RunError::unavailable(
-                    "workspace private workload closure remains Unknown",
-                ));
-            }
-            // Keep Applied until final settlement: publication's required-effect
-            // predicate still needs the successful apply. The exact live core
-            // retains its verified exit/closure and idempotent stop state.
-        }
-        self.close_checkout_backup_recoverable(&cleanup)?;
-        cx.operation()
-            .check("workspace private custody closed for park")?;
-        Ok(())
-    }
 
     #[cfg(all(test, feature = "fault-injection"))]
     pub(super) fn has_partial_checkout_backup(&self) -> bool {

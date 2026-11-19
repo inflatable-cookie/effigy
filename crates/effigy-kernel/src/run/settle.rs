@@ -194,11 +194,6 @@ impl Run<'_> {
         retain_incomplete: bool,
     ) -> Result<Outcome<Settled>, RunError> {
         self.cleanup_prelaunch_interpolations()?;
-        if self.partial_sentinel.is_some() {
-            return Err(RunError::unavailable(
-                "workspace sentinel startup remains unsettled",
-            ));
-        }
         let cx = cleanup_effects(cleanup)?;
         if !self.holds_owner_gate()? {
             return Err(RunError::broken("a settle without its owner gate"));
@@ -512,21 +507,6 @@ impl Run<'_> {
                     }
                     txn.conn().execute("UPDATE runs SET phase='closed',cleanup_outcome=?2,updated_at=?3,closed_at=coalesce(closed_at,?3) WHERE run_id=?1",
                         params![self.id.to_string(),if complete { "complete" } else { "incomplete" },txn.now()])?;
-                    // A keyed workspace request's final answer and every
-                    // client attachment end in this same commit (§8.11).
-                    workspace::closed(txn, self.id, &workload, complete)?;
-                    // A workspace session's serving custody ends here too, in
-                    // the one transaction that closes its run: a settled session
-                    // is no longer an owner, and nothing can serve a listener on
-                    // its behalf. There is deliberately no earlier release: a
-                    // crash before this commit keeps the row, so a successor
-                    // still finds the recorded custody and can settle or refuse
-                    // rather than silently dropping authority (I-R7). A run that
-                    // is not a session has no row, so this is a no-op for it.
-                    txn.conn().execute(
-                        "DELETE FROM workspace_session_custody WHERE run_id=?1",
-                        [self.id.to_string()],
-                    )?;
                     if machine && complete {
                         if self.owner.resource.kind() == crate::id::ResourceKind::Gateway {
                             let completion = MachineCompletion { run: self.id, generation: self.owner.generation, workload: workload.clone(), stderr_tail: stderr_tail.clone() };
@@ -737,15 +717,9 @@ pub(crate) fn settle_interrupted_wait(
 ) -> Result<Outcome<Settled>, RunError> {
     let (owner, id) = target;
     let store = Store::open(&cleanup_effects(cleanup)?, root)?;
-    let gate_owner = crate::workspace_session::session_run_gate(store.conn(), owner, id)?;
-    let ids = super::aliases::gates(root, &gate_owner, std::slice::from_ref(&gate_owner))?;
+    let _ = id;
+    let ids = super::aliases::gates(root, owner, std::slice::from_ref(owner))?;
     let guard = Gate::acquire(cx, root, &ids, wait)?;
-    // Admission identities are immutable. Recheck after locking, before any
-    // settlement callback, so a liveness slot can never lend another run custody.
-    if crate::workspace_session::session_run_gate(store.conn(), owner, id)? != gate_owner {
-        return Err(RunError::broken("workspace recovery slot changed"));
-    }
-    crate::workspace_session::verify_reserved_owner_dead(store.conn(), owner, id)?;
     let record = journal::run(store.conn(), id)?;
     if record.owner != owner.name().to_string() {
         return Err(RunError::broken("wrong run owner"));
@@ -764,14 +738,12 @@ pub(crate) fn settle_interrupted_wait(
         poisoned: false,
         completed: Default::default(),
         sentinel: None,
-        partial_sentinel: None,
         closed_effects: None,
         machine_startup: None,
         checkout_custody: None,
         ancestor_closure: None,
         prelaunch_interpolations: Default::default(),
         processes: Default::default(),
-        session_launch: Default::default(),
     }
     .settle(cleanup, adapter)
 }

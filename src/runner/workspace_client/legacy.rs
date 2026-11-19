@@ -1,21 +1,10 @@
-//! The production workspace context: the legacy `effigy.workspace-context.v1`
-//! document the ordinary (non-qualified) publication writes (052 §8.2, §8.11).
+//! The production workspace context: the `effigy.workspace-context.v1` document
+//! `workspace_command::provisioning::publication` writes next to the pinned
+//! executable and the source snapshots (052 §8.2, §8.11).
 //!
-//! Two publications exist while v0.15 qualifies the workspace client:
-//!
-//! - the **qualified** path (`workspace_command::reserved_guest`) creates one
-//!   admitted session, one qualified listener and one strict full v2 document,
-//!   and a guest reads it strictly through [`super::context::v2`];
-//! - the **ordinary production** path
-//!   (`workspace_command::provisioning::publication`) publishes the pinned
-//!   executable, the source snapshots and this legacy v1 document. Production
-//!   enablement of the v2 path is Tom's review gate (effigy#626), so v1 is what
-//!   every production workspace container carries today.
-//!
-//! This reader is deliberately separate and explicitly named. A v1 document is
-//! never fed to the strict v2 reader and no v2 field is inferred from it: it
-//! parses the v1 document under the v1 rules it was published with, and checks
-//! exactly the identity facts a v1 document carries — the container id, VM
+//! This reader is deliberately separate and explicitly named. It parses the v1
+//! document under the v1 rules it was published with, and checks exactly the
+//! identity facts a v1 document carries — the container id, VM
 //! boot, image platform and libc from an independent guest observation, the
 //! generation `current` names, and the SHA-256 of the executable that is
 //! running. Version and protocol stay the document's own claims, checked by the
@@ -39,7 +28,6 @@ use std::cell::RefCell;
 
 use effigy_manifest::{ManifestTask, ManifestTaskRunIn};
 
-use super::context::v2::SCHEMA as V2_SCHEMA;
 use super::context::{
     declared_schema, read_published_body, ContextReadError, ContextRefusal, GuestReader,
     WorkspaceContainerIdentity, WorkspaceContext, CONTEXT_SCHEMA, HOST_REPREPARE_COMMAND,
@@ -178,40 +166,26 @@ pub(crate) fn refuse_host_bound_task(
     )))
 }
 
-/// One published generation, routed by the schema it declares.
-///
-/// The routing is explicit so a document is only ever read by the reader that
-/// owns its schema. The strict v2 reader keeps every guarantee it had; the
-/// legacy reader is this module, and an unknown schema refuses instead of being
-/// guessed at (§8.11).
-#[derive(Debug)]
-pub(crate) enum PublishedContext {
-    Strict(Box<super::context::v2::PublishedGuestContext>),
-    Legacy(Box<PublishedLegacyGuestContext>),
-}
-
-/// Read the one published generation and dispatch on its declared schema.
+/// Read the one published generation this guest build reads.
 pub(crate) fn read_published(
     guest: &mut dyn GuestReader,
     identity: &mut dyn GuestIdentity,
-) -> Result<Option<PublishedContext>, ContextReadError> {
+) -> Result<Option<Box<PublishedLegacyGuestContext>>, ContextReadError> {
     let Some(published) = read_published_body(guest)? else {
         return Ok(None);
     };
     let schema = declared_schema(&published.bytes)?;
     let generation = published.generation;
     match schema.as_str() {
-        V2_SCHEMA => super::context::v2::published_guest_at(&published.bytes, generation, identity)
-            .map(|context| Some(PublishedContext::Strict(Box::new(context)))),
         CONTEXT_SCHEMA => {
             let binary = RunningBinary::observe().map_err(ContextReadError::Guest)?;
             published_legacy_at(&published.bytes, generation, identity, &binary)
-                .map(|context| Some(PublishedContext::Legacy(Box::new(context))))
+                .map(|context| Some(Box::new(context)))
         }
         schema => Err(ContextRefusal::unavailable(format!(
             "the published workspace context declares schema `{schema}`, which this build does not \
              read; run the command on the host, or re-prepare the workspace on the host \
-             (`{HOST_REPREPARE_COMMAND}`) to publish `{V2_SCHEMA}` or `{CONTEXT_SCHEMA}`"
+             (`{HOST_REPREPARE_COMMAND}`) to publish `{CONTEXT_SCHEMA}`"
         ))
         .into()),
     }

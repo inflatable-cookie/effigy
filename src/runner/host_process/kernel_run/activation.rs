@@ -549,7 +549,6 @@ impl host::HostActivation for KernelActivation<'_> {
                     cwd: launch_cwd,
                     env: environment,
                     handoff: None,
-                    admission: None,
                 },
                 executable,
                 effigy_kernel::supervise::ClientMode::Owning,

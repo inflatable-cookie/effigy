@@ -277,10 +277,6 @@ impl OperationContext {
     }
     /// Retire already closed workload custody within this operation's exact
     /// deadline and cancellation. This grants no fresh cleanup window.
-    #[cfg(feature = "workspace-private-qualification")]
-    pub(crate) fn cleanup_within(&self) -> CleanupContext {
-        CleanupContext(self.clone())
-    }
     pub fn remaining(&self) -> Option<Duration> {
         match self.deadline {
             Deadline::At(at) => {

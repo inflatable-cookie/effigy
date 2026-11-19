@@ -103,28 +103,6 @@ pub(in crate::runner) fn take_owner() -> Option<OwnerSession> {
         .take()
 }
 
-/// Reserved workspace engines may execute only the resolution carried by
-/// their owning dispatcher. Ordinary managed clients have no such fence.
-pub(in crate::runner) fn workspace_resolution(
-) -> Result<Option<super::wire::WorkspaceResolution>, RunnerError> {
-    let owner = OWNER
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    match owner.as_ref() {
-        Some(owner) if owner.session.admission().is_some() => owner
-            .payload
-            .workspace_resolution
-            .clone()
-            .map(Some)
-            .ok_or_else(|| {
-                RunnerError::task_invocation(
-                    "reserved workspace resolution evidence is unavailable",
-                )
-            }),
-        _ => Ok(None),
-    }
-}
-
 /// One workload as the run starts it.
 #[derive(Clone)]
 pub(in crate::runner) struct WorkloadSpec {
@@ -286,33 +264,6 @@ pub(in crate::runner) fn own<T>(
     } = owner;
     let ansi_front = matches!(payload.front, super::wire::Front::Tui);
     let _front = crate::runner::managed_color::enter(ansi_front);
-    let workspace_admission = match session.admission().cloned() {
-        Some(ticket) => {
-            let snapshot = payload
-                .workspace_resolution
-                .as_ref()
-                .and_then(|resolution| {
-                    effigy_kernel::id::ResolvedInvocation::decode(&resolution.invocation).ok()
-                })
-                .and_then(|resolved| {
-                    resolved
-                        .spec()
-                        .provenance
-                        .get("workspace:catalog-snapshot")
-                        .cloned()
-                });
-            let Some(snapshot) = snapshot else {
-                let message = "reserved workspace catalog snapshot is unavailable";
-                session.refused(Category::Refused, message);
-                return Err(RunnerError::task_invocation(message));
-            };
-            Some(task_engine::WorkspaceAdmission {
-                ticket,
-                catalog_snapshot: Some(snapshot),
-            })
-        }
-        None => None,
-    };
     let mut run = match TaskRun::begin_detached(TaskRunRequest {
         target: &plan.target,
         lock_wait_ms: plan.lock_wait_ms,
@@ -324,7 +275,6 @@ pub(in crate::runner) fn own<T>(
         args: &plan.args,
         key: None,
         admission: plan.admission,
-        workspace_admission,
         cwd: Some(&plan.cwd),
     }) {
         Ok(run) => run,
@@ -370,11 +320,7 @@ pub(in crate::runner) fn own<T>(
         }
         wait_publisher.publish_entries(&states);
     };
-    let admitted = if session.admission().is_some() {
-        session.admitted_with_capture(&mut *run.run_mut()?, secrets.clone())
-    } else {
-        session.admitted(&mut *run.run_mut()?)
-    };
+    let admitted = session.admitted(&mut *run.run_mut()?);
     if let Err(error) = admitted {
         let message =
             format!("the managed run could not establish its control and capture ({error})");
@@ -1463,7 +1409,6 @@ mod tests {
             args: &[],
             key: None,
             admission: None,
-            workspace_admission: None,
             cwd: None,
         })
         .expect("managed journal run");

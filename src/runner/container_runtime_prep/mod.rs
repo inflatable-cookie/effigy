@@ -13,23 +13,18 @@
 //! - [`checkout_mount`] and [`cargo_inputs`] prove the selected checkout is
 //!   what the container will execute against.
 //! - [`host_mounts`] prepares the host side of Compose bind mounts.
-//! - [`image_platform`] and [`predecessor`] are the preflight observations, and
-//!   [`sealed_render`] with [`compose_hash`] own the sealed render whose bytes
-//!   they read.
+//! - [`image_platform`] is the preflight image observation.
 
 mod activation;
 mod binding;
 mod cargo_inputs;
 mod checkout_mount;
-mod compose_hash;
 mod exec_prep;
 mod gateway;
 mod host_mounts;
 mod image_platform;
-mod predecessor;
 mod prep;
 mod running;
-mod sealed_render;
 mod validation;
 
 pub(in crate::runner) use crate::runner::workspace_command::provisioning::BoundedReadRefusal;
@@ -45,14 +40,6 @@ pub(in crate::runner) use binding::{
 };
 pub(in crate::runner) use gateway::container_policy_uses_gateway_surface;
 pub(in crate::runner) use image_platform::{observed_image_platform, ObservedImagePlatform};
-pub(in crate::runner) use predecessor::{
-    observed_predecessor_compatibility, PredecessorCompatibility,
-};
-#[cfg(test)]
-pub(in crate::runner) use predecessor::{
-    observed_predecessor_compatibility_with, PredecessorBackend,
-};
-pub(in crate::runner) use sealed_render::{seal_render_for_preflight, SealedRender};
 
 #[cfg(test)]
 pub(in crate::runner) use activation::StartPolicy;
@@ -60,11 +47,6 @@ pub(in crate::runner) use activation::StartPolicy;
 use activation::{
     activate_container_runtime_plan_for_task_using, ensure_exec_container_running_with,
     runtime_activation_plan_from_request, runtime_activation_report_for_result,
-};
-#[cfg(test)]
-use compose_hash::{
-    canonical_compose_model, compose_config_args, compose_config_output,
-    compose_service_config_hashes, parse_service_config_hashes, verify_frozen_compose_reads,
 };
 #[cfg(test)]
 pub(in crate::runner) use exec_prep::prepare_container_exec_runtime;
@@ -78,8 +60,6 @@ use host_mounts::{candidate_host_mount_paths, prepare_host_bind_mount_dirs};
 use prep::{run_runtime_compose_up_stage, run_runtime_prep_steps};
 #[cfg(test)]
 use running::ensure_runtime_running_stage;
-#[cfg(test)]
-use sealed_render::verified_compose_inputs;
 #[cfg(test)]
 use validation::validate_policy_runtime;
 

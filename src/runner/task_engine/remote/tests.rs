@@ -318,7 +318,6 @@ fn begin(root: &Path, task: &str) -> TaskRun {
         args: &[],
         key: None,
         admission: None,
-        workspace_admission: None,
         cwd: None,
     })
     .expect("admitted")
@@ -354,7 +353,6 @@ fn begin_with_hook(root: &Path) -> (TaskRun, i32) {
         args: &[],
         key: None,
         admission: Some(effigy_manifest::ManifestTaskAdmission::Heavy),
-        workspace_admission: None,
         cwd: None,
     })
     .expect("held admission");
@@ -873,7 +871,6 @@ fn remote_admission_v2_durable_run_refuses_before_hook() {
         args: &[],
         key: None,
         admission: Some(effigy_manifest::ManifestTaskAdmission::Heavy),
-        workspace_admission: None,
         cwd: None,
     });
     assert!(result.is_err(), "durable v2 admission must refuse");

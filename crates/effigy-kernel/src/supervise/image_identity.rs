@@ -154,36 +154,7 @@ impl TestCreatorImage {
 
 /// Capture once at executable entry, before it can be replaced beside a live
 /// owner. Failure is sticky; a later pathname cannot seed a new birth snapshot.
-#[cfg(feature = "workspace-private-qualification")]
-static CREATOR: std::sync::OnceLock<Result<CreatorImage, String>> = std::sync::OnceLock::new();
 
-#[cfg(feature = "workspace-private-qualification")]
-pub(super) fn initialize() -> io::Result<()> {
-    CREATOR
-        .get_or_init(|| {
-            let image = CreatorImage::capture().map_err(|error| error.to_string())?;
-            let identity = ident::process_identity(std::process::id())
-                .verified()
-                .cloned()
-                .ok_or("creator identity unavailable")?;
-            image
-                .verify_process(&identity)
-                .map_err(|error| error.to_string())?;
-            Ok(image)
-        })
-        .as_ref()
-        .map(|_| ())
-        .map_err(|error| io::Error::other(error.clone()))
-}
-
-#[cfg(feature = "workspace-private-qualification")]
-pub(crate) fn creator() -> io::Result<&'static CreatorImage> {
-    CREATOR
-        .get()
-        .ok_or_else(|| io::Error::other("qualification image was not captured at entry"))?
-        .as_ref()
-        .map_err(|error| io::Error::other(error.clone()))
-}
 
 #[cfg(test)]
 mod tests {

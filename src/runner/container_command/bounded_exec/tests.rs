@@ -588,8 +588,8 @@ fn assert_public_activation_fence(repo_root: &Path, context_path: &Path, mode: &
 fn write_public_guest_context(dir: &Path, repo_root: &Path, mode: &str) -> PathBuf {
     use crate::runner::workspace_client::context::{
         GuestBinaryIdentity, WorkspaceActivationIdentity, WorkspaceBackendDescriptor,
-        WorkspaceChannelLocator, WorkspaceContainerIdentity, WorkspaceContext,
-        WorkspaceContextInput, WorkspaceHostIdentity, WorkspacePathMap, CHANNEL_PROTOCOL_VERSION,
+        WorkspaceContainerIdentity, WorkspaceContext, WorkspaceContextInput,
+        WorkspaceHostIdentity, WorkspacePathMap, CHANNEL_PROTOCOL_VERSION,
     };
     let environment = public_environment_identity(&dir.join("home"), repo_root);
     let host_version = effigy_core::build_info::active_version();
@@ -641,10 +641,6 @@ fn write_public_guest_context(dir: &Path, repo_root: &Path, mode: &str) -> PathB
         },
         sources: Vec::new(),
         routes: Vec::new(),
-        channel: WorkspaceChannelLocator {
-            endpoint: Some("host:1".to_owned()),
-            server_identity: Some("sha256:s".to_owned()),
-        },
     });
     let path = dir.join(format!("guest-context-{mode}.json"));
     fs::write(&path, context.render().expect("render guest context")).expect("write guest context");

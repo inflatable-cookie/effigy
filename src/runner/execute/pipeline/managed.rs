@@ -51,11 +51,6 @@ pub(in crate::runner) fn run_managed_task(
     selection_plan: &ExecutionSelectionPlan,
     run_key: Option<&RunKey>,
 ) -> Result<Option<String>, RunnerError> {
-    if selection.task.mode.as_deref() != Some("tui")
-        && managed_run::workspace_resolution()?.is_some()
-    {
-        return super::standard::run_reserved_shell(preflight, selection);
-    }
     let container_handoff = inside_container_handoff();
     let managed_invocation = (selection.task.mode.as_deref() == Some("tui"))
         .then(|| parse_managed_invocation(&preflight.runtime_args_exec))
@@ -156,7 +151,6 @@ pub(in crate::runner) fn run_managed_task(
                 args: &preflight.runtime_args_exec.passthrough,
                 key: run_key,
                 admission: selection.task.admission,
-                workspace_admission: None,
                 cwd: Some(&preflight.invocation_cwd),
             })?;
             let result = run_workspace_with_repo_root_and_cleanup_override(
@@ -178,38 +172,6 @@ pub(in crate::runner) fn run_managed_task(
         )?;
         return Ok(None);
     };
-    if let Some(owner) = owner
-        .as_ref()
-        .filter(|owner| owner.session.admission().is_some())
-    {
-        let expected = owner.payload.workspace_resolution.as_ref().ok_or_else(|| {
-            RunnerError::task_invocation("reserved workspace resolution evidence is unavailable")
-        })?;
-        let original = effigy_kernel::id::ResolvedInvocation::decode(&expected.invocation)
-            .map_err(|_| {
-                RunnerError::task_invocation("reserved workspace resolution is unreadable")
-            })?;
-        let target = TaskTarget::for_selection(
-            &preflight.resolved.resolved_root,
-            &preflight.selector.task_name,
-            selection,
-        )
-        .with_profile(&plan.profile);
-        let checkout = crate::runner::task_engine::checkout::read(&target.root)
-            .map_err(|_| {
-                RunnerError::task_invocation("reserved workspace checkout identity is unavailable")
-            })?
-            .ok_or_else(|| {
-                RunnerError::task_invocation("reserved workspace checkout identity is unavailable")
-            })?;
-        if target.task_id(checkout)? != original.spec().task
-            || target.owner(checkout)? != original.spec().owner
-        {
-            return Err(RunnerError::task_invocation(
-                "reserved workspace managed profile identity changed",
-            ));
-        }
-    }
     // A rendered session command that names this checkout's effective alias
     // owes the same published-backing-service proof a plain host run owes, and
     // a refusal here stops the session before its supervisor starts
@@ -805,11 +767,7 @@ fn own_managed_run(
 ) -> Result<Option<String>, RunnerError> {
     let preflight = context.preflight;
     let selection = context.selection;
-    let token = owner
-        .session
-        .admission()
-        .map(|ticket| effigy_kernel::run::workspace_managed_token(ticket.run()))
-        .unwrap_or_else(generate_managed_run_token);
+    let token = generate_managed_run_token();
     // Anything that fails before admission is the supervisor's refusal: the
     // client reports it, and nothing ran.
     let inputs = (|| -> Result<_, RunnerError> {
