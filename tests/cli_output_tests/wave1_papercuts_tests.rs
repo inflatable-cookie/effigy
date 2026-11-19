@@ -196,7 +196,7 @@ run_in = "host"
         .filter(|finding| {
             let check_id = finding["check_id"].as_str().unwrap_or("");
             let evidence = finding["evidence"].as_str().unwrap_or("");
-            check_id == "manifest.schema.unsupported_key"
+            check_id == "manifest.schema"
                 && (evidence.contains("tasks.script.rhai")
                     || evidence.contains("tasks.script.run_in"))
                 || check_id == "tasks.references.resolve" && evidence.contains("`docs")
@@ -253,7 +253,7 @@ run = [{ task = "missing-task" }]
     };
 
     assert!(
-        evidence_for("manifest.schema.unsupported_key").is_empty(),
+        evidence_for("manifest.schema").is_empty(),
         "`[isolation]` and `[defer]` are manifest keys: {findings:?}"
     );
     let references = evidence_for("tasks.references.resolve");

@@ -19,6 +19,11 @@ composition conflicts, environment tools, task references, draft lifecycle,
 graph-index state, dependency health, and runtime diagnostics. It does not walk
 repository content for scan findings and does not execute `health`.
 
+Manifest shape findings come from the production manifest grammar:
+`effigy_manifest` is asked about each table, so doctor reports a key or value
+exactly when the loader refuses it and a finding names the narrowest refused key
+path. There is no second schema table beside the loader.
+
 `effigy doctor --deep` adds content scans and the selected scope's `health`
 task. This is an explicit request for repository work, not a compatibility
 alias for the old unbounded behavior. `--refresh` is deep-only and bypasses

@@ -283,8 +283,8 @@ fn write_staged_report(
     let metadata_path = staged_root.join("effigy-artifact.json");
     let metadata_json =
         serde_json::to_vec_pretty(&metadata).map_err(ArtifactStagingError::SerializeMetadata)?;
-    // A later state apply reads this metadata while a re-stage of the same
-    // source may be rewriting it, so publish one complete generation.
+    // A consumer reads this metadata while a re-stage of the same source may be
+    // rewriting it, so publish one complete generation.
     crate::atomic::write_atomic(&metadata_path, &metadata_json).map_err(|error| {
         ArtifactStagingError::WriteMetadata {
             path: metadata_path.clone(),

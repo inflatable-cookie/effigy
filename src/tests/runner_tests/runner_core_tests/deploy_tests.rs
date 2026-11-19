@@ -428,7 +428,7 @@ fn write_git_provider_package(root: &Path, name: &str) {
 }
 
 #[test]
-fn run_deploy_plan_json_reports_env_state_provider_and_hooks() {
+fn run_deploy_plan_json_reports_env_provider_and_hooks() {
     let root = setup_deploy_transaction_fixture("deploy-plan-transaction");
     let out = run_command(Command::Deploy(DeployArgs {
         subcommand: DeploySubcommand::Plan {
@@ -443,7 +443,10 @@ fn run_deploy_plan_json_reports_env_state_provider_and_hooks() {
     let parsed = parse_json_output_with_schema_version(&out, "effigy.deploy.plan.v1", 1);
     assert_eq!(parsed["env"].as_str(), Some("uat"));
     assert_eq!(parsed["provider"].as_str(), Some("render"));
-    assert_eq!(parsed["state"]["stack"].as_str(), Some("uat"));
+    assert!(
+        parsed.get("state").is_none(),
+        "deploy plan no longer plans a retired state stack: {parsed}"
+    );
     assert_eq!(parsed["release_policy"]["mode"].as_str(), Some("optional"));
     assert_eq!(
         parsed["artifact_policy"]["mode"].as_str(),
@@ -1155,7 +1158,6 @@ fn run_deploy_apply_refuses_all_unexecuted_obligations_without_effects() {
                 let text = error.to_string();
                 let details = error.json_error_details().unwrap_or(&text);
                 for obligation in [
-                    "state",
                     "hooks",
                     "health",
                     "release gates",

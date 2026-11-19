@@ -64,9 +64,6 @@ pub(super) fn run_state_artifact(
             },
             output_json,
         ),
-        other => Err(RunnerError::task_invocation(format!(
-            "internal error: `{other:?}` reached the state artifact dispatch"
-        ))),
     }
 }
 

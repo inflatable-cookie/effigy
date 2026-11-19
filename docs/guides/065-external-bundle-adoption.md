@@ -38,7 +38,7 @@ effigy doctor --verbose
 
 `bundle inspect` reports the active source and materialized bundle root.
 
-You never have to run `effigy bundle sync` in normal work. `effigy dev`,
+You never have to run `effigy bundle sync` in normal work. Ordinary task runs, `effigy dev`,
 `effigy bootstrap` and `effigy container up` update a stale source themselves,
 before they compose the manifest from it, and say so in one line:
 
@@ -46,16 +46,17 @@ before they compose the manifest from it, and say so in one line:
 [bundle] bundle updated 544c0cc9 → 7111bf60 (upstream moved)
 ```
 
-An ordinary task run in a checkout that has never pinned the source acquires it
-first, so a fresh worktree or clone runs its tasks straight away. It never moves
-a pin: refreshing a stale source stays on the Prepare paths above.
+A fresh checkout acquires missing sources before running a task. Read-only task
+listing and planning acquire missing pins without refreshing existing ones.
 
 `bundle sync` stays as the explicit command, and it is the only updater a source
 declared `update = "manual"` has. It acquires and validates a new generation
 before atomically selecting it in `.effigy/sources.lock.json`. A failed
 acquisition keeps the previous bytes.
 
-What a Prepare path updates:
+What a Prepare path updates. A command checks once, when it starts, and then
+runs on the bytes it selected: a source that moves while a task or managed run
+is going is picked up by the next command, not by the one already running.
 
 - a changed declaration (url, ref or path) is re-acquired immediately;
 - a path bundle is re-snapshotted when its content changed, so editing a local
@@ -69,9 +70,9 @@ What a Prepare path updates:
   changed declaration with no usable pin fails the command.
 
 Help, version, completion, tasks, plans, status, config views, doctor and bundle
-inspection read paths never fetch, check or write source state. When a source is
-behind they name the locked and the available revision and say the next
-`effigy dev` or `effigy container up` will update it.
+inspection read paths never fetch, check or write source state. When a declaration
+has changed they name the locked revision and say the next `effigy dev` or
+`effigy container up` will update it.
 
 Existing v0.14.1 cache bytes are imported automatically at the first Prepare.
 Declared `[catalog.sources.<name>]` use the same typed grammar and checkout lock

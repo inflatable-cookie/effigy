@@ -838,11 +838,8 @@ fn own_managed_run(
             token: token.clone(),
             task: preflight.selector.task_name.clone(),
             profile: plan.profile.clone(),
-            // The catalog whose pins this run's commands resolve against. The
-            // supervisor re-resolves it when it starts each process, after the
-            // Prepare paths a setup step and the environment `up` run.
+            // The catalog whose pinned sources this run's commands name.
             source_manifest: selection.catalog.manifest_path.clone(),
-            container_repo_root: container_repo_root.clone(),
             environment,
             fail_on_non_zero: plan.fail_on_non_zero,
             scratch: managed_task_scratch(selection.task),

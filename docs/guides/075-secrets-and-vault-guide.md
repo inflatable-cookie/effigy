@@ -92,7 +92,6 @@ default and now fail with the declaring file and line. Existing vaults and
 | `containers` | container runtime delivery (`compose` env by default, or runtime files when the container config opts into that mode) |
 | `rhai` | Rhai scripts via `secrets::get(name)` |
 | `deploy` | deploy provider package Rhai scripts |
-| `state` | state apply hook task environments |
 | `artifacts` | artifact workflow Rhai scripts |
 
 A secret can target multiple consumers: `targets = ["tasks", "containers", "rhai"]`.
@@ -508,9 +507,9 @@ Rules:
 
 ## Use In Deploy Hooks
 
-Deploy provider packages and deploy/state hooks receive `targets = ["deploy"]`
-and `targets = ["state"]` secrets through their process environment or Rhai
-context automatically.
+Deploy provider packages and `after_deploy` hooks receive
+`targets = ["deploy"]` secrets through their process environment or Rhai context
+automatically.
 
 ## Safety
 

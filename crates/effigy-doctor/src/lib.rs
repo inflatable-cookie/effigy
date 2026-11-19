@@ -12,7 +12,6 @@
 mod contracts;
 mod error;
 mod finding;
-pub mod manifest_schema;
 mod ports;
 mod projection;
 mod report;
@@ -44,7 +43,7 @@ mod util;
 mod workflow;
 
 pub use command::run_doctor;
-pub use contracts::{check_id, install_tool, remediation, schema_supported_value, ALL_CHECK_IDS};
+pub use contracts::{check_id, install_tool, remediation, ALL_CHECK_IDS};
 pub use dependency_health::dependency_health_findings;
 pub use error::DoctorError;
 pub use finding::{DoctorFinding, DoctorSeverity, FindingSink};

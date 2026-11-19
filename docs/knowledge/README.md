@@ -9,6 +9,7 @@ Current product truth is owned by topic. User documentation remains in [guides](
 | Detailed component design | [Architecture directory](architecture/000-overview.md) |
 | Live progress sites and the feedback lint gate | [Live progress sites](architecture/036-live-progress-sites.md) |
 | Interfaces and guarantees | [Contracts](contracts/README.md) |
+| Deployment data: seeds, dumps, snapshots and artifact staging (v0.16 replacement for the retired state stack) | [Deployment data workflows](deployment-data-workflows.md) |
 | Change-scoped QA (implemented; `stop` and `hard_timeout_ms` wait on 052) | [Bounded QA groups contract](contracts/051-bounded-qa-groups-contract.md) |
 | Runtime kernel (session kernel and the guest's local dispatch implemented; the guest-to-host channel, workspace session and guest PTY are retired) | [Runtime kernel contract](contracts/052-runtime-kernel-contract.md) |
 | Interpolation custody and recovery (proposed) | [Design](architecture/037-interpolation-custody-proposal.md) |

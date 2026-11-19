@@ -97,22 +97,6 @@ fn execute_rhai_script_exposes_extended_rhai_feature_surface() {
             let user_unset = config::user_unset("containers.profile");
             if user_unset["feature"] != "config.user_unset" || user_unset["options"]["key"] != "containers.profile" { throw("config user unset"); }
 
-            let state_plan = state::plan("uat");
-            if state_plan["feature"] != "state.plan" || state_plan["options"]["stack"] != "uat" { throw("state plan"); }
-
-            let state_apply = state::apply(#{ stack: "uat", yes: true });
-            if state_apply["feature"] != "state.apply" || state_apply["options"]["stack"] != "uat" { throw("state apply"); }
-
-            let state_capture = state::capture("uat", "baseline");
-            if state_capture["feature"] != "state.capture" || state_capture["options"]["profile"] != "baseline" { throw("state capture"); }
-
-            let state_capture_set = state::capture_set(#{ stack: "uat", profiles: ["baseline", "media"], key: "uat-snapshot", yes: true, push: true });
-            if state_capture_set["feature"] != "state.capture_set" { throw("state capture set"); }
-            if state_capture_set["options"]["profiles"][1] != "media" || state_capture_set["options"]["key"] != "uat-snapshot" || state_capture_set["options"]["push"] != true { throw("state capture set options"); }
-
-            let state_history = state::history(#{ stack: "uat", limit: 5 });
-            if state_history["feature"] != "state.history" || state_history["options"]["limit"] != 5 { throw("state history"); }
-
             let artifact_inspect = state::artifact_inspect("oci://ghcr.io/acme/app:seed");
             if artifact_inspect["feature"] != "state.artifact_inspect" { throw("artifact inspect"); }
 

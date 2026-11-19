@@ -656,17 +656,6 @@ fn sequence_step_progress(label: &str, step_id: &str) -> ProgressSource {
 
 type StepExit = (i32, String, String, WorkloadOutcome);
 
-/// The source a command opens is the one the lock selects when it runs.
-///
-/// A sequence resolves every step before the first one runs, and a step is
-/// itself a Prepare path (`task:container up`, `task:bundle sync`). Such a
-/// step publishes a new source generation and removes the one the later
-/// steps were rendered against, so each command is pointed at the live
-/// object as it starts instead of the generation it named.
-fn live_source_command(selection: &TaskSelection<'_>, command: &str) -> String {
-    effigy_manifest::relocate_source_paths(&selection.catalog.manifest_path, command)
-}
-
 fn execute_step(
     action: StepAction,
     preflight: &ExecutionPreflight,
@@ -702,7 +691,6 @@ fn execute_step(
         StepAction::Command(command)
             if !super::pipeline::standard::runs_plain_host_command(preflight, selection) =>
         {
-            let command = live_source_command(selection, &command);
             super::pipeline::standard::run_sequence_container_command(
                 preflight, selection, &command, run,
             )
@@ -714,23 +702,20 @@ fn execute_step(
             let mut cwd = root.to_path_buf();
             let mut argv = Vec::new();
             let command = match action {
-                StepAction::Command(command) => live_source_command(selection, &command),
+                StepAction::Command(command) => command,
                 StepAction::Helper {
                     argv: resolved,
                     cwd: selected,
                     ..
                 } => {
-                    argv = resolved
-                        .into_iter()
-                        .map(|arg| live_source_command(selection, &arg))
-                        .collect();
+                    argv = resolved;
                     cwd = selected;
                     format!("effigy {}", argv.join(" "))
                 }
                 StepAction::Rhai { path } => {
                     argv = effigy_core::effigy_invocation::resolve_effigy_invocation_argv()
                         .map_err(RunnerError::Cwd)?;
-                    let path = live_source_command(selection, &path.display().to_string());
+                    let path = path.display().to_string();
                     argv.extend([
                         "script".to_owned(),
                         "run".to_owned(),

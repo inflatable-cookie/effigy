@@ -15,8 +15,10 @@ use serde::{Deserialize, Serialize};
 
 use super::BundleSourceType;
 use crate::{ManifestBundleBase, ManifestError};
+mod hold;
 mod prepare;
 mod progress;
+pub use hold::{hold_selected_sources, SourceHold};
 pub use prepare::{
     bundle_update_notes, prepare_bundle_sources, prepare_missing_bundle_sources,
     sync_bundle_source, SourcePreparation, SourceSettlement,
@@ -150,26 +152,6 @@ struct SourcePin {
     #[serde(default)]
     revision: Option<String>,
 }
-#[derive(Debug, Default, Serialize, Deserialize)]
-#[serde(transparent)]
-struct KnownVersions(BTreeMap<String, String>);
-impl Record for KnownVersions {
-    const MAX_BYTES: u64 = LOCK_MAX;
-    fn decode(bytes: &[u8]) -> Result<Self, String> {
-        let known: Self = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
-        if known.0.len() > 4096 {
-            return Err("source hint inventory exceeds limit".into());
-        }
-        Ok(known)
-    }
-}
-fn source_key(selection: &BundleSelection) -> Result<String, serde_json::Error> {
-    let mut spec = selection.spec();
-    if let ManifestBundleBase::Git { url, .. } = &mut spec {
-        *url = canonical_git_cache_identity(url);
-    }
-    serde_json::to_vec(&spec).map(|bytes| sha256_hex(&bytes))
-}
 fn state_location(
     manifest: &Path,
 ) -> Result<effigy_kernel::location::CheckoutLocation, ManifestError> {
@@ -183,21 +165,6 @@ fn state_location(
     })
 }
 
-fn known_version(selection: &BundleSelection) -> Option<String> {
-    if effigy_core::container_detection::process_is_inside_effigy_workspace_container() {
-        return None;
-    }
-    let home = effigy_kernel::root::StateRoot::home_from_env()?;
-    let op = observe_context();
-    let cx = op.observe().ok()?;
-    let dir = DirFd::open(&home.join(".effigy/cache")).ok()?;
-    let Observed::Verified(known, _) =
-        read_record::<KnownVersions>(&cx, &dir, &FileName::new("sources-known.json").ok()?)
-    else {
-        return None;
-    };
-    known.0.get(&source_key(selection).ok()?).cloned()
-}
 impl Record for SourceLock {
     const MAX_BYTES: u64 = LOCK_MAX;
     fn decode(bytes: &[u8]) -> Result<Self, String> {
@@ -322,22 +289,10 @@ fn resolve_source(
                 format!("pinned source `{name}` is unavailable; run `effigy bundle sync`"),
             ));
         }
-        let known = known_version(selection);
-        let declaration_changed = !same_declaration(&pin.declaration, selection);
-        let stale = declaration_changed
-            || known
-                .as_ref()
-                .is_some_and(|version| *version != pin.version);
+        let stale = !same_declaration(&pin.declaration, selection);
         if stale {
-            // Reads stay network-free and never select new bytes; the notice
-            // names both sides with their kind and the Prepare path that will
-            // update (contract 020 §Read paths, papercuts 228e8d43/1ef87556).
-            notice(&behind_notice(
-                name,
-                pin,
-                known.as_deref(),
-                declaration_changed,
-            ));
+            // Reads stay network-free and never select new bytes (contract 020).
+            notice(&behind_notice(name, pin));
         }
         let selected = BundleSelection::from_spec(manifest, &pin.declaration)?;
         return Ok(ResolvedBundleSource {
@@ -432,100 +387,6 @@ pub fn catalog_source_roots(manifest: &Path) -> Result<CatalogSourceRoots, Manif
         .collect::<Result<_, _>>()?;
     Ok(CatalogSourceRoots { bundle, declared })
 }
-/// A path a run step names under this checkout's source cache.
-const SOURCE_CACHE: &str = ".effigy/cache/sources/";
-
-/// An imported v0.14.1 object sits beside the acquired object of the same
-/// source, so both spellings name the one source.
-const IMPORTED_OBJECT_PREFIX: &str = "import-";
-
-/// Point a run step at the source the checkout lock selects now.
-///
-/// A path under `.effigy/cache/sources/<generation>/` names a source, not the
-/// generation that happened to hold it. A run resolved a bundle path before
-/// its own Prepare refreshed that source; the refresh publishes a new
-/// generation and removes the old one (contract 020), so the path a later step
-/// still holds names bytes nothing selects. Relocating it to the object the
-/// lock selects keeps the run on one rule: it opens the source the lock
-/// publishes, at the moment it runs.
-///
-/// Text that names no cached source path, or a source this checkout no longer
-/// pins, is returned unchanged. Reading the lock is local and bounded.
-pub fn relocate_source_paths(manifest: &Path, text: &str) -> String {
-    relocate_source_paths_through(manifest, &[], text)
-}
-
-/// The same rule for text written against another name for this checkout.
-///
-/// `roots` are checkout roots this checkout's source cache is reachable
-/// through — a managed container route rewrites the host checkout root to its
-/// mount before a process starts, so the generation its command names must be
-/// resolved in that namespace too.
-pub fn relocate_source_paths_through(manifest: &Path, roots: &[&Path], text: &str) -> String {
-    if !text.contains(SOURCE_CACHE) {
-        return text.to_owned();
-    }
-    let Some(live) = live_source_objects(manifest) else {
-        return text.to_owned();
-    };
-    let mut relocated = text.to_owned();
-    for root in std::iter::once(parent(manifest)).chain(roots.iter().copied()) {
-        relocated = relocate_below(&relocated, root, &live);
-    }
-    relocated
-}
-
-/// Rewrite every `<root>/.effigy/cache/sources/<generation>/<source>` spelling
-/// in `text` to the generation the lock selects for that source.
-fn relocate_below(text: &str, root: &Path, live: &BTreeMap<String, String>) -> String {
-    let cache = format!("{}/{SOURCE_CACHE}", root.display());
-    let mut relocated = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(at) = rest.find(&cache) {
-        relocated.push_str(&rest[..at + cache.len()]);
-        rest = &rest[at + cache.len()..];
-        // The generation component is the part a refresh replaces.
-        let Some((generation, named)) = rest.split_once('/') else {
-            break;
-        };
-        let object_len = named
-            .bytes()
-            .take_while(|byte| byte.is_ascii_alphanumeric() || *byte == b'-')
-            .count();
-        let object = &named[..object_len];
-        let imported = object
-            .strip_prefix(IMPORTED_OBJECT_PREFIX)
-            .unwrap_or(object);
-        match live.get(object).or_else(|| live.get(imported)) {
-            Some(selected) => relocated.push_str(selected),
-            None => {
-                relocated.push_str(generation);
-                relocated.push('/');
-                relocated.push_str(object);
-            }
-        }
-        rest = &named[object_len..];
-    }
-    relocated.push_str(rest);
-    relocated
-}
-
-/// The object each source name the lock selects resolves to now, as the part
-/// of its path below `cache/sources/`.
-fn live_source_objects(manifest: &Path) -> Option<BTreeMap<String, String>> {
-    let lock = read_lock(manifest).ok().flatten()?;
-    let objects = lock
-        .sources
-        .values()
-        .filter_map(|pin| {
-            let name = pin.object.file_name()?.to_str()?.to_owned();
-            let selected = pin.object.strip_prefix("cache/sources").ok()?;
-            Some((name, selected.display().to_string()))
-        })
-        .collect::<BTreeMap<_, _>>();
-    (!objects.is_empty()).then_some(objects)
-}
-
 fn notice(message: &str) {
     // A single bounded diagnostic per process; nested manifest discovery can
     // resolve the same checkout repeatedly (completion in particular).
@@ -548,73 +409,15 @@ fn short_version(value: &str) -> String {
     }
 }
 
-/// The `<source> behind` line for one stale pin.
-///
-/// The locked side may be a Git revision while the bounded hint only records a
-/// content digest, so the two short ids are labelled with their kind instead of
-/// looking comparable. Both sides stay bare revision spellings when both are
-/// revisions.
-fn behind_notice(
-    name: &str,
-    pin: &SourcePin,
-    known: Option<&str>,
-    declaration_changed: bool,
-) -> String {
-    let locked_raw = pin.revision.as_deref().unwrap_or(&pin.version);
-    let locked_kind = revision_kind(locked_raw);
-    let suffix = "the next `effigy dev` or `effigy container up` will update";
-    match known.filter(|_| !declaration_changed) {
-        Some(available_raw) => {
-            let available_kind = revision_kind(available_raw);
-            if locked_kind == Kind::Revision && available_kind == Kind::Revision {
-                format!(
-                    "{name} behind: locked {}, available {}; {suffix}",
-                    short_version(locked_raw),
-                    short_version(available_raw)
-                )
-            } else {
-                format!(
-                    "{name} behind: locked {} {}, available {} {}; {suffix}",
-                    locked_kind.label(),
-                    short_version(locked_raw),
-                    available_kind.label(),
-                    short_version(available_raw)
-                )
-            }
-        }
-        None => format!(
-            "{name} behind: locked {} {}, declaration changed; {suffix}",
-            locked_kind.label(),
-            short_version(locked_raw)
-        ),
-    }
+/// The `<source> behind` line for a pin whose declaration changed. Reads never
+/// select new bytes; the next Prepare path acquires the declared source.
+fn behind_notice(name: &str, pin: &SourcePin) -> String {
+    format!(
+        "{name} behind: locked {}, declaration changed; the next `effigy dev` or `effigy container up` will update",
+        short_version(pin.revision.as_deref().unwrap_or(&pin.version))
+    )
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Kind {
-    Revision,
-    Digest,
-}
-
-impl Kind {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Revision => "revision",
-            Self::Digest => "digest",
-        }
-    }
-}
-
-/// A sha256 content digest is hex without a `sha256:` prefix; a Git revision is
-/// a short or full commit id.
-fn revision_kind(value: &str) -> Kind {
-    let value = value.strip_prefix("sha256:").unwrap_or(value);
-    if value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        Kind::Digest
-    } else {
-        Kind::Revision
-    }
-}
 fn legacy_root(manifest: &Path, selection: &BundleSelection) -> Option<PathBuf> {
     let cache = parent(manifest).join(".effigy/cache/bundles");
     Some(match selection {
@@ -711,7 +514,9 @@ fn oci_bundle_cache_locator(reference: &str) -> OciBundleCacheLocator {
 
 #[cfg(test)]
 mod tests {
+    use super::hold::held_generations;
     use super::*;
+    use std::collections::BTreeSet;
     #[test]
     fn missing_remote_source_is_a_pure_error() {
         let home = tempfile::tempdir().unwrap();
@@ -816,62 +621,11 @@ base = { type = "git", url = "https://invalid.invalid/bundle" }
     }
 
     #[test]
-    fn behind_notice_labels_a_revision_against_a_content_digest() {
-        let locked = pin(
-            Some("544c0cc9b30c2a5d0b6e6c5d4f0d1c2b3a4f5e60"),
-            "9b1f7a4c2d6e8f0a1b3c5d7e9f0a2b4c6d8e0f1a3b5c7d9e0f2a4b6c8d0e1f3a",
-        );
-        let line = behind_notice(
-            "bundle",
-            &locked,
-            Some("2750ab75c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8"),
-            false,
-        );
-        assert_eq!(
-            line,
-            "bundle behind: locked revision 544c0cc9, available digest 2750ab75; the next `effigy dev` or `effigy container up` will update"
-        );
-    }
-
-    #[test]
-    fn behind_notice_keeps_bare_revisions_when_both_sides_are_revisions() {
+    fn behind_notice_names_a_changed_declaration_by_the_locked_revision() {
         let locked = pin(Some("544c0cc9b30c2a5d0b6e6c5d4f0d1c2b3a4f5e60"), "ignored");
-        let line = behind_notice(
-            "bundle",
-            &locked,
-            Some("2fd87567aa11bb22cc33dd44ee55ff66aa77bb88"),
-            false,
-        );
         assert_eq!(
-            line,
-            "bundle behind: locked 544c0cc9, available 2fd87567; the next `effigy dev` or `effigy container up` will update"
-        );
-    }
-
-    #[test]
-    fn behind_notice_labels_a_path_source_digest_and_a_declaration_change() {
-        let path_pin = SourcePin {
-            declaration: ManifestBundleBase::Path {
-                dir: "bundle".into(),
-            },
-            object: "cache/sources/one".into(),
-            version: "9b1f7a4c2d6e8f0a1b3c5d7e9f0a2b4c6d8e0f1a3b5c7d9e0f2a4b6c8d0e1f3a".into(),
-            revision: None,
-        };
-        let digest_line = behind_notice(
-            "bundle",
-            &path_pin,
-            Some("2750ab75c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8"),
-            false,
-        );
-        assert_eq!(
-            digest_line,
-            "bundle behind: locked digest 9b1f7a4c, available digest 2750ab75; the next `effigy dev` or `effigy container up` will update"
-        );
-        let changed = behind_notice("bundle", &path_pin, None, true);
-        assert_eq!(
-            changed,
-            "bundle behind: locked digest 9b1f7a4c, declaration changed; the next `effigy dev` or `effigy container up` will update"
+            behind_notice("bundle", &locked),
+            "bundle behind: locked 544c0cc9, declaration changed; the next `effigy dev` or `effigy container up` will update"
         );
     }
 
@@ -939,73 +693,32 @@ base = { type = "git", url = "https://invalid.invalid/bundle" }
     }
 
     #[test]
-    fn a_step_path_follows_the_generation_the_lock_selects() {
-        let (home, manifest) = pinned_checkout("cache/sources/generation-b/bundle-object");
-        let root = home
-            .path()
-            .join(".effigy/cache/sources/generation-b/bundle-object");
-        let stale = home
-            .path()
-            .join(".effigy/cache/sources/generation-a/bundle-object/scripts/dev/profile_env.py");
-        let selected = root.join("scripts/dev/profile_env.py");
+    fn a_hold_keeps_its_selected_generation_until_it_is_released() {
+        let (home, manifest) = pinned_checkout("cache/sources/generation-a/bundle-object");
+        let held = hold_selected_sources(&manifest)
+            .expect("hold")
+            .expect("a pinned checkout holds its selection");
         assert_eq!(
-            relocate_source_paths(&manifest, &format!("sh {}", stale.display())),
-            format!("sh {}", selected.display())
+            held_generations(&manifest),
+            BTreeSet::from(["generation-a".to_owned()])
         );
-        // An imported v0.14.1 object names the same source as the acquired one.
-        let imported = home.path().join(
-            ".effigy/cache/sources/generation-0/import-bundle-object/scripts/dev/profile_env.py",
-        );
-        assert_eq!(
-            relocate_source_paths(&manifest, &format!("sh {}", imported.display())),
-            format!("sh {}", selected.display())
-        );
+        drop(held);
+        assert!(held_generations(&manifest).is_empty());
+        drop(home);
     }
 
     #[test]
-    fn a_container_route_resolves_the_generation_under_its_own_mount() {
-        let (_home, manifest) = pinned_checkout("cache/sources/generation-b/bundle-object");
-        let mount = Path::new("/workspace");
-        let command = "cd /workspace && sh /workspace/.effigy/cache/sources/generation-a/bundle-object/scripts/dev/profile_env.py";
-        let selected = "cd /workspace && sh /workspace/.effigy/cache/sources/generation-b/bundle-object/scripts/dev/profile_env.py";
-        assert_eq!(
-            relocate_source_paths_through(&manifest, &[mount], command),
-            selected
-        );
-        // Only the roots the caller names are recognised: the host spelling of
-        // the same command is not a mount path, and neither is another mount.
-        assert_eq!(relocate_source_paths(&manifest, command), command);
-        assert_eq!(
-            relocate_source_paths_through(&manifest, &[Path::new("/elsewhere")], command),
-            command
-        );
-    }
-
-    #[test]
-    fn an_unchanged_selection_leaves_a_step_path_alone() {
-        let (home, manifest) = pinned_checkout("cache/sources/generation-b/bundle-object");
-        let current = home
-            .path()
-            .join(".effigy/cache/sources/generation-b/bundle-object/scripts/helper.sh");
-        let command = format!("sh {} --flag", current.display());
-        assert_eq!(relocate_source_paths(&manifest, &command), command);
-    }
-
-    #[test]
-    fn text_outside_the_selected_sources_keeps_its_paths() {
-        let (home, manifest) = pinned_checkout("cache/sources/generation-b/bundle-object");
-        let other_checkout = home.path().join("neighbour");
-        let neighbour = other_checkout
-            .join(".effigy/cache/sources/generation-a/bundle-object/scripts/helper.sh");
-        let retired = home
-            .path()
-            .join(".effigy/cache/sources/generation-a/retired-object/scripts/helper.sh");
-        let command = format!(
-            "sh {} && sh {} && sh {}",
-            neighbour.display(),
-            retired.display(),
-            home.path().join("scripts/dev/plain.sh").display()
-        );
-        assert_eq!(relocate_source_paths(&manifest, &command), command);
+    fn a_hold_left_by_a_dead_process_is_removed_and_keeps_nothing() {
+        let (home, manifest) = pinned_checkout("cache/sources/generation-a/bundle-object");
+        let holds = home.path().join(".effigy/cache/source-holds");
+        std::fs::create_dir_all(&holds).unwrap();
+        // No process has this pid, so the link no longer holds anything.
+        std::os::unix::fs::symlink(
+            "../../cache/sources/generation-a/bundle-object",
+            holds.join("999999999.0"),
+        )
+        .unwrap();
+        assert!(held_generations(&manifest).is_empty());
+        assert!(!holds.join("999999999.0").exists());
     }
 }

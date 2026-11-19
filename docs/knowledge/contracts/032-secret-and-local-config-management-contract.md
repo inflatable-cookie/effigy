@@ -335,8 +335,6 @@ Injection rules:
   diagnostic when a required value in that scope is absent or the vault is
   locked
 - deploy provider package scripts run with `targets = ["deploy"]` access
-- state apply hook tasks can receive `targets = ["state"]` values through the
-  same process environment injection path
 - artifact-targeted Rhai workflow callers may opt into `targets = ["artifacts"]`
   when an artifact workflow has a script execution point
 - avoid persistent `.env` files by default

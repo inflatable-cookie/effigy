@@ -27,8 +27,6 @@ pub(super) struct DeployPlanReport {
     pub(super) app: DeployPlanApp,
     pub(super) code: DeployCodeRef,
     pub(super) release_policy: DeployReleasePolicyReport,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) state: Option<DeployStatePlan>,
     pub(super) artifact_policy: DeployArtifactPolicyReport,
     pub(super) provider_preflight: DeployProviderPreflightReport,
     pub(super) hooks: Vec<DeployHookPlan>,
@@ -62,13 +60,6 @@ pub(super) struct DeployReleasePolicyReport {
     pub(super) mode: String,
     pub(super) required: bool,
     pub(super) gates_required: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(super) struct DeployStatePlan {
-    pub(super) stack: String,
-    pub(super) lineage_id: String,
-    pub(super) planned_report_path: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -84,7 +84,7 @@ Use only when the repo or user needs them:
 | Local stack | `effigy container up`, `effigy dev` (repo task) |
 | Cross-repo download and start | `effigy bootstrap <git-url>` (`effigy bootstrap` in a checkout runs its `setup`) |
 | Secrets | `effigy secrets doctor`, `effigy secrets list` |
-| State / deploy | `effigy state plan`, `effigy deploy plan` |
+| Deploy | `effigy deploy plan` |
 | Release cut | human-gated; see `release-protocol.md` |
 
 ## Source checkout fallback

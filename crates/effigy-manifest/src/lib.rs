@@ -11,6 +11,7 @@ mod bundles;
 mod catalog_section;
 mod composition;
 pub mod config_sections;
+pub mod diagnostics;
 mod ingress;
 mod lifecycle_date;
 pub use lifecycle_date::ManifestLifecycleDate;
@@ -31,6 +32,7 @@ pub mod task_runtime;
 mod test_config;
 pub mod user_config;
 
+pub use diagnostics::{diagnose_manifest_value, ManifestDiagnostic};
 pub use effigy_core::repo_markers::TASK_MANIFEST_FILE;
 /// Longest task `description` Effigy accepts, in characters. A description is
 /// one line of human context, not documentation: the guide and the task's own
@@ -39,12 +41,11 @@ pub const TASK_DESCRIPTION_MAX_CHARS: usize = 200;
 pub use portfolio::{load_portfolio, Portfolio, PORTFOLIO_FILE};
 
 pub use bundles::{
-    bundle_update_notes, catalog_source_roots, inspect_bundle_source, prepare_bundle_sources,
-    prepare_missing_bundle_sources, relocate_source_paths, relocate_source_paths_through,
-    resolve_catalog_source, sync_bundle_source, BundleInputResolution, BundleInputSource,
-    BundleInputSpec, BundleInputType, BundleSourceInspectReport, BundleSourceType, BundleSpec,
-    BundleSyncReport, CatalogSourceRoots, SourcePreparation, SourceProgress, SourceProgressEvent,
-    SourceSettlement,
+    bundle_update_notes, catalog_source_roots, hold_selected_sources, inspect_bundle_source,
+    prepare_bundle_sources, prepare_missing_bundle_sources, resolve_catalog_source,
+    sync_bundle_source, BundleInputResolution, BundleInputSource, BundleInputSpec, BundleInputType,
+    BundleSourceInspectReport, BundleSourceType, BundleSpec, BundleSyncReport, CatalogSourceRoots,
+    SourceHold, SourcePreparation, SourceProgress, SourceProgressEvent, SourceSettlement,
 };
 pub use catalog_section::{
     env_schema_declaring_catalog, nearest_catalog, nearest_declaring_catalog,
@@ -170,7 +171,6 @@ pub const MANIFEST_TOP_LEVEL_KEYS: &[&str] = &[
     "defer",
     "env",
     "data",
-    "state",
     "deploy",
     "test",
     "package_manager",
@@ -211,8 +211,6 @@ pub struct TaskManifest {
     pub env: BTreeMap<String, ManifestEnvEntry>,
     #[serde(default)]
     pub data: Option<ManifestDataConfig>,
-    #[serde(default)]
-    pub state: Option<toml::Value>,
     /// Raw deployment transaction config keyed by environment.
     ///
     /// This intentionally remains a raw TOML value in the manifest crate so

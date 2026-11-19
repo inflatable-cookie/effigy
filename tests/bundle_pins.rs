@@ -452,9 +452,9 @@ fn selected_source_object(fixture: &Fixture) -> PathBuf {
     fixture.repo.join(".effigy").join(object)
 }
 
-/// A run's later step opens the bundle helper the lock selects now: a step's
-/// own Prepare can publish a new generation and remove the one every step of
-/// the run was rendered against. `sequence_in_bundle` writes the run into the
+/// A run's later step opens the bundle helper the run started with: a step's
+/// own Prepare can publish a new generation, and the run's holds keep the one
+/// its steps were rendered against. `sequence_in_bundle` writes the run into the
 /// bundle's own defaults, so its helper path is rendered when the manifest
 /// loads; otherwise the consumer manifest names it with `{{ bundle.root }}`.
 /// `bundle_content_changed` decides whether the refresh selects new bytes or
@@ -509,21 +509,40 @@ fn run_bundle_helper_after_a_step_refresh(
     (ok, output)
 }
 
+/// The generations under `.effigy/cache/sources`, by name.
+fn source_generations(fixture: &Fixture) -> Vec<String> {
+    let mut names = fs::read_dir(fixture.repo.join(".effigy/cache/sources"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    names.sort();
+    names
+}
+
+/// A run keeps the generation it started with while it runs (contract 020). Once
+/// it has exited its hold is gone, so the next sync removes that predecessor
+/// and only the generation the lock selects is left.
+fn assert_run_kept_then_released_its_generation(fixture: &Fixture, output: &str) {
+    assert!(output.contains("profile-env-helper"), "{output}");
+    assert_eq!(
+        source_generations(fixture).len(),
+        2,
+        "the run's generation and the one its refresh selected: {:?}",
+        source_generations(fixture)
+    );
+    let (ok, output) = fixture.run(&["bundle", "sync"], &[], Duration::from_secs(20));
+    assert!(ok, "{output}");
+    assert_eq!(source_generations(fixture).len(), 1, "{output}");
+    selected_source_object(fixture);
+}
+
 #[test]
-fn a_later_step_runs_the_bundle_helper_its_own_refresh_replaced() {
+fn a_later_step_keeps_the_bundle_helper_its_run_started_with() {
     let fixture = Fixture::new();
     fixture.write_path_bundle();
     let (ok, output) = run_bundle_helper_after_a_step_refresh(&fixture, true, true);
     assert!(ok, "{output}");
-    assert!(output.contains("profile-env-helper"), "{output}");
-    // The refresh published one generation and removed the predecessor the
-    // run had rendered its helper path against.
-    let selected = selected_source_object(&fixture);
-    assert!(
-        selected.join("scripts/profile_env.sh").is_file(),
-        "the selected source carries the helper: {}",
-        selected.display()
-    );
+    assert_run_kept_then_released_its_generation(&fixture, &output);
 }
 
 #[test]
@@ -532,16 +551,14 @@ fn an_unchanged_step_refresh_keeps_the_bundle_helper_reachable() {
     fixture.write_path_bundle();
     let (ok, output) = run_bundle_helper_after_a_step_refresh(&fixture, false, false);
     assert!(ok, "{output}");
-    assert!(output.contains("profile-env-helper"), "{output}");
-    selected_source_object(&fixture);
+    assert_run_kept_then_released_its_generation(&fixture, &output);
 }
 
-/// A managed run renders its process commands into a plan, then runs its
-/// setup steps and brings its environment up — both Prepare paths — before it
-/// starts a process. A refresh in between publishes a new source generation
-/// and removes the one the plan named, so the process must open the source the
-/// lock selects at start. `bundle_content_changed` decides whether the setup
-/// refresh selects new bytes or only a new generation.
+/// A managed run renders its process commands, then runs its setup steps. A
+/// setup refresh publishes a new source generation, but the run's holds keep
+/// the generation its commands name, so the process opens the bytes it started
+/// with. `bundle_content_changed` decides whether the setup refresh selects new
+/// bytes or only a new generation.
 fn run_managed_bundle_helper_after_a_setup_refresh(
     fixture: &Fixture,
     bundle_content_changed: bool,
@@ -578,28 +595,86 @@ fn run_managed_bundle_helper_after_a_setup_refresh(
 }
 
 #[test]
-fn a_managed_process_opens_the_source_its_setup_refresh_selected() {
+fn a_managed_process_keeps_the_source_its_run_started_with() {
     let fixture = Fixture::new();
     fixture.write_path_bundle();
     let (ok, output) = run_managed_bundle_helper_after_a_setup_refresh(&fixture, true);
     assert!(ok, "{output}");
-    assert!(output.contains("profile-env-helper"), "{output}");
-    let selected = selected_source_object(&fixture);
-    assert!(
-        selected.join("scripts/profile_env.sh").is_file(),
-        "the selected source carries the helper: {}",
-        selected.display()
-    );
+    assert_run_kept_then_released_its_generation(&fixture, &output);
 }
 
 #[test]
-fn a_managed_process_opens_the_source_an_unchanged_setup_refresh_published() {
+fn a_managed_process_keeps_its_source_when_an_unchanged_setup_refresh_publishes() {
     let fixture = Fixture::new();
     fixture.write_path_bundle();
     let (ok, output) = run_managed_bundle_helper_after_a_setup_refresh(&fixture, false);
     assert!(ok, "{output}");
-    assert!(output.contains("profile-env-helper"), "{output}");
-    selected_source_object(&fixture);
+    assert_run_kept_then_released_its_generation(&fixture, &output);
+}
+
+/// A refresh by another invocation while a long task runs does not break that
+/// task: the task's own holds keep the bytes it resolved at its start.
+#[test]
+fn a_refresh_during_a_long_task_leaves_the_task_its_source() {
+    let fixture = Fixture::new();
+    fixture.write_path_bundle();
+    fs::create_dir(fixture.repo.join("bundle/scripts")).unwrap();
+    fs::write(
+        fixture.repo.join("bundle/scripts/profile_env.sh"),
+        "#!/bin/sh\necho profile-env-helper\n",
+    )
+    .unwrap();
+    fs::write(
+        fixture.repo.join("effigy.toml"),
+        "[bundle]\nbase = { type = \"path\", dir = \"bundle\" }\n\
+         [tasks.long]\nrun = \"sleep 3 && sh {{ bundle.root }}/scripts/profile_env.sh\"\n",
+    )
+    .unwrap();
+    let logs = fixture.logs.join("long");
+    let mut long = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(["long"])
+        .current_dir(&fixture.repo)
+        .env("HOME", &fixture.home)
+        .env("NO_COLOR", "1")
+        .env_remove("EFFIGY_WORKSPACE_CONTAINER")
+        .env_remove("EFFIGY_CONTAINER_HANDOFF")
+        .env_remove("EFFIGY_ACTIVE_VERSION")
+        .stdout(Stdio::from(fs::File::create(&logs).unwrap()))
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    // The task holds its selection before it runs: wait until the hold exists.
+    let holds = fixture.repo.join(".effigy/cache/source-holds");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !holds
+        .read_dir()
+        .is_ok_and(|mut entries| entries.next().is_some())
+    {
+        assert!(
+            Instant::now() < deadline,
+            "the long task never held its source"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // A content change makes this sync select new bytes while the task runs.
+    fs::write(
+        fixture.repo.join("bundle/scripts/profile_env.sh"),
+        "#!/bin/sh\necho profile-env-changed\n",
+    )
+    .unwrap();
+    let (ok, output) = fixture.run(&["bundle", "sync"], &[], Duration::from_secs(20));
+    assert!(ok, "{output}");
+    assert_eq!(source_generations(&fixture).len(), 2, "{output}");
+    assert!(long.wait().unwrap().success());
+    let task_output = fs::read_to_string(&logs).unwrap();
+    assert!(
+        task_output.contains("profile-env-helper") && !task_output.contains("changed"),
+        "the long task ran the bytes it started with: {task_output}"
+    );
+    // Its hold is released with it, so the next sync removes the predecessor.
+    let (ok, output) = fixture.run(&["bundle", "sync"], &[], Duration::from_secs(20));
+    assert!(ok, "{output}");
+    assert_eq!(source_generations(&fixture).len(), 1, "{output}");
 }
 
 #[test]
@@ -701,7 +776,9 @@ fn git_acquisition_uses_main_sentinel_and_checkout_pins_are_independent() {
     );
     assert!(ok, "{output}");
     assert!(output.contains("original"), "{output}");
-    assert!(output.contains("bundle behind"), "{output}");
+    // A read cannot know that upstream moved: the machine-wide hint is gone
+    // (contract 020), so the only read notice is a changed declaration.
+    assert!(!output.contains("behind"), "{output}");
     assert_eq!(fs::read(&other_pin).unwrap(), other_original);
 }
 #[test]
@@ -1614,7 +1691,7 @@ fn two_fresh_worktrees_acquire_one_shared_pinned_destination_at_once() {
 /// A fresh checkout runs an ordinary task: the missing bundle and catalog pins
 /// are acquired before the strict parse (contract 020 §Behaviour rule 1).
 #[test]
-fn a_plain_task_run_acquires_only_the_missing_pins() {
+fn a_plain_task_run_acquires_missing_pins() {
     let fixture = Fixture::new();
     let source = fixture.owner.path().join("source");
     let first = init_git_bundle(&source, &fixture.home, "one");
@@ -1641,18 +1718,30 @@ fn a_plain_task_run_acquires_only_the_missing_pins() {
         lock["sources"]["catalog:team"]["declaration"]["type"],
         "path"
     );
+}
 
-    // A newer upstream commit never moves a pin on a task run, and no remote
-    // check is recorded: refresh stays on the Prepare paths.
-    commit_git_bundle(&source, &fixture.home, "two");
+/// A new ordinary task selects a changed path bundle before resolving its command.
+#[test]
+fn a_later_plain_task_refreshes_a_changed_path_bundle() {
+    let fixture = Fixture::new();
+    fixture.write_path_bundle();
+    fs::write(
+        fixture.repo.join("bundle/effigy.toml"),
+        "[tasks.hello]\nrun = \"echo original-ordinary-task\"\n",
+    )
+    .unwrap();
     let (ok, output) = fixture.run(&["hello"], &[], Duration::from_secs(30));
     assert!(ok, "{output}");
-    assert!(
-        output.contains("hello one") && !output.contains("hello two"),
-        "{output}"
-    );
-    assert_eq!(pinned_revision(&fixture), first);
-    assert!(!fixture.repo.join(".effigy/sources.update.json").exists());
+    assert!(output.contains("original-ordinary-task"), "{output}");
+
+    fs::write(
+        fixture.repo.join("bundle/effigy.toml"),
+        "[tasks.hello]\nrun = \"echo updated-ordinary-task\"\n",
+    )
+    .unwrap();
+    let (ok, output) = fixture.run(&["hello"], &[], Duration::from_secs(30));
+    assert!(ok, "{output}");
+    assert!(output.contains("updated-ordinary-task"), "{output}");
 }
 
 /// Read paths acquire only what a fresh checkout is missing (contract 020
@@ -1707,6 +1796,46 @@ fn a_lock_pin_whose_object_is_gone_is_acquired_again() {
             .unwrap();
     let object = lock["sources"]["bundle"]["object"].as_str().unwrap();
     assert!(fixture.repo.join(".effigy").join(object).is_dir());
+}
+
+/// An ordinary task acquires a missing pinned checkout once, then does not
+/// inspect it on later invocations.
+#[test]
+fn an_ordinary_task_does_not_inspect_an_existing_pinned_checkout() {
+    let fixture = Fixture::new();
+    let source = fixture.owner.path().join("book-src");
+    let rev = init_git_bundle(&source, &fixture.home, "one");
+    fs::write(
+        fixture.repo.join("effigy.toml"),
+        format!(
+            "[sources.book]\ngit = \"file://{}\"\nrev = \"{rev}\"\npath = \"book\"\n\n[tasks.hello]\nrun = \"echo hello\"\n",
+            source.display()
+        ),
+    )
+    .unwrap();
+    let (ok, output) = fixture.run(&["hello"], &[], Duration::from_secs(30));
+    assert!(ok, "{output}");
+    assert!(fixture.repo.join("book").is_dir());
+
+    let tools = fixture.owner.path().join("tools");
+    fs::create_dir(&tools).unwrap();
+    let git = tools.join("git");
+    fs::write(
+        &git,
+        "#!/bin/sh\nprintf called > \"$HOME/git-called\"\nexit 1\n",
+    )
+    .unwrap();
+    fs::set_permissions(&git, fs::Permissions::from_mode(0o755)).unwrap();
+    let path =
+        std::env::join_paths([tools, PathBuf::from("/usr/bin"), PathBuf::from("/bin")]).unwrap();
+    let (ok, output) = fixture.run(
+        &["hello"],
+        &[("PATH", Path::new(&path))],
+        Duration::from_secs(30),
+    );
+    assert!(ok, "{output}");
+    assert!(output.contains("hello"), "{output}");
+    assert!(!fixture.home.join("git-called").exists(), "{output}");
 }
 
 /// A pinned `[sources.*]` git URL that needs a credential prompt fails the task

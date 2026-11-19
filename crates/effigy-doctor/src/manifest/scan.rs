@@ -7,9 +7,8 @@ use effigy_routing::{default_alias, effective_manifest_paths, RoutingError};
 use toml::Value;
 
 use super::super::finding_templates::ManifestParseFinding;
-use super::schema::validate_manifest_schema;
 use super::ManifestScanResult;
-use crate::{DoctorError, DoctorState};
+use crate::{check_id, remediation, DoctorError, DoctorState};
 
 pub(super) fn collect_manifest_findings(
     resolved_root: &Path,
@@ -77,7 +76,7 @@ impl<'a, 'b> ScanContext<'a, 'b> {
     fn validate_manifest_syntax_and_schema(&mut self, manifest_path: &Path, source: &str) -> bool {
         match parse_toml::<Value>(source) {
             Ok(raw) => {
-                validate_manifest_schema(manifest_path, &raw, self.state);
+                self.emit_grammar_diagnostics(manifest_path, &raw);
                 true
             }
             Err(error) => {
@@ -87,6 +86,29 @@ impl<'a, 'b> ScanContext<'a, 'b> {
                 ));
                 false
             }
+        }
+    }
+
+    /// Manifest shape findings come from the production grammar: doctor asks
+    /// `effigy_manifest` about each table instead of keeping its own schema
+    /// tables, so a key is reported here exactly when the loader refuses it.
+    fn emit_grammar_diagnostics(&mut self, manifest_path: &Path, raw: &Value) {
+        for diagnostic in effigy_manifest::diagnose_manifest_value(raw) {
+            let evidence = if diagnostic.path.is_empty() {
+                format!("{} {}", manifest_path.display(), diagnostic.message)
+            } else {
+                format!(
+                    "{} has an invalid manifest shape at `{}`: {}",
+                    manifest_path.display(),
+                    diagnostic.path,
+                    diagnostic.message
+                )
+            };
+            self.state.add_check_error(
+                check_id::MANIFEST_SCHEMA,
+                evidence,
+                remediation::MANIFEST_SCHEMA.to_owned(),
+            );
         }
     }
 

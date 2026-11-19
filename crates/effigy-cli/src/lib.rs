@@ -327,44 +327,6 @@ pub struct StateArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StateSubcommand {
-    Plan {
-        manifest: Option<PathBuf>,
-        stack: Option<String>,
-        write_report: bool,
-    },
-    Apply {
-        manifest: Option<PathBuf>,
-        stack: Option<String>,
-        yes: bool,
-        skip_layers: Vec<String>,
-    },
-    Capture {
-        manifest: Option<PathBuf>,
-        stack: Option<String>,
-        profile: Option<String>,
-        role: Option<String>,
-        source_env: Option<String>,
-        key: Option<String>,
-        source: Option<String>,
-        destination_ref: Option<String>,
-        hook: Option<String>,
-        task: Option<String>,
-        yes: bool,
-        push: bool,
-    },
-    CaptureSet {
-        stack: String,
-        profiles: Vec<String>,
-        key: Option<String>,
-        yes: bool,
-        push: bool,
-    },
-    History {
-        stack: String,
-        kind: Option<String>,
-        limit: Option<usize>,
-        lineage: Option<String>,
-    },
     ArtifactInspect {
         source: String,
         farmyard_handoff: bool,

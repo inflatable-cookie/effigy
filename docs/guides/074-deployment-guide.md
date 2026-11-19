@@ -166,8 +166,6 @@ adapter = "render"
 require_release_gates = true
 
 [deploy.production.hooks]
-before_state = "hooks:pre-deploy"
-after_state = "hooks:post-state"
 after_deploy = "hooks:smoke-test"
 ```
 
@@ -182,8 +180,10 @@ effigy deploy plan uat --write-report
 ```
 
 Plan inspects environment configuration, resolves code references and provider
-packages, runs provider preflight, and lists intended state, hooks and health
-checks. It emits `effigy.deploy.plan.v1`. It does not execute those obligations,
+packages, runs provider preflight, and lists the intended hooks and health
+checks. `state` is the environment state label used for production detection and
+the provider context; deploy never applies data (see
+[deployment data workflows](../knowledge/deployment-data-workflows.md)). It emits `effigy.deploy.plan.v1`. It does not execute those obligations,
 verify release gates or enforce immutable artifact pins. A plan with no blockers
 is not evidence that a deployment can execute. Provider resolution is offline
 and preflight runs provider code without secrets; see
@@ -198,9 +198,8 @@ effigy deploy apply uat --yes
 effigy deploy redeploy uat --deployment <ID> --yes
 ```
 
-The refusal names all unimplemented obligations: state and migrations;
-`before_state`, `after_state` and `after_deploy` hooks; health checks; release
-gates; digest pins; and provider deployment/rollback. Neither a provider success
+The refusal names all unimplemented obligations: `after_deploy` hooks; health
+checks; release gates; digest pins; and provider deployment/rollback. Neither a provider success
 response nor a historical success report can make these commands succeed.
 Removing optional obligations from configuration does not enable execution.
 Because the refusal happens before provider resolution, no floating provider
