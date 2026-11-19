@@ -44,7 +44,8 @@ concurrent = [{name = "job", run = "touch ready; sleep 60"}]
         return result
     def journal_rows():
         journal = project / '.effigy/state/kernel.db'
-        with closing(sqlite3.connect(f'{journal.as_uri()}?mode=ro', uri=True)) as db:
+        with closing(sqlite3.connect(f'{journal.as_uri()}?mode=rw', uri=True)) as db:
+            db.execute('PRAGMA query_only = ON')
             tables = ('foreground_terminals', 'runs', 'logs', 'objects')
             return tuple(db.execute(f'SELECT count(*) FROM {table}').fetchone()[0]
                          for table in tables)

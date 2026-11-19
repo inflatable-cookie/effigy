@@ -166,7 +166,9 @@ with tempfile.TemporaryDirectory(prefix="q010-test-tui-") as temporary:
                 assert outer_gate is not None, "nested task custody gate"
             started = time.monotonic()
             child.kill()  # Only this proof's recorded owner PID.
-            child.wait(timeout=10)
+            while child.poll() is None:
+                drain()
+                assert time.monotonic() - started < 10, "killed owner did not exit"
             try:
                 while alive(pid):
                     if outer_gate is not None:
@@ -186,7 +188,8 @@ with tempfile.TemporaryDirectory(prefix="q010-test-tui-") as temporary:
                               "cleanup_seconds": round(time.monotonic() - started, 3)}))
     journal = project / ".effigy/state/kernel.db"
     assert list(base.rglob("*.db")) == [journal], "local TUI used another database"
-    with closing(sqlite3.connect(f"{journal.as_uri()}?mode=ro", uri=True)) as db:
+    with closing(sqlite3.connect(f"{journal.as_uri()}?mode=rw", uri=True)) as db:
+        db.execute("PRAGMA query_only = ON")
         outcomes = {row[0] for row in db.execute("SELECT outcome FROM foreground_terminals")}
         assert {"succeeded", "cancelled"} <= outcomes, outcomes
         for table in ("runs", "objects", "logs"):

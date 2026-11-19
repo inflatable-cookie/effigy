@@ -103,7 +103,9 @@ run = "touch suite-ready; sleep 300"
             journal = state / "kernel.db"
             assert journal.is_file(), "foreground settlement did not create its checkout journal"
             databases.update(state / f"kernel.db{suffix}" for suffix in ("", "-shm", "-wal"))
-            with closing(sqlite3.connect(f"{journal.as_uri()}?mode=ro", uri=True)) as db:
+            # A query-only reader still needs to open a cold WAL index.
+            with closing(sqlite3.connect(f"{journal.as_uri()}?mode=rw", uri=True)) as db:
+                db.execute("PRAGMA query_only = ON")
                 terminal_count += db.execute("SELECT count(*) FROM foreground_terminals").fetchone()[0]
                 for table in ("runs", "logs", "objects"):
                     assert db.execute(f"SELECT count(*) FROM {table}").fetchone() == (0,), table
