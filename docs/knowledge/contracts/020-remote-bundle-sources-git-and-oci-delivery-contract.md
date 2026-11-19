@@ -122,23 +122,13 @@ that only `effigy bundle sync` moved selected bytes.
 
 - `effigy bundle sync` stays as the explicit command: it re-acquires every
   declared source, including path sources.
-- The Prepare paths update a stale source themselves, once, at the start of the
-  command and before it composes the manifest from it: `effigy dev`,
-  `effigy bootstrap`, `effigy container up` and the callers of container up. A
-  later Prepare in the same process only fills a missing pin; it never moves a
-  selected one, so nothing a command resolves changes under it.
-- Any other task run applies rule 1 only, before it composes the manifest: a
-  declared source with no **usable** pin is acquired, so a fresh checkout,
-  worktree or clone runs an ordinary task, lists its tasks and plans one
-  instead of refusing. A pin whose recorded object directory is gone is not
-  usable, so a copied checkout or a hand-deleted cache acquires it again. An
-  existing usable pin never moves there - no changed declaration, path
-  re-snapshot or floating Git check - and no update record is written. A
-  failed acquisition fails the task with the acquisition error and the
-  `effigy bundle sync` hint. Managed (`mode = "tui"`) task-local `status`,
-  `logs` and `stop` do not apply rule 1: they inspect or stop the existing
-  session and never clone. A task whose first argument happens to be those
-  words still acquires.
+- Ordinary task runs and Prepare paths update stale sources once at command
+  start, before composing the manifest. A later Prepare in the same process
+  only fills a missing pin, so resolved text keeps its selected bytes.
+- Task listing and planning acquire missing pins without moving usable ones.
+  Managed (`mode = "tui"`) task-local `status`, `logs` and `stop` inspect or
+  stop the existing session without acquiring. A task whose first argument
+  happens to be those words still acquires.
 
 Every acquisition is bounded to 120 seconds and non-interactive
 (`GIT_TERMINAL_PROMPT=0`, and an SSH command with `BatchMode=yes` when the

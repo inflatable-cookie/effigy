@@ -52,12 +52,8 @@ pub(super) fn run_skill_passthrough_with_context(
 }
 
 pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, RunnerError> {
-    // Both a task run and the task listing read the checkout's sources. Neither
-    // refuses over a pin this checkout does not hold yet: a missing one is
-    // acquired (rule 1 only), and only a Prepare path refreshes what is behind.
-    // Managed TUI status/logs/stop inspect or stop an existing session and
-    // never acquire. Any other task, including one whose first argument is
-    // those words, still acquires.
+    // Select sources before resolving an executing task. Read-only discovery
+    // only fills missing pins, and managed session controls do neither.
     let root = crate::runner::command_context::active_runtime_context()
         .map(|context| context.command_root().to_path_buf())
         .unwrap_or_else(|| cwd.into());
@@ -85,13 +81,7 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
             _ => false,
         };
         if reads_sources && !reserved_workspace {
-            if crate::runner::bundle_command::is_source_prepare_command(&cmd) {
-                crate::runner::bundle_command::prepare_sources_for_manifest(&manifest)?;
-            } else {
-                crate::runner::bundle_command::prepare_missing_sources_for_manifest(&manifest)?;
-            }
-            // Only a run that executes a catalog task holds its sources. Listing,
-            // `--plan` and built-in discovery write nothing into the checkout.
+            // Listing, `--plan` and built-in discovery only fill missing pins.
             let executes = matches!(
                 &cmd,
                 Command::Task(task)
@@ -99,8 +89,11 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
                         && !effigy_core::builtin_tasks::is_builtin_task_name(&task.name)
             );
             if executes {
+                crate::runner::bundle_command::prepare_sources_for_manifest(&manifest)?;
                 _source_hold = effigy_manifest::hold_selected_sources(&manifest)
                     .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+            } else {
+                crate::runner::bundle_command::prepare_missing_sources_for_manifest(&manifest)?;
             }
         }
     }

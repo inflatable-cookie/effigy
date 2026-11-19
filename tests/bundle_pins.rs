@@ -1691,7 +1691,7 @@ fn two_fresh_worktrees_acquire_one_shared_pinned_destination_at_once() {
 /// A fresh checkout runs an ordinary task: the missing bundle and catalog pins
 /// are acquired before the strict parse (contract 020 §Behaviour rule 1).
 #[test]
-fn a_plain_task_run_acquires_only_the_missing_pins() {
+fn a_plain_task_run_acquires_missing_pins() {
     let fixture = Fixture::new();
     let source = fixture.owner.path().join("source");
     let first = init_git_bundle(&source, &fixture.home, "one");
@@ -1719,17 +1719,31 @@ fn a_plain_task_run_acquires_only_the_missing_pins() {
         "path"
     );
 
-    // A newer upstream commit never moves a pin on a task run, and no remote
-    // check is recorded: refresh stays on the Prepare paths.
-    commit_git_bundle(&source, &fixture.home, "two");
+
+}
+
+/// A new ordinary task selects a changed path bundle before resolving its command.
+#[test]
+fn a_later_plain_task_refreshes_a_changed_path_bundle() {
+    let fixture = Fixture::new();
+    fixture.write_path_bundle();
+    fs::write(
+        fixture.repo.join("bundle/effigy.toml"),
+        "[tasks.hello]\nrun = \"echo original-ordinary-task\"\n",
+    )
+    .unwrap();
     let (ok, output) = fixture.run(&["hello"], &[], Duration::from_secs(30));
     assert!(ok, "{output}");
-    assert!(
-        output.contains("hello one") && !output.contains("hello two"),
-        "{output}"
-    );
-    assert_eq!(pinned_revision(&fixture), first);
-    assert!(!fixture.repo.join(".effigy/sources.update.json").exists());
+    assert!(output.contains("original-ordinary-task"), "{output}");
+
+    fs::write(
+        fixture.repo.join("bundle/effigy.toml"),
+        "[tasks.hello]\nrun = \"echo updated-ordinary-task\"\n",
+    )
+    .unwrap();
+    let (ok, output) = fixture.run(&["hello"], &[], Duration::from_secs(30));
+    assert!(ok, "{output}");
+    assert!(output.contains("updated-ordinary-task"), "{output}");
 }
 
 /// Read paths acquire only what a fresh checkout is missing (contract 020
