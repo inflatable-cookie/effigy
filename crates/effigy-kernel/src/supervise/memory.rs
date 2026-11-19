@@ -1196,6 +1196,10 @@ fn park_unproved(
     let task = coordinates
         .map(|diag| diag.task.task().to_owned())
         .unwrap_or_default();
+    // Nothing in the snapshot changes while this sentinel parks, so it is
+    // published once. A failed publication stays unpublished and is retried on
+    // the next tick, which bounds the retry rate to the park loop (effigy#1054).
+    let mut published = false;
     loop {
         let pin_closed = pin_is_closed(watch);
         let inventory =
@@ -1203,19 +1207,20 @@ fn park_unproved(
                 live_pids: Vec::new(),
                 unproven: true,
             });
-        if let Some(root) = root.as_ref() {
-            let holder = super::park::ParkedHolder {
-                schema: super::park::PARKED_SCHEMA.into(),
-                run: config.run.to_string(),
-                task: task.clone(),
-                sentinel_pid: std::process::id(),
-                owner_pid: config.owner.pid,
-                checkout: checkout.clone(),
-                pgids: pgids.to_vec(),
-                live_pids: inventory.live_pids.clone(),
-                state: "parked".into(),
-            };
-            let _ = super::park::write_snapshot(root, &holder);
+        if !published {
+            if let Some(root) = root.as_ref() {
+                let holder = super::park::ParkedHolder {
+                    schema: super::park::PARKED_SCHEMA.into(),
+                    run: config.run.to_string(),
+                    task: task.clone(),
+                    sentinel_pid: std::process::id(),
+                    owner_pid: config.owner.pid,
+                    checkout: checkout.clone(),
+                    pgids: pgids.to_vec(),
+                    state: "parked".into(),
+                };
+                published = super::park::write_snapshot(root, &holder).is_ok();
+            }
         }
         let release = root
             .as_ref()

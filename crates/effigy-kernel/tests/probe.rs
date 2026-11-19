@@ -272,47 +272,6 @@ fn probe_guard_dead_before_ack_never_releases_barrier() {
     assert_eq!(snapshot(home.path()), before);
 }
 #[test]
-fn probe_both_dead_maintenance_requires_nonce_and_two_absent_owners() {
-    for mode in ["hang", "descendant", "escape"] {
-        let home = tempfile::tempdir().unwrap();
-        let listener = listener();
-        let before = snapshot(home.path());
-        let mut observer = Observer::start(home.path(), mode, listener.local_addr().unwrap());
-        observer.go();
-        let mut workload = Workloads(vec![accept(&listener)]);
-        if mode != "hang" {
-            workload.0.push(accept(&listener));
-        }
-        signal(&observer.guard, libc::SIGKILL);
-        signal(&observer.identity, libc::SIGKILL);
-        observer.child.wait().unwrap();
-        std::thread::sleep(Duration::from_millis(50));
-        assert!(alive(workload.0.last().unwrap()));
-        let mut foreign = Command::new(fixture())
-            .args(["nonce-workload"])
-            .env_clear()
-            .spawn()
-            .unwrap();
-        let foreign_id = ident::process_identity(foreign.id())
-            .verified()
-            .unwrap()
-            .clone();
-        let foreign_guard = Workloads(vec![foreign_id.clone()]);
-        let result = Command::new(fixture())
-            .arg("probe-maintain")
-            .output()
-            .unwrap();
-        assert!(result.status.success());
-        for identity in &workload.0 {
-            wait_gone(identity);
-        }
-        assert!(alive(&foreign_id), "maintenance touched foreign process");
-        drop(foreign_guard);
-        foreign.wait().unwrap();
-        assert_eq!(snapshot(home.path()), before);
-    }
-}
-#[test]
 fn probe_escaped_descendant_without_nonce_is_outside_every_owners_bound() {
     for action in ["guard-kill", "observer-kill", "both-kill"] {
         let home = tempfile::tempdir().unwrap();
@@ -333,14 +292,6 @@ fn probe_escaped_descendant_without_nonce_is_outside_every_owners_bound() {
             alive(&workload.0[1]),
             "unidentifiable escaped process was signalled"
         );
-        if action == "both-kill" {
-            assert!(Command::new(fixture())
-                .arg("probe-maintain")
-                .status()
-                .unwrap()
-                .success());
-            assert!(alive(&workload.0[1]));
-        }
     }
 }
 #[test]

@@ -180,7 +180,7 @@ Engine migrations belong to the engine lanes and start only after cut 7.
 | 3 | `run`: begin, journal, requests, settle; attachments and claims | journal-boundary kills; concurrent settle; closed-with-residue predecessor before `begin`; permit refusals; attach stalled between permit and apply |
 | 4 | `custody` and `signal`: barrier spawn, `spawn_all`, stop with the unreaped leader, nonce-evidenced recovery stop, router, sentinel, detached supervisor | signal × run-kind kill matrix; partial spawn; reused or foreign process group never signalled; secrets out of argv |
 | 5 | `remote`: adapter contract, wrapper, conformance suite; Docker and nerdctl adapters | conformance on the strict fake, then real-engine qualification |
-| 6 | `probe`: `ObserveContext` capabilities and the probe guard | `Unknown` injection; HTTP status policy; guarded subprocess and HTTP probes on a permission-denied root with an empty diff; guard SIGKILL, observer SIGKILL and SIGSTOP, both-dead and descendant cases on macOS and Linux |
+| 6 | `probe`: `ObserveContext` capabilities and the probe guard | `Unknown` injection; HTTP status policy; guarded subprocess and HTTP probes on a permission-denied root with an empty diff; guard SIGKILL, observer SIGKILL and SIGSTOP, and descendant cases on macOS and Linux |
 | 7 | `fault` harness and the full oracle suite green | §12.1 oracles over every scenario |
 | 8 | `qa:kernel-ratchet` active with its baseline | the gate fails on a new raw primitive |
 
@@ -569,11 +569,10 @@ The guard retains its original Linux group pidfd. It never substitutes a numeric
 group after a descriptor failure. Without that capability it checks a live
 leader immediately before a numeric group signal; after leader loss it signals
 only members whose probe nonce and start identity it can verify. The same nonce
-path covers descendants in new sessions. `probe::maintain` requires a host
-Mutate context and two positively absent owner generations. It never signals a
-group or a process with an unreadable, foreign or missing nonce. These are the
-evidence limits in contract 052 §5.11, including processes outside custody after
-both owners die.
+path covers descendants in new sessions. An environment nonce alone never grants
+host signal authority, so a probe that outlives both owners is outside custody
+and is operator cleanup (effigy#1054). These are the evidence limits in contract
+052 §5.11.
 
 `connect` accepts adapter-resolved loopback TCP, plain HTTP GET/HEAD, Unix
 control sockets and gateway DNS targets. It does no system name resolution,
@@ -585,8 +584,8 @@ resource generations remain the adapter's responsibility; process exit is
 never converted into readiness.
 
 `test:kernel:probe` runs strict signal-policy fakes, transport/status/budget and
-fault-boundary proofs, plus native owner/guard death, SIGSTOP, descendants,
-both-dead maintenance and read-only filesystem oracles. Its telemetry travels
+fault-boundary proofs, plus native owner/guard death, SIGSTOP, descendants and
+read-only filesystem oracles. Its telemetry travels
 over private sockets so probes and helpers produce no fixture files. The proofs
 wait on the workload's own announcement and on the guard's own deadline; the
 fixture's startup and the harness's handshake are outside the observed budget,

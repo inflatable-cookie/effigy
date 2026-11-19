@@ -95,19 +95,6 @@ pub fn run(entry: &str, args: &[OsString], cancel: CancelToken) {
         std::thread::sleep(Duration::from_secs(30));
         return;
     }
-    if entry == "probe-maintain" {
-        let result = maintain(
-            &op(cancel, EffectClass::Mutate, Duration::from_secs(5))
-                .effects()
-                .unwrap(),
-        )
-        .unwrap();
-        println!(
-            "{}",
-            json!({"signals": result.signals.len(), "uncertain": result.uncertain.len()})
-        );
-        return;
-    }
     let home = Path::new(&args[1]);
     let runtime = ProbeRuntime::install(Executable::current().unwrap()).unwrap();
     // Startup stays off the proof's clock: spawning this fixture, installing
