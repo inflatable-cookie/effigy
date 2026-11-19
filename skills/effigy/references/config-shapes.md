@@ -56,16 +56,13 @@ labels = ["Related", "See also"]
 headings = ["Related"]
 ```
 
-Northstar consumers should keep their profile in the committed manifest emitted
-by the Northstar starter; this generic example does not assume Northstar names.
-Effigy reserves none of these tokens.
+This generic example assumes no project's names; Effigy reserves none of these
+tokens.
 
-The profile is copied configuration, not inherited runtime behavior.
-`effigy init northstar` materializes it into the consumer `effigy.toml`, and
-from then on the committed bytes are the only runtime authority: no starter, no
-installed skill directory, and no template cache is read while answering a
-query. Adopting a newer template is an explicit merge
-(`effigy init northstar --dry-run`), never an automatic reinterpretation.
+The profile is committed configuration, not inherited runtime behavior: the
+bytes in the consumer `effigy.toml` are the only runtime authority. No
+starter, installed skill directory or template cache is read while answering
+a query.
 
 The profile grammar and ranking rules live in
 `docs/knowledge/contracts/041-documentation-graph-profile-contract.md`; the architecture

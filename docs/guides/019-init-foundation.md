@@ -35,7 +35,7 @@ effigy init --check --json
 effigy init --checklist --json
 effigy init --apply-actions manifest.effigy_toml,secrets_surface.inspect --json
 effigy init minimal --dry-run
-effigy init northstar --force
+effigy init minimal --force
 ```
 
 ### Safety

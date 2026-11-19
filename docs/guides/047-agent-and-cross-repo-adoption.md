@@ -300,23 +300,18 @@ these are true:
 If these are not yet true, the repo is still in migration and should document
 Effigy as partial coverage rather than the default loop.
 
-## 4a) Northstar + Effigy Boundary
+## 4a) Northstar docs + Effigy Boundary
 
-When a repo wants the full Northstar + Effigy operating model, keep the
+When a repo uses the Northstar docs structure alongside Effigy, keep the
 boundary explicit:
 
-- use the reusable repo contract in
+- the `northstar-docs` skill owns the documentation shape; see
   [`056-northstar-effigy-consumer-repo-contract.md`](056-northstar-effigy-consumer-repo-contract.md)
-  for the current knowledge and plan shape, with `effigy qa` as validation
-- use `effigy init northstar` for a new lean repository, or the lean Northstar adoption guide for migration
 - let Effigy own the generic validation and execution surfaces, for example:
   `docs check links`, `docs check paths`, JSON mode, and release orchestration
-- treat the Northstar documentation graph profile as one committed
-  `[docs_policy.graph]` block in the consumer manifest. The skill or starter may
-  originate those bytes, but installation is a materialization step and later
-  template updates are an explicit merge. Effigy resolves documentation
-  semantics from the consumer manifest only, never from an installed skill
-  directory
+- a documentation graph profile is one committed `[docs_policy.graph]` block
+  in the consumer manifest. Effigy resolves documentation semantics from the
+  consumer manifest only, never from an installed skill directory
 
 Do not collapse bootstrap logic into Effigy unless repeated adoption pain shows
 that the skill/template layer cannot cover the gap cleanly.
