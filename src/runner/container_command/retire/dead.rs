@@ -64,6 +64,7 @@ pub(super) fn run(
     }
     let mut outcomes = Vec::new();
     let mut failed = false;
+    let mut human = effigy_ui::HumanError::new("retirement of dead checkouts did not complete");
     for group in dead {
         let mut outcome = retire_owned(&caller, &group.resources, keep_data)?;
         outcome
@@ -74,6 +75,7 @@ pub(super) fn run(
             Ok(gateway) => outcome.gateway = gateway,
             Err(error) => {
                 failed = true;
+                human = human.evidence(error.to_string());
                 outcomes.push(serde_json::json!({
                     "checkout": group.checkout,
                     "ok": false,
@@ -84,6 +86,9 @@ pub(super) fn run(
             }
         }
         let ok = outcome.ok();
+        for failure in &outcome.failed {
+            human = human.evidence(&failure.error);
+        }
         failed |= !ok;
         outcomes.push(serde_json::json!({
             "checkout": group.checkout,
@@ -97,6 +102,9 @@ pub(super) fn run(
         "scopes": outcomes,
         "unknown": unknown,
     });
+    if failed && output_json {
+        return Err(RunnerError::structured_json(value, false, human, None));
+    }
     let rendered = if output_json {
         value.to_string()
     } else {
@@ -105,11 +113,7 @@ pub(super) fn run(
         })?
     };
     if failed {
-        if output_json {
-            Err(RunnerError::CommandJsonFailure { rendered })
-        } else {
-            Err(RunnerError::task_invocation(rendered))
-        }
+        Err(RunnerError::task_invocation(rendered))
     } else {
         Ok(rendered)
     }

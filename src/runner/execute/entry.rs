@@ -16,6 +16,7 @@ fn run_manifest_task_with_preflight_input(
     let (task, run_key) = task_without_run_key(task)?;
     if run_key.is_some() {
         input.args = task.args.clone();
+        input.task_options = task.options.clone();
     }
     let preflight = build_execution_preflight_from_input(input)?;
     let _local_dev_secrets = crate::runner::secret_session::activate_local_dev_secret_access(
@@ -43,6 +44,7 @@ fn run_manifest_task_with_preflight_input_and_env(
     let (task, run_key) = task_without_run_key(task)?;
     if run_key.is_some() {
         input.args = task.args.clone();
+        input.task_options = task.options.clone();
     }
     let preflight = build_execution_preflight_from_input(input)?;
     let _local_dev_secrets = crate::runner::secret_session::activate_local_dev_secret_access(
@@ -125,27 +127,13 @@ fn refuse_key_without_run(run_key: Option<&RunKey>, why: &str) -> Result<(), Run
 fn task_without_run_key(
     task: &TaskInvocation,
 ) -> Result<(TaskInvocation, Option<RunKey>), RunnerError> {
-    let marker = effigy_cli::INTERNAL_RUN_ID_ARG;
-    let Some(index) = task.args.iter().position(|arg| arg == marker) else {
-        return Ok((task.clone(), None));
-    };
-    let key = match task.args.get(index + 1) {
-        Some(key) if index + 2 == task.args.len() => RunKey::parse(key)?,
-        _ => {
-            return Err(RunnerError::task_invocation(
-                "internal `--run-id` argument is malformed",
-            ))
-        }
-    };
-    let mut args = task.args.clone();
-    args.truncate(index);
-    Ok((
-        TaskInvocation {
-            name: task.name.clone(),
-            args,
-        },
-        Some(key),
-    ))
+    if let Some(options) = &task.options {
+        let key = options.run_id.as_deref().map(RunKey::parse).transpose()?;
+        let mut task = task.clone();
+        task.options.as_mut().expect("options present").run_id = None;
+        return Ok((task, key));
+    }
+    Ok((task.clone(), None))
 }
 
 pub(in crate::runner) fn run_manifest_task_request(
@@ -165,6 +153,7 @@ fn run_manifest_task_request_inner(request: TaskExecutionRequest) -> Result<Stri
     let plan = ExecutionDispatchPlan::from_request(request)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let invocation = TaskInvocation {
+        options: plan.request.task_options.clone(),
         name: plan.selector.clone(),
         args: plan.args.clone(),
     };

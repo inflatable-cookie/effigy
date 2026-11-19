@@ -35,6 +35,7 @@ fn parse_skill_run_and_tasks_map_paths_selectors_and_stdio() {
                     path: Some(PathBuf::from("/opt/skills/example/effigy.toml")),
                     stdio: SkillStdioMode::Default,
                     task: TaskInvocation {
+                        options: None,
                         name: "example/check".to_owned(),
                         args: vec![
                             "--".to_owned(),
@@ -54,6 +55,7 @@ fn parse_skill_run_and_tasks_map_paths_selectors_and_stdio() {
                     path: None,
                     stdio: SkillStdioMode::Default,
                     task: TaskInvocation {
+                        options: None,
                         name: "northstar/check-links".to_owned(),
                         args: Vec::new(),
                     },
@@ -75,6 +77,7 @@ fn parse_skill_run_and_tasks_map_paths_selectors_and_stdio() {
                     path: None,
                     stdio: SkillStdioMode::Passthrough,
                     task: TaskInvocation {
+                        options: None,
                         name: "northstar/check-links".to_owned(),
                         args: Vec::new(),
                     },

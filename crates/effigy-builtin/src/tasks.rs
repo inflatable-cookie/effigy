@@ -27,7 +27,13 @@ pub(super) fn run_builtin_tasks(
     run_passthrough_builtin_command(
         &task.name,
         runtime_args,
-        |output_json| render_builtin_help_topic(HelpTopic::Tasks, "tasks", output_json),
+        |output_json| {
+            render_builtin_help_topic(
+                HelpTopic::Tasks,
+                "tasks",
+                output_json || task.options.as_ref().is_some_and(|o| o.json_mode),
+            )
+        },
         |args| request::parse_tasks_request(task, args),
         |request: request::TasksRequest| {
             if !request.output_json && !request.pretty_json {

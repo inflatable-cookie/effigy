@@ -26,10 +26,9 @@ fn former_namespace_words_parse_as_task_selectors_and_keep_following_args() {
         assert_eq!(
             parse(&argv),
             Command::Task(TaskInvocation {
+                options: Some(effigy_cli::GlobalCliOptions::default()),
                 name: word.to_owned(),
-                args: std::iter::once(effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned())
-                    .chain(args.iter().map(|arg| (*arg).to_owned()))
-                    .collect(),
+                args: args.iter().map(|arg| (*arg).to_owned()).collect(),
             }),
             "`effigy {word}` must be a selector, not a reserved namespace"
         );
@@ -57,11 +56,9 @@ fn unowned_former_grouped_spellings_do_not_parse_as_the_child_builtin() {
     assert_eq!(
         parse(&["admin", "config"]),
         Command::Task(TaskInvocation {
+            options: Some(effigy_cli::GlobalCliOptions::default()),
             name: "admin".to_owned(),
-            args: vec![
-                effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned(),
-                "config".to_owned()
-            ],
+            args: vec!["config".to_owned()],
         })
     );
 }
@@ -71,6 +68,7 @@ fn slash_selectors_never_enter_help_group_or_builtin_parsing() {
     assert_eq!(
         parse(&["admin/test"]),
         Command::Task(TaskInvocation {
+            options: None,
             // A prefixed built-in keeps its own flag positions: no boundary.
             name: "admin/test".to_owned(),
             args: Vec::new(),
@@ -79,11 +77,9 @@ fn slash_selectors_never_enter_help_group_or_builtin_parsing() {
     assert_eq!(
         parse(&["repo/graph", "status"]),
         Command::Task(TaskInvocation {
+            options: Some(effigy_cli::GlobalCliOptions::default()),
             name: "repo/graph".to_owned(),
-            args: vec![
-                effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned(),
-                "status".to_owned()
-            ],
+            args: vec!["status".to_owned()],
         })
     );
 }

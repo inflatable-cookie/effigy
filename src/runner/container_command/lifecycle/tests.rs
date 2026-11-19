@@ -127,10 +127,10 @@ fn detached_json_failure_keeps_the_stage_identity_and_sanitized_cause() {
         );
 
     let failure = detached_activation_failure(&operation, true, error);
-    let RunnerError::CommandJsonFailure { rendered } = failure else {
+    let RunnerError::StructuredCommandFailure(failure) = failure else {
         panic!("detached JSON mode must render a machine failure");
     };
-    let document: serde_json::Value = serde_json::from_str(&rendered).expect("json failure");
+    let document: serde_json::Value = failure.json_value();
     assert_eq!(document["phase"], "detached_activation");
     assert_eq!(document["activation_stage"], "environment_handover");
     assert_eq!(document["state"], "unavailable");
@@ -157,10 +157,10 @@ fn detached_json_failure_keeps_the_stage_identity_and_sanitized_cause() {
             reason: "revision changed".to_owned(),
         },
     );
-    let RunnerError::CommandJsonFailure { rendered } = failure else {
+    let RunnerError::StructuredCommandFailure(failure) = failure else {
         panic!("detached JSON mode must render a machine failure");
     };
-    let document: serde_json::Value = serde_json::from_str(&rendered).expect("json failure");
+    let document: serde_json::Value = failure.json_value();
     assert_eq!(document["state"], "unavailable");
     assert_eq!(document["recovery"], "effigy container up --detach");
     assert_eq!(document["failure_kind"], "endpoint_store_refusal");
@@ -178,10 +178,10 @@ fn detached_json_failure_keeps_the_stage_identity_and_sanitized_cause() {
             reason: "store unreadable".to_owned(),
         },
     );
-    let RunnerError::CommandJsonFailure { rendered } = failure else {
+    let RunnerError::StructuredCommandFailure(failure) = failure else {
         panic!("detached JSON mode must render a machine failure");
     };
-    let document: serde_json::Value = serde_json::from_str(&rendered).expect("json failure");
+    let document: serde_json::Value = failure.json_value();
     assert_eq!(document["failure_kind"], "endpoint_observation_unknown");
     assert_eq!(
         document["cause"],
@@ -195,10 +195,10 @@ fn detached_json_failure_keeps_the_stage_identity_and_sanitized_cause() {
         true,
         RunnerError::task_invocation("gateway endpoint store: revision changed"),
     );
-    let RunnerError::CommandJsonFailure { rendered } = failure else {
+    let RunnerError::StructuredCommandFailure(failure) = failure else {
         panic!("detached JSON mode must render a machine failure");
     };
-    let document: serde_json::Value = serde_json::from_str(&rendered).expect("json failure");
+    let document: serde_json::Value = failure.json_value();
     assert_eq!(document["failure_kind"], "invocation_refusal");
 }
 
@@ -443,12 +443,12 @@ fn a_detached_readiness_refusal_json_names_the_waits_it_ended_on() {
             }],
         }),
     );
-    let RunnerError::CommandJsonFailure { rendered } =
+    let RunnerError::StructuredCommandFailure(failure) =
         detached_activation_failure(&operation, true, error)
     else {
         panic!("a detached readiness refusal renders its JSON envelope");
     };
-    let document: serde_json::Value = serde_json::from_str(&rendered).expect("json");
+    let document: serde_json::Value = failure.json_value();
     assert_eq!(document["failure_kind"], "container_readiness");
     assert_eq!(document["readiness"], "unverified");
     assert_eq!(document["waiting_on"][0]["service"], "web");
@@ -562,10 +562,10 @@ fn detached_listener_exposure_json_names_exposed_and_withheld_routes() {
         true,
         listener_exposure_failure(&policy, &integrations),
     );
-    let RunnerError::CommandJsonFailure { rendered } = failure else {
+    let RunnerError::StructuredCommandFailure(failure) = failure else {
         panic!("detached JSON mode must render a machine failure");
     };
-    let document: serde_json::Value = serde_json::from_str(&rendered).expect("json failure");
+    let document: serde_json::Value = failure.json_value();
     assert_eq!(document["state"], "partial");
     assert_eq!(document["phase"], "listener_exposure");
     assert_eq!(document["failure_kind"], "managed_listener_exposure");

@@ -75,12 +75,6 @@ impl HelpGroup {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CommandDescriptor {
-    pub topic: HelpTopic,
-    pub command_name: Option<&'static str>,
-}
-
 /// One row of the general-help inventory.
 ///
 /// The inventory is the single typed owner of general help: each row names
@@ -97,113 +91,6 @@ pub struct GeneralHelpEntry {
     /// Name accepted by `effigy help <name>`, when the row has a typed panel.
     pub help_argument: Option<&'static str>,
 }
-
-pub const COMMAND_DESCRIPTORS: &[CommandDescriptor] = &[
-    CommandDescriptor {
-        topic: HelpTopic::General,
-        command_name: Some("help"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Bundle,
-        command_name: Some("bundle"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Deploy,
-        command_name: Some("deploy"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Deps,
-        command_name: Some("deps"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Secrets,
-        command_name: Some("secrets"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Defer,
-        command_name: Some("defer"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Exec,
-        command_name: Some("exec"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::State,
-        command_name: None,
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Workspace,
-        command_name: Some("workspace"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Gateway,
-        command_name: Some("gateway"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Service,
-        command_name: Some("service"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Rhai,
-        command_name: Some("rhai"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Skill,
-        command_name: Some("skill"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Docs,
-        command_name: Some("docs"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Contracts,
-        command_name: Some("contracts"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Container,
-        command_name: Some("container"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Bootstrap,
-        command_name: Some("bootstrap"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Uninstall,
-        command_name: Some("uninstall"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Release,
-        command_name: Some("release"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Doctor,
-        command_name: Some("doctor"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Runs,
-        command_name: Some("runs"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Tasks,
-        command_name: None,
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Test,
-        command_name: Some("test"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Init,
-        command_name: Some("init"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Changelog,
-        command_name: None,
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Fmt,
-        command_name: Some("fmt"),
-    },
-];
 
 /// General-help inventory, ordered by primary group.
 ///
@@ -448,64 +335,21 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
     },
 ];
 
-/// Names accepted by `effigy help <command>` and the typed panel each renders.
-///
-/// Every pair must render the same facts as `effigy <command> --help`; the
-/// parity test in this module parses both forms and compares them.
-pub const HELP_COMMAND_TOPICS: &[(&str, HelpTopic)] = &[
-    ("bootstrap", HelpTopic::Bootstrap),
-    ("bundle", HelpTopic::Bundle),
-    ("changelog", HelpTopic::Changelog),
-    ("container", HelpTopic::Container),
-    ("contracts", HelpTopic::Contracts),
-    ("defer", HelpTopic::Defer),
-    ("deploy", HelpTopic::Deploy),
-    ("deps", HelpTopic::Deps),
-    ("docs", HelpTopic::Docs),
-    ("doctor", HelpTopic::Doctor),
-    ("exec", HelpTopic::Exec),
-    ("fmt", HelpTopic::Fmt),
-    ("fmt-rust", HelpTopic::Fmt),
-    ("gateway", HelpTopic::Gateway),
-    ("help", HelpTopic::General),
-    ("init", HelpTopic::Init),
-    ("release", HelpTopic::Release),
-    ("rhai", HelpTopic::Rhai),
-    ("secrets", HelpTopic::Secrets),
-    ("service", HelpTopic::Service),
-    ("skill", HelpTopic::Skill),
-    ("state", HelpTopic::State),
-    ("runs", HelpTopic::Runs),
-    ("tasks", HelpTopic::Tasks),
-    ("test", HelpTopic::Test),
-    ("uninstall", HelpTopic::Uninstall),
-    ("version", HelpTopic::General),
-    ("workspace", HelpTopic::Workspace),
-];
-
-pub fn command_descriptors() -> &'static [CommandDescriptor] {
-    COMMAND_DESCRIPTORS
-}
-
-pub fn descriptor_for_topic(topic: HelpTopic) -> Option<&'static CommandDescriptor> {
-    COMMAND_DESCRIPTORS
-        .iter()
-        .find(|descriptor| descriptor.topic == topic)
-}
-
 pub fn help_topic_for_command(command: &str) -> Option<HelpTopic> {
-    COMMAND_DESCRIPTORS
-        .iter()
-        .find(|descriptor| descriptor.command_name == Some(command))
-        .map(|descriptor| descriptor.topic)
+    // These commands own their direct help in their feature parser; aliases
+    // are resolved there too. The help-argument table owns the names.
+    if matches!(
+        command,
+        "state" | "tasks" | "changelog" | "fmt-rust" | "version"
+    ) {
+        return None;
+    }
+    help_topic_for_help_argument(command)
 }
 
 /// Resolve `effigy help <command>` to its typed panel.
 pub fn help_topic_for_help_argument(name: &str) -> Option<HelpTopic> {
-    HELP_COMMAND_TOPICS
-        .iter()
-        .find(|(candidate, _)| *candidate == name)
-        .map(|(_, topic)| *topic)
+    crate::builtin_names::builtin_command_name(name).and_then(|entry| entry.help_topic)
 }
 
 /// Names accepted by `effigy help <command>` whose detailed help is owned by
@@ -527,9 +371,10 @@ pub fn help_builtin_route(name: &str) -> Option<&'static str> {
 /// Every name `effigy help <command>` accepts, typed panels and built-in-owned
 /// help alike.
 pub fn help_command_names() -> impl Iterator<Item = &'static str> {
-    HELP_COMMAND_TOPICS
+    crate::builtin_names::BUILTIN_COMMAND_NAMES
         .iter()
-        .map(|(name, _)| *name)
+        .filter(|entry| entry.help_topic.is_some())
+        .map(|entry| entry.name)
         .chain(HELP_COMMAND_BUILTIN_ROUTES.iter().copied())
 }
 

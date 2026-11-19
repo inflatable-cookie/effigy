@@ -2,8 +2,8 @@ use crate::tests::prelude::{
     parse_command, strip_global_json_flag, Command, DoctorArgs, HelpGroup, HelpTopic, PathBuf,
     TaskInvocation, TasksArgs,
 };
-use effigy_cli::command_surface::HELP_COMMAND_TOPICS;
-use effigy_cli::{RunsAction, RunsArgs, INTERNAL_RUN_ID_ARG};
+use effigy_cli::builtin_names::BUILTIN_COMMAND_NAMES;
+use effigy_cli::{GlobalCliOptions, RunsAction, RunsArgs};
 
 fn parse(args: &[&str]) -> Command {
     parse_command(args.iter().map(|arg| (*arg).to_owned())).expect("parse should succeed")
@@ -100,56 +100,59 @@ fn parse_command_rejects_unknown_global_flag_token() {
 }
 #[test]
 fn parse_command_applies_leading_task_runtime_flags_to_task_selectors() {
-    let cmd = parse_command(vec![
-        "--repo".to_owned(),
-        "/tmp/workspace".to_owned(),
-        "--verbose-root".to_owned(),
-        "--env-schema".to_owned(),
-        "config/env.schema.toml".to_owned(),
-        "snapshot".to_owned(),
-        "--plan".to_owned(),
-    ])
-    .expect("parse should succeed");
+    let cmd = parse_command(
+        vec![
+            "--repo",
+            "/tmp/workspace",
+            "--verbose-root",
+            "--env-schema",
+            "config/env.schema.toml",
+            "snapshot",
+            "--plan",
+        ]
+        .into_iter()
+        .map(str::to_owned),
+    )
+    .unwrap();
     assert_eq!(
         cmd,
         Command::Task(TaskInvocation {
-            name: "snapshot".to_owned(),
-            args: vec![
-                "--repo".to_owned(),
-                "/tmp/workspace".to_owned(),
-                "--verbose-root".to_owned(),
-                "--env-schema".to_owned(),
-                "config/env.schema.toml".to_owned(),
-                effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned(),
-                "--plan".to_owned(),
-            ],
+            options: Some(GlobalCliOptions {
+                repo_override: Some(PathBuf::from("/tmp/workspace")),
+                task_verbose_root: true,
+                task_env_schema: Some(PathBuf::from("config/env.schema.toml")),
+                ..Default::default()
+            }),
+            name: "snapshot".into(),
+            args: vec!["--plan".into()],
         })
     );
 }
 
 #[test]
-fn parse_command_injects_leading_repo_when_task_repo_is_after_passthrough_delimiter() {
-    let cmd = parse_command(vec![
-        "--repo".to_owned(),
-        "/tmp/global".to_owned(),
-        "snapshot".to_owned(),
-        "--".to_owned(),
-        "--repo".to_owned(),
-        "/tmp/task".to_owned(),
-    ])
-    .expect("parse should succeed");
+fn parse_command_keeps_task_repo_after_passthrough_delimiter() {
+    let cmd = parse_command(
+        vec![
+            "--repo",
+            "/tmp/global",
+            "snapshot",
+            "--",
+            "--repo",
+            "/tmp/task",
+        ]
+        .into_iter()
+        .map(str::to_owned),
+    )
+    .unwrap();
     assert_eq!(
         cmd,
         Command::Task(TaskInvocation {
-            name: "snapshot".to_owned(),
-            args: vec![
-                "--repo".to_owned(),
-                "/tmp/global".to_owned(),
-                effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned(),
-                "--".to_owned(),
-                "--repo".to_owned(),
-                "/tmp/task".to_owned(),
-            ],
+            options: Some(GlobalCliOptions {
+                repo_override: Some(PathBuf::from("/tmp/global")),
+                ..Default::default()
+            }),
+            name: "snapshot".into(),
+            args: vec!["--".into(), "--repo".into(), "/tmp/task".into()],
         })
     );
 }
@@ -173,13 +176,13 @@ fn parse_command_carries_the_run_id_key_only_to_a_selector() {
     assert_eq!(
         cmd,
         Command::Task(TaskInvocation {
-            name: "heavy-check".to_owned(),
-            args: vec![
-                "--json".to_owned(),
-                effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned(),
-                INTERNAL_RUN_ID_ARG.to_owned(),
-                "ci-1234".to_owned(),
-            ],
+            options: Some(GlobalCliOptions {
+                json_mode: true,
+                run_id: Some("ci-1234".into()),
+                ..Default::default()
+            }),
+            name: "heavy-check".into(),
+            args: Vec::new(),
         })
     );
     let error = parse_command(vec![
@@ -322,11 +325,9 @@ fn parse_catalogue_help_alias_falls_back_to_task_routing() {
         assert_eq!(
             cmd,
             Command::Task(TaskInvocation {
+                options: Some(GlobalCliOptions::default()),
                 name: word.to_owned(),
-                args: vec![
-                    effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned(),
-                    "--help".to_owned()
-                ],
+                args: vec!["--help".to_owned()],
             }),
             "`effigy {word} --help` must stay a task selector"
         );
@@ -369,15 +370,18 @@ fn parse_help_group_topics_resolve_to_discovery_panels() {
 
 #[test]
 fn parse_help_command_matches_direct_command_help() {
-    for (name, topic) in HELP_COMMAND_TOPICS {
+    for (name, topic) in BUILTIN_COMMAND_NAMES
+        .iter()
+        .filter_map(|entry| entry.help_topic.map(|topic| (entry.name, topic)))
+    {
         assert_eq!(
             parse(&["help", name]),
-            Command::Help(*topic),
+            Command::Help(topic),
             "`effigy help {name}` should render the typed panel"
         );
         assert_eq!(
             parse(&[name, "--help"]),
-            Command::Help(*topic),
+            Command::Help(topic),
             "`effigy {name} --help` should render the same typed panel"
         );
     }
@@ -404,6 +408,7 @@ fn parse_unknown_help_topic_fails_with_group_and_command_guidance() {
 fn parse_help_topic_for_builtin_owned_help_mirrors_the_direct_command() {
     for name in ["config", "scan"] {
         let expected = Command::Task(TaskInvocation {
+            options: Some(Default::default()),
             name: name.to_owned(),
             args: vec!["--help".to_owned()],
         });
@@ -428,8 +433,9 @@ fn parse_help_group_words_stay_available_to_task_selectors() {
         assert_eq!(
             parse(&[group.slug()]),
             Command::Task(TaskInvocation {
+                options: Some(GlobalCliOptions::default()),
                 name: group.slug().to_owned(),
-                args: vec![effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned()],
+                args: vec![],
             }),
             "`effigy {}` must keep task routing",
             group.slug()
@@ -439,11 +445,9 @@ fn parse_help_group_words_stay_available_to_task_selectors() {
     assert_eq!(
         parse(&["repo", "docs"]),
         Command::Task(TaskInvocation {
+            options: Some(GlobalCliOptions::default()),
             name: "repo".to_owned(),
-            args: vec![
-                effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned(),
-                "docs".to_owned(),
-            ],
+            args: vec!["docs".to_owned(),],
         })
     );
 }

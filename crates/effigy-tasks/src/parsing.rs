@@ -11,16 +11,8 @@ pub fn normalize_builtin_test_suite(raw: &str) -> Option<&'static str> {
     }
 }
 
-/// Effigy's own flags for a task invocation. With the CLI's boundary, only
-/// the flags before the selector are Effigy's and the task keeps the rest
-/// verbatim; without one (an invocation built inside Effigy) the flags are
-/// read from anywhere before `--`.
+/// Parse runtime flags on an internally constructed task invocation.
 pub fn parse_task_runtime_args(args: &[String]) -> Result<TaskRuntimeArgs, String> {
-    if let Some(split) = effigy_core::task_args::split_task_args(args) {
-        let mut parsed = parse_unbounded_runtime_args(&split.effigy)?;
-        parsed.passthrough.extend(split.task);
-        return Ok(parsed);
-    }
     parse_unbounded_runtime_args(args)
 }
 

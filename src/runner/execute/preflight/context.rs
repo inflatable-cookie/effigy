@@ -55,7 +55,8 @@ pub(in crate::runner) fn build_execution_preflight(
         task.args.clone(),
         cwd,
         ExecutionSurface::DirectCli,
-    );
+    )
+    .with_task_options(task.options.clone());
     // A selector resolved inside an external skill task stays in that task's
     // source catalog, exactly as the execution path re-resolves it. Without
     // the source, tree classification looks the selector up in the consumer's
@@ -72,11 +73,12 @@ pub(in crate::runner) fn build_execution_preflight_from_input(
     input: ExecutionPreflightInput,
 ) -> Result<ExecutionPreflight, RunnerError> {
     let invocation = TaskInvocation {
+        options: input.task_options.clone(),
         name: input.selector.clone(),
         args: input.args.clone(),
     };
     let (runtime_args_raw, runtime_args_exec, output_json, plan, help) =
-        prepare_execution_runtime_args(&input.args)?;
+        prepare_execution_runtime_args(&input.selector, &input.args, input.task_options.as_ref())?;
     let discovery = discovery::discover_execution_preflight(
         &input.selector,
         input.cwd,

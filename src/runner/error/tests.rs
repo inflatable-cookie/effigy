@@ -379,15 +379,25 @@ fn task_manifest_parse_error_with_stale_install_names_recovery() {
 
 #[test]
 fn command_json_failure_survives_builtin_port_round_trip() {
-    let rendered = r#"{"schema":"effigy.task.run.v1","ok":false,"stdout":"diagnostic"}"#;
-    let error = RunnerError::CommandJsonFailure {
-        rendered: rendered.to_owned(),
-    };
+    let payload =
+        serde_json::json!({"schema":"effigy.task.run.v1","ok":false,"stdout":"diagnostic"});
+    let rendered = serde_json::to_string_pretty(&payload).unwrap();
+    let error = RunnerError::task_json_failure(
+        payload,
+        "build",
+        9,
+        effigy_kernel::outcome::WorkloadOutcome::Failed { code: 9 },
+        "diagnostic",
+        "error: failed",
+    );
+    assert_eq!(error.process_exit_code(), 9);
+    assert!(error.human_error().render_text().contains("error: failed"));
+    assert_eq!(error.json_error_details(), Some(rendered.as_str()));
 
     let builtin = crate::runner::builtin_ports::runner_to_builtin(error);
     match &builtin {
-        effigy_builtin::BuiltinError::CommandJsonFailure { rendered: carried } => {
-            assert_eq!(carried, rendered);
+        effigy_builtin::BuiltinError::TaskJsonFailure(failure) => {
+            assert_eq!(failure.rendered(), rendered)
         }
         other => panic!("unexpected builtin error variant: {other:?}"),
     }
@@ -398,16 +408,23 @@ fn command_json_failure_survives_builtin_port_round_trip() {
 
     let round_tripped = RunnerError::from(builtin);
     match &round_tripped {
-        RunnerError::CommandJsonFailure { rendered: carried } => {
-            assert_eq!(carried, rendered);
-        }
+        RunnerError::TaskJsonFailure(failure) => assert_eq!(failure.rendered(), rendered),
         other => panic!("unexpected runner error variant: {other:?}"),
     }
     assert_eq!(
         round_tripped.to_string(),
         "command failed (json output available)"
     );
-    assert_eq!(round_tripped.json_error_details(), Some(rendered));
+    assert_eq!(round_tripped.json_error_details(), Some(rendered.as_str()));
+    assert_eq!(round_tripped.process_exit_code(), 9);
+    assert_eq!(
+        round_tripped.workload_outcome(),
+        effigy_kernel::outcome::WorkloadOutcome::Failed { code: 9 }
+    );
+    assert!(round_tripped
+        .human_error()
+        .render_text()
+        .contains("error: failed"));
 }
 
 #[test]
@@ -520,9 +537,7 @@ fn structured_details_name_what_failed_and_the_recovery() {
         "readiness": "unverified",
         "stop": "effigy container down",
     });
-    let error = RunnerError::CommandJsonFailure {
-        rendered: details.to_string(),
-    };
+    let error = RunnerError::legacy_command_failure(details.to_string());
     let human = error.human_error();
     assert_eq!(
         human.what_failed(),
@@ -548,9 +563,7 @@ fn task_run_details_name_the_task_and_the_failing_output() {
         "stderr": "error: widget is undefined\n",
         "stdout": "building widget\n",
     });
-    let error = RunnerError::CommandJsonFailure {
-        rendered: details.to_string(),
-    };
+    let error = RunnerError::legacy_command_failure(details.to_string());
     let human = error.human_error();
     assert_eq!(human.what_failed(), "task `fail` failed");
     assert_eq!(
@@ -687,200 +700,10 @@ fn a_long_launch_refusal_keeps_its_cause_in_the_human_output() {
 }
 
 #[test]
-fn retained_step_capture_is_complete_private_and_named_in_text_and_json() {
-    use std::os::unix::fs::PermissionsExt;
-    let root = tempfile::tempdir().expect("scratch");
-    let run = effigy_kernel::id::RunId::new(0, [7; 10]).expect("run id");
-    crate::runner::scratch::with_test_scope(root.path(), || {
-        let stdout = format!("{}\nFAIL example::broken\nthread 'broken' panicked at lib.rs:1:1:\nassertion failed: useful cause\n{}", "progress\n".repeat(300), "PASS other\n".repeat(300));
-        let retained =
-            crate::runner::scratch::retain_step_output(&run, &stdout, "token=private", false);
-        let path = std::path::Path::new(
-            retained
-                .strip_prefix("full failed-step output: ")
-                .expect("retained path"),
-        );
-        assert!(path.starts_with(root.path()));
-        let capture = std::fs::read_to_string(path).expect("full output exists");
-        assert!(capture.contains(&stdout));
-        assert!(!capture.contains("private"));
-        assert_eq!(
-            std::fs::metadata(path)
-                .expect("metadata")
-                .permissions()
-                .mode()
-                & 0o777,
-            0o600
-        );
-        let stderr = format!("{}\n{retained}", "progress\n".repeat(30));
-        for error in [
-            RunnerError::TaskCommandFailure { command: "test step".into(), code: Some(100), stdout: stdout.clone(), stderr: stderr.clone() },
-            RunnerError::CommandJsonFailure { rendered: serde_json::json!({"task":"test", "stdout":stdout, "stderr":stderr, "exit_code":100}).to_string() },
-        ] {
-            let human = error.human_error();
-            let rendered = human.render_text();
-            assert!(rendered.contains(&retained), "{rendered}");
-            assert!(rendered.contains("assertion failed: useful cause"), "{rendered}");
-            assert!(human.to_json()["evidence"].as_array().expect("evidence").len() <= effigy_ui::human::MAX_EVIDENCE_LINES);
-        }
-    });
-}
-
-/// A relayed step's record is written where a run-scratch teardown cannot
-/// remove it, keeps no credential, and still names the panic in the summary
-/// the operator reads (effigy#937, QA b0850d50).
-#[test]
-fn a_relayed_step_record_outlives_the_run_scratch_and_names_the_panic() {
-    let scratch = tempfile::tempdir().expect("scratch root");
-    let run_scratch = tempfile::tempdir().expect("run scratch");
-    let run = effigy_kernel::id::RunId::new(0, [9; 10]).expect("run id");
-    let stdout = "PASS fine\nFAIL effigy::cli_output_tests cohort\n".to_owned();
-    let stderr = format!(
-        "{}
-thread 'cohort' panicked at crates/effigy/src/lib.rs:12:5:
-assertion `left == right` failed: shared run stayed up
-token=supersecret\n",
-        "progress\n".repeat(400)
-    );
-
-    let retained =
-        crate::runner::scratch::with_test_scratch(Some(scratch.path().to_path_buf()), true, || {
-            crate::runner::scratch::with_test_scope(run_scratch.path(), || {
-                crate::runner::scratch::retain_step_output(&run, &stdout, &stderr, true)
-            })
-        });
-    let path = std::path::Path::new(
-        retained
-            .lines()
-            .next()
-            .and_then(|line| line.strip_prefix("full failed-step output: "))
-            .expect("retained path"),
-    );
-    assert!(
-        path.starts_with(
-            scratch
-                .path()
-                .join("effigy/failed-steps")
-                .join(run.to_string())
-        ),
-        "the record lives on the operator's root, not in the run's temp: {}",
-        path.display()
-    );
-    // The harness removes the run's own temporary directory at teardown.
-    std::fs::remove_dir_all(run_scratch.path()).expect("run scratch removed");
-    let record = std::fs::read_to_string(path).expect("the record survived the teardown");
-    assert!(
-        record.contains("assertion `left == right` failed"),
-        "{record}"
-    );
-    assert!(!record.contains("supersecret"), "{record}");
-
-    // The failure's own summary carries the panic line and the record's path.
-    let human = RunnerError::TaskCommandFailure {
-        command: "test -- --no-fail-fast".into(),
-        code: Some(100),
-        stdout,
-        stderr: format!("error: test run failed\n{retained}"),
-    }
-    .human_error();
-    let rendered = human.render_text();
-    assert!(
-        rendered.contains("thread 'cohort' panicked at crates/effigy/src/lib.rs:12:5:"),
-        "{rendered}"
-    );
-    assert!(
-        rendered.contains(path.to_string_lossy().as_ref()),
-        "{rendered}"
-    );
-    assert!(!rendered.contains("supersecret"), "{rendered}");
-    assert!(human.evidence_lines().len() <= effigy_ui::human::MAX_EVIDENCE_LINES);
-}
-
-/// The record directory is a retained tree like any other: a later sweep
-/// retires it a day after the failure and never while it is fresh.
-#[test]
-fn a_failed_step_record_is_past_its_life_a_day_after_the_failure() {
-    let scratch = tempfile::tempdir().expect("scratch root");
-    let root = scratch.path().to_path_buf();
-    let run = effigy_kernel::id::RunId::new(0, [11; 10]).expect("run id");
-    let retained = crate::runner::scratch::with_test_scratch(Some(root.clone()), true, || {
-        crate::runner::scratch::retain_step_output(&run, "out", "err", false)
-    });
-    let path = std::path::Path::new(
-        retained
-            .lines()
-            .next()
-            .and_then(|line| line.strip_prefix("full failed-step output: "))
-            .expect("retained path"),
-    )
-    .to_path_buf();
-    let fresh = crate::runner::scratch::sweep_at(&root, now_ms(), std::time::Duration::MAX);
-    assert!(path.exists(), "a fresh record is never swept: {fresh:?}");
-    assert_eq!(fresh.removed, 0, "{fresh:?}");
-
-    let later = now_ms() + 25 * 60 * 60 * 1000;
-    let report = crate::runner::scratch::sweep_at(&root, later, std::time::Duration::MAX);
-    assert_eq!(report.removed, 1, "{report:?}");
-    assert!(!path.exists(), "the sweep retired the record's directory");
-    assert!(
-        path.parent()
-            .expect("record dir")
-            .parent()
-            .expect("failed-steps")
-            .parent()
-            .expect("namespace")
-            .exists(),
-        "the sweep removes the record's run directory, not the namespace"
-    );
-}
-
-/// A configured root the operator already named `effigy` shows the namespace
-/// segment twice. That layout is the intended one (effigy#946): the `effigy/`
-/// child is the namespace the sweep descends into, so a record left directly
-/// under such a root would sit beside it and never be retired.
-#[test]
-fn a_record_under_a_root_named_effigy_stays_in_the_swept_namespace() {
-    let owner = tempfile::tempdir().expect("owner");
-    let root = owner.path().join("scratch").join("effigy");
-    std::fs::create_dir_all(&root).expect("configured root");
-    let run = effigy_kernel::id::RunId::new(0, [12; 10]).expect("run id");
-    let retained = crate::runner::scratch::with_test_scratch(Some(root.clone()), true, || {
-        crate::runner::scratch::retain_step_output(&run, "out", "err", false)
-    });
-    let path = std::path::Path::new(
-        retained
-            .lines()
-            .next()
-            .and_then(|line| line.strip_prefix("full failed-step output: "))
-            .expect("retained path"),
-    )
-    .to_path_buf();
-    let expected = root.join("effigy/failed-steps").join(run.to_string());
-    assert!(
-        path.starts_with(&expected),
-        "the record stays under the namespace the sweep reaches: {}",
-        path.display()
-    );
-    let later = now_ms() + 25 * 60 * 60 * 1000;
-    let report = crate::runner::scratch::sweep_at(&root, later, std::time::Duration::MAX);
-    assert_eq!(report.removed, 1, "{report:?}");
-    assert!(!path.exists(), "a later sweep retires the record");
-}
-
-/// Now, in milliseconds since the Unix epoch, as the sweep takes it.
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as i64)
-        .unwrap_or(0)
-}
-
-#[test]
 fn text_command_payload_carries_its_next_action_to_the_json_form() {
-    let error = RunnerError::CommandJsonFailure {
-        rendered: "qa group `ci` needs a planner\nscope: 3 files\nnext: run `effigy qa:plan`\n"
-            .to_owned(),
-    };
+    let error = RunnerError::legacy_command_failure(
+        "qa group `ci` needs a planner\nscope: 3 files\nnext: run `effigy qa:plan`\n".to_owned(),
+    );
     let human = error.human_error();
     assert_eq!(human.what_failed(), "qa group `ci` needs a planner");
     assert_eq!(human.next_action_text(), Some("run `effigy qa:plan`"));
@@ -907,16 +730,17 @@ fn a_nested_envelope_failure_carries_its_next_action_to_the_json_form() {
             "details": { "exit_code": 3 },
             "human": {
                 "what_failed": "step `lint` failed",
-                "evidence": ["exit code 3"],
+                "evidence": ["exit code 3", "token=secret"],
                 "next_action": "run `effigy lint:feedback`",
             },
         },
     })
     .to_string();
-    let error = RunnerError::CommandJsonFailure { rendered: payload };
+    let error = RunnerError::legacy_command_failure(payload);
     let human = error.human_error();
     assert_eq!(human.what_failed(), "step `lint` failed");
-    assert_eq!(human.evidence_lines(), ["exit code 3"]);
+    assert_eq!(human.evidence_lines()[0], "exit code 3");
+    assert!(!human.render_text().contains("secret"));
     assert_eq!(
         human.to_json()["next_action"],
         "run `effigy lint:feedback`",
@@ -929,10 +753,9 @@ fn a_nested_envelope_failure_carries_its_next_action_to_the_json_form() {
 
 #[test]
 fn command_payload_without_an_action_keeps_a_valid_null() {
-    let error = RunnerError::CommandJsonFailure {
-        rendered: serde_json::json!({ "message": "the lock is held", "state": "blocked" })
-            .to_string(),
-    };
+    let error = RunnerError::legacy_command_failure(
+        serde_json::json!({ "schema": "effigy.run.v1", "message": "the lock is held", "state": "blocked" }).to_string(),
+    );
     let json = error.human_error().to_json();
     assert_eq!(json["what_failed"], "the lock is held");
     assert!(json["next_action"].is_null());

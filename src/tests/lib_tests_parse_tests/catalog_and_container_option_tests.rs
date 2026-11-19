@@ -64,11 +64,9 @@ fn parse_removed_catalog_commands_refuse_and_catalogue_stays_a_selector() {
     assert_eq!(
         catalogue,
         Command::Task(crate::tests::prelude::TaskInvocation {
+            options: Some(effigy_cli::GlobalCliOptions::default()),
             name: "catalogue".to_owned(),
-            args: vec![
-                effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned(),
-                "list".to_owned()
-            ],
+            args: vec!["list".to_owned()],
         })
     );
 }
@@ -356,6 +354,7 @@ fn container_argv_parses() {
             &["defer", "--repo", "/tmp/demo", "--json", "prep", "--watch"],
             Command::Defer(DeferArgs {
                 task: TaskInvocation {
+                    options: None,
                     name: "prep".to_owned(),
                     args: vec!["--watch".to_owned()],
                 },

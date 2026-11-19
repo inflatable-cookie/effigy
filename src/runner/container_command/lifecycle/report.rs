@@ -101,8 +101,8 @@ pub(super) fn detached_activation_failure(
             failures.len()
         );
         if output_json {
-            return RunnerError::CommandJsonFailure {
-                rendered: serde_json::json!({
+            return RunnerError::structured_json(
+                serde_json::json!({
                     "state": "partial",
                     "phase": "listener_exposure",
                     "activation_stage": operation.stage.unwrap_or("runtime_integrations"),
@@ -116,9 +116,8 @@ pub(super) fn detached_activation_failure(
                     "recovery": "effigy container up --detach",
                     "stop": "effigy container down",
                     "message": message,
-                })
-                .to_string(),
-            };
+                }), false, error.human_error().evidence(format!("Detached activation settled the environment with partial exposure: {} route(s) published, {} listener(s) withheld.", exposed.len(), failures.len())).next_action("effigy container up --detach"), Some(error.workload_outcome()),
+            );
         }
         return RunnerError::task_invocation(message);
     }
@@ -166,9 +165,16 @@ pub(super) fn detached_activation_failure(
             rendered["failure_kind"] = details["failure_kind"].clone();
             rendered["waiting_on"] = details["waiting_on"].clone();
         }
-        return RunnerError::CommandJsonFailure {
-            rendered: rendered.to_string(),
-        };
+        let human = effigy_ui::HumanError::new(sanitized_failure_cause(&error))
+            .evidence(&message)
+            .evidence(format!("failure_kind: {failure_kind}"))
+            .next_action("effigy container down");
+        return RunnerError::structured_json(
+            rendered,
+            false,
+            human,
+            Some(error.workload_outcome()),
+        );
     }
     RunnerError::task_invocation(format!(
         "{error}\ndetached activation unavailable: readiness and exposure are unverified. Inspect with `effigy container status`; retry `effigy container up --detach`. `effigy container down` stops the scope; `effigy container retire --yes` removes owned mutable data."
@@ -176,11 +182,11 @@ pub(super) fn detached_activation_failure(
 }
 
 /// The machine-readable details of a container wait that ended unfinished.
-fn wait_refusal_details(error: &RunnerError) -> Option<serde_json::Value> {
-    let RunnerError::ContainerWaitRefused { details_json, .. } = error else {
-        return None;
-    };
-    serde_json::from_str::<serde_json::Value>(details_json).ok()
+fn wait_refusal_details(error: &RunnerError) -> Option<&serde_json::Value> {
+    match error {
+        RunnerError::ContainerWaitRefused { details, .. } => Some(details),
+        _ => None,
+    }
 }
 
 pub(super) fn detached_activation_error(

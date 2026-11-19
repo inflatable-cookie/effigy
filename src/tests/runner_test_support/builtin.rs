@@ -3,12 +3,14 @@ use super::{run_manifest_task_with_cwd, PathBuf, RunnerError, TaskInvocation};
 fn builtin_invocation(name: &str, args: &[&str]) -> TaskInvocation {
     match name {
         "completion" => TaskInvocation {
+            options: None,
             name: "config".to_owned(),
             args: std::iter::once("completion".to_owned())
                 .chain(args.iter().map(|arg| (*arg).to_owned()))
                 .collect(),
         },
         _ => TaskInvocation {
+            options: None,
             name: name.to_owned(),
             args: args.iter().map(|arg| (*arg).to_owned()).collect(),
         },

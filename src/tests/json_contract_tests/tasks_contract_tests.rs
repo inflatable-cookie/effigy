@@ -312,6 +312,7 @@ fn tasks_status_json_contract_has_versioned_top_level_shape() {
     let out = with_test_user_config_home(&home, || {
         run_manifest_task_with_cwd(
             &TaskInvocation {
+                options: None,
                 name: "check".to_owned(),
                 args: Vec::new(),
             },

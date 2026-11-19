@@ -17,7 +17,14 @@ pub(super) fn run_builtin_help(
 ) -> Result<Option<String>, BuiltinError> {
     run_builtin_command(
         args,
-        |output_json| render_builtin_general_help(deferred_builtins, output_json, catalogs, root),
+        |output_json| {
+            render_builtin_general_help(
+                deferred_builtins,
+                output_json || task.options.as_ref().is_some_and(|o| o.json_mode),
+                catalogs,
+                root,
+            )
+        },
         || request::parse_help_request(task, args),
         |request: request::HelpRequest| {
             let rendered = render_builtin_general_help(

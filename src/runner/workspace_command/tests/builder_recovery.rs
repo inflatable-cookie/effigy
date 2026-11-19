@@ -966,6 +966,7 @@ esac
         ));
         run_manifest_task_with_cwd(
             &TaskInvocation {
+                options: None,
                 name: "workspace:linux:artifact".to_owned(),
                 args: vec![],
             },

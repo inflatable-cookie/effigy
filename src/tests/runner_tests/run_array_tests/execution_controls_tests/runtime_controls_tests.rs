@@ -14,6 +14,7 @@ run = ["printf a >> effects", {id="slow",run="sleep 5", timeout_ms=100}, "printf
     .unwrap();
     let error = run_manifest_task_with_cwd(
         &TaskInvocation {
+            options: None,
             name: "validate".into(),
             args: vec![],
         },
@@ -53,6 +54,7 @@ run = 'printf "$SCOPED" >> effects; sleep 20; printf leaf-late >> effects'
         let started = std::time::Instant::now();
         let error = run_manifest_task_with_cwd(
             &TaskInvocation {
+                options: None,
                 name: "outer".into(),
                 args: vec![],
             },

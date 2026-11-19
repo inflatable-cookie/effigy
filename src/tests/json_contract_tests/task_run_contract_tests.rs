@@ -31,6 +31,7 @@ fn task_run_json_contract_failure_preserves_rhai_script_output() {
 
     let err = run_manifest_task_with_cwd(
         &TaskInvocation {
+            options: None,
             name: "fail-rhai".to_owned(),
             args: vec!["--json".to_owned()],
         },
@@ -39,7 +40,7 @@ fn task_run_json_contract_failure_preserves_rhai_script_output() {
     .expect_err("expected non-zero rhai task failure");
 
     let rendered = match err {
-        RunnerError::CommandJsonFailure { rendered } => rendered,
+        RunnerError::TaskJsonFailure(failure) => failure.rendered().to_owned(),
         other => panic!("unexpected error: {other}"),
     };
     let parsed = parse_json(&rendered);
@@ -66,6 +67,7 @@ fn catalog_task_run_json_contract_failure_has_versioned_shape() {
 
     let err = run_manifest_task_with_cwd(
         &TaskInvocation {
+            options: None,
             name: "fail".to_owned(),
             args: vec!["--json".to_owned()],
         },
@@ -74,7 +76,7 @@ fn catalog_task_run_json_contract_failure_has_versioned_shape() {
     .expect_err("expected non-zero task failure");
 
     let rendered = match err {
-        RunnerError::CommandJsonFailure { rendered } => rendered,
+        RunnerError::TaskJsonFailure(failure) => failure.rendered().to_owned(),
         other => panic!("unexpected error: {other}"),
     };
     let parsed = parse_json(&rendered);

@@ -27,6 +27,7 @@ fn repo_scoped_args(root: &Path, args: &[&str]) -> Vec<String> {
 fn run_named_task(root: &Path, name: &str, args: &[&str]) -> Result<String, RunnerError> {
     run_manifest_task_with_cwd(
         &TaskInvocation {
+            options: None,
             name: name.to_owned(),
             args: task_args(args),
         },
@@ -37,6 +38,7 @@ fn run_named_task(root: &Path, name: &str, args: &[&str]) -> Result<String, Runn
 fn run_named_task_with_repo(root: &Path, name: &str, args: &[&str]) -> Result<String, RunnerError> {
     run_manifest_task_with_cwd(
         &TaskInvocation {
+            options: None,
             name: name.to_owned(),
             args: repo_scoped_args(root, args),
         },

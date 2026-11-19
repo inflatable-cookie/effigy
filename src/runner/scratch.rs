@@ -1281,6 +1281,10 @@ pub(in crate::runner) fn with_test_scratch<T>(
 }
 
 #[cfg(test)]
+#[path = "scratch_retention_tests.rs"]
+mod retention_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

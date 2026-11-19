@@ -48,23 +48,27 @@ pub(super) fn maybe_run_in_process_sequence(
     )?;
     *workload = Some(report.outcome.clone());
     if preflight.output_json {
-        let mut payload: serde_json::Value =
-            serde_json::from_str(&super::json_payload::render_task_command_json(
-                &preflight.selector,
-                context.repo_for_task(),
-                context.command(),
-                Some(report.code),
-                &report.stdout,
-                &report.stderr,
-            )?)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        let mut payload = super::json_payload::task_run_payload(
+            &preflight.selector,
+            context.repo_for_task(),
+            context.command(),
+            Some(report.code),
+            &report.stdout,
+            &report.stderr,
+        );
         payload["steps"] = serde_json::Value::Array(report.steps);
         payload["failed_step"] = serde_json::json!(report.failed_step);
-        let rendered = effigy_ui::encode_json(&payload, true)?;
         return if report.code == 0 {
-            Ok(Some(rendered))
+            Ok(Some(effigy_ui::encode_json(&payload, true)?))
         } else {
-            Err(RunnerError::CommandJsonFailure { rendered })
+            Err(RunnerError::task_json_failure(
+                payload,
+                &preflight.selector.task_name,
+                report.code,
+                report.outcome,
+                &report.stdout,
+                &report.stderr,
+            ))
         };
     }
     if report.code != 0 {
@@ -504,47 +508,42 @@ fn run_steps(
         let (code, stdout, mut stderr, workload) = match result {
             Ok(exit) => exit,
             Err(error) => {
-                let rendered = error
-                    .rendered_output()
-                    .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok());
                 let pending = crate::runner::task_engine::pending_stop(&label);
                 let code = pending
                     .as_ref()
                     .map(|(code, _)| *code)
-                    .or_else(|| {
-                        rendered
-                            .as_ref()
-                            .and_then(|value| value["exit_code"].as_i64())
-                            .map(|code| code as i32)
-                            .or(error.task_exit_status())
-                    })
+                    .or_else(|| error.task_exit_status())
                     .unwrap_or_else(|| error.process_exit_code());
-                let (stdout, stderr) = match (&rendered, &error) {
-                    (Some(value), _) => (
-                        value["stdout"].as_str().unwrap_or_default().to_owned(),
-                        value["stderr"].as_str().unwrap_or_default().to_owned(),
-                    ),
-                    (_, RunnerError::TaskCommandFailure { stdout, stderr, .. })
+                let (stdout, stderr) = match &error {
+                    RunnerError::TaskJsonFailure(failure) => {
+                        (failure.stdout.clone(), failure.stderr.clone())
+                    }
+                    RunnerError::CommandJsonFailure(failure) => match failure.value.as_ref() {
+                        Some(value) => (
+                            value["stdout"].as_str().unwrap_or_default().to_owned(),
+                            value["stderr"].as_str().unwrap_or_default().to_owned(),
+                        ),
+                        None => (String::new(), error.human_error().render_text_body()),
+                    },
+                    RunnerError::TaskCommandFailure { stdout, stderr, .. }
                         if !stdout.is_empty() || !stderr.is_empty() =>
                     {
                         (stdout.clone(), stderr.clone())
                     }
-                    _ => (String::new(), error.to_string()),
+                    _ => (String::new(), error.human_error().render_text_body()),
                 };
-                (
-                    code,
-                    stdout,
-                    stderr,
-                    pending.map(|(_, outcome)| outcome).unwrap_or_else(|| {
-                        if code == 124 {
-                            WorkloadOutcome::TimedOut {
-                                phase: label.clone(),
-                            }
-                        } else {
-                            crate::runner::task_engine::workload_for_exit(code)
+                let workload = pending.map(|(_, outcome)| outcome).unwrap_or_else(|| {
+                    if let RunnerError::TaskJsonFailure(failure) = &error {
+                        failure.outcome.clone()
+                    } else if code == 124 {
+                        WorkloadOutcome::TimedOut {
+                            phase: label.clone(),
                         }
-                    }),
-                )
+                    } else {
+                        crate::runner::task_engine::workload_for_exit(code)
+                    }
+                });
+                (code, stdout, stderr, workload)
             }
         };
         if code != 0 && !streams_output() {
@@ -970,6 +969,7 @@ fn resolve_task_step(
         .task_execution_root(&catalog.catalog_root)
         .to_path_buf();
     let invocation = TaskInvocation {
+        options: None,
         name: render_task_selector(&selector),
         args,
     };
@@ -1206,6 +1206,7 @@ mod tests {
             std::fs::write(fixture.path().join("effigy.toml"), body).unwrap();
         }
         let invocation = effigy_cli::TaskInvocation {
+            options: None,
             name: selector.into(),
             args: Vec::new(),
         };
@@ -1395,6 +1396,7 @@ mod tests {
         .unwrap();
         std::fs::write(catalog.join("effigy.toml"), "[catalog]\nalias = 'desktop'\n[tasks.preflight]\nrun = 'true'\n[tasks.\"db:migrate\"]\nrun = 'true'\n").unwrap();
         let invocation = effigy_cli::TaskInvocation {
+            options: None,
             name: "desktop/preflight".into(),
             args: Vec::new(),
         };

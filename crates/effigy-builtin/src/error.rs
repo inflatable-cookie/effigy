@@ -54,6 +54,8 @@ pub enum BuiltinError {
     CommandJsonFailure {
         rendered: String,
     },
+    TaskJsonFailure(Box<effigy_kernel::outcome::TaskFailure>),
+    StructuredCommandFailure(Box<effigy_kernel::outcome::CommandFailure>),
     Manifest(ManifestError),
     Managed(ManagedError),
     Routing(RoutingError),
@@ -117,7 +119,9 @@ impl std::fmt::Display for BuiltinError {
             BuiltinError::DoctorNonZero { error_count, .. } => {
                 write!(f, "doctor found {error_count} error finding(s)")
             }
-            BuiltinError::CommandJsonFailure { .. } => {
+            BuiltinError::CommandJsonFailure { .. }
+            | BuiltinError::TaskJsonFailure(_)
+            | BuiltinError::StructuredCommandFailure(_) => {
                 write!(f, "command failed (json output available)")
             }
             BuiltinError::Manifest(error) => write!(f, "{error}"),

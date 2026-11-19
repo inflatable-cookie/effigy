@@ -11,7 +11,10 @@ pub(super) fn parse_help_request(
     task: &TaskInvocation,
     args: &[String],
 ) -> Result<HelpRequest, BuiltinError> {
-    let mut output_json = false;
+    let mut output_json = task
+        .options
+        .as_ref()
+        .is_some_and(|options| options.json_mode);
     let mut parser = BuiltinArgParser::new(args);
     parser.parse_loop_require_no_unknown(&task.name, |parser, arg| {
         if parser.consume_json_flag(arg, &mut output_json) {

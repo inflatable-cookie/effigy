@@ -145,6 +145,7 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
                 });
             let request = TaskExecutionRequestBuilder::new()
                 .runtime_context(runtime_context)
+                .task_options(task.options.clone())
                 .task(task.name, task.args)
                 .surface(ExecutionSurface::DirectCli)
                 .build()

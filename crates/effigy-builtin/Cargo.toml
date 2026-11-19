@@ -10,6 +10,7 @@ description = "Built-in command layer for Effigy (registry, dispatch, ports, all
 effigy-catalog = { path = "../effigy-catalog" }
 effigy-cli = { path = "../effigy-cli" }
 effigy-core = { path = "../effigy-core" }
+effigy-kernel = { path = "../effigy-kernel" }
 effigy-env = { path = "../effigy-env" }
 effigy-managed = { path = "../effigy-managed" }
 effigy-manifest = { path = "../effigy-manifest" }

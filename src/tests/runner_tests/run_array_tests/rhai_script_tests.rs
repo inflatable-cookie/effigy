@@ -51,6 +51,7 @@ hydrate = { run = { rhai = "scripts/hydrate.rhai" }, run_in = "host" }
     );
     run_manifest_task_with_cwd(
         &TaskInvocation {
+            options: None,
             name: "hydrate".to_owned(),
             args: vec!["snapshot-a".to_owned()],
         },
@@ -92,6 +93,7 @@ run = [{ rhai = "scripts/hydrate.rhai" }]
 
     run_manifest_task_with_cwd(
         &TaskInvocation {
+            options: None,
             name: "hydrate".to_owned(),
             args: vec!["snapshot-a".to_owned()],
         },
@@ -131,6 +133,7 @@ run = [
     // then the task's arguments, where a second `--` belongs to the task.
     run_manifest_task_with_cwd(
         &TaskInvocation {
+            options: None,
             name: "parity".to_owned(),
             args: vec![
                 "--".to_owned(),
@@ -162,6 +165,7 @@ run = [{ run = "printf invalid", rhai = "print(\"nope\")" }]
 
     let error = run_manifest_task_with_cwd(
         &TaskInvocation {
+            options: None,
             name: "validate".to_owned(),
             args: Vec::new(),
         },
@@ -217,6 +221,7 @@ run = [{ rhai = "scripts/dispatch.rhai" }]
 
     run_manifest_task_with_cwd(
         &TaskInvocation {
+            options: None,
             name: "validate".to_owned(),
             args: Vec::new(),
         },
@@ -319,6 +324,7 @@ fn run_manifest_task_run_array_rhai_steps_support_container_helpers() {
 
     run_manifest_task_with_cwd(
         &TaskInvocation {
+            options: None,
             name: "validate".to_owned(),
             args: Vec::new(),
         },

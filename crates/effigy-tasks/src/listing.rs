@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use effigy_core::builtin_tasks::BUILTIN_TASKS;
+use effigy_core::builtin_tasks::builtin_tasks;
 use effigy_core::widgets::{KeyValue, NoticeLevel};
 use effigy_manifest::{LoadedCatalog, ManifestTask, ManifestTaskVisibility};
 use effigy_ui::theme::Theme;
@@ -540,12 +540,11 @@ fn selector_notes(selector: &TaskSelector) -> Vec<String> {
 }
 
 fn builtin_task_rows_filtered(deferred_builtins: &BTreeSet<String>) -> Vec<BuiltinTaskProjection> {
-    BUILTIN_TASKS
-        .iter()
+    builtin_tasks()
         .filter(|(task, _)| !deferred_builtins.contains(*task))
         .map(|(task, description)| BuiltinTaskProjection {
-            task: (*task).to_owned(),
-            description: (*description).to_owned(),
+            task: task.to_owned(),
+            description: description.to_owned(),
         })
         .collect()
 }

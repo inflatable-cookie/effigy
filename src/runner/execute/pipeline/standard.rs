@@ -23,7 +23,6 @@ use crate::runner::container_runtime_prep::{
 use crate::runner::environment::emit_held_notice;
 use crate::runner::error::RunnerError;
 use crate::runner::execute::nested;
-use crate::runner::execute::render;
 use crate::runner::execute::workspace_seeded::{
     inside_container_handoff, run_workspace_seeded_task_session,
 };
@@ -627,18 +626,25 @@ fn finish_remote(
     if preflight.output_json {
         let stdout = redact_task_secret_values(&String::from_utf8_lossy(&exit.stdout), secret_ref);
         let stderr = redact_task_secret_values(&String::from_utf8_lossy(&exit.stderr), secret_ref);
-        let rendered = render::render_task_command_json(
+        let payload = super::super::json_payload::task_run_payload(
             &preflight.selector,
             context.repo_for_task(),
             context.command(),
             Some(exit.code),
             &stdout,
             &stderr,
-        )?;
+        );
         return if succeeded {
-            Ok(rendered)
+            Ok(effigy_ui::encode_json(&payload, true)?)
         } else {
-            Err(RunnerError::CommandJsonFailure { rendered })
+            Err(RunnerError::task_json_failure(
+                payload,
+                &preflight.selector.task_name,
+                exit.code,
+                exit.workload,
+                &stdout,
+                &stderr,
+            ))
         };
     }
     if !succeeded {

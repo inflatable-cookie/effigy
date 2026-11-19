@@ -5,7 +5,9 @@ pub(super) fn runner_error_rendered_output(error: &RunnerError) -> Option<&str> 
         RunnerError::BuiltinTestNonZero { rendered, .. } => non_empty_rendered(rendered),
         RunnerError::BuiltinScanNonZero { rendered, .. } => non_empty_rendered(rendered),
         RunnerError::DoctorNonZero { rendered, .. } => non_empty_rendered(rendered),
-        RunnerError::CommandJsonFailure { rendered } => non_empty_rendered(rendered),
+        RunnerError::CommandJsonFailure(failure) => non_empty_rendered(&failure.rendered),
+        RunnerError::StructuredCommandFailure(failure) => non_empty_rendered(failure.rendered()),
+        RunnerError::TaskJsonFailure(failure) => non_empty_rendered(failure.rendered()),
         RunnerError::DepsOperationNonZero { rendered, .. } => non_empty_rendered(rendered),
         _ => None,
     }
@@ -17,7 +19,11 @@ pub(super) fn runner_error_json_details(error: &RunnerError) -> Option<&str> {
         | RunnerError::RunDeadline { details_json, .. }
         | RunnerError::RunControl { details_json, .. } => non_empty_rendered(details_json),
         RunnerError::BoundedExecFailure { json_details, .. } => non_empty_rendered(json_details),
-        RunnerError::ContainerWaitRefused { details_json, .. } => non_empty_rendered(details_json),
+        RunnerError::ContainerWaitRefused {
+            details,
+            details_json,
+            ..
+        } => Some(details_json.get_or_init(|| details.to_string()).as_str()),
         RunnerError::TaskLockConflict(details) => {
             details.details_json.as_deref().and_then(non_empty_rendered)
         }

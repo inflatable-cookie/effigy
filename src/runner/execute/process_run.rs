@@ -42,18 +42,25 @@ pub(super) fn run_task_process(
     if output_json {
         let stdout = String::from_utf8_lossy(&exit.stdout);
         let stderr = String::from_utf8_lossy(&exit.stderr);
-        let rendered = super::json_payload::render_task_command_json(
+        let payload = super::json_payload::task_run_payload(
             context.selector,
             context.repo_for_task(),
             context.command(),
             Some(exit.code),
             &stdout,
             &stderr,
-        )?;
+        );
         if exit.workload == WorkloadOutcome::Succeeded {
-            return Ok(rendered);
+            return Ok(effigy_ui::encode_json(&payload, true)?);
         }
-        return Err(RunnerError::CommandJsonFailure { rendered });
+        return Err(RunnerError::task_json_failure(
+            payload,
+            &context.selector.task_name,
+            exit.code,
+            exit.workload,
+            &stdout,
+            &stderr,
+        ));
     }
     if exit.workload == WorkloadOutcome::Succeeded {
         if verbose_root {

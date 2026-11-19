@@ -594,6 +594,7 @@ fn run_manifest_db_seed_task(
     with_runtime_session_context(data_seed_runtime_session_context(), || {
         run_manifest_task_with_surface_and_env(
             &TaskInvocation {
+                options: None,
                 name: DB_SEED_TASK.to_owned(),
                 args: Vec::new(),
             },

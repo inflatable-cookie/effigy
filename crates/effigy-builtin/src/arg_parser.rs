@@ -49,6 +49,7 @@ impl<'a> BuiltinArgParser<'a> {
 
     pub(crate) fn positional_task_invocation(&self, name: &str) -> TaskInvocation {
         TaskInvocation {
+            options: None,
             name: name.to_owned(),
             args: self.remaining().to_vec(),
         }

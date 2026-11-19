@@ -22,6 +22,93 @@ pub enum WorkloadOutcome {
     Interrupted,
     Unknown(UnknownReason),
 }
+/// A command's failure payload and the facts its producer already knows.
+#[derive(Debug)]
+pub struct CommandFailure {
+    pub payload: CommandFailurePayload,
+    pub human: effigy_ui::HumanError,
+    pub outcome: Option<WorkloadOutcome>,
+    rendered: std::sync::OnceLock<String>,
+}
+
+#[derive(Debug)]
+pub enum CommandFailurePayload {
+    Json {
+        value: serde_json::Value,
+        pretty: bool,
+    },
+    Text(String),
+}
+
+impl CommandFailure {
+    pub fn json(
+        value: serde_json::Value,
+        pretty: bool,
+        human: effigy_ui::HumanError,
+        outcome: Option<WorkloadOutcome>,
+    ) -> Self {
+        Self {
+            payload: CommandFailurePayload::Json { value, pretty },
+            human,
+            outcome,
+            rendered: std::sync::OnceLock::new(),
+        }
+    }
+    pub fn text(
+        text: String,
+        human: effigy_ui::HumanError,
+        outcome: Option<WorkloadOutcome>,
+    ) -> Self {
+        Self {
+            payload: CommandFailurePayload::Text(text),
+            human,
+            outcome,
+            rendered: std::sync::OnceLock::new(),
+        }
+    }
+    pub fn rendered(&self) -> &str {
+        match &self.payload {
+            CommandFailurePayload::Text(text) => text,
+            CommandFailurePayload::Json { value, pretty } => self.rendered.get_or_init(|| {
+                if *pretty {
+                    serde_json::to_string_pretty(value)
+                } else {
+                    serde_json::to_string(value)
+                }
+                .expect("JSON value encodes")
+            }),
+        }
+    }
+    pub fn json_value(&self) -> serde_json::Value {
+        match &self.payload {
+            CommandFailurePayload::Json { value, .. } => value.clone(),
+            CommandFailurePayload::Text(text) => serde_json::Value::String(text.clone()),
+        }
+    }
+}
+
+/// The task producer's failure payload and its already-known facts.
+#[derive(Debug, Clone)]
+pub struct TaskFailure {
+    pub payload: serde_json::Value,
+    pub rendered: std::sync::OnceLock<String>,
+    pub code: i32,
+    pub outcome: WorkloadOutcome,
+    pub human: effigy_ui::HumanError,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+impl TaskFailure {
+    pub fn rendered(&self) -> &str {
+        self.rendered
+            .get_or_init(|| {
+                serde_json::to_string_pretty(&self.payload).expect("JSON value encodes")
+            })
+            .as_str()
+    }
+}
+
 /// How the workload ended, in the words a person reads instead of a variant.
 impl std::fmt::Display for WorkloadOutcome {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -66,6 +66,7 @@ pub(in crate::runner) fn supervise(session: EngineSession) -> Result<(), RunErro
     };
     task_engine::adopt_state_home(payload.state_home.clone());
     let command = effigy_cli::Command::Task(effigy_cli::TaskInvocation {
+        options: payload.options.clone(),
         name: payload.task.clone(),
         args: payload.args.clone(),
     });

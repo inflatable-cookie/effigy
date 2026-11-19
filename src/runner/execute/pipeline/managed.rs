@@ -1510,6 +1510,7 @@ pub(in crate::runner) fn inline_managed_policy(
     task: &str,
 ) -> Result<Option<EffectiveContainerPolicy>, RunnerError> {
     let invocation = effigy_cli::TaskInvocation {
+        options: None,
         name: task.to_owned(),
         args: Vec::new(),
     };
@@ -1733,6 +1734,7 @@ working_dir = "/workspace"
             // once to the project catalog fragments a migrated consumer has.
             crate::runner::test_support::migrate_declared_compose_files(&root);
             let invocation = effigy_cli::TaskInvocation {
+                options: None,
                 name: "dev".into(),
                 args: vec![],
             };

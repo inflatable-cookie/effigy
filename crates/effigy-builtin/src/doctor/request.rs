@@ -18,7 +18,10 @@ pub(super) fn parse_doctor_request(
     args: &[String],
 ) -> Result<DoctorRequest, BuiltinError> {
     let mut parser = BuiltinArgParser::new(args);
-    let mut output_json = false;
+    let mut output_json = task
+        .options
+        .as_ref()
+        .is_some_and(|options| options.json_mode);
     let mut fix = false;
     let mut verbose = false;
     let mut deep = false;

@@ -53,9 +53,7 @@ mod tests {
             "next_action": "effigy run status 42",
         })
         .to_string();
-        let error = RunnerError::CommandJsonFailure {
-            rendered: payload.clone(),
-        };
+        let error = RunnerError::legacy_command_failure(payload.clone());
 
         let projected = command_error(&error);
 

@@ -15,7 +15,10 @@ pub(super) fn parse_scan_request(
 ) -> Result<ScanRequest, BuiltinError> {
     let mut parser = BuiltinArgParser::new(args);
     let mut command: Option<ScanCommand> = None;
-    let mut output_json = false;
+    let mut output_json = task
+        .options
+        .as_ref()
+        .is_some_and(|options| options.json_mode);
     let mut format: Option<ScanRenderFormat> = None;
     let mut out: Option<PathBuf> = None;
     let mut warn_raw: Option<String> = None;

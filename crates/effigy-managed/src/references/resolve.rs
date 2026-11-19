@@ -314,9 +314,7 @@ mod tests {
     fn a_builtin_reference_falls_back_only_when_no_catalog_declares_it() {
         let catalogs: Vec<LoadedCatalog> = Vec::new();
         assert!(
-            effigy_core::builtin_tasks::BUILTIN_TASKS
-                .iter()
-                .any(|(name, _)| *name == "doctor"),
+            effigy_core::builtin_tasks::is_builtin_task_name("doctor"),
             "the fixture uses a real builtin"
         );
 

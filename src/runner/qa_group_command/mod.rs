@@ -173,12 +173,21 @@ fn run_qa_group(
     if plan.scope_assessment == ScopeAssessment::NeedsPlanner {
         // A needs_planner plan is not executable and has no run ID; an
         // attempted run returns the same plan with a failing exit.
-        let rendered = if output_json {
-            render_json(&plan)?
+        let human = plan.needs_planner_reasons.iter().fold(
+            effigy_ui::HumanError::new(format!("qa group `{}` needs a planner", plan.group.name)),
+            |human, reason| human.evidence(&reason.reason),
+        );
+        return Err(if output_json {
+            RunnerError::structured_json(
+                serde_json::to_value(&plan)
+                    .map_err(|e| RunnerError::task_invocation(e.to_string()))?,
+                true,
+                human,
+                None,
+            )
         } else {
-            render_text(&plan)?
-        };
-        return Err(RunnerError::CommandJsonFailure { rendered });
+            RunnerError::structured_text(render_text(&plan)?, human, None)
+        });
     }
     if plan_only {
         return if output_json {

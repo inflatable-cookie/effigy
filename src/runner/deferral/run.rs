@@ -493,7 +493,25 @@ fn build_deferred_command(
 ) -> Result<String, RunnerError> {
     // Each argument stays one word with its shell syntax inert, matching how
     // ordinary task `{args}` are rendered.
-    let args_rendered = crate::runner::util::render_passthrough_args(&runtime_args.passthrough);
+    let mut flags = Vec::new();
+    if let Some(options) = &task.options {
+        if options.task_plan {
+            flags.push("--plan".to_owned());
+        }
+        if options.json_mode {
+            flags.push("--json".to_owned());
+        }
+        flags.extend(
+            task.args
+                .iter()
+                .take_while(|arg| {
+                    effigy_core::task_args::COMPAT_TRAILING_FLAGS.contains(&arg.as_str())
+                })
+                .cloned(),
+        );
+    }
+    flags.extend(runtime_args.passthrough.iter().cloned());
+    let args_rendered = crate::runner::util::render_passthrough_args(&flags);
     let request_rendered = shell_quote(&task.name);
     let repo_rendered = shell_quote(&repo_root.display().to_string());
     Ok(deferral

@@ -14,6 +14,7 @@ fn run_direct_task(name: &str, context: &EffigyRuntimeContext) -> Result<String,
     with_test_user_config_home(&home, || {
         run_command_with_context(
             Command::Task(TaskInvocation {
+                options: None,
                 name: name.to_owned(),
                 args: Vec::new(),
             }),
@@ -45,6 +46,7 @@ fn direct_foreground_dispatch_stays_in_memory_when_configured_program_is_inactiv
     with_test_user_config_home(&home, || {
         run_command_with_context(
             Command::Task(TaskInvocation {
+                options: None,
                 name: "echo".to_owned(),
                 args: Vec::new(),
             }),
@@ -76,6 +78,7 @@ fn direct_foreground_dispatch_records_durably_when_configured_program_activates(
     with_test_user_config_home(&home, || {
         run_command_with_context(
             Command::Task(TaskInvocation {
+                options: None,
                 name: "echo".to_owned(),
                 args: Vec::new(),
             }),
@@ -179,6 +182,7 @@ fn direct_task_dispatch_refused_by_a_live_holder_records_no_run_of_its_own() {
 
     let error = run_command_with_context(
         Command::Task(TaskInvocation {
+            options: None,
             name: "echo".to_owned(),
             args: Vec::new(),
         }),
@@ -216,6 +220,7 @@ fn selector_plan_does_not_start_the_task_process() {
 
     let output = run_command_with_context(
         Command::Task(TaskInvocation {
+            options: None,
             name: "slow".to_owned(),
             args: vec!["--plan".to_owned()],
         }),
@@ -258,6 +263,7 @@ fn selector_plan_json_reports_command_shape_without_executing() {
 
     let output = run_command_with_context(
         Command::Task(TaskInvocation {
+            options: None,
             name: "probe".to_owned(),
             args: vec!["--json".to_owned(), "--plan".to_owned()],
         }),
@@ -303,6 +309,7 @@ fn json_selector_without_plan_still_executes() {
 
     let output = run_command_with_context(
         Command::Task(TaskInvocation {
+            options: None,
             name: "probe".to_owned(),
             args: vec!["--json".to_owned()],
         }),
@@ -330,6 +337,7 @@ fn selector_plan_does_not_run_deferral_fallback() {
 
     let error = run_command_with_context(
         Command::Task(TaskInvocation {
+            options: None,
             name: "missing-task".to_owned(),
             args: vec!["--plan".to_owned()],
         }),
@@ -366,6 +374,7 @@ concurrent = [
 
     let output = run_command_with_context(
         Command::Task(TaskInvocation {
+            options: None,
             name: "dev".to_owned(),
             args: vec!["--plan".to_owned()],
         }),
@@ -400,6 +409,7 @@ fn selector_plan_does_not_resolve_env_schema_exec() {
 
     run_command_with_context(
         Command::Task(TaskInvocation {
+            options: None,
             name: "build".to_owned(),
             args: vec!["--plan".to_owned()],
         }),

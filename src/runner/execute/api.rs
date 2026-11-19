@@ -68,6 +68,7 @@ pub(in crate::runner) fn run_manifest_task_with_surface_env_and_secret_targets(
     }
     let request = TaskExecutionRequestBuilder::new()
         .runtime_context(runtime_context)
+        .task_options(task.options.clone())
         .task(task.name.clone(), task.args.clone())
         .surface(surface)
         .environment(environment)
@@ -111,6 +112,7 @@ pub(in crate::runner) fn run_inline_task_with_cwd_and_env(
     env_overrides: &BTreeMap<String, String>,
 ) -> Result<String, RunnerError> {
     let invocation = TaskInvocation {
+        options: None,
         name: label.to_owned(),
         args: Vec::new(),
     };

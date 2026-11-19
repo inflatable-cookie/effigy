@@ -25,7 +25,7 @@ pub mod run_spec;
 pub mod runtime;
 
 pub use command::resolve_managed_task_plan;
-pub use effigy_core::builtin_tasks::BUILTIN_TASKS;
+pub use effigy_core::builtin_tasks::builtin_tasks;
 pub use invocation::{parse_managed_invocation, ManagedInvocation, ParsedManagedInvocation};
 pub use plan::{
     invalid_managed_process_definition, resolve_managed_concurrent_task_plan,

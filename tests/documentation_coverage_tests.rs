@@ -1,4 +1,4 @@
-use effigy_core::builtin_tasks::BUILTIN_TASKS;
+use effigy_core::builtin_tasks::builtin_tasks;
 use effigy_test_support::process::FixtureCommandExt;
 use std::{
     collections::BTreeSet,
@@ -82,7 +82,7 @@ fn project_local_and_distributed_effigy_skills_have_semantic_parity() {
 #[test]
 fn public_builtin_registry_routes_through_the_command_reference() {
     let matrix = read("docs/guides/025-command-reference-matrix.md");
-    for (name, _) in BUILTIN_TASKS {
+    for (name, _) in builtin_tasks() {
         let route = format!("`effigy {name}");
         assert!(
             matrix.contains(&route),

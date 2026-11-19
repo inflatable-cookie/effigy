@@ -354,6 +354,7 @@ fn run_task_from_root(
     in_shared_state(|| {
         run_command_with_context(
             Command::Task(TaskInvocation {
+                options: None,
                 name: selector.to_owned(),
                 args: Vec::new(),
             }),
@@ -367,6 +368,7 @@ fn plan_task_from_root(fixture: &NestedContainerFixture, selector: &str) -> serd
         EffigyRuntimeContext::capture(Some(fixture.root.clone()), None).expect("runtime context");
     let output = run_command_with_context(
         Command::Task(TaskInvocation {
+            options: None,
             name: selector.to_owned(),
             args: vec!["--json".to_owned(), "--plan".to_owned()],
         }),
@@ -410,6 +412,7 @@ fn child_scope_nested_container_task_still_executes_in_declared_container() {
     in_shared_state(|| {
         run_manifest_task_with_cwd(
             &TaskInvocation {
+                options: None,
                 name: "check".to_owned(),
                 args: Vec::new(),
             },
@@ -498,6 +501,7 @@ run_in = "container"
 
     let error = run_command_with_context(
         Command::Task(TaskInvocation {
+            options: None,
             name: "barn/vet".to_owned(),
             args: Vec::new(),
         }),

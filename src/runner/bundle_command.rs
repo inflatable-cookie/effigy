@@ -30,10 +30,7 @@ pub(crate) fn is_source_prepare_command(command: &effigy_cli::Command) -> bool {
 
 /// First-argument `status`, `logs` or `stop` on a task. On a managed TUI
 /// task this inspects or stops the session; on any other task those words
-/// are ordinary arguments and the run still acquires a missing pin. A CLI
-/// invocation joins Effigy flags with
-/// [`effigy_core::task_args::TASK_ARGS_BOUNDARY`] before the task's
-/// arguments; the verb is the first task-side argument after that split.
+/// are ordinary arguments and the run still acquires a missing pin.
 pub(crate) fn is_task_local_session_invocation(task: &effigy_cli::TaskInvocation) -> bool {
     first_task_arg(&task.args).is_some_and(|arg| matches!(arg, "status" | "logs" | "stop"))
 }
@@ -174,13 +171,7 @@ fn task_mode_from_value(value: &toml::Value, name: &str) -> Option<String> {
 }
 
 fn first_task_arg(args: &[String]) -> Option<&str> {
-    let mut rest = match args
-        .iter()
-        .position(|arg| arg == effigy_core::task_args::TASK_ARGS_BOUNDARY)
-    {
-        Some(index) => &args[index + 1..],
-        None => args,
-    };
+    let mut rest = args;
     while rest
         .first()
         .is_some_and(|arg| effigy_core::task_args::COMPAT_TRAILING_FLAGS.contains(&arg.as_str()))
@@ -194,10 +185,14 @@ fn first_task_arg(args: &[String]) -> Option<&str> {
 /// `--`. It still fills a missing pin like any other run, but it is not a
 /// Prepare path, so it never refreshes one.
 pub(crate) fn is_read_only_task_invocation(task: &effigy_cli::TaskInvocation) -> bool {
-    task.args
-        .iter()
-        .take_while(|arg| arg.as_str() != "--")
-        .any(|arg| matches!(arg.as_str(), "--plan" | "--help" | "-h"))
+    task.options
+        .as_ref()
+        .is_some_and(|options| options.task_plan)
+        || task
+            .args
+            .iter()
+            .take_while(|arg| arg.as_str() != "--")
+            .any(|arg| matches!(arg.as_str(), "--plan" | "--help" | "-h"))
 }
 
 pub(super) fn run_bundle(args: BundleArgs) -> Result<String, RunnerError> {
@@ -625,6 +620,7 @@ mod tests {
 
         fn task(name: &str, args: &[&str]) -> TaskInvocation {
             TaskInvocation {
+                options: None,
                 name: name.to_owned(),
                 args: args.iter().map(|arg| (*arg).to_owned()).collect(),
             }
@@ -643,8 +639,9 @@ mod tests {
                 );
 
                 let joined = TaskInvocation {
+                    options: None,
                     name: name.to_owned(),
-                    args: effigy_core::task_args::join_task_args(Vec::new(), vec![verb.to_owned()]),
+                    args: vec![verb.to_owned()],
                 };
                 assert!(
                     is_task_local_session_invocation(&joined),
@@ -658,11 +655,9 @@ mod tests {
         }
 
         let trailing_json = TaskInvocation {
+            options: None,
             name: "dev".to_owned(),
-            args: effigy_core::task_args::join_task_args(
-                Vec::new(),
-                vec!["--json".to_owned(), "status".to_owned()],
-            ),
+            args: vec!["--json".to_owned(), "status".to_owned()],
         };
         assert!(is_task_local_session_invocation(&trailing_json));
         assert!(!is_source_prepare_command(&Command::Task(trailing_json)));
@@ -676,8 +671,9 @@ mod tests {
         assert!(is_source_prepare_command(&Command::Task(dev)));
 
         let joined_dev = TaskInvocation {
+            options: None,
             name: "dev".to_owned(),
-            args: effigy_core::task_args::join_task_args(Vec::new(), Vec::new()),
+            args: Vec::new(),
         };
         assert!(!is_task_local_session_invocation(&joined_dev));
         assert!(is_source_prepare_command(&Command::Task(joined_dev)));
@@ -703,6 +699,7 @@ mod tests {
         .expect("write member catalog");
 
         let status = TaskInvocation {
+            options: None,
             name: "dev".to_owned(),
             args: vec!["status".to_owned()],
         };
@@ -712,12 +709,14 @@ mod tests {
         );
 
         let joined = TaskInvocation {
+            options: None,
             name: "dev".to_owned(),
-            args: effigy_core::task_args::join_task_args(Vec::new(), vec!["status".to_owned()]),
+            args: vec!["status".to_owned()],
         };
         assert!(is_managed_tui_session_invocation(&joined, &manifest));
 
         let need_status = TaskInvocation {
+            options: None,
             name: "need".to_owned(),
             args: vec!["status".to_owned()],
         };
@@ -725,6 +724,7 @@ mod tests {
         assert!(!is_managed_tui_session_invocation(&need_status, &manifest));
 
         let serve_status = TaskInvocation {
+            options: None,
             name: "serve".to_owned(),
             args: vec!["status".to_owned()],
         };
@@ -738,6 +738,7 @@ mod tests {
         assert!(is_managed_tui_session_invocation(&serve_status, &manifest));
 
         let api_status = TaskInvocation {
+            options: None,
             name: "api/dev".to_owned(),
             args: vec!["status".to_owned()],
         };
@@ -747,8 +748,9 @@ mod tests {
             "a prefixed non-tui catalog task does not inherit the root leaf's tui mode"
         );
         let joined_api = TaskInvocation {
+            options: None,
             name: "api/dev".to_owned(),
-            args: effigy_core::task_args::join_task_args(Vec::new(), vec!["status".to_owned()]),
+            args: vec!["status".to_owned()],
         };
         assert!(!is_managed_tui_session_invocation(&joined_api, &manifest));
 
@@ -783,6 +785,7 @@ mod tests {
         .expect("write root");
 
         let status = TaskInvocation {
+            options: None,
             name: "dev".to_owned(),
             args: vec!["status".to_owned()],
         };
@@ -791,12 +794,14 @@ mod tests {
             "dev status on an included tui fragment skips the missing pin"
         );
         let joined = TaskInvocation {
+            options: None,
             name: "dev".to_owned(),
-            args: effigy_core::task_args::join_task_args(Vec::new(), vec!["status".to_owned()]),
+            args: vec!["status".to_owned()],
         };
         assert!(is_managed_tui_session_invocation(&joined, &manifest));
 
         let need_status = TaskInvocation {
+            options: None,
             name: "need".to_owned(),
             args: vec!["status".to_owned()],
         };

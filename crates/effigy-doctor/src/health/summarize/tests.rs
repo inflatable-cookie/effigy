@@ -1,4 +1,7 @@
-use super::{summarize_health_task_json_failure, summarize_health_task_json_success};
+use super::{
+    summarize_health_task_failure, summarize_health_task_json_failure,
+    summarize_health_task_json_success,
+};
 
 /// Both success fallbacks keep the raw payload readable: unparsable JSON and
 /// unknown-schema envelopes each surface the payload verbatim.
@@ -52,6 +55,7 @@ fn failure_summary_from_valid_json_envelope_prefers_structured_fields() {
     let summary = summarize_health_task_json_failure(
         r#"{"schema":"effigy.task.run.v1","stdout":"A","stderr":"B","exit_code":3}"#,
     );
+    assert_eq!(summary, summarize_health_task_failure(Some(3), "A", "B"));
     assert_eq!(
         summary,
         "health task execution failed: exit=3, stdout=A, stderr=B"

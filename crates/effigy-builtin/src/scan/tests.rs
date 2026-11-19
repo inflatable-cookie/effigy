@@ -8,6 +8,7 @@ use effigy_scan::ScanRenderFormat;
 #[test]
 fn parse_scan_request_requires_subcommand() {
     let task = TaskInvocation {
+        options: None,
         name: "scan".to_owned(),
         args: Vec::new(),
     };
@@ -18,6 +19,7 @@ fn parse_scan_request_requires_subcommand() {
 #[test]
 fn parse_scan_request_accepts_god_files_thresholds_and_output_flags() {
     let task = TaskInvocation {
+        options: None,
         name: "scan".to_owned(),
         args: Vec::new(),
     };
@@ -46,6 +48,7 @@ fn parse_scan_request_accepts_god_files_thresholds_and_output_flags() {
 #[test]
 fn parse_scan_request_refuses_retired_scanners_with_their_replacement() {
     let task = TaskInvocation {
+        options: None,
         name: "scan".to_owned(),
         args: Vec::new(),
     };
@@ -70,6 +73,7 @@ fn parse_scan_request_refuses_retired_scanners_with_their_replacement() {
 #[test]
 fn parse_scan_request_refuses_retired_scanner_flags() {
     let task = TaskInvocation {
+        options: None,
         name: "scan".to_owned(),
         args: Vec::new(),
     };

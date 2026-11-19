@@ -87,16 +87,29 @@ pub(super) fn execute_group_run(
     for warning in run.close(workload) {
         eprintln!("warning: qa-group run {run_id}: {warning}");
     }
-    let rendered = if output_json {
-        render_record_json(&record)?
-    } else {
-        render_record_text(&record)
-    };
     match outcome {
-        Ok(()) => Ok(rendered),
-        // The final ledger is the failure payload: the caller sees the
-        // honest record with a failing exit, never a bare message.
-        Err(_) => Err(RunnerError::CommandJsonFailure { rendered }),
+        Ok(()) => {
+            if output_json {
+                render_record_json(&record)
+            } else {
+                Ok(render_record_text(&record))
+            }
+        }
+        Err(failure) => {
+            let human = failure.human_error();
+            let outcome = Some(failure.workload_outcome());
+            Err(if output_json {
+                RunnerError::structured_json(
+                    serde_json::to_value(&record)
+                        .map_err(|e| RunnerError::task_invocation(e.to_string()))?,
+                    true,
+                    human,
+                    outcome,
+                )
+            } else {
+                RunnerError::structured_text(render_record_text(&record), human, outcome)
+            })
+        }
     }
 }
 
@@ -239,13 +252,17 @@ fn run_single_member(root: &Path, member: &QaGroupPlanMember) -> MemberAttempt {
             let (stdout, stderr) = extract_payload_output(&rendered);
             Ok((stdout, stderr))
         }
-        Err(RunnerError::CommandJsonFailure { rendered }) => {
+        Err(failure @ RunnerError::TaskJsonFailure(_)) => {
+            let (stdout, stderr) = task_failure_output(&failure);
+            Err((Box::new(failure), stdout, stderr))
+        }
+        Err(RunnerError::CommandJsonFailure(failure)) => {
             // The captured payload carries the task's real exit code and its
             // redacted output. Re-derive the typed failure from them so the
             // ledger can distinguish cancellation (exit 130) from failure
             // and record the actual code; the group renders its own ledger,
             // so the wrapped JSON payload is not needed downstream.
-            let (stdout, stderr, exit_code) = extract_failure_payload(&rendered);
+            let (stdout, stderr, exit_code) = extract_failure_payload(failure.value.as_ref());
             Err((
                 Box::new(RunnerError::TaskCommandFailure {
                     command: member_command_label(member),
@@ -344,18 +361,18 @@ fn extract_payload_output(rendered: &str) -> (String, String) {
     }
 }
 
-fn extract_failure_payload(rendered: &str) -> (String, String, i32) {
-    match serde_json::from_str::<serde_json::Value>(rendered) {
-        Ok(value) => (
-            string_field(&value, "stdout"),
-            string_field(&value, "stderr"),
+fn extract_failure_payload(value: Option<&serde_json::Value>) -> (String, String, i32) {
+    match value {
+        Some(value) => (
+            string_field(value, "stdout"),
+            string_field(value, "stderr"),
             value
                 .get("exit_code")
                 .and_then(|code| code.as_i64())
                 .and_then(|code| i32::try_from(code).ok())
                 .unwrap_or(1),
         ),
-        Err(_) => (String::new(), String::new(), 1),
+        None => (String::new(), String::new(), 1),
     }
 }
 
@@ -370,12 +387,30 @@ fn string_field(value: &serde_json::Value, key: &str) -> String {
 fn task_failure_output(error: &RunnerError) -> (String, String) {
     match error {
         RunnerError::TaskCommandFailure { stdout, stderr, .. } => (stdout.clone(), stderr.clone()),
+        RunnerError::TaskJsonFailure(failure) => (failure.stdout.clone(), failure.stderr.clone()),
         _ => (String::new(), String::new()),
     }
 }
 
 fn classify_member_failure(error: &RunnerError) -> (QaGroupMemberState, String, Option<i32>) {
     match error {
+        RunnerError::TaskJsonFailure(failure)
+            if matches!(
+                failure.outcome,
+                effigy_kernel::outcome::WorkloadOutcome::Cancelled { .. }
+            ) =>
+        {
+            (
+                QaGroupMemberState::Cancelled,
+                format!("interrupted (exit {})", failure.code),
+                Some(failure.code),
+            )
+        }
+        RunnerError::TaskJsonFailure(failure) => (
+            QaGroupMemberState::Failed,
+            format!("task command failed with exit {}", failure.code),
+            Some(failure.code),
+        ),
         RunnerError::TaskCommandFailure { code, .. } if *code == Some(130) => (
             QaGroupMemberState::Cancelled,
             "interrupted (exit 130)".to_owned(),
@@ -386,7 +421,7 @@ fn classify_member_failure(error: &RunnerError) -> (QaGroupMemberState, String, 
             format!("task command failed with exit {}", code.unwrap_or(1)),
             Some(code.unwrap_or(1)),
         ),
-        RunnerError::CommandJsonFailure { .. } => (
+        RunnerError::CommandJsonFailure(_) => (
             QaGroupMemberState::Failed,
             "task command failed (captured payload)".to_owned(),
             Some(1),
@@ -412,6 +447,14 @@ fn classify_member_failure(error: &RunnerError) -> (QaGroupMemberState, String, 
 fn classify_group_failure(error: &RunnerError) -> QaGroupOutcome {
     match error {
         RunnerError::TaskCommandFailure { code, .. } if *code == Some(130) => {
+            QaGroupOutcome::Cancelled
+        }
+        RunnerError::TaskJsonFailure(failure)
+            if matches!(
+                failure.outcome,
+                effigy_kernel::outcome::WorkloadOutcome::Cancelled { .. }
+            ) =>
+        {
             QaGroupOutcome::Cancelled
         }
         _ => QaGroupOutcome::Failed,
@@ -628,6 +671,45 @@ mod tests {
             heavy_reasons: Vec::new(),
             declared_run_in: "host".to_owned(),
         }
+    }
+
+    #[test]
+    fn member_failure_keeps_the_producer_outcome_and_code() {
+        use effigy_execution::{QaGroupMemberState, QaGroupOutcome};
+        use effigy_kernel::{ctx::StopCause, outcome::WorkloadOutcome};
+        let cancelled = crate::runner::error::RunnerError::task_json_failure(
+            serde_json::json!({}),
+            "check",
+            130,
+            WorkloadOutcome::Cancelled {
+                cause: StopCause::Requested,
+                signal: None,
+            },
+            "",
+            "stopped",
+        );
+        assert_eq!(
+            super::classify_member_failure(&cancelled).0,
+            QaGroupMemberState::Cancelled
+        );
+        assert_eq!(
+            super::classify_group_failure(&cancelled),
+            QaGroupOutcome::Cancelled
+        );
+        let failed = crate::runner::error::RunnerError::task_json_failure(
+            serde_json::json!({}),
+            "check",
+            9,
+            WorkloadOutcome::Failed { code: 9 },
+            "",
+            "failure",
+        );
+        let (state, _, code) = super::classify_member_failure(&failed);
+        assert_eq!((state, code), (QaGroupMemberState::Failed, Some(9)));
+        assert_eq!(
+            super::classify_group_failure(&failed),
+            QaGroupOutcome::Failed
+        );
     }
 
     #[test]

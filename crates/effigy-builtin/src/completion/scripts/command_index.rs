@@ -1,6 +1,6 @@
 use effigy_cli::builtin_names::live_builtin_command_names;
 
-use crate::constants::BUILTIN_TASKS;
+use crate::constants::builtin_tasks;
 
 /// One-line completion menu description for a live direct command that is not
 /// a built-in task row.
@@ -52,10 +52,9 @@ pub(super) fn command_rows() -> Vec<(&'static str, &'static str)> {
 /// The description a command's menu row shows: the published built-in task
 /// summary when the command has one, else the direct command's own row.
 fn command_description(name: &str) -> &'static str {
-    BUILTIN_TASKS
-        .iter()
+    builtin_tasks()
         .find(|(task, _)| *task == name)
-        .map(|(_, description)| *description)
+        .map(|(_, description)| description)
         .or_else(|| {
             DIRECT_COMMAND_DESCRIPTIONS
                 .iter()

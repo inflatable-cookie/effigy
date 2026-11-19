@@ -267,6 +267,7 @@ fn retired_tasks_unlock_and_cache_refuse_with_the_explanation() {
         let root = temp_workspace(&format!("retired-tasks-{word}"));
         let error = run_manifest_task_with_cwd(
             &TaskInvocation {
+                options: None,
                 name: "tasks".to_owned(),
                 args: vec![word.to_owned(), "--json".to_owned()],
             },

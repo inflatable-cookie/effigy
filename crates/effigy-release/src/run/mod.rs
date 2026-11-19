@@ -180,8 +180,8 @@ pub use kernel::{
 pub use kernel::{read_release_observation_for_root, read_release_record, ReleaseSettlement};
 
 pub use receipt::{
-    render_release_receipt_json, render_release_receipt_text, render_release_run_json,
-    ReleaseReceipt,
+    release_run_payload, render_release_receipt_json, render_release_receipt_text,
+    render_release_run_json, ReleaseReceipt,
 };
 pub use record::{
     RecordApproval, RecordArtifact, RecordArtifactFile, RecordCheckpoint, RecordDecision,

@@ -214,7 +214,7 @@ pub(super) fn fmt_runner_error(
         | RunnerError::RunControl { detail, .. } => f.write_str(detail),
         RunnerError::RunSettled { code } | RunnerError::RunSettledJson { code, .. } => write!(f, "the run settled with exit {code}"),
         RunnerError::RunKeyExists { run } => write!(f, "the `--run-id` key names run {run}"),
-        RunnerError::CommandJsonFailure { .. } => {
+        RunnerError::CommandJsonFailure(_) | RunnerError::TaskJsonFailure(_) | RunnerError::StructuredCommandFailure(_) => {
             write!(f, "command failed (json output available)")
         }
         RunnerError::BoundedExecFailure { message, .. } => f.write_str(message),

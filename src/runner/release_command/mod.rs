@@ -2,11 +2,9 @@ use std::path::Path;
 
 use effigy_cli::{ReleaseArgs, ReleaseSubcommand};
 use effigy_release::{
-    load_release_config, render_release_gate_run_json as render_release_gate_run_json_payload,
-    render_release_gate_run_text, render_release_pipeline_plan_text,
-    render_release_plan_json as render_release_plan_json_payload, render_release_receipt_json,
-    render_release_receipt_text, render_release_run_json,
-    render_release_status_json as render_release_status_json_payload, render_release_status_text,
+    load_release_config, release_gate_run_payload, release_plan_payload, release_run_payload,
+    release_status_payload, render_release_gate_run_text, render_release_pipeline_plan_text,
+    render_release_receipt_json, render_release_receipt_text, render_release_status_text,
     ReleaseAction, ReleaseRunOutcome, ReleaseStage, TargetDecision,
 };
 
@@ -35,11 +33,16 @@ pub(super) fn run_release(args: ReleaseArgs) -> Result<String, RunnerError> {
                 status.ready
             };
             if args.output_json {
-                let rendered = render_release_status_json_payload(&status);
+                let payload = release_status_payload(&status);
                 if succeeded {
-                    return Ok(rendered);
+                    return Ok(serde_json::to_string_pretty(&payload).expect("JSON value encodes"));
                 }
-                return Err(RunnerError::CommandJsonFailure { rendered });
+                return Err(release_failure(
+                    payload,
+                    "release status is blocked",
+                    &status.blockers,
+                    &status.gate_results,
+                ));
             }
 
             let rendered = render_release_status_text(&status);
@@ -52,11 +55,16 @@ pub(super) fn run_release(args: ReleaseArgs) -> Result<String, RunnerError> {
         ReleaseSubcommand::Gates => {
             let gate_run = run_standalone_release_gates(&resolved)?;
             if args.output_json {
-                let rendered = render_release_gate_run_json_payload(&gate_run);
+                let payload = release_gate_run_payload(&gate_run);
                 if gate_run.passed {
-                    return Ok(rendered);
+                    return Ok(serde_json::to_string_pretty(&payload).expect("JSON value encodes"));
                 }
-                return Err(RunnerError::CommandJsonFailure { rendered });
+                return Err(release_failure(
+                    payload,
+                    "release gates failed",
+                    &gate_run.blockers,
+                    &gate_run.gate_results,
+                ));
             }
 
             let rendered = render_release_gate_run_text(&gate_run);
@@ -73,11 +81,16 @@ pub(super) fn run_release(args: ReleaseArgs) -> Result<String, RunnerError> {
             )?;
             let plan = collect_release_plan(&resolved, requested_version_override)?;
             if args.output_json {
-                let rendered = render_release_plan_json_payload(&plan);
+                let payload = release_plan_payload(&plan);
                 if plan.ready {
-                    return Ok(rendered);
+                    return Ok(serde_json::to_string_pretty(&payload).expect("JSON value encodes"));
                 }
-                return Err(RunnerError::CommandJsonFailure { rendered });
+                return Err(release_failure(
+                    payload,
+                    "release plan is blocked",
+                    &plan.blockers,
+                    &[],
+                ));
             }
 
             let rendered = render_release_pipeline_plan_text(&plan);
@@ -144,6 +157,34 @@ pub(super) fn run_release(args: ReleaseArgs) -> Result<String, RunnerError> {
     }
 }
 
+fn release_failure(
+    payload: serde_json::Value,
+    message: &str,
+    blockers: &[String],
+    gates: &[effigy_release::GateResult],
+) -> RunnerError {
+    let human = blockers
+        .iter()
+        .fold(effigy_ui::HumanError::new(message), |human, blocker| {
+            human.evidence(blocker)
+        });
+    let human = gates
+        .iter()
+        .filter(|gate| !gate.passed)
+        .fold(human, |human, gate| {
+            let human = human.evidence(format!("gate `{}` failed", gate.name));
+            let human = if let Some(error) = &gate.launch_error {
+                human.evidence(error)
+            } else {
+                human
+            };
+            human
+                .evidence_output("stderr", &gate.stderr)
+                .evidence_output("stdout", &gate.stdout)
+        });
+    RunnerError::structured_json(payload, true, human, None)
+}
+
 /// A release Run reports its receipt plus the lines the Run printed.
 fn render_release_run(
     output_json: bool,
@@ -152,15 +193,20 @@ fn render_release_run(
     let receipt = outcome.receipt();
     let succeeded = outcome.succeeded();
     if output_json {
-        let rendered = render_release_run_json(
+        let payload = release_run_payload(
             &receipt,
             &outcome.messages,
             &outcome.receipt_path.display().to_string(),
         );
         if succeeded {
-            return Ok(rendered);
+            return Ok(serde_json::to_string_pretty(&payload).expect("JSON value encodes"));
         }
-        return Err(RunnerError::CommandJsonFailure { rendered });
+        return Err(release_failure(
+            payload,
+            "release run failed",
+            &receipt.errors,
+            &[],
+        ));
     }
     let mut lines = Vec::new();
     lines.extend(outcome.messages.iter().cloned());

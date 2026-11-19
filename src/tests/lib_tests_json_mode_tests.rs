@@ -7,6 +7,7 @@ use super::prelude::{
 #[test]
 fn apply_global_json_flag_injects_task_arg_when_missing() {
     let cmd = Command::Task(TaskInvocation {
+        options: None,
         name: "tasks".to_owned(),
         args: vec!["--resolve".to_owned(), "catalog-a/api".to_owned()],
     });
@@ -22,6 +23,7 @@ fn apply_global_json_flag_injects_task_arg_when_missing() {
 #[test]
 fn apply_global_json_flag_preserves_config_completion_nested_subcommand_position() {
     let cmd = Command::Task(TaskInvocation {
+        options: None,
         name: "config".to_owned(),
         args: vec![
             "completion".to_owned(),
@@ -50,6 +52,7 @@ fn apply_global_json_flag_preserves_config_completion_nested_subcommand_position
 fn command_requests_json_checks_task_or_global_mode() {
     let version_cmd = Command::Version;
     let cmd = Command::Task(TaskInvocation {
+        options: None,
         name: "tasks".to_owned(),
         args: vec!["--resolve".to_owned(), "catalog-a/api".to_owned()],
     });
@@ -59,12 +62,14 @@ fn command_requests_json_checks_task_or_global_mode() {
     assert!(command_requests_json(&cmd, true));
 
     let cmd_with_json = Command::Task(TaskInvocation {
+        options: None,
         name: "tasks".to_owned(),
         args: vec!["--json".to_owned()],
     });
     assert!(command_requests_json(&cmd_with_json, false));
 
     let cmd_json_after_delimiter = Command::Task(TaskInvocation {
+        options: None,
         name: "snapshot".to_owned(),
         args: vec!["--".to_owned(), "--json".to_owned()],
     });

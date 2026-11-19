@@ -45,7 +45,10 @@ pub(super) fn parse_init_request(
     args: &[String],
 ) -> Result<InitRequest, BuiltinError> {
     let mut parser = BuiltinArgParser::new(args);
-    let mut output_json = false;
+    let mut output_json = task
+        .options
+        .as_ref()
+        .is_some_and(|options| options.json_mode);
     let mut force = false;
     let mut dry_run = false;
     let mut list = false;
@@ -246,6 +249,7 @@ mod tests {
 
     fn task() -> TaskInvocation {
         TaskInvocation {
+            options: None,
             name: "init".to_owned(),
             args: Vec::new(),
         }

@@ -157,6 +157,7 @@ mod tests {
     fn embedded_default_preserves_existing_repo_target() {
         let command = Command::Defer(DeferArgs {
             task: TaskInvocation {
+                options: None,
                 name: "seed".to_owned(),
                 args: Vec::new(),
             },
