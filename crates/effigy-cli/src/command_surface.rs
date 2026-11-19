@@ -75,12 +75,6 @@ impl HelpGroup {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CommandDescriptor {
-    pub topic: HelpTopic,
-    pub command_name: Option<&'static str>,
-}
-
 /// One row of the general-help inventory.
 ///
 /// The inventory is the single typed owner of general help: each row names
@@ -97,113 +91,6 @@ pub struct GeneralHelpEntry {
     /// Name accepted by `effigy help <name>`, when the row has a typed panel.
     pub help_argument: Option<&'static str>,
 }
-
-pub const COMMAND_DESCRIPTORS: &[CommandDescriptor] = &[
-    CommandDescriptor {
-        topic: HelpTopic::General,
-        command_name: Some("help"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Bundle,
-        command_name: Some("bundle"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Deploy,
-        command_name: Some("deploy"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Deps,
-        command_name: Some("deps"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Secrets,
-        command_name: Some("secrets"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Defer,
-        command_name: Some("defer"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Exec,
-        command_name: Some("exec"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::State,
-        command_name: None,
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Workspace,
-        command_name: Some("workspace"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Gateway,
-        command_name: Some("gateway"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Service,
-        command_name: Some("service"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Rhai,
-        command_name: Some("rhai"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Skill,
-        command_name: Some("skill"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Docs,
-        command_name: Some("docs"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Contracts,
-        command_name: Some("contracts"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Container,
-        command_name: Some("container"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Bootstrap,
-        command_name: Some("bootstrap"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Uninstall,
-        command_name: Some("uninstall"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Release,
-        command_name: Some("release"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Doctor,
-        command_name: Some("doctor"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Runs,
-        command_name: Some("runs"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Tasks,
-        command_name: None,
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Test,
-        command_name: Some("test"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Init,
-        command_name: Some("init"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Changelog,
-        command_name: None,
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Fmt,
-        command_name: Some("fmt"),
-    },
-];
 
 /// General-help inventory, ordered by primary group.
 ///
@@ -483,21 +370,16 @@ pub const HELP_COMMAND_TOPICS: &[(&str, HelpTopic)] = &[
     ("workspace", HelpTopic::Workspace),
 ];
 
-pub fn command_descriptors() -> &'static [CommandDescriptor] {
-    COMMAND_DESCRIPTORS
-}
-
-pub fn descriptor_for_topic(topic: HelpTopic) -> Option<&'static CommandDescriptor> {
-    COMMAND_DESCRIPTORS
-        .iter()
-        .find(|descriptor| descriptor.topic == topic)
-}
-
 pub fn help_topic_for_command(command: &str) -> Option<HelpTopic> {
-    COMMAND_DESCRIPTORS
-        .iter()
-        .find(|descriptor| descriptor.command_name == Some(command))
-        .map(|descriptor| descriptor.topic)
+    // These commands own their direct help in their feature parser; aliases
+    // are resolved there too. The help-argument table owns the names.
+    if matches!(
+        command,
+        "state" | "tasks" | "changelog" | "fmt-rust" | "version"
+    ) {
+        return None;
+    }
+    help_topic_for_help_argument(command)
 }
 
 /// Resolve `effigy help <command>` to its typed panel.

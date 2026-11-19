@@ -1,8 +1,7 @@
 use super::{
-    command_descriptors, deferred_builtin_for_help_argument, deferred_builtin_for_help_topic,
-    descriptor_for_topic, general_help_entries, general_help_entries_for_group, help_builtin_route,
-    help_command_names, help_topic_for_command, help_topic_for_help_argument, HelpGroup,
-    HELP_COMMAND_BUILTIN_ROUTES, HELP_COMMAND_TOPICS,
+    deferred_builtin_for_help_argument, deferred_builtin_for_help_topic, general_help_entries,
+    general_help_entries_for_group, help_builtin_route, help_command_names, help_topic_for_command,
+    help_topic_for_help_argument, HelpGroup, HELP_COMMAND_BUILTIN_ROUTES, HELP_COMMAND_TOPICS,
 };
 use crate::builtin_names::{
     builtin_command_name, builtin_escape_spelling, is_deferred_builtin_command,
@@ -108,26 +107,7 @@ const CONTRACT_GROUP_INVENTORIES: &[(HelpGroup, &[&str])] = &[
 ];
 
 #[test]
-fn command_descriptors_have_unique_topics_and_consistent_lookups() {
-    let mut seen = Vec::new();
-    for descriptor in command_descriptors() {
-        assert!(
-            !seen.contains(&descriptor.topic),
-            "duplicate {descriptor:?}"
-        );
-        seen.push(descriptor.topic);
-        assert_eq!(descriptor_for_topic(descriptor.topic), Some(descriptor));
-        if let Some(name) = descriptor.command_name {
-            assert_eq!(help_topic_for_command(name), Some(descriptor.topic));
-        }
-    }
-}
-
-#[test]
 fn retired_heavy_admission_queries_are_not_a_builtin_help_surface() {
-    assert!(command_descriptors()
-        .iter()
-        .all(|descriptor| descriptor.command_name != Some("admission")));
     assert!(general_help_entries()
         .iter()
         .all(|entry| !entry.command.starts_with("effigy admission")));
@@ -140,10 +120,6 @@ fn command_descriptors_cover_current_top_level_help_routes() {
         let parsed = parse_command([(*command).to_owned(), "--help".to_owned()])
             .unwrap_or_else(|error| panic!("parse {command} --help: {error}"));
         assert_eq!(parsed, Command::Help(*expected_topic));
-        assert!(
-            descriptor_for_topic(*expected_topic).is_some(),
-            "missing descriptor for {command} help topic {expected_topic:?}"
-        );
         // Every top-level name that resolves through the static lookup must
         // agree with the parsed route.
         if let Some(topic) = help_topic_for_command(command) {
@@ -255,10 +231,6 @@ fn help_command_topics_reuse_the_existing_typed_help_owner() {
     expected.dedup();
     assert_eq!(names.len(), expected.len(), "duplicate help owner");
     for (name, topic) in HELP_COMMAND_TOPICS {
-        assert!(
-            descriptor_for_topic(*topic).is_some(),
-            "`effigy help {name}` points at a topic without a command descriptor"
-        );
         assert_eq!(help_topic_for_help_argument(name), Some(*topic));
         assert!(
             help_builtin_route(name).is_none(),
@@ -338,7 +310,7 @@ fn deferred_builtin_for_help_topic_matches_the_inventory_row() {
             continue;
         }
         let topic = help_topic_for_help_argument(argument).expect("listed help argument");
-        assert!(descriptor_for_topic(topic).is_some(), "{argument}");
+        assert_eq!(help_topic_for_help_argument(argument), Some(topic));
         if entry.deferred_builtin.is_some() {
             // Deferral follows the requested name, not the shared panel:
             // `fmt` and `fmt-rust` are one topic but two built-ins.
@@ -362,10 +334,9 @@ const RETIRED_SHADOWABLE_WORDS: &[&str] = &["demo"];
 /// The complete built-in top-level inventory: every spelling a help route,
 /// built-in task row, or command descriptor can reach.
 fn builtin_top_level_inventory() -> Vec<&'static str> {
-    let mut inventory: Vec<&'static str> = command_descriptors()
+    let mut inventory: Vec<&'static str> = HELP_COMMAND_TOPICS
         .iter()
-        .filter_map(|row| row.command_name)
-        .chain(HELP_COMMAND_TOPICS.iter().map(|(name, _)| *name))
+        .map(|(name, _)| *name)
         // `run` is a public alias of `runs`, not a separate help topic.
         .chain(std::iter::once("run"))
         .chain(HELP_COMMAND_BUILTIN_ROUTES.iter().copied())

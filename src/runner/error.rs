@@ -920,43 +920,41 @@ fn embedded_human_error(human: &serde_json::Value) -> effigy_ui::HumanError {
 /// written, so the first line says what failed and the last `next:` line is
 /// the action. The `--json` form carries that same action, not `null`.
 fn text_payload_human(rendered: &str) -> effigy_ui::HumanError {
-    let what_failed = rendered
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .unwrap_or("the command failed");
-    let human = effigy_ui::HumanError::new(what_failed);
-    let next = rendered
-        .lines()
-        .rev()
-        .find_map(|line| line.trim().strip_prefix("next:"))
-        .map(str::trim)
-        .filter(|action| !action.is_empty());
-    match next {
-        Some(action) => human.next_action(action),
-        None => human,
-    }
+    human_error_from_lines(rendered, false)
 }
 
-/// Lift a rendered refusal into the three facts, without inventing any: the
-/// first line is what failed, a `next:` line is the next action, and the rest
-/// is evidence.
+/// Lift a rendered refusal into the three facts without inventing any.
 fn human_error_from_display(rendered: &str) -> effigy_ui::HumanError {
+    human_error_from_lines(rendered, true)
+}
+
+fn human_error_from_lines(rendered: &str, include_evidence: bool) -> effigy_ui::HumanError {
     let mut lines = rendered.lines();
-    let what_failed = lines
-        .next()
+    let first = if include_evidence {
+        lines.next()
+    } else {
+        lines.by_ref().find(|line| !line.trim().is_empty())
+    };
+    let what_failed = first
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .unwrap_or("the command failed");
     let mut error = effigy_ui::HumanError::new(what_failed);
-    for line in lines {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
+    if !include_evidence {
+        if let Some(action) = first.and_then(|line| line.trim().strip_prefix("next:")) {
+            if !action.trim().is_empty() {
+                error = error.next_action(action.trim());
+            }
         }
+    }
+    for line in lines.map(str::trim).filter(|line| !line.is_empty()) {
         match line.strip_prefix("next:") {
-            Some(action) => error = error.next_action(action.trim()),
-            None => error = error.evidence(line),
+            Some(action) if include_evidence || !action.trim().is_empty() => {
+                error = error.next_action(action.trim())
+            }
+            Some(_) => {}
+            None if include_evidence => error = error.evidence(line),
+            None => {}
         }
     }
     error
