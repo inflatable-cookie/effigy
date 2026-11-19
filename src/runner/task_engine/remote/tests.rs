@@ -331,10 +331,8 @@ fn begin_with_hook(root: &Path) -> (TaskRun, i32) {
         "echo $$ > '{}'; printf 'admit\\n'; while :; do sleep 1; done",
         pid_file.display()
     );
-    let _env = crate::contract_test_support::EnvGuard::set_many(&[
-        ("EFFIGY_ADMISSION_HOOK", Some(hook)),
-        ("EFFIGY_ADMISSION_PROTOCOL", None),
-    ]);
+    let _env =
+        crate::contract_test_support::EnvGuard::set_many(&[("EFFIGY_ADMISSION_HOOK", Some(hook))]);
     let target = TaskTarget {
         root: root.to_path_buf(),
         catalog: String::new(),
@@ -815,69 +813,9 @@ fn shared_process_remote_admission_and_guest_version_inputs_stay_private() {
     assert!(output.status.success(), "{output:?}");
     let stdout = String::from_utf8(output.stdout).expect("libtest receipt");
     assert!(
-        stdout.contains("10 passed; 0 failed;"),
-        "all eight admission cases and both version/terminal cases ran: {stdout}"
+        stdout.contains("9 passed; 0 failed;"),
+        "all seven admission cases and both version/terminal cases ran: {stdout}"
     );
-}
-
-#[test]
-fn remote_admission_v2_durable_run_refuses_before_hook() {
-    let _lock = crate::contract_test_support::lock_test();
-    const CHILD: &str = "EFFIGY_TEST_REMOTE_ADMISSION_V2";
-    if std::env::var_os(CHILD).is_none() {
-        // The reported protocol is this negative control's input, not the
-        // protocol of concurrent positive remote-admission fixtures.
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "runner::task_engine::remote::tests::remote_admission_v2_durable_run_refuses_before_hook",
-                "--nocapture",
-                "--test-threads=1",
-            ])
-            .env(CHILD, "1")
-            .env("EFFIGY_ADMISSION_PROTOCOL", "2")
-            .output_owned()
-            .expect("isolated reported-admission control");
-        assert!(output.status.success(), "{output:?}");
-        return;
-    }
-    assert_eq!(
-        std::env::var("EFFIGY_ADMISSION_PROTOCOL").unwrap(),
-        "2",
-        "the child runs the original reported-protocol input"
-    );
-    let fixture = fixture();
-    let pid_file = fixture.root.join("hook-pid");
-    let hook = format!(
-        "echo $$ > '{}'; printf 'admit\\n'; while :; do sleep 1; done",
-        pid_file.display()
-    );
-    let _env =
-        crate::contract_test_support::EnvGuard::set_many(&[("EFFIGY_ADMISSION_HOOK", Some(hook))]);
-    let target = TaskTarget {
-        root: fixture.root.clone(),
-        catalog: String::new(),
-        task: "remote:v2".into(),
-        surface: effigy_core::task_selection::TaskSurface::Published,
-        profile: None,
-        shared_lock: None,
-        argument_scope: None,
-        label: "remote:v2".into(),
-    };
-    let result = TaskRun::begin(TaskRunRequest {
-        target: &target,
-        lock_wait_ms: 0,
-        custody: true,
-        scratch: false,
-        managed_run_token: None,
-        args: &[],
-        key: None,
-        admission: Some(effigy_manifest::ManifestTaskAdmission::Heavy),
-        workspace_admission: None,
-        cwd: None,
-    });
-    assert!(result.is_err(), "durable v2 admission must refuse");
-    assert!(!pid_file.exists(), "v2 refusal must precede the hook");
 }
 
 fn task<'a>(

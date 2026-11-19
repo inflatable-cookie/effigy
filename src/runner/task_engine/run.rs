@@ -749,35 +749,6 @@ impl TaskRun {
         }
     }
 
-    /// Whether this run's custody is the memory class (contract 052 Q-010):
-    /// the only class admission protocol v2 can report custodians for, since
-    /// a durable run's sentinel is not a memory guard.
-    pub(in crate::runner) fn is_memory_class(&self) -> bool {
-        self.memory.is_some()
-    }
-
-    /// The run's own identity and its memory guard's, the two custodians a
-    /// v2 admission reports before any workload spawns. In-process work runs
-    /// inside the owner and dies with it, so the owner covers it.
-    pub(in crate::runner) fn custodian_identities(
-        &self,
-    ) -> (
-        Option<effigy_kernel::ident::ProcessIdentity>,
-        Option<effigy_kernel::ident::ProcessIdentity>,
-    ) {
-        let owner = effigy_kernel::ident::process_identity(std::process::id())
-            .verified()
-            .cloned();
-        let guard = self.memory.as_ref().and_then(|memory| {
-            memory
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .guard_identity()
-                .cloned()
-        });
-        (owner, guard)
-    }
-
     /// How long the admission hook took to admit this run, when one did.
     pub(in crate::runner) fn admission_wait_ms(&self) -> Option<u64> {
         self.admission
@@ -968,8 +939,6 @@ impl TaskRun {
         Vec<String>,
     ) {
         let admission = self.admission.take();
-        let target = self.target.clone();
-        let run_id = self.id().to_string();
         self.leave_programs();
         let scratch = self.conclude_scratch(&workload);
         let result = match self.memory.take() {
@@ -977,7 +946,6 @@ impl TaskRun {
                 owned(memory),
                 workload.clone(),
                 &kernel::cleanup_context(budget),
-                &mut |_| {},
             ),
             None => match self.run.take() {
                 Some(run) => close_run_settled(
@@ -989,15 +957,8 @@ impl TaskRun {
             },
         };
         let (outcome, mut warnings) = result;
-        if let Some(admission) = admission {
-            warnings.extend(super::admission::finish(
-                admission,
-                &target,
-                &run_id,
-                &workload,
-                outcome.as_ref(),
-            ));
-        }
+        // Settle has stopped the run's effects; the hook goes with the marker.
+        drop(admission);
         warnings.extend(scratch);
         (outcome, warnings)
     }
@@ -1006,64 +967,22 @@ impl TaskRun {
     /// gates. Returns warnings only: the task's result is already decided.
     pub(in crate::runner) fn close(mut self, workload: WorkloadOutcome) -> Vec<String> {
         let mut warnings = Vec::new();
-        // Settle stops the admission hook; the marker goes with it, and a v2
-        // admission reports its terminal result before that happens.
+        // Settle stops the admission hook; the marker goes with it.
         let admission = self.admission.take();
-        let target = self.target.clone();
-        let run_id = self.id().to_string();
         self.leave_programs();
         warnings.extend(self.conclude_scratch(&workload));
-        let mut settled = None;
-        let mut terminal = admission;
-        let mut terminal_groups = 0u64;
-        let mut terminal_reported = false;
         if let Some(memory) = self.memory.take() {
             match kernel::cleanup() {
                 Ok(cleanup) => {
-                    let mut report_warnings = Vec::new();
-                    let (outcome, close_warnings) = foreground::close_memory(
-                        owned(memory),
-                        workload.clone(),
-                        &cleanup,
-                        &mut |preview| {
-                            // A v1 admission reports nothing and keeps its
-                            // marker until the settle has stopped the hook.
-                            if !terminal
-                                .as_ref()
-                                .is_some_and(|admission| admission.reporting())
-                            {
-                                return;
-                            }
-                            let admission = terminal.take().expect("checked above");
-                            terminal_groups = admission.workload_groups();
-                            terminal_reported = true;
-                            report_warnings.extend(super::admission::report_terminal(
-                                &admission, &workload, preview,
-                            ));
-                        },
-                    );
-                    settled = outcome;
-                    let report_failed = !report_warnings.is_empty();
-                    if report_failed && effigy_core::run_deadline::ceiling().is_some() {
-                        // Lost final evidence is not a positive settle under
-                        // the opt-in: the task fails closed and the footer is
-                        // suppressed.
-                        effigy_core::run_deadline::note_settlement_incomplete();
-                        effigy_core::output_cap::foreground_incomplete();
-                        if let Some(settled) = &mut settled {
-                            settled
-                                .mark_incomplete("the terminal admission report was not delivered");
-                        }
-                    }
-                    warnings.extend(report_warnings);
+                    let (_, close_warnings) =
+                        foreground::close_memory(owned(memory), workload.clone(), &cleanup);
                     warnings.extend(close_warnings);
                 }
                 Err(error) => warnings.push(error.to_string()),
             }
         }
         if let Some(run) = self.run.take() {
-            let (outcome, close_warnings) = close_run(owned(run), workload.clone());
-            settled = settled.or(outcome);
+            let (_, close_warnings) = close_run(owned(run), workload.clone());
             warnings.extend(close_warnings);
         }
         if let Some(shared) = self.shared.take() {
@@ -1075,40 +994,8 @@ impl TaskRun {
             };
             warnings.extend(close_run(shared, mirrored).1);
         }
-        if let Some(admission) = terminal {
-            // No settle reported through it (a run with nothing to settle):
-            // report and record after the fact, best effort.
-            let terminal_warnings =
-                super::admission::finish(admission, &target, &run_id, &workload, settled.as_ref());
-            if !terminal_warnings.is_empty() && effigy_core::run_deadline::ceiling().is_some() {
-                effigy_core::run_deadline::note_settlement_incomplete();
-                effigy_core::output_cap::foreground_incomplete();
-                if let Some(settled) = &mut settled {
-                    settled.mark_incomplete("the terminal admission evidence was lost");
-                }
-            }
-            warnings.extend(terminal_warnings);
-        } else if terminal_reported {
-            let record_warnings = match &settled {
-                Some(settled_run) => super::admission::record_terminal(
-                    &target,
-                    &run_id,
-                    settled_run,
-                    terminal_groups,
-                ),
-                None => Vec::new(),
-            };
-            if !record_warnings.is_empty() && effigy_core::run_deadline::ceiling().is_some() {
-                // The run's final terminal record could not be written: the
-                // evidence is lost, so the settle is not positive.
-                effigy_core::run_deadline::note_settlement_incomplete();
-                effigy_core::output_cap::foreground_incomplete();
-                if let Some(settled) = &mut settled {
-                    settled.mark_incomplete("the terminal record could not be written");
-                }
-            }
-            warnings.extend(record_warnings);
-        }
+        // Settle has stopped the run's effects; the hook goes with the marker.
+        drop(admission);
         warnings
     }
 

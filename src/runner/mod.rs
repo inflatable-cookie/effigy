@@ -81,6 +81,12 @@ pub(in crate::runner) use deps_command::run_deps;
 pub(in crate::runner) use docs_command::run_docs;
 pub use entrypoints::resolve_command_root;
 pub use error::RunnerError;
+
+/// Refuses an environment that still sets a retired v0.15 switch, before any
+/// command runs, so the change is named rather than silent.
+pub fn check_retired_switches() -> Result<(), RunnerError> {
+    task_engine::retired_switches()
+}
 pub(in crate::runner) use exec_command::run_exec;
 pub(in crate::runner) use format_command::run_fmt;
 pub(in crate::runner) use gateway_command::{

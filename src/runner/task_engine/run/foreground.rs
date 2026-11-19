@@ -45,16 +45,8 @@ impl TaskRun {
             .map(Ok)
             .unwrap_or_else(|| StateRoot::filesystem_checkout(&kernel::observe(), &location))
             .map_err(|error| start_error(&error.to_string()))?;
-        let root = if effigy_kernel::store::strict_persistence() {
-            StateRoot::foreground_effects_prepared(&cx, &location)
-        } else {
-            StateRoot::foreground_effects(&cx, &location)
-        }
-        .map_err(|error| start_error(&error.to_string()))?;
-        // Strict persistence (effigy#985): a v2 admission settles one slot in
-        // the fixed terminal ring, so the ring must exist and have room before
-        // the hook runs. Refusing here writes no gate and no byte of any file.
-        super::super::admission::require_strict_terminal_ring(&plan, &root)?;
+        let root = StateRoot::foreground_effects(&cx, &location)
+            .map_err(|error| start_error(&error.to_string()))?;
         let owner = if task_gate {
             request.target.owner(checkout)?
         } else {
@@ -88,12 +80,6 @@ impl TaskRun {
                 invocation = ResolvedInvocation::new(spec)
                     .map_err(|error| start_error(&error.to_string()))?;
             }
-        }
-        if effigy_kernel::store::strict_persistence() {
-            let mut gate_ids = invocation.spec().gates.clone();
-            gate_ids.push(owner.clone());
-            effigy_kernel::run::verify_prepared_foreground_gates(&root, &owner, &gate_ids)
-                .map_err(|error| start_error(&error.to_string()))?;
         }
         kernel::install_router()?;
         let custody_scope = kernel::CustodyWait::enter();
@@ -187,41 +173,17 @@ impl TaskRun {
     ) -> Result<OwnedProcess, RunnerError> {
         self.verify_admission()?;
         let cx = kernel::effects();
-        // Under admission protocol v2 every workload group is reported — and
-        // acknowledged — between its recorded receipt and its `go`. A refused
-        // report leaves the child unexecuted and fails the run closed.
-        // A helper process (the admission hook itself, a built-in's session) is
-        // not a workload group; only a workload spawn is reported.
-        let mut gate = if auxiliary {
-            None
-        } else {
-            super::super::admission::WorkloadGate::for_spawn(self.admission.as_ref(), &self.target)
-        };
         let process: Result<_, SpawnError> = match &self.memory {
             Some(memory) => {
                 let mut memory = memory
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                match gate.as_mut() {
-                    Some(gate) => {
-                        Custody::spawn_foreground_gated(&mut memory, spec, &cx, gate, handoff)
-                    }
-                    None => Custody::spawn_foreground_with_handoff(
-                        &mut memory,
-                        spec,
-                        &cx,
-                        !auxiliary,
-                        handoff,
-                    ),
-                }
+                Custody::spawn_foreground_with_handoff(&mut memory, spec, &cx, !auxiliary, handoff)
             }
             None => {
                 Custody::spawn_with_handoff(&mut *self.run_mut()?, spec, &cx, !auxiliary, handoff)
             }
         };
-        if let Some(error) = gate.as_mut().and_then(|gate| gate.take_failure()) {
-            return Err(error);
-        }
         process.map_err(|error| {
             RunnerError::task_invocation(format!("process custody refused: {error}"))
         })
@@ -342,7 +304,6 @@ pub(super) fn close_memory(
     mut run: ForegroundRun,
     workload: WorkloadOutcome,
     cleanup: &effigy_kernel::ctx::CleanupContext,
-    report: &mut dyn FnMut(CleanupOutcome),
 ) -> (
     Option<effigy_kernel::outcome::Outcome<effigy_kernel::run::Settled>>,
     Vec<String>,
@@ -361,7 +322,7 @@ pub(super) fn close_memory(
         .map(|error| format!("foreground outcome: {error}"))
         .into_iter()
         .collect::<Vec<_>>();
-    match run.settle_reporting(cleanup, report) {
+    match run.settle(cleanup) {
         Ok(outcome) => {
             let positive = recorded_ok
                 && outcome.cleanup() == effigy_kernel::outcome::CleanupOutcome::Complete;

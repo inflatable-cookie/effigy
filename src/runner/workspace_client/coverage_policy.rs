@@ -94,7 +94,7 @@ fn channel_scope_unsupported(cmd: &Command) -> Option<&'static str> {
         Command::Runs(args) => match args.action {
             RunsAction::List { .. } | RunsAction::Status { .. } | RunsAction::Stop { .. } => None,
             RunsAction::Logs { .. } => Some(RUN_LOGS),
-            RunsAction::Prepare { .. } | RunsAction::Release { .. } => Some(OTHER),
+            RunsAction::Release { .. } => Some(OTHER),
         },
         Command::Gateway(_) => Some(GATEWAY),
         Command::Release(_) => Some(RELEASE),

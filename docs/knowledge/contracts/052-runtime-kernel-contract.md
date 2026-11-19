@@ -353,53 +353,25 @@ blocks the affected owner until positively absent or explicitly acknowledged;
 acknowledgement for a foreground run lasts only in the current custodian.
 Guaranteed restartable recovery requires a durable class.
 
-**The narrow terminal-record exception (effigy#325).** One deliberate,
-bounded exception to "a foreground run leaves no durable record" (Tom,
-2026-10-24; Queue decision b3538091, chosen option verbatim: "the admission
-hook reports the workload's real process group and start identity, and Effigy
-records a terminal result for foreground runs. Then Queue can settle dead runs
-as lost and free slots on its own."). An orchestrator that opts in to
-`effigy.admission-request.v2` (contract [049](049-heavy-validation-admission-contract.md))
-makes Effigy write exactly one row to the owning checkout journal at settle,
-in an additive schema-1 `foreground_terminals` table. An older reader selects
-the columns it knows, so that existing addition needs no schema-version bump.
-The later v2 detached-owner claim boundary in §8.7 has different writer rules.
-
-The row holds the run id, the `CheckoutId`, the boot identity, the task, the
-outcome, the exit code or signal, `cleanup`, the acknowledged workload-group
-count and the closed time. The row is bounded at write time: an oversized
-`run_id`, `checkout`, `boot`, `outcome` or `cleanup` is refused rather than cut,
-so no two runs can coalesce on one key, and only the descriptive `task` label is
-cut and marked. Contract
-[049](049-heavy-validation-admission-contract.md#per-invocation-persistence-effigy977)
-states the maxima, the row maximum and the rest of this route's per-invocation
-persistence. It is
-**evidence, never authority**: it carries no
+**The owner-loss terminal record (effigy#986).** Q-010 keeps a foreground run
+in memory, so losing every custodian would leave nothing to read. When a
+foreground run's *owner* dies while its memory guard survives, the guard settles
+the run and writes one row to the owning checkout journal's
+`foreground_terminals` table (an additive schema-1 table, so an older reader
+selects the columns it knows and no version bump is needed). The row holds the
+run id, the `CheckoutId`, the boot identity, the task, the outcome, the exit code
+or signal, `cleanup` and the closed time. It says only what the guard can still
+prove: `interrupted` with `cleanup: "complete"` when the run's custody closed, and
+`unknown` with `cleanup: "incomplete"` when a pin or registered effect did not.
+It never says `succeeded`. It is **evidence, never authority**: it carries no
 PID, PGID or start identity, so no run, provider or built-in may signal,
 reclaim, recover or settle from it. `run status <id>` reports it with
 `evidence_source: "foreground-terminal-record.v1"`; `run logs` reports no
-retained log and `run stop` refuses. The only closure Effigy asserts from it is
-a terminal result with `cleanup: "complete"` (R5/I-R7). A run whose custodians
-all died before settle writes nothing and stays `not-recorded`; there is no
-replay.
-
-One writer is not the admission hook. A foreground run whose *owner* died while
-its memory guard survived is settled by that guard, which writes one such
-record itself (effigy#986). It says only what the guard can still prove:
-`interrupted` with `cleanup: "complete"` when the run's custody closed, and
-`unknown` with `cleanup: "incomplete"` when a pin or registered effect did not.
-It never says `succeeded`, and it carries no identity either, so the owner's
-death grants no signal, reclaim or replay. A guard carries the persistence
-class of the run whose owner it observed, so a strict run's owner-death record
-goes to the same preallocated ring instead of opening SQLite. Every other
-foreground run keeps Q-010 unchanged, including no journal write at all.
-
-Under strict persistence (effigy#985) the same record is first written to one
-slot of a fixed-size, preallocated ring under the state root, and the route
-opens no SQLite connection at all; the next non-strict store open ingests the
-slot into the same `foreground_terminals` table, and `run status` and `runs`
-read the slot until then (contract 049). The provider-side release rule this
-evidence supports is contract 049's, and it is not an Effigy authority.
+retained log and `run stop` refuses. A foreground run that settles normally
+writes no row, and a run whose custodians all died before settle writes nothing
+and stays `not-recorded`; there is no replay. The admission hook receives no
+reports and sends no acknowledgements (contract 049). The provider-side release
+rule this evidence supports is contract 049's, and it is not an Effigy authority.
 
 **Views and fencing.** Foreground runs have random `RunId`s and an in-memory
 incarnation fence containing that id; persistent resource generations are not

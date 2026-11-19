@@ -137,11 +137,7 @@ impl ForegroundRun {
                  with each one's checkout-alias spelling",
             ));
         }
-        let mut gate = if crate::store::strict_persistence() {
-            Gate::acquire_prepared(cx, root, &ids, opts.wait)?
-        } else {
-            Gate::acquire(cx, root, &ids, opts.wait)?
-        };
+        let mut gate = Gate::acquire(cx, root, &ids, opts.wait)?;
         // Declared shared exclusion gates remain held too; adapter gates
         // cannot reach this local-only path. The held flock is the exclusion: a
         // predecessor it does not name cannot still be live, so a journal row
@@ -257,17 +253,7 @@ impl ForegroundRun {
     pub fn interrupt(&mut self, workload: WorkloadOutcome) -> Result<(), RunError> {
         self.record.interrupt(workload)
     }
-    pub fn settle(self, cleanup: &CleanupContext) -> Result<Outcome<Settled>, RunError> {
-        self.settle_reporting(cleanup, &mut |_| {})
-    }
-
-    /// `settle` with one report immediately before the run stops its first
-    /// effect, which settles last. A v2 admission's hook is that effect: it
-    /// must receive the run's terminal report while it is still live, and
-    /// every other effect's state is known at that point. `report` receives
-    /// the cleanup the settle will reach unless that final stop fails, so a
-    /// caller reports closure it can stand behind. The kernel never
-    /// interprets the callback.
+    /// Settles every effect in reverse spawn order and closes the run.
     ///
     /// If the invocation's absolute run deadline cuts settlement short, the
     /// run records that fact, keeps its surviving custodian through the
@@ -275,12 +261,8 @@ impl ForegroundRun {
     /// pretending to have settled (effigy#992). Under the opt-in any
     /// settlement that is not positively complete -- an error, a timeout or
     /// residue -- is recorded as incomplete, never as success.
-    pub fn settle_reporting(
-        mut self,
-        cleanup: &CleanupContext,
-        report: &mut dyn FnMut(CleanupOutcome),
-    ) -> Result<Outcome<Settled>, RunError> {
-        let result = self.settle_inner(cleanup, report);
+    pub fn settle(mut self, cleanup: &CleanupContext) -> Result<Outcome<Settled>, RunError> {
+        let result = self.settle_inner(cleanup);
         if effigy_core::run_deadline::ceiling().is_some() && result.is_err() {
             // A settle that failed for any reason under the deadline leaves
             // the run unsettled: the guard is left as the surviving custodian
@@ -303,33 +285,11 @@ impl ForegroundRun {
         }
     }
 
-    fn settle_inner(
-        &mut self,
-        cleanup: &CleanupContext,
-        report: &mut dyn FnMut(CleanupOutcome),
-    ) -> Result<Outcome<Settled>, RunError> {
+    fn settle_inner(&mut self, cleanup: &CleanupContext) -> Result<Outcome<Settled>, RunError> {
         let effects = self.record.effects().to_vec();
-        // Effects settle in reverse, so the last effect settled is the first
-        // one spawned: an admission hook, which reports before it stops.
-        let last = effects
-            .iter()
-            .find(|effect| !effect.state.terminal())
-            .map(|effect| effect.sequence);
         for effect in effects.iter().rev() {
             if effect.state.terminal() {
                 continue;
-            }
-            if Some(effect.sequence) == last {
-                let complete = self
-                    .record
-                    .effects()
-                    .iter()
-                    .all(|other| other.state.terminal() || Some(other.sequence) == last);
-                report(if complete {
-                    CleanupOutcome::Complete
-                } else {
-                    CleanupOutcome::Incomplete
-                });
             }
             cleanup.operation().check("foreground settlement")?;
             let live = self.processes.remove(&effect.sequence);
@@ -385,7 +345,7 @@ impl ForegroundRun {
         }
         // Always attempt the guard's positive close, bounded by the cleanup
         // context (which the run deadline already caps). An error leaves the
-        // guard field for `settle_reporting` to abandon without a second wait;
+        // guard field for `settle` to abandon without a second wait;
         // a successful close is the only case where the guard is taken.
         if let Some(guard) = self.guard.as_mut() {
             guard.close(cleanup)?;

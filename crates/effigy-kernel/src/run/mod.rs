@@ -32,46 +32,8 @@ pub use socket::{connect_control_socket, control_socket_path};
 mod terminal;
 pub use terminal::{
     read as terminal_record, recent as terminal_records, record as record_terminal, TerminalRecord,
-    BOOT_MAX as TERMINAL_BOOT_MAX, CHECKOUT_MAX as TERMINAL_CHECKOUT_MAX,
-    EVIDENCE as TERMINAL_RECORD_EVIDENCE, INSERT_MAX_PAGES as TERMINAL_INSERT_MAX_PAGES,
-    KEEP_MS as TERMINAL_RECORD_KEEP_MS, PRUNE_MAX as TERMINAL_PRUNE_MAX,
-    PRUNE_MAX_PAGES as TERMINAL_PRUNE_MAX_PAGES, ROW_MAX_BYTES as TERMINAL_ROW_MAX_BYTES,
-    ROW_OVERHEAD_BYTES as TERMINAL_ROW_OVERHEAD_BYTES, RUN_ID_MAX as TERMINAL_RUN_ID_MAX,
-    TASK_MAX as TERMINAL_TASK_MAX, TRUNCATION_MARKER as TERMINAL_TRUNCATION_MARKER,
-    WORD_MAX as TERMINAL_WORD_MAX, WRITE_MAX_BYTES as TERMINAL_WRITE_MAX_BYTES,
-    WRITE_MAX_PAGES as TERMINAL_WRITE_MAX_PAGES,
+    EVIDENCE as TERMINAL_RECORD_EVIDENCE, KEEP_MS as TERMINAL_RECORD_KEEP_MS,
 };
-mod terminal_ring;
-pub(crate) use terminal_ring::ingest as terminal_ring_ingest;
-pub(crate) use terminal_ring::write as terminal_ring_write;
-pub use terminal_ring::{
-    prepare as terminal_ring_prepare, read as terminal_strict_record,
-    records as terminal_strict_records, status as terminal_ring_status,
-    RingStatus as TerminalRingStatus, HEADER_BYTES as TERMINAL_RING_HEADER_BYTES,
-    RING_BYTES as TERMINAL_RING_BYTES, RING_FILE as TERMINAL_RING_FILE,
-    SLOTS as TERMINAL_RING_SLOTS, SLOT_BYTES as TERMINAL_RING_SLOT_BYTES,
-};
-
-/// Prepare the gate files used by one foreground task, including the
-/// filesystem-derived checkout alias that admission also holds.
-pub fn prepare_foreground_gates(
-    root: &crate::root::StateRoot,
-    owner: &crate::id::ResourceId,
-    ids: &[crate::id::ResourceId],
-) -> Result<(), RunError> {
-    let ids = aliases::gates(root, owner, ids)?;
-    crate::gate::Gate::prepare_foreground(root, &ids).map_err(RunError::from)
-}
-
-/// Check the exact foreground gate paths without creating or changing them.
-pub fn verify_prepared_foreground_gates(
-    root: &crate::root::StateRoot,
-    owner: &crate::id::ResourceId,
-    ids: &[crate::id::ResourceId],
-) -> Result<(), RunError> {
-    let ids = aliases::gates(root, owner, ids)?;
-    crate::gate::Gate::verify_prepared_foreground(root, &ids).map_err(RunError::from)
-}
 
 pub(crate) use attachments::{
     check_activation_fence, holder_attachment, publish_active_state, workspace_bindings,

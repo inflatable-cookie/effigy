@@ -1,1 +1,0 @@
-Strict persistence now prepares task gate files before a run, refuses missing state and gate paths before admission, and reports the state volume's allocation unit with an APFS data-block allocation model in contract 049. Preparation handles one task identity per command; declared task trees can be prepared selector by selector.

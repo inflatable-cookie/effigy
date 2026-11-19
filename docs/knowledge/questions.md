@@ -434,7 +434,12 @@ exception is narrow:
   authority inside Effigy.
 - Runs without a hook keep Q-010 unchanged.
 
-effigy#325 implemented it: contract 049 owns the opt-in protocol
+Superseded on 2026-11-19 (v0.16 simplification, task 1063): the opt-in reported
+protocol, the acknowledgements and the strict ring are retired. Contract 049's
+Retired section records what went and what remains (the owner-loss row). The
+history below is kept as the record of the decision.
+
+effigy#325 implemented it: contract 049 owned the opt-in protocol
 (`EFFIGY_ADMISSION_PROTOCOL=2`), the acknowledged reports and the coverage
 witness, and 052 §3.1 records this note's narrow exception. The row lives in an
 additive schema-1 `foreground_terminals` table in the owning checkout journal,

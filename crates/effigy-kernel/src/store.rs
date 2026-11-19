@@ -56,28 +56,6 @@ pub const WAL_LIMIT_BYTES: u64 = 16 << 20;
 /// (effigy#977): a quarter of [`WAL_LIMIT_BYTES`]. An attempt is not a reset; it
 /// completes only when no reader pins an older snapshot.
 pub const WAL_AUTOCHECKPOINT_PAGES: u32 = (WAL_LIMIT_BYTES / PAGE_SIZE / 4) as u32;
-/// The pages the fixed schema occupies when this build creates a store
-/// (effigy#977). The statements are constants (`SCHEMA_V1`, the additive tables
-/// and their indexes), so a fresh store's size is a constant: one page per table
-/// and index, the schema page, the header and the auto-vacuum pointer maps.
-/// `store_fresh_schema_is_bounded` holds a created store to this.
-pub const SCHEMA_MAX_PAGES: u32 = 64;
-/// The environment switch that opts this process into strict persistence
-/// (effigy#981).
-///
-/// Off unless it is exactly `1`. Strict mode is for a consumer that has to
-/// account for every byte one invocation writes: no store this process opens is
-/// created, migrated, backfilled, pruned or checkpointed by it, and a store that
-/// is not already prepared is refused before admission instead. The switch is
-/// read once per open, so the decision cannot change under a live handle.
-pub const STRICT_PERSISTENCE_ENV: &str = "EFFIGY_STRICT_PERSISTENCE";
-/// The command that prepares a checkout journal outside a strict run.
-pub const PREPARE_COMMAND: &str = "effigy run prepare";
-/// SQLite's write-ahead-log header (`WAL_HDRSIZE` in `wal.c`;
-/// <https://sqlite.org/fileformat2.html#walformat>).
-pub const WAL_HEADER_BYTES: u64 = 32;
-/// SQLite's header on every write-ahead-log frame (`WAL_FRAME_HDRSIZE`).
-pub const WAL_FRAME_HEADER_BYTES: u64 = 24;
 /// One page of SQLite's wal-index, which is what a `kernel.db-shm` file holds
 /// (`WALINDEX_PGSZ` in `wal.c`; the build asserts it at 32768 bytes, so the
 /// shared-memory file grows in blocks of this size).
@@ -182,23 +160,6 @@ pub enum StoreError {
     /// Effigy's own record or an invariant is wrong, but nothing on disk is
     /// corrupt: an Effigy bug, and never a repair.
     Broken(String),
-    /// The store is not prepared for a strict-persistence run (effigy#981): it
-    /// is missing, older than this build's schema, in another journal mode, in
-    /// a page size this build's bound is not stated for, or carrying a rollback
-    /// journal. Strict mode refuses instead of creating, migrating, converting
-    /// or recovering it, because those writes would belong to this invocation.
-    NotPrepared {
-        reason: String,
-    },
-    /// The strict-persistence terminal ring cannot accept this run's record
-    /// (effigy#985): it is missing, the wrong size, full, or holds a committed
-    /// slot this build cannot verify. The route refuses before admission, and a
-    /// write that meets the condition anyway fails closed without writing
-    /// anything else.
-    TerminalRing {
-        path: PathBuf,
-        reason: String,
-    },
 }
 impl StoreError {
     pub fn category(&self) -> Category {
@@ -215,8 +176,6 @@ impl StoreError {
             | Self::ClassRefused(_)
             | Self::TooLarge { .. }
             | Self::NotCorrupt
-            | Self::NotPrepared { .. }
-            | Self::TerminalRing { .. }
             | Self::StaleGeneration { .. }
             | Self::UnknownResource => Category::Refused,
             Self::Untrusted { .. }
@@ -351,15 +310,6 @@ impl std::fmt::Display for StoreError {
                  removed"
                     .to_owned()
             }
-            Self::NotPrepared { reason } => format!(
-                "the state store is not prepared for a strict-persistence run \
-                 (`{STRICT_PERSISTENCE_ENV}=1`): {reason}; `{PREPARE_COMMAND}` prepares it outside \
-                 such a run, and then the run works"
-            ),
-            Self::TerminalRing { path, reason } => format!(
-                "the strict terminal ring {} was refused: {reason}",
-                path.display()
-            ),
             Self::Corrupt(_)
             | Self::UnknownSchema { .. }
             | Self::Gate(_)
@@ -470,15 +420,10 @@ pub struct Store {
     root: StateRoot,
     /// The run this store writes for, for the writer gate's diagnostic body.
     run: Option<RunId>,
-    /// Strict persistence (effigy#981): this handle never creates, migrates,
-    /// backfills, prunes or checkpoints. Read once when it opened.
-    strict: bool,
 }
 impl Store {
     /// Opens for writing: creates `kernel.db` 0600, applies the settings in
-    /// §5.5, and creates or checks the schema (I-S5). Under
-    /// [`STRICT_PERSISTENCE_ENV`] it prepares nothing and refuses a store that
-    /// is not already prepared.
+    /// §5.5, and creates or checks the schema (I-S5).
     pub fn open(cx: &EffectContext, root: &StateRoot) -> Result<Self, StoreError> {
         Self::open_within(cx, root, BusyWait::AtLeast(STORE_BUSY_WAIT))
     }
@@ -489,28 +434,9 @@ impl Store {
         root: &StateRoot,
         wait: BusyWait,
     ) -> Result<Self, StoreError> {
-        Self::open_mode(cx, root, wait, strict_persistence())
+        Self::open_mode(cx, root, wait)
     }
-    /// Opens strictly whatever the switch says (effigy#981). A store that does
-    /// not exist is refused, never created: the caller opted in to an
-    /// invocation that writes only its own record.
-    pub fn open_strict(cx: &EffectContext, root: &StateRoot) -> Result<Self, StoreError> {
-        Self::open_mode(cx, root, BusyWait::AtLeast(STORE_BUSY_WAIT), true)
-    }
-    /// Opens without strict persistence whatever the switch says.
-    ///
-    /// This is the one caller that must ignore the switch: `effigy run
-    /// prepare` exists to prepare the store a strict run then refuses to
-    /// prepare, so the switch it satisfies cannot refuse it.
-    pub fn open_preparing(cx: &EffectContext, root: &StateRoot) -> Result<Self, StoreError> {
-        Self::open_mode(cx, root, BusyWait::AtLeast(STORE_BUSY_WAIT), false)
-    }
-    fn open_mode(
-        cx: &EffectContext,
-        root: &StateRoot,
-        wait: BusyWait,
-        strict: bool,
-    ) -> Result<Self, StoreError> {
+    fn open_mode(cx: &EffectContext, root: &StateRoot, wait: BusyWait) -> Result<Self, StoreError> {
         if !root.writable() {
             return Err(StoreError::Untrusted {
                 path: root.path().into(),
@@ -519,16 +445,13 @@ impl Store {
         }
         // A live custodian continuing through a replaced locator is refused.
         let name = FileName::new(root.database_name())?;
-        // Strict mode opens the file it found: no `O_CREAT`, so a missing store
-        // is a condition to report, not a file this run creates.
-        let create = if strict { None } else { Some(FILE_MODE) };
-        let Some((_, stat)) = root
-            .dir()
-            .open_file(&name, libc::O_RDWR, create, Trust::Private)?
+        let Some((_, stat)) =
+            root.dir()
+                .open_file(&name, libc::O_RDWR, Some(FILE_MODE), Trust::Private)?
         else {
-            return Err(StoreError::NotPrepared {
-                reason: format!("{DB_NAME} does not exist, so this run would create it"),
-            });
+            return Err(StoreError::Broken(format!(
+                "{DB_NAME} could not be created in the state directory"
+            )));
         };
         if stat.st_size as u64 > MAX_DB_BYTES {
             return Err(StoreError::TooLarge {
@@ -536,9 +459,6 @@ impl Store {
             });
         }
         check_store_files(root).map_err(StoreError::from)?;
-        if strict {
-            refuse_recovery(root)?;
-        }
         let path = root.dir().join(root.database_name());
         let conn = Connection::open_with_flags(
             path.clone(),
@@ -559,38 +479,17 @@ impl Store {
             conn,
             root: root.clone(),
             run: None,
-            strict,
         };
         store.configure(cx, wait)?;
-        // The one point strict records enter SQLite (effigy#985): any writable
-        // non-strict open of a checkout journal ingests the strict terminal
-        // ring and frees the slots it copied. Absence is a cheap no-op, and a
-        // ring that cannot be read leaves the records for a later open rather
-        // than failing an ordinary run.
-        if !strict && !root.is_machine() {
-            let _ = crate::run::terminal_ring_ingest(cx, &mut store, root);
-        }
         Ok(store)
     }
     /// Names the run this store writes for, so a refused writer wait names it.
     pub fn set_run(&mut self, run: RunId) {
         self.run = Some(run);
     }
-    /// Whether this handle opened under strict persistence (effigy#981).
-    ///
-    /// Maintenance and retention callers read it rather than the environment,
-    /// so they act on the same decision the handle was opened with.
-    pub fn strict(&self) -> bool {
-        self.strict
-    }
     /// Write-ahead logging, the durable settings and the schema, under the
     /// store's own writer gate. A current store is only read here: opening it
     /// never takes the write lock (a hot path with many concurrent runs).
-    ///
-    /// Under strict persistence (effigy#981) this prepares nothing: the journal
-    /// mode is read rather than set, no auto-vacuum header is written, no
-    /// checkpoint may run, and the schema is verified instead of created or
-    /// migrated.
     fn configure(&mut self, cx: &EffectContext, wait: BusyWait) -> Result<(), StoreError> {
         let window = wait.window(cx);
         let patient = cx.patience(window);
@@ -604,137 +503,17 @@ impl Store {
         // Incremental auto-vacuum must be chosen while the store is empty, and
         // before write-ahead logging materialises its header. On an existing
         // store this is only pending until retention's one-time `VACUUM`.
-        if !self.strict {
-            self.conn.execute_batch("PRAGMA auto_vacuum=INCREMENTAL")?;
-        }
-        if self.strict {
-            // A store in another journal mode would be converted, and that
-            // conversion writes the database header.
-            self.require_wal()?;
-        } else {
-            self.set_journal_mode(&patient, started + window)?;
-        }
-        // Strict persistence switches SQLite's own checkpoint off, so neither
-        // the end of a transaction nor the close that follows it moves a frame
-        // into the database (effigy#981).
-        let autocheckpoint = if self.strict {
-            0
-        } else {
-            WAL_AUTOCHECKPOINT_PAGES
-        };
+        self.conn.execute_batch("PRAGMA auto_vacuum=INCREMENTAL")?;
+        self.set_journal_mode(&patient, started + window)?;
         self.conn.execute_batch(&format!(
             "PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF; \
              PRAGMA cell_size_check=ON; PRAGMA max_page_count={}; \
              PRAGMA journal_size_limit={WAL_LIMIT_BYTES}; \
-             PRAGMA wal_autocheckpoint={autocheckpoint}",
+             PRAGMA wal_autocheckpoint={WAL_AUTOCHECKPOINT_PAGES}",
             MAX_DB_BYTES / PAGE_SIZE
         ))?;
-        if self.strict {
-            // `wal_autocheckpoint=0` covers a commit; the last close has its own
-            // switch, confirmed here rather than assumed.
-            self.conn.set_db_config(
-                rusqlite::config::DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE,
-                true,
-            )?;
-            if !self
-                .conn
-                .db_config(rusqlite::config::DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE)?
-            {
-                return Err(StoreError::Broken(
-                    "SQLite did not accept `SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE`, so this strict \
-                     run cannot promise that closing its store leaves the log alone"
-                        .into(),
-                ));
-            }
-        }
-        self.check_sidecar_bounds()?;
-        if self.strict {
-            self.verify_schema()?;
-        } else {
-            self.schema(&patient, BusyWait::Context)?;
-        }
+        self.schema(&patient, BusyWait::Context)?;
         Ok(())
-    }
-    /// Reads back the settings that bound this store's side files (effigy#977).
-    /// Both are per connection, so this is the same connection that writes.
-    pub fn sidecar_bounds(&self) -> Result<SidecarBounds, StoreError> {
-        let limit: i64 = self
-            .conn
-            .query_row("PRAGMA journal_size_limit", [], |row| row.get(0))?;
-        let pages: i64 = self
-            .conn
-            .query_row("PRAGMA wal_autocheckpoint", [], |row| row.get(0))?;
-        let page_size: i64 = self
-            .conn
-            .query_row("PRAGMA page_size", [], |row| row.get(0))?;
-        Ok(SidecarBounds {
-            journal_size_limit: limit.max(0) as u64,
-            wal_autocheckpoint: pages.max(0) as u32,
-            page_size: page_size.max(0) as u64,
-        })
-    }
-    /// Refuses an open whose settings did not apply, so no write happens under
-    /// a bound this connection never set. Strict persistence expects its own
-    /// automatic checkpointing switched off (effigy#981).
-    fn check_sidecar_bounds(&self) -> Result<(), StoreError> {
-        let expected = if self.strict {
-            0
-        } else {
-            WAL_AUTOCHECKPOINT_PAGES
-        };
-        let bounds = self.sidecar_bounds()?;
-        if bounds.journal_size_limit != WAL_LIMIT_BYTES || bounds.wal_autocheckpoint != expected {
-            return Err(StoreError::Broken(format!(
-                "the store's side-file bounds did not apply: journal_size_limit is {} \
-                 (expected {WAL_LIMIT_BYTES}) and wal_autocheckpoint is {} (expected {expected})",
-                bounds.journal_size_limit, bounds.wal_autocheckpoint
-            )));
-        }
-        Ok(())
-    }
-    /// The number of frames in this store's write-ahead log (effigy#977).
-    ///
-    /// A passive checkpoint attempt reports the count on a non-strict handle:
-    /// passive never waits for another connection and never blocks a reader, so
-    /// it is a plain observation of the log a writer shares. It does write back
-    /// the pages a checkpoint can carry, so a **strict** handle never asks for
-    /// one: it reads the log's own length instead, which is exact there because
-    /// strict persistence never checkpoints (effigy#981).
-    ///
-    /// The count only grows by frames a writer appends and only falls when a
-    /// checkpoint resets the log, which a pinned reader prevents;
-    /// `run_terminal_write_appends_at_most_its_stated_frames` measures one route
-    /// write this way.
-    pub fn wal_frames(&self) -> Result<u32, StoreError> {
-        if self.strict {
-            let bytes = self.wal_bytes()?;
-            let page = self.sidecar_bounds()?.page_size;
-            let frame = page.saturating_add(WAL_FRAME_HEADER_BYTES).max(1);
-            let frames = bytes.saturating_sub(WAL_HEADER_BYTES) / frame;
-            return Ok(frames.min(u64::from(u32::MAX)) as u32);
-        }
-        let (_busy, log, _checkpointed): (i64, i64, i64) =
-            self.conn
-                .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-                })?;
-        Ok(log.clamp(0, i64::from(u32::MAX)) as u32)
-    }
-    /// The size of this store's write-ahead log on disk, without touching it.
-    pub fn wal_bytes(&self) -> Result<u64, StoreError> {
-        let name = FileName::new(&format!("{}-wal", self.root.database_name()))?;
-        Ok(self
-            .root
-            .dir()
-            .entry(&name)?
-            .map_or(0, |stat| stat.st_size.max(0) as u64))
-    }
-    /// The store's page count and size, from the open connection.
-    pub fn page_count(&self) -> Result<u64, StoreError> {
-        let pages: i64 = self
-            .conn
-            .query_row("PRAGMA page_count", [], |row| row.get(0))?;
-        Ok(pages.max(0) as u64)
     }
     /// `journal_mode=WAL` is persistent in the file. A store last written in
     /// rollback mode needs a moment of exclusive access to change it, so a
@@ -774,49 +553,6 @@ impl Store {
                 pause = (pause * 2).min(BUSY_RETRY_MAX);
             }
         }
-    }
-    /// The store must already run in the write-ahead log (effigy#981):
-    /// converting it would write the database header, which a strict run does
-    /// not own.
-    fn require_wal(&self) -> Result<(), StoreError> {
-        let mode: String = self
-            .conn
-            .query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
-        if mode.eq_ignore_ascii_case("wal") {
-            return Ok(());
-        }
-        Err(StoreError::NotPrepared {
-            reason: format!(
-                "it runs in journal mode {mode}, and this run would have to convert it to the \
-                 write-ahead log"
-            ),
-        })
-    }
-    /// Strict persistence: the store must already be at the current schema.
-    ///
-    /// Nothing is created, altered or backfilled, and the one bookkeeping write
-    /// `schema` makes — `last_written_by` — is left to a later non-strict open,
-    /// so a strict run writes no database page of its own (effigy#981).
-    fn verify_schema(&self) -> Result<(), StoreError> {
-        let gaps = schema_gaps(&self.conn)?;
-        if !gaps.is_empty() {
-            return Err(StoreError::NotPrepared {
-                reason: format!(
-                    "it is not at the current schema: it is missing {}",
-                    gaps.join(", ")
-                ),
-            });
-        }
-        let page_size = self.sidecar_bounds()?.page_size;
-        if page_size != PAGE_SIZE {
-            return Err(StoreError::NotPrepared {
-                reason: format!(
-                    "it writes {page_size}-byte pages, and the byte bound this run states is \
-                     measured at {PAGE_SIZE}"
-                ),
-            });
-        }
-        Ok(())
     }
     /// Read-only open (R2): one plain SQLite read, no copy. A store with
     /// write-ahead side files is read through SQLite's own WAL; a checkpointed
@@ -1011,14 +747,6 @@ impl Store {
         cx: &EffectContext,
         pages: u32,
     ) -> Result<MaintainReport, StoreError> {
-        // Strict persistence never checkpoints, vacuums or migrates, so a
-        // maintenance pass has nothing it may do on this handle (effigy#981).
-        if self.strict {
-            return Err(StoreError::Refused(
-                "strict persistence forbids store maintenance: its checkpoint and vacuum are                  writes this run does not own; run it without the switch, or use `effigy run                  prepare` first"
-                    .into(),
-            ));
-        }
         let started = Instant::now();
         let mut report = MaintainReport::default();
         let window = BusyWait::AtLeast(STORE_BUSY_WAIT).window(cx);
@@ -1112,15 +840,6 @@ impl Store {
         if cx.operation().class() != EffectClass::Mutate {
             return Err(StoreError::ClassRefused(cx.operation().class()));
         }
-        // Moving a store and its side files aside is a write to this
-        // invocation's checkout, which strict persistence does not own
-        // (effigy#981).
-        if strict_persistence() {
-            return Err(StoreError::Refused(format!(
-                "strict persistence (`{STRICT_PERSISTENCE_ENV}=1`) forbids the explicit repair, \
-                 which moves `{DB_NAME}` and its side files; unset it to repair the store"
-            )));
-        }
         let gate = root.store_gate(cx, WRITER_GATE)?;
         let _guard = Gate::acquire(cx, root, &[gate], Wait::FailFast)?;
         match Self::open(cx, root) {
@@ -1190,8 +909,7 @@ impl Store {
             [BUILD],
             |row| row.get(0),
         )?;
-        // One predicate serves the write path and strict persistence's
-        // read-only verification (effigy#981), so the two cannot drift.
+        // One predicate decides whether the write path has anything to add.
         if schema_gaps(&self.conn)?.is_empty() && !stale_build {
             return Ok(());
         }
@@ -1210,6 +928,11 @@ impl Store {
                 if !has_table(txn.conn, name)? {
                     txn.conn.execute_batch(sql)?;
                 }
+            }
+            if has_terminal_workload_groups(txn.conn)? {
+                txn.conn.execute_batch(
+                    "ALTER TABLE foreground_terminals DROP COLUMN workload_groups",
+                )?;
             }
             if !has_activation_session_owner(txn.conn)? {
                 txn.conn.execute_batch("ALTER TABLE workspace_activation_reservations ADD COLUMN session_owner TEXT;
@@ -1252,12 +975,6 @@ impl Store {
 /// bounds, and the close never stalls the run that is finishing.
 impl Drop for Store {
     fn drop(&mut self) {
-        // Strict persistence never checkpoints: not at the end of a
-        // transaction (`wal_autocheckpoint=0`) and not here (effigy#981).
-        // Resetting the log stays with a non-strict writer.
-        if self.strict {
-            return;
-        }
         let _ = self.conn.busy_timeout(CLOSE_CHECKPOINT_WAIT);
         let _ = self
             .conn
@@ -1269,19 +986,6 @@ impl Drop for Store {
                 ))
             });
     }
-}
-
-/// The side-file bounds one writable store connection holds (effigy#977), read
-/// back from SQLite rather than assumed from what the open asked for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SidecarBounds {
-    /// `PRAGMA journal_size_limit`: the most the log may be after a completed
-    /// checkpoint resets it.
-    pub journal_size_limit: u64,
-    /// `PRAGMA wal_autocheckpoint`: pages appended before a checkpoint attempt.
-    pub wal_autocheckpoint: u32,
-    /// `PRAGMA page_size`: the unit both bounds above are measured in.
-    pub page_size: u64,
 }
 
 /// What one bounded maintenance pass did (§7.4).
@@ -1764,25 +1468,22 @@ fn busy(error: GateError) -> StoreError {
         other => other.into(),
     }
 }
-/// Whether this process opted in to strict persistence (effigy#981).
-///
-/// It is read each time a store opens, so no decision can change under a live
-/// handle, and every route in the process sees the same answer from the same
-/// environment.
-pub fn strict_persistence() -> bool {
-    strict_persistence_value(std::env::var_os(STRICT_PERSISTENCE_ENV).as_deref())
-}
-/// The switch's own reading: strict only when it is exactly `1`, so a typo or an
-/// empty value keeps the byte-identical non-strict behaviour.
-pub fn strict_persistence_value(value: Option<&std::ffi::OsStr>) -> bool {
-    value.is_some_and(|value| value == std::ffi::OsStr::new("1"))
-}
 
 /// What a store at schema version [`SCHEMA_VERSION`] is missing (effigy#981).
 ///
 /// Empty means this build can write it without a schema change. The write path
-/// migrates whatever is missing; strict persistence refuses instead, so one
-/// predicate describes both.
+/// migrates whatever is missing, so one predicate describes the whole gap.
+/// A journal written before the terminal record dropped its workload-group
+/// count still has that column, which the record no longer fills.
+fn has_terminal_workload_groups(conn: &Connection) -> Result<bool, StoreError> {
+    Ok(conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('foreground_terminals') \
+         WHERE name='workload_groups')",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
 fn schema_gaps(conn: &Connection) -> Result<Vec<String>, StoreError> {
     let mut gaps = Vec::new();
     if !has_backend(conn)? {
@@ -1801,6 +1502,9 @@ fn schema_gaps(conn: &Connection) -> Result<Vec<String>, StoreError> {
             gaps.push(format!("the `{name}` index"));
         }
     }
+    if has_terminal_workload_groups(conn)? {
+        gaps.push("the retired `foreground_terminals.workload_groups` column".to_owned());
+    }
     if !has_activation_session_owner(conn)? {
         gaps.push("`workspace_activation_reservations.session_owner`".to_owned());
     }
@@ -1814,167 +1518,6 @@ fn schema_gaps(conn: &Connection) -> Result<Vec<String>, StoreError> {
         gaps.push("`workspace_admissions.resolution_digest`".to_owned());
     }
     Ok(gaps)
-}
-
-/// Strict persistence refuses a store that needs recovery (effigy#981).
-///
-/// Three on-disk states make the first open for writing do work this invocation
-/// does not own:
-///
-/// - a rollback journal, which SQLite would roll back into the database (an
-///   actual write to `kernel.db`);
-/// - a write-ahead log whose size is not a whole number of frames, which is a
-///   crashed writer's torn log and has to be recovered before it can be read;
-/// - a log that holds frames while its wal-index (`kernel.db-shm`) is missing,
-///   which SQLite rebuilds by reading the whole log before the first read.
-///
-/// A store in one of these states is refused instead, so strict mode opens only
-/// a store whose log and index are already consistent. `effigy run prepare`
-/// opens the store without strict persistence and settles it.
-fn refuse_recovery(root: &StateRoot) -> Result<(), StoreError> {
-    let journal = FileName::new(&format!("{}-journal", root.database_name()))?;
-    if root.dir().entry(&journal)?.is_some() {
-        return Err(StoreError::NotPrepared {
-            reason: format!(
-                "it has a rollback journal ({}) on disk, so opening it for writing would roll \
-                 that journal back into the database",
-                root.dir().join(journal.as_str()).display()
-            ),
-        });
-    }
-    let wal = FileName::new(&format!("{}-wal", root.database_name()))?;
-    let Some(stat) = root.dir().entry(&wal)? else {
-        return Ok(());
-    };
-    let size = stat.st_size.max(0) as u64;
-    if size == 0 {
-        return Ok(());
-    }
-    let page_size = header_facts(root).map_or(PAGE_SIZE, |(_, page)| page);
-    let frame = page_size.saturating_add(WAL_FRAME_HEADER_BYTES).max(1);
-    if size < WAL_HEADER_BYTES || !size.saturating_sub(WAL_HEADER_BYTES).is_multiple_of(frame) {
-        return Err(StoreError::NotPrepared {
-            reason: format!(
-                "its write-ahead log is {size} bytes, which is not a whole number of \
-                 {page_size}-byte frames, so a crashed writer left it needing recovery"
-            ),
-        });
-    }
-    if size == WAL_HEADER_BYTES {
-        return Ok(());
-    }
-    let index = FileName::new(&format!("{}-shm", root.database_name()))?;
-    if root.dir().entry(&index)?.is_none() {
-        return Err(StoreError::NotPrepared {
-            reason: format!(
-                "its write-ahead log holds {} frames but its wal-index ({}) is missing, so \
-                 opening it would rebuild that index before this run wrote anything",
-                (size - WAL_HEADER_BYTES) / frame,
-                root.dir().join(index.as_str()).display()
-            ),
-        });
-    }
-    Ok(())
-}
-
-/// What [`Store::verify_prepared`] observed about a store that needs no write.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PreparedStore {
-    /// The schema version the store records.
-    pub schema_version: i64,
-    /// The page size it writes.
-    pub page_size: u64,
-    /// The pages it holds now.
-    pub pages: u64,
-}
-
-/// Verifies, without writing, that a store is already prepared for a strict run
-/// (effigy#981): it exists, needs no recovery, records this build's schema, runs
-/// in the write-ahead log, and writes pages at the size the byte bound is stated
-/// in.
-///
-/// This is the precondition a route checks before admission. It reads through
-/// SQLite's own log, so when the shared log is longer than an empty wal-index
-/// covers, SQLite may create or extend `kernel.db-shm`; it never writes
-/// `kernel.db`, its log, or its schema. `verify_prepared` is therefore safe to
-/// run before deciding whether to start a workload, and a refusal writes no
-/// database page.
-pub fn verify_prepared(root: &StateRoot, busy: Duration) -> Result<PreparedStore, StoreError> {
-    refuse_recovery(root)?;
-    let reader = open_reading(root, busy)?.ok_or_else(|| StoreError::NotPrepared {
-        reason: format!("{DB_NAME} does not exist, so this run would create it"),
-    })?;
-    let gaps = schema_gaps(reader.conn())?;
-    if !gaps.is_empty() {
-        return Err(StoreError::NotPrepared {
-            reason: format!(
-                "it is not at the current schema: it is missing {}",
-                gaps.join(", ")
-            ),
-        });
-    }
-    let version = reader.schema_version();
-    if version != SCHEMA_VERSION {
-        return Err(StoreError::NotPrepared {
-            reason: format!(
-                "it records schema version {version}, and this Effigy writes {SCHEMA_VERSION}"
-            ),
-        });
-    }
-    // The journal mode and page size live in the database header, which is a
-    // file read rather than a SQLite open: an immutable read of a checkpointed
-    // store reports neither reliably.
-    let (format_writes_wal, page_size) = header_facts(root)?;
-    if !format_writes_wal {
-        return Err(StoreError::NotPrepared {
-            reason: "it does not record the write-ahead log as its format, and this run would \
-                     have to convert it"
-                .into(),
-        });
-    }
-    if page_size != PAGE_SIZE {
-        return Err(StoreError::NotPrepared {
-            reason: format!(
-                "it writes {page_size}-byte pages, and the byte bound this run states is measured \
-                 at {PAGE_SIZE}"
-            ),
-        });
-    }
-    let pages: i64 = reader
-        .conn()
-        .query_row("PRAGMA page_count", [], |row| row.get(0))?;
-    Ok(PreparedStore {
-        schema_version: version,
-        page_size,
-        pages: pages.max(0) as u64,
-    })
-}
-
-/// The two facts SQLite's own file header states: whether the database is in
-/// write-ahead-log format (byte 18, `2` = WAL) and its page size (bytes 16-17,
-/// where `1` means 65536).
-fn header_facts(root: &StateRoot) -> Result<(bool, u64), StoreError> {
-    let name = FileName::new(root.database_name())?;
-    let Some((mut file, _)) = root
-        .dir()
-        .open_file(&name, libc::O_RDONLY, None, Trust::Private)?
-    else {
-        return Err(StoreError::NotPrepared {
-            reason: format!("{DB_NAME} does not exist, so this run would create it"),
-        });
-    };
-    let mut header = [0_u8; 20];
-    use std::io::Read as _;
-    file.read_exact(&mut header).map_err(|error| {
-        StoreError::Io(IoError::new(
-            "read",
-            &root.dir().join(name.as_str()),
-            &error,
-        ))
-    })?;
-    let declared = u64::from(u16::from_be_bytes([header[16], header[17]]));
-    let page_size = if declared == 1 { 65536 } else { declared };
-    Ok((header[18] == 2, page_size))
 }
 
 /// The store's own files: the database and, during commits, its write-ahead
@@ -2324,7 +1867,6 @@ const ADDITIVE_TABLES: [(&str, &str); 9] = [
   exit_code INTEGER,
   signal INTEGER,
   cleanup TEXT NOT NULL,
-  workload_groups INTEGER NOT NULL,
   closed_at INTEGER NOT NULL
 ) STRICT;
 CREATE INDEX IF NOT EXISTS foreground_terminals_closed
@@ -2653,7 +2195,6 @@ CREATE TABLE foreground_terminals (
   exit_code INTEGER,
   signal INTEGER,
   cleanup TEXT NOT NULL,
-  workload_groups INTEGER NOT NULL,
   closed_at INTEGER NOT NULL
 ) STRICT;
 CREATE INDEX foreground_terminals_closed ON foreground_terminals(closed_at);

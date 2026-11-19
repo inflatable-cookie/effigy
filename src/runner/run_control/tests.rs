@@ -13,9 +13,11 @@ use effigy_core::task_selection::TaskSurface;
 use effigy_kernel::custody::Stream;
 
 use super::*;
+use crate::runner::task_engine::effect_context;
 use crate::runner::task_engine::{
     run_plain, PlainCommand, RunKey, TaskRun, TaskRunRequest, TaskTarget,
 };
+use effigy_kernel::ctx::OpenReason;
 
 #[cfg(feature = "fault-injection")]
 const LINES: usize = 40;
@@ -1415,7 +1417,6 @@ fn write_settled_record(checkout: &Path, run: RunId, outcome: &str, cleanup: &st
             exit_code: None,
             signal: None,
             cleanup: cleanup.to_owned(),
-            workload_groups: 1,
             closed_at_ms: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |elapsed| elapsed.as_millis() as i64),
