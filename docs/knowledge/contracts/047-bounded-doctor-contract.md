@@ -1,4 +1,4 @@
-# Bounded Doctor and Scan Cache Contract
+# Bounded Doctor Contract
 
 Owner: doctor, scan, catalog-routing, and task-execution maintainers
 
@@ -6,8 +6,8 @@ Owner: doctor, scan, catalog-routing, and task-execution maintainers
 
 This contract makes doctor bounded and useful in large monorepos without
 weakening diagnosis. It separates cheap structural health from explicit deep
-work, reuses one exact catalog-scoped inventory, and defines safe incremental
-cache and timeout behavior.
+work, reuses one exact catalog-scoped inventory, and defines timeout and
+partial-report behavior. A deep run keeps no persistent scan state.
 
 ## CLI contract
 
@@ -16,9 +16,9 @@ cache and timeout behavior.
 2. `effigy doctor --deep` runs structural checks, enabled content scans, and
    the selected scope's `health` task.
 3. `--catalog <alias>` and `--all-catalogs` are deep-only and mutually
-   exclusive. `--refresh` is deep-only.
+   exclusive.
 4. `doctor <task>` explanation mode retains existing behavior and rejects
-   deep, catalog, fan-out, and refresh combinations before work begins.
+   deep, catalog, and fan-out combinations before work begins.
 5. `--fix` retains its current structural repair boundary. Deep mode creates
    no new mutation permission.
 
@@ -28,11 +28,9 @@ cache and timeout behavior.
 2. Root scope prunes all effective member roots.
 3. Cwd member selection or `--catalog` touches only that member.
 4. `--all-catalogs` is the only implicit root-plus-members fan-out.
-5. Declared external members follow the same rules and keep workspace-owned
-   cache state keyed by canonical scope identity.
+5. Declared external members follow the same rules.
 6. A selected scope's inventory, findings, and `health` execution cannot read
-   or mutate a sibling scope. Changed cache publication may inspect and evict
-   owned sibling generations under the inventory and cache contract below.
+   or mutate a sibling scope.
 
 ## Health precondition contract
 
@@ -114,60 +112,31 @@ cache and timeout behavior.
 5. A timed-out health task has its owned process tree terminated and reaped.
    No health side effect may continue after doctor exits.
 
-## Inventory and cache contract
+## Inventory contract
 
 1. Deep mode performs at most one physical content walk per selected scope.
 2. Enabled content scanners consume one shared ordered observation stream.
-3. Cached facts must reproduce the same findings and ordering as uncached
-   evaluation and standalone scan commands.
-4. Cache keys include canonical repo/scope identity, catalog topology, scan
-   config, ignore posture, schema version, implementation version, and exact
-   file identity.
-5. Git index blob identity is valid only for a clean tracked file. All other
-   files require a content digest. Mtime plus size cannot establish a hit.
-6. Cache publication under `.effigy/doctor/cache/v2/` is locked and atomic.
-   Compare the complete encoded generation with the current bytes before
-   creating a directory, lock, or temporary file. Identical content performs
-   no publication writes, including with `--refresh`. Changed content is
-   compared again under the publication lock before atomic replacement.
-   Interrupted work cannot publish partial state or destroy a valid prior
-   generation.
-7. Corrupt or incompatible cache content is ignored, reported, and rebuilt.
-8. `--refresh` bypasses cached observation reuse and atomically replaces
-   successful entries only when the resulting generation differs.
-9. V2 generations embed the scope root and alias used to derive their directory
-   name. After a changed publication, doctor evicts the oldest verifiably owned
-   v2 generations by file modification time (directory name breaks ties) to
-   target 128 MiB and 32 directories. The current and locked generations stay.
-   An oversized generation is not published and produces a warning. Unknown,
-   mismatched, symlinked and unreadable entries remain untouched and are reported;
-   they or locks can prevent the limits from being met. V1 is never inferred to
-   be owned or evicted. Cache content is disposable and not version controlled.
-
-Deep inventory's changed-generation publication is an explicit derived-cache
-exception to contract 052 R2, scoped to `doctor --deep` (with or without
-`--refresh`). It does not grant writes to structural doctor, standalone scan,
-or any other Static/Observe command. An unchanged deep generation remains
-read-only; the cache remains disposable and publication failures are warnings.
-The ratchet's additional write and removal sites are part of this exception:
-publication is confined to the owner's v2 directory, while eviction locks and
-rechecks each verifiably owned generation before removing its cache file.
-Unknown, mismatched, and locked entries remain untouched, and failed cache
-effects remain warnings.
+3. The shared inventory reproduces the same findings and ordering as the
+   standalone scan commands.
+4. Deep mode keeps no persistent scan cache. It writes no per-file facts under
+   the workspace, runs no Git identity subprocess, and re-reads the selected
+   scope's files on every run.
+5. Interrupted work leaves no scan state behind and publishes nothing.
 
 ## Report contract
 
 Human and JSON reports expose:
 
 - mode, selected scopes, configured budget, elapsed time, and completeness;
-- per-check `complete`, `cached`, `skipped`, or `budget-exhausted` state;
+- per-check `complete`, `skipped`, or `budget-exhausted` state;
 - per-check duration;
-- deep cache hit, miss, and invalid-entry counts;
 - timeout phase and next steps when incomplete.
 
 JSON changes are additive unless the existing schema contract requires an
-explicit version bump. A spinner may improve interactive feedback but cannot
-carry evidence absent from the terminal report.
+explicit version bump. The v0.16 report removed the `run.cache` counters and
+the `cached` check state; no other field moved. A spinner may improve
+interactive feedback but cannot carry evidence absent from the terminal
+report.
 
 ## Compatibility and migration
 
@@ -179,21 +148,22 @@ Standalone scan commands, scan thresholds, finding semantics, catalog aliases,
 task resolution, health task execution semantics, and current JSON fields stay
 compatible unless this contract explicitly adds data.
 
+v0.16 removed the persistent deep-scan cache and its `--refresh` flag. `effigy
+doctor --refresh` is now an unknown option, and a deep run always reads the
+selected scope. Existing `.effigy/doctor/cache/` directories are inert; Effigy
+ignores them and does not delete them, so an operator may remove one by hand.
+
 ## Required proof
 
 - A synthetic large repository proves default doctor performs no content walk
   and never invokes a health sentinel within the 10-second default budget.
-- An instrumented cold deep run proves exactly one walk per selected scope
-  while all enabled scanners retain standalone-equivalent findings.
-- A warm deep run proves unchanged files are not reread or reanalysed, and
-  identical generations retain the cache inode and timestamps and the cache
-  directory timestamp (no transient lock or temp file). `--refresh` of the
-  same facts also skips publication; changed facts retain locked replacement.
-- Same-size, same-mtime changed content misses the cache.
-- One selected catalog does not touch sibling files, cache, or health; explicit
+- An instrumented deep run proves exactly one walk per selected scope while
+  all enabled scanners retain standalone-equivalent findings, and proves the
+  run creates no scan state under the workspace.
+- One selected catalog does not touch sibling files or health; explicit
   all-catalog fan-out visits each declared scope once.
 - Deadline expiry during inventory and health produces partial evidence,
-  non-zero exit, no partial cache publication, and no surviving child process.
+  non-zero exit, and no surviving child process.
 - A child scope with its own lock and no local `node_modules` reports the
   missing bootstrap and never invokes its health sentinel; after a local
   bootstrap install the same scope runs health. A standalone child repository
@@ -212,14 +182,11 @@ compatible unless this contract explicitly adds data.
   install are reported as `missing-local-install`. A scope whose ancestor lock
   lacks verified membership, a non-JS catalog, and a dependency-free child are
   each covered.
-- Corrupt cache input rebuilds safely with a useful warning. V2 ownership,
-  eviction limits, tie-breaking, protected entries and oversized generations
-  have focused proofs; unchanged warm runs remain write-free.
 - Explain mode, structural `--fix`, text output, and JSON consumers retain
   their defined behavior.
 
 ## Drift triggers
 
 Revisit this contract when doctor tier membership, catalog selection, timeout
-defaults, cache identity/schema, scan observation semantics, process-tree
-cancellation, or doctor JSON completeness fields change.
+defaults, scan observation semantics, process-tree cancellation, or doctor JSON
+completeness fields change.

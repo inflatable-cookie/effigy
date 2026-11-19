@@ -88,7 +88,6 @@ pub(super) fn command_options(command: &str) -> &'static [&'static str] {
             "--deep",
             "--catalog",
             "--all-catalogs",
-            "--refresh",
             "--json",
             "--help",
             "-h",

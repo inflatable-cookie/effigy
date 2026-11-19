@@ -48,7 +48,7 @@ Use these docs intentionally:
   placement, catalog sources, and release/distribution separation
 - [028-published-and-draft-task-surfaces.md](028-published-and-draft-task-surfaces.md)
   keeps public/internal discovery metadata on one task namespace and runtime
-- [029-bounded-doctor-and-scan-cache.md](029-bounded-doctor-and-scan-cache.md)
+- [029-bounded-doctor.md](029-bounded-doctor.md)
   separates fast structural diagnosis from explicit catalog-scoped deep work
   with one shared inventory, exact incremental cache facts, and deadlines
 - [030-docs-check-source-traversal.md](030-docs-check-source-traversal.md)
@@ -63,7 +63,7 @@ Use these docs intentionally:
   defines feature-placement gates and alias-stable migration rules
 - [`contract/046`](../contracts/046-published-and-draft-task-surface-contract.md)
   defines task visibility, grouped discovery, complete JSON inventory and legacy syntax translation
-- [`contract/047`](../contracts/047-bounded-doctor-and-scan-cache-contract.md)
+- [`contract/047`](../contracts/047-bounded-doctor-contract.md)
   defines doctor tiers, catalog scope, budgets, cache trust, cancellation, and
   incomplete-report evidence
 

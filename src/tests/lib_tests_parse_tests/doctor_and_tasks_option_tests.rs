@@ -13,14 +13,13 @@ fn base_doctor() -> DoctorArgs {
         deep: false,
         catalog: None,
         all_catalogs: false,
-        refresh: false,
         explain: None,
     }
 }
 
 /// One row per distinct `doctor` flag mapping in `parse_doctor`: the
 /// `--repo`/`--fix`/`--json` combination, `--verbose`, the explanation
-/// target with its `--` passthrough and the deep-catalog-refresh triple.
+/// target with its `--` passthrough and the deep-catalog pair.
 #[test]
 fn parse_doctor_flags_map_their_fields() {
     let cases: &[(&[&str], Command)] = &[
@@ -51,11 +50,10 @@ fn parse_doctor_flags_map_their_fields() {
             }),
         ),
         (
-            &["doctor", "--deep", "--catalog", "api", "--refresh"],
+            &["doctor", "--deep", "--catalog", "api"],
             Command::Doctor(DoctorArgs {
                 deep: true,
                 catalog: Some("api".to_owned()),
-                refresh: true,
                 ..base_doctor()
             }),
         ),

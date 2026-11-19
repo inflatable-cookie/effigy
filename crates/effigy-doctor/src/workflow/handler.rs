@@ -112,13 +112,10 @@ impl phases::WorkflowPhaseHandler for DefaultWorkflowPhaseHandler<'_> {
                 .collect::<Vec<_>>();
             crate::deep_inventory::run_deep_inventory(
                 crate::deep_inventory::DeepInventoryRequest {
-                    workspace_root: resolved_root,
                     scope_root: &selected.catalog_root,
-                    scope_alias: &selected.alias,
                     catalogs: &manifest.parsed_catalogs,
                     pruned_roots: &pruned_roots,
                     deadline,
-                    refresh: self.config.refresh,
                 },
                 state,
                 self.progress.as_deref_mut(),

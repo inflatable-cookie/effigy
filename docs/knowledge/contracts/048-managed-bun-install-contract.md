@@ -6,7 +6,7 @@ this document records what replaced the retired route and what still holds.
 Owner: Bootstrap maintainers
 
 Related: [020](020-remote-bundle-sources-git-and-oci-delivery-contract.md),
-[047](047-bounded-doctor-and-scan-cache-contract.md),
+[047](047-bounded-doctor-contract.md),
 [bootstrap guide 057](../../guides/057-bootstrap-repo-bringup.md)
 
 ## What was retired
@@ -42,7 +42,7 @@ start = "dev"
 - `effigy doctor --deep` reports the same gap as `health.task.bootstrap` with the
   observed install root, lock root and missing declared dependencies, and names
   the same repo-owned preparation (contract
-  [047](047-bounded-doctor-and-scan-cache-contract.md)).
+  [047](047-bounded-doctor-contract.md)).
 - Effigy never edits a sibling dependency checkout to make an install succeed.
   A failure stays an install failure of the task that ran it.
 

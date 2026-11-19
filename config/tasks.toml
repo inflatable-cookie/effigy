@@ -1474,27 +1474,10 @@
 "check:doctor:fixture-contract" = { visibility = "internal", group = "Maintenance", run = [
   "sh scripts/oxide-selector.sh clippy --all-targets -- -D warnings",
 ] }
-# Original cold whole-CLI fixture and direct inventory fixture run as separate
-# nextest calls. The whole-CLI fixture uses a 4000 ms doctor budget so slow
-# runner pre-scan phases cannot consume it before the fixture's Git
-# identity-tree hang; the direct inventory fixture keeps its existing 800 ms
-# deadline origin (it has no earlier phases to spend it).
-"test:doctor:git-timeout-proof" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "inventory-git-timeout-proof", run = "sh scripts/oxide-selector.sh nextest run -p effigy-scan --lib --profile doctor-process --filter-expr 'test(doctor_git_timeout_process_group_evidence)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 120000 },
-  { id = "inventory-slow-prelude-negative", run = "sh scripts/oxide-selector.sh nextest run -p effigy-scan --lib --profile doctor-process --filter-expr 'test(doctor_git_timeout_before_status_is_incomplete_evidence)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 120000 },
-] }
-
-"check:doctor:git-timeout-proof" = { visibility = "internal", group = "Maintenance", run = [
-  { id = "scan-test-compile", run = "sh scripts/oxide-selector.sh check -p effigy-scan --tests", timeout_ms = 600000 },
-  { id = "cli-test-compile", run = "sh scripts/oxide-selector.sh check -p effigy --test cli_output_tests", timeout_ms = 600000 },
-  { id = "scan-test-clippy", run = "sh scripts/oxide-selector.sh clippy -p effigy-scan --tests -- -D warnings", timeout_ms = 600000 },
-  { id = "cli-test-clippy", run = "sh scripts/oxide-selector.sh clippy -p effigy --test cli_output_tests -- -D warnings", timeout_ms = 600000 },
-] }
 # Exercise the milestone's captured/concurrent runner shape, rather than the
 # serial --no-capture shape used for detailed process receipts above.
 "test:doctor:cold-scheduling" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { id = "cold-cli-family-default-profile", run = "sh scripts/oxide-selector.sh nextest run -p effigy --test cli_output_tests --user-config-file none --filterset 'test(cli_deep_doctor_timeout_terminates_) | test(cli_fast_doctor_timeout_terminates_cargo_metadata_tree)' --no-fail-fast --retries 0 --no-tests fail -j 4", timeout_ms = 120000 },
-  { id = "cold-inventory-family-default-profile", run = "sh scripts/oxide-selector.sh nextest run -p effigy-scan --lib --user-config-file none --filterset 'test(doctor_git_timeout_process_group_evidence) | test(doctor_git_timeout_before_status_is_incomplete_evidence)' --no-fail-fast --retries 0 --no-tests fail -j 4", timeout_ms = 120000 },
 ] }
 
 # Rhai storage retirement (contract 043): negative proofs that the removed
@@ -1662,7 +1645,6 @@
 ] }
 # Caller-family half of the matrix, also usable after capture checks settle.
 "test:audit:assurance-boundary:compatibility" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { task = "test:doctor:git-timeout-proof" },
   { id = "help-and-version-remaining-cases", run = "sh scripts/oxide-selector.sh nextest run -p effigy --test cli_output_tests --filter-expr 'test(help_and_flags_tests::) & !test(cli_help_parity_is_stable_across_owned_checkout_identity_changes) & !test(cli_version_json_uses_one_identity_snapshot_during_checkout_change)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 120000 },
   { id = "metadata-and-process-caller-tests", run = "sh scripts/oxide-selector.sh nextest run -p effigy-core -p effigy-process -p effigy --lib --filterset 'package(effigy-core) | package(effigy-process) | test(cli::output::) | test(cli::version_dispatch::) | test(capture_deadline_tests::)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }

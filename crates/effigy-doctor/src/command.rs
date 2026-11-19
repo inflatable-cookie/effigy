@@ -73,16 +73,14 @@ fn validate_invocation(args: &DoctorArgs) -> Result<(), DoctorError> {
             "`--catalog` and `--all-catalogs` are mutually exclusive",
         ));
     }
-    if !args.deep && (args.catalog.is_some() || args.all_catalogs || args.refresh) {
+    if !args.deep && (args.catalog.is_some() || args.all_catalogs) {
         return Err(DoctorError::task_invocation(
-            "`--catalog`, `--all-catalogs`, and `--refresh` require `--deep`",
+            "`--catalog` and `--all-catalogs` require `--deep`",
         ));
     }
-    if args.explain.is_some()
-        && (args.deep || args.catalog.is_some() || args.all_catalogs || args.refresh)
-    {
+    if args.explain.is_some() && (args.deep || args.catalog.is_some() || args.all_catalogs) {
         return Err(DoctorError::task_invocation(
-            "doctor explanation mode cannot combine with `--deep`, `--catalog`, `--all-catalogs`, or `--refresh`",
+            "doctor explanation mode cannot combine with `--deep`, `--catalog`, or `--all-catalogs`",
         ));
     }
     Ok(())

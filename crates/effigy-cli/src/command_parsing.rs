@@ -1517,7 +1517,6 @@ where
     let mut deep = false;
     let mut catalog = None;
     let mut all_catalogs = false;
-    let mut refresh = false;
     let mut explain: Option<TaskInvocation> = None;
     let mut explain_passthrough = false;
 
@@ -1529,13 +1528,10 @@ where
         }
         if let Some(request) = explain.as_mut() {
             if !explain_passthrough
-                && matches!(
-                    arg.as_str(),
-                    "--deep" | "--catalog" | "--all-catalogs" | "--refresh"
-                )
+                && matches!(arg.as_str(), "--deep" | "--catalog" | "--all-catalogs")
             {
                 return Err(CliParseError::InvalidArguments(
-                    "doctor explanation mode cannot combine with `--deep`, `--catalog`, `--all-catalogs`, or `--refresh`".to_owned(),
+                    "doctor explanation mode cannot combine with `--deep`, `--catalog`, or `--all-catalogs`".to_owned(),
                 ));
             }
             explain_passthrough |= arg == "--";
@@ -1552,7 +1548,6 @@ where
                 })?);
             }
             "--all-catalogs" => all_catalogs = true,
-            "--refresh" => refresh = true,
             other => {
                 explain = Some(TaskInvocation {
                     name: other.to_owned(),
@@ -1562,13 +1557,7 @@ where
         }
     }
 
-    validate_doctor_flags(
-        deep,
-        catalog.as_deref(),
-        all_catalogs,
-        refresh,
-        explain.as_ref(),
-    )?;
+    validate_doctor_flags(deep, catalog.as_deref(), all_catalogs, explain.as_ref())?;
 
     Ok(Command::Doctor(DoctorArgs {
         repo_override: common.repo_override,
@@ -1578,7 +1567,6 @@ where
         deep,
         catalog,
         all_catalogs,
-        refresh,
         explain,
     }))
 }
@@ -1587,7 +1575,6 @@ fn validate_doctor_flags(
     deep: bool,
     catalog: Option<&str>,
     all_catalogs: bool,
-    refresh: bool,
     explain: Option<&TaskInvocation>,
 ) -> Result<(), CliParseError> {
     if catalog.is_some() && all_catalogs {
@@ -1595,14 +1582,14 @@ fn validate_doctor_flags(
             "`--catalog` and `--all-catalogs` are mutually exclusive".to_owned(),
         ));
     }
-    if !deep && (catalog.is_some() || all_catalogs || refresh) {
+    if !deep && (catalog.is_some() || all_catalogs) {
         return Err(CliParseError::InvalidArguments(
-            "`--catalog`, `--all-catalogs`, and `--refresh` require `--deep`".to_owned(),
+            "`--catalog` and `--all-catalogs` require `--deep`".to_owned(),
         ));
     }
-    if explain.is_some() && (deep || catalog.is_some() || all_catalogs || refresh) {
+    if explain.is_some() && (deep || catalog.is_some() || all_catalogs) {
         return Err(CliParseError::InvalidArguments(
-            "doctor explanation mode cannot combine with `--deep`, `--catalog`, `--all-catalogs`, or `--refresh`".to_owned(),
+            "doctor explanation mode cannot combine with `--deep`, `--catalog`, or `--all-catalogs`".to_owned(),
         ));
     }
     Ok(())

@@ -15,7 +15,7 @@ pub(crate) fn render_doctor_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> 
         ],
         &[
             "effigy doctor [--repo <PATH>] [--fix] [--verbose] [--json]",
-            "effigy doctor --deep [--catalog <ALIAS> | --all-catalogs] [--refresh]",
+            "effigy doctor --deep [--catalog <ALIAS> | --all-catalogs]",
             "effigy doctor <task> <args> [--json]",
         ],
         &[
@@ -24,7 +24,6 @@ pub(crate) fn render_doctor_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> 
             ("--deep", "Run content scans and selected-scope health"),
             ("--catalog <ALIAS>", "Select one effective catalog for deep work"),
             ("--all-catalogs", "Explicitly fan out deep work across root and members"),
-            ("--refresh", "Bypass deep scan cache reads and replace successful entries"),
             (
                 "--verbose",
                 "Include expanded per-finding detail in text output",

@@ -1364,16 +1364,12 @@ name = "effigy-scan"
 version = "0.14.1"
 dependencies = [
  "effigy-manifest",
- "effigy-process",
  "effigy-tasks",
  "globset",
- "hex",
  "ignore",
  "nix 0.31.3",
  "serde",
  "serde_json",
- "sha2 0.11.0",
- "signal-hook 0.4.4",
  "tempfile",
 ]
 
