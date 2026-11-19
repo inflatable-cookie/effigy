@@ -1729,6 +1729,9 @@ working_dir = "/workspace"
                 "services:\n  app:\n    image: alpine\n",
             )
             .unwrap();
+            // The manifest predates the `compose_file` retirement; migrate it
+            // once to the project catalog fragments a migrated consumer has.
+            crate::runner::test_support::migrate_declared_compose_files(&root);
             let invocation = effigy_cli::TaskInvocation {
                 name: "dev".into(),
                 args: vec![],

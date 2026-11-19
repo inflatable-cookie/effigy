@@ -276,6 +276,9 @@ working_dir = "/workspace"{extra_container_sections}
         "services:\n  app:\n    image: alpine:latest\n",
     )
     .expect("write docker compose");
+    // The manifest predates the `compose_file` retirement; migrate it once to
+    // the project catalog fragments a migrated consumer's checkout has.
+    crate::runner::test_support::migrate_declared_compose_files(root);
 }
 
 pub(in crate::runner::tests) fn write_catalog_manifest_with_alias(

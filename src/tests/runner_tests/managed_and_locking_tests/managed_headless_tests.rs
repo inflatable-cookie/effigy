@@ -241,6 +241,9 @@ working_dir = "/workspace"
         "services:\n  app:\n    image: alpine:latest\n",
     )
     .expect("write docker compose");
+    // The manifest predates the `compose_file` retirement; migrate it once to
+    // the project catalog fragments a migrated consumer's checkout has.
+    crate::runner::test_support::migrate_declared_compose_files(&root);
     let root_for_thread = root.clone();
     let run = std::thread::spawn(move || run_dev(&root_for_thread, &["--headless"]));
     let status = wait_for_dev(&root, &["status"], "api          running");
@@ -380,6 +383,9 @@ WORKER_PID_FILE = {worker_pid}
         "services:\n  app:\n    image: alpine:latest\n",
     )
     .expect("write docker compose");
+    // The manifest predates the `compose_file` retirement; migrate it once to
+    // the project catalog fragments a migrated consumer's checkout has.
+    crate::runner::test_support::migrate_declared_compose_files(root);
 }
 
 /// A container environment's machine store lives beside the fixture, never

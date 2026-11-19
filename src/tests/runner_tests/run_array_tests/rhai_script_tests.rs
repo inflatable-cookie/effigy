@@ -387,6 +387,9 @@ detach_timeout_secs = 1
 mounts = ["./:/workspace"]
 "#,
     );
+    // The manifest predates the `compose_file` retirement; migrate it once to
+    // the project catalog fragments a migrated consumer's checkout has.
+    crate::runner::test_support::migrate_declared_compose_files(root);
 }
 
 pub(super) fn install_fake_container_runtime(root: &std::path::Path) -> std::path::PathBuf {

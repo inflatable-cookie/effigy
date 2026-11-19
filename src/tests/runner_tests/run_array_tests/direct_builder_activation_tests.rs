@@ -1,6 +1,6 @@
 //! Private production-adapter proof for a no-port direct-Compose builder.
 //!
-//! The manifest declares a retired `compose_file` (translated to a project
+//! The manifest declares a retired `compose_file` (migrated once to a project
 //! catalog fragment) with no published ports. A Rhai task
 //! runs `container::up` and then `container::shell`, so the real policy load,
 //! admission guard, detached preparation, owned-binding verification and exec
@@ -275,6 +275,11 @@ shell = "/bin/sh"
                 "primary_service = \"builder\"\nworking_dir = \"/workspace\"",
             );
         fs::write(root.join("effigy.toml"), format!("{manifest}\n[containers.builder.services.builder]\ncatalog = \"private-builder\"\n")).unwrap();
+    } else {
+        // Every other scenario keeps the retired declaration and takes the
+        // migration's project catalog fragments instead, as a migrated
+        // consumer's checkout has them.
+        crate::runner::test_support::migrate_declared_compose_files(&root);
     }
     let _gateway =
         crate::runner::gateway_command::set_test_gateway_home(&root.join("gateway-home"));

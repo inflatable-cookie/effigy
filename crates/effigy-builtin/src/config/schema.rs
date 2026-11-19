@@ -59,10 +59,8 @@ impl SchemaSection {
         match self {
             Self::Manifest if include_core => docs::manifest_lines(profile),
             Self::Manifest => docs::manifest_minimal_lines(),
-            // The manifest section's include graph overrides this entry from
-            // `effigy.docs.toml`, and composition refuses an override path the
-            // including manifest does not define. The template therefore
-            // carries the index it shows being overridden.
+            // The template carries one repository-owned docs index so the
+            // docs routing it documents has a shape to copy.
             Self::DocsIndex => vec![
                 "[docs_policy.indexes.topic]",
                 "# Repository-owned docs index an agent reads first.",
