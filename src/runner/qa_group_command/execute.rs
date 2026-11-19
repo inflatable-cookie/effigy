@@ -239,6 +239,21 @@ fn run_single_member(root: &Path, member: &QaGroupPlanMember) -> MemberAttempt {
             let (stdout, stderr) = extract_payload_output(&rendered);
             Ok((stdout, stderr))
         }
+        Err(RunnerError::TaskJsonFailure {
+            code,
+            stdout,
+            stderr,
+            ..
+        }) => Err((
+            Box::new(RunnerError::TaskCommandFailure {
+                command: member_command_label(member),
+                code: Some(code),
+                stdout: stdout.clone(),
+                stderr: stderr.clone(),
+            }),
+            stdout,
+            stderr,
+        )),
         Err(RunnerError::CommandJsonFailure { rendered }) => {
             // The captured payload carries the task's real exit code and its
             // redacted output. Re-derive the typed failure from them so the

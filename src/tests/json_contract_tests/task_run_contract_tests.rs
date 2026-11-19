@@ -39,7 +39,7 @@ fn task_run_json_contract_failure_preserves_rhai_script_output() {
     .expect_err("expected non-zero rhai task failure");
 
     let rendered = match err {
-        RunnerError::CommandJsonFailure { rendered } => rendered,
+        RunnerError::TaskJsonFailure { rendered, .. } => rendered,
         other => panic!("unexpected error: {other}"),
     };
     let parsed = parse_json(&rendered);
@@ -74,7 +74,7 @@ fn catalog_task_run_json_contract_failure_has_versioned_shape() {
     .expect_err("expected non-zero task failure");
 
     let rendered = match err {
-        RunnerError::CommandJsonFailure { rendered } => rendered,
+        RunnerError::TaskJsonFailure { rendered, .. } => rendered,
         other => panic!("unexpected error: {other}"),
     };
     let parsed = parse_json(&rendered);

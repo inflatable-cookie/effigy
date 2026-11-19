@@ -53,7 +53,14 @@ pub(super) fn run_task_process(
         if exit.workload == WorkloadOutcome::Succeeded {
             return Ok(rendered);
         }
-        return Err(RunnerError::CommandJsonFailure { rendered });
+        return Err(RunnerError::task_json_failure(
+            rendered,
+            &context.selector.task_name,
+            exit.code,
+            exit.workload,
+            &stdout,
+            &stderr,
+        ));
     }
     if exit.workload == WorkloadOutcome::Succeeded {
         if verbose_root {

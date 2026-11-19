@@ -64,7 +64,14 @@ pub(super) fn maybe_run_in_process_sequence(
         return if report.code == 0 {
             Ok(Some(rendered))
         } else {
-            Err(RunnerError::CommandJsonFailure { rendered })
+            Err(RunnerError::task_json_failure(
+                rendered,
+                &preflight.selector.task_name,
+                report.code,
+                report.outcome,
+                &report.stdout,
+                &report.stderr,
+            ))
         };
     }
     if report.code != 0 {

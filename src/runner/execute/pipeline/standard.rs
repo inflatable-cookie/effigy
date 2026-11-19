@@ -646,7 +646,14 @@ fn finish_remote(
         return if succeeded {
             Ok(rendered)
         } else {
-            Err(RunnerError::CommandJsonFailure { rendered })
+            Err(RunnerError::task_json_failure(
+                rendered,
+                &preflight.selector.task_name,
+                exit.code,
+                exit.workload,
+                &stdout,
+                &stderr,
+            ))
         };
     }
     if !succeeded {
