@@ -1904,7 +1904,10 @@ fn gateway_boundaries_record_exactly_their_own_events() {
     assert_eq!(events.len(), 1, "{log}");
     assert_eq!(events[0]["event"], "gateway_up", "{log}");
     assert_eq!(events[0]["cause"], "gateway up command", "{log}");
-    assert_eq!(events[0]["caller"]["pid"], std::process::id(), "{log}");
+    // Contract 005: the one event carries the invoking pid and the fixed
+    // caller identifier, never an argv token or an ancestor chain.
+    assert_eq!(events[0]["pid"], std::process::id(), "{log}");
+    assert_eq!(events[0]["caller"], "effigy", "{log}");
 
     // Managed start: a task run that starts the gateway in-process says so.
     let dir = tempfile::tempdir().expect("private gateway fixture");
@@ -1980,7 +1983,7 @@ fn gateway_down_records_its_caller_before_it_reads_any_state() {
     assert_eq!(record["action"], "down");
     assert_eq!(record["cause"], "gateway down command");
     assert_eq!(record["pid"], std::process::id());
-    assert_eq!(record["caller"]["pid"], std::process::id());
+    assert_eq!(record["caller"], "effigy");
 }
 
 #[test]

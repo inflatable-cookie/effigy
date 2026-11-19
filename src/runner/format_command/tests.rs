@@ -47,10 +47,15 @@ fn fmt_rust_formats_only_the_named_files() {
 
     let report = format_files(&root, std::slice::from_ref(&named), false).expect("format");
     assert!(report.contains("src/named.rs"), "{report}");
-    assert!(
-        !root.join(".effigy/state/kernel.db").exists(),
-        "formatting keeps its run in memory"
-    );
+    // Contract 052 §3.1: the formatting run keeps its lifecycle in memory and
+    // settlement writes its one terminal row to the checkout journal.
+    let rows = crate::runner::task_engine::list_runs(Some(&root), 10).expect("the settled run");
+    assert_eq!(rows.runs.len(), 1, "{rows:?}");
+    assert!(rows.runs[0].is_terminal_record(), "{rows:?}");
+    assert_eq!(rows.runs[0].task, "fmt rust");
+    assert_eq!(rows.runs[0].view.state, "succeeded");
+    assert_eq!(rows.runs[0].view.exit_code, Some(0));
+    assert_eq!(rows.runs[0].view.cleanup, Some("complete"));
 
     assert_eq!(
         fs::read_to_string(&named).expect("named"),
