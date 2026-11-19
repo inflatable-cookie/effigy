@@ -31,10 +31,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub(crate) mod anchor;
-// Scaffolding only: no helper or workspace path may use it until the birth
-// receipt protocol and its exact-owner checks have been independently reviewed.
-#[allow(dead_code)]
-mod birth_hash;
 // Ordinary builds do not consume these qualification-only observations.
 /// One owner for the length-prefixed frames every helper pipe speaks.
 mod frame;

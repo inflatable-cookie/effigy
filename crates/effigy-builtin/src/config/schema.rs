@@ -16,7 +16,7 @@ const HEADER_MINIMAL: &str = "# Minimal strict-valid effigy.toml starter";
 enum SchemaSection {
     Manifest,
     DocsIndex,
-    DocsPolicyGraph,
+    DocsPolicySources,
     Containers,
     PackageManager,
     Test,
@@ -32,7 +32,7 @@ enum SchemaSection {
 const CANONICAL_SECTIONS: &[SchemaSection] = &[
     SchemaSection::Manifest,
     SchemaSection::DocsIndex,
-    SchemaSection::DocsPolicyGraph,
+    SchemaSection::DocsPolicySources,
     SchemaSection::Containers,
     SchemaSection::PackageManager,
     SchemaSection::Test,
@@ -72,7 +72,7 @@ impl SchemaSection {
                 "dir = \"docs\"",
                 "",
             ],
-            Self::DocsPolicyGraph => docs::docs_policy_graph_lines(profile),
+            Self::DocsPolicySources => docs::docs_policy_sources_lines(),
             Self::Containers => docs::containers_lines(profile),
             Self::PackageManager => docs::package_manager_lines(profile),
             Self::Test => docs::test_section_lines(
@@ -100,7 +100,7 @@ fn sections_for(target: Option<ConfigSchemaTarget>, minimal: bool) -> &'static [
         Some(ConfigSchemaTarget::Manifest) => &[
             SchemaSection::Manifest,
             SchemaSection::DocsIndex,
-            SchemaSection::DocsPolicyGraph,
+            SchemaSection::DocsPolicySources,
         ],
         Some(ConfigSchemaTarget::PackageManager) => &[SchemaSection::PackageManager],
         Some(ConfigSchemaTarget::Test) => &[SchemaSection::Test],

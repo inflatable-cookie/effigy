@@ -6,7 +6,7 @@ use toml::Value;
 
 use super::TaskManifest;
 use crate::bundles::{apply_bundle_defaults, BundleInputResolution};
-use crate::config_sections::{ManifestBundleConfig, ManifestDocsPolicyGraphConfig};
+use crate::config_sections::ManifestBundleConfig;
 use crate::ingress::{record_value_sources, ManifestInput};
 use crate::manifest_section::{
     resolve_include_path, validate_minimum_effigy_version, ManifestIncludeEntry,
@@ -98,34 +98,6 @@ struct CompositionSession {
     evaluation_order: Vec<PathBuf>,
     include_graph: Vec<ManifestCompositionEdge>,
     overridden_paths: Vec<ManifestCompositionOverride>,
-}
-
-pub fn load_docs_policy_graph_config(
-    manifest_path: &Path,
-) -> Result<Option<ManifestDocsPolicyGraphConfig>, ManifestError> {
-    if !manifest_path.is_file() {
-        return Ok(None);
-    }
-    let mut session = CompositionSession::default();
-    let mut composed = load_composed_value(manifest_path, &mut session)?;
-    apply_bundle_defaults(manifest_path, &mut composed, None)?;
-    let Some(graph_value) = composed
-        .value
-        .get("docs_policy")
-        .and_then(|docs_policy| docs_policy.get("graph"))
-    else {
-        return Ok(None);
-    };
-    let graph: ManifestDocsPolicyGraphConfig =
-        graph_value
-            .clone()
-            .try_into()
-            .map_err(|error| ManifestError::Parse {
-                path: manifest_path.to_path_buf(),
-                error,
-            })?;
-    graph.validate(manifest_path)?;
-    Ok(Some(graph))
 }
 
 pub fn load_task_manifest_with_inspection(
@@ -1731,13 +1703,6 @@ selection-contract = "selection.json"
 git = "git@example.com:acme/book.git"
 rev-file = "book.rev"
 path = "book"
-
-[docs_policy.graph]
-roots = ["README.md"]
-
-[docs_policy.graph.kinds.guide]
-include = ["docs/*.md"]
-default-currentness = "current"
 "#,
         );
         let loaded = load_task_manifest_with_inspection(&root).expect("load");
@@ -1764,21 +1729,6 @@ default-currentness = "current"
                 .as_deref(),
             Some("book.rev")
         );
-        assert_eq!(
-            loaded
-                .manifest
-                .docs_policy
-                .as_ref()
-                .expect("docs policy")
-                .graph
-                .as_ref()
-                .expect("graph")
-                .kinds
-                .get("guide")
-                .expect("guide")
-                .default_currentness,
-            crate::config_sections::ManifestDocsPolicyGraphCurrentnessClass::Current
-        );
         let notice = loaded
             .manifest
             .retired_config
@@ -1787,7 +1737,6 @@ default-currentness = "current"
         assert!(notice.contains("`schema-index`"), "{notice}");
         assert!(notice.contains("`selection-contract`"), "{notice}");
         assert!(notice.contains("`rev-file`"), "{notice}");
-        assert!(!notice.contains("`default-currentness`"), "{notice}");
         assert!(notice.contains("removed in v0.16"), "{notice}");
         assert_eq!(notice.matches("effigy.toml").count(), 1, "{notice}");
         assert_eq!(
@@ -1816,13 +1765,6 @@ selection_contract = "selection.json"
 git = "git@example.com:acme/book.git"
 rev_file = "book.rev"
 path = "book"
-
-[docs_policy.graph]
-roots = ["README.md"]
-
-[docs_policy.graph.kinds.guide]
-include = ["docs/*.md"]
-default_currentness = "current"
 "#,
         );
         write_manifest(

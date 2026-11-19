@@ -144,10 +144,8 @@ where
     let mut dns_addr = None;
     let mut proxy_addr = None;
     let mut https_addr = None;
-    let mut listener_handoff = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--listener-handoff" => listener_handoff = true,
             "--private-state-root" if state_root.is_none() => {
                 state_root = Some(PathBuf::from(next_required_value(
                     &mut args,
@@ -204,10 +202,7 @@ where
             ));
         }
     };
-    Ok(Command::InternalGateway(InternalGatewayArgs {
-        private,
-        listener_handoff,
-    }))
+    Ok(Command::InternalGateway(InternalGatewayArgs { private }))
 }
 
 fn parse_internal_gateway_identity_command<I>(args: I) -> Result<Command, CliParseError>

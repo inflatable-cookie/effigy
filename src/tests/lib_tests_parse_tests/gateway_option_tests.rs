@@ -135,23 +135,16 @@ fn parse_gateway_retired_listener_handoff_commands_refuse_actionably() {
     }
 }
 
-/// The internal `__gateway-run` surface: the handoff flag maps on and off.
+/// The internal `__gateway-run` surface takes no listener-handoff opt-in any
+/// more: the daemon always binds its own loopback listeners.
 #[test]
-fn parse_internal_gateway_run_defaults_and_handoff_flag() {
-    let cases: &[(&[&str], bool)] = &[
-        (&["__gateway-run", "--listener-handoff"], true),
-        (&["__gateway-run"], false),
-    ];
-    for (args, listener_handoff) in cases {
-        assert_eq!(
-            parse_command(args.iter().map(|arg| (*arg).to_owned())).expect("parse should succeed"),
-            Command::InternalGateway(InternalGatewayArgs {
-                private: None,
-                listener_handoff: *listener_handoff,
-            }),
-            "{args:?}"
-        );
-    }
+fn parse_internal_gateway_run_takes_no_listener_handoff_flag() {
+    assert_eq!(
+        parse_command([String::from("__gateway-run")]).expect("parse should succeed"),
+        Command::InternalGateway(InternalGatewayArgs { private: None }),
+    );
+    parse_command([String::from("__gateway-run"), String::from("--listener-handoff")])
+        .expect_err("the retired direct handoff flag must be refused");
 }
 
 #[test]

@@ -20,14 +20,6 @@ effigy skill run northstar-docs/check-links
 effigy skill run northstar-docs/changelog -- check
 ```
 
-## Documentation graph profile
-
-A repository that wants Effigy's documentation graph keeps one committed
-`[docs_policy.graph]` block in its own `effigy.toml`. Effigy resolves
-documentation semantics from that manifest only, never from an installed skill
-directory or template. See
-[`../knowledge/contracts/041-documentation-graph-profile-contract.md`](../knowledge/contracts/041-documentation-graph-profile-contract.md).
-
 ## Effigy commands
 
 Use `rg` and `docs/README.md` for code and document authority, `effigy tasks` for selector inventory, `effigy doctor` for routing or health, and `effigy test --plan` when test shape matters. Run `effigy qa` before a PR. A consumer's QA command must work from a fresh checkout with its own dependencies.

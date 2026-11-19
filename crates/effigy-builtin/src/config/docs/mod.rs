@@ -20,8 +20,8 @@ pub(super) fn manifest_minimal_lines() -> Vec<&'static str> {
     tasks::manifest_minimal_lines()
 }
 
-pub(super) fn docs_policy_graph_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
-    tasks::docs_policy_graph_lines(profile)
+pub(super) fn docs_policy_sources_lines() -> Vec<&'static str> {
+    tasks::docs_policy_sources_lines()
 }
 
 pub(super) fn scan_lines() -> &'static [&'static str] {

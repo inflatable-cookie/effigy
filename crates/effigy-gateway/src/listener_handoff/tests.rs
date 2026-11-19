@@ -3,14 +3,10 @@
 //! Every test runs on ephemeral loopback endpoints under the same UID with
 //! owned descriptors only. Nothing here registers a launchd job, touches the
 //! production endpoints `80`/`443`, elevates, or reads live gateway state.
-//! The production adoption refusal (outside launchd) is genuine evidence that
-//! the daemon cannot silently start this way without launchd handing it sockets.
 
-#[cfg(target_os = "macos")]
-use super::ActivationFailure;
 use super::{
-    close_owned_fd, production_specs, validate_and_adopt, DescriptorRefusal, HandedSocketSpec,
-    HandoffIdentity, ListenerHandoffError, HANDOFF_HTTPS_SOCKET_NAME, HANDOFF_HTTP_SOCKET_NAME,
+    close_owned_fd, validate_and_adopt, DescriptorRefusal, HandedSocketSpec, HandoffIdentity,
+    ListenerHandoffError,
 };
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket};
 use std::os::fd::{AsFd, AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
@@ -139,13 +135,13 @@ fn listener_handoff_adopts_real_listening_loopback_sockets() {
     let (http_listener, http_addr) = listening_socket();
     let (https_listener, https_addr) = listening_socket();
     let specs = [
-        spec(HANDOFF_HTTP_SOCKET_NAME, http_addr),
-        spec(HANDOFF_HTTPS_SOCKET_NAME, https_addr),
+        spec("http", http_addr),
+        spec("https", https_addr),
     ];
     let activated = [
-        (HANDOFF_HTTP_SOCKET_NAME, vec![into_owned_fd(http_listener)]),
+        ("http", vec![into_owned_fd(http_listener)]),
         (
-            HANDOFF_HTTPS_SOCKET_NAME,
+            "https",
             vec![into_owned_fd(https_listener)],
         ),
     ];
@@ -188,19 +184,19 @@ fn listener_handoff_refuses_wrong_endpoint_and_closes_handed_descriptors() {
     let fd_witness = DescriptorCloseWitness::new(&actual_listener);
     let fd = into_owned_fd(actual_listener);
     let specs = [spec(
-        HANDOFF_HTTP_SOCKET_NAME,
+        "http",
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), actual_addr.port() + 1),
     )];
     let error = validate_and_adopt(
         &specs,
-        &[(HANDOFF_HTTP_SOCKET_NAME, vec![fd])],
+        &[("http", vec![fd])],
         &operator_identity(),
     )
     .expect_err("wrong endpoint must refuse");
     let ListenerHandoffError::DescriptorRefused { socket, refusal } = &error else {
         panic!("expected a descriptor refusal, got {error:?}");
     };
-    assert_eq!(*socket, HANDOFF_HTTP_SOCKET_NAME);
+    assert_eq!(*socket, "http");
     match refusal {
         DescriptorRefusal::WrongEndpoint { expected, actual } => {
             assert_eq!(*actual, actual_addr);
@@ -221,10 +217,10 @@ fn listener_handoff_refuses_wrong_family() {
     .expect("ipv6 loopback bind");
     let fd_witness = DescriptorCloseWitness::new(&listener);
     let fd = into_owned_fd(listener);
-    let specs = [spec(HANDOFF_HTTP_SOCKET_NAME, loopback_ephemeral())];
+    let specs = [spec("http", loopback_ephemeral())];
     let error = validate_and_adopt(
         &specs,
-        &[(HANDOFF_HTTP_SOCKET_NAME, vec![fd])],
+        &[("http", vec![fd])],
         &operator_identity(),
     )
     .expect_err("wrong family must refuse");
@@ -250,10 +246,10 @@ fn listener_handoff_refuses_non_listening_stream_socket() {
     let fd_witness = DescriptorCloseWitness::new(&accepted);
     let fd = accepted.into_raw_fd();
     drop(stream);
-    let specs = [spec(HANDOFF_HTTP_SOCKET_NAME, addr)];
+    let specs = [spec("http", addr)];
     let error = validate_and_adopt(
         &specs,
-        &[(HANDOFF_HTTP_SOCKET_NAME, vec![fd])],
+        &[("http", vec![fd])],
         &operator_identity(),
     )
     .expect_err("non-listening socket must refuse");
@@ -277,10 +273,10 @@ fn listener_handoff_refuses_datagram_socket() {
     let socket = UdpSocket::bind(loopback_ephemeral()).expect("udp bind");
     let fd_witness = DescriptorCloseWitness::new(&socket);
     let fd = socket.into_raw_fd();
-    let specs = [spec(HANDOFF_HTTP_SOCKET_NAME, loopback_ephemeral())];
+    let specs = [spec("http", loopback_ephemeral())];
     let error = validate_and_adopt(
         &specs,
-        &[(HANDOFF_HTTP_SOCKET_NAME, vec![fd])],
+        &[("http", vec![fd])],
         &operator_identity(),
     )
     .expect_err("datagram socket must refuse");
@@ -307,14 +303,14 @@ fn listener_handoff_refuses_duplicate_socket_object() {
     let duplicate_witness = DescriptorCloseWitness::new(&duplicate_owned);
     let duplicate = duplicate_owned.into_raw_fd();
     let specs = [
-        spec(HANDOFF_HTTP_SOCKET_NAME, addr),
-        spec(HANDOFF_HTTPS_SOCKET_NAME, addr),
+        spec("http", addr),
+        spec("https", addr),
     ];
     let error = validate_and_adopt(
         &specs,
         &[
-            (HANDOFF_HTTP_SOCKET_NAME, vec![fd]),
-            (HANDOFF_HTTPS_SOCKET_NAME, vec![duplicate]),
+            ("http", vec![fd]),
+            ("https", vec![duplicate]),
         ],
         &operator_identity(),
     )
@@ -341,13 +337,13 @@ fn listener_handoff_refuses_missing_or_extra_socket_descriptors() {
     let fd = into_owned_fd(listener);
     let extra = fd_witness.original.try_clone().expect("extra socket");
     let specs = [
-        spec(HANDOFF_HTTP_SOCKET_NAME, addr),
-        spec(HANDOFF_HTTPS_SOCKET_NAME, addr),
+        spec("http", addr),
+        spec("https", addr),
     ];
     // Missing https entry: zero descriptors for the name.
     let error = validate_and_adopt(
         &specs,
-        &[(HANDOFF_HTTP_SOCKET_NAME, vec![fd])],
+        &[("http", vec![fd])],
         &operator_identity(),
     )
     .expect_err("missing socket must refuse");
@@ -368,10 +364,10 @@ fn listener_handoff_refuses_missing_or_extra_socket_descriptors() {
     let extra_owned = fd_witness.original.try_clone().expect("extra socket");
     let extra_witness = DescriptorCloseWitness::new(&extra_owned);
     let extra = extra_owned.into_raw_fd();
-    let specs = [spec(HANDOFF_HTTP_SOCKET_NAME, addr)];
+    let specs = [spec("http", addr)];
     let error = validate_and_adopt(
         &specs,
-        &[(HANDOFF_HTTP_SOCKET_NAME, vec![fd, extra])],
+        &[("http", vec![fd, extra])],
         &operator_identity(),
     )
     .expect_err("two descriptors for one name must refuse");
@@ -392,8 +388,8 @@ fn listener_handoff_refuses_root_and_sudo_identities() {
     let (listener, addr) = listening_socket();
     let fd_witness = DescriptorCloseWitness::new(&listener);
     let fd = into_owned_fd(listener);
-    let specs = [spec(HANDOFF_HTTP_SOCKET_NAME, addr)];
-    let activated = [(HANDOFF_HTTP_SOCKET_NAME, vec![fd])];
+    let specs = [spec("http", addr)];
+    let activated = [("http", vec![fd])];
     let root = HandoffIdentity {
         effective_uid: 0,
         sudo_environment_present: false,
@@ -412,59 +408,11 @@ fn listener_handoff_refuses_root_and_sudo_identities() {
         sudo_environment_present: true,
     };
     let error = validate_and_adopt(
-        &[spec(HANDOFF_HTTP_SOCKET_NAME, addr)],
-        &[(HANDOFF_HTTP_SOCKET_NAME, vec![fd])],
+        &[spec("http", addr)],
+        &[("http", vec![fd])],
         &sudo,
     )
     .expect_err("sudo environment must refuse");
     assert!(matches!(error, ListenerHandoffError::ElevatedInvocation));
     assert_descriptor_closed(&fd_witness);
-}
-
-/// Production adoption refuses outside launchd without binding anything.
-#[test]
-fn listener_handoff_production_adoption_refuses_outside_launchd() {
-    let error = super::adopt_handed_listeners().expect_err("no launchd activation in tests");
-    #[cfg(target_os = "macos")]
-    match &error {
-        // Both refusals are correct here: the test harness is not a launchd
-        // job (ESRCH), and a sudo-wrapped harness is an elevated invocation.
-        ListenerHandoffError::ActivationFailed {
-            failure: ActivationFailure::NotLaunchedByLaunchd,
-            ..
-        }
-        | ListenerHandoffError::ElevatedInvocation => {}
-        other => panic!("expected NotLaunchedByLaunchd refusal, got {other:?}"),
-    }
-    #[cfg(not(target_os = "macos"))]
-    assert!(
-        matches!(error, ListenerHandoffError::UnsupportedPlatform),
-        "expected UnsupportedPlatform, got {error:?}"
-    );
-    assert_eq!(production_specs().len(), 2);
-    let endpoints: Vec<u16> = production_specs()
-        .iter()
-        .map(|spec| spec.endpoint.port())
-        .collect();
-    assert_eq!(endpoints, vec![80, 443]);
-
-    let fixture = tempfile::tempdir().expect("fresh listener-handoff fixture");
-    let config = crate::server::GatewayConfig::standard(fixture.path().to_path_buf())
-        .with_listener_handoff(true);
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("tokio runtime");
-    let startup = runtime.block_on(crate::server::run_operator_gateway(
-        config,
-        effigy_kernel::ctx::CancelToken::default(),
-    ));
-    assert!(matches!(
-        startup,
-        Err(crate::error::GatewayError::ListenerHandoff(_))
-    ));
-    assert!(
-        !fixture.path().join("gateway.pid").exists(),
-        "a refused handoff start must not publish a generation record"
-    );
 }

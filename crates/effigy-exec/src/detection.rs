@@ -4,11 +4,9 @@
 //!
 //! - Whether effigy is installed inside the container (for handoff)
 //! - Which shell is available (bash, sh)
-//! - Which effigy version the container reports
 //!
 //! A probe is identified by [`ProbeKind`] — never by its human description — so
-//! the result a caller records is the same value the builder reads back, and
-//! each kind owns how its result is interpreted.
+//! the result a caller records is the same value the builder reads back.
 
 use std::collections::HashMap;
 
@@ -17,9 +15,6 @@ use std::collections::HashMap;
 pub struct ContainerCapabilities {
     /// Whether effigy is installed inside the container.
     pub has_effigy: bool,
-
-    /// Effigy version inside the container, if a version probe reported one.
-    pub effigy_version: Option<String>,
 
     /// Available shell, when the container offered one. A container that
     /// answered neither shell probe claims no shell; it is never reported as
@@ -92,50 +87,15 @@ pub fn determine_strategy(
     }
 }
 
-/// How a probe result is interpreted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProbeInterpreter {
-    /// The exit status decides; stdout carries no capability fact.
-    ExitCode,
-
-    /// The exit status decides, and stdout carries the reported version.
-    VersionOutput,
-}
-
-impl ProbeInterpreter {
-    /// The version a probe reported, if its own interpreter reads output.
-    fn reported_version(self, output: &str) -> Option<String> {
-        match self {
-            Self::ExitCode => None,
-            Self::VersionOutput => {
-                let output = output.trim();
-                (!output.is_empty()).then(|| output.to_owned())
-            }
-        }
-    }
-}
-
 /// The identity of one capability probe: how its result is recorded and read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProbeKind {
     /// Whether effigy is installed inside the container.
     EffigyInstallation,
-    /// Which effigy version the container reports.
-    EffigyVersion,
     /// Whether bash is available.
     Bash,
     /// Whether sh is available.
     Sh,
-}
-
-impl ProbeKind {
-    /// How this check's result is interpreted.
-    pub fn interpreter(self) -> ProbeInterpreter {
-        match self {
-            Self::EffigyInstallation | Self::Bash | Self::Sh => ProbeInterpreter::ExitCode,
-            Self::EffigyVersion => ProbeInterpreter::VersionOutput,
-        }
-    }
 }
 
 /// Probe specification for detecting container capabilities.
@@ -172,10 +132,6 @@ pub fn standard_probe_spec() -> ProbeSpec {
                 command: vec!["which".to_string(), "effigy".to_string()],
             },
             ProbeCheck {
-                kind: ProbeKind::EffigyVersion,
-                command: vec!["effigy".to_string(), "version".to_string()],
-            },
-            ProbeCheck {
                 kind: ProbeKind::Bash,
                 command: vec!["which".to_string(), "bash".to_string()],
             },
@@ -192,9 +148,6 @@ pub fn standard_probe_spec() -> ProbeSpec {
 pub struct ProbeResult {
     /// Whether the command exited successfully (exit code 0).
     pub success: bool,
-
-    /// Stdout output (trimmed).
-    pub output: String,
 }
 
 /// Build container capabilities from probe results.
@@ -206,12 +159,6 @@ pub fn build_capabilities_from_results(
 ) -> ContainerCapabilities {
     let answered = |kind: ProbeKind| results.get(&kind).filter(|result| result.success);
 
-    let effigy_version = answered(ProbeKind::EffigyVersion).and_then(|result| {
-        ProbeKind::EffigyVersion
-            .interpreter()
-            .reported_version(&result.output)
-    });
-
     let shell = if answered(ProbeKind::Bash).is_some() {
         Some("/bin/bash".to_string())
     } else {
@@ -220,7 +167,6 @@ pub fn build_capabilities_from_results(
 
     ContainerCapabilities {
         has_effigy: answered(ProbeKind::EffigyInstallation).is_some(),
-        effigy_version,
         shell,
     }
 }

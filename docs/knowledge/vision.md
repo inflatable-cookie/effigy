@@ -105,9 +105,6 @@ not a production deployment topology.
   join task routing automatically.
 - Built-in [test orchestration](contracts/038-unified-test-orchestration-contract.md)
   uses `[test]`; `tasks.test` is removed and `test --plan` does not execute.
-- The [documentation graph](architecture/024-repository-defined-documentation-graph.md)
-  takes its semantic profile from the selected repository, not an installed
-  skill, a hard-coded Northstar layout, or a second index.
 
 Those rules outlive their former vision decision records. Planning selections
 about past governance and consumer cohorts remain in Git history; current

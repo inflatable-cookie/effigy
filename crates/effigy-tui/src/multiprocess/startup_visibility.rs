@@ -6,12 +6,11 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use effigy_core::shell::shell_quote as core_shell_quote;
-use effigy_process::{ProcessManagerError, ProcessSpec, ProcessSupervisor};
+use effigy_process::{ProcessManagerError, ProcessSpec};
 use nix::pty::{openpty, Winsize};
 use tempfile::TempDir;
 
-use super::state::{ProcessStartupState, SessionState};
-use super::{lifecycle, runtime_loop, MultiProcessTuiOptions, RuntimeDiagnostics, SessionRuntime};
+use super::MultiProcessTuiOptions;
 
 const CASE_ENV: &str = "EFFIGY_TEST_TUI_STARTUP_CASE";
 const ROOT_ENV: &str = "EFFIGY_TEST_TUI_STARTUP_ROOT";
@@ -106,31 +105,6 @@ fn managed_tui_startup_visibility_production_pty() {
     let mut session = PtySession::spawn("empty", empty.path());
     session.finish_successfully();
     session.assert_terminal_untouched();
-
-    let legacy = FixtureWorkspace::new();
-    let mut session = PtySession::spawn("blocking-baseline", legacy.path());
-    assert!(session.wait_for("\u{1b}[2J"));
-    session.collect_for(Duration::from_millis(150));
-    assert!(!session.output_text().contains("legacy-last [running]"));
-    assert!(!legacy.path().join("supervisor.returned").exists());
-    session.wait_for_or_panic("legacy-last [running]");
-    assert!(legacy.path().join("supervisor.returned").exists());
-    let output = session.output_text();
-    let first_frame = output
-        .find("legacy-last [running]")
-        .expect("legacy first frame");
-    let alt_screen = output
-        .find("\u{1b}[?1049h")
-        .expect("legacy path entered alternate screen");
-    let clear = output
-        .find("\u{1b}[2J")
-        .expect("legacy path cleared alternate screen");
-    assert!(alt_screen < first_frame && clear < first_frame);
-    session.send_key(b"\x03");
-    session.finish_successfully();
-    wait_for_pid_to_exit(&legacy.path().join("legacy-first.pid"));
-    wait_for_pid_to_exit(&legacy.path().join("legacy-last.pid"));
-    session.assert_terminal_restored();
 }
 
 fn run_child_case(case: &str, root: &Path) {
@@ -335,64 +309,8 @@ fn run_child_case(case: &str, root: &Path) {
             ),
             Err(super::MultiProcessTuiError::NoProcesses)
         )),
-        "blocking-baseline" => run_blocking_baseline(root),
         other => panic!("unknown PTY fixture case {other}"),
     }
-}
-
-fn run_blocking_baseline(root: &Path) {
-    let processes = vec![
-        fixture_process(
-            "legacy-first",
-            &root.join("legacy-first.pid"),
-            "legacy-first-output",
-            root,
-            0,
-        ),
-        fixture_process(
-            "legacy-last",
-            &root.join("legacy-last.pid"),
-            "legacy-last-output",
-            root,
-            1_200,
-        ),
-    ];
-    let terminal = lifecycle::init_terminal().expect("initialize legacy TUI terminal");
-    let supervisor =
-        ProcessSupervisor::spawn(root.to_path_buf(), processes).expect("blocking supervisor spawn");
-    let mut state = SessionState::new(
-        root.to_path_buf(),
-        vec!["legacy-first".to_owned(), "legacy-last".to_owned()],
-        24,
-        80,
-        1_000,
-    );
-    state
-        .startup_states
-        .insert("legacy-first".to_owned(), ProcessStartupState::Running);
-    state
-        .startup_states
-        .insert("legacy-last".to_owned(), ProcessStartupState::Running);
-    let mut runtime = SessionRuntime {
-        supervisor: Box::new(supervisor),
-        terminal,
-        state,
-        diagnostics: RuntimeDiagnostics::from_env(),
-        vt_emulator_enabled: false,
-        terminal_lost: false,
-    };
-    fs::write(root.join("supervisor.returned"), "released")
-        .expect("record blocking supervisor completion before rendering");
-    let result = runtime_loop::run_event_loop(&mut runtime, MultiProcessTuiOptions::default());
-    let cleanup = lifecycle::shutdown_and_render_summary(
-        &mut runtime.terminal,
-        runtime.supervisor.as_ref(),
-        &runtime.state.logs,
-        &runtime.state.process_started_at,
-        &runtime.diagnostics,
-    );
-    result.unwrap_or_else(|error| panic!("legacy event loop: {error}"));
-    cleanup.unwrap_or_else(|error| panic!("legacy terminal and process cleanup: {error}"));
 }
 
 fn fixture_process(

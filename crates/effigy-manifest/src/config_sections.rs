@@ -35,11 +35,8 @@ pub use container::{
 pub use contracts::ManifestContractsConfig;
 pub use docs_policy::load_committed_docs_policy_sources;
 pub use docs_policy::{
-    ManifestDocsPolicyConfig, ManifestDocsPolicyGraphCardinality, ManifestDocsPolicyGraphConfig,
-    ManifestDocsPolicyGraphCurrentnessClass, ManifestDocsPolicyGraphCurrentnessConfig,
-    ManifestDocsPolicyGraphFieldConfig, ManifestDocsPolicyGraphKindConfig,
-    ManifestDocsPolicyGraphRelationConfig, ManifestDocsPolicyIndexConfig,
-    ManifestDocsPolicyNextActionConfig, ManifestDocsPolicySourcesConfig,
+    ManifestDocsPolicyConfig, ManifestDocsPolicyIndexConfig, ManifestDocsPolicyNextActionConfig,
+    ManifestDocsPolicySourcesConfig,
 };
 pub use release::{
     ManifestReleaseArtifactConfig, ManifestReleaseConfig, ManifestReleaseGateConfig,

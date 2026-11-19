@@ -576,7 +576,6 @@ pub enum GatewaySubcommand {
 #[doc(hidden)]
 pub struct InternalGatewayArgs {
     pub private: Option<GatewayPrivateArgs>,
-    pub listener_handoff: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

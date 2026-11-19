@@ -139,27 +139,6 @@ index = "vision"
 heading = "## Next move"
 allowlist_file = "docs/policy/vision-next-task-verbs.txt"
 
-[docs_policy.graph]
-roots = ["handbook", "README.md"]
-
-[docs_policy.graph.fields.state]
-labels = ["State"]
-cardinality = "one"
-
-[docs_policy.graph.currentness]
-field = "state"
-current = ["live"]
-historical = ["retired"]
-
-[docs_policy.graph.kinds.playbook]
-include = ["handbook/playbooks/*.md"]
-authority = 80
-default_currentness = "unknown"
-
-[docs_policy.graph.relations.see-also]
-labels = ["See also"]
-headings = ["See also"]
-
 [bootstrap]
 setup = ["bootstrap:local", "doctor"]
 start = "dev"
@@ -563,17 +542,6 @@ description = "Alias for the dev stack"
 ];
 
 static REJECT_CASES: &[RejectCase] = &[
-    RejectCase {
-        name: "unknown-docs-policy-graph-key",
-        manifest: r#"
-[docs_policy.graph]
-roots = ["handbook"]
-mystery = true
-"#,
-        evidence: &["docs_policy.graph.mystery"],
-        remediation: &[],
-        findings: None,
-    },
     RejectCase {
         name: "retired-catalog-pack-support-policy",
         manifest: r#"

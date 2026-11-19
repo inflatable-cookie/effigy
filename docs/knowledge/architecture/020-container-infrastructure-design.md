@@ -346,7 +346,7 @@ Main owners in `effigy-gateway`:
 | `resolver_setup` | macOS resolver file management |
 | `ports` | persistent project port allocation |
 | `tcp_alias` / `loopback` | local aliases and safe loopback binding |
-| `listener_handoff` | launchd socket-activation adoption of TCP `127.0.0.1:80`/`443` for the operator-owned gateway — the internal `--listener-handoff` opt-in; v0.15 retired the experimental definition generator and inspection/removal commands, and live activation and cross-boot proof stay operator-owned (see [gateway migration and the launchd handoff ruling](034-gateway-legacy-upgrade-recovery.md)) |
+| `listener_handoff` | launchd socket activation for the root-owned bind broker's Unix socket, plus validation and adoption of the descriptors the broker hands the operator gateway; the direct daemon mode that adopted TCP `127.0.0.1:80`/`443` was retired in v0.16 (see [gateway migration and the launchd handoff ruling](034-gateway-legacy-upgrade-recovery.md)) |
 | `server` / `stats` | daemon lifecycle and operator statistics |
 
 A manifest route can target a container service or a declared host listener:
@@ -948,9 +948,9 @@ For a task-local development restart, use the managed session controls in
 task invocation. That restarts the managed dev session while the shared
 gateway remains available to other sessions.
 
-If Q-002's interactive reader cannot support prompt-free verification, see the
-separate [read-only daemon attestation proposal](034-gateway-legacy-upgrade-recovery.md#proposed-read-only-root-daemon-attestation).
-It is design evidence only; implementation needs a new operator ruling.
+Prompt-free verification of that reader remains Q-002's open concern. The
+read-only daemon attestation proposal this page once pointed at was never
+implemented and has been removed.
 
 On macOS, gateway setup manages `/etc/resolver/` files for local domains.
 HTTPS uses mkcert-backed certificates after `effigy gateway setup-tls`.

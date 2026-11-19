@@ -11,7 +11,6 @@ Current technical authority for Effigy.
 | Production Deployment Export Architecture | [021-production-deployment-export-architecture.md](021-production-deployment-export-architecture.md) |
 | Runtime ownership and pipelines | [022-runtime-architecture-sanity-audit.md](022-runtime-architecture-sanity-audit.md) |
 | Local Dependency Linking Architecture | [023-local-dependency-linking-architecture.md](023-local-dependency-linking-architecture.md) |
-| Repository-Defined Documentation Graph Architecture | [024-repository-defined-documentation-graph.md](024-repository-defined-documentation-graph.md) |
 | External Skill Task Execution | [025-external-skill-task-execution.md](025-external-skill-task-execution.md) |
 | Feature Placement And Command Surface Architecture | [026-feature-placement-and-command-surface.md](026-feature-placement-and-command-surface.md) |
 | Task Visibility And Grouping | [028-published-and-draft-task-surfaces.md](028-published-and-draft-task-surfaces.md) |

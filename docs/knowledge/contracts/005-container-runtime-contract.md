@@ -1066,8 +1066,8 @@ environment or credentials, and it is evidence, never authority: read the
 top-level `status` for current state.
 
 The gateway's process and socket interfaces (`socket_ownership`, `macos_socket`
-and `linux_net`) stay for the gateway's listener handoff. A managed listener no
-longer reads them.
+and `linux_net`) stay for the bind broker's activation socket and descriptor
+adoption. A managed listener no longer reads them.
 Existing container defaults and non-listener host-process behavior are
 unchanged; core does not select a framework or add a built-in dev verb.
 

@@ -132,9 +132,7 @@ kebab-case aliases `[contracts].schema-index`,
 parse through v0.15 with the same effective values. Composition records
 one compat notice per manifest naming the snake_case or auto-discovery
 replacement and v0.16 removal. The scan matches those alias positions
-only: a task named `schema-index` is silent.
-`docs_policy.graph.kinds.<kind>.default-currentness` is the contract 041
-kebab spelling and is not in this window. Canonical snake_case and
+only: a task named `schema-index` is silent. Canonical snake_case and
 path-only includes are silent. Auto-discovered `effigy.local.toml` is
 not a manual optional include. Local overlay precedence above is
 unchanged. User-global program preference aliases are out of this

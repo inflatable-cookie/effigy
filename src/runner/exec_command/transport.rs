@@ -611,7 +611,6 @@ pub(in crate::runner) fn probe_container_capabilities(
             check.kind,
             ProbeResult {
                 success: output.status.success(),
-                output: String::from_utf8_lossy(&output.stdout).trim().to_owned(),
             },
         );
     }

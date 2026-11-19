@@ -284,9 +284,7 @@ removed in v0.16:
 Public kebab-case aliases at their real positions still load:
 `[contracts].schema-index` / `selection-contract` as `schema_index` /
 `selection_contract`, and `[sources.<name>].rev-file` as `rev_file`.
-A task named `schema-index` is not an alias. Contract 041's
-`docs_policy.graph.kinds.<kind>.default-currentness` is the primary
-kebab spelling and is not in this window. Canonical snake_case and
+A task named `schema-index` is not an alias. Canonical snake_case and
 path-only includes print no notice. Combined legacy forms still print
 one notice per manifest. `--json` carries that notice in the command
 envelope `warnings` array and never on stdout. Auto-discovered
