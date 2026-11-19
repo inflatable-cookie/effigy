@@ -31,6 +31,6 @@ whose path is under a skipped name.
 
 ## Command surface
 
-Parser shape and kind names stay with
-[021-docs-check-subcommand-consolidation-contract.md](../contracts/021-docs-check-subcommand-consolidation-contract.md).
-This page owns traversal behavior only.
+Parser shape and kind names stay with the command surface:
+[guide 025](../../guides/025-command-reference-matrix.md) and the CLI help
+topics. This page owns traversal behavior only.

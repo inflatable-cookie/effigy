@@ -1297,7 +1297,8 @@ claims namespace. After the session, clean only that preparation with
 This runs the unchanged D4 checks against that chain, never the historical packet.
 
 The exploratory request may also carry the planner-approved `external_checkout`
-directory identity described in [contract 053](../../knowledge/contracts/053-workspace-activation-interface.md#detached-docker-routing-effigy831).
+directory identity described in
+[contract 052 §8.11](../../knowledge/contracts/052-runtime-kernel-contract.md#811-workspace-client-interface-v1).
 It is unsealed Desktop-only, canonical, fresh and owned. The checkout is bounded
 to 16 MiB of source/state; artifact, temp and evidence roots remain on Stash.
 The sealed entry does not accept this exception.
