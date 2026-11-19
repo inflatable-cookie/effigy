@@ -58,6 +58,10 @@ fn temp_repo(manifest: &str) -> std::path::PathBuf {
         "services:\n  workspace:\n    image: example\n",
     )
     .expect("write compose");
+    // A manifest that still declares the retired `compose_file` gets the same
+    // migration a consumer runs once; a manifest without `[containers]` is
+    // left alone.
+    crate::runner::test_support::migrate_declared_compose_files(&root);
     root
 }
 

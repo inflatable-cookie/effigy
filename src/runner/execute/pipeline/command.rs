@@ -239,6 +239,9 @@ run_in = "host"
 "#,
         )
         .expect("root manifest");
+        // The manifest predates the `compose_file` retirement; migrate it once
+        // to the project catalog fragments a migrated consumer's checkout has.
+        crate::runner::test_support::migrate_declared_compose_files(dir.path());
         fs::write(
             dir.path().join("packages/leaf with 'quote/effigy.toml"),
             r#"[catalog]

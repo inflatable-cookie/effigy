@@ -457,7 +457,9 @@ default = "web"
 
 [containers.web]
 driver = "colima"
-compose_file = "compose.yml"
+
+[containers.web.services.app]
+catalog = "app"
 
 [tasks.dev]
 mode = "tui"
