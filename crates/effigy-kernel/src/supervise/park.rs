@@ -34,8 +34,10 @@ impl GroupInventory {
     }
 }
 
-/// What a parked sentinel writes so `run stop`, lock-wait, and `doctor` can
-/// name the holder, and so `run release` can re-inventory the same groups.
+/// What a parked sentinel writes once so `run stop`, lock-wait, and `doctor`
+/// can name the holder, and so `run release` can re-inventory the same groups.
+/// Nothing in it changes while the sentinel parks: live members are observed
+/// on demand by `run release`, never cached here (effigy#1054).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParkedHolder {
     pub schema: String,
@@ -45,7 +47,6 @@ pub struct ParkedHolder {
     pub owner_pid: u32,
     pub checkout: String,
     pub pgids: Vec<u32>,
-    pub live_pids: Vec<u32>,
     pub state: String,
 }
 
@@ -173,7 +174,7 @@ pub fn inventory_groups(pgids: &[u32]) -> io::Result<GroupInventory> {
     })
 }
 
-/// Write or replace this run's parked snapshot.
+/// Publish this run's parked snapshot: once per parked sentinel.
 pub fn write_snapshot(root: &StateRoot, holder: &ParkedHolder) -> io::Result<()> {
     let dir = parked_dir(root, true)?.ok_or_else(|| {
         io::Error::other("checkout state could not create the parked-sentinel directory")
@@ -432,7 +433,6 @@ mod tests {
             owner_pid: 1,
             checkout: home.path().display().to_string(),
             pgids: vec![pid],
-            live_pids: vec![pid],
             state: "parked".into(),
         };
         write_snapshot(&root, &holder).expect("snapshot");

@@ -712,6 +712,10 @@
 "release:evidence:validate" = { visibility = "public", group = "Release", description = "Validate captured release artifact evidence.", run = "sh scripts/release/checks.sh evidence-validate {args}" }
 "release:evidence:closeout" = { visibility = "public", group = "Release", description = "Write the release closeout record from captured artifacts.", run = "sh scripts/release/checks.sh evidence-closeout {args}" }
 "release:secrets:audit" = { visibility = "internal", group = "Release", description = "Audit the tracked tree at HEAD and history since the release tag for credential-shaped text, bounded and cached by commit. Prints rule, path and commit, never the value.", run = "sh scripts/release/secret-audit.sh {args}" }
+# The `ci` certify gate. A hosted gate is an ordinary repo task: the release
+# runner exports `EFFIGY_RELEASE_COMMIT` for the candidate it gates, and this
+# task proves that exact commit's CI rather than the newest run on the ref.
+"release:ci-evidence" = { visibility = "internal", group = "Release", description = "Prove exactly one successful `workflow_dispatch` ci.yml run for the release candidate.", run = "sh scripts/check-release-ci.sh {args}" }
 
 # Container/runtime profiling
 "perf:container-shell-matrix" = { visibility = "internal", group = "Maintenance", run = { rhai = "scripts/profile-container-shell-matrix.rhai" } }
@@ -1737,7 +1741,7 @@
   { id = "manifest-sources", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest --lib -E 'test(bundles::source::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "secrets-vault", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-secrets --lib --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "runtime-feedback", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-runtime --lib -E 'test(write::report::tests::) | test(write::tests::) | test(data::progress::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
-  { id = "release-gates", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-release --lib -E 'test(gate_run_reports) | test(gate_observer) | test(gate_persist) | test(gate_json) | test(failing_and_passing_gates) | test(status_text_shows_the_failed_gate_tail_and_log_path) | test(named_hosted_reuse)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+  { id = "release-gates", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-release --lib -E 'test(gate_run_reports) | test(gate_observer) | test(gate_persist) | test(gate_json) | test(failing_and_passing_gates) | test(status_text_shows_the_failed_gate_tail_and_log_path)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
 ]}
 # Argument errors and suggested commands (effigy#318): the targeted usage a
 # mistyped argument gets, a guard that parses every `effigy …` form a message

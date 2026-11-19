@@ -343,10 +343,6 @@ struct TestEffects {
     inputs: Vec<serde_json::Value>,
     /// Every output document a task wrote, in invocation order.
     outputs: Vec<String>,
-    /// Scripted hosted evidence, one answer per check, oldest first.
-    hosted_evidence: Vec<HostedEvidence>,
-    /// The binding each hosted check was asked to honour, in check order.
-    hosted_evidence_bindings: Vec<crate::hosted_evidence::HostedEvidenceBinding>,
     /// What an artifact task builds, relative to the release root.
     artifact_path: Option<String>,
     artifact_contents: Vec<u8>,
@@ -357,7 +353,7 @@ impl TestEffects {
         let mut inner = GitEffects::with_executable(root, custody_fixture());
         // Refusal tracing is the TestEffects default so a checkpoint-resume
         // Git StopReport keeps its categories after TempDir cleanup. Named
-        // full-run and hosted-wait proofs still opt into every-stop traces.
+        // full-run proofs still opt into every-stop traces.
         inner.trace_refusals = true;
         Self {
             inner,
@@ -375,8 +371,6 @@ impl TestEffects {
             task_outputs: BTreeMap::new(),
             inputs: Vec::new(),
             outputs: Vec::new(),
-            hosted_evidence: Vec::new(),
-            hosted_evidence_bindings: Vec::new(),
             artifact_path: None,
             artifact_contents: b"certified artifact".to_vec(),
         }
@@ -525,31 +519,6 @@ impl ReleaseEffects for TestEffects {
             stderr: String::new(),
             success: true,
         })
-    }
-
-    fn hosted_evidence(
-        &mut self,
-        _run: &mut Run<'_>,
-        _gate: &str,
-        _spec: &crate::hosted_evidence::HostedEvidenceSpec,
-        commit: &str,
-        binding: &crate::hosted_evidence::HostedEvidenceBinding,
-    ) -> Result<HostedEvidence, ReleaseError> {
-        self.hosted_evidence_bindings.push(binding.clone());
-        if self.hosted_evidence.is_empty() {
-            return Err(ReleaseError::TaskInvocation(
-                "no scripted hosted evidence for this check".to_owned(),
-            ));
-        }
-        let mut evidence = self.hosted_evidence.remove(0);
-        if let HostedEvidence::Accepted {
-            commit: accepted, ..
-        } = &mut evidence
-        {
-            // The fake source answers for the commit it was asked about.
-            *accepted = commit.to_owned();
-        }
-        Ok(evidence)
     }
 
     fn operator(&mut self, _run: &mut Run<'_>) -> Option<String> {
@@ -1502,7 +1471,7 @@ fn checkout_release_resumes_while_another_checkout_writer_is_stalled() {
 }
 
 // ---------------------------------------------------------------------------
-// task targets, check/verify, decisions and hosted waits (contract 054 §3, §6, §7)
+// task targets, check/verify, decisions and gates (contract 054 §3, §6, §7)
 // ---------------------------------------------------------------------------
 
 /// Append `[release]` configuration to the fixture's manifest.
@@ -2202,120 +2171,6 @@ fn a_partial_task_target_fan_out_resumes_with_the_remaining_target() {
 }
 
 #[test]
-fn a_hosted_wait_stops_the_run_without_holding_a_process_open() {
-    let waited = fixture("hosted-wait");
-    single_identity_project(&waited);
-    append_manifest(
-        &waited,
-        "[release.gates.hosted]\ncommand = \"exit 7\"\nreuse-hosted-evidence = true\nstage = \"certify\"\n\n[release.hosted-evidence]\nworkflow = \"ci.yml\"\n",
-    );
-    commit_and_push(&waited);
-
-    let mut effects = TestEffects::new(&waited.root);
-    effects.inner.trace_settlement = true;
-    effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
-    effects.hosted_evidence = vec![HostedEvidence::Waiting {
-        detail: "hosted evidence for gate `hosted` is pending: run … status is `in_progress`."
-            .to_owned(),
-        run: None,
-    }];
-
-    let waiting = run(&waited, &mut effects, ReleaseAction::Run, None);
-    assert!(
-        waiting.succeeded(),
-        "a hosted wait is not a failure: {:?}",
-        waiting.record.errors
-    );
-    assert_eq!(
-        waiting.record.status,
-        ReleaseRunStatus::AwaitingHostedEvidence
-    );
-    assert_eq!(waiting.record.waiting_on.as_deref(), Some("hosted"));
-    // The gate stage did not complete: the last checkpoint is still prepare
-    // and nothing downstream of the gate stage ran.
-    assert_eq!(waiting.record.stage, "prepare");
-    assert!(waiting
-        .record
-        .gates
-        .iter()
-        .all(|gate| gate.stage != "certify" || gate.passed));
-    assert!(
-        waiting.record.artifacts.is_empty(),
-        "a hosted wait captures no artifacts"
-    );
-    assert!(
-        !effects.tasks.iter().any(|task| task == "release:pack"),
-        "the artifact task must not run after a hosted wait: {:?}",
-        effects.tasks
-    );
-    assert!(
-        remote_tags(&waited).is_empty(),
-        "nothing publishes while waiting"
-    );
-
-    // A resume re-checks the same gate and continues with the evidence now in
-    // hand. The gate's `exit 7` command never runs.
-    effects.hosted_evidence = vec![HostedEvidence::Accepted {
-        repository: "acme/demo".to_owned(),
-        commit: String::new(),
-        run: crate::hosted_evidence::BoundRun {
-            run_id: Some(1),
-            url: "https://github.com/acme/demo/actions/runs/1".to_owned(),
-        },
-    }];
-    let resumed = resume(&waited, &mut effects);
-    assert!(
-        resumed.succeeded(),
-        "resume failed: {:?}",
-        resumed.record.errors
-    );
-    assert_eq!(resumed.record.status, ReleaseRunStatus::Complete);
-    let hosted = resumed
-        .record
-        .gates
-        .iter()
-        .find(|gate| gate.name == "hosted")
-        .expect("hosted gate");
-    assert!(hosted.passed);
-    assert_eq!(
-        hosted.hosted_run.as_deref(),
-        Some("https://github.com/acme/demo/actions/runs/1")
-    );
-    // The candidate commit is the commit the evidence was asked about.
-    let candidate = resumed.record.candidate_commit.clone().expect("candidate");
-    assert!(effects.tasks.iter().all(|task| task != "exit 7"));
-    assert_eq!(remote_tags(&waited).get("v0.2.5"), Some(&candidate));
-
-    // Failed evidence fails the gate closed instead of waiting.
-    let failed_fixture = fixture("hosted-failed");
-    single_identity_project(&failed_fixture);
-    append_manifest(
-        &failed_fixture,
-        "[release.gates.hosted]\ncommand = \"exit 7\"\nreuse-hosted-evidence = true\nstage = \"certify\"\n\n[release.hosted-evidence]\nworkflow = \"ci.yml\"\n",
-    );
-    commit_and_push(&failed_fixture);
-    let mut effects = TestEffects::new(&failed_fixture.root);
-    effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
-    effects.hosted_evidence = vec![HostedEvidence::Failed {
-        detail: "hosted evidence for gate `hosted` failed: run … conclusion is `failure`."
-            .to_owned(),
-        run: None,
-    }];
-    let outcome = run(&failed_fixture, &mut effects, ReleaseAction::Run, None);
-    assert_eq!(outcome.record.status, ReleaseRunStatus::Failed);
-    assert!(
-        outcome
-            .record
-            .errors
-            .iter()
-            .any(|error| error.contains("hosted evidence")),
-        "{:?}",
-        outcome.record.errors
-    );
-    assert!(remote_tags(&failed_fixture).is_empty());
-}
-
-#[test]
 fn a_failed_task_target_verify_is_published_but_unverified() {
     let fixture = fixture("task-unverified");
     single_identity_project(&fixture);
@@ -2357,137 +2212,198 @@ fn a_failed_task_target_verify_is_published_but_unverified() {
     );
 }
 
+const GATE_MANIFEST: &str = r#"[release]
+changelog = "CHANGELOG.md"
+
+[release.identities.app]
+version-file = "Cargo.toml"
+version-path = "package.version"
+tag-format = "v{version}"
+
+[release.gates]
+pre = { command = "sh gates/source-commit.sh", stage = "pre" }
+candidate = "sh gates/candidate-commit.sh"
+
+[release.artifacts]
+app = { task = "release:pack", path = "dist/app-*.tgz" }
+
+[release.targets.tags]
+kind = "tag"
+"#;
+
+/// A gate is an ordinary repo command or task, so the only thing that binds it
+/// to this release is the commit the runner tells it about. The gate proves
+/// that exact candidate (contract 054 §3).
 #[test]
-fn a_hosted_wait_binds_the_dispatched_run_and_a_resume_rechecks_it() {
-    let hosted = fixture("hosted-bind");
-    single_identity_project(&hosted);
-    append_manifest(
-        &hosted,
-        "[release.gates.hosted]\ncommand = \"exit 7\"\nreuse-hosted-evidence = true\nstage = \"certify\"\n\n[release.hosted-evidence]\nworkflow = \"ci.yml\"\n",
+fn a_gate_proves_the_exact_candidate_commit_the_runner_binds() {
+    let fixture = fixture("gate-candidate");
+    single_identity_project(&fixture);
+    write(&fixture.root, "effigy.toml", GATE_MANIFEST);
+    write(
+        &fixture.root,
+        "gates/source-commit.sh",
+        "#!/bin/sh\nprintf '%s\\n' \"$EFFIGY_RELEASE_COMMIT\" > source-commit.txt\n",
     );
-    commit_and_push(&hosted);
+    write(
+        &fixture.root,
+        "gates/candidate-commit.sh",
+        "#!/bin/sh\nset -e\nprintf '%s\\n' \"$EFFIGY_RELEASE_COMMIT\" > gate-commit.txt\ngit rev-parse HEAD > tree-commit.txt\n",
+    );
+    commit_all(&fixture.root, "gate fixtures");
+    git(&fixture.root, &["push"]);
 
-    let mut effects = TestEffects::new(&hosted.root);
+    let mut effects = TestEffects::new(&fixture.root);
     effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
-    // The release dispatches once and the run it started is still going: the
-    // wait binds that run instead of waiting for a newer one.
-    effects.hosted_evidence = vec![HostedEvidence::Waiting {
-        detail: "hosted evidence for gate `hosted` is pending: run 7 status is `in_progress`."
-            .to_owned(),
-        run: Some(crate::hosted_evidence::BoundRun {
-            run_id: Some(7),
-            url: "https://github.com/acme/demo/actions/runs/7".to_owned(),
-        }),
-    }];
-    let waiting = run(&hosted, &mut effects, ReleaseAction::Run, None);
+    let certified = run(
+        &fixture,
+        &mut effects,
+        ReleaseAction::Run,
+        Some(ReleaseStage::Certify),
+    );
     assert!(
-        waiting.succeeded(),
-        "a hosted wait is not a failure: {:?}",
-        waiting.record.errors
+        certified.succeeded(),
+        "certify failed: {:?}",
+        certified.record.errors
     );
-    assert_eq!(
-        waiting.record.status,
-        ReleaseRunStatus::AwaitingHostedEvidence
-    );
-    // The Run records the dispatch window it opened and the run it bound, so
-    // the receipt names one run, not whichever run is newest.
-    let window: &super::record::RecordHostedWait =
-        waiting.record.hosted_wait("hosted").expect("hosted wait");
-    assert_eq!(window.workflow, "ci.yml");
-    assert!(!window.created_after.is_empty());
-    assert_eq!(window.run_id, Some(7));
-    assert_eq!(
-        window.run_url.as_deref(),
-        Some("https://github.com/acme/demo/actions/runs/7")
-    );
-    assert_eq!(effects.hosted_evidence_bindings.len(), 1);
-    assert_eq!(
-        effects.hosted_evidence_bindings[0].created_after.as_deref(),
-        Some(window.created_after.as_str())
-    );
-    assert_eq!(effects.hosted_evidence_bindings[0].run_id, None);
 
-    // A resume re-checks the bound run: the same window, and the run id the
-    // record journalled.
-    effects.hosted_evidence = vec![HostedEvidence::Accepted {
-        repository: "acme/demo".to_owned(),
-        commit: String::new(),
-        run: crate::hosted_evidence::BoundRun {
-            run_id: Some(7),
-            url: "https://github.com/acme/demo/actions/runs/7".to_owned(),
-        },
-    }];
-    let resumed = resume(&hosted, &mut effects);
+    let read = |name: &str| {
+        std::fs::read_to_string(fixture.root.join(name))
+            .expect("gate wrote its answer")
+            .trim()
+            .to_owned()
+    };
+    let source = certified
+        .record
+        .source_commit
+        .clone()
+        .expect("source commit");
+    let candidate = certified
+        .record
+        .candidate_commit
+        .clone()
+        .expect("candidate commit");
+    assert_eq!(
+        read("source-commit.txt"),
+        source,
+        "a `pre` gate proves the source commit"
+    );
+    assert_eq!(
+        read("gate-commit.txt"),
+        candidate,
+        "a `certify` gate proves the prepared candidate"
+    );
+    assert_eq!(
+        read("tree-commit.txt"),
+        candidate,
+        "the gate runs on the candidate commit"
+    );
+    assert_ne!(
+        source, candidate,
+        "prepare commits the version, so the candidate is not the source"
+    );
+}
+
+/// A gate with no evidence for the candidate fails the Run where it runs: no
+/// artifact is captured, nothing publishes, and a resume re-runs that gate once
+/// the evidence exists — it does not re-run the gates that already passed.
+#[test]
+fn a_failed_gate_captures_nothing_and_a_resume_re_runs_it() {
+    let fixture = fixture("gate-retry");
+    single_identity_project(&fixture);
+    write(&fixture.root, "effigy.toml", GATE_MANIFEST);
+    write(&fixture.root, "gates/source-commit.sh", "#!/bin/sh\ntrue\n");
+    // The evidence appears after the gate's first check, the way a pending
+    // hosted run completes between invocations.
+    write(
+        &fixture.root,
+        "gates/candidate-commit.sh",
+        "#!/bin/sh\nset -e\ngit rev-parse HEAD > gated-commit.txt\nattempts=0\n[ -f evidence-attempts ] && attempts=$(cat evidence-attempts)\nattempts=$((attempts + 1))\nprintf '%s' \"$attempts\" > evidence-attempts\ntest \"$attempts\" -ge 2\n",
+    );
+    commit_all(&fixture.root, "gate fixtures");
+    git(&fixture.root, &["push"]);
+
+    let mut effects = TestEffects::new(&fixture.root);
+    effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
+    let failed = run(&fixture, &mut effects, ReleaseAction::Run, None);
+    assert_eq!(failed.record.status, ReleaseRunStatus::Failed);
+    assert!(
+        failed
+            .record
+            .errors
+            .iter()
+            .any(|error| error.contains("gate `candidate` failed")),
+        "{:?}",
+        failed.record.errors
+    );
+    assert!(
+        failed
+            .record
+            .gates
+            .iter()
+            .any(|gate| gate.name == "candidate" && !gate.passed),
+        "{:?}",
+        failed.record.gates
+    );
+    assert!(
+        failed.record.artifacts.is_empty(),
+        "a failed gate captures no artifacts"
+    );
+    assert!(
+        !effects.tasks.iter().any(|task| task == "release:pack"),
+        "the artifact task must not run behind a failed gate: {:?}",
+        effects.tasks
+    );
+    assert!(
+        remote_tags(&fixture).is_empty(),
+        "nothing publishes behind a failed gate"
+    );
+    let candidate = failed
+        .record
+        .candidate_commit
+        .clone()
+        .expect("candidate commit");
+    assert_eq!(
+        std::fs::read_to_string(fixture.root.join("gated-commit.txt"))
+            .expect("gate wrote the commit it checked")
+            .trim(),
+        candidate,
+        "the failed gate checked the candidate commit"
+    );
+    assert_eq!(failed.record.stage, "prepare");
+
+    // The evidence now exists, so the resume re-runs the failed gate and
+    // continues: the gate that already passed is not run again.
+    let source_gate_before = failed
+        .record
+        .gates
+        .iter()
+        .filter(|gate| gate.name == "pre" && gate.passed)
+        .count();
+    assert_eq!(source_gate_before, 1);
+    let resumed = resume(&fixture, &mut effects);
     assert!(
         resumed.succeeded(),
         "resume failed: {:?}",
         resumed.record.errors
     );
-    assert_eq!(effects.hosted_evidence_bindings.len(), 2);
+    assert_eq!(resumed.record.status, ReleaseRunStatus::Complete);
     assert_eq!(
-        effects.hosted_evidence_bindings[1].created_after.as_deref(),
-        Some(window.created_after.as_str()),
-        "a resume keeps the dispatch window it opened"
-    );
-    assert_eq!(
-        effects.hosted_evidence_bindings[1].run_id,
-        Some(7),
-        "a resume re-checks the bound run, never a sibling"
-    );
-    let gate = resumed
-        .record
-        .gates
-        .iter()
-        .find(|gate| gate.name == "hosted")
-        .expect("hosted gate");
-    assert!(gate.passed);
-    assert_eq!(gate.hosted_run_id, Some(7));
-    assert_eq!(
-        resumed.record.hosted_wait("hosted").expect("wait").run_id,
-        Some(7)
-    );
-}
-
-#[test]
-fn an_ambiguous_hosted_answer_fails_the_gate_and_binds_nothing() {
-    let hosted = fixture("hosted-ambiguous");
-    single_identity_project(&hosted);
-    append_manifest(
-        &hosted,
-        "[release.gates.hosted]\ncommand = \"exit 7\"\nreuse-hosted-evidence = true\nstage = \"certify\"\n\n[release.hosted-evidence]\nworkflow = \"ci.yml\"\n",
-    );
-    commit_and_push(&hosted);
-
-    let mut effects = TestEffects::new(&hosted.root);
-    effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
-    effects.hosted_evidence = vec![HostedEvidence::Failed {
-        detail: "hosted evidence for gate `hosted` is ambiguous: 2 runs match workflow `ci.yml` for commit `abc123`; re-run when only its own dispatch is live".to_owned(),
-        run: None,
-    }];
-    let outcome = run(&hosted, &mut effects, ReleaseAction::Run, None);
-    assert_eq!(outcome.record.status, ReleaseRunStatus::Failed);
-    assert!(
-        outcome
+        resumed
             .record
-            .errors
+            .gates
             .iter()
-            .any(|error| error.contains("is ambiguous")),
-        "{:?}",
-        outcome.record.errors
+            .filter(|gate| gate.name == "pre")
+            .count(),
+        1,
+        "a gate that already passed is not run again"
     );
-    let gate = outcome
+    assert!(resumed
         .record
         .gates
         .iter()
-        .find(|gate| gate.name == "hosted")
-        .expect("hosted gate");
-    assert!(!gate.passed);
-    assert_eq!(gate.hosted_run_id, None);
-    assert_eq!(
-        outcome.record.hosted_wait("hosted").expect("wait").run_id,
-        None
-    );
-    assert!(remote_tags(&hosted).is_empty());
+        .any(|gate| gate.name == "candidate" && gate.passed));
+    assert_eq!(artifact_digests(&resumed).len(), 1);
+    assert_eq!(remote_tags(&fixture).get("v0.2.5"), Some(&candidate));
 }
 
 #[test]

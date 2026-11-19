@@ -271,12 +271,15 @@ the same membership rows the sentinel uses (`custody/platform.rs`
 cleanup pin closed settles as `interrupted` and drops the gates
 (`supervise/memory.rs` `wait_for_closure` owner-lost early return, then
 `park_unproved`). An unproved closure — pin still open, or a group row that
-stayed ambiguous — parks the sentinel as the verified holder: it writes
-`.effigy/state/parked/<run>.json`, re-inventories every 250 ms, and never
-signals. `effigy run release <run>` re-inventories now; only a proved-empty
-group writes `.effigy/state/parked/<run>.release`, which the parked loop
-honours by dropping the gates and recording `released`. Live members are named
-and nothing is signalled. KILL is not the supported path. It settles its
+stayed ambiguous — parks the sentinel as the verified holder: it publishes
+`.effigy/state/parked/<run>.json` once, re-inventories every 250 ms, and never
+signals. Live members are observed on demand, never cached in the snapshot, so
+an unchanged holder is never rewritten and a failed first publication is
+retried by the same loop (effigy#1054). `effigy run release <run>`
+re-inventories now; only a proved-empty group writes
+`.effigy/state/parked/<run>.release`, which the parked loop honours by dropping
+the gates and recording `released`. Live members are named and nothing is
+signalled. KILL is not the supported path. It settles its
 registered effects and then releases its gate descriptions, and only after that
 release does it record the run's honest outcome (below). The order is
 deliberate: a reader that found both a held foreground gate and a terminal
@@ -2388,15 +2391,16 @@ rule of I-P4, limited to the generation evidence it holds:
 | Anything else | none | nothing |
 
 If the observer and the guard both die, the probe is outside custody. Its
-nonce names two owners whose absence the kernel can prove, so the kernel's
-maintenance step (Mutate class or the explicit maintenance command, never
-Observe) stops nonce-carrying processes by nonce and start time.
+nonce names the two owners whose absence would have to be proved, and nothing
+in the kernel proves it: a process environment marker is never the sole grant
+of host signal authority, so an orphan that outlives both owners is operator
+cleanup (effigy#1054).
 
 | Who lives | Stopped within the bound | Outside the bound |
 | --- | --- | --- |
 | Observer | every group member, at the deadline (the unreaped leader keeps the group number allocated); nonce-carrying processes that left the group | a process that left the group and cleared its environment |
 | Guard only | Linux with the group capability: every member of the original group, plus nonce-carrying processes outside it, at the deadline plus grace. macOS and Linux without it: the whole group while the leader lives; after that, nonce-carrying processes. | Without the group capability: a group member without the nonce after the leader exits. Everywhere: a process that left the group and cleared its environment. |
-| Neither | nonce-carrying processes, at the next maintenance step | any process without the nonce |
+| Neither | nothing | every process, including one that still carries the nonce |
 
 Processes outside the bound are never signalled (I-P4, R3). Observe writes
 nothing, so it cannot record them as residue; the limit is stated here, not
@@ -2421,9 +2425,9 @@ of every other class use the same two calls for their probes.
   registration. Every probe process inside the bound for whichever owner
   lives (table above) is stopped within that bound. A process without
   generation evidence is never signalled and is outside the bound; Observe
-  cannot record it. If both owners die, maintenance stops nonce-carrying
-  processes. Probe commands are declared by adapters as non-mutating and
-  verified by the read-only fixture.
+  cannot record it. If both owners die, nothing signals the probe. Probe
+  commands are declared by adapters as non-mutating and verified by the
+  read-only fixture.
 - I-O3: `wait_all` is one waiter with one deadline over an ordered list.
   Dependencies are typed facts, never sleeps.
 - I-O4: HTTP probes declare expected statuses (default 200–299), with a
@@ -2437,7 +2441,7 @@ of every other class use the same two calls for their probes.
 | --- | --- |
 | Crash, Kill of the observer | The guard reads EOF and stops every registered open probe within its evidence (group descriptor, verified leader or nonce). Processes without evidence are left alone. Nothing was written, so nothing needs recovery. |
 | Crash, Kill of the guard | The observer still owns each probe through its unreaped leader and kills the group at the deadline. New probes return `Unknown(GuardUnavailable)` until a new guard acknowledges. |
-| Crash, Kill of both | The probe is outside custody. Maintenance stops nonce-carrying processes; any others stay untouched. |
+| Crash, Kill of both | The probe is outside custody and untouched: the kernel holds no signal authority for it. |
 | SIGSTOP of the observer | The guard stops open probes at the deadline plus grace. |
 | ENOSPC | Probes write nothing. |
 | Probe timeout | `Unknown(TimedOut)`; other findings are still reported. |
@@ -2461,8 +2465,8 @@ of every other class use the same two calls for their probes.
   - observer SIGSTOPped: the guard stops both at the deadline plus grace;
   - guard dead before acknowledging: the probe never executes, and the
     result is `Unknown`;
-  - both SIGKILLed: the probe survives until maintenance, which stops it by
-    nonce, while a foreign process with another or no nonce survives.
+  - both SIGKILLed: the probe and a foreign process survive; no owner is
+    left and nothing signals either.
 - Observer SIGKILLed after the leader exits, leaving a descendant in the
   group that cleared its environment: on Linux with the group capability the
   guard stops it through the group descriptor; on macOS, and on Linux

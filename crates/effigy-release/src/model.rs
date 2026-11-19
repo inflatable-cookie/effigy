@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use effigy_changelog::BumpKind;
 use effigy_manifest::ManifestError;
 
-use crate::hosted_evidence::HostedEvidenceSpec;
 use crate::{
     ReleasePipelinePlan, ReleaseRunSummary, ResolvedGate, ResolvedSyncFile, ResolvedVersionSource,
 };
@@ -18,7 +17,6 @@ pub struct ReleaseConfig {
     pub sync_files: Vec<ResolvedSyncFile>,
     pub gates: Vec<ResolvedGate>,
     pub tag_format: String,
-    pub hosted_evidence: Option<HostedEvidenceSpec>,
 }
 
 #[derive(Debug, Clone)]
@@ -33,10 +31,6 @@ pub struct GateResult {
     pub launch_error: Option<String>,
     pub duration_ms: u128,
     pub log_path: Option<PathBuf>,
-    pub reused: bool,
-    pub hosted_run_url: Option<String>,
-    pub hosted_head_sha: Option<String>,
-    pub hosted_repository: Option<String>,
 }
 
 #[derive(Debug, Clone)]

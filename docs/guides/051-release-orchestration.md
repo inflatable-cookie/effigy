@@ -52,7 +52,7 @@ Use the commands by intent:
 - `run` for the whole pipeline: validate, gates, prepare, certify, publish,
   verify and closeout, with a checkpoint after every stage
 - `resume <run>` to continue an interrupted Run from its last checkpoint,
-  including a Run waiting on hosted evidence
+  including a Run whose gate found no evidence yet
 - `settle <run>` to settle an interrupted invocation without executing another stage; inspect its receipt before deciding whether to resume
 - `approve <run>` to pass an approval checkpoint
 - `decide <run> --published|--not-published` to record an unknown `task` target
@@ -124,8 +124,8 @@ Current built-in release commands:
   - continue an interrupted Run from its last checkpoint. An interrupted tag
     push is reconciled by looking the tag up on the remote first, and an
     interrupted `task` target by running its `check` task; a release never
-    re-publishes something it cannot prove was absent. A Run waiting on
-    hosted evidence is also resumed this way: it holds no process open
+    re-publishes something it cannot prove was absent. A failed gate is
+    re-run by a resume too, and the gates already recorded as passed are not
 - `effigy release approve <run>`
   - pass an approval checkpoint (`approve = ["publish"]` in `[release]`) and
     continue. The approval records who approved and when
@@ -248,16 +248,10 @@ Supported `[release]` fields:
 - `tag-format`
   - optional tag template
   - supports `{version}` placeholder
-- `[release.hosted-evidence]`
-  - optional GitHub Actions lookup used when a gate sets
-    `reuse-hosted-evidence = true`
-  - `workflow` is required in that case
-  - `event` defaults to `workflow_dispatch`
-  - `branch` defaults to `main`
 - `[release.gates]`
   - optional named gate map
-  - supports string shorthand or table form with `command`, `description`, and
-    optional `reuse-hosted-evidence`
+  - supports string shorthand or table form with `command`, `task`,
+    `description` and optional `stage` (`pre` or `certify`)
 
 During the Run's `prepare` stage, supported structured version files keep their
 existing layout:
@@ -271,34 +265,27 @@ Gate forms:
 [release.gates]
 fmt = "cargo fmt --all -- --check"
 
-[release.hosted-evidence]
-workflow = "ci.yml"
-
 [release.gates.test]
 command = "cargo test"
 description = "Run the Rust test suite"
-reuse-hosted-evidence = true
+
+[release.gates.metadata]
+task = "release:metadata"
 ```
 
-Gates run in declaration order. Put cheap checks first. A gate with
-`reuse-hosted-evidence = true` is a **hosted wait**: it is satisfied by a
-successful GitHub Actions run for this repository's exact commit — the
-candidate commit once `prepare` committed it, and the source commit before
-that — verified through authenticated `gh`. While that evidence is missing or
-still running, the Run stops with status `awaiting-hosted-evidence`, holds no
-process open and runs no later work in that stage (no artifact task runs before
-the evidence exists); `effigy release resume <run>` re-checks it and continues.
-A failed run, the wrong commit, the wrong repository or an ambiguous answer
-fails the gate closed instead of running the local command. Gates without that
-flag run locally.
+Gates run in declaration order. Put cheap checks first. A gate is an ordinary
+command or repo task: Effigy knows no provider, so a provider-specific gate
+such as hosted CI evidence is a `[tasks]` entry wired in with `task = "<name>"`.
+The runner exports the commit the gate must prove as `EFFIGY_RELEASE_COMMIT` —
+the source commit for a `stage = "pre"` gate, the prepared candidate for a
+`stage = "certify"` gate — so the task verifies that commit, not whichever
+commit its work tree holds.
 
-The wait binds one run, never a sibling. It opens a dispatch window the first
-time the gate needs evidence, and accepts only a run of the configured workflow
-and event for the exact commit that was created after that instant; that run's
-id is recorded on the gate and re-checked by every resume, so a newer dispatch
-cannot be substituted for it. Zero matches keeps waiting; several matches
-inside the window fail closed with the candidates named. Dispatch the workflow
-once for the commit this Run is waiting on, then `effigy release resume <run>`.
+A gate that cannot prove its evidence exits non-zero, so the stage fails: no
+artifact is captured, no target publishes, and nothing is left running.
+`effigy release resume <run>` re-runs that gate and skips the gates already
+recorded as passed. For a dispatched workflow, dispatch it for the candidate,
+wait for it, then resume.
 
 A release with a `task` target can publish to any destination without Effigy
 knowing its protocol. The task runs as an ordinary Effigy task and reads the
@@ -531,10 +518,12 @@ There must be exactly one `workflow_dispatch` run for the candidate SHA.
 Never take the newest run: a sibling dispatch of the same commit is a
 different run, so zero matches or several matches refuse and name the
 candidates instead of choosing one. Effigy's self-hosted `ci` release gate
-(`scripts/check-release-ci.sh`) applies the same rule. Missing,
-pending, red, cancelled, or different-commit evidence blocks the `pre-gates`
-stage. The other local gates validate the deterministic version, changelog, and
-lockfile mutations after hosted CI has proved the source commit.
+(`release:ci-evidence` in `config/tasks.toml`, running
+`scripts/check-release-ci.sh`) applies the same rule to
+`$EFFIGY_RELEASE_COMMIT`, the commit the gate stage gates. Missing,
+pending, red, cancelled, or different-commit evidence fails the gate. The other
+local gates validate the deterministic version, changelog, and lockfile
+mutations after hosted CI has proved the source commit.
 
 For Effigy's own binary publication, the Run's second target does the
 dispatch. `[release.targets.binaries]` is a `task` target whose publish task is
@@ -687,48 +676,34 @@ Gate behavior:
 After a failed gate, look at that gate's log first. Prepare and execute text
 also print the last 20 lines of combined stdout/stderr plus the log path.
 `--json` adds optional `log_path` per gate result and `environment_path` for
-the run, plus optional `reused`, `hosted_run_url`, `hosted_head_sha`, and
-`hosted_repository` when a named gate reused hosted evidence. Those fields do
-not change schema ids.
+the run. Those fields do not change schema ids.
 
-Named hosted reuse:
+A provider-specific gate, hosted CI included:
 
 ```toml
-[release.hosted-evidence]
-workflow = "ci.yml"
-
-[release.gates.ci]
-command = "sh scripts/check-release-ci.sh"
-
-[release.gates.test]
-command = "cargo test"
-reuse-hosted-evidence = true
+# config/tasks.toml
+[tasks]
+"release:ci-evidence" = { run = "sh scripts/check-release-ci.sh" }
 ```
 
-- lookup uses authenticated `gh run list --repo <origin-owner/name>`
-- the run must match this repository and the exact `HEAD` SHA
-- the wait binds the one run created inside its dispatch window and records
-  the run id; a resume re-checks that run and never a newer sibling
-- exactly one match is required: zero keeps waiting, several fail closed and
-  name the candidate runs
-- `prepare` changes `HEAD` only when it commits the prepared tree; reuse
-  attests the source commit, so a hosted-evidence gate belongs in the
-  `pre-gates` stage
-- `status`, `release --plan` and `release gates` share that verdict
-- the Run's record keeps each hosted gate, its dispatch window and its bound
-  run id and URL
-- missing, pending, failed, ambiguous, wrong-repository, or wrong-SHA evidence
-  fails the named gate; unlisted gates still run locally
+```toml
+# config/release.toml
+[release.gates]
+ci = { task = "release:ci-evidence" }
+```
 
-Effigy's own manifest includes `ci = "sh scripts/check-release-ci.sh"`. That
-`ci` gate stays a required local command. Hosted reuse is opt-in per gate on
-GitHub-hosted consumers; other providers keep supplying local gates.
+- the task proves `$EFFIGY_RELEASE_COMMIT`, the commit the gate stage gates
+- a GitHub lookup uses authenticated `gh run list --repo <origin-owner/name>`
+- exactly one `workflow_dispatch` run for that commit is required: zero or
+  several refuse rather than taking the newest, because a sibling dispatch,
+  re-dispatch or re-run is a different run
+- missing, pending, failed, ambiguous, wrong-repository or wrong-SHA evidence
+  fails the gate; `status --check-gates` and `release gates` share that verdict
+- the gate belongs in the stage whose commit it proves: `pre` for the source
+  commit, `certify` for the prepared candidate
 
-Important gate-stage rule:
-
-- a gate that reuses hosted evidence belongs in `stage = "pre"`; a
-  `stage = "certify"` gate runs against the prepared commit, where hosted
-  evidence for the source commit no longer applies
+Effigy's own release declares `ci = { task = "release:ci-evidence" }`, with the
+task in `config/tasks.toml`.
 
 ## 7) Run State and Safety
 

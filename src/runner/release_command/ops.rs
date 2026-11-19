@@ -4,7 +4,7 @@ use std::path::Path;
 use effigy_core::resolver::ResolvedTarget;
 use effigy_release::{
     collect_release_gate_run, collect_release_status as collect_release_status_via_release,
-    gate_outcome_word, plan_release_pipeline as plan_release_pipeline_via_release,
+    gate_outcome_word, git_head_sha, plan_release_pipeline as plan_release_pipeline_via_release,
     release_home as release_home_via_release, release_receipt_for_run,
     run_release_gates_with_observer, run_release_with_observer, GateExecutionReport, GateObserver,
     GateResult, GitEffects, ReleaseAction, ReleaseGateRun, ReleasePipelinePlan, ReleaseRunOutcome,
@@ -173,24 +173,12 @@ impl Drop for ReleaseRunSteps {
 }
 
 impl GateObserver for ReleaseRunSteps {
-    fn gate_started(
-        &mut self,
-        position: usize,
-        total: usize,
-        gate: &ResolvedGate,
-        reusing_hosted_evidence: bool,
-    ) {
+    fn gate_started(&mut self, position: usize, total: usize, gate: &ResolvedGate) {
         if let Some(previous) = self.gate.take() {
             previous.finish_clear();
         }
-        self.progress
-            .update(|_| gate_frame(position, total, gate, reusing_hosted_evidence));
-        self.gate = Some(self.root.live_step(gate_progress(
-            position,
-            total,
-            gate,
-            reusing_hosted_evidence,
-        )));
+        self.progress.update(|_| gate_frame(position, total, gate));
+        self.gate = Some(self.root.live_step(gate_progress(position, total, gate)));
     }
 
     fn gate_finished(&mut self, position: usize, total: usize, result: &GateResult) {
@@ -211,14 +199,6 @@ impl GateObserver for ReleaseRunSteps {
     fn stage(&mut self, stage: &str) {
         self.progress.update(|_| {
             ProgressFrame::new(format!("running stage {stage}")).waiting_for(NEXT_GATE_OR_STAGE)
-        });
-    }
-
-    fn note(&mut self, message: &str) {
-        self.progress.update(|previous| {
-            ProgressFrame::new(message)
-                .waiting_for(NEXT_GATE_OR_STAGE)
-                .observations_from(previous)
         });
     }
 }
@@ -331,7 +311,10 @@ fn emit_release_gate_inventory(gates: &[ResolvedGate]) {
 
 fn run_release_gates(root: &Path, gates: &[ResolvedGate], fail_fast: bool) -> GateExecutionReport {
     let mut observer = ReleaseGateSteps::default();
-    run_release_gates_with_observer(root, gates, fail_fast, &mut observer)
+    // A one-off gate run has no release Run record, so the gates it checks
+    // gate the work tree's HEAD (contract 054 §3).
+    let commit = git_head_sha(root).ok();
+    run_release_gates_with_observer(root, gates, fail_fast, commit.as_deref(), &mut observer)
 }
 
 /// Draw each gate as a live step: `running gate cargo test (2/5)` while it
@@ -357,20 +340,9 @@ impl Drop for ReleaseGateSteps {
 }
 
 impl GateObserver for ReleaseGateSteps {
-    fn gate_started(
-        &mut self,
-        position: usize,
-        total: usize,
-        gate: &ResolvedGate,
-        reusing_hosted_evidence: bool,
-    ) {
+    fn gate_started(&mut self, position: usize, total: usize, gate: &ResolvedGate) {
         self.clear();
-        self.running = Some(live_step(gate_progress(
-            position,
-            total,
-            gate,
-            reusing_hosted_evidence,
-        )));
+        self.running = Some(live_step(gate_progress(position, total, gate)));
     }
 
     fn gate_finished(&mut self, position: usize, total: usize, result: &GateResult) {
@@ -381,47 +353,20 @@ impl GateObserver for ReleaseGateSteps {
             None => finish_line(result.passed, &summary),
         }
     }
-
-    fn note(&mut self, message: &str) {
-        self.clear();
-        emit_release_progress_line(message);
-    }
 }
 
 /// A gate's live step, for example `running gate cargo test (2/5); waiting for
-/// `effigy test` to exit; 3s elapsed`. Reusing hosted evidence names the
-/// evidence it waits on, because nothing local is running.
-pub(super) fn gate_progress(
-    position: usize,
-    total: usize,
-    gate: &ResolvedGate,
-    reusing_hosted_evidence: bool,
-) -> ProgressSource {
-    ProgressSource::new(gate_frame(position, total, gate, reusing_hosted_evidence))
+/// `effigy test` to exit; 3s elapsed`.
+pub(super) fn gate_progress(position: usize, total: usize, gate: &ResolvedGate) -> ProgressSource {
+    ProgressSource::new(gate_frame(position, total, gate))
 }
 
 /// Show one gate on a progress source: its sub-step and count, and the exact
-/// command or hosted evidence it is waiting on.
-fn gate_frame(
-    position: usize,
-    total: usize,
-    gate: &ResolvedGate,
-    reusing_hosted_evidence: bool,
-) -> ProgressFrame {
-    let (sub_step, awaiting) = if reusing_hosted_evidence {
-        (
-            format!("reusing hosted evidence for gate {}", gate.name),
-            format!("hosted evidence for gate {}", gate.name),
-        )
-    } else {
-        (
-            format!("running gate {}", gate.name),
-            format!("`{}` to exit", gate.command),
-        )
-    };
-    ProgressFrame::new(sub_step)
+/// command it is waiting on.
+fn gate_frame(position: usize, total: usize, gate: &ResolvedGate) -> ProgressFrame {
+    ProgressFrame::new(format!("running gate {}", gate.name))
         .count(Some((position as u64, total as u64)))
-        .waiting_for(awaiting)
+        .waiting_for(format!("`{}` to exit", gate.command))
 }
 
 /// The line a finished gate leaves: the outcome word, the timing, and where
