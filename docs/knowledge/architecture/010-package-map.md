@@ -86,7 +86,7 @@ these callers. `deny.toml` remains the dependency policy authority.
 | Crate | Responsibility |
 | --- | --- |
 | `effigy-context` | boot-time runtime context, cwd/repo target authority, optional external task-source identity, host facts, and container handoff capture |
-| `effigy-containers` | effective container policy, scoped host maps, runtime ownership labels, labelled retirement planning, backend facade, typed container operation planning, compose assembly, typed system/workspace mount rendering, workspace mount rewrite, and lower-level container/runtime compatibility helpers |
+| `effigy-containers` | effective container policy, scoped host maps, runtime ownership labels, labelled retirement planning, backend facade, compose assembly, typed system/workspace mount rendering, workspace mount rewrite, and lower-level container/runtime compatibility helpers |
 | `effigy-catalog` | compiled baseline catalog, ordered catalog-source resolution, qualified names, fragment requirements, compose assembly inputs, and catalog schema |
 | `effigy-gateway` | local gateway loopback aliases and host-port derivation |
 | `effigy-runtime-plan` | typed runtime activation request, activation plan, readiness/alias/lease plan, and activation report substrate |
@@ -156,10 +156,10 @@ these callers. `deny.toml` remains the dependency policy authority.
 | Module | Responsibility |
 | --- | --- |
 | [`src/runner/container_command/*`](../../../src/runner/container_command/mod.rs) | container command-surface glue: parse resolved CLI model, call operation/runtime/data helpers, render operator output |
-| [`src/runner/container_command/lifecycle.rs`](../../../src/runner/container_command/lifecycle.rs) | shared operation plans and entrypoints; `lifecycle/` owns up, down, reset, status, stats, logs, shell and exec separately, with shared preparation, reporting and runtime integration effects |
+| [`src/runner/container_command/lifecycle.rs`](../../../src/runner/container_command/lifecycle.rs) | entrypoints; `lifecycle/` owns up, down, reset, status, stats, logs, shell and exec separately, with shared preparation, reporting and runtime integration effects |
 | [`src/runner/container_command/hosts.rs`](../../../src/runner/container_command/hosts.rs) | effective host map for one checkout: declared and scoped HTTP/TCP names |
 | [`src/runner/container_command/retire.rs`](../../../src/runner/container_command/retire.rs) | retirement over the backend's own ownership labels: containers, volumes, networks, gateway state |
-| [`src/runner/container_command/data.rs`](../../../src/runner/container_command/data.rs) | container data command glue over `effigy-data`, `effigy-state::artifact`, container operation plans, and runtime IO adapters |
+| [`src/runner/container_command/data.rs`](../../../src/runner/container_command/data.rs) | container data command glue over `effigy-data`, `effigy-state::artifact`, and runtime IO adapters |
 | [`src/runner/db_seed.rs`](../../../src/runner/db_seed.rs) | bootstrap and task-facing DB seed glue over `effigy-data` source normalization, artifact staging, and task execution requests |
 | [`src/runner/state_command_artifact.rs`](../../../src/runner/state_command_artifact.rs) | `effigy state artifact` command glue over `effigy_state::artifact` refs, OCI transport, staging, and capture plans |
 
@@ -233,7 +233,7 @@ of owning every runtime/container decision locally.
 | Crate | Main types | Responsibility |
 | --- | --- | --- |
 | [`effigy-runtime-plan`](../../../crates/effigy-runtime-plan/src/lib.rs) | `RuntimeActivationRequest`, `RuntimeActivationPlan`, `RuntimeReadinessPlan`, `RuntimeAliasPlan`, `RuntimeLeasePlan`, `RuntimeActivationReport` | Pure runtime activation planning and report shape. Side effects remain in runner/runtime adapters. |
-| [`effigy-containers`](../../../crates/effigy-containers/src/lib.rs) | `ContainerManager`, `ContainerOperationRequest`, `ContainerOperationPlan`, `BackendId`, operation kind structs, and side-effect/safety models | Canonical container-domain crate for backend selection, typed lifecycle/read/exec/data/cache/volume planning, compose/runtime compatibility helpers, and workspace-aware container policy handling. |
+| [`effigy-containers`](../../../crates/effigy-containers/src/lib.rs) | `ContainerManager`, `BackendId`, and captured exec requests | Canonical container-domain crate for backend selection, container lifecycle, read, exec, data, cache and volume operations, compose/runtime compatibility helpers, and workspace-aware container policy handling. |
 | [`effigy-data`](../../../crates/effigy-data/src/lib.rs) | `DataTargetRef`, `ResolvedDataTarget`, `DataSeedPlan`, `DataDumpPlan`, `DatabaseCommandPlan`, `ArtifactDataHandoff` | Data seed/dump planning, logical target resolution, database command rendering, and artifact handoff normalization. |
 
 ## Artifact Substrate Ownership Map
@@ -309,14 +309,11 @@ The important live hardening seams are now:
 - typed runtime/session context instead of bootstrap-only env steering
 - captured `effigy-context` authority instead of direct cwd/root rediscovery in
   new runner code
-- `effigy-containers` facade for runner-facing backend selection, operation
-  planning, and operation reports
+- `effigy-containers` facade for runner-facing backend selection and operation reports
 - `effigy-execution` request builder for direct and embedded task plan
   construction
 - `effigy-runtime-plan` activation requests/plans for runtime prep identity,
   lease policy, and report shape
-- `effigy-containers` operation plans for lifecycle, read, exec/shell, data,
-  cache, and volume command intent
 - `effigy-data` seed/dump planning for DB targets, artifact handoff, and
   database command rendering
 - `effigy-state::artifact` artifact transport/staging/capture substrate for OCI

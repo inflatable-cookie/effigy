@@ -95,16 +95,7 @@ gateway, or lease behavior.
 
 ## Container Operation Rules
 
-Container operation planning belongs to `effigy-containers`.
-
-Operation plans must carry:
-
-- repo root
-- policy/container identity
-- operation kind
-- side-effect class
-- safety or confirmation policy for destructive operations
-- backend/manager boundary where backend work is needed
+Destructive operations require explicit consent before runtime effects.
 
 Backend behavior belongs behind `ContainerManager` and runtime adapters. Runner
 command code should not branch on Docker Compose versus Colima/nerdctl.
@@ -139,7 +130,7 @@ Required behavior:
 - first-party scripts should prefer `exec::run` for container commands that
   depend on host/container context
 - direct `container::*` callbacks remain compatibility surfaces until fully
-  migrated behind container operation requests
+  migrated behind shared execution requests
 
 ## Drift Guards
 

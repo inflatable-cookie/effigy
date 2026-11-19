@@ -1,8 +1,3 @@
-use effigy_containers::{
-    ContainerLifecycleOperation, ContainerOperationKind, ContainerOperationPlan,
-    ContainerOperationRequest, EffectiveContainerPolicy,
-};
-use std::path::Path;
 mod down;
 mod exec;
 mod integrations;
@@ -27,23 +22,3 @@ pub(super) use shell::run_container_shell;
 pub(super) use stats::run_container_stats_command;
 pub(super) use status::run_container_status_command;
 pub(super) use up::run_container_up;
-
-pub(in crate::runner) fn lifecycle_operation_plan(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    operation: ContainerLifecycleOperation,
-) -> ContainerOperationPlan {
-    ContainerOperationRequest::new(
-        repo_root.to_path_buf(),
-        policy.name.clone(),
-        ContainerOperationKind::lifecycle(operation),
-    )
-    .backend_id(lifecycle_backend_id(policy))
-    .plan()
-}
-
-fn lifecycle_backend_id(policy: &EffectiveContainerPolicy) -> &'static str {
-    match policy.driver {
-        effigy_manifest::ManifestContainerDriver::Colima => "colima",
-    }
-}

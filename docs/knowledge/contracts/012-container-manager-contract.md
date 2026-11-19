@@ -24,7 +24,6 @@ It owns:
 - `ContainerBackend`
 - `ContainerBackendRegistry`
 - `BackendId`
-- typed operation requests
 - typed runtime state
 - typed operation reports
 - interrupt policy for attached sessions
@@ -32,8 +31,7 @@ It owns:
 Static registration is enough for this round. Dynamic plugin loading is out of
 scope.
 
-Container command intent is planned inside `effigy-containers`. Backend work
-then routes through `effigy-containers` and, where compatibility still
+Backend work routes through `effigy-containers` and, where compatibility still
 requires it, `effigy-runtime` adapter helpers. The cross-pipeline boundary is
 defined in `015-runtime-operation-pipeline-contract.md`.
 
@@ -82,8 +80,7 @@ two startup phases and per-route reporting are owned by
 ## Shipped Migration State
 
 `g03.031` shipped the manager facade and moved runner-level backend selection
-behind it. `g04` added typed operation plans and manager-backed runtime
-adapters.
+behind it. `g04` added manager-backed runtime adapters.
 
 Shipped manager-owned surfaces:
 
@@ -93,8 +90,6 @@ Shipped manager-owned surfaces:
 - raw runtime process invocation wrapping for copy, volume, and image commands
 - internal lifecycle operation reports
 - runner-level exec/copy/data/lifecycle backend selection
-- operation request/plan surfaces for lifecycle, read, exec/shell, data, and
-  cache work
 
 Remaining compatibility boundary:
 
@@ -146,7 +141,6 @@ Minimum proof:
 - attached interrupt path runs manager-owned cleanup
 - copy, exec, status, logs, and stats route through the manager
 - runner drift guards reject caller-local backend branching
-- operation plans expose operation kind, side-effect class, and safety policy
 
 Lightweight drift check:
 
