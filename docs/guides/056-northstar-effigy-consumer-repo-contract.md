@@ -1,28 +1,32 @@
-# 056 — Northstar and Effigy in a consumer repository
+# 056 — Northstar docs and Effigy in a consumer repository
 
-This guide's path stays stable for consumers. A new repository can start with `effigy init northstar`; the bundled starter follows lean Northstar. Existing repositories should use the [lean adoption guide](https://github.com/inflatable-cookie/northstar) and migrate in one deliberate cut after draining Queue work.
+This guide's path stays stable for consumers.
 
-## Repository shape
+[Northstar](https://github.com/inflatable-cookie/northstar) is an opt-in
+stack of agent skills. Its documentation structure is the `northstar-docs`
+skill: `AGENTS.md` for agent orientation, `docs/README.md` as the entry point
+to the docs, and `docs/knowledge/` for the why and depth, with one owning file
+per fact. To adopt it, copy the skill's `template/` and follow its adoption
+reference. Effigy bundles no Northstar starter; `effigy init` emits only the
+generic `minimal` starter.
 
-- `AGENTS.md` orients agents and names `effigy qa` as validation.
-- `docs/README.md` describes the current state and links by topic.
-- `docs/knowledge/` owns current vision, architecture, contracts, release procedure, and open questions.
-- Queue holds the plan (lanes, lane documents and order), leads, papercuts and draft briefs.
-- `docs/guides/` remains product documentation at stable consumer paths.
-- Queue closeout is the default when no control manifest applies. New lean
-  repositories carry no Queue files. Per-repository overrides live in Queue's
-  permanent `repository_settings` rows and use `repository.set`,
-  `repository.get`, and `repositories`; fields include `closeout`,
-  `validation`, `reviewer`, `qa`, `validationPolicy`, and `note`. Project
-  membership is separate: `project.get` takes a key or structured repository
-  identity, and `project.upsert` groups repositories. The operator CLI/API
-  accepts an absolute existing checkout path or normalized `owner/name` origin
-  for repository settings. The old settings-shaped
-  `project.set` and string-shaped `project.get` calls are rejected. See
-  [Queue Spec 022](https://github.com/inflatable-cookie/paseo-northstar-queue/blob/main/docs/knowledge/specs/022-queue-projects-without-manifests.md)
-  and the [Queue RPC schema](https://github.com/inflatable-cookie/paseo-northstar-queue/blob/main/shared/contracts.ts).
+## Running the skill's checks
 
-Queue also owns task status, review, closeout, and outcomes. Code and documentation navigation use `rg` and the repository's `docs/README.md` index; The v0.15 release removed both commands.
+The skill's scripts are dependency-free Python. Run them directly, or through
+the skill's Effigy catalog once the skill is installed:
+
+```sh
+effigy skill run northstar-docs/check-links
+effigy skill run northstar-docs/changelog -- check
+```
+
+## Documentation graph profile
+
+A repository that wants Effigy's documentation graph keeps one committed
+`[docs_policy.graph]` block in its own `effigy.toml`. Effigy resolves
+documentation semantics from that manifest only, never from an installed skill
+directory or template. See
+[`../knowledge/contracts/041-documentation-graph-profile-contract.md`](../knowledge/contracts/041-documentation-graph-profile-contract.md).
 
 ## Effigy commands
 

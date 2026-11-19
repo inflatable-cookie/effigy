@@ -1684,8 +1684,7 @@ Starter list / starter emission still use the starter-oriented init contracts.
   "schema": "effigy.init.list.v1",
   "schema_version": 1,
   "starters": [
-    { "name": "minimal", "description": "Minimal Effigy scaffold" },
-    { "name": "northstar", "description": "Northstar-profile starter" }
+    { "name": "minimal", "description": "Minimal Effigy scaffold" }
   ]
 }
 ```

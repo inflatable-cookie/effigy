@@ -1,0 +1,1 @@
+Removed the bundled `northstar` starter: `effigy init` now offers only `minimal`. Northstar's docs structure is the opt-in `northstar-docs` skill, adopted by copying its template; guide 056 points there.

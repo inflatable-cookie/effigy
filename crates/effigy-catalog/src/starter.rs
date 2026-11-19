@@ -259,10 +259,6 @@ mod tests {
             names.contains(&"minimal"),
             "minimal should be listed; got {listing:?}"
         );
-        assert!(
-            names.contains(&"northstar"),
-            "northstar should be listed; got {listing:?}"
-        );
         // Listing is sorted so `--list` output is stable.
         let mut sorted = names.clone();
         sorted.sort();
@@ -276,72 +272,5 @@ mod tests {
             Err(StarterError::NotFound { name }) => assert_eq!(name, "does-not-exist"),
             other => panic!("expected NotFound, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn northstar_starter_resolves_with_all_declared_files_and_guidance() {
-        let starter = StarterResolver::new()
-            .resolve("northstar")
-            .expect("northstar starter");
-        let targets: Vec<&str> = starter.files.iter().map(|f| f.target.as_str()).collect();
-        let expected_targets = [
-            "effigy.toml",
-            "README.md",
-            "AGENTS.md",
-            "docs/README.md",
-            "docs/knowledge/README.md",
-            "docs/knowledge/architecture.md",
-            "docs/knowledge/contracts/README.md",
-            "docs/knowledge/domain/README.md",
-            "docs/knowledge/vision.md",
-            "docs/knowledge/contracts/release.md",
-            "docs/knowledge/questions.md",
-        ];
-        for expected in expected_targets {
-            assert!(
-                targets.contains(&expected),
-                "missing {expected}: {targets:?}"
-            );
-        }
-        assert_eq!(
-            targets.len(),
-            expected_targets.len(),
-            "unexpected starter file: {targets:?}"
-        );
-        assert!(starter.guidance.expect("guidance").contains("Queue"));
-    }
-
-    #[test]
-    fn northstar_starter_owns_the_northstar_graph_profile() {
-        let resolver = StarterResolver::new();
-        let starter = resolver.resolve("northstar").expect("northstar starter");
-        let manifest = starter
-            .files
-            .iter()
-            .find(|f| f.target == "effigy.toml")
-            .expect("manifest")
-            .contents
-            .as_str();
-        for expected in [
-            "[docs_policy.graph]",
-            "[docs_policy.graph.kinds.knowledge]",
-            "[docs_policy.graph.kinds.guide]",
-            "docs/knowledge/contracts/release.md",
-            "qa = [{ task = \"qa:docs\" }]",
-        ] {
-            assert!(
-                manifest.contains(expected),
-                "starter manifest misses {expected}"
-            );
-        }
-        let minimal = resolver.resolve("minimal").expect("minimal starter");
-        let minimal_manifest = minimal
-            .files
-            .iter()
-            .find(|f| f.target == "effigy.toml")
-            .expect("minimal manifest")
-            .contents
-            .as_str();
-        assert!(!minimal_manifest.contains("[docs_policy.graph]"));
     }
 }
