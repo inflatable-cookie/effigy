@@ -4,13 +4,11 @@
 //! nothing: each route names what execution would do, and the caller does it.
 
 use effigy_cli::TaskInvocation;
-use effigy_execution::ExecutionSelectionPlan;
 use effigy_manifest::{DeferredCommand, TaskSelection};
 use effigy_routing::select_catalog_and_task;
 use effigy_tasks::TaskSelector;
 
 use super::planning::ExecutionPreflight;
-use super::selection::build_execution_selection_plan;
 use crate::runner::command_context::active_runtime_context;
 use crate::runner::deferral::{
     deferred_builtins_from_catalogs, select_deferral, should_attempt_deferral,
@@ -19,10 +17,7 @@ use crate::runner::error::RunnerError;
 
 pub(in crate::runner) enum Route<'a> {
     /// A declared task in a member catalog.
-    Task {
-        selection: TaskSelection<'a>,
-        plan: Box<ExecutionSelectionPlan>,
-    },
+    Task { selection: TaskSelection<'a> },
     /// A built-in command routed by name (`test`, `tasks`, `watch`, ...).
     Builtin,
     /// A container exec alias of the default exec surface.
@@ -90,13 +85,7 @@ fn resolve_route_from<'a>(
         &preflight.catalogs,
         &preflight.invocation_cwd,
     ) {
-        Ok(selection) => {
-            let plan = build_execution_selection_plan(preflight, &selection);
-            return Ok(Route::Task {
-                selection,
-                plan: Box::new(plan),
-            });
-        }
+        Ok(selection) => return Ok(Route::Task { selection }),
         Err(error) => error.into(),
     };
     if let Some(removed) = removed_builtin_invocation_error(&preflight.selector) {

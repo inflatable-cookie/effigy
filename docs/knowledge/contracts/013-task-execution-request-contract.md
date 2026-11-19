@@ -19,20 +19,9 @@ surface.
 
 ## Request Owner
 
-The canonical request owner is `effigy_execution`.
-
-Public contract types:
-
-- `TaskExecutionRequest`
-- `TaskExecutionRequestBuilder`
-- `ResolvedTaskExecutionPlan`
-- `ExecutionSurface`
-- `ExecutionIntent`
-- `ExecutionOutputMode`
-- `ExecutionRuntimePolicy`
-- `ExecutionHandoffPolicy`
-- `ExecutionCleanupPolicy`
-- `ExecutionEnvironmentPlan`
+The canonical request owner is `effigy_execution`. Its exports are the public
+request, builder, resolved plan and policy types; this contract owns what they
+mean, not an inventory of them.
 
 Runner code may still own command presentation and final dispatch mechanics, but
 it must not invent a parallel task-request model.
@@ -73,6 +62,14 @@ Defaults are allowed only where the product contract has a safe default:
 ## Resolution Rules
 
 Resolution turns `TaskExecutionRequest` into `ResolvedTaskExecutionPlan`.
+
+Selection, binding and routing are one resolved target, not a chain of plan
+objects. The selector resolves once, without effects, to the selected task and
+its catalog, mode and evidence. The binding and route are read from that
+selection. Plan, execution and nested steps all receive the same selection; no
+separate selection or binding plan mirrors it. A selected task's name never
+changes its route, so a declared task named after an Effigy command routes by
+its own declaration like any other task.
 
 The plan owns the resolved route:
 

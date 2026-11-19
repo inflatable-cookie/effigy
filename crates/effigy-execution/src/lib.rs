@@ -5,7 +5,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use effigy_context::{EffigyRuntimeContext, TaskSourceContext};
-use effigy_tasks::{CatalogSelectionMode, TaskRuntimeArgs, TaskSelector};
+use effigy_tasks::{TaskRuntimeArgs, TaskSelector};
 pub use qa_group_status::{
     member_log_file_name, qa_group_log_dir, QaGroupBackend, QaGroupBudgetState, QaGroupGapSnapshot,
     QaGroupMemberRecord, QaGroupMemberState, QaGroupOutcome, QaGroupRunGroupSnapshot,
@@ -333,13 +333,6 @@ fn strip_task_output_flags(args: &[String]) -> (Vec<String>, bool, bool) {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExecutionPreflightPlan {
-    pub input: ExecutionPreflightInput,
-    pub runtime_args: Option<ExecutionRuntimeArgsPlan>,
-    pub diagnostics: Vec<ExecutionPlanDiagnostic>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionDiscoveryInput {
     pub selector: String,
     pub cwd: PathBuf,
@@ -379,108 +372,12 @@ pub struct ExecutionDiscoveryPlan {
     pub repo_override: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExecutionSelectionInput {
-    pub selector: TaskSelector,
-    pub invocation_cwd: PathBuf,
-    pub resolved_root: PathBuf,
-}
-
-impl ExecutionSelectionInput {
-    pub fn from_discovery(plan: &ExecutionDiscoveryPlan) -> Self {
-        Self {
-            selector: plan.selector.clone(),
-            invocation_cwd: plan.invocation_cwd.clone(),
-            resolved_root: plan.resolved_root.clone(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExecutionSelectionCatalogSummary {
-    pub alias: String,
-    pub catalog_root: PathBuf,
-    pub manifest_path: PathBuf,
-    pub depth: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExecutionSelectionPlan {
-    pub input: ExecutionSelectionInput,
-    pub catalog: ExecutionSelectionCatalogSummary,
-    pub mode: CatalogSelectionMode,
-    pub evidence: Vec<String>,
-    pub task_name: String,
-}
-
-impl ExecutionSelectionPlan {
-    pub fn new(
-        input: ExecutionSelectionInput,
-        catalog: ExecutionSelectionCatalogSummary,
-        mode: CatalogSelectionMode,
-        evidence: Vec<String>,
-        task_name: impl Into<String>,
-    ) -> Self {
-        Self {
-            input,
-            catalog,
-            mode,
-            evidence,
-            task_name: task_name.into(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExecutionBindingInput {
-    pub selection: ExecutionSelectionPlan,
-    pub runtime_surface: String,
-}
-
-impl ExecutionBindingInput {
-    pub fn new(selection: ExecutionSelectionPlan, runtime_surface: impl Into<String>) -> Self {
-        Self {
-            selection,
-            runtime_surface: runtime_surface.into(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionBindingKind {
     None,
     Host,
     NamedContainer,
     InlineContainer,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExecutionBindingPlan {
-    pub input: ExecutionBindingInput,
-    pub kind: ExecutionBindingKind,
-    pub requested_container_name: Option<String>,
-    pub inline_workspace: bool,
-}
-
-impl ExecutionBindingPlan {
-    pub fn new(
-        input: ExecutionBindingInput,
-        kind: ExecutionBindingKind,
-        requested_container_name: Option<String>,
-        inline_workspace: bool,
-    ) -> Self {
-        Self {
-            input,
-            kind,
-            requested_container_name,
-            inline_workspace,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExecutionDispatchInput {
-    pub request: TaskExecutionRequest,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -493,7 +390,6 @@ pub struct ExecutionDispatchPlan {
     pub env_keys: Vec<String>,
     pub output_mode: ExecutionOutputMode,
     pub surface: ExecutionSurface,
-    pub diagnostics: Vec<ExecutionPlanDiagnostic>,
 }
 
 impl ExecutionDispatchPlan {
@@ -531,7 +427,6 @@ impl ExecutionDispatchPlan {
             env_keys,
             output_mode: plan.request.output_mode,
             surface: plan.request.surface.clone(),
-            diagnostics: Vec::new(),
         })
     }
 
@@ -545,21 +440,6 @@ impl ExecutionDispatchPlan {
         .with_secret_targets(self.request.environment.secret_targets.clone())
         .with_task_source(self.request.runtime_context.task_source().cloned())
         .with_output_mode(self.output_mode)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExecutionPlanDiagnostic {
-    pub code: String,
-    pub message: String,
-}
-
-impl ExecutionPlanDiagnostic {
-    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self {
-            code: code.into(),
-            message: message.into(),
-        }
     }
 }
 

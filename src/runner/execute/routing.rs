@@ -1,4 +1,4 @@
-use effigy_exec::routing::{route, ExecContext, ExecTarget, RoutingDecision, TaskOverrides};
+use effigy_exec::routing::{route, DeclaredTarget, ExecContext, ExecTarget, RoutingDecision};
 use effigy_manifest::{
     ManifestContainerConfig, ManifestContainersConfig, ManifestSystemsConfig, ManifestTask,
     ManifestTaskRunIn,
@@ -64,13 +64,14 @@ pub(in crate::runner) fn route_standard_task_execution(
             "task `{command_name}` declares `run_in = \"container\"`, but no container target is defined"
         )));
     }
-    let task_overrides = TaskOverrides {
-        host: task_run_in == ManifestTaskRunIn::Host || binding_is_host,
-        container: if task_run_in == ManifestTaskRunIn::Container {
-            target_container.clone()
-        } else {
-            explicit_container.clone()
-        },
+    // A named container is the only container a task can declare: when the
+    // task asks for one, `resolve_routing_containers` has already resolved it.
+    let declared = if task_run_in == ManifestTaskRunIn::Host || binding_is_host {
+        DeclaredTarget::Host
+    } else if let Some(container) = explicit_container {
+        DeclaredTarget::Container(container)
+    } else {
+        DeclaredTarget::Default
     };
     let container_running = match target_container.as_deref() {
         Some(name) => is_container_running(name)?,
@@ -87,7 +88,7 @@ pub(in crate::runner) fn route_standard_task_execution(
     };
 
     Ok(RoutedTaskExecution {
-        decision: route(command_name, &context, &task_overrides),
+        decision: route(&context, &declared),
     })
 }
 
