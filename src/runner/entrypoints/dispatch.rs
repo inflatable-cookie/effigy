@@ -57,10 +57,6 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
     let root = crate::runner::command_context::active_runtime_context()
         .map(|context| context.command_root().to_path_buf())
         .unwrap_or_else(|| cwd.into());
-    // A reserved workspace engine must verify its dispatcher-owned selection
-    // before any preparation or fallback can produce effects. Its first
-    // resolver already observed the sources; missing sources now refuse.
-    let reserved_workspace = crate::runner::managed_run::workspace_resolution()?.is_some();
     // The command's own hold on the sources it selected. It lives until the
     // command finishes, so a refresh by another invocation cannot remove them.
     let mut _source_hold: Option<effigy_manifest::SourceHold> = None;
@@ -80,7 +76,7 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
             Command::Task(_) | Command::Tasks(_) => true,
             _ => false,
         };
-        if reads_sources && !reserved_workspace {
+        if reads_sources {
             // Listing, `--plan` and built-in discovery only fill missing pins.
             let executes = matches!(
                 &cmd,

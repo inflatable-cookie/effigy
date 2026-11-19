@@ -30,11 +30,6 @@ fn main() {
         }
         return;
     }
-    #[cfg(feature = "workspace-private-qualification")]
-    if effigy_kernel::supervise::initialize_private_qualification_image().is_err() {
-        eprintln!("workspace qualification creator image unavailable");
-        std::process::exit(1);
-    }
     #[cfg(target_os = "macos")]
     if raw_args
         .first()

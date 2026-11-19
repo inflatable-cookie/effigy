@@ -9,23 +9,22 @@ windows, installation, production enablement or publication.
 
 ## Qualification scope
 
-Tom's 2026-11-01 Q-017 ruling narrows v0.15 workspace-client coverage to
-noninteractive Level 1. Level 2 features, including guest attach, detach,
-reconnect, terminal input and resize, shared-lock tasks, pause and the rest of
-the former full command matrix, follow after v0.15. Unsupported requests must
-refuse by name and direct the user to the independently invoked host CLI.
-These deferrals do not waive positive Level 1 behavior, security, native or
-consumer gates.
+Host actions run in the host CLI (Tom 2026-11-19, D1). A container-mode guest
+runs its commands locally, on the container's own checkout and state, and holds
+no host authority: there is no guest-to-host channel, grant, session, attach,
+reconnect or guest PTY. The single refusal is a task the checkout binds to the
+host, `run_in = "host"`, which names the host checkout. These retirements do not
+waive guest security, native or consumer gates.
 
 Qualification covers every bundle cohort on the exact frozen inputs: DecodeLabs
 sites (including CBS critical), DecodeLabs libraries, Underlay (Acowtancy and
 siblings), and other roots. It includes a fresh HOME and Tom's
 machine. Owner-approved proofs must establish real outcomes and streaming,
-positive full-session publication, exact owner and custody, pinned TLS and
-credential secrecy, and the full-session behavior on Colima, Docker Desktop and
-Linux Docker Engine. Hybrid mode provisions no guest. The existing refusal,
-identity and baseline packets cannot establish these positive claims; they
-need a qualification-capable candidate and packet.
+positive publication of the guest binary and context, exact owner and custody,
+pinned binary identity and credential secrecy, and the guest behavior on
+Colima, Docker Desktop and Linux Docker Engine. Hybrid mode provisions no
+guest. The existing refusal, identity and baseline packets cannot establish
+these positive claims; they need a qualification-capable packet.
 
 Ordinary-Compose synthetic proof is useful fixture evidence, not proof from an
 actual Acow consumer. Worktree health is not data continuity: preserve the

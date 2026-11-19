@@ -90,10 +90,6 @@ fn spec(home: &Path) -> ProcessSpec {
     }
 }
 fn main() {
-    #[cfg(feature = "workspace-private-qualification")]
-    if std::env::args().nth(1).as_deref() != Some("private-qualification-uninitialized") {
-        initialize_private_qualification_image().expect("qualification entry image");
-    }
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     let entry = args.first().and_then(|s| s.to_str()).unwrap_or("");
     let policy = match entry {
@@ -104,15 +100,6 @@ fn main() {
     let mut router = SignalRouter::install(policy).unwrap();
     if let Some(result) = effigy_kernel::probe::internal_entry(entry, router.root_cancel()) {
         result.unwrap();
-        return;
-    }
-    #[cfg(feature = "workspace-private-qualification")]
-    if entry.starts_with("private-qualification") {
-        qualification_fixture::run(
-            Path::new(args.get(1).expect("fixture root")),
-            router.root_cancel(),
-            entry,
-        );
         return;
     }
     if entry.starts_with("probe-") {
@@ -695,7 +682,6 @@ fn engine_launch(home: &Path) -> EngineLaunch {
         env: vec![("FIXTURE_ENGINE_ENV".into(), "present".into())],
 
         handoff: None,
-        admission: None,
     }
 }
 
@@ -725,21 +711,7 @@ fn fixture_engine(mut session: EngineSession, mut router: RouterHandle) -> Resul
             placement: effigy_kernel::supervise::Placement::Detached,
         }),
     };
-    // A dispatcher that reserved a keyed workspace request hands the ticket to
-    // this detached supervisor; admitting under it is the same `begin` with the
-    // binding committed in its one admission transaction (052 §8.11).
-    let begun = match session.admission().cloned() {
-        Some(ticket) => Run::begin_admitted(
-            &cx,
-            &root,
-            &invocation(),
-            opts,
-            &cleanup,
-            &mut Strict,
-            ticket,
-        ),
-        None => Run::begin(&cx, &root, &invocation(), opts, &cleanup, &mut Strict),
-    };
+    let begun = Run::begin(&cx, &root, &invocation(), opts, &cleanup, &mut Strict);
     let mut run = match begun {
         Ok(run) => run,
         Err(error) => {
@@ -826,29 +798,6 @@ fn fixture_engine(mut session: EngineSession, mut router: RouterHandle) -> Resul
                 session.event(vec![u8::from(session.detached())]);
                 continue;
             }
-            if frame == b"resume-secondary" {
-                let key = session.admission().expect("workspace ticket").key();
-                let attachment = resume_secondary(
-                    &cx,
-                    &root,
-                    key.session,
-                    run.id(),
-                    AttachmentId::new([8; 16]),
-                )
-                .inspect_err(|error| {
-                    session.event(format!("secondary attach: {error}").into_bytes())
-                })?;
-                let socket = std::os::unix::net::UnixStream::connect(home.join("a.sock"))
-                    .inspect_err(|error| {
-                        session.event(format!("secondary socket: {error}").into_bytes())
-                    })?;
-                let input = std::fs::File::from(std::os::fd::OwnedFd::from(socket));
-                session
-                    .watch_attachment(&run, &attachment, &input)
-                    .inspect_err(|error| {
-                        session.event(format!("secondary watch: {error}").into_bytes())
-                    })?;
-            }
             session.event(frame);
         }
         if let Some(cause) = control.stop {
@@ -874,7 +823,3 @@ fn fixture_engine(mut session: EngineSession, mut router: RouterHandle) -> Resul
 
 #[path = "probe-fixture.rs"]
 mod probe_fixture;
-
-#[cfg(feature = "workspace-private-qualification")]
-#[path = "qualification-fixture.rs"]
-mod qualification_fixture;

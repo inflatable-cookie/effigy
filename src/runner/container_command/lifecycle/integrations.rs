@@ -1,20 +1,15 @@
-use super::report::{annotate_managed_host_listeners, detached_activation_error};
+use super::report::detached_activation_error;
 use crate::runner::container_command::closeout::finish_container_up_failure;
 use crate::runner::container_command::secret_env::{
-    materialize_container_secret_runtime, resolve_container_secret_runtime, secrets_required,
-    ResolvedContainerSecretRuntime,
+    materialize_container_secret_runtime, ResolvedContainerSecretRuntime,
 };
 use crate::runner::container_command::steps::ProgressSource;
-use crate::runner::container_command::support::{
-    annotate_registered_gateway_routes, annotate_tcp_alias_host_notes, annotate_warning_lines,
-    reconcile_primary_service_tcp_alias_hosts, wait_for_container_ready,
-};
+use crate::runner::container_command::support::reconcile_primary_service_tcp_alias_hosts;
 use crate::runner::container_command::{
-    gateway_registration, secret_env, support, workspace_integrations, RunnerError,
+    gateway_registration, support, workspace_integrations, RunnerError,
 };
-use effigy_containers::{up_detached_report, EffectiveContainerPolicy};
+use effigy_containers::EffectiveContainerPolicy;
 use effigy_ui::steps::ProgressFrame;
-use std::ffi::OsString;
 use std::path::Path;
 
 #[derive(Default)]
@@ -92,7 +87,6 @@ pub(super) fn gateway_port_wait_stage(
 pub(super) enum IntegrationOutcomePolicy {
     Attached,
     Detached,
-    Workspace,
 }
 
 impl IntegrationOutcomePolicy {
@@ -105,8 +99,6 @@ impl IntegrationOutcomePolicy {
         match self {
             Self::Attached => finish_container_up_failure(error, cleanup()),
             Self::Detached => detached_activation_error(policy, error),
-            // The journal adapter redacts the diagnostic and retains custody.
-            Self::Workspace => error,
         }
     }
 }
@@ -175,10 +167,7 @@ impl RuntimeIntegrationContext<'_> {
                         None,
                     )
                 };
-                match self.outcome {
-                    IntegrationOutcomePolicy::Workspace => prepare()?,
-                    _ => ensure_up_workspace_permissions(policy, prepare)?,
-                }
+                ensure_up_workspace_permissions(policy, prepare)?;
             }
             Step::Secrets => {
                 self.stage(2, "materializing secrets");
@@ -252,267 +241,4 @@ pub(super) fn ensure_up_workspace_permissions(
             policy.name
         ))
     })
-}
-
-/// Gate-free effects for the reserved workspace owner. This value owns the
-/// frozen policy and all returned exposure handles; it never applies Compose,
-/// opens another environment activation or runs lifecycle cleanup itself.
-pub(in crate::runner) struct WorkspaceUpEffects {
-    target: effigy_kernel::workspace_session::ContainerIdentity,
-    policy: EffectiveContainerPolicy,
-    secrets: ResolvedContainerSecretRuntime,
-    runtime: RuntimeIntegrationState,
-    health: Option<&'static str>,
-    secrets_attempted: bool,
-    routes_attempted: bool,
-    waits: Option<crate::runner::managed_wait::ActivationWaits>,
-}
-
-/// Secret values remain in this process, resolved once for both apply and
-/// runtime-file integration. Binding the observed target adds no new secrets.
-pub(in crate::runner) struct WorkspacePreparedEffects {
-    policy: EffectiveContainerPolicy,
-    secrets: ResolvedContainerSecretRuntime,
-}
-
-impl WorkspacePreparedEffects {
-    pub(in crate::runner) fn prepare(
-        policy: EffectiveContainerPolicy,
-    ) -> Result<Self, RunnerError> {
-        let secrets =
-            resolve_container_secret_runtime(&policy.repo_root, &policy, secrets_required())?;
-        Ok(Self { policy, secrets })
-    }
-    pub(in crate::runner) fn compose_env(&self) -> Vec<(String, OsString)> {
-        secret_env::compose_env(&self.secrets)
-    }
-    pub(in crate::runner) fn bind(
-        self,
-        target: effigy_kernel::workspace_session::ContainerIdentity,
-    ) -> WorkspaceUpEffects {
-        WorkspaceUpEffects {
-            target,
-            policy: self.policy,
-            secrets: self.secrets,
-            runtime: RuntimeIntegrationState::default(),
-            health: None,
-            secrets_attempted: false,
-            routes_attempted: false,
-            waits: None,
-        }
-    }
-}
-
-impl WorkspaceUpEffects {
-    pub(in crate::runner) fn startup_report(
-        &self,
-    ) -> crate::runner::workspace_client::serving_host::ContainerStartupReport {
-        let mut report = up_detached_report(&self.policy, false, self.health);
-        annotate_registered_gateway_routes(&mut report, &self.runtime.report.gateway_routes);
-        annotate_managed_host_listeners(&mut report, &self.runtime.report.managed_host_listeners);
-        annotate_tcp_alias_host_notes(&mut report, &self.runtime.report.tcp_alias_host_notes);
-        annotate_warning_lines(&mut report, &self.secrets.warnings);
-        crate::runner::workspace_client::serving_host::ContainerStartupReport {
-            json: report.json,
-            text: report.success_text,
-        }
-    }
-
-    fn binding(
-        &self,
-    ) -> Result<&effigy_containers::exec::VerifiedComposeContainer, effigy_kernel::run::RunError>
-    {
-        self.runtime.binding.as_ref().ok_or_else(|| {
-            effigy_kernel::run::RunError::refused(
-                "workspace integrations have no verified primary binding",
-            )
-        })
-    }
-}
-
-impl crate::runner::workspace_client::container_up::integrations::IntegrationEffects
-    for WorkspaceUpEffects
-{
-    fn reconcile(
-        &mut self,
-        step: workspace_integrations::WorkspaceIntegrationStep,
-        deadline: std::time::Instant,
-    ) -> Result<(), effigy_kernel::run::RunError> {
-        use effigy_kernel::run::RunError;
-        use workspace_integrations::WorkspaceIntegrationStep as Step;
-        let failed = |error: RunnerError| {
-            #[cfg(feature = "workspace-serving-fixture")]
-            crate::runner::workspace_client::container_up::fixture_diagnostic(
-                "integration effect failed",
-            );
-            let _ = error;
-            RunError::unavailable("workspace integration effect failed")
-        };
-        if std::time::Instant::now() >= deadline {
-            return Err(RunError::unavailable("integration budget exhausted"));
-        }
-        if step != Step::Readiness {
-            self.binding()?
-                .reverify(&self.policy.repo_root, &self.policy, deadline)
-                .map_err(|_| RunError::unavailable("workspace integration target changed"))?;
-        }
-        let root = &self.policy.repo_root;
-        if step == Step::Readiness {
-            let waits = crate::runner::managed_wait::ActivationWaits::begin(
-                root,
-                &self.policy.name,
-                crate::runner::environment::requested_holder(),
-            )
-            .map_err(failed)?;
-            let mut graph = crate::runner::host_process::HostWaitGraph::for_environment_phase(
-                &self.policy,
-                waits.publisher(),
-                std::time::Instant::now(),
-            );
-            let mut observe_phase = |state: &effigy_core::managed_waits::EntryState| {
-                graph.observe_environment_phase(state, std::time::Instant::now());
-            };
-            self.health = wait_for_container_ready(
-                &self.policy,
-                None,
-                crate::runner::container_command::readiness::ObservationBudget::Until(deadline),
-                Some(&mut observe_phase),
-            )
-            .map_err(failed)?;
-            graph.environment_ready(std::time::Instant::now());
-            self.waits = Some(waits);
-            if self.health == Some("interrupted") {
-                return Err(RunError::refused("workspace readiness interrupted"));
-            }
-        }
-        if step == Step::Secrets {
-            self.secrets_attempted = !self.secrets.env.is_empty()
-                && self.secrets.delivery
-                    == effigy_manifest::ManifestContainerSecretDelivery::RuntimeFiles;
-        }
-        if step == Step::Routes {
-            self.routes_attempted =
-                crate::runner::container_runtime_prep::container_policy_uses_gateway_surface(
-                    &self.policy,
-                );
-        }
-        let waits = self.waits.as_mut().ok_or_else(|| {
-            RunError::unavailable("workspace activation observations are unavailable")
-        })?;
-        RuntimeIntegrationContext {
-            root,
-            policy: &self.policy,
-            secrets: &self.secrets,
-            container_name: Some(&self.policy.name),
-            outcome: IntegrationOutcomePolicy::Workspace,
-            progress: None,
-            publisher: waits.publisher(),
-        }
-        .reconcile(&mut self.runtime, step, Some(deadline))
-        .map_err(failed)?;
-        if step == Step::HostIntegrations {
-            let complete = self
-                .runtime
-                .report
-                .managed_host_listener_failures
-                .is_empty();
-            waits.finish(complete).map_err(failed)?;
-            if !complete {
-                return Err(RunError::unavailable(
-                    "workspace host listener exposure is incomplete",
-                ));
-            }
-        }
-        if step == Step::Readiness && self.binding()?.id() != self.target.container_id {
-            return Err(RunError::refused(
-                "workspace integration primary target changed",
-            ));
-        }
-
-        Ok(())
-    }
-
-    fn unwind(
-        &mut self,
-        step: workspace_integrations::WorkspaceIntegrationStep,
-        cleanup_deadline: std::time::Instant,
-    ) -> Result<(), effigy_kernel::run::RunError> {
-        use effigy_kernel::run::RunError;
-        use workspace_integrations::WorkspaceIntegrationStep as Step;
-        if std::time::Instant::now() >= cleanup_deadline {
-            return Err(RunError::unavailable(
-                "workspace integration cleanup budget exhausted",
-            ));
-        }
-        // Readiness and undeclared permission/host integrations change nothing.
-        // A journalled step alone does not prove its helper mutated anything.
-        // For attempted mutations the ordinary helpers do not yet
-        // supply exact-effect absence evidence: retain handles/journal instead
-        // of erasing another activation's route, process or secret files.
-        let absent = match step {
-            Step::Readiness => true,
-            Step::Permissions => self.policy.workspace_user.is_none(),
-            Step::Secrets => !self.secrets_attempted,
-            Step::Routes => !self.routes_attempted,
-            Step::HostIntegrations => {
-                self.policy.host_processes.is_empty()
-                    && !crate::runner::container_runtime_prep::container_policy_uses_gateway_surface(
-                        &self.policy,
-                    )
-            }
-        };
-        absent
-            .then_some(())
-            .ok_or_else(|| RunError::unavailable("integration effects unsettled; re-run up"))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::super::tests::{shared_service, test_policy};
-    use super::*;
-    #[test]
-    fn workspace_integration_cleanup_distinguishes_undeclared_effects_from_mutations() {
-        use crate::runner::container_command::secret_env::ResolvedContainerSecretRuntime;
-        use crate::runner::container_command::workspace_integrations::WorkspaceIntegrationStep as Step;
-        use crate::runner::workspace_client::container_up::integrations::IntegrationEffects;
-        use std::time::{Duration, Instant};
-        let mut effects = WorkspacePreparedEffects {
-            policy: test_policy(Vec::new()),
-            secrets: ResolvedContainerSecretRuntime {
-                delivery: effigy_manifest::ManifestContainerSecretDelivery::ComposeEnv,
-                env: Vec::new(),
-                warnings: Vec::new(),
-            },
-        }
-        .bind(effigy_kernel::workspace_session::ContainerIdentity {
-            container_id: "a".repeat(64),
-            vm_boot_id: "boot".into(),
-            backend: "docker-compose".into(),
-        });
-        let deadline = Instant::now() + Duration::from_secs(5);
-        for step in [
-            Step::Readiness,
-            Step::Permissions,
-            Step::Secrets,
-            Step::Routes,
-            Step::HostIntegrations,
-        ] {
-            effects
-                .unwind(step, deadline)
-                .expect("undeclared effects have no mutation to withdraw");
-            assert!(effects.unwind(step, Instant::now()).is_err());
-        }
-        effects.policy.workspace_user = Some("nobody".into());
-        assert!(effects.unwind(Step::Permissions, deadline).is_err());
-        effects
-            .policy
-            .shared_services
-            .push(shared_service("db", "postgres", 5432));
-        assert!(effects.unwind(Step::HostIntegrations, deadline).is_err());
-        effects.secrets_attempted = true;
-        effects.routes_attempted = true;
-        assert!(effects.unwind(Step::Secrets, deadline).is_err());
-        assert!(effects.unwind(Step::Routes, deadline).is_err());
-    }
 }

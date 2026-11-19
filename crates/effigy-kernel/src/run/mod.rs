@@ -73,9 +73,6 @@ pub fn verify_prepared_foreground_gates(
     crate::gate::Gate::verify_prepared_foreground(root, &ids).map_err(RunError::from)
 }
 
-pub(crate) use attachments::{
-    check_activation_fence, holder_attachment, publish_active_state, workspace_bindings,
-};
 /// Disposable-fixture support: record one environment's own `active`
 /// publication exactly as an activation commit does, through the same fence
 /// check and the same transaction, so a process-lifetime proof can admit a
@@ -93,26 +90,17 @@ pub fn publish_active_for_fixture(
 ) -> Result<(), RunError> {
     let mut store = crate::store::Store::open(cx, root)?;
     store.transaction(cx, |txn| {
-        attachments::check_activation_fence(txn.conn(), owner)?;
+        journal::check_fence(txn.conn(), owner)?;
         attachments::publish_active_state(txn, owner)
     })
 }
 
 pub use attachments::{
-    unfinished_guest_binary, AttachMode, AttachmentTicket, Attachments, GuestBinaryTicket,
-    GuestPublicationReceipt, GuestPublicationTicket, Holder, Liveness, TransitionPermit,
-    GUEST_BINARY_KIND, GUEST_PUBLICATION_KIND,
+    AttachMode, AttachmentTicket, Attachments, GuestPublicationReceipt, GuestPublicationTicket,
+    Holder, Liveness, TransitionPermit, GUEST_PUBLICATION_KIND,
 };
 pub use history::{children, history, recent, summary, unclosed, RunSummary};
 pub use logs::{read_log, LogRead};
-pub use workspace::{
-    attach_secondary, lookup, owner_attachment_id, reserve_resolved, resume_owner,
-    resume_secondary, workspace_managed_token, AdmissionKey, AdmissionTicket, Attachment,
-    AttachmentId, Chunk, Client, Gap, InvalidHexId, RecordedOutcome, Recovered, Release, RequestId,
-    Reservation, Session, UnknownAdmission, CONTROL_MAX, MAX_CHUNK, SECONDARY_MAX,
-};
-mod workspace;
-mod workspace_custody;
 pub(crate) use settle::settle_interrupted_wait;
 pub use settle::{settle_interrupted, Reconciled, Settled, SettlementAdapter};
 
@@ -124,7 +112,7 @@ use crate::observe::UnknownReason;
 use crate::outcome::{Invocation, Outcome, WorkloadOutcome};
 use crate::root::StateRoot;
 use crate::store::{BusyWait, Store, StoreError, SETTLE_BUSY_WAIT};
-use rusqlite::{params, OptionalExtension};
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -418,6 +406,14 @@ pub struct BeginOpts {
     /// Planned custody requires a re-executable sentinel before any workload.
     pub custody: Option<crate::supervise::LifecyclePlan>,
 }
+impl std::fmt::Debug for Run<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Run")
+            .field("id", &self.id)
+            .field("owner", &self.owner)
+            .finish_non_exhaustive()
+    }
+}
 pub struct Run<'a> {
     root: &'a StateRoot,
     store: Store,
@@ -432,7 +428,6 @@ pub struct Run<'a> {
     // manufactures success; only finish durably records the validated outcome.
     completed: std::collections::BTreeMap<i64, crate::outcome::RequiredObligation>,
     sentinel: Option<crate::supervise::SentinelLease>,
-    partial_sentinel: Option<Box<crate::supervise::PartialSentinel>>,
     machine_startup: Option<machine::Startup>,
     checkout_custody: Option<checkout_custody::CheckoutCustody>,
     ancestor_closure: Option<crate::closure::ClosurePin>,
@@ -443,770 +438,9 @@ pub struct Run<'a> {
         i64,
         std::sync::Arc<std::sync::Mutex<crate::custody::ProcessCore>>,
     >,
-    /// The session's one live listener claim, when this run is a workspace
-    /// session. A second launch for the same session refuses instead of opening
-    /// a second listener and key under one session's custody.
-    session_launch: std::cell::RefCell<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>,
 }
 
-/// Retains the exact reserved run while its environment gate is free. There is
-/// deliberately no generic effect access through this type.
-#[derive(Debug)]
-pub struct ParkedWorkspaceRun<'a> {
-    run: Run<'a>,
-    gates: Vec<crate::id::ResourceId>,
-    reservation: crate::workspace_session::WorkspaceActivationReservation,
-    snapshot: crate::workspace_session::ActivationReservationRecord,
-    deadline: std::time::Instant,
-    identity: crate::ident::ProcessIdentity,
-    resume_facts: Option<WorkspaceResumeFacts>,
-}
-
-/// Re-runnable integration work recorded by the retained session owner.
-/// These records track custody and recovery, not authenticated effect receipts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkspaceIntegrationStep {
-    Readiness,
-    Permissions,
-    Secrets,
-    Routes,
-    HostIntegrations,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkspaceIntegrationState {
-    Attempted,
-    Completed,
-    Cleared,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WorkspaceIntegrationRecord {
-    reservation: crate::workspace_session::ActivationReservationId,
-    step: WorkspaceIntegrationStep,
-    state: WorkspaceIntegrationState,
-}
-
-const WORKSPACE_INTEGRATION_KIND: &str = "kernel:workspace-integration-step";
-
-fn workspace_integration_journal(
-    conn: &rusqlite::Connection,
-    run: RunId,
-    owner: &Fence,
-    reservation: crate::workspace_session::ActivationReservationId,
-) -> Result<std::collections::BTreeMap<WorkspaceIntegrationStep, WorkspaceIntegrationState>, RunError>
-{
-    let mut steps = std::collections::BTreeMap::new();
-    for effect in journal::effects(conn, run)? {
-        if effect.spec.kind != WORKSPACE_INTEGRATION_KIND {
-            continue;
-        }
-        if !matches!(effect.state, EffectState::Applied | EffectState::Retained)
-            || effect.spec.target != *owner
-            || effect.spec.settlement != Settlement::Retain
-            || effect.spec.required
-        {
-            return Err(RunError::broken(
-                "workspace integration journal is inconsistent",
-            ));
-        }
-        let record: WorkspaceIntegrationRecord = serde_json::from_value(effect.spec.payload)?;
-        if record.reservation != reservation {
-            return Err(RunError::refused(
-                "workspace integration journal belongs to another reservation",
-            ));
-        }
-        match record.state {
-            WorkspaceIntegrationState::Attempted => {
-                steps.insert(record.step, record.state);
-            }
-            WorkspaceIntegrationState::Completed if steps.contains_key(&record.step) => {
-                steps.insert(record.step, record.state);
-            }
-            WorkspaceIntegrationState::Cleared if steps.contains_key(&record.step) => {
-                steps.remove(&record.step);
-            }
-            _ => {
-                return Err(RunError::broken(
-                    "workspace integration journal transition is inconsistent",
-                ))
-            }
-        }
-    }
-    Ok(steps)
-}
-
-pub(crate) fn workspace_integrations_unsettled(
-    conn: &rusqlite::Connection,
-    binding: &crate::workspace_session::SessionBinding,
-    reservation: crate::workspace_session::ActivationReservationId,
-) -> Result<bool, RunError> {
-    let owner = Fence {
-        resource: binding.owner.clone(),
-        generation: binding.generation,
-    };
-    Ok(!workspace_integration_journal(conn, binding.run, &owner, reservation)?.is_empty())
-}
-
-/// Exact journal facts the adapter must reobserve before resuming publication.
-#[derive(Clone, PartialEq, Eq)]
-pub struct WorkspaceResumeFacts {
-    pub reservation: crate::workspace_session::ActivationReservationId,
-    pub environment: ResourceId,
-    pub environment_run: RunId,
-    pub environment_generation: crate::id::Generation,
-    pub session: crate::workspace_session::SessionBinding,
-    pub selection: crate::id::Digest,
-    pub target: crate::workspace_session::ContainerIdentity,
-    pub platform: crate::workspace_session::BoundPlatform,
-    pub creator_receipt: Value,
-    pub created_ids: Vec<String>,
-}
-
-impl std::fmt::Debug for WorkspaceResumeFacts {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WorkspaceResumeFacts")
-            .field("reservation", &self.reservation)
-            .field("environment_run", &self.environment_run)
-            .finish_non_exhaustive()
-    }
-}
-
-/// Read-only expected facts. They are not an observation of the backend.
-#[derive(Debug)]
-pub struct WorkspaceResumeView<'a> {
-    facts: &'a WorkspaceResumeFacts,
-    deadline: std::time::Instant,
-}
-impl WorkspaceResumeView<'_> {
-    pub fn facts(&self) -> &WorkspaceResumeFacts {
-        self.facts
-    }
-    pub fn deadline(&self) -> std::time::Instant {
-        self.deadline
-    }
-}
-
-/// Gate reacquired and journal fence checked. Backend and publication evidence
-/// still require validation, so this state exposes no generic run effects.
-#[derive(Debug)]
-pub struct ReacquiredWorkspaceRun<'a> {
-    owner: ParkedWorkspaceRun<'a>,
-}
-
-impl<'a> ReacquiredWorkspaceRun<'a> {
-    /// Release only Env again before gate-free cleanup. A failed release keeps
-    /// the same guarded owner so no cleanup custody is lost.
-    pub fn repark(mut self) -> Result<ParkedWorkspaceRun<'a>, (RunError, Box<Self>)> {
-        match self.owner.run.guard.park() {
-            Ok(gates) => {
-                self.owner.gates = gates;
-                Ok(self.owner)
-            }
-            Err(reason) => Err((RunError::refused(reason), Box::new(self))),
-        }
-    }
-
-    /// A failed revalidation can settle under a separate cleanup budget
-    /// without exposing normal Env effect authority.
-    pub fn settle(
-        self,
-        cleanup: &CleanupContext,
-        adapter: &mut impl SettlementAdapter,
-    ) -> Result<Outcome<Settled>, (RunError, Box<GuardedWorkspaceCleanup<'a>>)> {
-        GuardedWorkspaceCleanup {
-            run: self.owner.run,
-        }
-        .settle(cleanup, adapter)
-    }
-
-    pub fn view(&self) -> Result<WorkspaceResumeView<'_>, RunError> {
-        let facts = self.owner.resume_facts.as_ref().ok_or_else(|| {
-            RunError::unavailable("workspace resume evidence was incomplete at park")
-        })?;
-        Ok(WorkspaceResumeView {
-            facts,
-            deadline: self.owner.deadline,
-        })
-    }
-
-    /// Perform the kernel's structural resume checks against the exact facts
-    /// captured under the original gate. The caller must first run the creator
-    /// owner's full receipt validation and bounded backend reobservation; this
-    /// kernel method does not qualify a backend or authenticate an adapter.
-    pub fn resume(
-        mut self,
-        session: &Run<'_>,
-        observed: crate::observe::Observed<WorkspaceResumeFacts>,
-    ) -> Result<Run<'a>, (RunError, Box<Self>)> {
-        let checked = (|| {
-            self.owner.run.can_effect()?;
-            if std::time::Instant::now() >= self.owner.deadline {
-                return Err(RunError::unavailable(
-                    "workspace activation deadline expired",
-                ));
-            }
-            if crate::ident::process_identity(std::process::id()).verified()
-                != Some(&self.owner.identity)
-            {
-                return Err(RunError::unavailable(
-                    "workspace activation owner identity changed or unavailable",
-                ));
-            }
-            let expected = self.owner.resume_facts.as_ref().ok_or_else(|| {
-                RunError::unavailable("workspace resume evidence was incomplete at park")
-            })?;
-            match observed {
-                crate::observe::Observed::Verified(ref fresh, _) if fresh == expected => {}
-                crate::observe::Observed::Verified(_, _) => {
-                    return Err(RunError::refused("workspace resume observation changed"))
-                }
-                crate::observe::Observed::Absent(_) => {
-                    return Err(RunError::refused("workspace resume observation is absent"))
-                }
-                crate::observe::Observed::Unknown(reason) => {
-                    return Err(RunError::unavailable(format!(
-                        "workspace resume observation is unknown: {reason}"
-                    )))
-                }
-            }
-            let current = self.owner.reservation.verify_claimed_run(
-                self.owner.run.store.conn(),
-                self.owner.run.id,
-                &self.owner.run.owner,
-            )?;
-            if current != self.owner.snapshot {
-                return Err(RunError::refused(
-                    "workspace reservation changed during revalidation",
-                ));
-            }
-            let binding = current
-                .session
-                .as_ref()
-                .ok_or_else(|| RunError::refused("parked activation has no staged session"))?;
-            if !session.owns_workspace_session(self.owner.run.root, binding)? {
-                return Err(RunError::refused(
-                    "retained workspace session owner does not hold its exact slot",
-                ));
-            }
-            self.owner.verify_session()?;
-            let (current, facts) = self.owner.run.workspace_snapshot(&self.owner.reservation)?;
-            if current != self.owner.snapshot || facts? != *expected {
-                return Err(RunError::refused(
-                    "workspace journalled resume evidence changed",
-                ));
-            }
-            self.owner.run.can_effect()?;
-            if std::time::Instant::now() >= self.owner.deadline {
-                return Err(RunError::unavailable(
-                    "workspace activation deadline expired",
-                ));
-            }
-            Ok(())
-        })();
-        match checked {
-            Ok(()) => Ok(self.owner.run),
-            Err(error) => Err((error, Box::new(self))),
-        }
-    }
-}
-
-/// Unsettled cleanup retains either the parked run or its reacquired gate.
-#[derive(Debug)]
-pub enum WorkspaceCleanupCustody<'a> {
-    Parked(Box<ParkedWorkspaceRun<'a>>),
-    Guarded(Box<GuardedWorkspaceCleanup<'a>>),
-}
-
-/// A cleanup-only owner. It cannot issue generic run effects.
-#[derive(Debug)]
-pub struct GuardedWorkspaceCleanup<'a> {
-    run: Run<'a>,
-}
-
-impl<'a> GuardedWorkspaceCleanup<'a> {
-    pub fn settle(
-        self,
-        cleanup: &CleanupContext,
-        adapter: &mut impl SettlementAdapter,
-    ) -> Result<Outcome<Settled>, (RunError, Box<Self>)> {
-        match self.run.settle_workspace_recoverable(cleanup, adapter) {
-            Ok(outcome) => Ok(outcome),
-            Err((error, run)) => Err((error, Box::new(Self { run: *run }))),
-        }
-    }
-}
-
-impl<'a> ParkedWorkspaceRun<'a> {
-    fn verify_integration_owner(
-        &self,
-        session: &Run<'_>,
-        conn: &rusqlite::Connection,
-    ) -> Result<(), RunError> {
-        if self.run.guard.covers(&self.run.owner.resource) {
-            return Err(RunError::refused(
-                "workspace integration requires Env to be free",
-            ));
-        }
-        if crate::ident::process_identity(std::process::id()).verified() != Some(&self.identity) {
-            return Err(RunError::unavailable(
-                "workspace activation owner identity changed or unavailable",
-            ));
-        }
-        let binding = self
-            .snapshot
-            .session
-            .as_ref()
-            .ok_or_else(|| RunError::refused("parked activation has no staged session"))?;
-        if !session.owns_workspace_session_for_cleanup(self.run.root, binding)? {
-            return Err(RunError::refused(
-                "retained workspace session owner does not hold its exact slot",
-            ));
-        }
-        crate::workspace_session::check_run_fence(conn, session.id, &session.owner)?;
-        let current = self
-            .reservation
-            .verify_claimed_run(conn, self.run.id, &self.run.owner)?;
-        if current != self.snapshot {
-            return Err(RunError::refused(
-                "workspace reservation changed while parked",
-            ));
-        }
-        Ok(())
-    }
-
-    fn integration_snapshot_on(
-        &self,
-        session: &Run<'_>,
-        conn: &rusqlite::Connection,
-    ) -> Result<
-        std::collections::BTreeMap<WorkspaceIntegrationStep, WorkspaceIntegrationState>,
-        RunError,
-    > {
-        self.verify_integration_owner(session, conn)?;
-        workspace_integration_journal(conn, session.id, &session.owner, self.reservation.id())
-    }
-
-    /// Read attempted and completed effects while retaining the exact owners.
-    pub fn integration_snapshot(
-        &self,
-        session: &Run<'_>,
-        cx: &EffectContext,
-    ) -> Result<
-        std::collections::BTreeMap<WorkspaceIntegrationStep, WorkspaceIntegrationState>,
-        RunError,
-    > {
-        cx.operation().check("workspace integration snapshot")?;
-        let result = self.integration_snapshot_on(session, session.store.conn())?;
-        cx.operation().check("workspace integration snapshot")?;
-        Ok(result)
-    }
-
-    /// Atomically append a bounded, non-secret integration custody record.
-    /// Clearing uses the caller's fresh cleanup context and may follow expiry.
-    pub fn record_integration_step(
-        &self,
-        session: &mut Run<'_>,
-        cx: &EffectContext,
-        step: WorkspaceIntegrationStep,
-        state: WorkspaceIntegrationState,
-    ) -> Result<(), RunError> {
-        if state != WorkspaceIntegrationState::Cleared && std::time::Instant::now() >= self.deadline
-        {
-            return Err(RunError::unavailable(
-                "workspace activation deadline expired",
-            ));
-        }
-        if state != WorkspaceIntegrationState::Cleared {
-            self.run.cx.operation().check("workspace integration")?;
-            session.can_effect()?;
-        }
-        self.verify_integration_owner(session, session.store.conn())?;
-        let owner = session.owner.clone();
-        let run_id = session.id;
-        let snapshot = self.integration_snapshot(session, cx)?;
-        if state != WorkspaceIntegrationState::Attempted && !snapshot.contains_key(&step) {
-            return Err(RunError::refused(
-                "workspace integration step was not attempted",
-            ));
-        }
-        let spec = EffectSpec {
-            target: owner.clone(),
-            kind: WORKSPACE_INTEGRATION_KIND.into(),
-            payload: serde_json::to_value(WorkspaceIntegrationRecord {
-                reservation: self.reservation.id(),
-                step,
-                state,
-            })?,
-            settlement: Settlement::Retain,
-            required: false,
-        };
-        session
-            .store
-            .transaction_within(cx, BusyWait::Context, |txn| {
-                crate::workspace_session::check_run_fence(txn.conn(), run_id, &owner)?;
-                let current = self.reservation.verify_claimed_run(
-                    txn.conn(),
-                    self.run.id,
-                    &self.run.owner,
-                )?;
-                if current != self.snapshot {
-                    return Err(RunError::refused(
-                        "workspace reservation changed while parked",
-                    ));
-                }
-                if state != WorkspaceIntegrationState::Cleared
-                    && std::time::Instant::now() >= self.deadline
-                {
-                    return Err(RunError::unavailable(
-                        "workspace activation deadline expired",
-                    ));
-                }
-                let sequence = journal::insert_effect(txn, run_id, &spec)?;
-                journal::write_effect(txn, run_id, sequence, EffectState::Applied, None, None)
-            })
-    }
-
-    fn verify_session(&self) -> Result<(), RunError> {
-        let session = self
-            .snapshot
-            .session
-            .as_ref()
-            .ok_or_else(|| RunError::refused("parked activation has no staged session"))?;
-        let row: Option<(i64, String, Option<String>)> = self
-            .run
-            .store
-            .conn()
-            .query_row(
-                "SELECT generation,phase,owner_identity FROM runs WHERE run_id=?1 AND owner=?2",
-                params![session.run.to_string(), session.owner.name().to_string()],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .optional()?;
-        let (generation, phase, identity) =
-            row.ok_or_else(|| RunError::refused("parked workspace session is no longer live"))?;
-        if generation != session.generation.get() as i64
-            || !matches!(phase.as_str(), "admitted" | "starting" | "active")
-        {
-            return Err(RunError::refused(
-                "parked workspace session is no longer live",
-            ));
-        }
-        let identity: crate::ident::ProcessIdentity =
-            serde_json::from_str(identity.as_deref().ok_or_else(|| {
-                RunError::unavailable("workspace session owner identity unavailable")
-            })?)?;
-        if identity != self.identity {
-            return Err(RunError::refused(
-                "workspace session has another owning process",
-            ));
-        }
-        let slot = crate::workspace_session::session_run_gate(
-            self.run.store.conn(),
-            &session.owner,
-            session.run,
-        )?;
-        if slot == session.owner {
-            return Err(RunError::unavailable(
-                "workspace session private liveness slot unavailable",
-            ));
-        }
-        let observe = self
-            .run
-            .cx
-            .child_until(self.deadline)
-            .operation()
-            .observe()
-            .map_err(|_| {
-                RunError::unavailable("workspace session liveness observation unavailable")
-            })?;
-        match Gate::probe(&observe, self.run.root, &slot) {
-            crate::observe::Observed::Verified(crate::gate::GateState::Held(_), _) => Ok(()),
-            _ => Err(RunError::unavailable(
-                "workspace session private liveness slot is not verified held",
-            )),
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn expire_for_test(&mut self) {
-        self.deadline = std::time::Instant::now();
-    }
-
-    /// Reacquire only for cleanup, with a fresh cleanup budget. This never
-    /// grants authority to resume activation or publish a generation.
-    pub fn settle(
-        mut self,
-        cleanup: &CleanupContext,
-        adapter: &mut impl SettlementAdapter,
-    ) -> Result<Outcome<Settled>, (RunError, WorkspaceCleanupCustody<'a>)> {
-        let checked = (|| {
-            if crate::ident::process_identity(std::process::id()).verified() != Some(&self.identity)
-            {
-                return Err(RunError::unavailable(
-                    "workspace activation owner identity changed or unavailable",
-                ));
-            }
-            let cx = cleanup
-                .operation()
-                .effects()
-                .map_err(|error| RunError::unavailable(error.to_string()))?;
-            let wait = match cleanup.operation().deadline() {
-                crate::ctx::Deadline::At(deadline) => Wait::Until(deadline),
-                crate::ctx::Deadline::Open(_) => Wait::FailFast,
-            };
-            let guard = Gate::acquire(&cx, self.run.root, &self.gates, wait)?;
-            let current = self.reservation.verify_claimed_run(
-                self.run.store.conn(),
-                self.run.id,
-                &self.run.owner,
-            )?;
-            if current != self.snapshot {
-                return Err(RunError::refused(
-                    "workspace reservation changed while parked",
-                ));
-            }
-            guard.set_run(&self.run.id);
-            self.run.guard = guard;
-            Ok(())
-        })();
-        if let Err(error) = checked {
-            return Err((error, WorkspaceCleanupCustody::Parked(Box::new(self))));
-        }
-        GuardedWorkspaceCleanup { run: self.run }
-            .settle(cleanup, adapter)
-            .map_err(|(error, custody)| (error, WorkspaceCleanupCustody::Guarded(custody)))
-    }
-    /// Reacquire within the original deadline and compare the entire frozen
-    /// reservation. On failure the original parked custody is returned.
-    pub fn reacquire(mut self) -> Result<ReacquiredWorkspaceRun<'a>, (RunError, Box<Self>)> {
-        let checked = (|| {
-            if std::time::Instant::now() >= self.deadline {
-                return Err(RunError::unavailable(
-                    "workspace activation deadline expired",
-                ));
-            }
-            if crate::ident::process_identity(std::process::id()).verified() != Some(&self.identity)
-            {
-                return Err(RunError::unavailable(
-                    "workspace activation owner identity changed or unavailable",
-                ));
-            }
-            let guard = Gate::acquire(
-                &self.run.cx,
-                self.run.root,
-                &self.gates,
-                Wait::Until(self.deadline),
-            )?;
-            if std::time::Instant::now() >= self.deadline {
-                return Err(RunError::unavailable(
-                    "workspace activation deadline expired",
-                ));
-            }
-            let current = self.reservation.verify_claimed_run(
-                self.run.store.conn(),
-                self.run.id,
-                &self.run.owner,
-            )?;
-            if current != self.snapshot {
-                return Err(RunError::refused(
-                    "workspace reservation changed while parked",
-                ));
-            }
-            self.verify_session()?;
-            self.run
-                .cx
-                .operation()
-                .check("workspace activation reacquire")?;
-            if std::time::Instant::now() >= self.deadline {
-                return Err(RunError::unavailable(
-                    "workspace activation deadline expired",
-                ));
-            }
-            guard.set_run(&self.run.id);
-            self.run.guard = guard;
-            Ok(())
-        })();
-        match checked {
-            Ok(()) => Ok(ReacquiredWorkspaceRun { owner: self }),
-            Err(error) => Err((error, Box::new(self))),
-        }
-    }
-}
-
-impl std::fmt::Debug for Run<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Run")
-            .field("id", &self.id)
-            .field("owner", &self.owner)
-            .finish_non_exhaustive()
-    }
-}
 impl<'a> Run<'a> {
-    fn workspace_snapshot(
-        &mut self,
-        reservation: &crate::workspace_session::WorkspaceActivationReservation,
-    ) -> Result<
-        (
-            crate::workspace_session::ActivationReservationRecord,
-            Result<WorkspaceResumeFacts, RunError>,
-        ),
-        RunError,
-    > {
-        self.can_effect()?;
-        self.store.transaction(&self.cx, |txn| {
-            let record = reservation.verify_claimed_run(txn.conn(), self.id, &self.owner)?;
-            let facts = journal::effects(txn.conn(), self.id).and_then(|effects| {
-                crate::workspace_session::resume_facts(&record, self.id, &self.owner, &effects)
-            });
-            Ok((record, facts))
-        })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn share_workspace_gate_for_test(
-        &mut self,
-    ) -> std::io::Result<Vec<std::os::fd::OwnedFd>> {
-        self.guard.share_custody()
-    }
-
-    /// Consume a claimed environment run and release only its gate. Failure
-    /// returns the original owner so the caller can settle it explicitly.
-    pub fn park_workspace(
-        mut self,
-        reservation: &crate::workspace_session::WorkspaceActivationReservation,
-        deadline: std::time::Instant,
-    ) -> Result<ParkedWorkspaceRun<'a>, (RunError, Box<Self>)> {
-        let deadline = match self.cx.operation().deadline() {
-            crate::ctx::Deadline::At(original) => deadline.min(original),
-            crate::ctx::Deadline::Open(_) => deadline,
-        };
-        let checked = (|| {
-            self.can_effect()?;
-            self.cleanup_prelaunch_interpolations()?;
-            if std::time::Instant::now() >= deadline {
-                return Err(RunError::unavailable(
-                    "workspace activation deadline expired",
-                ));
-            }
-            // A partially prepared owner may still park for safe cleanup, but
-            // it cannot resume unless every required fact was captured.
-            let (snapshot, facts) = self.workspace_snapshot(reservation)?;
-            let resume_facts = facts.ok();
-            let identity = crate::ident::process_identity(std::process::id())
-                .verified()
-                .cloned()
-                .ok_or_else(|| {
-                    RunError::unavailable("workspace activation owner identity unavailable")
-                })?;
-            let recorded: Option<String> = self.store.conn().query_row(
-                "SELECT owner_identity FROM runs WHERE run_id=?1",
-                [self.id.to_string()],
-                |row| row.get(0),
-            )?;
-            let recorded: crate::ident::ProcessIdentity =
-                serde_json::from_str(recorded.as_deref().ok_or_else(|| {
-                    RunError::unavailable("workspace activation recorded identity unavailable")
-                })?)?;
-            if recorded != identity {
-                return Err(RunError::refused(
-                    "workspace activation owner identity changed",
-                ));
-            }
-            self.can_effect()?;
-            if std::time::Instant::now() >= deadline {
-                return Err(RunError::unavailable(
-                    "workspace activation deadline expired",
-                ));
-            }
-            #[cfg(feature = "workspace-private-qualification")]
-            let gates = if self.sentinel.is_some() && self.checkout_custody.is_some() {
-                self.prepare_qualification_park(deadline)?;
-                self.guard
-                    .park_after_custody_closed()
-                    .map_err(RunError::refused)?
-            } else {
-                self.guard.park().map_err(RunError::refused)?
-            };
-            #[cfg(not(feature = "workspace-private-qualification"))]
-            let gates = self.guard.park().map_err(RunError::refused)?;
-            Ok((snapshot, gates, identity, resume_facts))
-        })();
-        match checked {
-            Ok((snapshot, gates, identity, resume_facts)) => Ok(ParkedWorkspaceRun {
-                run: self,
-                gates,
-                reservation: reservation.clone(),
-                snapshot,
-                deadline,
-                identity,
-                resume_facts,
-            }),
-            Err(error) => Err((error, Box::new(self))),
-        }
-    }
-
-    /// Release a resumed Env owner solely for integration cleanup.  This
-    /// token carries no resume facts and has an expired workload deadline.
-    pub fn park_workspace_for_cleanup(
-        mut self,
-        reservation: &crate::workspace_session::WorkspaceActivationReservation,
-        session: &Run<'_>,
-        cleanup: &CleanupContext,
-    ) -> Result<ParkedWorkspaceRun<'a>, (RunError, Box<Self>)> {
-        let checked = (|| {
-            cleanup.operation().check("workspace cleanup park")?;
-            let snapshot =
-                reservation.verify_claimed_run(self.store.conn(), self.id, &self.owner)?;
-            let binding = snapshot
-                .session
-                .as_ref()
-                .ok_or_else(|| RunError::refused("workspace cleanup session missing"))?;
-            if !session.owns_workspace_session_for_cleanup(self.root, binding)? {
-                return Err(RunError::refused(
-                    "retained workspace session owner does not hold its exact slot",
-                ));
-            }
-            let identity = crate::ident::process_identity(std::process::id())
-                .verified()
-                .cloned()
-                .ok_or_else(|| {
-                    RunError::unavailable("workspace activation owner identity unavailable")
-                })?;
-            let recorded: Option<String> = self.store.conn().query_row(
-                "SELECT owner_identity FROM runs WHERE run_id=?1",
-                [self.id.to_string()],
-                |row| row.get(0),
-            )?;
-            let recorded: crate::ident::ProcessIdentity =
-                serde_json::from_str(recorded.as_deref().ok_or_else(|| {
-                    RunError::unavailable("workspace activation recorded identity unavailable")
-                })?)?;
-            if recorded != identity {
-                return Err(RunError::refused(
-                    "workspace activation owner identity changed",
-                ));
-            }
-            cleanup.operation().check("workspace cleanup park")?;
-            let gates = self.guard.park().map_err(RunError::refused)?;
-            Ok((snapshot, identity, gates))
-        })();
-        match checked {
-            Ok((snapshot, identity, gates)) => Ok(ParkedWorkspaceRun {
-                run: self,
-                gates,
-                reservation: reservation.clone(),
-                snapshot,
-                deadline: std::time::Instant::now(),
-                identity,
-                resume_facts: None,
-            }),
-            Err(error) => Err((error, Box::new(self))),
-        }
-    }
     pub fn begin(
         cx: &EffectContext,
         root: &'a StateRoot,
@@ -1222,9 +456,6 @@ impl<'a> Run<'a> {
             opts,
             || Ok(cleanup.clone()),
             adapter,
-            None,
-            None,
-            None,
             None,
             None,
         )
@@ -1244,126 +475,7 @@ impl<'a> Run<'a> {
         cleanup: impl FnOnce() -> Result<CleanupContext, RunError>,
         adapter: &mut impl SettlementAdapter,
     ) -> Result<Self, RunError> {
-        Self::begin_under(
-            cx, root, inv, opts, cleanup, adapter, None, None, None, None, None,
-        )
-    }
-
-    /// Admit a run bound to a keyed workspace request (§8.11). The reservation,
-    /// the run row and the key's `admitted` state commit in one transaction, so
-    /// no reader ever sees an admitted binding without its run. A reservation
-    /// that never reaches this commit remains Unknown and names no run.
-    #[allow(clippy::too_many_arguments)]
-    pub fn begin_admitted(
-        cx: &EffectContext,
-        root: &'a StateRoot,
-        inv: &ResolvedInvocation,
-        opts: BeginOpts,
-        cleanup: &CleanupContext,
-        adapter: &mut impl SettlementAdapter,
-        ticket: AdmissionTicket,
-    ) -> Result<Self, RunError> {
-        if ticket.run() != opts.id {
-            return Err(RunError::broken(
-                "an admission ticket names a different run than the one it admits",
-            ));
-        }
-        Self::begin_under(
-            cx,
-            root,
-            inv,
-            opts,
-            || Ok(cleanup.clone()),
-            adapter,
-            None,
-            None,
-            Some(ticket),
-            None,
-            None,
-        )
-    }
-
-    /// Admit the environment activation run at the generation a workspace
-    /// activation reserved (§8.7), binding that reservation in the admission
-    /// transaction.
-    ///
-    /// The adopted generation is the one the environment's counter would
-    /// advance to next, so a reservation grants nothing the gate and the counter
-    /// do not already confirm: it only names E early enough for the Task-owned
-    /// session to be admitted (under `Gate(Task)` alone) before this run takes
-    /// `Gate(Env)`. A reservation that already names another run, one whose
-    /// generation another activation consumed, or one that is committed or
-    /// cancelled refuses before the run row exists.
-    #[allow(clippy::too_many_arguments)]
-    pub fn begin_claimed(
-        cx: &EffectContext,
-        root: &'a StateRoot,
-        inv: &ResolvedInvocation,
-        opts: BeginOpts,
-        cleanup: impl FnOnce() -> Result<CleanupContext, RunError>,
-        adapter: &mut impl SettlementAdapter,
-        claim: crate::workspace_session::ActivationClaim,
-    ) -> Result<Self, RunError> {
-        Self::begin_under(
-            cx,
-            root,
-            inv,
-            opts,
-            cleanup,
-            adapter,
-            None,
-            None,
-            None,
-            Some(claim),
-            None,
-        )
-    }
-
-    /// Preserve an already-admitted workspace Env owner when subsequent setup
-    /// fails, including partial sentinel startup. A failure before an owner is
-    /// constructed returns no run. Custody uses the recoverable workspace
-    /// startup path; it does not qualify Discard or private backend execution.
-    #[allow(clippy::too_many_arguments)]
-    pub fn begin_claimed_recoverable(
-        cx: &EffectContext,
-        root: &'a StateRoot,
-        inv: &ResolvedInvocation,
-        opts: BeginOpts,
-        cleanup: impl FnOnce() -> Result<CleanupContext, RunError>,
-        adapter: &mut impl SettlementAdapter,
-        claim: crate::workspace_session::ActivationClaim,
-    ) -> Result<Self, (RunError, Option<Box<GuardedWorkspaceCleanup<'a>>>)> {
-        if !matches!(
-            claim,
-            crate::workspace_session::ActivationClaim::Environment(_)
-        ) {
-            return Err((
-                RunError::refused(
-                    "recoverable claimed admission requires an environment activation",
-                ),
-                None,
-            ));
-        }
-        let mut retained = None;
-        Self::begin_under(
-            cx,
-            root,
-            inv,
-            opts,
-            cleanup,
-            adapter,
-            None,
-            None,
-            None,
-            Some(claim),
-            Some(&mut retained),
-        )
-        .map_err(|error| {
-            (
-                error,
-                retained.map(|run| Box::new(GuardedWorkspaceCleanup { run: *run })),
-            )
-        })
+        Self::begin_under(cx, root, inv, opts, cleanup, adapter, None, None)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1376,9 +488,6 @@ impl<'a> Run<'a> {
         adapter: &mut impl SettlementAdapter,
         parent: Option<RunId>,
         planned: Option<EffectSpec>,
-        admission: Option<AdmissionTicket>,
-        claim: Option<crate::workspace_session::ActivationClaim>,
-        mut retained: Option<&mut Option<Box<Self>>>,
     ) -> Result<Self, RunError> {
         crate::fault_point!(BeginBefore)?;
         if root.is_machine()
@@ -1405,33 +514,10 @@ impl<'a> Run<'a> {
             return Err(RunError::refused("invocation class differs from context"));
         }
         cx.operation().check("begin")?;
-        let session_binding = claim.as_ref().and_then(|claim| claim.session_binding());
-        // Only a frozen workspace-session claim may use its private liveness
-        // slot. It keeps the same logical Task owner and admits no generic
-        // predecessor recovery. No Env gate is acquired on this path.
-        let gate_owner = match session_binding {
-            Some(binding) => {
-                if !inv.spec().gates.is_empty() || !inv.spec().attachments.is_empty() {
-                    return Err(RunError::refused(
-                        "reserved workspace admission takes only its session slot",
-                    ));
-                }
-                let store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
-                crate::workspace_session::session_run_gate(
-                    store.conn(),
-                    &binding.owner,
-                    binding.run,
-                )?
-            }
-            None => inv.spec().owner.clone(),
-        };
-        let ids = if session_binding.is_some() {
-            aliases::gates(root, &gate_owner, std::slice::from_ref(&gate_owner))?
-        } else {
-            let mut ids = inv.spec().gates.clone();
-            ids.push(inv.spec().owner.clone());
-            aliases::gates(root, &inv.spec().owner, &ids)?
-        };
+        let gate_owner = inv.spec().owner.clone();
+        let mut ids = inv.spec().gates.clone();
+        ids.push(inv.spec().owner.clone());
+        let ids = aliases::gates(root, &inv.spec().owner, &ids)?;
         let mut guard = Gate::acquire(cx, root, &ids, opts.wait)?;
         crate::fault_point!(BeginGated)?;
         // Only an owner gate may span recovery callbacks or later effects (K14).
@@ -1451,11 +537,7 @@ impl<'a> Run<'a> {
             settle::compact_machine_closed(&mut store, &inv.spec().owner, &cleanup)?;
         }
         let mut predecessors = Vec::new();
-        if session_binding.is_none() {
-            crate::workspace_session::refuse_session_overlap(store.conn(), &inv.spec().owner)?;
-        }
-        for owner in guard.ids().filter(|_| session_binding.is_none()) {
-            crate::workspace_session::refuse_bound_reservation_recovery(store.conn(), owner)?;
+        for owner in guard.ids() {
             predecessors.extend(
                 journal::predecessors(store.conn(), owner)?
                     .into_iter()
@@ -1463,63 +545,12 @@ impl<'a> Run<'a> {
             );
         }
         let admit = |txn: &mut crate::store::Txn<'_>| {
-            if session_binding.is_none() {
-                let reserved: bool = txn.conn().query_row(
-                    "SELECT EXISTS(SELECT 1 FROM workspace_session_runs WHERE run_id=?1)",
-                    [opts.id.to_string()],
-                    |row| row.get(0),
-                )?;
-                if reserved {
-                    return Err(RunError::refused(
-                        "this run identity belongs to a frozen workspace session",
-                    ));
-                }
-            }
-            if admission.is_none() {
-                // A keyed workspace reservation keeps its run identity until it
-                // is admitted or its session generation ends.
-                workspace::refuse_unkeyed(txn, opts.id)?;
-            }
-            let identity = if admission.is_some() || claim.is_some() {
-                Some(serde_json::to_string(
-                    &crate::ident::process_identity(std::process::id())
-                        .verified()
-                        .ok_or_else(|| RunError::unavailable("owner identity unavailable"))?,
-                )?)
-            } else {
-                None
-            };
             txn.resource(&inv.spec().owner, "run")?;
-            let generation = if let Some(binding) = session_binding {
-                binding.generation
-            } else {
-                crate::workspace_session::refuse_session_overlap(txn.conn(), &inv.spec().owner)?;
-                txn.next_generation(&inv.spec().owner)?
-            };
-            match &claim {
-                // The reserved generation is claimed in this transaction: a
-                // crash leaves either no run and an unclaimed reservation, or
-                // one admitted run bound to it.
-                Some(claim) => {
-                    claim.bind(txn, &inv.spec().owner, generation, opts.id)?;
-                }
-                // A reserved generation is not admitted around its
-                // reservation: a competing environment activation is refused
-                // by name instead of taking the generation the staged session
-                // is labelled with.
-                None => crate::workspace_session::refuse_reserved_generation(
-                    txn.conn(),
-                    &inv.spec().owner,
-                    generation,
-                )?,
-            }
+            let generation = txn.next_generation(&inv.spec().owner)?;
             txn.conn().execute("INSERT INTO runs(run_id,owner,generation,kind,placement,phase,invocation,digest,created_at,updated_at,workload_outcome,parent_run,owner_identity) \
                 VALUES (?1,?2,?3,?4,'host','admitted',?5,?6,?7,?7,?8,?9,?10)", params![opts.id.to_string(),
                 inv.spec().owner.name().to_string(), generation.get() as i64,
-                if opts.custody.is_some() {"custody"}else{"operation"}, serde_json::to_string(inv)?, inv.digest().0.as_slice(), txn.now(), if opts.custody.is_some() {Some(serde_json::to_string(&WorkloadOutcome::NotStarted)?)}else{None}, parent.map(|id| id.to_string()), identity])?;
-            if let Some(ticket) = &admission {
-                workspace::bind(txn, ticket, inv)?;
-            }
+                if opts.custody.is_some() {"custody"}else{"operation"}, serde_json::to_string(inv)?, inv.digest().0.as_slice(), txn.now(), if opts.custody.is_some() {Some(serde_json::to_string(&WorkloadOutcome::NotStarted)?)}else{None}, parent.map(|id| id.to_string()), None::<String>])?;
             if let Some(planned) = &planned {
                 let fence = Fence {
                     resource: inv.spec().owner.clone(),
@@ -1535,14 +566,6 @@ impl<'a> Run<'a> {
         // A keyed run and its consumed ticket commit before predecessor effects.
         // A crash during recovery leaves one admitted run to recover, never a
         // reservation that could be handed off again after effects occurred.
-        let admitted_generation = if admission.is_some() {
-            let generation =
-                store.transaction(&cx.child(std::time::Duration::from_secs(30)), admit)?;
-            guard.set_run(&opts.id);
-            Some(generation)
-        } else {
-            None
-        };
         for (owner, predecessor) in predecessors {
             let mut previous = Self {
                 root,
@@ -1558,20 +581,14 @@ impl<'a> Run<'a> {
                 poisoned: false,
                 completed: Default::default(),
                 sentinel: None,
-                partial_sentinel: None,
                 closed_effects: None,
                 machine_startup: None,
                 checkout_custody: None,
                 ancestor_closure: None,
                 prelaunch_interpolations: Default::default(),
                 processes: Default::default(),
-                session_launch: Default::default(),
             };
-            previous.settle_recovering(
-                &cleanup,
-                adapter,
-                admitted_generation.map(|generation| (opts.id, generation)),
-            )?;
+            previous.settle_recovering(&cleanup, adapter, None)?;
             let residue = previous
                 .effects()?
                 .into_iter()
@@ -1600,10 +617,7 @@ impl<'a> Run<'a> {
             guard = previous.guard;
         }
         crate::fault_point!(BeginRecovered)?;
-        let generation = match admitted_generation {
-            Some(generation) => generation,
-            None => store.transaction(&cx.child(std::time::Duration::from_secs(30)), admit)?,
-        };
+        let generation = store.transaction(&cx.child(std::time::Duration::from_secs(30)), admit)?;
         let admitted_fault = (|| {
             crate::fault_point!(BeginAdmitted)?;
             Ok::<(), RunError>(())
@@ -1623,42 +637,20 @@ impl<'a> Run<'a> {
             poisoned: false,
             completed: Default::default(),
             sentinel: None,
-            partial_sentinel: None,
             closed_effects: None,
             machine_startup: planned.map(|_| machine::Startup::default()),
             checkout_custody: None,
             ancestor_closure: None,
             prelaunch_interpolations: Default::default(),
             processes: Default::default(),
-            session_launch: Default::default(),
         };
-        if let Err(error) = admitted_fault {
-            if let Some(retained) = retained.as_mut() {
-                **retained = Some(Box::new(run));
-            }
-            return Err(error);
-        }
+        admitted_fault?;
         if inv.spec().owner.kind() == crate::id::ResourceKind::Env {
             if let crate::id::Scope::Checkout(checkout) = inv.spec().owner.scope() {
-                if let Err(error) = run.protect_checkout(checkout, opts.wait) {
-                    if let Some(retained) = retained.as_mut() {
-                        **retained = Some(Box::new(run));
-                    }
-                    return Err(error);
-                }
+                run.protect_checkout(checkout, opts.wait)?;
             }
         }
         if let Some(plan) = opts.custody {
-            // Recoverable Env admission must not drop a partial helper or
-            // settle behind its caller's reservation. Return the exact owner,
-            // including any partial sentinel and checkout backup, on failure.
-            if let Some(retained) = retained.as_mut() {
-                if let Err(error) = run.enable_workspace_custody(&plan) {
-                    **retained = Some(Box::new(run));
-                    return Err(error);
-                }
-                return Ok(run);
-            }
             let registration = crate::supervise::spawn_sentinel(&run, root, &plan, &opts.next);
             match registration.and_then(|registration| run.register_lifecycle(registration, &plan))
             {
@@ -1672,155 +664,7 @@ impl<'a> Run<'a> {
         Ok(run)
     }
     fn holds_owner_gate(&self) -> Result<bool, RunError> {
-        let gate = crate::workspace_session::session_run_gate(
-            self.store.conn(),
-            &self.owner.resource,
-            self.id,
-        )?;
-        Ok(self.guard.covers(&gate))
-    }
-
-    /// Borrowing this exact owner keeps its Task-ranked liveness slot held
-    /// through activation commit. A cross-process probe cannot provide this
-    /// guarantee: the probed process may die before the transaction starts.
-    /// The owning proof a channel listener may be launched under.
-    ///
-    /// Only a run whose private session slot the journal records as an admitted
-    /// workspace session yields one, so a listener and key are always launched
-    /// for the detached session owner itself, never for a binding a caller
-    /// assembled or for an environment run.
-    /// Claim the session's one live listener for this run.
-    ///
-    /// A workspace session has exactly one listener and key: a second launch for
-    /// a session whose listener is already live refuses here, so one session can
-    /// never serve through two owners. The claim is released when the launch
-    /// stops or its run settles.
-    pub(crate) fn claim_session_launch(
-        &self,
-    ) -> Result<
-        std::sync::Arc<std::sync::atomic::AtomicBool>,
-        crate::workspace_session::ServingRefusal,
-    > {
-        use std::sync::atomic::Ordering;
-        let mut slot = self.session_launch.borrow_mut();
-        if let Some(existing) = slot.as_ref() {
-            if existing.load(Ordering::SeqCst) {
-                return Err(crate::workspace_session::ServingRefusal::AlreadyPublished);
-            }
-        }
-        let claim = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-        *slot = Some(claim.clone());
-        Ok(claim)
-    }
-
-    pub fn session_owner(&mut self) -> Result<crate::workspace_session::SessionOwner, RunError> {
-        self.can_effect()?;
-        if self.owner.resource.kind() != crate::id::ResourceKind::Task {
-            return Err(RunError::refused(
-                "only an admitted workspace session owns a channel listener",
-            ));
-        }
-        // Custody is a detached registration the serving supervisor made, on a
-        // run the journal records as this workspace session.
-        let registered: bool = self.store.conn().query_row(
-            "SELECT EXISTS(SELECT 1 FROM workspace_session_custody WHERE run_id=?1)",
-            params![self.id.to_string()],
-            |row| row.get(0),
-        )?;
-        if !registered {
-            return Err(RunError::refused(
-                "this run holds no detached session custody registration",
-            ));
-        }
-        let known: bool = self.store.conn().query_row(
-            "SELECT (EXISTS(SELECT 1 FROM workspace_session_runs \
-             WHERE run_id=?1 AND owner=?2 AND generation=?3) \
-             OR EXISTS(SELECT 1 FROM workspace_sessions \
-             WHERE run_id=?1 AND session_generation=?3)) \
-             AND EXISTS(SELECT 1 FROM runs WHERE run_id=?1)",
-            params![
-                self.id.to_string(),
-                self.owner.resource.name().to_string(),
-                self.owner.generation.get() as i64
-            ],
-            |row| row.get(0),
-        )?;
-        if !known {
-            return Err(RunError::refused(
-                "only an admitted workspace session owns a channel listener",
-            ));
-        }
-        // The proof names the exact detached run. The session's gate stays with
-        // that run, so settlement releases it; a launch only serves while the
-        // run it names is still open (and can abandon the proof explicitly).
-        Ok(crate::workspace_session::SessionOwner::of(
-            self.id,
-            self.owner.clone(),
-        ))
-    }
-
-    /// Register this run as a detached session's custody owner, on behalf of
-    /// the serving supervisor that holds it. The detached supervisor performs
-    /// this when it adopts the session; a run without it is not a custody
-    /// owner, however it was admitted.
-    pub(crate) fn register_session_custody(&mut self, supervisor_id: &str) -> Result<(), RunError> {
-        self.can_effect()?;
-        if self.owner.resource.kind() != crate::id::ResourceKind::Task
-            || supervisor_id.trim().is_empty()
-        {
-            return Err(RunError::refused(
-                "only a detached workspace session registers custody, under a named supervisor",
-            ));
-        }
-        if crate::workspace_session::session_of_run(self.store.conn(), self.id)?.is_none() {
-            return Err(RunError::refused(
-                "only a recorded workspace session registers custody",
-            ));
-        }
-        self.store.transaction(&self.cx, |txn| {
-            txn.conn().execute(
-                "INSERT INTO workspace_session_custody(run_id,supervisor,created_at) VALUES (?1,?2,?3) \
-                 ON CONFLICT(run_id) DO UPDATE SET supervisor=excluded.supervisor",
-                params![self.id.to_string(), supervisor_id, txn.now()],
-            )?;
-            Ok::<_, RunError>(())
-        })
-    }
-
-    /// Re-read the exact reserved activation while this run holds its Env gate.
-    /// A caller may use this before an external observation, but it is not a
-    /// substitute for revalidating target or creator evidence afterwards.
-    pub fn verify_workspace_reservation(
-        &self,
-        reservation: &crate::workspace_session::WorkspaceActivationReservation,
-    ) -> Result<(), RunError> {
-        self.can_effect()?;
-        reservation.verify_claimed_run(self.store.conn(), self.id, &self.owner)?;
-        Ok(())
-    }
-
-    pub(crate) fn owns_workspace_session(
-        &self,
-        root: &StateRoot,
-        binding: &crate::workspace_session::SessionBinding,
-    ) -> Result<bool, RunError> {
-        self.can_effect()?;
-        self.owns_workspace_session_for_cleanup(root, binding)
-    }
-
-    /// Cleanup verifies retained possession without relying on the operation
-    /// context that may have expired or been cancelled.
-    fn owns_workspace_session_for_cleanup(
-        &self,
-        root: &StateRoot,
-        binding: &crate::workspace_session::SessionBinding,
-    ) -> Result<bool, RunError> {
-        Ok(self.root.path() == root.path()
-            && self.id == binding.run
-            && self.owner.resource == binding.owner
-            && self.owner.generation == binding.generation
-            && journal::run(self.store.conn(), self.id)?.phase != Phase::Closed
-            && self.holds_owner_gate()?)
+        Ok(self.guard.covers(&self.owner.resource))
     }
 
     pub(crate) fn capture_log(
@@ -1930,7 +774,7 @@ impl<'a> Run<'a> {
         sequence: i64,
     ) -> Result<(), RunError> {
         self.store.transaction(&self.cx, |txn| {
-            crate::workspace_session::check_run_fence(txn.conn(), self.id, &self.owner)?;
+            check_workspace_fence(txn.conn(), &self.owner)?;
             journal::write_effect(txn, self.id, sequence, EffectState::Released, None, None)
         })
     }
@@ -2065,7 +909,7 @@ impl<'a> Run<'a> {
                 |txn| {
                     journal::check_fence(txn.conn(), &self.owner)?;
                     if spec.target != self.owner {
-                        crate::workspace_session::check_intent_target(txn.conn(), self.id, &spec)?;
+                        journal::check_spec_target(txn.conn(), &spec)?;
                     }
                     journal::insert_effect(txn, self.id, &spec)
                 },
@@ -2146,7 +990,7 @@ impl<'a> Run<'a> {
             crate::fault_point!(AppliedBefore)?;
             self.store
                 .transaction(&self.cx.child(std::time::Duration::from_secs(30)), |txn| {
-                    crate::workspace_session::check_run_fence(txn.conn(), self.id, &self.owner)?;
+                    check_workspace_fence(txn.conn(), &self.owner)?;
                     let effect = journal::effect(txn.conn(), self.id, ticket.sequence)?;
                     journal::check_run_target(txn.conn(), self.id, &self.owner, &effect)?;
                     if effect.spec.target != self.owner
@@ -2194,7 +1038,7 @@ impl<'a> Run<'a> {
             }
             self.store
                 .transaction(&self.cx.child(std::time::Duration::from_secs(30)), |txn| {
-                    crate::workspace_session::check_run_fence(txn.conn(), self.id, &self.owner)?;
+                    check_workspace_fence(txn.conn(), &self.owner)?;
                     let effect = journal::effect(txn.conn(), self.id, ticket.sequence)?;
                     journal::check_run_target(txn.conn(), self.id, &self.owner, &effect)?;
                     if !matches!(effect.state, EffectState::Intended | EffectState::Unknown) {
@@ -2265,7 +1109,7 @@ impl<'a> Run<'a> {
             crate::fault_point!(PhaseBefore)?;
             self.store
                 .transaction(&self.cx.child(std::time::Duration::from_secs(30)), |txn| {
-                    crate::workspace_session::check_run_fence(txn.conn(), self.id, &self.owner)?;
+                    check_workspace_fence(txn.conn(), &self.owner)?;
                     txn.conn().execute(
                         "UPDATE runs SET phase=?2,updated_at=?3 WHERE run_id=?1",
                         params![self.id.to_string(), phase.name(), txn.now()],
@@ -2291,7 +1135,7 @@ impl<'a> Run<'a> {
         if ticket.run != self.id || ticket.owner != self.owner {
             return Err(RunError::broken("foreign completion ticket"));
         }
-        crate::workspace_session::check_run_fence(self.store.conn(), self.id, &self.owner)?;
+        check_workspace_fence(self.store.conn(), &self.owner)?;
         let effect = journal::effect(self.store.conn(), self.id, ticket.sequence)?;
         journal::check_run_target(self.store.conn(), self.id, &self.owner, &effect)?;
         if effect.state != EffectState::Applied || self.completed.contains_key(&ticket.sequence) {
@@ -2359,7 +1203,7 @@ impl<'a> Run<'a> {
                 &self.cx,
                 BusyWait::AtLeast(SETTLE_BUSY_WAIT),
                 |txn| {
-                    crate::workspace_session::check_run_fence(txn.conn(), self.id, &self.owner)?;
+                    check_workspace_fence(txn.conn(), &self.owner)?;
                     crate::fault_point!(PhaseBefore)?;
                     txn.conn().execute("UPDATE runs SET phase='stopping',workload_outcome=?2,updated_at=?3 WHERE run_id=?1",
                         params![self.id.to_string(), serde_json::to_string(&workload)?, txn.now()])?;
@@ -2395,7 +1239,7 @@ impl<'a> Run<'a> {
         let cx = settle::cleanup_effects(cleanup)?;
         let machine_lifecycle = self.machine_lifecycle();
         self.store.transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
-            crate::workspace_session::check_run_fence(txn.conn(), self.id, &self.owner)?;
+            check_workspace_fence(txn.conn(), &self.owner)?;
             txn.conn().execute("UPDATE runs SET phase='stopping',workload_outcome=?2,updated_at=?3 WHERE run_id=?1",params![self.id.to_string(),serde_json::to_string(&workload)?,txn.now()])?;
             if machine_lifecycle {
                 txn.conn().execute("UPDATE requests SET state='resolved',resolved_at=?2 WHERE run_id=?1 AND state='pending'", params![self.id.to_string(),txn.now()])?;
@@ -2404,8 +1248,7 @@ impl<'a> Run<'a> {
         })
     }
     /// Register an action the run performs when it settles (or is dropped
-    /// un-settled). A session's listener and key custody are released this way,
-    /// so settlement closes the socket and wipes the secret.
+    /// un-settled).
     pub fn on_settle(&mut self, action: impl FnOnce() + Send + 'static) {
         self.guard.on_release(action);
     }
@@ -2441,32 +1284,6 @@ impl<'a> Run<'a> {
             Err(error) => Err((error, Box::new(self))),
         }
     }
-
-    /// Settle an existing checkout workspace owner without losing its exact
-    /// gate when effects remain unresolved. Listener/key release actions run
-    /// first. This returns the same owner on an incomplete cleanup.
-    pub fn settle_workspace_recoverable(
-        mut self,
-        cleanup: &CleanupContext,
-        adapter: &mut impl SettlementAdapter,
-    ) -> Result<Outcome<Settled>, (RunError, Box<Self>)> {
-        if self.root.is_machine() || self.machine_lifecycle() {
-            return Err((
-                RunError::refused(
-                    "recoverable workspace settlement requires a checkout workspace run",
-                ),
-                Box::new(self),
-            ));
-        }
-        if let Err(error) = self.require_environment_gate() {
-            return Err((error, Box::new(self)));
-        }
-        self.run_settle_actions();
-        match self.settle_workspace_inner(cleanup, adapter) {
-            Ok(outcome) => Ok(outcome),
-            Err(error) => Err((error, Box::new(self))),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -2486,19 +1303,16 @@ pub struct Request {
 /// Requests never acquire the owner's gate. Only a current generation accepts
 /// them; owner handling rechecks the same fence immediately before acting.
 pub fn request(cx: &EffectContext, root: &StateRoot, request: &Request) -> Result<(), RunError> {
-    request_bounded(cx, root, request, None, None)
+    request_bounded(cx, root, request, None)
 }
-/// One control request, with an optional bound on how many may wait at once and
-/// an optional client attachment it must still hold. Both the bound and the
-/// attachment row are checked in the transaction that inserts the request, so a
-/// concurrent sender cannot exceed the bound and a release that lands first
-/// cannot be overtaken by a control (§8.11).
+/// One control request, with an optional bound on how many may wait at once.
+/// The bound is checked in the transaction that inserts the request, so a
+/// concurrent sender cannot exceed it.
 pub(super) fn request_bounded(
     cx: &EffectContext,
     root: &StateRoot,
     request: &Request,
     max_pending: Option<usize>,
-    attached: Option<&Attachment>,
 ) -> Result<(), RunError> {
     cx.require(crate::ctx::Capability::AdapterEffect)
         .map_err(|_| RunError::refused("request needs Mutate"))?;
@@ -2517,18 +1331,10 @@ pub(super) fn request_bounded(
     let mut store = Store::open_within(cx, root, wait)?;
     crate::fault_point!(RequestBefore)?;
     store.transaction_within(cx, wait, |txn| {
-        crate::workspace_session::check_run_fence(txn.conn(), request.run, &request.expected)?;
+        check_workspace_fence(txn.conn(), &request.expected)?;
         let record = journal::run(txn.conn(), request.run)?;
         if record.owner != request.expected.resource.name().to_string() || record.generation != request.expected.generation || record.phase == Phase::Closed {
             return Err(RunError::refused("request run is not current"));
-        }
-        if let Some(attachment) = attached {
-            workspace::require_live_owner(&cx.operation().observe().map_err(|_| RunError::refused("observation required"))?, root, txn.conn(), request.run)?;
-            if !workspace::attached_row(txn.conn(), attachment.id(), attachment)? {
-                return Err(RunError::refused(
-                    "this attachment is no longer attached to the run",
-                ));
-            }
         }
         if let Some(max_pending) = max_pending {
             let pending: i64 = txn.conn().query_row(
@@ -2575,7 +1381,7 @@ fn pending_requests(
 
 impl Run<'_> {
     pub fn requests(&self) -> Result<Vec<Request>, RunError> {
-        crate::workspace_session::check_run_fence(self.store.conn(), self.id, &self.owner)?;
+        check_workspace_fence(self.store.conn(), &self.owner)?;
         pending_requests(self.store.conn(), self.id, &self.owner)
     }
 
@@ -2619,7 +1425,7 @@ impl Run<'_> {
             return Err(RunError::broken("foreign request"));
         }
         self.store.transaction(&self.cx.child(std::time::Duration::from_secs(30)), |txn| {
-            crate::workspace_session::check_run_fence(txn.conn(), request.run, &request.expected)?;
+            check_workspace_fence(txn.conn(), &request.expected)?;
             txn.conn().execute("UPDATE requests SET state='resolved',resolved_at=?2 WHERE request_id=?1 AND run_id=?3",
                 params![request.id.to_string(), txn.now(), self.id.to_string()])?;
             Ok::<_, RunError>(())
@@ -2724,60 +1530,6 @@ impl Run<'_> {
 }
 
 impl Run<'_> {
-    #[allow(dead_code)]
-    pub(crate) fn close_partial_workspace_sentinel(
-        &mut self,
-        cleanup: &CleanupContext,
-    ) -> Result<std::process::ExitStatus, RunError> {
-        self.require_environment_gate()?;
-        crate::workspace_session::check_run_fence(self.store.conn(), self.id, &self.owner)?;
-        let partial = self
-            .partial_sentinel
-            .as_mut()
-            .ok_or_else(|| RunError::unavailable("workspace partial sentinel unavailable"))?;
-        partial
-            .close_and_reap(cleanup)
-            .map_err(|_| RunError::unavailable("workspace sentinel cleanup remains unsettled"))
-    }
-
-    /// Workspace-only startup scaffold; failed helpers remain on this Run.
-    /// It does not qualify helper capabilities or permit Discard.
-    #[allow(dead_code)]
-    pub(crate) fn enable_workspace_custody(
-        &mut self,
-        plan: &crate::supervise::LifecyclePlan,
-    ) -> Result<(), RunError> {
-        if self.partial_sentinel.is_some() {
-            return Err(RunError::unavailable(
-                "workspace sentinel startup remains unsettled",
-            ));
-        }
-        self.can_effect()?;
-        self.require_environment_gate()?;
-        if self.root.is_machine() || self.owner.resource.kind() != crate::id::ResourceKind::Env {
-            return Err(RunError::refused(
-                "workspace custody requires a checkout environment",
-            ));
-        }
-        if self.sentinel.is_some() {
-            return Err(RunError::unavailable(
-                "workspace sentinel startup remains unsettled",
-            ));
-        }
-        match crate::supervise::spawn_workspace_sentinel(
-            self, self.root, plan, &self.next, &self.cx,
-        ) {
-            Ok(lease) => self.register_lifecycle(lease, plan),
-            Err((error, partial)) => {
-                if partial.is_some() {
-                    self.poisoned = true;
-                    self.partial_sentinel = partial;
-                }
-                Err(error)
-            }
-        }
-    }
-
     /// Bootstrap adapters may prepare a root-owned helper before enabling
     /// custody. No process may spawn until this registration commits.
     pub fn enable_custody(

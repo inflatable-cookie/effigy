@@ -23,7 +23,6 @@ pub(super) struct DetachedOperationState {
     pub(super) stage: Option<&'static str>,
     pub(super) preparation_step: Option<&'static str>,
     /// Workspace preparation diagnostics must not echo backend/secret values.
-    pub(super) workspace_mode: bool,
     /// The environment and checkout the activation was asked to bring up.
     pub(super) identity: Option<String>,
 }
