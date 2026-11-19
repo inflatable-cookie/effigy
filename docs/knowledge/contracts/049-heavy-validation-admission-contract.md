@@ -258,11 +258,11 @@ evidence line and no `deadline` field are written, and every budget keeps its
 
 This feature adds **no file and no helper write**. It changes time budgets
 only; the persistence inventory (state and gate files, `kernel.db` and its sidecars,
-the private unlinked helper log, and the owner-loss terminal row) is unchanged.
+the private unlinked helper log, and the foreground terminal row) is unchanged.
 
 ## Run control
 
-Every task run is a kernel `Run`. Only durable runs have a journal. The
+Every task run is a kernel `Run`. Foreground runs write a terminal row; durable runs also journal their lifecycle. The
 following is the Q-010 control boundary (contract 052 §3.1).
 
 - **`--run-id <key>`.** A caller-chosen key (1–128 of `A–Z a–z 0–9 . _ : -`)
@@ -276,7 +276,7 @@ following is the Q-010 control boundary (contract 052 §3.1).
   task before attachment; an unreadable record never authorizes attachment.
   Managed tasks keep their existing `--run-id` refusal.
 - **`effigy runs [--limit N] [--all]`.** This checkout's durable task and
-  QA-group runs plus verified live foreground diagnostics, newest first.
+  QA-group runs, foreground terminal rows and verified live diagnostics, newest first.
   `--all` uses bounded checkout discovery in 052 §7.6. JSON remains
   `effigy.runs.v1`; additive provenance/coverage fields distinguish durable
   rows, live diagnostics, residue and partial discovery. Unavailable fields
@@ -287,8 +287,8 @@ following is the Q-010 control boundary (contract 052 §3.1).
   Live foreground state requires verified holder identity; a held gate whose
   recorded owner is verifiably gone reads `interrupted` and names
   `effigy run stop <run>` as its settlement. After exit the answer is
-  `not recorded (foreground or expired)`. It never infers success from a free
-  gate. JSON remains `effigy.run.v1` with evidence provenance.
+  the terminal row when available, or `not recorded` when absent or expired.
+  It never infers success from a free gate. JSON remains `effigy.run.v1` with evidence provenance.
 - **`effigy run logs <run> [--follow] [--stdout-offset N] [--stderr-offset N]`.**
   Durable runs only: redacted output per stream at absolute byte offsets.
   `--follow` drains to the final outcome and exits with the run's result.
@@ -383,7 +383,7 @@ the variable. Queue's migration to the hook is described in
 | Guarantee | Proof |
 | --- | --- |
 | Hook admit, hold, release; deny; timeout; crash; nested marker; no-hook default; `qa`/`ci` | `test:run-control:cli` |
-| v1 stays byte for byte: unchanged request, stdin at EOF, no journal | `test:run-control:cli` (`admission_protocol_v1_stays_byte_identical_without_the_opt_in`) |
+| v1 stays byte for byte: unchanged request and stdin at EOF | `test:run-control:cli` (`admission_protocol_v1_stays_byte_identical_without_the_opt_in`) |
 | The in-process marker is per thread: a heavy run on another thread of the same process still takes the hook | `test:run-control` (`admission::tests::a_held_admission_marker_belongs_to_the_thread_that_holds_it`) |
 | `--run-id` racing invocations and repeats | `test:run-control:cli`; `test:run-control` |
 | `run stop` settles a running task and its children | `test:run-control`; `test:run-control:cli` |
@@ -393,13 +393,7 @@ the variable. Queue's migration to the hook is described in
 | An unverifiable workload observation or unread stream ends unknown within its own budget, never settled or drained success; a recovering observation resumes at the exact offset with no gap or duplicate (hook `RunEffects`; hidden stdout segments) | `test:run-control` |
 | Log segments, offsets, expiry, truncation, read fault | `test:kernel:run` |
 | One foreground admission writes a fixed, bounded gate set, and a gate body stays inside its bound whatever the holder's `argv0` is | `test:kernel:gate` (`gate_foreground_admission_writes_a_fixed_bounded_set`); `test:kernel:gate` (unit: `a_gate_body_is_bounded_whatever_the_holder_looks_like`) |
-| A terminal row's identities are refused rather than cut, and a refused record writes nothing | `test:kernel:run` (`run_terminal_record_identity_is_refused_not_cut`) |
-| The task label is cut with the truncation marker, and the stored row is inside the stated maximum | `test:kernel:run` (`run_terminal_record_label_is_cut_and_the_row_is_bounded`) |
-| One terminal write prunes a bounded slice of expired rows | `test:kernel:run` (`run_terminal_write_prunes_a_bounded_slice_of_expired_rows`) |
-| One terminal write appends at most its stated frames to the log, measured with a reader pinning it | `test:kernel:run` (`run_terminal_write_appends_at_most_its_stated_frames`) |
-| A created store holds only the fixed, bounded schema | `test:kernel:store` (`store_fresh_schema_is_bounded`) |
-| The store open applies and verifies its log settings, and a closing writer truncates the log it wrote | `test:kernel:store` (`store_open_states_and_enforces_the_side_file_bounds`) |
-| Ingestion copies a slot into the journal with its identity and outcome, is idempotent, frees the slot, and leaves retention pruning expired rows | `test:kernel:run` (`run_terminal_ring_ingests_into_the_journal_and_frees_the_slots`) |
+
 
 Q-010 implementation adds the classification, zero-write and multi-checkout
 discovery proofs in contract 052 §12.6 to these same run-control selectors. These are future acceptance requirements, not Phase 1

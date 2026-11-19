@@ -352,9 +352,10 @@ blocks the affected owner until positively absent or explicitly acknowledged;
 acknowledgement for a foreground run lasts only in the current custodian.
 Guaranteed restartable recovery requires a durable class.
 
-**The owner-loss terminal record (effigy#986).** Q-010 keeps a foreground run
+**The foreground terminal record.** Q-010 keeps a foreground run
 in memory, so losing every custodian would leave nothing to read. When a
-foreground run's *owner* dies while its memory guard survives, the guard settles
+foreground run settles normally, the owner writes a terminal row. If its *owner*
+dies while its memory guard survives, the guard settles
 the run and writes one row to the owning checkout journal's
 `foreground_terminals` table (an additive schema-1 table, so an older reader
 selects the columns it knows and no version bump is needed). The row holds the
@@ -362,15 +363,13 @@ run id, the `CheckoutId`, the boot identity, the task, the outcome, the exit cod
 or signal, `cleanup` and the closed time. It says only what the guard can still
 prove: `interrupted` with `cleanup: "complete"` when the run's custody closed, and
 `unknown` with `cleanup: "incomplete"` when a pin or registered effect did not.
-It never says `succeeded`. It is **evidence, never authority**: it carries no
+The owner records the settled workload outcome. The row is **evidence, never authority**: it carries no
 PID, PGID or start identity, so no run, provider or built-in may signal,
 reclaim, recover or settle from it. `run status <id>` reports it with
 `evidence_source: "foreground-terminal-record.v1"`; `run logs` reports no
-retained log and `run stop` refuses. A foreground run that settles normally
-writes no row, and a run whose custodians all died before settle writes nothing
+retained log and `run stop` refuses. A run whose custodians all died before settle writes nothing
 and stays `not-recorded`; there is no replay. The admission hook receives no
-reports and sends no acknowledgements (contract 049). The provider-side release
-rule this evidence supports is contract 049's, and it is not an Effigy authority.
+reports and sends no acknowledgements (contract 049).
 
 **Views and fencing.** Foreground runs have random `RunId`s and an in-memory
 incarnation fence containing that id; persistent resource generations are not
@@ -379,8 +378,8 @@ incremented. No persisted request can address a foreground incarnation.
 its holder's boot/start identity and checkout binding. Without an owner query,
 phase/outcome/log fields are explicitly unavailable. `run status <id>` checks
 the current checkout's journal and verified live gate diagnostics; after the
-foreground run exits it says `not recorded (foreground or expired)`, never
-`succeeded` or `interrupted` from stale bytes. Discovered survivors are residue
+foreground run exits it reports its terminal row when available, never
+`succeeded` or `interrupted` from stale gate bytes. Discovered survivors are residue
 observations, not reconstructed journal entries. `run logs` has no foreground
 history. A held gate whose recorded owner is verifiably gone is not a live
 owner: `run status` reports it as `interrupted` and names `effigy run stop
@@ -843,17 +842,11 @@ machine journal initialization. Checkout backend logs use their checkout gate.
 SQLite settings: `journal_mode=WAL` (persistent), `synchronous=FULL`,
 `foreign_keys=ON`, `journal_size_limit` = 16 MiB and `wal_autocheckpoint` = 1024
 pages, `auto_vacuum=INCREMENTAL` chosen while the store is empty, and a
-`busy_timeout` from the store's own window. The open reads both log settings
-back and refuses a store whose settings did not apply, and a closing writable
-store attempts `PRAGMA wal_checkpoint(TRUNCATE)` inside a short window, so a
+`busy_timeout` from the store's own window. A closing writable store attempts `PRAGMA wal_checkpoint(TRUNCATE)` inside a short window, so a
 finished writer carries its log into the store and releases it when no
 concurrent reader needs it. `journal_size_limit` bounds the log after a
 completed checkpoint reset, not its peak: a reader that pins an older snapshot
-stops the reset, and writers keep appending while it does. What one invocation
-of a route contributes is therefore the frames of its own transaction, and
-contract
-[049](049-heavy-validation-admission-contract.md#per-invocation-persistence-effigy977)
-states that contribution and what it excludes. Write-ahead logging is what lets a
+stops the reset, and writers keep appending while it does. Write-ahead logging is what lets a
 reader and a writer share the store; it replaced the rollback journal in
 effigy#275 after concurrent runs refused each other with `Busy`.
 
@@ -3459,7 +3452,7 @@ only those identities, remove fixtures and preserve exit codes before reporting.
 | Proof | Required evidence |
 | --- | --- |
 | Classification | Table-driven CLI coverage of every §3.1 row, with text/JSON, TTY/pipe, heavy/no hook, nested scripts and late durable requests; no effect before refusal or durable admission |
-| Write count | Instrument database opens/commits and filesystem writes/fsyncs before/after fresh and warm foreground tasks, sequences and test suites: **0 database writes, 0 durable runtime records**, no machine DB dependency. Show transient lock writes separately. Repeat with configured source preparation and prove honest durable classification. QA-group runs are checkout-durable: retain their definition, member ledger, result and logs across owner exit, with zero machine-store writes for local-only members. Measure their checkout writes separately. Detached runs report commits by admission, spawn, requests, settle, bytes and fsyncs; no per-output, poll or heartbeat journal writes |
+| Write count | Foreground settlement writes one checkout terminal row, with no machine DB dependency. QA-group and detached runs retain their durable lifecycle records. |
 | Isolation/concurrency | At least 20 overlapping short runs across at least 3 independent checkouts, while long detached runs and an environment transition run; zero cross-project lock refusals, including a deliberately stalled local retention writer. Same-resource contention still returns the specified Busy result. Busy/corrupt machine store cannot block local-only foreground work |
 | Foreground custody | macOS/Linux: leader exit with live descendants, HUP/INT/TERM, owner SIGKILL, guard SIGKILL, both dead, cleared tags, escaped session, reused/foreign PGIDs and SIGSTOP; positive cleanup or explicit evidence-limited residue, no numeric recovery signal, no false persisted success, no unlock while the surviving custodian cleans up |
 | Durable crash recovery | Kill/ENOSPC/EPERM/Unknown at every intent, receipt, activation and settle crossing for QA-group runs, `--run-id`, detached one-shot, each managed front end, environment transition, sidecar, remote/container run, and gateway lifecycle/publication. Preserve O1–O14 with local integrity and cross-store receipts; one authority and no double release |

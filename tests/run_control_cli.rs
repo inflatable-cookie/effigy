@@ -1384,20 +1384,35 @@ while :; do sleep 0.1; done
         "the v1 request is unchanged: {request}"
     );
     assert_eq!(fixture.read("hook.log.stdin"), "", "v1 stdin stays at EOF");
-    assert!(
-        !fixture.has_journal(),
-        "a v1 foreground run writes no journal"
-    );
     let status = fixture.run(&[
         "--json",
         "run",
         "status",
         request["run_id"].as_str().expect("run id"),
     ]);
-    assert!(!status.status.success(), "{}", text(&status));
+    assert!(status.status.success(), "{}", text(&status));
     let envelope = json_of(&String::from_utf8_lossy(&status.stdout));
-    assert_eq!(envelope["error"]["details"]["state"], "not-found");
-    assert_eq!(envelope["error"]["details"]["recording"], "not-recorded");
+    assert_eq!(envelope["result"]["run"]["state"], "succeeded");
+    let listing = fixture.run(&["--json", "runs"]);
+    let envelope = json_of(&String::from_utf8_lossy(&listing.stdout));
+    let runs = envelope["result"]["runs"].as_array().expect("runs");
+    assert_eq!(runs.len(), 1, "{envelope}");
+    assert_eq!(runs[0]["state"], "succeeded");
+}
+
+#[test]
+fn foreground_failure_has_one_terminal_record() {
+    let fixture = Fixture::new();
+    let output = fixture.run(&["failing"]);
+    assert_eq!(output.status.code(), Some(4), "{}", text(&output));
+    let listing = fixture.run(&["--json", "runs"]);
+    let envelope = json_of(&String::from_utf8_lossy(&listing.stdout));
+    let runs = envelope["result"]["runs"].as_array().expect("runs");
+    assert_eq!(runs.len(), 1, "{envelope}");
+    assert_eq!(runs[0]["state"], "failed");
+    let run = fixture.status_json(runs[0]["run_id"].as_str().expect("run id"));
+    assert_eq!(run["state"], "failed");
+    assert_eq!(run["exit_code"], 4);
 }
 
 /// Q-015 through the real binary: `test:focused` keys its exclusion by the

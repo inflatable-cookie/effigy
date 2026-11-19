@@ -1,4 +1,4 @@
-//! Checkout-local exclusion and memory-only custody; no writable journal.
+//! Checkout-local exclusion and memory-only custody with a terminal journal record.
 use super::*;
 use crate::ctx::{EffectClass, Placement};
 use crate::id::{ExecutionTarget, ResourceKind, Scope};
@@ -17,6 +17,9 @@ use std::time::Duration;
 pub struct ForegroundRun {
     record: ForegroundRecord,
     cx: EffectContext,
+    root: StateRoot,
+    task: String,
+    boot: String,
     next: Invocation,
     executable: Executable,
     guard: Option<MemoryGuard>,
@@ -165,7 +168,14 @@ impl ForegroundRun {
                     .map(|deadline| deadline.ceiling_nanos()),
             },
         )?;
+        let boot = crate::ident::boot_identity()
+            .verified()
+            .map(|boot| boot.as_str().to_owned())
+            .unwrap_or_else(|| "unknown".to_owned());
         Ok(Self {
+            root: root.clone(),
+            task: inv.spec().task.task().to_owned(),
+            boot,
             record: ForegroundRecord::new(opts.id, inv.spec().owner.clone()),
             cx: cx.clone(),
             next: opts.next,
@@ -351,6 +361,39 @@ impl ForegroundRun {
             guard.close(cleanup)?;
         }
         self.guard.take();
+        let Scope::Checkout(checkout) = self.record.incarnation().owner.scope() else {
+            unreachable!("foreground admission requires a checkout");
+        };
+        let (state, exit_code, signal) = match outcome.workload() {
+            WorkloadOutcome::NotStarted => ("not-started", None, None),
+            WorkloadOutcome::Succeeded => ("succeeded", Some(0), None),
+            WorkloadOutcome::Failed { code } => ("failed", Some(*code), None),
+            WorkloadOutcome::Cancelled { signal, .. } => ("cancelled", None, *signal),
+            WorkloadOutcome::TimedOut { .. } => ("timed-out", None, None),
+            WorkloadOutcome::Interrupted => ("interrupted", None, None),
+            WorkloadOutcome::Unknown(_) => ("unknown", None, None),
+        };
+        let record = TerminalRecord {
+            run_id: self.record.incarnation().run.to_string(),
+            checkout: checkout.text(),
+            boot: self.boot.clone(),
+            task: self.task.clone(),
+            outcome: state.to_owned(),
+            exit_code,
+            signal,
+            cleanup: if incomplete { "incomplete" } else { "complete" }.to_owned(),
+            closed_at_ms: crate::store::wall_ms(),
+        };
+        if let Err(error) = terminal::record(
+            &cleanup.operation().effects().expect("cleanup has effects"),
+            &self.root,
+            &record,
+        ) {
+            outcome.add_warning(crate::outcome::Warning {
+                code: "terminal_record".into(),
+                message: format!("could not record foreground outcome: {error}"),
+            });
+        }
         if effects_complete && descendants_closed {
             self._gate.release_closed_custody();
             if let Some(completion) = &self.completion {
