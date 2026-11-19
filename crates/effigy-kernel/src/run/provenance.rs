@@ -27,40 +27,21 @@ impl OperatorAction {
 }
 
 /// The one operator event: which action ran, who asked, from where and why.
-/// `caller` is the invoking program's own file name, so a flag value or a
-/// deeper argument never reaches the log.
+/// `caller` is a fixed identifier; process arguments never reach the log.
 pub fn event(
     action: OperatorAction,
     cause: &str,
     pid: u32,
-    argv: &[&str],
     cwd: Option<&std::path::Path>,
 ) -> serde_json::Value {
     serde_json::json!({
         "event": action.event(),
         "action": action,
         "pid": pid,
-        "caller": caller(argv.first().copied()),
+        "caller": "effigy",
         "cwd": cwd,
         "cause": bounded(cause, TEXT_LIMIT),
     })
-}
-
-/// The program name of `argv[0]`, bounded. An unreadable or empty argument
-/// records the same bounded absence instead of a guess.
-fn caller(argv0: Option<&str>) -> String {
-    let Some(argv0) = argv0 else {
-        return "unknown".into();
-    };
-    let name = std::path::Path::new(argv0)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(argv0);
-    if name.is_empty() {
-        "unknown".into()
-    } else {
-        bounded(name, TEXT_LIMIT)
-    }
 }
 
 fn bounded(value: &str, limit: usize) -> String {
@@ -85,7 +66,6 @@ mod tests {
             OperatorAction::Down,
             "route table empty for 300 s",
             42,
-            &["/usr/local/bin/effigy", "gateway", "down"],
             Some(std::path::Path::new("/work")),
         );
         assert_eq!(value["event"], "gateway_stop");
@@ -99,20 +79,13 @@ mod tests {
 
     #[test]
     fn the_event_is_bounded_and_never_keeps_a_flag_value_or_control_byte() {
-        let secret = "s".repeat(TEXT_LIMIT * 2);
-        let value = event(
-            OperatorAction::Up,
-            "started",
-            1,
-            &[secret.as_str(), "--token=hunter2"],
-            None,
-        );
+        let value = event(OperatorAction::Up, "started", 1, None);
         let caller = value["caller"].as_str().unwrap();
         assert!(caller.chars().count() <= TEXT_LIMIT + 1, "{caller}");
         let text = value.to_string();
         assert!(!text.contains("hunter2"), "{text}");
-        let noisy = event(OperatorAction::Setup, "bad\u{1b}[31m", 1, &[], None);
+        let noisy = event(OperatorAction::Setup, "bad\u{1b}[31m", 1, None);
         assert_eq!(noisy["cause"], "bad [31m");
-        assert_eq!(noisy["caller"], "unknown");
+        assert_eq!(noisy["caller"], "effigy");
     }
 }

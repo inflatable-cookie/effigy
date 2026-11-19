@@ -988,29 +988,34 @@ impl Owner {
     }
 
     fn poll(&mut self, run: &mut TaskRun, index: usize) -> Option<End> {
-        let workload = &mut self.workloads[index];
-        let process = workload.process.as_mut()?;
-        // Output is already in the run log; only live styles travel in memory.
-        let _ = process.take_output();
-        let styled = process.take_styled_output();
-        let Observed::Verified(exit, _) = process.poll() else {
-            return None;
+        let (name, styled, exit) = {
+            let workload = &mut self.workloads[index];
+            let process = workload.process.as_mut()?;
+            // Output is already in the run log; only live styles travel in memory.
+            let _ = process.take_output();
+            let styled = process.take_styled_output();
+            let exit = process.poll();
+            (workload.spec.name.clone(), styled, exit)
         };
-        let _ = run.complete(process, exit);
-        workload.tail = String::from_utf8_lossy(&process.tail()).into_owned();
-        let name = workload.spec.name.clone();
-        let shutdown = workload.spec.shutdown_on_exit;
-        workload.process = None;
-        workload.exit = Some(exit.code);
-        println!("[effigy] `{name}` exit={}", exit.code);
-        // Styles go first: the client folds the log's last bytes into a plain
-        // read on exit, and must already know which of them it styled live.
+        // Deliver styles on every poll, before a final exit makes the client
+        // fold the remaining committed bytes into a plain read.
         for chunk in styled.chunks {
             self.event(&EngineEvent::Styled {
                 process: name.clone(),
                 chunk,
             });
         }
+        let Observed::Verified(exit, _) = exit else {
+            return None;
+        };
+        let workload = &mut self.workloads[index];
+        let process = workload.process.as_mut()?;
+        let _ = run.complete(process, exit);
+        workload.tail = String::from_utf8_lossy(&process.tail()).into_owned();
+        let shutdown = workload.spec.shutdown_on_exit;
+        workload.process = None;
+        workload.exit = Some(exit.code);
+        println!("[effigy] `{name}` exit={}", exit.code);
         self.event(&EngineEvent::Exited {
             process: name.clone(),
             code: exit.code,

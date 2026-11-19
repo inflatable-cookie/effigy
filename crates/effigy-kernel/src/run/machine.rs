@@ -40,12 +40,8 @@ pub fn try_record_gateway_operator(
 
 /// The one event line: pid, invoking program, cwd and cause.
 fn operator_event_line(action: OperatorAction, cause: &str) -> String {
-    let argv = std::env::args_os()
-        .map(|arg| arg.to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
-    let argv = argv.iter().map(String::as_str).collect::<Vec<_>>();
     let cwd = std::env::current_dir().ok();
-    provenance::event(action, cause, std::process::id(), &argv, cwd.as_deref()).to_string()
+    provenance::event(action, cause, std::process::id(), cwd.as_deref()).to_string()
 }
 
 fn append_operator_line(directory: &std::path::Path, line: &str) -> std::io::Result<()> {
@@ -586,5 +582,36 @@ mod tests {
         ));
         drop(read);
         next.settle(&cleanup(&cx), &mut adapter).unwrap();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod caller_privacy_test {
+    use super::*;
+    use std::os::unix::process::CommandExt;
+
+    #[test]
+    fn sensitive_custom_argv0_never_reaches_operator_event() {
+        const SECRET: &str = "sensitive-custom-argv0-hunter2";
+        if std::env::var_os("EFFIGY_CALLER_PRIVACY_CHILD").is_some() {
+            let line = operator_event_line(OperatorAction::Up, "test");
+            assert!(!line.contains(SECRET), "{line}");
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&line).unwrap()["caller"],
+                "effigy"
+            );
+            return;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg0(SECRET)
+            .args(["--exact", "run::machine::caller_privacy_test::sensitive_custom_argv0_never_reaches_operator_event", "--nocapture"])
+            .env("EFFIGY_CALLER_PRIVACY_CHILD", "1")
+            .output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
     }
 }

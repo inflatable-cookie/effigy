@@ -198,8 +198,15 @@ impl Shared {
                                 .iter()
                                 .map(|span| span.text.len() as u64)
                                 .sum::<u64>();
+                        let cursor = self
+                            .followers
+                            .get(&process)
+                            .map(|follower| follower.cursors[0].offset)
+                            .unwrap_or(0);
                         let through = self.styled_through.entry(process.clone()).or_insert(0);
-                        *through = (*through).max(end);
+                        if !accept_style(through, cursor, chunk.offset, end) {
+                            continue;
+                        }
                         self.queue.push_back(event(
                             &process,
                             ProcessEventKind::Styled,
@@ -324,6 +331,31 @@ impl Shared {
                 ));
             }
         }
+    }
+}
+
+// Only suppress canonical bytes that were actually delivered, in order.
+fn accept_style(through: &mut u64, cursor: u64, start: u64, end: u64) -> bool {
+    if start != (*through).max(cursor) || end < start {
+        return false;
+    }
+    *through = end;
+    true
+}
+
+#[cfg(test)]
+mod style_coverage_tests {
+    use super::accept_style;
+
+    #[test]
+    fn evicted_prefix_falls_back_to_plain_log_before_styles_resume() {
+        let mut through = 0;
+        assert!(!accept_style(&mut through, 0, 4, 8));
+        assert_eq!(through, 0);
+        // The follower delivers the missing canonical bytes through offset 8.
+        assert!(accept_style(&mut through, 8, 8, 12));
+        assert_eq!(through, 12);
+        assert!(!accept_style(&mut through, 8, 4, 8));
     }
 }
 

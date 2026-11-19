@@ -691,7 +691,7 @@ one record, and a replacement or a migration stop stays attributable through the
 `up` or `setup` action that requested it. An event carries only what a consumer
 uses: `event`, `action`, `pid`, `caller`, `cwd` and `cause`.
 
-- `caller` is the invoking program's own file name, bounded to 96 characters.
+- `caller` is the fixed identifier `effigy`; process arguments are never recorded.
   It is the one attribution field: no ancestor is walked, no controlling
   terminal is resolved, no argument token is classified and no environment
   variable is read, so a password pasted into an argument or a marker variable

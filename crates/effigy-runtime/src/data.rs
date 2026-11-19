@@ -201,6 +201,15 @@ where
     })
 }
 
+fn reject_global_kind_filter(kind: Option<&str>) -> Result<(), EffigyRuntimeError> {
+    if kind.is_some() {
+        return Err(EffigyRuntimeError::task_invocation(
+            "global cache --kind is no longer supported; cache kinds are not classified".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 pub fn run_container_cache_list_all<FL, F>(
     cwd: &Path,
     profile: Option<&str>,
@@ -214,6 +223,7 @@ where
     FL: Fn() -> Result<BTreeSet<String>, EffigyRuntimeError>,
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
+    reject_global_kind_filter(kind_filter)?;
     CacheVolumeProgress::run(PROBE_VOLUME_INSPECT, |progress| {
         progress.update(|_| ProgressFrame::new("inspecting cache volumes"));
         let resolved_profile = effigy_containers::backend::global_endpoint(profile);
@@ -362,6 +372,7 @@ where
     FL: Fn() -> Result<BTreeSet<String>, EffigyRuntimeError>,
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
+    reject_global_kind_filter(kind_filter)?;
     CacheVolumeProgress::run(PROBE_VOLUME_INSPECT, |progress| {
         progress.update(|_| ProgressFrame::new("inspecting cache volumes"));
         let resolved_profile = effigy_containers::backend::global_endpoint(profile);
@@ -1354,7 +1365,7 @@ mod global_cache_prune_tests {
 
         let runtime = FakeRuntime::standard();
         let removals = Rc::clone(&runtime.removals);
-        let rendered = run_container_cache_prune_all(
+        let error = run_container_cache_prune_all(
             Path::new("."),
             Some("test-profile"),
             None,
@@ -1363,15 +1374,21 @@ mod global_cache_prune_tests {
             || running_projects(RUNNING_PROJECT),
             |_cwd: &Path, _endpoint: &str, command: &DockerCommand| runtime.capture(command),
         )
-        .expect("prune succeeds");
+        .expect_err("kind filter must be refused");
+        assert!(error.to_string().contains("--kind is no longer supported"));
         assert!(removals.borrow().is_empty());
-        assert_eq!(prune_report(&rendered)["removed_count"], 0);
-        let kinds = prune_report(&rendered)["caches"]
-            .as_array()
-            .expect("caches")
-            .iter()
-            .all(|cache| cache["kind"] == "node-modules");
-        assert!(kinds);
+        let runtime = FakeRuntime::standard();
+        let error = run_container_cache_list_all(
+            Path::new("."),
+            Some("test-profile"),
+            None,
+            Some("rust-target"),
+            true,
+            || running_projects(RUNNING_PROJECT),
+            |_cwd: &Path, _endpoint: &str, command: &DockerCommand| runtime.capture(command),
+        )
+        .expect_err("list kind filter must be refused");
+        assert!(error.to_string().contains("--kind is no longer supported"));
     }
 
     /// The read-only global listing names an opaque `efv-*` volume it cannot
