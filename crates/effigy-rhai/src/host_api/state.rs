@@ -1,16 +1,18 @@
 use std::sync::Arc;
 
 use rhai::{Dynamic, Engine, EvalAltResult, ImmutableString, Map};
-use serde_json::Value;
 
 use crate::surface::MODULE_STATE;
 
 use super::{
-    map_to_json, module_feature_no_args, module_feature_options, module_feature_string,
-    module_feature_string_options, rhai_runtime_error, run_feature_dynamic, HostCallbacks,
-    ScriptContext,
+    map_to_json, module_feature_string_options, HostCallbacks, ScriptContext,
 };
 
+/// The `state::` module keeps only the plain data-artifact verbs. v0.16 retired
+/// the layered stack helpers (`plan`, `apply`, `capture`, `capture_set`,
+/// `history`, the capture/apply context readers and `capture_source`); a
+/// repository now declares those as tasks.
+/// See `docs/knowledge/deployment-data-workflows.md`.
 pub(super) fn register_state_module(
     engine: &mut Engine,
     context: Arc<ScriptContext>,
@@ -24,160 +26,6 @@ pub(super) fn register_state_module(
 
 fn build_state_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {
     let mut module = rhai::Module::new();
-    module_feature_no_args(
-        &mut module,
-        "plan",
-        crate::surface::FEATURE_STATE_PLAN,
-        context.clone(),
-        callbacks.clone(),
-    );
-    module_feature_string(
-        &mut module,
-        "plan",
-        crate::surface::FEATURE_STATE_PLAN,
-        "stack",
-        context.clone(),
-        callbacks.clone(),
-    );
-    module_feature_options(
-        &mut module,
-        "plan",
-        crate::surface::FEATURE_STATE_PLAN,
-        context.clone(),
-        callbacks.clone(),
-    );
-    module_feature_no_args(
-        &mut module,
-        "apply",
-        crate::surface::FEATURE_STATE_APPLY,
-        context.clone(),
-        callbacks.clone(),
-    );
-    module_feature_string(
-        &mut module,
-        "apply",
-        crate::surface::FEATURE_STATE_APPLY,
-        "stack",
-        context.clone(),
-        callbacks.clone(),
-    );
-    module_feature_options(
-        &mut module,
-        "apply",
-        crate::surface::FEATURE_STATE_APPLY,
-        context.clone(),
-        callbacks.clone(),
-    );
-    module_feature_string(
-        &mut module,
-        "history",
-        crate::surface::FEATURE_STATE_HISTORY,
-        "stack",
-        context.clone(),
-        callbacks.clone(),
-    );
-    module_feature_options(
-        &mut module,
-        "history",
-        crate::surface::FEATURE_STATE_HISTORY,
-        context.clone(),
-        callbacks.clone(),
-    );
-    let capture_context = context.clone();
-    let capture_callbacks = callbacks.clone();
-    module.set_native_fn(
-        "capture",
-        move |stack: ImmutableString,
-              profile: ImmutableString|
-              -> Result<Dynamic, Box<EvalAltResult>> {
-            run_feature_dynamic(
-                &capture_context,
-                &capture_callbacks,
-                crate::surface::FEATURE_STATE_CAPTURE,
-                serde_json::json!({
-                    "stack": stack.as_str(),
-                    "profile": profile.as_str(),
-                }),
-            )
-        },
-    );
-    module_feature_options(
-        &mut module,
-        "capture",
-        crate::surface::FEATURE_STATE_CAPTURE,
-        context.clone(),
-        callbacks.clone(),
-    );
-    module_feature_options(
-        &mut module,
-        "capture_set",
-        crate::surface::FEATURE_STATE_CAPTURE_SET,
-        context.clone(),
-        callbacks.clone(),
-    );
-    let capture_context_reader = context.clone();
-    module.set_native_fn(
-        "capture_context",
-        move || -> Result<Dynamic, Box<EvalAltResult>> {
-            let path = required_state_path_env(
-                &capture_context_reader.cwd,
-                "EFFIGY_STATE_CAPTURE_CONTEXT",
-            )?;
-            let contents = std::fs::read_to_string(&path).map_err(|error| {
-                rhai_runtime_error(format!(
-                    "failed to read state capture context `{}`: {error}",
-                    path.display()
-                ))
-            })?;
-            let value = serde_json::from_str::<Value>(&contents).map_err(|error| {
-                rhai_runtime_error(format!(
-                    "failed to parse state capture context `{}`: {error}",
-                    path.display()
-                ))
-            })?;
-            Ok(json_to_dynamic(value))
-        },
-    );
-    let capture_context_path_reader = context.clone();
-    module.set_native_fn(
-        "capture_context_path",
-        move || -> Result<String, Box<EvalAltResult>> {
-            required_state_path_env(
-                &capture_context_path_reader.cwd,
-                "EFFIGY_STATE_CAPTURE_CONTEXT",
-            )
-            .map(|path| path.display().to_string())
-        },
-    );
-    let apply_context_reader = context.clone();
-    module.set_native_fn(
-        "apply_context",
-        move || -> Result<Dynamic, Box<EvalAltResult>> {
-            let path =
-                required_state_path_env(&apply_context_reader.cwd, "EFFIGY_STATE_APPLY_CONTEXT")?;
-            let contents = std::fs::read_to_string(&path).map_err(|error| {
-                rhai_runtime_error(format!(
-                    "failed to read state apply context `{}`: {error}",
-                    path.display()
-                ))
-            })?;
-            let value = serde_json::from_str::<Value>(&contents).map_err(|error| {
-                rhai_runtime_error(format!(
-                    "failed to parse state apply context `{}`: {error}",
-                    path.display()
-                ))
-            })?;
-            Ok(json_to_dynamic(value))
-        },
-    );
-    let apply_context_path_reader = context.clone();
-    module.set_native_fn(
-        "apply_context_path",
-        move || -> Result<String, Box<EvalAltResult>> {
-            required_state_path_env(&apply_context_path_reader.cwd, "EFFIGY_STATE_APPLY_CONTEXT")
-                .map(|path| path.display().to_string())
-        },
-    );
     module_feature_string_options(
         &mut module,
         "artifact_inspect",
@@ -194,16 +42,16 @@ fn build_state_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> 
         context.clone(),
         callbacks.clone(),
     );
-    let artifact_capture_context = context.clone();
-    let artifact_capture_callbacks = callbacks.clone();
+    let capture_context = context.clone();
+    let capture_callbacks = callbacks.clone();
     module.set_native_fn(
         "artifact_capture",
         move |source: ImmutableString,
               destination: ImmutableString|
               -> Result<Dynamic, Box<EvalAltResult>> {
             super::run_feature_dynamic(
-                &artifact_capture_context,
-                &artifact_capture_callbacks,
+                &capture_context,
+                &capture_callbacks,
                 crate::surface::FEATURE_STATE_ARTIFACT_CAPTURE,
                 serde_json::json!({
                     "source": source.as_str(),
@@ -235,64 +83,5 @@ fn build_state_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> 
             )
         },
     );
-    module.set_native_fn(
-        "capture_source",
-        || -> Result<String, Box<EvalAltResult>> {
-            required_state_env("EFFIGY_STATE_CAPTURE_SOURCE")
-        },
-    );
-    module.set_native_fn(
-        "capture_destination_ref",
-        || -> Result<String, Box<EvalAltResult>> {
-            Ok(crate::lookup_host_env("EFFIGY_STATE_CAPTURE_DESTINATION_REF").unwrap_or_default())
-        },
-    );
     module
-}
-
-fn required_state_env(name: &str) -> Result<String, Box<EvalAltResult>> {
-    crate::lookup_host_env(name).map_err(|_| rhai_runtime_error(format!("missing {name}")))
-}
-
-fn required_state_path_env(
-    cwd: &std::path::Path,
-    name: &str,
-) -> Result<std::path::PathBuf, Box<EvalAltResult>> {
-    let path = required_state_env(name)?;
-    Ok(super::resolve_runtime_path(cwd, &path))
-}
-
-fn json_to_dynamic(value: Value) -> Dynamic {
-    match value {
-        Value::Null => ().into(),
-        Value::Bool(value) => value.into(),
-        Value::Number(value) => {
-            if let Some(value) = value.as_i64() {
-                value.into()
-            } else if let Some(value) = value.as_u64() {
-                if value <= i64::MAX as u64 {
-                    (value as i64).into()
-                } else {
-                    value.to_string().into()
-                }
-            } else if let Some(value) = value.as_f64() {
-                value.into()
-            } else {
-                ().into()
-            }
-        }
-        Value::String(value) => ImmutableString::from(value).into(),
-        Value::Array(values) => values
-            .into_iter()
-            .map(json_to_dynamic)
-            .collect::<rhai::Array>()
-            .into(),
-        Value::Object(values) => {
-            let mut map = Map::new();
-            for (key, value) in values {
-                map.insert(key.into(), json_to_dynamic(value));
-            }
-            map.into()
-        }
-    }
 }

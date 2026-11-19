@@ -4,14 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "State stack manifest and lineage planning substrate for Effigy"
+description = "Artifact staging substrate and shared path display helpers for Effigy"
 
 [dependencies]
-chrono = { version = "0.4", default-features = false, features = ["std"] }
-effigy-manifest = { path = "../effigy-manifest" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "1"
 
 [lints]
 workspace = true

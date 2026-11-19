@@ -229,8 +229,6 @@ pub(super) struct DeployPreflightConfig {
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub(super) struct DeployHooksConfig {
-    pub(super) before_state: Option<String>,
-    pub(super) after_state: Option<String>,
     pub(super) after_deploy: Option<String>,
 }
 

@@ -61,6 +61,12 @@ fn reject_retired_tables(value: &Value) -> Result<(), String> {
                 .to_owned(),
         );
     }
+    if root.contains_key("state") {
+        return Err(
+            "`[state.*]` layered state stacks were removed in v0.16; the workflow moved to repository tasks: seed and dump with `container data seed|dump`, stage plain artifacts with `effigy state artifact`, and keep app-specific migrations and overlays as `[tasks]` (see docs/knowledge/deployment-data-workflows.md)"
+                .to_owned(),
+        );
+    }
     if let Some(tasks) = root.get("tasks").and_then(Value::as_table) {
         for task in tasks.values() {
             reject_draft_in_task(task)?;

@@ -259,42 +259,6 @@ pub(super) fn secrets_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
     ]
 }
 
-fn state_section_comment(profile: ConfigDocProfile) -> &'static str {
-    match profile {
-        ConfigDocProfile::Reference => {
-            "# Ordered state stacks for schema, seed, import, and capture layers."
-        }
-        ConfigDocProfile::Schema => {
-            "# Ordered state stacks for schema, seed, import, and capture layers."
-        }
-    }
-}
-
-pub(super) fn state_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
-    vec![
-        "[state.uat]",
-        state_section_comment(profile),
-        "schema = \"effigy.state-stack.v1\"",
-        "name = \"acme-uat\"",
-        "environment = \"uat\"",
-        "",
-        "[[state.uat.layers]]",
-        "key = \"structure\"",
-        "role = \"structure\"",
-        "source = \"db:migrate\"",
-        "apply_mode = \"task\"",
-        "environment_policy = \"all\"",
-        "",
-        "[state.uat.captures.new-content]",
-        "role = \"uat-capture\"",
-        "source_env = \"uat\"",
-        "source = \".effigy/state-captures/captures/{key}.tar\"",
-        "ref = \"oci://ghcr.io/acme/state:{key}\"",
-        "task = \"state:capture-new-content\"",
-        "",
-    ]
-}
-
 fn deploy_section_comment(profile: ConfigDocProfile) -> &'static str {
     match profile {
         ConfigDocProfile::Reference => {

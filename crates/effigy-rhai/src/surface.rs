@@ -85,11 +85,6 @@ pub const FEATURE_CONFIG_USER_PATH: &str = "config.user_path";
 pub const FEATURE_CONFIG_USER_GET: &str = "config.user_get";
 pub const FEATURE_CONFIG_USER_SET: &str = "config.user_set";
 pub const FEATURE_CONFIG_USER_UNSET: &str = "config.user_unset";
-pub const FEATURE_STATE_PLAN: &str = "state.plan";
-pub const FEATURE_STATE_APPLY: &str = "state.apply";
-pub const FEATURE_STATE_CAPTURE: &str = "state.capture";
-pub const FEATURE_STATE_CAPTURE_SET: &str = "state.capture_set";
-pub const FEATURE_STATE_HISTORY: &str = "state.history";
 pub const FEATURE_STATE_ARTIFACT_INSPECT: &str = "state.artifact_inspect";
 pub const FEATURE_STATE_ARTIFACT_STAGE: &str = "state.artifact_stage";
 pub const FEATURE_STATE_ARTIFACT_CAPTURE: &str = "state.artifact_capture";
@@ -151,11 +146,6 @@ pub const FEATURE_NAMES: &[&str] = &[
     FEATURE_CONFIG_USER_GET,
     FEATURE_CONFIG_USER_SET,
     FEATURE_CONFIG_USER_UNSET,
-    FEATURE_STATE_PLAN,
-    FEATURE_STATE_APPLY,
-    FEATURE_STATE_CAPTURE,
-    FEATURE_STATE_CAPTURE_SET,
-    FEATURE_STATE_HISTORY,
     FEATURE_CONTAINER_WORKSPACE_ARTIFACT_BUILD,
     FEATURE_CONTAINER_STATUS,
     FEATURE_CONTAINER_LOGS,
@@ -209,7 +199,6 @@ pub const FEATURE_NAMES: &[&str] = &[
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RhaiFeatureDispatch {
     Runner,
-    HostHandled,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -245,15 +234,6 @@ const fn runner_feature(id: &'static str) -> RhaiFeatureDescriptor {
     }
 }
 
-const fn host_handled_feature(id: &'static str) -> RhaiFeatureDescriptor {
-    RhaiFeatureDescriptor {
-        id,
-        option_style: "host",
-        safety: "depends-on-command",
-        dispatch: RhaiFeatureDispatch::HostHandled,
-    }
-}
-
 pub const FEATURE_DESCRIPTORS: &[RhaiFeatureDescriptor] = &[
     runner_feature(FEATURE_TASKS_LIST),
     runner_feature(FEATURE_TASKS_RESOLVE),
@@ -266,11 +246,6 @@ pub const FEATURE_DESCRIPTORS: &[RhaiFeatureDescriptor] = &[
     runner_feature(FEATURE_CONFIG_USER_GET),
     runner_feature(FEATURE_CONFIG_USER_SET),
     runner_feature(FEATURE_CONFIG_USER_UNSET),
-    runner_feature(FEATURE_STATE_PLAN),
-    runner_feature(FEATURE_STATE_APPLY),
-    runner_feature(FEATURE_STATE_CAPTURE),
-    host_handled_feature(FEATURE_STATE_CAPTURE_SET),
-    runner_feature(FEATURE_STATE_HISTORY),
     runner_feature(FEATURE_CONTAINER_WORKSPACE_ARTIFACT_BUILD),
     runner_feature(FEATURE_CONTAINER_STATUS),
     runner_feature(FEATURE_CONTAINER_LOGS),
@@ -1067,48 +1042,6 @@ const EXTRA_SURFACE_FUNCTIONS: &[RhaiSurfaceFunction] = &[
         signature: "state::artifact_capture(source, destination[, options])",
         description: "Stage and optionally push one local data artifact to an explicit `oci://` destination.",
         safety: "network-local-mutation",
-    },
-    RhaiSurfaceFunction {
-        module: MODULE_STATE,
-        name: "capture_context",
-        signature: "state::capture_context()",
-        description: "Return active state capture hook context.",
-        safety: "read-only",
-    },
-    RhaiSurfaceFunction {
-        module: MODULE_STATE,
-        name: "capture_context_path",
-        signature: "state::capture_context_path()",
-        description: "Return the active state capture context path.",
-        safety: "read-only",
-    },
-    RhaiSurfaceFunction {
-        module: MODULE_STATE,
-        name: "capture_source",
-        signature: "state::capture_source()",
-        description: "Return active state capture source.",
-        safety: "read-only",
-    },
-    RhaiSurfaceFunction {
-        module: MODULE_STATE,
-        name: "capture_destination_ref",
-        signature: "state::capture_destination_ref()",
-        description: "Return active state capture destination reference.",
-        safety: "read-only",
-    },
-    RhaiSurfaceFunction {
-        module: MODULE_STATE,
-        name: "apply_context",
-        signature: "state::apply_context()",
-        description: "Return active state apply hook context.",
-        safety: "read-only",
-    },
-    RhaiSurfaceFunction {
-        module: MODULE_STATE,
-        name: "apply_context_path",
-        signature: "state::apply_context_path()",
-        description: "Return the active state apply context path.",
-        safety: "read-only",
     },
     RhaiSurfaceFunction {
         module: MODULE_DEPLOY,

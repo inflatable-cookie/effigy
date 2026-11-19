@@ -271,19 +271,6 @@ pub(super) fn validation_jobs(context: &RepoSetupContext) -> Vec<SetupJob> {
 pub(super) fn advanced_jobs(context: &RepoSetupContext) -> Vec<SetupJob> {
     vec![
         contextual_job(
-            "state_surface.inspect",
-            JobClass::new(
-                SetupCategory::Advanced,
-                SetupExecutionKind::Inspect,
-                SetupSafetyClass::SafeCheck,
-            ),
-            context.has_state,
-            "Inspect declared state stacks.".to_owned(),
-            "`[state]` is declared; init does not apply state".to_owned(),
-            Some("effigy state plan".to_owned()),
-            false,
-        ),
-        contextual_job(
             "deploy_surface.inspect",
             JobClass::new(
                 SetupCategory::Advanced,

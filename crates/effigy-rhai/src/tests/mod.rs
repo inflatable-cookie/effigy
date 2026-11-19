@@ -430,7 +430,7 @@ fn rhai_surface_feature_descriptors_cover_feature_names() {
         assert!(!descriptor.safety.is_empty());
         assert!(matches!(
             descriptor.dispatch,
-            RhaiFeatureDispatch::Runner | RhaiFeatureDispatch::HostHandled
+            RhaiFeatureDispatch::Runner
         ));
     }
 }
