@@ -4,7 +4,7 @@ use crate::runner::container_command::{bounded_failure_error, bounded_phase_erro
 use crate::runner::error::WorkspaceGuestFailure;
 use crate::runner::exec_command::{
     copy_file_into_service, copy_file_into_service_bounded, run_command_capture_until,
-    BoundedCapture, BoundedCaptureFailure, BoundedCommandBudget, BoundedCommandPhase,
+    BoundedCapture, BoundedCommandBudget, BoundedCommandPhase,
 };
 use crate::runner::workspace_client::context::{
     GuestReader, GuestWorkspace, WorkspaceContainerIdentity, HOST_REPREPARE_COMMAND,
