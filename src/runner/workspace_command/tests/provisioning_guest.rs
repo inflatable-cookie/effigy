@@ -2704,7 +2704,9 @@ fn production_publication_writes_what_the_legacy_guest_consumes_for_the_same_con
     crate::runner::workspace_client::legacy::remember_guest_host_checkout(&published);
     let refusal = crate::runner::workspace_client::legacy::refuse_host_bound_task(
         "hosted",
-        tasks.get("hosted").expect("the pinned host-bound declaration"),
+        tasks
+            .get("hosted")
+            .expect("the pinned host-bound declaration"),
     )
     .expect_err("a host-bound task refuses in a workspace guest");
     assert_eq!(
@@ -2716,7 +2718,9 @@ fn production_publication_writes_what_the_legacy_guest_consumes_for_the_same_con
     );
     crate::runner::workspace_client::legacy::refuse_host_bound_task(
         "hello",
-        tasks.get("hello").expect("the pinned container-bound declaration"),
+        tasks
+            .get("hello")
+            .expect("the pinned container-bound declaration"),
     )
     .expect("an ordinary declaration runs here");
     crate::runner::workspace_client::legacy::forget_guest_host_checkout();
