@@ -2641,6 +2641,7 @@ mounts = ["{mount}"]
         ),
     )
     .expect("write container manifest");
+    crate::compose_migration::migrate_declared(&root);
 }
 
 fn append_required_container_secret(root: &std::path::Path) {
@@ -4845,6 +4846,7 @@ mounts = ["./app:/workspace"]
 "#,
     )
     .expect("write managed headless manifest");
+    crate::compose_migration::migrate_declared(&root);
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     // Managed children run through `sh -lc` login shells, and macOS login
     // shells rebuild PATH via path_helper, demoting the test's fake-first
@@ -5132,6 +5134,7 @@ detach_timeout_secs = 1
         ),
     )
     .expect("write managed headless manifest");
+    crate::compose_migration::migrate_declared(&root);
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let wrapper = root.join("effigy-path-wrapper.sh");
     fs::write(
@@ -5583,6 +5586,7 @@ detach_timeout_secs = 1
         ),
     )
     .expect("write handover manifest");
+    crate::compose_migration::migrate_declared(&root);
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let binary = env!("CARGO_BIN_EXE_effigy");
     let wrapper = root.join("effigy-path-wrapper.sh");

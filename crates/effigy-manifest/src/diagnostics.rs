@@ -123,7 +123,7 @@ mod tests {
         assert!(diagnose(
             r#"
 [manifest]
-include = [{ path = "effigy.tasks.toml", override = ["tasks"] }]
+include = [{ path = "effigy.tasks.toml" }]
 
 [catalog]
 alias = "app"

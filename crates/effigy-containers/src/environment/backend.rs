@@ -50,8 +50,6 @@ pub enum BackendReason {
     /// The environment record holds the backend Prepare recorded, with the
     /// label of the source that chose it then.
     Recorded(String),
-    /// A v0.14.1 per-checkout backend metadata file named it (read-only).
-    LegacyMetadata,
     /// `~/.effigy/config.toml` prefers this backend.
     UserPreference,
     /// The manifest's container driver defaults to it.
@@ -67,9 +65,6 @@ impl BackendReason {
             Self::Recorded(source) => format!(
                 "the environment record keeps the backend its generation was prepared on (chosen by: {source})"
             ),
-            Self::LegacyMetadata => {
-                "the checkout's v0.14 backend metadata names it".to_owned()
-            }
             Self::UserPreference => "the user preference in ~/.effigy/config.toml".to_owned(),
             Self::ManifestDriver(driver) => format!("the manifest driver `{driver}` default"),
         }
@@ -81,7 +76,6 @@ impl BackendReason {
         match self {
             Self::EnvironmentVariable(_) => "environment".to_owned(),
             Self::Recorded(source) => source.clone(),
-            Self::LegacyMetadata => "legacy-runtime-file".to_owned(),
             Self::UserPreference => "user-preference".to_owned(),
             Self::ManifestDriver(_) => "driver-default".to_owned(),
         }
@@ -176,7 +170,7 @@ impl BackendSelection {
 
 /// The selection for `policy`: [`crate::backend::exact_backend`]'s engine
 /// and precedence, with the context and reason this seam shows. Observe
-/// only: reads the store, the legacy file and configuration, writes nothing.
+/// only: reads the store and configuration, writes nothing.
 pub fn select(repo_root: &Path, policy: &EffectiveContainerPolicy) -> BackendSelection {
     use crate::backend::BackendSource;
     let exact = crate::backend::exact_backend(repo_root, &policy.name, policy.driver);
@@ -185,7 +179,6 @@ pub fn select(repo_root: &Path, policy: &EffectiveContainerPolicy) -> BackendSel
             std::env::var("EFFIGY_COMPOSE_BACKEND").unwrap_or_default(),
         ),
         BackendSource::Recorded(source) => BackendReason::Recorded(source),
-        BackendSource::Legacy => BackendReason::LegacyMetadata,
         BackendSource::UserPreference => BackendReason::UserPreference,
         BackendSource::DriverDefault => match policy.driver {
             ManifestContainerDriver::Colima => {

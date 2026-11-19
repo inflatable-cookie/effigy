@@ -113,8 +113,8 @@ the Effigy range, schema and capabilities it lacks. See
 ### Retired catalog packs
 
 The installed catalog-pack runtime and `effigy service pack` are retired in
-v0.15. Existing `~/.effigy/catalog-packs/` state is ignored with a notice and
-left untouched; delete it when convenient. Pack v1.2.0 added `silo`; the
+v0.15. Existing `~/.effigy/catalog-packs/` state is ignored and left
+untouched (v0.16 removed the one-release notice); delete it when convenient. Pack v1.2.0 added `silo`; the
 0.15.0 baseline goes one step further and retires `minio` (below), so a project
 that resolved `minio` from the pack or the baseline must move to `silo`. To
 ship services without an Effigy release, publish them as a bundle `catalog/`
@@ -122,11 +122,11 @@ or a declared source.
 
 ### Retired catalog services
 
-The built-in baseline `minio` service is retired in v0.15 (effigy#424): Effigy
-no longer ships a MinIO fragment. A manifest whose `catalog = "minio"` would
-fall back to that removed baseline fragment fails with a refusal that names
-`silo`, and the old name is never silently remapped. Existing volumes and data
-are untouched.
+The built-in baseline `minio` service is retired (effigy#424): Effigy no
+longer ships a MinIO fragment. A manifest whose `catalog = "minio"` has no
+higher-priority definition gets the ordinary not-found diagnostic; the old name
+is never silently remapped (v0.16 removed the dedicated one-release refusal
+that named `silo`). Existing volumes and data are untouched.
 
 Catalog sources still come first (Q-005): a project, bundle or declared source
 that defines its own `minio` fragment keeps serving it, and `effigy service
@@ -306,7 +306,7 @@ listener by default.
 
 Local S3-compatible object storage from PGSTY Silo, a maintained
 S3-compatible server. This is the only shipped object-storage fragment; the
-retired `minio` name is refused with a pointer here, not remapped.
+retired `minio` name has no shipped fragment and is never remapped.
 
 - Image: digest-pinned `docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z`
   (override via `image`).

@@ -442,8 +442,9 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   `container shell --command … --bounded` capture supports it when all required
   deadline and byte limits are supplied
 - `container status --global` and `container stats --global` are cross-project views
-- `container migrate` writes a deprecated `compose_file` out as project catalog
-  fragments with an unchanged render; `container eject` is retired
+- `container migrate` writes a retired `compose_file` out as project catalog
+  fragments with an unchanged render; ordinary commands refuse the key and
+  name this command, and `container eject` is retired
 - volume and data commands run on the environment's exact backend and touch
   only volumes whose Effigy labels name the project
 - `container logs --json` returns a finite snapshot; `container logs --follow`

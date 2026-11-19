@@ -293,9 +293,7 @@ fn run_with_credential(
 mod tests {
     use super::SharedCredentialFile;
     use crate::contract_test_support::EnvGuard;
-    use effigy_containers::{
-        load_container_policy, EffectiveContainerPolicy, SharedServiceBinding,
-    };
+    use effigy_containers::{EffectiveContainerPolicy, SharedServiceBinding};
     use effigy_manifest::TaskManifest;
     use effigy_test_support::Fixture;
     use std::collections::BTreeMap;
@@ -350,7 +348,7 @@ shared = true
             crate::runner::manifest::load_task_manifest(&root.join("effigy.toml"))
                 .expect("load manifest");
         let policy: EffectiveContainerPolicy =
-            load_container_policy(root, Some("stack")).expect("policy");
+            crate::runner::test_support::load_fixture_policy(root, Some("stack")).expect("policy");
         super::super::shared_data::resolve_shared_data_binding(&policy, &manifest, "mysql")
             .expect("resolve")
             .expect("shared binding")

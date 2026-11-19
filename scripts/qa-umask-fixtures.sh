@@ -5,7 +5,7 @@
 # files. Linux native qualification found fixture homes and a legacy log
 # fixture whose default modes were group-writable under Ubuntu's usual 0002, so
 # the kernel's private-state trust refused them. This route re-runs the fixture
-# families that own custody, object, publication, serving-host, environment and
+# families that own custody, object, publication, environment and
 # test-support state under 0002, 0027 and 0077: a fixture that leans on the
 # ambient umask fails here instead of only on a Linux host. It is host umask
 # coverage only and never replaces native Linux qualification.
@@ -27,8 +27,8 @@ sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection -
 EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture \
   sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test custody --lib -E 'test(/^custody::tests::/) | test(/^signal::tests::/) | test(/^run::lifecycle::tests::/) | binary(custody)' --no-fail-fast --retries 0 --no-tests fail
 
-# Object store, serving-host session and file-trust fixtures.
-sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --lib -E 'test(/^objects::tests::/) | test(/^workspace_session::tests::/) | test(/^fs::/)' --no-fail-fast --retries 0 --no-tests fail
+# Object store and file-trust fixtures.
+sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --lib -E 'test(/^objects::tests::/) | test(/^fs::/)' --no-fail-fast --retries 0 --no-tests fail
 
 # Publication and environment fixtures in the container policy.
 sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(/^environment::tests::/) | test(/^policy::render::tests::/)' --no-fail-fast --retries 0 --no-tests fail

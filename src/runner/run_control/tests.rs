@@ -88,7 +88,6 @@ fn start(root: &Path, task: &str, key: &RunKey, command: &str) -> std::thread::J
             args: &[],
             key: Some(&key),
             admission: None,
-            workspace_admission: None,
             cwd: None,
         })
         .expect("keyed run admitted");
@@ -149,7 +148,6 @@ fn unreadable_history_does_not_hide_verified_foreground_custody() {
         args: &[],
         key: None,
         admission: None,
-        workspace_admission: None,
         cwd: None,
     };
     let durable = TaskRun::begin(request()).expect("initialize durable layout");
@@ -467,7 +465,6 @@ fn keyed_contender_observes_the_run_published_after_its_lookup() {
             args: &[],
             key: Some(&contender_key),
             admission: None,
-            workspace_admission: None,
             cwd: None,
         })
     });
@@ -481,7 +478,6 @@ fn keyed_contender_observes_the_run_published_after_its_lookup() {
         args: &[],
         key: Some(&key),
         admission: None,
-        workspace_admission: None,
         cwd: None,
     })
     .expect("winner publishes while holding its gate");
@@ -521,7 +517,6 @@ fn different_task_contender_refuses_the_key_published_after_its_lookup() {
             args: &[],
             key: Some(&contender_key),
             admission: None,
-            workspace_admission: None,
             cwd: None,
         })
     });
@@ -535,7 +530,6 @@ fn different_task_contender_refuses_the_key_published_after_its_lookup() {
         args: &[],
         key: Some(&key),
         admission: None,
-        workspace_admission: None,
         cwd: None,
     })
     .expect("winner publishes while holding its gate");
@@ -575,7 +569,6 @@ fn keyed_contention_before_publication_refuses_without_attaching() {
         args: &[],
         key: Some(&key),
         admission: None,
-        workspace_admission: None,
         cwd: None,
     });
     assert!(
@@ -614,7 +607,6 @@ fn unreadable_key_journal_refuses_without_attaching() {
         args: &[],
         key: Some(&key),
         admission: None,
-        workspace_admission: None,
         cwd: None,
     });
     let error = result.expect_err("unreadable journal refuses");
@@ -641,7 +633,6 @@ fn a_run_key_names_one_run_under_racing_invocations_and_repeats() {
                     args: &[],
                     key: Some(&key),
                     admission: None,
-                    workspace_admission: None,
                     cwd: None,
                 })
             })
@@ -672,7 +663,6 @@ fn a_run_key_names_one_run_under_racing_invocations_and_repeats() {
         args: &[],
         key: Some(&key),
         admission: None,
-        workspace_admission: None,
         cwd: None,
     });
     assert!(
@@ -688,7 +678,6 @@ fn a_run_key_names_one_run_under_racing_invocations_and_repeats() {
         args: &[],
         key: Some(&key),
         admission: None,
-        workspace_admission: None,
         cwd: None,
     })
     .expect_err("a key never binds a second task");
@@ -1248,7 +1237,6 @@ fn a_foreground_run_whose_owner_is_gone_offers_its_supported_settlement() {
         args: &[],
         key: None,
         admission: None,
-        workspace_admission: None,
         cwd: None,
     };
     let memory = TaskRun::begin_foreground(request()).expect("foreground admitted");
@@ -1308,7 +1296,6 @@ fn a_held_foreground_run_with_a_gone_owner_is_not_reported_as_running() {
         args: &[],
         key: None,
         admission: None,
-        workspace_admission: None,
         cwd: None,
     })
     .expect("foreground admitted");
@@ -1323,7 +1310,6 @@ fn a_held_foreground_run_with_a_gone_owner_is_not_reported_as_running() {
         args: &[],
         key: None,
         admission: None,
-        workspace_admission: None,
         cwd: None,
     })
     .expect_err("a held gate refuses the second invocation");
@@ -1518,7 +1504,6 @@ fn run_stop_names_a_parked_holder_when_custody_stays() {
         args: &[],
         key: None,
         admission: None,
-        workspace_admission: None,
         cwd: None,
     })
     .expect("foreground admitted");
@@ -1560,7 +1545,6 @@ fn run_stop_names_a_parked_holder_when_the_owner_is_unverified() {
         args: &[],
         key: None,
         admission: None,
-        workspace_admission: None,
         cwd: None,
     })
     .expect("foreground admitted");
@@ -1612,7 +1596,6 @@ fn run_status_names_a_parked_holder() {
         args: &[],
         key: None,
         admission: None,
-        workspace_admission: None,
         cwd: None,
     })
     .expect("foreground admitted");
@@ -1649,7 +1632,6 @@ fn a_parked_foreground_holder_names_the_release_command() {
         args: &[],
         key: None,
         admission: None,
-        workspace_admission: None,
         cwd: None,
     })
     .expect("foreground admitted");
@@ -1665,7 +1647,6 @@ fn a_parked_foreground_holder_names_the_release_command() {
         args: &[],
         key: None,
         admission: None,
-        workspace_admission: None,
         cwd: None,
     })
     .expect_err("held gate");

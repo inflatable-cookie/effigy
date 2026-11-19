@@ -289,10 +289,8 @@ fn catalog_reads_are_write_free_and_never_reach_a_source_remote() {
         let (_, output) = fixture.run(args, Some(Path::new(&path)), Duration::from_secs(10));
         if args.contains(&"service") && args.contains(&"list") {
             assert!(output.contains("mailer"), "{args:?}: {output}");
-            assert!(
-                output.contains("catalog pack state") && output.contains("left untouched"),
-                "{args:?}: {output}"
-            );
+            // v0.16 removed the one-release retired-pack-store notice.
+            assert!(!output.contains("catalog pack state"), "{args:?}: {output}");
         }
         assert!(
             !fixture.home.join("remote-called").exists(),

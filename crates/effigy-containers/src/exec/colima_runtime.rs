@@ -330,26 +330,6 @@ pub fn runtime_backend_is_running(
     }
 }
 
-/// Qualification never starts a profile or repairs shared runtime units. These
-/// are the same real read-only status/containerd/BuildKit predicates used by
-/// ordinary ensure, with uncertainty returned to the owning preparation Run.
-#[cfg(feature = "workspace-private-qualification")]
-pub fn require_qualification_backend_running(
-    policy: &EffectiveContainerPolicy,
-    repo_root: &Path,
-) -> Result<bool, ContainerExecError> {
-    if !runtime_backend_is_running(policy, repo_root)? {
-        return Err(runtime_readiness_error(
-            "qualification requires an already running backend",
-        ));
-    }
-    if resolve_compose_backend_for_repo(repo_root, policy) == ComposeBackend::ColimaNerdctl {
-        probe_colima_runtime(policy, repo_root, COLIMA_RUNTIME_PROBE_TIMEOUT)
-            .map_err(|error| runtime_readiness_error(&error))?;
-    }
-    Ok(false)
-}
-
 /// Status-path observation of the selected backend.
 ///
 /// Lifecycle helpers still treat a failed Colima status as "not running".
@@ -1005,37 +985,6 @@ mod tests {
         .expect("write config");
         let profile = with_test_user_config_home(&home, default_runtime_profile);
         assert_eq!(profile, "devbox");
-    }
-
-    #[test]
-    fn runtime_detection_for_policy_prefers_repo_backend_override_over_user_global_preference() {
-        let _lock = crate::test_env_lock();
-        let temp = tempfile::tempdir().expect("tempdir");
-        let repo_root = temp.path().join("repo");
-        let home = temp.path().join(".effigy-home");
-        std::fs::create_dir_all(&repo_root).expect("mkdir repo");
-        std::fs::create_dir_all(&home).expect("mkdir home");
-        std::fs::write(
-            home.join("config.toml"),
-            "[containers]\nbackend = \"containerd\"\n",
-        )
-        .expect("write config");
-        // A v0.14 per-environment record, read until Prepare imports it.
-        std::fs::create_dir_all(repo_root.join(".effigy/runtime/compose")).expect("mkdir");
-        std::fs::write(
-            repo_root.join(".effigy/runtime/compose/.effigy-runtime.json"),
-            "[containers.web]\nbackend = \"docker-compose\"\n",
-        )
-        .expect("write legacy runtime backend record");
-
-        let detection = with_test_user_config_home(&home, || {
-            runtime_detection_for_policy(&repo_root, &test_policy())
-        });
-
-        assert_eq!(
-            detection.backend_override,
-            Some(BackendId::docker_compose())
-        );
     }
 
     #[test]

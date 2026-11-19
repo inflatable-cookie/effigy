@@ -8,10 +8,10 @@
 #[serde(deny_unknown_fields)]
 pub struct ManifestContractsConfig {
     /// Project-relative path to the JSON schema index.
-    #[serde(default, alias = "schema-index")]
+    #[serde(default)]
     pub schema_index: Option<String>,
     /// Project-relative path to the selection payload contract.
-    #[serde(default, alias = "selection-contract")]
+    #[serde(default)]
     pub selection_contract: Option<String>,
 }
 
@@ -37,20 +37,6 @@ selection_contract = "docs/knowledge/contracts/json-selection-contract.json"
             parsed.selection_contract.as_deref(),
             Some("docs/knowledge/contracts/json-selection-contract.json")
         );
-    }
-
-    #[test]
-    fn contracts_config_accepts_kebab_case_keys() {
-        let parsed: ManifestContractsConfig = toml::from_str(
-            r#"
-schema-index = "index.json"
-selection-contract = "selection.json"
-"#,
-        )
-        .expect("parse kebab-case contracts");
-
-        assert_eq!(parsed.schema_index.as_deref(), Some("index.json"));
-        assert_eq!(parsed.selection_contract.as_deref(), Some("selection.json"));
     }
 
     #[test]

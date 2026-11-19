@@ -318,7 +318,6 @@ fn begin(root: &Path, task: &str) -> TaskRun {
         args: &[],
         key: None,
         admission: None,
-        workspace_admission: None,
         cwd: None,
     })
     .expect("admitted")
@@ -352,7 +351,6 @@ fn begin_with_hook(root: &Path) -> (TaskRun, i32) {
         args: &[],
         key: None,
         admission: Some(effigy_manifest::ManifestTaskAdmission::Heavy),
-        workspace_admission: None,
         cwd: None,
     })
     .expect("held admission");
@@ -798,23 +796,21 @@ fn remote_admission_held_honors_stop_request() {
 /// Exercise the conflicting controls in one real libtest process, even when
 /// this regression itself is selected by nextest's isolated-process runner.
 #[test]
-fn shared_process_remote_admission_and_guest_version_inputs_stay_private() {
+fn shared_process_remote_admission_inputs_stay_private() {
     let _lock = crate::contract_test_support::lock_test();
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "runner::task_engine::remote::tests::remote_admission_",
-            "runner::workspace_client::tests::running_guest_version_matches_producer_context_without_display_normalization",
-            "runner::workspace_client::tests::terminal_input_and_resize_reach_the_runs_own_writer",
             "--test-threads=8",
             "--nocapture",
         ])
         .output_owned()
-        .expect("concurrent remote-admission and version controls");
+        .expect("concurrent remote-admission controls");
     assert!(output.status.success(), "{output:?}");
     let stdout = String::from_utf8(output.stdout).expect("libtest receipt");
     assert!(
-        stdout.contains("9 passed; 0 failed;"),
-        "all seven admission cases and both version/terminal cases ran: {stdout}"
+        stdout.contains("7 passed; 0 failed;"),
+        "all seven admission cases ran: {stdout}"
     );
 }
 

@@ -21,10 +21,7 @@ pub(super) use down::run_container_down_command;
 pub(in crate::runner) use exec::run_container_exec_capture_with_credentials;
 pub(in crate::runner) use exec::run_container_exec_operation_capture;
 pub(in crate::runner) use exec::run_container_exec_stream;
-pub(in crate::runner) use integrations::{WorkspacePreparedEffects, WorkspaceUpEffects};
 pub(super) use logs::run_container_logs_command;
-#[cfg(feature = "workspace-private-qualification")]
-pub(super) use prepare::qualification_prepare_body;
 pub(in crate::runner) use reset::run_container_reset_command;
 pub(super) use shell::run_container_shell;
 pub(super) use stats::run_container_stats_command;

@@ -1,6 +1,6 @@
 # 070 — Per-Machine Local Overlays and External Mounts
 
-This guide ties together five composition primitives that together let
+This guide ties together four composition primitives that together let
 a project ship a committed environment definition while letting each
 developer plug in machine-specific details (bastion hosts, SSH config,
 scratch directories) without committing absolute paths or personal
@@ -12,14 +12,10 @@ The primitives:
    loaded automatically when present.
 2. **`[manifest].extend = [...]`** — append onto array-valued fields
    from an imported fragment rather than replacing them.
-3. **`optional = true` include directive** — silently skip an include
-   when its file is missing. Accepted through v0.15 with one deprecation
-   notice; omit the missing include or rely on auto-discovered
-   `effigy.local.toml`. Removed in v0.16.
-4. **`domains = [...]` sugar on `[containers.<name>.dns]`** — a flat
+3. **`domains = [...]` sugar on `[containers.<name>.dns]`** — a flat
    list of public-facing names that expand into routes inheriting from
    `domain_defaults`.
-5. **External `host.mounts` with `${VAR}` and `~` expansion** — opt
+4. **External `host.mounts` with `${VAR}` and `~` expansion** — opt
    into out-of-repo mount sources via `external = true` in the
    structured table form.
 
@@ -249,7 +245,7 @@ Add `effigy.local.toml` to `.gitignore`; discovery does not modify Git ignore fi
 `effigy.local.toml` is auto-included **last**, so it always wins over
 committed layers. Conflicting leaves are replaced by the local value;
 inspection identifies the winning file and the replaced source. Explicitly
-including this file instead uses ordinary include and override rules, and
+including this file instead uses ordinary include conflict rules, and
 prevents auto-discovery from including it a second time.
 
 `[manifest].extend = [...]` in `effigy.local.toml` makes the env
@@ -257,40 +253,29 @@ fragment **append** onto array-valued paths instead of fully
 replacing them. Useful when the root manifest already has its own
 entries on those paths.
 
-`optional = true` on includes (not used in the scaffold above, but
-worth knowing) lets a layer reference further fragments that may not
-exist on every machine. Pair it with auto-discovery to chain
-overlays. Through v0.15 the directive still loads; write a path-only
-include for a file that always exists, or let auto-discovery pick up
-`effigy.local.toml`. The form is removed in v0.16.
+`[manifest].include` has no `optional` flag in v0.16: it refuses with its
+replacement. Write a path-only include for a file that always exists, or let
+auto-discovery pick up `effigy.local.toml`.
 
 `external = true` on a mount makes the `host` value's interpolation
 resolve to an absolute path outside the repo without tripping the
 default repo-relative containment check.
 
-## v0.15 compatibility window
+## Retired spellings refused in v0.16
 
-Manual `[manifest].include` `optional` and `override` still parse
-through v0.15 with the same effective values. Each form records one
-deprecation notice naming the replacement and that the form is
-removed in v0.16:
+v0.15 accepted a manual `[manifest].include` `optional` or `override`, and the
+kebab-case keys `[contracts].schema-index` / `selection-contract` and
+`[sources.<name>].rev-file`. v0.16 refuses each with its replacement:
 
 - `optional` — omit a missing include, or rely on auto-discovered
-  `effigy.local.toml`. The notice fires when the key is present,
-  including `optional = false`.
-- `override` — use auto-discovered `effigy.local.toml` for
-  machine-local replacement, or `[manifest].extend` for arrays.
+  `effigy.local.toml`.
+- `override` — use auto-discovered `effigy.local.toml` for machine-local
+  replacement, or `[manifest].extend` for arrays.
+- write `schema_index`, `selection_contract` and `rev_file`.
 
-Public kebab-case aliases at their real positions still load:
-`[contracts].schema-index` / `selection-contract` as `schema_index` /
-`selection_contract`, and `[sources.<name>].rev-file` as `rev_file`.
-A task named `schema-index` is not an alias. Canonical snake_case and
-path-only includes print no notice. Combined legacy forms still print
-one notice per manifest. `--json` carries that notice in the command
-envelope `warnings` array and never on stdout. Auto-discovered
-`effigy.local.toml` is not a manual optional/override and stays
-silent. User-global program preference aliases (`colima-nerdctl`,
-`docker-compose`) are out of this window.
+Auto-discovered `effigy.local.toml` is not one of these forms and stays silent.
+User-global program preference aliases (`colima-nerdctl`, `docker-compose`)
+are unaffected.
 
 ## CI And Determinism
 
@@ -336,14 +321,11 @@ git grep <env-name>-bastion envs/   # alias name only — never a real host
 - **Committing `effigy.local.toml` without `.example` suffix.** That
   defeats the per-machine model. Ignore the file and flag a committed
   overlay in PRs.
-- **Using `extend` and `override` on the same include path.** They
-  are mutually exclusive — declare exactly one per path.
 
 ## Related Guides
 
 - [`059-manifest-composition-guide.md`](059-manifest-composition-guide.md)
-  — full include-directive semantics (extend, override, optional,
-  auto-discovery).
+  — include and extend semantics and local auto-discovery.
 - [`063-container-system-guide.md`](063-container-system-guide.md)
   — host-mount rules including the External Host Mounts subsection.
 - [`050-env-schema-integration.md`](050-env-schema-integration.md)

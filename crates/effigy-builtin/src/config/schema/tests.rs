@@ -16,16 +16,9 @@ fn the_canonical_template_and_minimal_starter_are_strict_valid_manifests() {
         let dir = tempfile::tempdir().expect("template fixture");
         let path = dir.path().join(effigy_manifest::TASK_MANIFEST_FILE);
         std::fs::write(&path, &template).expect("write template");
-        // The template's own `include` graph names these fragments; the
-        // loader resolving them is part of what "strict-valid" claims. The
-        // docs fragment carries the index the template's override names.
+        // Resolve the template's included task fragment through the loader.
         std::fs::write(dir.path().join("effigy.tasks.toml"), "")
             .expect("write included task fragment");
-        std::fs::write(
-            dir.path().join("effigy.docs.toml"),
-            "[docs_policy.indexes.topic]\nfile = \"docs/README.md\"\ndir = \"docs\"\n",
-        )
-        .expect("write included docs fragment");
 
         let loaded =
             effigy_manifest::load_task_manifest_with_inspection(&path).unwrap_or_else(|error| {

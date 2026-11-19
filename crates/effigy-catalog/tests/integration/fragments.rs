@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 
 use effigy_catalog::assembly::{ComposeAssembler, ServiceDeclaration};
-use effigy_catalog::fragment::{CatalogFragment, FragmentSource};
-use effigy_catalog::schema::ServiceSchema;
+use effigy_catalog::fragment::{CatalogResolver, FragmentSource};
 
 use super::bundled_resolver;
 
@@ -675,34 +674,28 @@ fn fragment_not_found_error() {
     ));
 }
 
-/// The built-in `minio` service is retired in v0.15 (effigy#424). A manifest
-/// that still names it gets a refusal naming `silo`, never a silent remap.
+/// The compiled baseline no longer ships the retired `minio` fragment, and
+/// `silo` is the service that replaced it.
 #[test]
-fn retired_minio_catalog_service_refuses_and_names_silo() {
+fn the_baseline_ships_silo_and_not_minio() {
     let resolver = bundled_resolver();
     for name in ["minio", "baseline/minio"] {
-        let error = resolver.resolve(name).expect_err("minio is retired");
         assert!(
             matches!(
-                error,
-                effigy_catalog::CatalogError::RetiredCatalogService { .. }
+                resolver
+                    .resolve(name)
+                    .expect_err("minio is not a baseline fragment"),
+                effigy_catalog::CatalogError::FragmentNotFound { .. }
             ),
-            "{name} should refuse as a retired service, got {error:?}"
-        );
-        let message = error.to_string();
-        assert!(message.contains("minio"), "{message}");
-        assert!(
-            message.contains("catalog = \"silo\""),
-            "the refusal must name the replacement: {message}"
+            "{name} keeps the plain not-found diagnostic"
         );
     }
-
     assert!(
         resolver
             .list()
             .iter()
             .all(|fragment| fragment.name != "minio"),
-        "the retired service must not be listed as a baseline fragment"
+        "the retired service is not a baseline fragment"
     );
     assert_eq!(
         resolver.resolve("silo").unwrap().schema.service.name,
@@ -714,22 +707,20 @@ fn retired_minio_catalog_service_refuses_and_names_silo() {
 fn missing_required_param_error() {
     // A fragment that declares a required param (no default) must refuse
     // assembly when the param is absent, naming the service and the param.
-    let schema = ServiceSchema::parse(
+    let project = tempfile::tempdir().expect("owned fixture root");
+    let fragment_dir = project.path().join("needs-key");
+    std::fs::create_dir(&fragment_dir).expect("fragment dir");
+    std::fs::write(
+        fragment_dir.join("service.toml"),
         "[service]\nname = \"needs-key\"\n\n[params.api_key]\ntype = \"string\"\ndescription = \"Required API key\"\n",
-        "needs-key",
     )
-    .expect("required-param schema parses");
-    let fragment = CatalogFragment {
-        name: "needs-key".to_string(),
-        schema,
-        compose_template: "services:\n  {{ service_name }}:\n    image: test:latest\n".to_string(),
-        dockerfile: None,
-        config_variants: HashMap::new(),
-        param_variants: HashMap::new(),
-        source: FragmentSource::Baseline,
-    };
-    let resolver =
-        bundled_resolver().with_overlay(HashMap::from([("needs-key".to_string(), fragment)]));
+    .expect("service.toml");
+    std::fs::write(
+        fragment_dir.join("compose.fragment.yml"),
+        "services:\n  {{ service_name }}:\n    image: test:latest\n",
+    )
+    .expect("compose fragment");
+    let resolver = CatalogResolver::new(Some(project.path().to_path_buf()));
     let assembler = ComposeAssembler::new(resolver);
     let services = vec![ServiceDeclaration {
         name: "keyed".to_string(),

@@ -7,7 +7,6 @@ use super::artifact_plan::LinuxWorkspaceTarget;
 use super::artifact_receipt::{digest_matches, verify_guest_artifact};
 use super::guest_io::{render_workspace_effigy_staging_path, ComposeWorkspaceGuest};
 use super::permission_prep::ensure_workspace_permissions_ready;
-use super::provisioning::staging::publish_guest_active_version;
 use super::sources::{
     environment_generation, host_user, operator_workspace_for_policy, workspace_path_map,
     workspace_routes, workspace_source_closure, OperatorWorkspace,
@@ -18,10 +17,9 @@ use crate::runner::workspace_client::context::{
     binary_dir, binary_path, context_dir, context_path, read_published_context,
     read_published_generation, snapshot_dir, snapshot_path, ContextReadError, GuestBinaryIdentity,
     GuestWorkspace, WorkspaceActivationIdentity, WorkspaceBackendDescriptor,
-    WorkspaceChannelLocator, WorkspaceContainerIdentity, WorkspaceContext, WorkspaceContextInput,
-    WorkspaceEnrolmentCredential, WorkspaceEnvironmentIdentity, WorkspaceHostIdentity,
-    WorkspacePathMap, BINARY_CURRENT_PATH, BINARY_ROOT, CHANNEL_PROTOCOL_VERSION,
-    CONTEXT_CURRENT_PATH, ENROL_CREDENTIAL_PATH, ENROL_ROOT, HOST_REPREPARE_COMMAND,
+    WorkspaceContainerIdentity, WorkspaceContext, WorkspaceContextInput,
+    WorkspaceEnvironmentIdentity, WorkspaceHostIdentity, WorkspacePathMap, BINARY_CURRENT_PATH,
+    BINARY_ROOT, CHANNEL_PROTOCOL_VERSION, CONTEXT_CURRENT_PATH, HOST_REPREPARE_COMMAND,
 };
 use crate::runner::workspace_command::{
     WorkspaceOpProgress, PROBE_CONTAINER_IDENTITY, PROBE_GUEST_PUBLICATION,
@@ -37,7 +35,7 @@ const CONTAINER_WORKSPACE_EFFIGY_ACTIVE_VERSION_PATH: &str = "/usr/local/bin/eff
 const CONTAINER_WORKSPACE_EFFIGY_INSTALL_IDENTITY_PATH: &str =
     "/usr/local/bin/effigy.install-identity";
 
-/// What one container-mode Prepare published, for the caller and for lane B.
+/// What one container-mode Prepare published for the caller.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::runner) struct PreparedWorkspaceGuest {
     pub(in crate::runner) activation: WorkspaceActivationIdentity,
@@ -52,12 +50,6 @@ pub(in crate::runner) struct WorkspacePrepareFacts<'a> {
     pub(in crate::runner) policy: &'a EffectiveContainerPolicy,
     /// `None` in hybrid mode: nothing is provisioned (§8.1).
     pub(in crate::runner) operator_workspace: Option<OperatorWorkspace>,
-    /// The session run lane B admitted for this environment (§8.7).
-    pub(in crate::runner) session_run_id: Option<String>,
-    pub(in crate::runner) session_generation: Option<u64>,
-    /// The narrow enrolment credential lane B minted for direct terminals (§8.8).
-    pub(in crate::runner) enrolment: Option<WorkspaceEnrolmentCredential>,
-    pub(in crate::runner) channel: WorkspaceChannelLocator,
     pub(in crate::runner) backend: WorkspaceBackendDescriptor,
     /// The container identity the host verified before publishing: the full
     /// backend id, plus the boot and platform the guest reported.
@@ -109,13 +101,12 @@ pub(in crate::runner) fn prepare_workspace_guest(
             },
             binary: binary.clone(),
             activation: activation.clone(),
-            session_run_id: facts.session_run_id.clone(),
-            session_generation: facts.session_generation,
+            session_run_id: None,
+            session_generation: None,
             paths: paths.clone(),
             backend: facts.backend.clone(),
             sources: closure.pins,
             routes: workspace_routes(facts.policy),
-            channel: facts.channel.clone(),
         });
         // Publish executable and snapshots before the context that names them.
         progress.update(|_| {
@@ -153,13 +144,6 @@ pub(in crate::runner) fn prepare_workspace_guest(
                 .waiting_for(PROBE_GUEST_PUBLICATION)
         });
         let context_generation = publish_context_generation(guest, &mut context)?;
-        if let Some(enrolment) = facts.enrolment.as_ref() {
-            progress.update(|_| {
-                ProgressFrame::new("publishing enrolment credential")
-                    .event(Some("workspace context published".to_owned()))
-            });
-            publish_enrolment_credential(guest, &workspace.user, enrolment)?;
-        }
         Ok(Some(PreparedWorkspaceGuest {
             activation,
             binary,
@@ -281,11 +265,6 @@ fn publish_workspace_guest_effect(
             repo_root,
             policy,
             operator_workspace: Some(operator_workspace),
-            // Session admission owns enrolment and republishes this context (§8.2, §8.7).
-            session_run_id: None,
-            session_generation: None,
-            enrolment: None,
-            channel: WorkspaceChannelLocator::default(),
             backend: WorkspaceBackendDescriptor {
                 kind: crate::runner::environment::backend(repo_root, policy)
                     .kind
@@ -601,23 +580,6 @@ fn install_pinned_guest_binary(
     Ok(())
 }
 
-/// Publish the enrolment-only credential readable solely by its workspace user (§8.8).
-fn publish_enrolment_credential(
-    guest: &mut dyn GuestWorkspace,
-    workspace_user: &str,
-    credential: &WorkspaceEnrolmentCredential,
-) -> Result<(), RunnerError> {
-    guest.ensure_dir(ENROL_ROOT, 0o700)?;
-    guest.write_file(
-        ENROL_CREDENTIAL_PATH,
-        credential.file_body().as_bytes(),
-        0o600,
-    )?;
-    guest.set_owner(ENROL_ROOT, workspace_user)?;
-    guest.set_owner(ENROL_CREDENTIAL_PATH, workspace_user)?;
-    Ok(())
-}
-
 /// Publish immutable snapshots before the context that names their digests.
 fn publish_source_snapshots(
     guest: &mut dyn GuestWorkspace,
@@ -635,6 +597,61 @@ fn publish_source_snapshots(
             None => guest.write_file(&path, bytes, 0o444)?,
         }
         guest.ensure_dir(&directory, 0o555)?;
+    }
+    Ok(())
+}
+
+/// Record the authenticated version beside the guest object a selection names.
+///
+/// A guest Effigy resolves its own active version from the file beside the
+/// executable it runs (`effigy_core::build_info::active_version`), and the
+/// executable it runs is the digest-addressed object, never the entry link: an
+/// executed symlink resolves to its target. Without this file the guest falls
+/// back to the crate's package version, so a locally built artifact whose
+/// recorded version carries a build stamp can never agree with the context that
+/// pins it. The bytes are the version the host already authenticated from the
+/// artifact and compared with its own; the object's digest stays the authority
+/// for *which* bytes run.
+pub(in crate::runner) fn publish_guest_active_version(
+    guest: &mut dyn GuestWorkspace,
+    executable: &str,
+    version: &str,
+) -> Result<(), RunnerError> {
+    let version = version.trim();
+    if version.is_empty() {
+        return Err(RunnerError::task_invocation(
+            "the pinned guest artifact records no active version",
+        ));
+    }
+    let path = effigy_core::build_info::active_version_file(Path::new(executable))
+        .to_string_lossy()
+        .into_owned();
+    let bytes = version.as_bytes();
+    if let Some(existing) = guest.read_file(&path)? {
+        if existing == bytes {
+            return Ok(());
+        }
+        return Err(RunnerError::task_invocation(format!(
+            "the guest records another version beside the executable `{executable}` it runs"
+        )));
+    }
+    // The store directory beside the object is sealed to 0555 after a
+    // publication, and the guest normally writes as root. An adapter that does
+    // not model root (the disk and fake guests, and a fixture running as the
+    // operator) needs the directory writable for this one creation, so open it,
+    // publish the immutable object, and seal it again. The final state is the
+    // same seal; the object itself is never replaced.
+    if let Some(parent) = Path::new(&path).parent().and_then(Path::to_str) {
+        guest.ensure_dir(parent, 0o755)?;
+    }
+    guest.write_no_replace(&path, bytes, 0o444)?;
+    if let Some(parent) = Path::new(&path).parent().and_then(Path::to_str) {
+        guest.ensure_dir(parent, 0o555)?;
+    }
+    if guest.read_file(&path)?.as_deref() != Some(bytes) {
+        return Err(RunnerError::task_invocation(format!(
+            "the guest did not record its pinned version beside `{executable}`"
+        )));
     }
     Ok(())
 }

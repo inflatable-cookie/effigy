@@ -687,7 +687,6 @@ mod tests {
                 args: &[],
                 key: None,
                 admission: None,
-                workspace_admission: None,
                 cwd: None,
             })
             .expect("foreground run");

@@ -66,7 +66,6 @@ impl LoadedTaskManifest {
 pub struct ManifestCompositionEdge {
     pub parent: PathBuf,
     pub child: PathBuf,
-    pub override_paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extend_paths: Vec<String>,
 }
@@ -87,8 +86,6 @@ pub struct ManifestCompositionValueSource {
 #[derive(Debug, Clone)]
 struct ManifestIncludeSpec {
     resolved_path: PathBuf,
-    override_paths: Vec<String>,
-    optional: bool,
     local_overlay: bool,
 }
 
@@ -239,26 +236,10 @@ fn load_composed_value(
     let mut composed = input;
 
     for include in includes {
-        if include.optional && !include.resolved_path.exists() {
-            continue;
-        }
         let child = load_composed_value(&include.resolved_path, session)?;
-        for path in &child.extend_paths {
-            if include.override_paths.contains(path) {
-                return Err(ManifestError::Compose {
-                    path: manifest_path.to_path_buf(),
-                    detail: format!(
-                        "include `{}` declares `{}` in `override`, but the imported fragment declares it in `[manifest].extend`; pick one",
-                        include.resolved_path.display(),
-                        path
-                    ),
-                });
-            }
-        }
         session.include_graph.push(ManifestCompositionEdge {
             parent: manifest_path.to_path_buf(),
             child: include.resolved_path.clone(),
-            override_paths: include.override_paths.clone(),
             extend_paths: child.extend_paths.clone(),
         });
         merge_values(MergeRequest {
@@ -313,10 +294,45 @@ fn append_local_overlay_include(manifest_path: &Path, includes: &mut Vec<Manifes
     }
     includes.push(ManifestIncludeSpec {
         resolved_path: local_path,
-        override_paths: Vec::new(),
-        optional: true,
         local_overlay: true,
     });
+}
+
+/// `optional` and `override` were the v0.15 include flags. v0.16 refuses
+/// them: an auto-discovered `effigy.local.toml` replaces machine-local values
+/// and `[manifest].extend` appends arrays and tables.
+fn reject_retired_include_flags(
+    manifest_path: &Path,
+    section: &Value,
+) -> Result<(), ManifestError> {
+    let Some(entries) = section.get("include").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    for entry in entries {
+        let Some(table) = entry.as_table() else {
+            continue;
+        };
+        for (flag, replacement) in [
+            (
+                "optional",
+                "omit a missing include, or rely on auto-discovered `effigy.local.toml`",
+            ),
+            (
+                "override",
+                "use auto-discovered `effigy.local.toml` for machine-local replacement, or `[manifest].extend` for arrays",
+            ),
+        ] {
+            if table.contains_key(flag) {
+                return Err(ManifestError::Compose {
+                    path: manifest_path.to_path_buf(),
+                    detail: format!(
+                        "`[manifest].include` `{flag}` was removed in v0.16; {replacement}"
+                    ),
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 fn take_include_specs(
@@ -332,6 +348,7 @@ fn take_include_specs(
             detail: "`[manifest].root` is retired; remove it and use --repo <PATH> to select an explicit root".to_owned(),
         });
     }
+    reject_retired_include_flags(manifest_path, &section)?;
     let config: ManifestSectionConfig =
         section.try_into().map_err(|error| ManifestError::Compose {
             path: manifest_path.to_path_buf(),
@@ -341,17 +358,12 @@ fn take_include_specs(
     let parent = manifest_path.parent().unwrap_or_else(|| Path::new("."));
     let mut specs = Vec::with_capacity(config.include.len());
     for entry in config.include {
-        let (path, override_paths, optional) = match entry {
-            ManifestIncludeEntry::Path(path) => (path, Vec::new(), false),
-            ManifestIncludeEntry::Detailed(detail) => {
-                (detail.path, detail.override_paths, detail.optional)
-            }
+        let path = match entry {
+            ManifestIncludeEntry::Path(path) => path,
+            ManifestIncludeEntry::Detailed(detail) => detail.path,
         };
-        let resolved_path = resolve_include_path(parent, &path);
         specs.push(ManifestIncludeSpec {
-            resolved_path,
-            override_paths,
-            optional,
+            resolved_path: resolve_include_path(parent, &path),
             local_overlay: false,
         });
     }
@@ -371,9 +383,7 @@ struct MergeRequest<'a> {
 
 struct MergeContext<'a> {
     incoming_sources: &'a BTreeMap<String, PathBuf>,
-    override_set: BTreeSet<String>,
     extend_set: BTreeSet<String>,
-    used_overrides: BTreeSet<String>,
     used_extends: BTreeSet<String>,
     overridden_paths: &'a mut Vec<ManifestCompositionOverride>,
     current_sources: &'a mut BTreeMap<String, PathBuf>,
@@ -393,17 +403,10 @@ fn merge_values(request: MergeRequest<'_>) -> Result<(), ManifestError> {
         current_sources,
         root_manifest_path,
     } = request;
-    let override_set = include
-        .override_paths
-        .iter()
-        .cloned()
-        .collect::<BTreeSet<_>>();
     let extend_set = extend_paths.iter().cloned().collect::<BTreeSet<_>>();
     let mut context = MergeContext {
         incoming_sources,
-        override_set,
         extend_set,
-        used_overrides: BTreeSet::new(),
         used_extends: BTreeSet::new(),
         overridden_paths,
         current_sources,
@@ -412,27 +415,9 @@ fn merge_values(request: MergeRequest<'_>) -> Result<(), ManifestError> {
         root_manifest_path,
     };
     merge_value_inner("", current, incoming, &mut context)?;
-    let unused_overrides = include
-        .override_paths
-        .iter()
-        .filter(|path| !context.used_overrides.contains((*path).as_str()))
-        .cloned()
-        .collect::<Vec<_>>();
-    if !unused_overrides.is_empty() {
-        return Err(ManifestError::Compose {
-            path: root_manifest_path.to_path_buf(),
-            detail: format!(
-                "unused override path(s) for {}: {}",
-                include.resolved_path.display(),
-                unused_overrides.join(", ")
-            ),
-        });
-    }
     // extend is prophylactic: declaring a path that didn't actually
     // need to be appended (because it didn't exist on the parent yet)
-    // is the happy outcome, not an error. Override is strict because a
-    // replacement that replaced nothing is almost always a typo;
-    // extend doesn't carry the same risk.
+    // is the happy outcome, not an error.
     let _ = context.used_extends;
     Ok(())
 }
@@ -478,25 +463,10 @@ fn merge_value_inner(
         });
     }
 
-    if !path.is_empty()
-        && (context.override_set.contains(path)
-            || (context.local_overlay && !(current.is_table() && incoming.is_table())))
-    {
+    if !path.is_empty() && context.local_overlay && !(current.is_table() && incoming.is_table()) {
         let existing_source =
             current_value_source(path, context.current_sources, context.root_manifest_path)
                 .to_path_buf();
-        if !context.local_overlay && value_kind(current) != value_kind(incoming) {
-            return Err(ManifestError::Compose {
-                path: context.root_manifest_path.to_path_buf(),
-                detail: format!(
-                    "override path `{path}` cannot replace {} from {} with {} from {}",
-                    value_kind(current),
-                    existing_source.display(),
-                    value_kind(incoming),
-                    context.incoming_fragment.display()
-                ),
-            });
-        }
         let changed = current != incoming;
         *current = incoming.clone();
         remove_source_entries(path, context.current_sources);
@@ -507,14 +477,13 @@ fn merge_value_inner(
             context.incoming_fragment,
             incoming,
         );
-        if changed || !context.local_overlay {
+        if changed {
             context.overridden_paths.push(ManifestCompositionOverride {
                 path: path.to_owned(),
                 replaced_source: existing_source,
                 by_fragment: context.incoming_fragment.to_path_buf(),
             });
         }
-        context.used_overrides.insert(path.to_owned());
         return Ok(());
     }
 
@@ -569,11 +538,10 @@ fn merge_value_inner(
     Err(ManifestError::Compose {
         path: context.root_manifest_path.to_path_buf(),
         detail: format!(
-            "manifest conflict at `{}` between {} and {}; add override = [\"{}\"] to the include entry for {}",
+            "manifest conflict at `{}` between {} and {}; list it in `[manifest].extend` to append, or replace it from `effigy.local.toml` (imported by {})",
             display_path(path),
             existing_source.display(),
             context.incoming_fragment.display(),
-            path,
             context.incoming_fragment.display(),
         ),
     })
@@ -1171,7 +1139,7 @@ paths = ["a"]
     }
 
     #[test]
-    fn optional_missing_include_is_skipped() {
+    fn a_path_only_include_of_a_present_file_loads() {
         let tmp = tempdir().expect("tempdir");
         let dir = tmp.path();
         let root = write_manifest(
@@ -1179,63 +1147,7 @@ paths = ["a"]
             "effigy.toml",
             r#"
 [manifest]
-include = [
-  { path = "missing.toml", optional = true },
-]
-
-[isolation]
-paths = ["a"]
-"#,
-        );
-        let loaded = load_task_manifest_with_inspection(&root).expect("load");
-        let domains = array_strings(&loaded.effective_value, "isolation.paths");
-        assert_eq!(domains, vec!["a".to_owned()]);
-        // Optional skipped includes do not show up in the include graph.
-        assert!(
-            loaded.include_graph.is_empty(),
-            "include_graph: {:?}",
-            loaded.include_graph
-        );
-        let notice = loaded
-            .manifest
-            .retired_config
-            .notice(&loaded.manifest_path)
-            .expect("optional include still notices");
-        assert!(notice.contains("`optional`"), "{notice}");
-        assert!(notice.contains("removed in v0.16"), "{notice}");
-    }
-
-    #[test]
-    fn optional_missing_include_without_flag_errors() {
-        let tmp = tempdir().expect("tempdir");
-        let dir = tmp.path();
-        let root = write_manifest(
-            dir,
-            "effigy.toml",
-            r#"
-[manifest]
-include = [
-  { path = "missing.toml" },
-]
-"#,
-        );
-        let err = load_task_manifest_with_inspection(&root).unwrap_err();
-        let detail = format!("{err}");
-        assert!(detail.contains("missing.toml"), "{detail}");
-    }
-
-    #[test]
-    fn optional_present_include_is_loaded() {
-        let tmp = tempdir().expect("tempdir");
-        let dir = tmp.path();
-        let root = write_manifest(
-            dir,
-            "effigy.toml",
-            r#"
-[manifest]
-include = [
-  { path = "overlay.toml", optional = true },
-]
+include = ["overlay.toml"]
 
 [isolation]
 paths = ["a"]
@@ -1253,14 +1165,11 @@ paths = ["b"]
 "#,
         );
         let loaded = load_task_manifest_with_inspection(&root).expect("load");
-        let domains = array_strings(&loaded.effective_value, "isolation.paths");
-        assert_eq!(domains, vec!["a".to_owned(), "b".to_owned()]);
-        let notice = loaded
-            .manifest
-            .retired_config
-            .notice(&loaded.manifest_path)
-            .expect("present optional include still notices");
-        assert!(notice.contains("`optional`"), "{notice}");
+        assert_eq!(
+            array_strings(&loaded.effective_value, "isolation.paths"),
+            ["a", "b"]
+        );
+        assert_eq!(loaded.include_graph.len(), 1, "one manual include");
     }
 
     /// Serialise tests that toggle process-global `EFFIGY_NO_LOCAL_OVERLAY`.
@@ -1365,7 +1274,7 @@ paths = ["b"]
                 .retired_config
                 .notice(&loaded.manifest_path)
                 .is_none(),
-            "auto-discovered local overlay is not a manual optional/override"
+            "the auto-discovered local overlay is not retired config"
         );
         // Auto-discovered include shows up in the include graph.
         assert_eq!(loaded.include_graph.len(), 1);
@@ -1428,9 +1337,7 @@ paths = ["b"]
             "effigy.toml",
             r#"
 [manifest]
-include = [
-  { path = "effigy.local.toml", optional = true },
-]
+include = ["effigy.local.toml"]
 
 [isolation]
 paths = ["a"]
@@ -1643,107 +1550,57 @@ minimum_effigy_version = "latest"
     }
 
     #[test]
-    fn include_override_still_replaces_and_notices_once() {
+    fn retired_include_flags_refuse_with_the_replacement() {
         let tmp = tempdir().expect("tempdir");
         let dir = tmp.path();
-        let root = write_manifest(
-            dir,
-            "effigy.toml",
-            r#"
-[manifest]
-include = [
-  { path = "overlay.toml", override = ["isolation.paths"] },
-]
-
-[isolation]
-paths = ["root"]
-"#,
-        );
-        write_manifest(
-            dir,
-            "overlay.toml",
-            r#"
-[isolation]
-paths = ["overlay"]
-"#,
-        );
-        let loaded = load_task_manifest_with_inspection(&root).expect("load");
-        assert_eq!(
-            array_strings(&loaded.effective_value, "isolation.paths"),
-            ["overlay"]
-        );
-        let notice = loaded
-            .manifest
-            .retired_config
-            .notice(&loaded.manifest_path)
-            .expect("override include still notices");
-        assert!(notice.contains("`override`"), "{notice}");
-        assert!(notice.contains("removed in v0.16"), "{notice}");
-        assert_eq!(notice.matches("effigy.toml").count(), 1, "{notice}");
-        assert_eq!(
-            loaded.manifest.retired_config.compat_statements().len(),
-            1,
-            "{notice}"
-        );
+        for (flag, line, replacement) in [
+            (
+                "optional",
+                "{ path = \"overlay.toml\", optional = true }",
+                "effigy.local.toml",
+            ),
+            (
+                "override",
+                "{ path = \"overlay.toml\", override = [\"isolation.paths\"] }",
+                "[manifest].extend",
+            ),
+        ] {
+            let root = write_manifest(
+                dir,
+                "effigy.toml",
+                &format!("[manifest]\ninclude = [\n  {line},\n]\n"),
+            );
+            write_manifest(dir, "overlay.toml", "[isolation]\npaths = [\"overlay\"]\n");
+            let error = load_task_manifest_with_inspection(&root).expect_err("refused");
+            let error = error.to_string();
+            assert!(error.contains(&format!("`{flag}`")), "{flag}: {error}");
+            assert!(error.contains("removed in v0.16"), "{flag}: {error}");
+            assert!(error.contains(replacement), "{flag}: {error}");
+        }
     }
 
     #[test]
-    fn representative_kebab_aliases_still_load_and_notice_once() {
+    fn retired_kebab_aliases_refuse_with_their_snake_case() {
         let tmp = tempdir().expect("tempdir");
         let dir = tmp.path();
-        let root = write_manifest(
-            dir,
-            "effigy.toml",
-            r#"
-[contracts]
-schema-index = "index.json"
-selection-contract = "selection.json"
-
-[sources.book]
-git = "git@example.com:acme/book.git"
-rev-file = "book.rev"
-path = "book"
-"#,
-        );
-        let loaded = load_task_manifest_with_inspection(&root).expect("load");
-        let direct: TaskManifest = toml::from_str(&std::fs::read_to_string(&root).expect("source"))
-            .expect("direct manifest");
-        assert_eq!(
-            direct.retired_config.compat_statements(),
-            loaded.manifest.retired_config.compat_statements()
-        );
-
-        let contracts = loaded.manifest.contracts.as_ref().expect("contracts");
-        assert_eq!(contracts.schema_index.as_deref(), Some("index.json"));
-        assert_eq!(
-            contracts.selection_contract.as_deref(),
-            Some("selection.json")
-        );
-        assert_eq!(
-            loaded
-                .manifest
-                .sources
-                .get("book")
-                .expect("book")
-                .rev_file
-                .as_deref(),
-            Some("book.rev")
-        );
-        let notice = loaded
-            .manifest
-            .retired_config
-            .notice(&loaded.manifest_path)
-            .expect("kebab aliases still notice");
-        assert!(notice.contains("`schema-index`"), "{notice}");
-        assert!(notice.contains("`selection-contract`"), "{notice}");
-        assert!(notice.contains("`rev-file`"), "{notice}");
-        assert!(notice.contains("removed in v0.16"), "{notice}");
-        assert_eq!(notice.matches("effigy.toml").count(), 1, "{notice}");
-        assert_eq!(
-            loaded.manifest.retired_config.compat_statements().len(),
-            3,
-            "{notice}"
-        );
+        for (line, canonical) in [
+            ("[contracts]\nschema-index = \"index.json\"\n", "schema_index"),
+            (
+                "[contracts]\nselection-contract = \"selection.json\"\n",
+                "selection_contract",
+            ),
+            (
+                "[sources.book]\ngit = \"git@example.com:acme/book.git\"\nrev-file = \"book.rev\"\npath = \"book\"\n",
+                "rev_file",
+            ),
+        ] {
+            let root = write_manifest(dir, "effigy.toml", line);
+            let error = load_task_manifest_with_inspection(&root)
+                .expect_err("refused")
+                .to_string();
+            assert!(error.contains(canonical), "{canonical}: {error}");
+            assert!(error.contains("removed in v0.16"), "{canonical}: {error}");
+        }
     }
 
     #[test]
@@ -1793,81 +1650,7 @@ paths = ["overlay"]
                 .notice(&loaded.manifest_path)
                 .is_none(),
             "canonical forms stay silent: {:?}",
-            loaded.manifest.retired_config.compat_statements()
-        );
-    }
-
-    #[test]
-    fn a_combined_legacy_manifest_prints_one_notice() {
-        let tmp = tempdir().expect("tempdir");
-        let dir = tmp.path();
-        let root = write_manifest(
-            dir,
-            "effigy.toml",
-            r#"
-[manifest]
-include = [
-  { path = "overlay.toml", optional = true, override = ["isolation.paths"] },
-]
-
-[contracts]
-schema-index = "index.json"
-
-[isolation]
-paths = ["root"]
-"#,
-        );
-        write_manifest(
-            dir,
-            "overlay.toml",
-            r#"
-[isolation]
-paths = ["overlay"]
-
-[contracts]
-selection-contract = "selection.json"
-"#,
-        );
-        let loaded = load_task_manifest_with_inspection(&root).expect("load");
-        assert_eq!(
-            array_strings(&loaded.effective_value, "isolation.paths"),
-            ["overlay"]
-        );
-        assert_eq!(
-            loaded
-                .manifest
-                .contracts
-                .as_ref()
-                .expect("contracts")
-                .schema_index
-                .as_deref(),
-            Some("index.json")
-        );
-        assert_eq!(
-            loaded
-                .manifest
-                .contracts
-                .as_ref()
-                .expect("contracts")
-                .selection_contract
-                .as_deref(),
-            Some("selection.json")
-        );
-        let notice = loaded
-            .manifest
-            .retired_config
-            .notice(&loaded.manifest_path)
-            .expect("combined legacy still notices");
-        assert!(notice.contains("`optional`"), "{notice}");
-        assert!(notice.contains("`override`"), "{notice}");
-        assert!(notice.contains("`schema-index`"), "{notice}");
-        assert!(notice.contains("`selection-contract`"), "{notice}");
-        assert!(notice.contains("removed in v0.16"), "{notice}");
-        assert_eq!(notice.matches("effigy.toml").count(), 1, "{notice}");
-        assert_eq!(
-            loaded.manifest.retired_config.compat_statements().len(),
-            4,
-            "{notice}"
+            loaded.manifest.retired_config.statements()
         );
     }
 }

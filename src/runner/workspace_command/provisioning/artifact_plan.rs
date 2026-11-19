@@ -75,29 +75,6 @@ impl LinuxWorkspaceTarget {
         })
     }
 
-    /// The image facts this artifact family was built for. The release triple in
-    /// the producer's receipt is its own record, so this is the artifact side of
-    /// the independent platform comparison, never a read of the image.
-    pub(in crate::runner) fn image_platform(
-        self,
-    ) -> effigy_kernel::workspace_session::ImagePlatform {
-        use effigy_kernel::workspace_session::{ImagePlatform, LoaderFamily};
-        let (architecture, loader) = match self {
-            Self::X86_64Gnu => ("amd64", LoaderFamily::Gnu),
-            Self::Aarch64Gnu => ("arm64", LoaderFamily::Gnu),
-            Self::X86_64Musl => ("amd64", LoaderFamily::Musl),
-            Self::Aarch64Musl => ("arm64", LoaderFamily::Musl),
-        };
-        ImagePlatform {
-            os: "linux".into(),
-            architecture: architecture.into(),
-            // A release triple names a machine type, never an optional CPU
-            // variant, so the artifact claims no variant it was not built for.
-            variant: String::new(),
-            loader,
-        }
-    }
-
     pub(super) fn artifact_relative_path(self) -> PathBuf {
         PathBuf::from(".effigy/linux-release/artifacts")
             .join(format!("effigy-{}", self.release_triple()))

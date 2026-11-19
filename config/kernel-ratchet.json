@@ -404,13 +404,6 @@
       "std::fs::remove_file": 1,
       "std::fs::rename": 1,
       "std::fs::write": 4
-    },
-    "src/runner/workspace_command/staged_probe_tests.rs": {
-      "std.process.Command.new": 1,
-      "std.process.Command.output": 1
-    },
-    "src/runner/workspace_transport/session_tests.rs": {
-      "std.process.Command.new": 1
     }
   },
   "tests": {

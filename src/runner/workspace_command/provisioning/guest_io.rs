@@ -18,7 +18,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 const CONTAINER_WORKSPACE_EFFIGY_STAGING_PATH_PREFIX: &str = "/tmp/effigy-host";
 static WORKSPACE_EFFIGY_STAGING_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// One identity probe reads four short `/proc` fields and two `ls` lines.
+#[cfg(test)]
 const WORKSPACE_IDENTITY_STDOUT_BYTES: u64 = 64 * 1024;
+#[cfg(test)]
 const WORKSPACE_IDENTITY_STDERR_BYTES: u64 = 8 * 1024;
 
 pub(super) fn render_workspace_effigy_staging_path() -> String {
@@ -326,7 +328,7 @@ exec "$@"
             "services:\n  app:\n    image: fixture:one\n",
         )
         .unwrap();
-        let policy = effigy_containers::load_container_policy(&root, Some("web")).unwrap();
+        let policy = crate::runner::test_support::load_fixture_policy(&root, Some("web")).unwrap();
         let now = Instant::now();
         let mut budget = BoundedCommandBudget::new(now, now + Duration::from_secs(10), 4096, 4096);
         let id = "a".repeat(64);
@@ -402,7 +404,7 @@ exec "$@"
             "services:\n  app:\n    image: fixture:one\n",
         )
         .unwrap();
-        let policy = effigy_containers::load_container_policy(&root, Some("web")).unwrap();
+        let policy = crate::runner::test_support::load_fixture_policy(&root, Some("web")).unwrap();
         let now = Instant::now();
         let mut budget =
             BoundedCommandBudget::new(now, now + Duration::from_secs(10), 65536, 65536);
@@ -752,6 +754,7 @@ impl ComposeWorkspaceGuest<'_> {
 
 /// Read guest-local identity through the selected backend and exact full ID.
 /// This does not re-resolve a Compose service or select a backend from a path.
+#[cfg(test)]
 pub(in crate::runner) fn observed_identity_on_backend(
     root: &effigy_kernel::root::StateRoot,
     selected: &effigy_containers::environment::BackendSelection,

@@ -2,6 +2,8 @@
 mod bundle_user_inputs_tests;
 #[path = "cli_output_tests/command_behavior_tests.rs"]
 mod command_behavior_tests;
+#[path = "support/compose_migration.rs"]
+mod compose_migration;
 #[cfg(unix)]
 #[path = "cli_output_tests/container_migrate_tests.rs"]
 mod container_migrate_tests;

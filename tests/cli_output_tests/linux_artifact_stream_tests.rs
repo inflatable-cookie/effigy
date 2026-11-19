@@ -43,6 +43,7 @@ mounts = ["./:/workspace:ro"]
         "services:\n  builder:\n    image: fixture:builder\n    working_dir: /workspace\n",
     )
     .unwrap();
+    crate::compose_migration::migrate_declared(&root);
     fs::write(root.join("tools/docker"), DOCKER_ADAPTER).unwrap();
     fs::set_permissions(root.join("tools/docker"), fs::Permissions::from_mode(0o755)).unwrap();
     let initialized = Command::new("git")

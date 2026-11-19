@@ -989,6 +989,7 @@ fn private_translated_scoped_compose_renders_its_own_port() {
         "services:\n  db:\n    image: fixture.invalid/db\n    ports: [\"4000:5432\"]\n",
     )
     .unwrap();
+    crate::compose_migration::migrate_declared(root);
     // A translated `compose_file` is a catalog environment: the scoped
     // checkout renders its own port instead of the primary's fixed one.
     let output = fixture

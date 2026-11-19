@@ -46,9 +46,6 @@ pub struct BootstrapPlan {
     /// `true` when the manifest could not be read for planning (for example an
     /// unprepared bundle source). Nothing is prepared by a plan.
     pub manifest_unreadable: Option<String>,
-    /// Retired bootstrap-only content the manifest still declares. The plan
-    /// reports them; `effigy bootstrap` refuses with the same messages.
-    pub refusals: Vec<String>,
     pub sources: Vec<PinnedSourceReport>,
     pub submodules: bool,
     pub setup: Vec<String>,
@@ -223,7 +220,6 @@ pub fn plan_bootstrap_request(request: &BootstrapRequest) -> Result<BootstrapPla
         request: request.clone(),
         manifest_found,
         manifest_unreadable: None,
-        refusals: Vec::new(),
         sources: Vec::new(),
         submodules: false,
         setup: Vec::new(),
@@ -238,7 +234,6 @@ pub fn plan_bootstrap_request(request: &BootstrapRequest) -> Result<BootstrapPla
     }
     match effigy_manifest::load_task_manifest(&manifest_path) {
         Ok(manifest) => {
-            plan.refusals = manifest.retired_config.refusals().to_vec();
             if let Some(bootstrap) = manifest.bootstrap {
                 plan.submodules = bootstrap.submodules;
                 plan.setup = bootstrap.setup;
@@ -382,18 +377,12 @@ fn is_empty_contract(bootstrap: &ManifestBootstrapConfig) -> bool {
     bootstrap.setup.is_empty() && bootstrap.start.is_none() && !bootstrap.submodules
 }
 
-/// Load a checkout's `[bootstrap]` contract, refusing retired-only declarations
-/// that bootstrap can no longer honour.
-///
-/// A v0.14.1 manifest still loads for every other command; only bootstrap
-/// refuses, with today's actionable migration message.
+/// Load a checkout's `[bootstrap]` contract. A retired `[bootstrap]` spelling
+/// is a manifest parse error, so this is the ordinary manifest load.
 pub fn load_manifest_bootstrap(
     manifest_path: &Path,
 ) -> Result<Option<ManifestBootstrapConfig>, BootstrapError> {
     let manifest = effigy_manifest::load_task_manifest(manifest_path)?;
-    if let Some(message) = manifest.retired_config.refusal_message() {
-        return Err(BootstrapError::task_invocation(message));
-    }
     Ok(manifest.bootstrap)
 }
 
@@ -427,7 +416,6 @@ pub fn render_bootstrap_plan(plan: &BootstrapPlan, output_json: bool) -> String 
         "branch": plan.request.branch,
         "manifest_found": plan.manifest_found,
         "manifest_unreadable": plan.manifest_unreadable,
-        "refusals": plan.refusals,
         "plan": {
             "clone": plan.request.repo_url.as_ref().map(|url| json!({
                 "repo_url": url,
@@ -471,9 +459,6 @@ pub fn render_bootstrap_plan(plan: &BootstrapPlan, output_json: bool) -> String 
     match plan.request.repo_url.as_deref() {
         Some(_) => lines.push("clone: yes".to_owned()),
         None => lines.push("clone: no (existing checkout used in place)".to_owned()),
-    }
-    for refusal in &plan.refusals {
-        lines.push(format!("refused: {refusal}"));
     }
     if plan.sources.is_empty() {
         lines.push("sources: none".to_owned());

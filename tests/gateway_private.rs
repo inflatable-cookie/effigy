@@ -1,3 +1,5 @@
+#[path = "support/compose_migration.rs"]
+mod compose_migration;
 #[path = "support/host_lifecycle.rs"]
 mod host_lifecycle;
 #[path = "support/route_table_fixture.rs"]
@@ -2259,6 +2261,7 @@ tls = false
 "#
         .to_owned();
         fs::write(checkout.join("effigy.toml"), manifest).unwrap();
+        crate::compose_migration::migrate_declared(&checkout);
     }
     let mut cleanup = ManagedContainerCleanup {
         checkouts: vec![primary.clone(), linked.clone()],
@@ -4494,6 +4497,7 @@ fn write_listener_fixture_manifest(fixture: ListenerFixtureManifest<'_>) {
         toml_quote(domain),
     );
     fs::write(checkout.join("effigy.toml"), manifest).expect("write managed listener config");
+    crate::compose_migration::migrate_declared(&checkout);
 }
 
 /// One managed listener in the leader-exit fixture: its declared restart
@@ -4559,6 +4563,7 @@ fn write_leader_exit_manifest(
         ));
     }
     fs::write(checkout.join("effigy.toml"), manifest).expect("write leader exit config");
+    crate::compose_migration::migrate_declared(&checkout);
 }
 
 fn toml_quote(value: &str) -> String {
@@ -6172,6 +6177,7 @@ fn container_up_waits_for_slow_service_health_before_host_processes() {
         toml_quote(&started_marker.display().to_string()),
     );
     fs::write(checkout.join("effigy.toml"), manifest).expect("write slow-health manifest");
+    crate::compose_migration::migrate_declared(&checkout);
 
     let mut cleanup = ManagedContainerCleanup {
         checkouts: vec![checkout.clone()],
@@ -6330,6 +6336,7 @@ impl PlainEnvironmentFixture {
             worker_pid = toml_quote(&worker_pid.display().to_string()),
         );
         fs::write(checkout.join("effigy.toml"), manifest).expect("write session manifest");
+        crate::compose_migration::migrate_declared(&checkout);
         Self {
             checkout,
             home,
@@ -6891,6 +6898,7 @@ fn container_hybrid_environment_switch_hands_the_whole_environment_over() {
 [containers.hybrid.host_processes.listener.route]\ndomain = \"switch.test\"\n"
     );
     fs::write(checkout.join("effigy.toml"), manifest).expect("write switch manifest");
+    crate::compose_migration::migrate_declared(&checkout);
 
     let stack_project = effigy_containers::load_container_policy(&checkout, Some("stack"))
         .expect("stack policy")
@@ -7249,6 +7257,7 @@ fn container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over() {
 [containers.hybrid.host_processes.listener.route]\ndomain = \"switch.test\"\n"
     );
     fs::write(checkout.join("effigy.toml"), manifest).expect("write switch manifest");
+    crate::compose_migration::migrate_declared(&checkout);
 
     effigy_core::worktree_scope::prepare_checkout_token(&checkout).expect("fixture identity");
     let stack_policy =
@@ -7607,6 +7616,7 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
 [containers.hybrid.dns]\nroutes = [{ domain = \"managed.test\", tls = true, port = 41003, service = \"workspace\" }]\n\n\
 [tasks.\"dev:container\"]\nmode = \"tui\"\ncontainer_lifecycle = true\ngateway = true\nhealth_wait = false\nconcurrent = [\n  { role = \"shell\", service = \"workspace\", start = 2 },\n  { role = \"lifecycle\", start = 1 },\n]\n";
     fs::write(checkout.join("effigy.toml"), manifest).expect("write managed clone manifest");
+    crate::compose_migration::migrate_declared(&checkout);
 
     effigy_core::worktree_scope::prepare_checkout_token(&checkout).expect("fixture identity");
     let stack_policy =
@@ -8052,6 +8062,7 @@ fn environment_owned_supervisor_outlives_the_task_that_started_it() {
         task_run = toml_quote(&task_run),
     );
     fs::write(checkout.join("effigy.toml"), manifest).expect("write task-owned listener config");
+    crate::compose_migration::migrate_declared(&checkout);
 
     let cleanup = ManagedContainerCleanup {
         checkouts: vec![checkout.clone()],
@@ -8261,6 +8272,7 @@ fn nested_effigy_host_process_stops_with_closure_verified() {
         profile = toml_quote(profile),
     );
     fs::write(checkout.join("effigy.toml"), manifest).expect("write the nested effigy config");
+    crate::compose_migration::migrate_declared(&checkout);
 
     let cleanup = ManagedContainerCleanup {
         checkouts: vec![checkout.clone()],
@@ -8487,6 +8499,7 @@ fn check_plain_host_process_start_refusal(detached: bool) {
         profile = toml_quote("fixture"),
     );
     fs::write(checkout.join("effigy.toml"), manifest).expect("write the refusal manifest");
+    crate::compose_migration::migrate_declared(&checkout);
 
     // The same identity work the fixture CLI performs before every run, so
     // the gate this test holds names the resource the supervisor child will
@@ -8642,6 +8655,7 @@ fn plain_host_workload_refused_before_exec_fails_up_then_a_clean_up_starts() {
         run = toml_quote(&run),
     );
     fs::write(checkout.join("effigy.toml"), manifest).expect("write the preflight manifest");
+    crate::compose_migration::migrate_declared(&checkout);
 
     let cleanup = ManagedContainerCleanup {
         checkouts: vec![checkout.clone()],
@@ -8974,6 +8988,7 @@ fn hung_listener_scaffold(
     git(&checkout, &["add", "compose.yml", "effigy.toml"]);
     git(&checkout, &["commit", "-m", "fixture base"]);
     fs::write(checkout.join("effigy.toml"), manifest).expect("write the hung listener config");
+    crate::compose_migration::migrate_declared(&checkout);
 
     let cleanup = ManagedContainerCleanup {
         checkouts: vec![checkout.clone()],
@@ -9145,6 +9160,7 @@ fn seed_local_effigy_host(fixture: &Path) -> LocalEffigyHost {
     // The markers a checkout carries, so discovery resolves this private root
     // instead of the developer's real checkout behind the test binary.
     fs::write(root.join("effigy.toml"), "").expect("local host manifest");
+    crate::compose_migration::migrate_declared(&root);
     fs::write(root.join("config/tasks.toml"), "").expect("local host tasks");
     fs::write(root.join("config/containers.toml"), "").expect("local host containers");
     let binary = root.join("target/debug/effigy");

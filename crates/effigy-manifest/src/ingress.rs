@@ -1,6 +1,6 @@
 //! Source values retain their provenance and notices through composition.
-//! Includes and local overlays compose before bootstrap normalisation; bundle
-//! defaults normalise separately before filling the consumer's missing values.
+//! Includes and local overlays compose before bundle defaults fill the
+//! consumer's missing values.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -24,16 +24,11 @@ impl ManifestInput {
             record_value_sources("", &value, source, &mut source_map);
         }
         Self {
-            retired_config: crate::legacy_compat::scan(&value),
+            retired_config: RetiredConfigDeclaration::default(),
             value,
             source_map,
             extend_paths: Vec::new(),
         }
-    }
-
-    pub fn normalize(&mut self) {
-        self.retired_config
-            .merge(crate::retired_bootstrap::translate(&mut self.value));
     }
 }
 

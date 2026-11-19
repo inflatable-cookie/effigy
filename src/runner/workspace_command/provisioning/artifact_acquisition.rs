@@ -10,9 +10,7 @@ use super::artifact_receipt::{
     workspace_effigy_local_install_identity, workspace_effigy_release_install_identity,
     write_artifact_identity,
 };
-use super::artifact_release::{
-    ensure_downloaded_linux_workspace_effigy_artifact, linux_workspace_effigy_cache_path,
-};
+use super::artifact_release::ensure_downloaded_linux_workspace_effigy_artifact;
 use super::guest_io::ComposeWorkspaceGuest;
 use super::sources::operator_workspace_for_policy;
 use crate::runner::command_context::current_working_dir;
@@ -36,37 +34,6 @@ pub(in crate::runner) struct HostWorkspaceArtifact {
     /// The install identity the bytes are current for: the checkout identity for
     /// a development build, the release identity for a download.
     pub(in crate::runner) install_identity: String,
-}
-
-/// Find an already-produced current artifact. Reserved publication never builds
-/// or downloads; a missing or stale artifact requires host preparation.
-pub(in crate::runner) fn held_linux_workspace_effigy_artifact(
-    repo_root: &Path,
-    target: LinuxWorkspaceTarget,
-) -> Result<PathBuf, RunnerError> {
-    let host_binary = std::env::current_exe().map_err(RunnerError::Cwd)?;
-    let cwd = current_working_dir()?;
-    let source = configured_linux_workspace_artifact_source()?;
-    let (artifact, identity) = match artifact_plan(&host_binary, repo_root, cwd.as_path(), source)?
-    {
-        ArtifactPlan::Build { checkout } => (
-            checkout.join(target.artifact_relative_path()),
-            local_artifact_identity(&host_binary, &checkout)?,
-        ),
-        ArtifactPlan::Download => (
-            linux_workspace_effigy_cache_path(target)?,
-            workspace_effigy_release_install_identity(),
-        ),
-    };
-    if linux_workspace_effigy_artifact_is_current(&artifact, target, &identity) {
-        return Ok(artifact);
-    }
-    Err(RunnerError::task_invocation(format!(
-        "no current produced linux workspace artifact for `{}` is held on this host, and the \
-         reserved publication neither builds nor downloads inside its deadline; run `{HOST_REPREPARE_COMMAND}` \
-         on the host first",
-        target.release_triple(),
-    )))
 }
 
 /// Acquire the declared workspace artifact before opening activation (§8.9).

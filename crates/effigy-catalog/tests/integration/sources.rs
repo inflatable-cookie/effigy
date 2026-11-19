@@ -269,10 +269,10 @@ fn compiled_baseline_fragments_meet_their_own_requirements() {
 
 /// Q-005 keeps project, bundle and declared sources ahead of the baseline. A
 /// source-local `minio` fragment therefore still resolves and is attributed to
-/// its own layer, while a `minio` that would fall back to the removed baseline
-/// fragment refuses and names `silo` (effigy#424).
+/// its own layer; with no higher-priority definition the name is the ordinary
+/// not-found, because the compiled baseline no longer ships it.
 #[test]
-fn retired_baseline_minio_refuses_while_source_local_minio_still_resolves() {
+fn source_local_minio_resolves_and_the_baseline_has_none() {
     let sources = Sources::new();
     let project = write_fragment(&sources.roots[0], "minio", "project-local", "");
     let bundle = write_fragment(&sources.roots[1], "minio", "bundle-local", "");
@@ -311,19 +311,17 @@ fn retired_baseline_minio_refuses_while_source_local_minio_still_resolves() {
         "lower sources that also define it are listed as shadows"
     );
 
-    // With no higher-priority definition the unqualified name and an explicit
-    // baseline request refuse, naming silo, instead of silently remapping.
+    // With no higher-priority definition the name is the ordinary not-found:
+    // the compiled baseline no longer ships the fragment.
     let bare = Sources::new();
     let bare_resolver = bare.resolver();
     for name in ["minio", "baseline/minio"] {
-        let error = bare_resolver.resolve(name).expect_err("minio is retired");
         assert!(
-            matches!(error, CatalogError::RetiredCatalogService { .. }),
-            "{name} should refuse as retired, got {error:?}"
-        );
-        assert!(
-            error.to_string().contains("catalog = \"silo\""),
-            "{name}: {error}"
+            matches!(
+                bare_resolver.resolve(name).expect_err("no baseline minio"),
+                CatalogError::FragmentNotFound { .. }
+            ),
+            "{name} keeps the plain not-found diagnostic"
         );
     }
     assert!(
@@ -331,9 +329,6 @@ fn retired_baseline_minio_refuses_while_source_local_minio_still_resolves() {
         "the compiled baseline no longer ships the fragment"
     );
 
-    // A qualified request for a source that simply lacks the fragment is not a
-    // retirement: it keeps the ordinary not-found diagnostic, so the refusal
-    // never disguises a typo or a missing source fragment as a baseline cut.
     for name in ["project/minio", "bundle/minio", "acme/minio"] {
         let error = bare_resolver.resolve(name).expect_err("no such fragment");
         assert!(

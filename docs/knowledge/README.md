@@ -11,7 +11,7 @@ Current product truth is owned by topic. User documentation remains in [guides](
 | Interfaces and guarantees | [Contracts](contracts/README.md) |
 | Deployment data: seeds, dumps, snapshots and artifact staging (v0.16 replacement for the retired state stack) | [Deployment data workflows](deployment-data-workflows.md) |
 | Change-scoped QA (implemented; `stop` and `hard_timeout_ms` wait on 052) | [Bounded QA groups contract](contracts/051-bounded-qa-groups-contract.md) |
-| Runtime kernel (session kernel, guest client, pinned TLS transport, host channel seam and serving owner implemented; the production activation caller, the wider guest Observe surface and backend/consumer qualification are not) | [Runtime kernel contract](contracts/052-runtime-kernel-contract.md); [workspace-client interface](contracts/052-runtime-kernel-contract.md#811-workspace-client-interface-v1) |
+| Runtime kernel (session kernel and the guest's local dispatch implemented; the guest-to-host channel, workspace session and guest PTY are retired) | [Runtime kernel contract](contracts/052-runtime-kernel-contract.md) |
 | Interpolation custody and recovery (proposed) | [Design](architecture/037-interpolation-custody-proposal.md) |
 | Container environments | [Environment reconciler contract](contracts/053-environment-reconciler-contract.md) |
 | Releases (config, `status`, `--plan` and the Run with checkpoints and receipts implemented for `tag` and `task` targets; native publish providers are v0.16) | [Release platform contract](contracts/054-release-platform-contract.md) |

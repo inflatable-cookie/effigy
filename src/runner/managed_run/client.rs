@@ -11,7 +11,7 @@
 
 use std::ffi::OsString;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use effigy_kernel::ctx::{Deadline, OpenReason};
@@ -57,131 +57,14 @@ pub(in crate::runner) struct Started {
     pub(in crate::runner) root: effigy_kernel::root::StateRoot,
 }
 
-#[cfg(all(test, feature = "workspace-serving-fixture"))]
-thread_local! {
-    static RESERVED_HANDOFF_PRESENT: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
-}
-
-#[cfg(all(test, feature = "workspace-serving-fixture"))]
-pub(in crate::runner) fn take_reserved_handoff_observation() -> Option<bool> {
-    RESERVED_HANDOFF_PRESENT.with(|observed| observed.take())
-}
-
 /// Spawns the run's detached supervisor and waits for its admission. A
 /// refusal (the run is already live, its predecessor would not settle, a
 /// setup error) is reported here; nothing was started.
 pub(in crate::runner) fn start(request: &ClientStart<'_>) -> Result<Started, RunnerError> {
-    start_with(request, None)
+    start_with(request)
 }
 
-/// [`start`] for the run a workspace dispatcher already reserved (052 §8.11).
-///
-/// The ticket travels unchanged into the supervisor's private config frame and
-/// reaches the engine as `EngineSession::admission()`; the engine then admits
-/// exactly the run the reservation names with `Run::begin_admitted`. Nothing
-/// here mints an id or admits a second run, and a refusal leaves the
-/// reservation for the client's retry to read from the host's own record.
-#[allow(dead_code)] // The production channel `Admission` adapter calls this once the
-                    // activation supplies the serving owner's negotiation and fence facts.
-pub(in crate::runner) fn start_admitted(
-    request: &ClientStart<'_>,
-    ticket: effigy_kernel::run::AdmissionTicket,
-) -> Result<Started, RunnerError> {
-    start_with(request, Some(ticket))
-}
-
-/// [`start`] for a task the workspace channel re-resolved and reserved.
-///
-/// The reservation travels unchanged into the supervisor's private config
-/// frame, so the engine admits exactly `ticket.run()` with `Run::begin_admitted`
-/// under the canonical Task gate. Nothing here mints an id or admits a second
-/// run, and the caller keeps the returned owning client for the run's life: a
-/// serving owner that drops it stops the run as an owner loss, never as
-/// detached success.
-#[allow(dead_code)] // The workspace dispatcher's `Admission` is its only caller.
-pub(in crate::runner) fn start_reserved(
-    host_checkout: &Path,
-    invocation: &effigy_cli::TaskInvocation,
-    cwd: PathBuf,
-    admission: effigy_kernel::run::AdmissionTicket,
-    resolution: wire::WorkspaceResolution,
-) -> Result<Started, RunnerError> {
-    let executable = task_engine::startup_executable()?;
-    start_reserved_with_executable(
-        host_checkout,
-        invocation,
-        cwd,
-        admission,
-        Some(resolution),
-        &executable,
-    )
-}
-
-pub(in crate::runner) fn start_reserved_with_executable(
-    host_checkout: &Path,
-    invocation: &effigy_cli::TaskInvocation,
-    cwd: PathBuf,
-    admission: effigy_kernel::run::AdmissionTicket,
-    resolution: Option<wire::WorkspaceResolution>,
-    executable: &effigy_kernel::supervise::Executable,
-) -> Result<Started, RunnerError> {
-    let home = task_engine::state_home_path().ok_or_else(|| {
-        RunnerError::task_invocation(
-            "HOME is unset or relative; Effigy keeps run state under $HOME/.effigy/state",
-        )
-    })?;
-    let payload = Payload {
-        task: invocation.name.clone(),
-        args: invocation.args.clone(),
-        front: Front::Detached,
-        state_home: home,
-        terminal: None,
-        workspace_resolution: resolution,
-    };
-    let mut env: Vec<(OsString, OsString)> =
-        crate::runner::secret_session::workload_ambient_environment()
-            .filter(|(key, _)| key != "EFFIGY_CUSTODY_NONCE" && key != "EFFIGY_PROBE_NONCE")
-            .collect();
-    let grant = crate::runner::secret_session::take_child_grant();
-    #[cfg(all(test, feature = "workspace-serving-fixture"))]
-    RESERVED_HANDOFF_PRESENT.with(|observed| observed.set(Some(grant.is_some())));
-    if let Some(grant) = &grant {
-        let (key, value) = grant.env_entry();
-        env.push((OsString::from(key), OsString::from(value)));
-    }
-    let cx = task_engine::effect_context(OpenReason::DevServer);
-    let root = task_engine::checkout_effects_root(host_checkout)?;
-    let run = admission.run();
-    let client = start_engine_at(
-        &cx,
-        root,
-        EngineLaunch {
-            payload: wire::encode(&payload),
-            cwd,
-            env,
-            handoff: grant.map(|grant| std::sync::Arc::new(grant.into_reader())),
-            admission: Some(admission),
-        },
-        executable,
-        ClientMode::Owning,
-    )
-    .map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "the reserved workspace task `{}` did not start its engine: {error}",
-            invocation.name
-        ))
-    })?;
-    Ok(Started {
-        client,
-        run,
-        root: root.clone(),
-    })
-}
-
-fn start_with(
-    request: &ClientStart<'_>,
-    admission: Option<effigy_kernel::run::AdmissionTicket>,
-) -> Result<Started, RunnerError> {
+fn start_with(request: &ClientStart<'_>) -> Result<Started, RunnerError> {
     let home = task_engine::state_home_path().ok_or_else(|| {
         RunnerError::task_invocation(
             "HOME is unset or relative; Effigy keeps run state under $HOME/.effigy/state",
@@ -193,7 +76,6 @@ fn start_with(
         front: request.front,
         state_home: home.clone(),
         terminal: request.terminal,
-        workspace_resolution: None,
     };
     // The supervisor is Effigy's own process, and it is never a workload's
     // environment: it starts without session access, then reads the one-shot
@@ -224,7 +106,6 @@ fn start_with(
             cwd: request.cwd.clone(),
             env,
             handoff: grant.map(|grant| std::sync::Arc::new(grant.into_reader())),
-            admission,
         },
         &executable,
         ClientMode::Owning,

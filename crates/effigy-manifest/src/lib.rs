@@ -16,7 +16,6 @@ mod ingress;
 mod lifecycle_date;
 pub use lifecycle_date::ManifestLifecycleDate;
 pub mod execution_binding;
-mod legacy_compat;
 mod loaded_catalog;
 mod manifest_section;
 pub mod portfolio;
@@ -236,7 +235,7 @@ pub struct TaskManifest {
     pub bootstrap: Option<ManifestBootstrapConfig>,
     /// What this manifest's retired v0.15 config read or ignored. It is never
     /// part of the TOML shape: [`load_task_manifest_with_inspection`] emits its
-    /// notice once per run and a removed command refuses with its refusals.
+    /// notice once per run.
     #[serde(skip)]
     pub retired_config: RetiredConfigDeclaration,
     /// Pinned extra sources acquired beside this checkout (contract 020).

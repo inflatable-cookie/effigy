@@ -39,7 +39,6 @@ pub(super) fn render_inspect_payload(
             json!({
                 "parent": display_path(&edge.parent, target_root),
                 "child": display_path(&edge.child, target_root),
-                "override_paths": edge.override_paths,
                 "extend_paths": edge.extend_paths,
             })
         })
@@ -253,9 +252,6 @@ fn render_edge(target_root: &Path, edge: &ManifestCompositionEdge) -> String {
         display_path(&edge.child, target_root)
     );
     let mut suffixes = Vec::new();
-    if !edge.override_paths.is_empty() {
-        suffixes.push(format!("override: {}", edge.override_paths.join(", ")));
-    }
     if !edge.extend_paths.is_empty() {
         suffixes.push(format!("extend: {}", edge.extend_paths.join(", ")));
     }

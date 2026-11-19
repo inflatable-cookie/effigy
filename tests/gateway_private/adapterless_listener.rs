@@ -165,6 +165,7 @@ fn adapterless_environment(root: &Path, profile: &str, manifest_tail: &str) -> P
         ),
     )
     .expect("write adapterless manifest");
+    crate::compose_migration::migrate_declared(&checkout);
     checkout
 }
 

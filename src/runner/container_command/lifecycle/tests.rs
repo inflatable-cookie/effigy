@@ -23,9 +23,8 @@ use crate::runner::container_command::RunnerError;
 use effigy_containers::annotate_workspace_extra_mount_decisions;
 use effigy_containers::policy::restart::RestartPolicyStage;
 use effigy_containers::{
-    down_report, load_container_policy, load_container_policy_for_creation, up_detached_report,
-    ContainerAction, CreationPolicyStage, EffectiveComposeSource, EffectiveContainerPolicy,
-    SharedServiceBinding,
+    down_report, up_detached_report, ContainerAction, CreationPolicyStage, EffectiveComposeSource,
+    EffectiveContainerPolicy, SharedServiceBinding,
 };
 use effigy_containers::{ContainerConfirmationPolicy, ContainerLifecycleOperation};
 use effigy_manifest::{
@@ -747,6 +746,7 @@ primary_service = "app"
             "services:\n  app:\n    image: alpine:latest\n",
         )
         .expect("write compose");
+        crate::runner::test_support::migrate_declared_compose_files(&root);
 
         let _runtime = crate::contract_test_support::EnvGuard::set_many(&[
             (
@@ -817,8 +817,9 @@ mounts = ["prepared:/workspace-root/prepared:ro"]
     // `up` never renders twice (effigy#371).
     let source = root.join("prepared");
     fs::create_dir(&source).expect("preparation creates source");
-    let (policy, decisions) = load_container_policy_for_creation(&root, Some("web"))
-        .expect("resolve creation-time mounts");
+    let (policy, decisions) =
+        crate::runner::test_support::load_fixture_policy_for_creation(&root, Some("web"))
+            .expect("resolve creation-time mounts");
 
     let backend = effigy_containers::ContainerManager::defaults();
     let request = effigy_containers::ContainerManagerRequest::new(&root)
@@ -917,6 +918,7 @@ primary_service = "app"
         "services:\n  app:\n    image: example\n",
     )
     .expect("compose");
+    crate::runner::test_support::migrate_declared_compose_files(&root);
 
     let error = run_container_reset(
         &root,
@@ -957,7 +959,7 @@ fn prepared_marker_policy(root: &Path) -> EffectiveContainerPolicy {
         "services:\n  app:\n    image: example\n",
     )
     .unwrap();
-    effigy_containers::prepare_container_policy(root, None).unwrap()
+    crate::runner::test_support::prepare_fixture_policy(root, None).unwrap()
 }
 
 fn running_row(service: &str, oneoff: bool) -> effigy_containers::exec::RunningComposeContainer {
@@ -997,20 +999,6 @@ fn detached_gateway_registration_failure_keeps_started_scope() {
     assert!(rendered.contains("no teardown ran"));
     assert!(rendered.contains("effigy container up --detach"));
     assert!(rendered.contains("reconcile from what is running"));
-}
-
-#[test]
-fn workspace_integration_failure_retains_owner_without_lifecycle_cleanup() {
-    let policy = test_policy(Vec::new());
-    let error = IntegrationOutcomePolicy::Workspace.failure(
-        &policy,
-        RunnerError::task_invocation("integration effects unsettled; re-run up"),
-        || panic!("workspace recovery owns cleanup"),
-    );
-    assert_eq!(
-        error.to_string(),
-        "integration effects unsettled; re-run up"
-    );
 }
 
 #[test]
@@ -1162,7 +1150,8 @@ impl FakeDownFixture {
     }
 
     fn policy(&self) -> EffectiveContainerPolicy {
-        load_container_policy(&self.repo_root, None).expect("fixture policy")
+        crate::runner::test_support::load_fixture_policy(&self.repo_root, None)
+            .expect("fixture policy")
     }
 
     /// The environment record after a stop: stopped and no longer
@@ -1297,7 +1286,8 @@ catalog = "postgres"
     }
 
     fn policy(&self, name: &str) -> EffectiveContainerPolicy {
-        load_container_policy(&self.repo_root, Some(name)).expect("fixture policy")
+        crate::runner::test_support::load_fixture_policy(&self.repo_root, Some(name))
+            .expect("fixture policy")
     }
 
     fn docker_log(&self) -> String {
@@ -1514,7 +1504,8 @@ impl UnpreparedDownFixture {
     }
 
     fn policy(&self) -> EffectiveContainerPolicy {
-        load_container_policy(&self.repo_root, None).expect("fixture policy")
+        crate::runner::test_support::load_fixture_policy(&self.repo_root, None)
+            .expect("fixture policy")
     }
 
     fn docker_log(&self) -> String {
@@ -1747,7 +1738,8 @@ exit 0
     }
 
     fn policy(&self) -> EffectiveContainerPolicy {
-        load_container_policy(&self.repo_root, None).expect("fixture policy")
+        crate::runner::test_support::load_fixture_policy(&self.repo_root, None)
+            .expect("fixture policy")
     }
 
     fn docker_log(&self) -> String {

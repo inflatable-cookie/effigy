@@ -1302,7 +1302,8 @@ exit 0
         }
 
         fn policy(&self) -> EffectiveContainerPolicy {
-            effigy_containers::load_container_policy(&self.repo_root, None).expect("fixture policy")
+            crate::runner::test_support::load_fixture_policy(&self.repo_root, None)
+                .expect("fixture policy")
         }
 
         fn runtime_dir(&self) -> String {

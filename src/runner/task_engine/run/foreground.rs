@@ -451,7 +451,6 @@ mod tests {
             args: &[],
             key: None,
             admission: None,
-            workspace_admission: None,
             cwd: None,
         }
     }
@@ -650,7 +649,6 @@ mod tests {
             args: &[],
             key: None,
             admission: None,
-            workspace_admission: None,
             cwd: None,
         })
         .expect_err("a spent ceiling starts nothing");

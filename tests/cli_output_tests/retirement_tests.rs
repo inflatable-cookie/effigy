@@ -37,7 +37,7 @@ fn retirement_commands_emit_json_errors_without_effects() {
 }
 
 #[test]
-fn retirement_user_catalog_warns_and_preserves_ignored_fragments() {
+fn retirement_user_catalog_is_ignored_and_preserved() {
     let fixture =
         effigy_test_support::Fixture::new("effigy-cli-private-").expect("private fixture");
     let home = fixture.path().join("home");
@@ -61,12 +61,9 @@ fn retirement_user_catalog_warns_and_preserves_ignored_fragments() {
     assert_eq!(packet["ok"], true);
     assert!(!packet.to_string().contains("retired-only"));
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert_eq!(
-        stderr.matches("is retired and ignored").count(),
-        1,
-        "{stderr}"
-    );
-    assert!(stderr.contains("infra/dev/catalog/"), "{stderr}");
+    // v0.16 removed the one-release notice: retired user catalog state is
+    // ignored silently and stays untouched on disk.
+    assert!(!stderr.contains("is retired and ignored"), "{stderr}");
     assert_eq!(
         fs::read_to_string(sentinel).unwrap(),
         "malformed retired content"
