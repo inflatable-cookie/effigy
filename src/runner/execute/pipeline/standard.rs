@@ -42,7 +42,6 @@ use effigy_env::schema_support::{
     SchemaSupportError,
 };
 use effigy_env::secret::SecretString;
-use effigy_execution::{ExecutionBindingInput, ExecutionSelectionPlan};
 use effigy_kernel::outcome::WorkloadOutcome;
 use effigy_manifest::{ManifestManagedRun, ManifestTaskRunIn, TaskSelection};
 use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRoute};
@@ -50,7 +49,6 @@ use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRoute};
 pub(in crate::runner) fn run_standard_task(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
-    selection_plan: &ExecutionSelectionPlan,
     run_key: Option<&RunKey>,
     tree: Option<super::super::sequence_run::ResolvedSteps>,
 ) -> Result<String, RunnerError> {
@@ -135,7 +133,6 @@ pub(in crate::runner) fn run_standard_task(
         run_standard_task_inner(
             preflight,
             selection,
-            selection_plan,
             &context,
             &env_schema_resolved,
             Some(&task_secret_pairs),
@@ -314,7 +311,6 @@ fn retired_task_cache_error(task_name: &str) -> RunnerError {
 fn run_standard_task_inner(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
-    selection_plan: &ExecutionSelectionPlan,
     context: &ExecutionTaskContext<'_>,
     env_schema_resolved: &Option<ResolvedEnv>,
     resolved_task_secrets: Option<&[(String, SecretString)]>,
@@ -363,10 +359,6 @@ fn run_standard_task_inner(
         selection.task,
         "standard task execution",
     )?;
-    let _binding_plan = binding_resolution.plan(ExecutionBindingInput::new(
-        selection_plan.clone(),
-        "standard task execution",
-    ));
     let container_binding = binding_resolution.binding();
     if let ContainerExecutionBinding::Inline { .. } = container_binding {
         let output = run_inline_workspace_standard_task(
@@ -807,12 +799,10 @@ pub(in crate::runner) fn run_sequence_container_command(
     let built = command::build_task_command(preflight, &selected, &None)?;
     let plain_env_keys = built.plain_env_keys.clone();
     let context = ExecutionTaskContext::new(preflight, &selected, built.command);
-    let plan = super::super::selection::build_execution_selection_plan(preflight, &selected);
     let tree = super::super::sequence_run::resolve_tree(preflight, &selected)?;
     run_standard_task_inner(
         preflight,
         &selected,
-        &plan,
         &context,
         &None,
         None,

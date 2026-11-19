@@ -912,7 +912,9 @@ struct ResolvedTask {
     preflight: ExecutionPreflight,
     task: effigy_manifest::ManifestTask,
     surface: effigy_tasks::TaskSurface,
-    plan: effigy_execution::ExecutionSelectionPlan,
+    catalog_root: std::path::PathBuf,
+    mode: effigy_core::task_selection::CatalogSelectionMode,
+    evidence: Vec<String>,
     tree: ResolvedSteps,
 }
 impl ResolvedTask {
@@ -925,22 +927,16 @@ impl ResolvedTask {
             .preflight
             .catalogs
             .iter()
-            .find(|catalog| catalog.catalog_root == self.plan.catalog.catalog_root)
+            .find(|catalog| catalog.catalog_root == self.catalog_root)
             .ok_or_else(|| RunnerError::task_invocation("resolved step catalog disappeared"))?;
         let selection = TaskSelection {
             catalog,
             task: &self.task,
-            mode: self.plan.mode,
-            evidence: self.plan.evidence.clone(),
+            mode: self.mode,
+            evidence: self.evidence.clone(),
             surface: self.surface,
         };
-        super::entry::run_selected_task(
-            &self.preflight,
-            &selection,
-            &self.plan,
-            None,
-            Some(self.tree),
-        )
+        super::entry::run_selected_task(&self.preflight, &selection, None, Some(self.tree))
     }
 }
 
@@ -989,7 +985,7 @@ fn resolve_task_step(
     child.output_json |= preflight.output_json;
     let route = super::route::resolve_reference_route(&invocation, &child);
     match route {
-        Ok(super::route::Route::Task { selection, plan }) => {
+        Ok(super::route::Route::Task { selection }) => {
             let tree = if child.help || child.plan {
                 ResolvedSteps {
                     foreground: true,
@@ -1001,10 +997,12 @@ fn resolve_task_step(
             let task = selection.task.clone();
             let surface = selection.surface;
             Ok(StepAction::Task(Box::new(ResolvedTask {
+                catalog_root: selection.catalog.catalog_root.clone(),
+                mode: selection.mode,
+                evidence: selection.evidence.clone(),
                 preflight: child,
                 task,
                 surface,
-                plan: *plan,
                 tree,
             })))
         }

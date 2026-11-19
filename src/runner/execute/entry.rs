@@ -25,23 +25,14 @@ fn run_manifest_task_with_preflight_input(
         refuse_key_without_run(run_key.as_ref(), "`--plan` starts no run")?;
         return run_execution_pipeline(&task, preflight);
     }
-    let (selection, selection_plan) =
-        match super::selection::resolve_task_selection(&task, &preflight)? {
-            super::selection::SelectionResolution::Selected { selection, plan } => {
-                (selection, plan)
-            }
-            super::selection::SelectionResolution::Output(output) => {
-                refuse_key_without_run(run_key.as_ref(), "this selector starts no task run")?;
-                return Ok(output);
-            }
-        };
-    run_selected_task(
-        &preflight,
-        &selection,
-        &selection_plan,
-        run_key.as_ref(),
-        None,
-    )
+    let selection = match super::selection::resolve_task_selection(&task, &preflight)? {
+        super::selection::SelectionResolution::Selected { selection } => selection,
+        super::selection::SelectionResolution::Output(output) => {
+            refuse_key_without_run(run_key.as_ref(), "this selector starts no task run")?;
+            return Ok(output);
+        }
+    };
+    run_selected_task(&preflight, &selection, run_key.as_ref(), None)
 }
 
 fn run_manifest_task_with_preflight_input_and_env(
@@ -61,16 +52,13 @@ fn run_manifest_task_with_preflight_input_and_env(
         refuse_key_without_run(run_key.as_ref(), "`--plan` starts no run")?;
         return run_execution_pipeline(&task, preflight);
     }
-    let (selection, selection_plan) =
-        match super::selection::resolve_task_selection(&task, &preflight)? {
-            super::selection::SelectionResolution::Selected { selection, plan } => {
-                (selection, plan)
-            }
-            super::selection::SelectionResolution::Output(output) => {
-                refuse_key_without_run(run_key.as_ref(), "this selector starts no task run")?;
-                return Ok(output);
-            }
-        };
+    let selection = match super::selection::resolve_task_selection(&task, &preflight)? {
+        super::selection::SelectionResolution::Selected { selection } => selection,
+        super::selection::SelectionResolution::Output(output) => {
+            refuse_key_without_run(run_key.as_ref(), "this selector starts no task run")?;
+            return Ok(output);
+        }
+    };
 
     let mut overridden_task = selection.task.clone();
     for (key, value) in env_overrides {
@@ -83,13 +71,7 @@ fn run_manifest_task_with_preflight_input_and_env(
         evidence: selection.evidence,
         surface: selection.surface,
     };
-    run_selected_task(
-        &preflight,
-        &overridden_selection,
-        &selection_plan,
-        run_key.as_ref(),
-        None,
-    )
+    run_selected_task(&preflight, &overridden_selection, run_key.as_ref(), None)
 }
 
 /// Runs the selected task. A `--run-id` key that already names a run
@@ -98,7 +80,6 @@ fn run_manifest_task_with_preflight_input_and_env(
 pub(super) fn run_selected_task(
     preflight: &super::planning::ExecutionPreflight,
     selection: &TaskSelection<'_>,
-    selection_plan: &effigy_execution::ExecutionSelectionPlan,
     run_key: Option<&RunKey>,
     tree: Option<super::sequence_run::ResolvedSteps>,
 ) -> Result<String, RunnerError> {
@@ -116,18 +97,13 @@ pub(super) fn run_selected_task(
     if preflight.plan {
         return super::pipeline::render_resolved_selector_plan(preflight, selection);
     }
-    let result =
-        super::pipeline::managed::run_managed_task(preflight, selection, selection_plan, run_key)
-            .and_then(|output| match output {
-                Some(output) => Ok(output),
-                None => super::pipeline::standard::run_standard_task(
-                    preflight,
-                    selection,
-                    selection_plan,
-                    run_key,
-                    tree,
-                ),
-            });
+    let result = super::pipeline::managed::run_managed_task(preflight, selection, run_key)
+        .and_then(|output| match output {
+            Some(output) => Ok(output),
+            None => {
+                super::pipeline::standard::run_standard_task(preflight, selection, run_key, tree)
+            }
+        });
     match result {
         Err(RunnerError::RunKeyExists { run }) => {
             crate::runner::run_control::attach(&run, preflight.output_json)

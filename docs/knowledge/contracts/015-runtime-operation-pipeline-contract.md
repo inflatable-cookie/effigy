@@ -58,17 +58,8 @@ allowances or adapter boundaries.
 
 ## Execution Pipeline Rules
 
-Task and command execution starts from `TaskExecutionRequestBuilder`.
-
-Required inputs:
-
-- captured `EffigyRuntimeContext`
-- execution intent
-- execution surface
-- output mode
-- runtime policy
-- environment plan
-- cleanup and handoff policy where applicable
+Task and command execution starts from `TaskExecutionRequestBuilder`. Its
+required inputs are owned by contract `013-task-execution-request-contract.md`.
 
 The resolved plan owns host, container, or local-container-handoff route
 selection. Rhai `exec::run(...)`, direct CLI, deferral, bootstrap, run-array,
@@ -79,15 +70,9 @@ equivalent inputs.
 
 Runtime activation planning belongs to `effigy-runtime-plan`.
 
-Activation plans must carry:
-
-- repo root
-- policy name
-- selected container name when one exists
-- repo override
-- readiness expectations
-- alias/gateway expectations
-- lease refresh policy
+Activation plans carry every fact the side-effect stages need, so a stage never
+re-derives identity, readiness, alias, gateway or lease policy. The fields are
+owned by `effigy-runtime-plan`.
 
 Side effects belong behind named runner/runtime stages. A caller may request
 activation, but it must not locally rebuild startup, readiness, alias,
@@ -97,14 +82,8 @@ gateway, or lease behavior.
 
 Container operation planning belongs to `effigy-containers`.
 
-Operation plans must carry:
-
-- repo root
-- policy/container identity
-- operation kind
-- side-effect class
-- safety or confirmation policy for destructive operations
-- backend/manager boundary where backend work is needed
+Operation plans carry the destructive-operation safety policy and the
+backend/manager boundary. The fields are owned by `effigy-containers`.
 
 Backend behavior belongs behind `ContainerManager` and runtime adapters. Runner
 command code should not branch on Docker Compose versus Colima/nerdctl.
@@ -129,17 +108,10 @@ command strings.
 Rhai runtime-sensitive helpers must route through the same pipeline families as
 CLI surfaces.
 
-Required behavior:
-
-- Rhai can inspect captured runtime context
-- Rhai `exec::run(..., #{ run_in: "container", ... })` uses the execution
-  request builder
-- `stdin_file`, cwd, env, container, and service options travel through typed
-  execution environment and route plans
-- first-party scripts should prefer `exec::run` for container commands that
-  depend on host/container context
-- direct `container::*` callbacks remain compatibility surfaces until fully
-  migrated behind container operation requests
+Rhai `exec::run(...)` uses the execution request builder, and its environment
+and route options travel as typed plan data. Direct `container::*` callbacks
+remain compatibility surfaces until they move behind container operation
+requests.
 
 ## Drift Guards
 
@@ -149,9 +121,8 @@ The lightweight drift guard is:
 effigy qa:architecture:runtime-container-drift
 ```
 
-It checks for new direct uses of cwd discovery, backend branching, raw
-Docker/Colima/nerdctl commands, compose helper calls, legacy capture helpers,
-and Rhai container-sensitive bypasses outside allowlisted debt.
+It checks the runner boundary rules above; a match is allowed only as a named
+adapter boundary or migration debt.
 
 Allowances must stay path-scoped and documented here and in the
 [package map](../architecture/010-package-map.md).
@@ -176,23 +147,9 @@ Suppression rules:
 
 ## Proof Expectations
 
-Minimum proof areas:
-
-- direct task host and container routes
-- inside-container handoff route
-- bootstrap task dispatch target preservation
-- Rhai `exec::run(... run_in=container ...)` with `stdin_file`
-- run-array embedded dispatch
-- managed dev activation identity and lease policy
-- `effigy exec` activation identity and handoff transport boundary
-- workspace seeded/bootstrap handoff cleanup and repo override propagation
-- container data seed from local SQL and OCI artifact
-- container data dump to local SQL and OCI artifact destination
-- `container reset --keep-data` persistent-data safety
-- Ctrl+C or attached-session closeout through manager-owned cleanup
-
-Proofs should prefer pure request/plan tests and fake side-effect adapters.
-Live container boot is reserved for focused compatibility checks.
+Proof areas are owned by `009-execution-surface-convergence.md`, Validation
+direction. Proofs prefer pure request and plan tests with fake side-effect
+adapters; live container boot is reserved for focused compatibility checks.
 
 ## Drift Triggers
 

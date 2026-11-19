@@ -1,4 +1,4 @@
-use effigy_exec::routing::{route, ExecContext, ExecTarget, RoutingDecision, TaskOverrides};
+use effigy_exec::routing::{route, DeclaredTarget, ExecContext, ExecTarget, RoutingDecision};
 use effigy_manifest::{
     ManifestContainerConfig, ManifestContainersConfig, ManifestSystemsConfig, ManifestTask,
     ManifestTaskRunIn,
@@ -64,13 +64,14 @@ pub(in crate::runner) fn route_standard_task_execution(
             "task `{command_name}` declares `run_in = \"container\"`, but no container target is defined"
         )));
     }
-    let task_overrides = TaskOverrides {
-        host: task_run_in == ManifestTaskRunIn::Host || binding_is_host,
-        container: if task_run_in == ManifestTaskRunIn::Container {
-            target_container.clone()
-        } else {
-            explicit_container.clone()
-        },
+    // A named container is the only container a task can declare: when the
+    // task asks for one, `resolve_routing_containers` has already resolved it.
+    let declared = if task_run_in == ManifestTaskRunIn::Host || binding_is_host {
+        DeclaredTarget::Host
+    } else if let Some(container) = explicit_container {
+        DeclaredTarget::Container(container)
+    } else {
+        DeclaredTarget::Default
     };
     let container_running = match target_container.as_deref() {
         Some(name) => is_container_running(name)?,
@@ -87,7 +88,7 @@ pub(in crate::runner) fn route_standard_task_execution(
     };
 
     Ok(RoutedTaskExecution {
-        decision: route(command_name, &context, &task_overrides),
+        decision: route(&context, &declared),
     })
 }
 
@@ -292,6 +293,68 @@ container = "web"
             routed_container_target(&routed.decision),
             Some(("web", "app"))
         );
+    }
+
+    #[test]
+    fn declared_task_named_like_an_effigy_command_routes_by_its_declaration() {
+        // A declared task called `doctor`, `tasks` or `release` is routed by
+        // its own `run_in`, exactly like any other task. The name never sends
+        // it to the host.
+        let _env = EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", None)]);
+        let containers = containers_toml(
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+"#,
+        );
+        let systems = systems_toml(
+            r#"
+[systems]
+default = "dev"
+
+[systems.dev]
+"#,
+        );
+        for name in ["doctor", "tasks", "release", "init"] {
+            let routed = route_standard_task_execution(
+                name,
+                None,
+                &manifest_task(),
+                Some(&systems),
+                Some(&containers),
+                |container| {
+                    assert_eq!(container, "web");
+                    Ok(true)
+                },
+            )
+            .expect("route");
+            assert_eq!(
+                routed_container_target(&routed.decision),
+                Some(("web", "app")),
+                "`{name}` declares nothing, so it runs in the default container"
+            );
+
+            let host_declared = ManifestTask {
+                run_in: Some(ManifestTaskRunIn::Host),
+                ..Default::default()
+            };
+            let routed = route_standard_task_execution(
+                name,
+                None,
+                &host_declared,
+                Some(&systems),
+                Some(&containers),
+                |_| panic!("a host-declared task does not check the container"),
+            )
+            .expect("route");
+            assert!(
+                matches!(routed.decision.target, ExecTarget::Host),
+                "`{name}` declares run_in = \"host\", so it runs on the host"
+            );
+        }
     }
 
     #[test]

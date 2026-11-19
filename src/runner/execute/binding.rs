@@ -3,7 +3,6 @@ use effigy_containers::{
     load_container_policy_with_workspace, load_inline_workspace_container_policy,
     resolve_inline_workspace_exec_working_dir, EffectiveContainerPolicy,
 };
-use effigy_execution::{ExecutionBindingInput, ExecutionBindingPlan};
 
 /// The one execution-binding vocabulary. The runner names the shared enum
 /// rather than decoding a second one beside it (effigy#971).
@@ -134,15 +133,6 @@ impl ExecutionBindingResolution {
         repo_root: &Path,
     ) -> Result<Option<PathBuf>, RunnerError> {
         self.binding.exec_working_dir(repo_root)
-    }
-
-    pub(in crate::runner) fn plan(&self, input: ExecutionBindingInput) -> ExecutionBindingPlan {
-        ExecutionBindingPlan::new(
-            input,
-            self.kind,
-            self.requested_container_name.clone(),
-            self.is_inline_container(),
-        )
     }
 }
 

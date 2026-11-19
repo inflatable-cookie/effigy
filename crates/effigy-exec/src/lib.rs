@@ -30,4 +30,4 @@ pub use alias::{ExecAlias, ExecAliasTable};
 pub use cwd::CwdMapper;
 pub use detection::{ContainerCapabilities, ExecStrategy};
 pub use error::ExecError;
-pub use routing::{ExecContext, ExecTarget, RoutingDecision};
+pub use routing::{DeclaredTarget, ExecContext, ExecTarget, RoutingDecision};
