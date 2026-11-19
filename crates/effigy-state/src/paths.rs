@@ -45,6 +45,9 @@ mod tests {
             path_display(Path::new("/repo/.effigy/reports/x.json"), root),
             ".effigy/reports/x.json"
         );
-        assert_eq!(path_display(Path::new("/other/x.json"), root), "/other/x.json");
+        assert_eq!(
+            path_display(Path::new("/other/x.json"), root),
+            "/other/x.json"
+        );
     }
 }

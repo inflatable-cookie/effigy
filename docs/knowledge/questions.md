@@ -350,8 +350,18 @@ the standalone data-artifact verbs keep their own namespace rather than a second
 meaning for `state capture`. `crates/effigy-artifacts` merged into `effigy-state`
 as the `artifact` module (its only consumers were that crate and the binary), and
 the Rhai `artifact` module became `state::artifact_inspect|artifact_stage|artifact_capture`. `container data seed` and
-`container data dump` keep using the same substrate unchanged. Tom's v0.16
-revisit of the deployment-data surface is untouched.
+`container data dump` keep using the same substrate unchanged.
+
+**v0.16 ruling** (Tom, 2026-11-19, D4 of the v0.16 simplification synthesis):
+retire the layered state workflow — phase and layer policy, capture profiles,
+lineage and history, state hooks, state report files, and the `state plan`,
+`apply`, `capture`, `capture-set` and `history` surfaces, with `[state.*]`
+refused by one actionable error. Keep local database seed/dump and plain OCI
+artifact staging. No replacement feature is needed: the new Acowtancy site was
+never deployed, and the one live use was a snapshot task that is already a plain
+task sequence. The replacement path and the legacy Acowtancy block are written
+up in [deployment data workflows](deployment-data-workflows.md), implemented by
+effigy#1057.
 
 Each item lands with its implementing PR, which updates the owning knowledge.
 That includes `vision.md` "Agent operations", which loses graph and docs context.

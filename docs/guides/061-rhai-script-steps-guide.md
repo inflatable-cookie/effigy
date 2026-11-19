@@ -193,12 +193,6 @@ Current v1 helpers:
   - `semver::bump_major(version)`
   - `semver::bump_minor(version)`
   - `semver::bump_patch(version)`
-- state stack helpers:
-  - `state::plan(options_map)`
-  - `state::apply(options_map)`
-  - `state::capture(options_map)`
-  - `state::capture_set(options_map)`
-  - `state::history(options_map)`
 - deploy helpers (`apply`/`redeploy` refuse in v0.15):
   - `deploy::model()`
   - `deploy::emit(options_map)`
@@ -207,14 +201,6 @@ Current v1 helpers:
   - `deploy::status(options_map)`
   - `deploy::history(options_map)`
   - `deploy::redeploy(options_map)`
-- state capture context helpers:
-  - `state::capture_context()`
-  - `state::capture_context_path()`
-  - `state::capture_source()`
-  - `state::capture_destination_ref()`
-- state apply hook context helpers:
-  - `state::apply_context()`
-  - `state::apply_context_path()`
 - state artifact helpers (moved from the retired `artifact` module in v0.15):
   - `state::artifact_inspect(source[, options_map])`
   - `state::artifact_stage(source[, options_map])`
@@ -547,28 +533,20 @@ if secrets::has("api_token") {
 }
 ```
 
-State capture context inside a capture hook:
+Stage and publish a captured snapshot from a repository task:
 
 ```rhai
-let ctx = state::capture_context();
-let src = state::capture_source();
-let dst = state::capture_destination_ref();
-log(`capturing from ${src} to ${dst}`);
-```
-
-Aggregate capture profiles from the same hook key:
-
-```rhai
-let ctx = state::capture_context();
-let result = state::capture_set(#{
-    stack: ctx["stack_name"],
-    profiles: ["new-content", "media"],
-    key: ctx["key"],
-    yes: true,
-    push: true,
-});
-if !result["ok"] {
-    throw("capture-set failed");
+let stage = state::artifact_stage("./data/exports/uat.sql");
+if !stage["ok"] {
+    throw("stage failed");
+}
+let published = state::artifact_capture(
+    "./data/exports/uat.sql",
+    "oci://ghcr.io/acme/uat-content:2026-05-06",
+    #{ kind: "sql-dump", environment_label: "uat", push: true },
+);
+if !published["ok"] {
+    throw("publish failed");
 }
 ```
 

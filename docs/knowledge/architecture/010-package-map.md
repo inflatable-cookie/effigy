@@ -93,7 +93,7 @@ these callers. `deny.toml` remains the dependency policy authority.
 | `effigy-runtime` | runtime metadata, data/read/write/shell adapter helpers, and manager-backed runtime IO wrappers |
 | `effigy-process` | host process/runtime process primitives used by runner surfaces |
 | `effigy-data` | data target resolution, seed/dump source normalization, artifact handoff planning, and database command rendering |
-| `effigy-state` | the pure state-stack model: planning/apply/capture/lineage, report paths, history and validation, with no file writes, tasks or container calls, plus the `artifact` module (artifact refs, OCI adapter, staging/apply/capture plans, metadata, and operation reports; folded in from `effigy-artifacts` in v0.15) |
+| `effigy-state` | the artifact substrate (artifact refs, OCI adapter, staging/apply/capture plans, metadata, and operation reports; folded in from `effigy-artifacts` in v0.15) plus the two path-display helpers deployment reports share; the layered state-stack model retired in v0.16 |
 
 ### Operator and policy domains
 
@@ -171,7 +171,7 @@ these callers. `deny.toml` remains the dependency policy authority.
 | [`src/runner/deploy_command/model/`](../../../src/runner/deploy_command/model/mod.rs) | managed deployment-model vocabulary: `deploy.model.v1` output, `[deploy.model]` manifest wire shapes, per-environment override merging and provenance, derivation, the closed runtime/backing-service mode sets, development-value suppression |
 | [`src/runner/deploy_command/provider/`](../../../src/runner/deploy_command/provider/mod.rs) | external provider-package vocabulary: package identity and resolution, `provider.toml` descriptor, path/git source materialization and cache, Rhai phase invocation and its workspace, phase-report contract, phase context document |
 | [`src/runner/deploy_command/plan.rs`](../../../src/runner/deploy_command/plan.rs), [`status.rs`](../../../src/runner/deploy_command/status.rs), [`export.rs`](../../../src/runner/deploy_command/export.rs) | the read and transaction command surfaces; `deploy model` and `deploy export` stay static derivation and export |
-| [`src/runner/deploy_command/report.rs`](../../../src/runner/deploy_command/report.rs) | report schemas, active/latest/history path conventions, JSON read/write; path and display helpers come from `effigy_state::paths` |
+| [`src/runner/deploy_command/report.rs`](../../../src/runner/deploy_command/report.rs) | report schemas, active/latest/history path conventions, JSON read/write; `path_display` and `safe_path_component` come from `effigy-state` |
 | [`src/runner/deploy_command/text.rs`](../../../src/runner/deploy_command/text.rs) | human-facing deploy rendering |
 
 Report paths, JSON schemas and the provider context/report contracts are stable
@@ -240,7 +240,11 @@ of owning every runtime/container decision locally.
 
 The artifact substrate is the `effigy_state::artifact` module. It was the
 standalone `effigy-artifacts` crate until v0.15 folded it into `effigy-state`
-(Q-009), because `effigy-state` and the binary were its only consumers.
+(Q-009), because `effigy-state` and the binary were its only consumers. v0.16
+retired the layered state-stack model around it (`state plan|apply|capture|
+history` and `[state.*]`), so `effigy-state` now holds the artifact substrate and
+the display helpers deployment reports use; see
+[deployment data workflows](../deployment-data-workflows.md).
 
 | Module | Responsibility |
 | --- | --- |

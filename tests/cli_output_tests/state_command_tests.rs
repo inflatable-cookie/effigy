@@ -20,7 +20,10 @@ fn cli_state_retired_stack_verbs_name_the_replacement_note() {
             .output_owned()
             .expect("run effigy");
 
-        assert!(!output.status.success(), "state {verb} must refuse: {output:?}");
+        assert!(
+            !output.status.success(),
+            "state {verb} must refuse: {output:?}"
+        );
         let rendered = parse_stdout_json(&output).to_string();
         assert!(
             rendered.contains(&format!("`effigy state {verb}` was removed in v0.16")),

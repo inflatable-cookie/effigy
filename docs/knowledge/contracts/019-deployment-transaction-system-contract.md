@@ -25,8 +25,8 @@ compatibility and cannot override this refusal.
 
 The remaining sections describe the **target transaction design**, not shipped
 execution guarantees. Existing plans describe intended work and may run provider
-preflight; they do not verify release gates, apply state, run hooks or health,
-or enforce digest pins. Full execution design is owned by Queue lane `deploy`,
+preflight; they do not verify release gates, run hooks or health, or enforce
+digest pins. Full execution design is owned by Queue lane `deploy`,
 with Acowtancy on Render as the proving consumer. See
 [Q-003](../questions.md#q-003--production-deployment-ownership) and the
 [deployment guide](../../guides/074-deployment-guide.md).
@@ -41,7 +41,6 @@ The existing deployment surface exports provider files. That remains useful,
 but it does not answer the larger operational question:
 
 - which code ref is being deployed
-- which state stack built the database and media baseline
 - which OCI artifacts were applied
 - which release evidence gates production
 - which provider project and services are targeted
@@ -50,8 +49,7 @@ but it does not answer the larger operational question:
 - which immutable inputs can be redeployed later
 
 This contract defines the app-agnostic transaction layer above the existing
-deploy model, state-stack framework, artifact substrate, release system, and
-provider packages.
+deploy model, artifact substrate, release system, and provider packages.
 
 ## Scope
 
@@ -61,7 +59,6 @@ The deployment transaction system owns:
 - provider-neutral deploy planning
 - code-source resolution
 - release-policy evaluation
-- state-stack orchestration as one deploy stage
 - artifact digest-policy checks
 - provider package preflight and apply boundaries
 - repo-owned hook invocation
@@ -150,7 +147,10 @@ Supported first-round fields:
   - required
   - `railway` first, `render` before the v0.6.0 closeout
 - `state`
-  - optional named state stack
+  - optional environment state label (`production`, `uat`, `development`, …)
+  - used for production detection and the provider context; deploy never
+    applies data, schema or migrations (see
+    [deployment data workflows](../deployment-data-workflows.md))
 - `code_ref`
   - `branch:<name>`, `tag:<name>`, `sha:<hash>`, or `release-tag`
 - `release_policy`
@@ -169,33 +169,28 @@ Supported first-round fields:
 
 ## Transaction Stages
 
-`deploy plan` resolves the transaction without mutating provider or state:
+`deploy plan` resolves the transaction without mutating the provider:
 
 1. load the composed manifest
 2. select `[deploy.<env>]`
 3. derive `deploy.model.v1`
 4. resolve the code ref
 5. resolve release evidence when required
-6. resolve the state stack when configured
-7. plan state apply
-8. enforce artifact digest policy
-9. build provider preflight/apply plan
-10. run provider read-only preflight checks when available
-11. plan hooks and health checks
-12. emit `effigy.deploy.plan.v1`
+6. enforce artifact digest policy
+7. build provider preflight/apply plan
+8. run provider read-only preflight checks when available
+9. plan hooks and health checks
+10. emit `effigy.deploy.plan.v1`
 
 `deploy apply --yes` re-runs planning and executes:
 
 1. write active deployment record
-2. run `before_state` hook when configured
-3. run state apply when configured
-4. run `after_state` hook when configured
-5. trigger provider deploy from the resolved code ref
-6. poll provider deployment status
-7. run health checks
-8. run `after_deploy` smoke hook when configured
-9. write final deployment report
-10. clear active deployment record
+2. trigger provider deploy from the resolved code ref
+3. poll provider deployment status
+4. run health checks
+5. run `after_deploy` smoke hook when configured
+6. write final deployment report
+7. clear active deployment record
 
 Failures stop later stages.
 
@@ -218,7 +213,7 @@ Production defaults should require:
 - clean worktree
 - release tag or release evidence
 - release gates
-- digest-pinned state artifacts
+- digest-pinned artifacts
 
 UAT defaults may allow:
 
@@ -227,19 +222,12 @@ UAT defaults may allow:
 - digest-preferred artifacts
 - no release gates unless configured
 
-## State And Artifact Rules
+## Artifact Rules
 
-State remains its own command family.
-
-Deploy may invoke state as a transaction stage.
-
-Rules:
-
-- `deploy plan` embeds a state apply summary, not full state semantics.
-- `deploy apply` calls the same state apply path as `effigy state apply`.
-- state reports remain canonical for state lineage.
-- deploy reports store state report paths and lineage ids.
-- artifact digest policy is enforced before state apply.
+- `[deploy.<env>].state` is the environment state label; the retired layered
+  state workflow is not a deploy stage (see
+  [deployment data workflows](../deployment-data-workflows.md)).
+- artifact digest policy is enforced before the provider deploy.
 - `digest-pinned` blocks mutable tag-only OCI refs.
 - app-specific artifact payload semantics remain app-owned.
 
@@ -310,7 +298,6 @@ Minimum plan fields:
 - deploy model summary
 - code ref and resolved commit/tag
 - release evidence
-- state stack and lineage summary
 - artifact refs and digests
 - provider preflight results
 - hooks
@@ -326,7 +313,6 @@ Minimum apply fields:
 - started and finished timestamps
 - resolved code ref
 - release evidence
-- state apply report path and lineage id
 - provider operation report
 - hook results
 - health/smoke results
@@ -353,10 +339,8 @@ The proof target is the Example App UAT/rebase deployment loop:
 
 ```sh
 effigy deploy plan uat
-effigy deploy apply uat --yes
-effigy state capture uat new-content --yes --push
+effigy deploy export render --path infra/deploy --plan
 effigy deploy plan production
-effigy deploy apply production --yes
 ```
 
 Effigy owns the transaction frame.
@@ -378,7 +362,6 @@ Implementation lanes should include:
 - report persistence tests
 - git ref resolution tests
 - release policy tests
-- state-stack integration tests
 - artifact digest policy tests
 - provider adapter tests with mocked provider output
 - secret redaction tests

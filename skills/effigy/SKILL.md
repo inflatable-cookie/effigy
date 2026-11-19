@@ -263,7 +263,7 @@ is unchanged. The `[docs_policy.graph]` profile was retired in v0.16: delete
 the table if a manifest still carries it.
 
 **Config shapes** — `[tasks]`, `[systems]`, `[containers]`, `[bootstrap]`,
-`[release]`, `[bundle]`, `[secrets]`, `[state]`, `[deploy]`, and the optional
+`[release]`, `[bundle]`, `[secrets]`, `[deploy]`, and the optional
 `[docs_policy.sources]` cross-repository declaration.
 Details: `references/config-shapes.md`.
 
@@ -286,8 +286,11 @@ resolved to an absolute path on the inherited PATH, so it never re-enters a shim
 and fallbacks never chain. Guide:
 `docs/guides/069-workspace-host-integration.md`.
 
-**State stacks** — `effigy state plan`, `apply`, `capture`.
-Guide: `docs/guides/073-state-stack-guide.md`.
+**Deployment data** — the layered `[state.*]` stack and its verbs retired in
+v0.16: declare schema, seed, import and snapshot steps as ordinary tasks, run
+seeds/dumps through `effigy container data seed|dump`, and move payloads with
+`effigy state artifact inspect|stage|capture`.
+Note: `docs/knowledge/deployment-data-workflows.md`.
 
 **Deployment** — `effigy deploy model <ENV> --json` and `deploy export <PROVIDER> <ENV>` describe a declared environment (shared `[deploy.model]` with `[deploy.<env>.model]` overrides).
 `deploy apply` and `deploy redeploy` are not yet supported in v0.15, even with

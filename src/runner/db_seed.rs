@@ -1179,9 +1179,9 @@ mod tests {
         cleanup_builtin_seed_staging, db_seed_env, db_seed_runtime_activation_plan,
         encode_staged_seed_name, logical_database_targets, resolve_db_seed_input_paths,
         resolve_db_seed_targets, stage_db_seed_files, stage_db_seed_files_with_adapter,
-        SeedMetadataEntry, DB_SEEDS_DIR, DB_SEEDS_DIR_ENV,
-        DB_SEEDS_JSON_ENV, DB_SEEDS_METADATA_FILE, DB_SEED_COUNT_ENV, DB_SEED_FILES_ENV,
-        DB_SEED_FILE_ENV, DB_SEED_TARGET_ENV, LEGACY_BOOTSTRAP_DB_SEEDS_METADATA_FILE,
+        SeedMetadataEntry, DB_SEEDS_DIR, DB_SEEDS_DIR_ENV, DB_SEEDS_JSON_ENV,
+        DB_SEEDS_METADATA_FILE, DB_SEED_COUNT_ENV, DB_SEED_FILES_ENV, DB_SEED_FILE_ENV,
+        DB_SEED_TARGET_ENV, LEGACY_BOOTSTRAP_DB_SEEDS_METADATA_FILE,
         LEGACY_BOOTSTRAP_DB_SEED_FILE_ENV,
     };
     use effigy_cli::BootstrapDbSeedInput;

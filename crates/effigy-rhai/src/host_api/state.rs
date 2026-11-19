@@ -4,9 +4,7 @@ use rhai::{Dynamic, Engine, EvalAltResult, ImmutableString, Map};
 
 use crate::surface::MODULE_STATE;
 
-use super::{
-    map_to_json, module_feature_string_options, HostCallbacks, ScriptContext,
-};
+use super::{map_to_json, module_feature_string_options, HostCallbacks, ScriptContext};
 
 /// The `state::` module keeps only the plain data-artifact verbs. v0.16 retired
 /// the layered stack helpers (`plan`, `apply`, `capture`, `capture_set`,

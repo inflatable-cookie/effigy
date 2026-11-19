@@ -1777,7 +1777,6 @@ fn secret_target_label(target: ManifestSecretTarget) -> &'static str {
         ManifestSecretTarget::Containers => "containers",
         ManifestSecretTarget::Rhai => "rhai",
         ManifestSecretTarget::Deploy => "deploy",
-        ManifestSecretTarget::State => "state",
         ManifestSecretTarget::Artifacts => "artifacts",
     }
 }

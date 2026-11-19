@@ -57,7 +57,7 @@ thread_local! {
 #[cfg(test)]
 thread_local! {
     /// In-process overrides for host env keys normally supplied by a parent
-    /// process (state capture/apply, deploy provider hooks).
+    /// process (deploy provider hooks and task-run context).
     static ACTIVE_HOST_ENV_OVERRIDES: RefCell<BTreeMap<String, String>> =
         const { RefCell::new(BTreeMap::new()) };
 }
@@ -186,8 +186,6 @@ pub enum RhaiSecretTarget {
     Rhai,
     /// Deployment provider package scripts.
     Deploy,
-    /// State stack workflow hooks.
-    State,
     /// Artifact workflow scripts.
     Artifacts,
 }
@@ -197,7 +195,6 @@ impl RhaiSecretTarget {
         match self {
             Self::Rhai => ManifestSecretTarget::Rhai,
             Self::Deploy => ManifestSecretTarget::Deploy,
-            Self::State => ManifestSecretTarget::State,
             Self::Artifacts => ManifestSecretTarget::Artifacts,
         }
     }

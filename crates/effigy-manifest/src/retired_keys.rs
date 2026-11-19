@@ -184,6 +184,27 @@ mod tests {
         assert!(error.contains("CHANGELOG.md"), "{error}");
     }
 
+    /// The retired layered state table names the owning note, the surviving
+    /// data commands and the task replacement in one error.
+    #[test]
+    fn state_table_is_refused_with_the_deployment_data_note() {
+        let error = toml::from_str::<TaskManifest>(
+            "[tasks]\nseed = 'echo seed'\n\n[state.uat]\nschema = 'effigy.state-stack.v1'",
+        )
+        .expect_err("retired state table");
+        let error = error.to_string();
+        assert!(
+            error.contains("`[state.*]` layered state stacks were removed in v0.16"),
+            "{error}"
+        );
+        assert!(error.contains("container data seed|dump"), "{error}");
+        assert!(error.contains("effigy state artifact"), "{error}");
+        assert!(
+            error.contains("docs/knowledge/deployment-data-workflows.md"),
+            "{error}"
+        );
+    }
+
     #[test]
     fn draft_step_reference_is_refused_with_the_task_key() {
         let error = toml::from_str::<TaskManifest>(

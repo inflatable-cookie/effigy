@@ -157,7 +157,6 @@ it acts on, with the count or mode in parentheses only when it adds something.
 | release | `running gate <name> (2/5)`, `reusing hosted evidence for gate <name> (1/1)` | `✓ gate <name> passed after 12s (2/5)` |
 | deploy | `resolving deploy provider <name> (offline)` | `✓ resolved deploy provider <name> from cached checkout at commit <sha>` |
 | task runs | ``waiting for heavy admission (task `dev`, 2 ahead)``, `running dev`, `running dev step 2/4: build` | ``✓ admitted heavy task `dev` after 12s`` |
-| state apply and capture | ``running task layer `structure` ``, ``importing SQL layer `baseline` ``, ``staging artifact layer `legacy` ``, ``running apply hook `legacy` ``, ``running capture task `capture:uat` `` | ``✓ applied layer `structure` `` / ``✗ apply hook `legacy` failed: …`` |
 
 A single-step task omits the step count and generated ordinal name; it uses a
 task description when present. Multi-step tasks include the position and a

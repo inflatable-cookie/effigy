@@ -29,7 +29,9 @@ fn parse_state_stack_verbs_are_refused_with_the_replacement() {
 fn parse_unknown_state_subcommand_names_the_surviving_verb() {
     let error = parse_command(vec!["state".to_owned(), "nonsense".to_owned()])
         .expect_err("unknown subcommand must refuse");
-    assert!(error.to_string().contains("only `effigy state artifact` remains"));
+    assert!(error
+        .to_string()
+        .contains("only `effigy state artifact` remains"));
 }
 
 /// The three `state artifact` verbs keep their source/ref vocabulary.

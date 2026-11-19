@@ -428,10 +428,7 @@ fn rhai_surface_feature_descriptors_cover_feature_names() {
         assert!(!descriptor.function().is_empty());
         assert!(!descriptor.option_style.is_empty());
         assert!(!descriptor.safety.is_empty());
-        assert!(matches!(
-            descriptor.dispatch,
-            RhaiFeatureDispatch::Runner
-        ));
+        assert!(matches!(descriptor.dispatch, RhaiFeatureDispatch::Runner));
     }
 }
 

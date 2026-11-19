@@ -230,8 +230,6 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.run.prepare.v1` (`run prepare --json`, including `--check`)
 - `effigy.admission.v1` (error details when a heavy run is not admitted)
 - `effigy.admission-request.v1` (the `EFFIGY_ADMISSION_REQUEST` hook input)
-- `effigy.state-stack.lineage.v1`
-- `effigy.state-stack.apply.v1`
 
 In v0.15, `deploy apply` and `deploy redeploy` exit nonzero with the existing
 `effigy.command.v1` envelope, `ok: false`, and `error.details.reason` set to
@@ -270,12 +268,8 @@ effigy --json test
 effigy --json init --dry-run
 effigy --json config completion bash --export
 effigy --json config completion candidates --prefix farm
-effigy --json state plan ./state/example-app-uat.toml
-effigy --json state plan uat --write-report
-effigy --json state apply uat
-effigy --json state capture uat new-content
-effigy --json state capture uat --role uat-capture --source-env uat --key uat-capture-2026-05-08
-effigy --json state history uat --kind capture --limit 5
+effigy --json state artifact stage oci://ghcr.io/acme/legacy-db:2026-05-01
+effigy --json state artifact capture ./dumps/uat.sql.gz --ref oci://ghcr.io/acme/uat-content:2026-05-06 --push
 effigy --json --repo /path/to/workspace build
 effigy --json --plan --repo /path/to/workspace build
 ```

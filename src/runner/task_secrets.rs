@@ -277,7 +277,6 @@ fn task_secret_targets(extra_targets: &[String]) -> Result<Vec<ManifestSecretTar
             "containers" => ManifestSecretTarget::Containers,
             "rhai" => ManifestSecretTarget::Rhai,
             "deploy" => ManifestSecretTarget::Deploy,
-            "state" => ManifestSecretTarget::State,
             "artifacts" => ManifestSecretTarget::Artifacts,
             other => {
                 return Err(RunnerError::task_invocation(format!(

@@ -48,7 +48,6 @@ pub(super) fn secrets_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
     tasks::secrets_lines(profile)
 }
 
-
 pub(super) fn deploy_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
     tasks::deploy_lines(profile)
 }
