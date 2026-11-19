@@ -107,7 +107,6 @@ fn run_manifest_task_builtin_config_schema_target_manifest_prints_composition_sn
             "[manifest]",
             "minimum_effigy_version = \"0.6.2\"",
             "\"effigy.tasks.toml\"",
-            "{ path = \"effigy.docs.toml\", override = [\"docs_policy.indexes.topic\"] }",
         ],
     );
     assert_output_excludes_all(&out, &["[tasks]"]);

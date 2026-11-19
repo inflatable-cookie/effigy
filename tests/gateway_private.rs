@@ -2624,7 +2624,9 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
         if name == "stack" {
             let path = worktrees[index].join("effigy.toml");
             let source = fs::read_to_string(&path).unwrap();
-            fs::write(path, source.replace("web", "stack")).unwrap();
+            // The migrated manifest names its service fragments `web-app`;
+            // rename only the environment's own tables.
+            fs::write(path, source.replace("containers.web", "containers.stack")).unwrap();
         }
     }
 
@@ -8864,6 +8866,10 @@ fn hung_restart_does_not_block_down_from_another_shell() {
         hung_listener_manifest("hung-restart.host.test"),
     )
     .expect("declare the hung listener before the restart");
+    // The rewritten manifest declares the retired `compose_file` again; the
+    // checkout keeps the migration's project catalog fragments, as a migrated
+    // consumer's does.
+    crate::compose_migration::migrate_declared(&checkout);
     let state_now = || host_lifecycle::read(&state_path);
     let mut restart = spawn_container_cli(&checkout, &cleanup, &["restart", "api"]);
     let deadline = Instant::now() + Duration::from_secs(90);

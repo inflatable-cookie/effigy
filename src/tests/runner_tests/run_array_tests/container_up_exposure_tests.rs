@@ -397,6 +397,7 @@ impl ExposureFixture {
             render_manifest(&declared, &depends_on, health_timeout_secs),
         )
         .expect("write manifest");
+        crate::runner::test_support::migrate_declared_compose_files(&repo);
 
         // The private gateway root is where the real endpoint store lives; the
         // gateway daemon itself is never started here.
@@ -551,6 +552,9 @@ impl ExposureFixture {
             render_manifest(&self.declared, &self.depends_on, self.health_timeout_secs),
         )
         .expect("rewrite manifest");
+        // The template says `compose_file`; the checkout keeps the catalog
+        // fragments its migration wrote, as a migrated consumer's does.
+        crate::runner::test_support::migrate_declared_compose_files(&self.repo());
     }
 
     /// Declare that one listener depends on another, as an edited manifest

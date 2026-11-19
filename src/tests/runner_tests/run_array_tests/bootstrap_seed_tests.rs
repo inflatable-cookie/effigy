@@ -315,6 +315,9 @@ mounts = ["./:/workspace"]
             server.port
         ),
     );
+    // The manifest predates the `compose_file` retirement; migrate it once to
+    // the project catalog fragments a migrated consumer's checkout has.
+    crate::runner::test_support::migrate_declared_compose_files(&root);
 
     run_bootstrap_with_cwd(bootstrap_args(), root.clone()).expect("first bootstrap");
     let recorded = fs::read_to_string(&order).expect("read order log");
