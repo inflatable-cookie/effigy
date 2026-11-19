@@ -84,7 +84,7 @@ ACCESSOR = 'prlctl list --info --json'
 # The reviewed identity, from the retained 747 originals. linux_setup's constants must equal the
 # home; linux_disk_association carries the same reviewed literals and its tests check the equality.
 REVIEWED_VM = '433c9e5b-c7b9-469f-9633-24b4addcd3b5'
-REVIEWED_HOME = '/Volumes/Stash/parallels/Ubuntu 26.04 ARM64.pvm'
+REVIEWED_HOME = '/Volumes/Stash/vms/parallels/Ubuntu 26.04 ARM64.pvm'
 REVIEWED_DISK_IMAGE = REVIEWED_HOME + '/harddisk1.hdd'
 # State of a running VM in the CLI grammar, as the retained originals carry it.
 STATE_RUNNING = 'running'
