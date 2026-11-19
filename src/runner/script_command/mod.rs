@@ -152,6 +152,7 @@ fn host_callbacks() -> HostCallbacks {
     HostCallbacks {
         run_task: Arc::new(|cwd, task, args| {
             let invocation = TaskInvocation {
+                options: None,
                 name: task.to_owned(),
                 args: args.to_vec(),
             };

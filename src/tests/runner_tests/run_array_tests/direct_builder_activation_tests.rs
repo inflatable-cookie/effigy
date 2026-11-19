@@ -418,6 +418,7 @@ esac
     } else {
         run_manifest_task_with_cwd(
             &TaskInvocation {
+                options: None,
                 name: "validate".to_owned(),
                 args: Vec::new(),
             },

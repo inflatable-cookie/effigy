@@ -24,6 +24,7 @@ fn doctor_explain_json_contract_has_selection_and_deferral_fields() {
             catalog: None,
             all_catalogs: false,
             explain: Some(TaskInvocation {
+                options: None,
                 name: "catalog_a/build".to_owned(),
                 args: vec!["--".to_owned(), "--watch".to_owned()],
             }),
@@ -86,6 +87,7 @@ fn doctor_explain_text_and_json_reasoning_fields_and_order_are_consistent() {
 
     let text = run_manifest_task_with_cwd(
         &TaskInvocation {
+            options: None,
             name: "doctor".to_owned(),
             args: vec![
                 "catalog_a/build".to_owned(),
@@ -107,6 +109,7 @@ fn doctor_explain_text_and_json_reasoning_fields_and_order_are_consistent() {
             catalog: None,
             all_catalogs: false,
             explain: Some(TaskInvocation {
+                options: None,
                 name: "catalog_a/build".to_owned(),
                 args: vec!["--".to_owned(), "--watch".to_owned()],
             }),

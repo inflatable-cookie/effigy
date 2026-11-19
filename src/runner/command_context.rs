@@ -82,12 +82,15 @@ pub(in crate::runner) fn resolve_active_repo_root(
 }
 
 fn task_repo_override(cmd: &Command) -> Option<std::path::PathBuf> {
-    parse_task_runtime_args(match cmd {
-        Command::Task(task) => &task.args,
-        _ => return None,
-    })
-    .ok()
-    .and_then(|parsed| parsed.repo_override)
+    let Command::Task(task) = cmd else {
+        return None;
+    };
+    if let Some(options) = &task.options {
+        return options.repo_override.clone();
+    }
+    parse_task_runtime_args(&task.args)
+        .ok()
+        .and_then(|parsed| parsed.repo_override)
 }
 
 pub fn command_repo_override_for_context(cmd: &Command) -> Option<std::path::PathBuf> {

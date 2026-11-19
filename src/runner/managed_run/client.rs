@@ -73,6 +73,7 @@ fn start_with(request: &ClientStart<'_>) -> Result<Started, RunnerError> {
     let payload = Payload {
         task: request.invocation.name.clone(),
         args: request.invocation.args.clone(),
+        options: request.invocation.options.clone(),
         front: request.front,
         state_home: home.clone(),
         terminal: request.terminal,

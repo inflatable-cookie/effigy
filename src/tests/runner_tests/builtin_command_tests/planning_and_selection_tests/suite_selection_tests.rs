@@ -18,6 +18,7 @@ fn run_builtin_with_child_evidence(root: PathBuf, args: &[&str]) -> Result<Strin
     );
     let result = run_manifest_task_with_cwd(
         &TaskInvocation {
+            options: None,
             name: "test".to_owned(),
             args: args.iter().map(|arg| (*arg).to_owned()).collect(),
         },
@@ -509,6 +510,7 @@ fn run_manifest_task_direct_child_task_does_not_inherit_undeclared_ancestor_cont
 
     let err = run_manifest_task_with_cwd(
         &TaskInvocation {
+            options: None,
             name: "test:unit".to_owned(),
             args: Vec::new(),
         },
@@ -773,6 +775,7 @@ fn assert_nested_invocation_container_default(command: &str, expected_default: &
         .expect("nested command should keep the child task selector")
         .to_owned();
     let task = TaskInvocation {
+        options: None,
         name: selector,
         args: vec!["--repo".to_owned(), repo.clone()],
     };

@@ -183,6 +183,7 @@ fn task_invocation_for_job(id: &str) -> Option<TaskInvocation> {
         _ => return None,
     };
     Some(TaskInvocation {
+        options: None,
         name: name.to_owned(),
         args: args.iter().map(|arg| (*arg).to_owned()).collect(),
     })

@@ -115,6 +115,7 @@ pub(super) fn dispatch(
                 catalog: string_option(&options, "catalog")?,
                 all_catalogs: bool_option(&options, "all_catalogs")?.unwrap_or(false),
                 explain: string_option(&options, "explain")?.map(|name| TaskInvocation {
+                    options: None,
                     name,
                     args: Vec::new(),
                 }),

@@ -11,6 +11,7 @@ pub(super) fn run_health_task_json(
     remaining_budget: Option<Duration>,
 ) -> Result<String, DoctorError> {
     let invocation = TaskInvocation {
+        options: None,
         name: "health".to_owned(),
         args: vec!["--json".to_owned()],
     };

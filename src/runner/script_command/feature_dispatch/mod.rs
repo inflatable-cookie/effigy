@@ -121,6 +121,7 @@ pub(super) fn run_builtin_json(
     }
     crate::runner::execute::api::run_manifest_task_with_surface(
         &TaskInvocation {
+            options: None,
             name: task.to_owned(),
             args,
         },

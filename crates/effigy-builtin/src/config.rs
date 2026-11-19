@@ -23,6 +23,7 @@ pub(super) fn run_builtin_config(
 ) -> Result<Option<String>, BuiltinError> {
     if matches!(args.first().map(String::as_str), Some("completion")) {
         let nested_task = TaskInvocation {
+            options: None,
             name: "config completion".to_owned(),
             args: Vec::new(),
         };

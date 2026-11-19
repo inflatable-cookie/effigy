@@ -36,6 +36,7 @@ fn assert_base_scan_payload(parsed: &serde_json::Value, schema: &str, scan: &str
 fn run_non_zero_scan_json(root: PathBuf, args: &[&str]) -> serde_json::Value {
     let err = run_manifest_task_with_cwd(
         &TaskInvocation {
+            options: None,
             name: "scan".to_owned(),
             args: args.iter().map(|arg| (*arg).to_owned()).collect(),
         },

@@ -104,6 +104,7 @@ fn command_kind_and_name_maps_command_variants() {
         qa: None,
     });
     let task = Command::Task(TaskInvocation {
+        options: None,
         name: "build".to_owned(),
         args: Vec::new(),
     });

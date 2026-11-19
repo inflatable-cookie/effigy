@@ -14,13 +14,9 @@ fn parse_runtime_task_passthrough() {
     assert_eq!(
         cmd,
         Command::Task(TaskInvocation {
+            options: Some(effigy_cli::GlobalCliOptions::default()),
             name: "snapshot".to_owned(),
-            args: vec![
-                effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned(),
-                "--json".to_owned(),
-                "--repo".to_owned(),
-                ".".to_owned(),
-            ],
+            args: vec!["--json".to_owned(), "--repo".to_owned(), ".".to_owned(),],
         })
     );
 }

@@ -246,6 +246,7 @@ mod tests {
 
     fn task() -> TaskInvocation {
         TaskInvocation {
+            options: None,
             name: "init".to_owned(),
             args: Vec::new(),
         }

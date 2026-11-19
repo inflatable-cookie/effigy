@@ -116,7 +116,7 @@ fn detached_json_failure_keeps_the_stage_identity_and_sanitized_cause() {
         );
 
     let failure = detached_activation_failure(&operation, true, error);
-    let RunnerError::CommandJsonFailure { rendered } = failure else {
+    let RunnerError::StructuredCommandFailure { rendered, .. } = failure else {
         panic!("detached JSON mode must render a machine failure");
     };
     let document: serde_json::Value = serde_json::from_str(&rendered).expect("json failure");
@@ -146,7 +146,7 @@ fn detached_json_failure_keeps_the_stage_identity_and_sanitized_cause() {
             reason: "revision changed".to_owned(),
         },
     );
-    let RunnerError::CommandJsonFailure { rendered } = failure else {
+    let RunnerError::StructuredCommandFailure { rendered, .. } = failure else {
         panic!("detached JSON mode must render a machine failure");
     };
     let document: serde_json::Value = serde_json::from_str(&rendered).expect("json failure");
@@ -167,7 +167,7 @@ fn detached_json_failure_keeps_the_stage_identity_and_sanitized_cause() {
             reason: "store unreadable".to_owned(),
         },
     );
-    let RunnerError::CommandJsonFailure { rendered } = failure else {
+    let RunnerError::StructuredCommandFailure { rendered, .. } = failure else {
         panic!("detached JSON mode must render a machine failure");
     };
     let document: serde_json::Value = serde_json::from_str(&rendered).expect("json failure");
@@ -184,7 +184,7 @@ fn detached_json_failure_keeps_the_stage_identity_and_sanitized_cause() {
         true,
         RunnerError::task_invocation("gateway endpoint store: revision changed"),
     );
-    let RunnerError::CommandJsonFailure { rendered } = failure else {
+    let RunnerError::StructuredCommandFailure { rendered, .. } = failure else {
         panic!("detached JSON mode must render a machine failure");
     };
     let document: serde_json::Value = serde_json::from_str(&rendered).expect("json failure");
@@ -432,7 +432,7 @@ fn a_detached_readiness_refusal_json_names_the_waits_it_ended_on() {
             }],
         }),
     );
-    let RunnerError::CommandJsonFailure { rendered } =
+    let RunnerError::StructuredCommandFailure { rendered, .. } =
         detached_activation_failure(&operation, true, error)
     else {
         panic!("a detached readiness refusal renders its JSON envelope");
@@ -551,7 +551,7 @@ fn detached_listener_exposure_json_names_exposed_and_withheld_routes() {
         true,
         listener_exposure_failure(&policy, &integrations),
     );
-    let RunnerError::CommandJsonFailure { rendered } = failure else {
+    let RunnerError::StructuredCommandFailure { rendered, .. } = failure else {
         panic!("detached JSON mode must render a machine failure");
     };
     let document: serde_json::Value = serde_json::from_str(&rendered).expect("json failure");

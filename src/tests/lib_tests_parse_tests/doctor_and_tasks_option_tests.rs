@@ -43,6 +43,7 @@ fn parse_doctor_flags_map_their_fields() {
             &["doctor", "catalog_a/build", "--", "--watch"],
             Command::Doctor(DoctorArgs {
                 explain: Some(TaskInvocation {
+                    options: None,
                     name: "catalog_a/build".to_owned(),
                     args: vec!["--".to_owned(), "--watch".to_owned()],
                 }),

@@ -21,6 +21,7 @@ pub(in crate::runner) enum Front {
 pub(in crate::runner) struct Payload {
     pub(in crate::runner) task: String,
     pub(in crate::runner) args: Vec<String>,
+    pub(in crate::runner) options: Option<effigy_core::task_args::GlobalCliOptions>,
     pub(in crate::runner) front: Front,
     pub(in crate::runner) state_home: PathBuf,
     /// The TUI's terminal size, for workload terminals.

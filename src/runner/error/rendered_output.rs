@@ -6,7 +6,8 @@ pub(super) fn runner_error_rendered_output(error: &RunnerError) -> Option<&str> 
         RunnerError::BuiltinScanNonZero { rendered, .. } => non_empty_rendered(rendered),
         RunnerError::DoctorNonZero { rendered, .. } => non_empty_rendered(rendered),
         RunnerError::CommandJsonFailure { rendered }
-        | RunnerError::TaskJsonFailure { rendered, .. } => non_empty_rendered(rendered),
+        | RunnerError::TaskJsonFailure { rendered, .. }
+        | RunnerError::StructuredCommandFailure { rendered, .. } => non_empty_rendered(rendered),
         RunnerError::DepsOperationNonZero { rendered, .. } => non_empty_rendered(rendered),
         _ => None,
     }

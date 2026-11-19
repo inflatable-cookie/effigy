@@ -256,6 +256,7 @@ env = { ROOT = "{repo}/data", ALIAS = "{project}" }
 
     fn command(root: &Path, selector: &str, args: Vec<String>) -> String {
         let invocation = TaskInvocation {
+            options: None,
             name: selector.to_owned(),
             args,
         };

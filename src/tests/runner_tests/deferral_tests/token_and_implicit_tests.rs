@@ -626,6 +626,7 @@ fn run_manifest_task_composer_global_exec_handoff_local_deferral_resolves_the_gl
     let output = crate::runner::command_context::with_runtime_context(&context, || {
         crate::runner::run_defer(DeferArgs {
             task: TaskInvocation {
+                options: None,
                 name: "missing-task".to_owned(),
                 args: vec!["--watch".to_owned()],
             },
@@ -707,6 +708,7 @@ fn run_manifest_task_container_handoff_wrapped_composer_gets_no_vendor_bin_path(
     let err = crate::runner::command_context::with_runtime_context(&context, || {
         crate::runner::run_defer(DeferArgs {
             task: TaskInvocation {
+                options: None,
                 name: "missing-task".to_owned(),
                 args: vec!["--watch".to_owned()],
             },
@@ -750,6 +752,7 @@ fn run_manifest_task_container_handoff_deferral_skips_host_mount_validation() {
     let output = crate::runner::command_context::with_runtime_context(&context, || {
         crate::runner::run_defer(DeferArgs {
             task: TaskInvocation {
+                options: None,
                 name: "true".to_owned(),
                 args: Vec::new(),
             },

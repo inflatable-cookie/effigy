@@ -18,6 +18,7 @@ fn run_array_retired_policies_fail_before_any_step() {
         .unwrap();
         let error = run_manifest_task_with_cwd(
             &TaskInvocation {
+                options: None,
                 name: "validate".into(),
                 args: vec![],
             },
@@ -41,6 +42,7 @@ fn run_array_duplicate_ids_fail_before_any_step() {
     std::fs::write(root.path().join("effigy.toml"), "[tasks.validate]\nrun = [{id='same',run='touch should-not-exist'}, {id='same',run='true'}]\n").unwrap();
     let error = run_manifest_task_with_cwd(
         &TaskInvocation {
+            options: None,
             name: "validate".into(),
             args: vec![],
         },

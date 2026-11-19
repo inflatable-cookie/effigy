@@ -981,6 +981,7 @@ fn resolve_task_step(
         .task_execution_root(&catalog.catalog_root)
         .to_path_buf();
     let invocation = TaskInvocation {
+        options: None,
         name: render_task_selector(&selector),
         args,
     };
@@ -1215,6 +1216,7 @@ mod tests {
             std::fs::write(fixture.path().join("effigy.toml"), body).unwrap();
         }
         let invocation = effigy_cli::TaskInvocation {
+            options: None,
             name: selector.into(),
             args: Vec::new(),
         };
@@ -1404,6 +1406,7 @@ mod tests {
         .unwrap();
         std::fs::write(catalog.join("effigy.toml"), "[catalog]\nalias = 'desktop'\n[tasks.preflight]\nrun = 'true'\n[tasks.\"db:migrate\"]\nrun = 'true'\n").unwrap();
         let invocation = effigy_cli::TaskInvocation {
+            options: None,
             name: "desktop/preflight".into(),
             args: Vec::new(),
         };

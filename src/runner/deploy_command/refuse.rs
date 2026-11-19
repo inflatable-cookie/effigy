@@ -24,7 +24,14 @@ pub(super) fn refuse_deploy_execution(
         "provider: deployment and rollback are not executed",
     ];
     if output_json {
-        Err(RunnerError::CommandJsonFailure {
+        let human = obligations
+            .iter()
+            .fold(effigy_ui::HumanError::new(&message), |human, item| {
+                human.evidence(*item)
+            })
+            .next_action(next_action);
+        Err(RunnerError::StructuredCommandFailure {
+            human,
             rendered: json!({
                 "schema": APPLY_SCHEMA,
                 "schema_version": 1,

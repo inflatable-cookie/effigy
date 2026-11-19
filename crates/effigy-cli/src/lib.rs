@@ -989,14 +989,10 @@ impl SkillArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskInvocation {
+    pub options: Option<GlobalCliOptions>,
     pub name: String,
     pub args: Vec<String>,
 }
-
-/// Internal argument used to carry a parsed global `--run-id` key to the
-/// selector runner without exposing it to the selected task's own arguments.
-#[doc(hidden)]
-pub const INTERNAL_RUN_ID_ARG: &str = "--__effigy-run-id";
 
 /// The refusal for the retired `--host-run-request-id` flag.
 pub const RETIRED_HOST_RUN_REQUEST_ID: &str = "`--host-run-request-id` was retired with the host-run client (Q-006). Use `effigy --run-id <key> <task>`: a repeat with the same key attaches to that run and never starts a second; inspect it with `effigy run status <key>`";

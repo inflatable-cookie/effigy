@@ -42,6 +42,7 @@ pub(super) fn resolve_probe(
     }
     args.extend(selector_args.iter().cloned());
     let invocation = TaskInvocation {
+        options: None,
         name: effigy_tasks::render_task_selector(&selector),
         args,
     };

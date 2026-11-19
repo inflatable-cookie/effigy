@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 pub struct TaskExecutionRequest {
     pub runtime_context: EffigyRuntimeContext,
     pub invocation: ExecutionIntent,
+    pub task_options: Option<effigy_core::task_args::GlobalCliOptions>,
     pub surface: ExecutionSurface,
     pub output_mode: ExecutionOutputMode,
     pub runtime_policy: ExecutionRuntimePolicy,
@@ -68,6 +69,7 @@ impl TaskExecutionRequest {
 pub struct TaskExecutionRequestBuilder {
     runtime_context: Option<EffigyRuntimeContext>,
     invocation: Option<ExecutionIntent>,
+    task_options: Option<effigy_core::task_args::GlobalCliOptions>,
     surface: Option<ExecutionSurface>,
     output_mode: Option<ExecutionOutputMode>,
     runtime_policy: Option<ExecutionRuntimePolicy>,
@@ -96,6 +98,14 @@ impl TaskExecutionRequestBuilder {
             selector: selector.into(),
             args,
         });
+        self
+    }
+
+    pub fn task_options(
+        mut self,
+        options: Option<effigy_core::task_args::GlobalCliOptions>,
+    ) -> Self {
+        self.task_options = options;
         self
     }
 
@@ -142,6 +152,7 @@ impl TaskExecutionRequestBuilder {
             invocation: self
                 .invocation
                 .ok_or(ExecutionRequestError::MissingInvocation)?,
+            task_options: self.task_options,
             surface: self.surface.unwrap_or_default(),
             output_mode: self.output_mode.unwrap_or_default(),
             runtime_policy: self.runtime_policy.unwrap_or_default(),
@@ -172,6 +183,7 @@ impl ResolvedTaskExecutionPlan {
 pub struct ExecutionPreflightInput {
     pub selector: String,
     pub args: Vec<String>,
+    pub task_options: Option<effigy_core::task_args::GlobalCliOptions>,
     pub cwd: PathBuf,
     pub surface: ExecutionSurface,
     pub secret_targets: Vec<String>,
@@ -189,12 +201,21 @@ impl ExecutionPreflightInput {
         Self {
             selector: selector.into(),
             args,
+            task_options: None,
             cwd,
             surface,
             secret_targets: Vec::new(),
             task_source: None,
             output_mode: ExecutionOutputMode::default(),
         }
+    }
+
+    pub fn with_task_options(
+        mut self,
+        options: Option<effigy_core::task_args::GlobalCliOptions>,
+    ) -> Self {
+        self.task_options = options;
+        self
     }
 
     pub fn with_secret_targets(mut self, targets: Vec<String>) -> Self {
@@ -234,31 +255,38 @@ pub struct ExecutionRuntimeArgsPlan {
 }
 
 impl ExecutionRuntimeArgsPlan {
-    pub fn from_args(args: &[String]) -> Result<Self, ExecutionRequestError> {
-        // Behind the CLI's boundary the task's own `--json` or `--plan` is
-        // the task's: only Effigy's half is searched for output flags.
-        if let Some(split) = effigy_core::task_args::split_task_args(args) {
-            let raw = effigy_tasks::parse_task_runtime_args(&split.effigy)
-                .map_err(ExecutionRequestError::InvalidRuntimeArgs)?;
-            let (mut exec_args, output_json, plan) = strip_task_output_flags(&raw.passthrough);
-            exec_args.extend(split.task.iter().cloned());
-            let help = task_help_requested(&split.effigy) || task_help_requested(&split.task);
-            let mut raw_args = raw.passthrough;
-            raw_args.extend(split.task);
-            return Ok(Self {
-                raw_args,
-                exec_args,
-                repo_override: raw.repo_override,
-                verbose_root: raw.verbose_root,
-                env_schema_override: raw.env_schema_override,
-                lock_wait_ms: raw.lock_wait_ms,
-                output_json,
-                plan,
-                help,
-                compat_flags: split.compat,
-                passed_through_flags: split.passed_through,
-            });
+    pub fn from_cli(args: &[String], options: &effigy_core::task_args::GlobalCliOptions) -> Self {
+        let mut rest = args;
+        let mut compat_flags = Vec::new();
+        while rest.first().is_some_and(|arg| {
+            effigy_core::task_args::COMPAT_TRAILING_FLAGS.contains(&arg.as_str())
+        }) {
+            compat_flags.push(rest[0].clone());
+            rest = &rest[1..];
         }
+        let passed_through_flags = rest
+            .iter()
+            .take_while(|arg| arg.as_str() != "--")
+            .filter(|arg| effigy_core::task_args::LEADING_ONLY_FLAGS.contains(&arg.as_str()))
+            .cloned()
+            .collect();
+        let help = task_help_requested(rest);
+        Self {
+            raw_args: rest.to_vec(),
+            exec_args: rest.to_vec(),
+            repo_override: options.repo_override.clone(),
+            verbose_root: options.task_verbose_root,
+            env_schema_override: options.task_env_schema.clone(),
+            lock_wait_ms: options.task_lock_wait_ms,
+            output_json: options.json_mode || compat_flags.iter().any(|flag| flag == "--json"),
+            plan: options.task_plan || compat_flags.iter().any(|flag| flag == "--plan"),
+            help,
+            compat_flags,
+            passed_through_flags,
+        }
+    }
+
+    pub fn from_args(args: &[String]) -> Result<Self, ExecutionRequestError> {
         let raw = effigy_tasks::parse_task_runtime_args(args)
             .map_err(ExecutionRequestError::InvalidRuntimeArgs)?;
         let help = task_help_requested(&raw.passthrough);
@@ -542,6 +570,7 @@ impl ExecutionDispatchPlan {
             self.effective_cwd.clone(),
             self.surface.clone(),
         )
+        .with_task_options(self.request.task_options.clone())
         .with_secret_targets(self.request.environment.secret_targets.clone())
         .with_task_source(self.request.runtime_context.task_source().cloned())
         .with_output_mode(self.output_mode)

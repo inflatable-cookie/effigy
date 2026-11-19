@@ -9,19 +9,7 @@ pub const LOCK_WAIT_ENV: &str = "EFFIGY_LOCK_WAIT_MS";
 
 const LOCK_WAIT_SUPPORTED_FORMS: &str = "`--lock-wait-ms` applies to a task or a skill run: `effigy --lock-wait-ms <MS> <task>` or `effigy --lock-wait-ms <MS> skill run <skill>/<task>`";
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct GlobalCliOptions {
-    pub json_mode: bool,
-    /// Show detailed progress subjects and diagnostic events.
-    pub verbose: bool,
-    pub repo_override: Option<PathBuf>,
-    pub task_verbose_root: bool,
-    pub task_env_schema: Option<PathBuf>,
-    pub task_lock_wait_ms: Option<String>,
-    pub task_plan: bool,
-    /// `--run-id <key>`: a caller-chosen idempotency key for one task run.
-    pub run_id: Option<String>,
-}
+pub use effigy_core::task_args::GlobalCliOptions;
 
 pub fn strip_global_cli_flags(
     args: Vec<String>,
@@ -75,12 +63,11 @@ pub fn strip_global_cli_flags(
                 let wait = args.next().ok_or(CliParseError::MissingFlagValue {
                     flag: "--lock-wait-ms".to_owned(),
                 })?;
-                if wait.trim().parse::<u64>().is_err() {
-                    return Err(CliParseError::InvalidArguments(format!(
+                options.task_lock_wait_ms = Some(wait.trim().parse::<u64>().map_err(|_| {
+                    CliParseError::InvalidArguments(format!(
                         "`--lock-wait-ms` takes a non-negative integer millisecond count, not `{wait}`"
-                    )));
-                }
-                options.task_lock_wait_ms = Some(wait);
+                    ))
+                })?);
             }
             "--plan" => options.task_plan = true,
             "--help" | "-h" => {
@@ -114,8 +101,8 @@ pub fn strip_global_cli_flags(
 /// The flag's value is validated by `strip_global_cli_flags`. Call once,
 /// before any task runs and while the process is still single-threaded.
 pub fn export_lock_wait_env(options: &GlobalCliOptions) {
-    if let Some(wait) = options.task_lock_wait_ms.as_deref() {
-        std::env::set_var(LOCK_WAIT_ENV, wait.trim());
+    if let Some(wait) = options.task_lock_wait_ms {
+        std::env::set_var(LOCK_WAIT_ENV, wait.to_string());
     }
 }
 
@@ -148,37 +135,8 @@ pub fn apply_global_cli_options(
     // catalog prefix (`catalog_a/tasks`).
     if let Command::Task(task) = &mut cmd {
         let routed_name = task.name.rsplit('/').next().unwrap_or(&task.name);
-        if !effigy_core::builtin_tasks::is_builtin_task_name(routed_name)
-            && !task
-                .args
-                .iter()
-                .any(|arg| arg == effigy_core::task_args::TASK_ARGS_BOUNDARY)
-        {
-            let mut effigy = Vec::new();
-            if let Some(repo) = options.repo_override.as_ref() {
-                effigy.extend(["--repo".to_owned(), repo.display().to_string()]);
-            }
-            if options.task_verbose_root {
-                effigy.push("--verbose-root".to_owned());
-            }
-            if let Some(schema) = options.task_env_schema.as_ref() {
-                effigy.extend(["--env-schema".to_owned(), schema.display().to_string()]);
-            }
-            if let Some(wait) = options.task_lock_wait_ms.as_ref() {
-                effigy.extend(["--lock-wait-ms".to_owned(), wait.clone()]);
-            }
-            if options.task_plan {
-                effigy.push("--plan".to_owned());
-            }
-            if options.json_mode {
-                effigy.push("--json".to_owned());
-            }
-            let task_args = std::mem::take(&mut task.args);
-            task.args = effigy_core::task_args::join_task_args(effigy, task_args);
-            if let Some(key) = options.run_id.as_ref() {
-                task.args.push(crate::INTERNAL_RUN_ID_ARG.to_owned());
-                task.args.push(key.clone());
-            }
+        if !effigy_core::builtin_tasks::is_builtin_task_name(routed_name) {
+            task.options = Some(options.clone());
             return Ok(cmd);
         }
     }
@@ -186,7 +144,7 @@ pub fn apply_global_cli_options(
         match &mut cmd {
             Command::Task(task) => {
                 if !runtime_flag_present_before_passthrough(&task.args, "--lock-wait-ms") {
-                    task.args.insert(0, wait.clone());
+                    task.args.insert(0, wait.to_string());
                     task.args.insert(0, "--lock-wait-ms".to_owned());
                 }
             }
@@ -337,24 +295,10 @@ pub fn apply_global_cli_options(
         }
     }
 
-    if let Some(key) = options.run_id.as_ref() {
-        // A built-in routed as a task (`tasks`, `test`) is not a task run.
-        match &mut cmd {
-            Command::Task(task)
-                if !effigy_core::builtin_tasks::is_builtin_task_name(
-                    task.name.rsplit('/').next().unwrap_or(&task.name),
-                ) =>
-            {
-                task.args.push(crate::INTERNAL_RUN_ID_ARG.to_owned());
-                task.args.push(key.clone());
-            }
-            _ => {
-                return Err(CliParseError::InvalidArguments(
-                    "`--run-id` names one repository task run: `effigy --run-id <key> <task>`"
-                        .to_owned(),
-                ))
-            }
-        }
+    if options.run_id.is_some() {
+        return Err(CliParseError::InvalidArguments(
+            "`--run-id` names one repository task run: `effigy --run-id <key> <task>`".to_owned(),
+        ));
     }
 
     if options.json_mode {
@@ -453,7 +397,19 @@ pub(super) fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bo
         Command::Tasks(args) => args.output_json,
         Command::Runs(args) => args.output_json,
         Command::Doctor(args) => args.output_json,
-        Command::Task(task) => runtime_flag_present_before_passthrough(&task.args, "--json"),
+        Command::Task(task) => match &task.options {
+            Some(options) => {
+                options.json_mode
+                    || task
+                        .args
+                        .iter()
+                        .take_while(|arg| {
+                            effigy_core::task_args::COMPAT_TRAILING_FLAGS.contains(&arg.as_str())
+                        })
+                        .any(|arg| arg == "--json")
+            }
+            None => runtime_flag_present_before_passthrough(&task.args, "--json"),
+        },
         Command::InternalGateway(_) => false,
         Command::InternalGatewayIdentity(_) => false,
         Command::InternalGuestProbe(_) => false,
@@ -464,9 +420,6 @@ pub(super) fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bo
 }
 
 pub fn runtime_flag_present_before_passthrough(args: &[String], flag: &str) -> bool {
-    if let Some(split) = effigy_core::task_args::split_task_args(args) {
-        return split.effigy.iter().any(|arg| arg == flag);
-    }
     args.iter()
         .take_while(|arg| arg.as_str() != "--")
         .any(|arg| arg == flag)

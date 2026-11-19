@@ -1516,6 +1516,7 @@ pub(in crate::runner) fn inline_managed_policy(
     task: &str,
 ) -> Result<Option<EffectiveContainerPolicy>, RunnerError> {
     let invocation = effigy_cli::TaskInvocation {
+        options: None,
         name: task.to_owned(),
         args: Vec::new(),
     };
@@ -1736,6 +1737,7 @@ working_dir = "/workspace"
             )
             .unwrap();
             let invocation = effigy_cli::TaskInvocation {
+                options: None,
                 name: "dev".into(),
                 args: vec![],
             };

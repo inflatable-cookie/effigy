@@ -101,7 +101,8 @@ pub(super) fn detached_activation_failure(
             failures.len()
         );
         if output_json {
-            return RunnerError::CommandJsonFailure {
+            return RunnerError::StructuredCommandFailure {
+                human: error.human_error().evidence(format!("Detached activation settled the environment with partial exposure: {} route(s) published, {} listener(s) withheld.", exposed.len(), failures.len())).next_action("effigy container up --detach"),
                 rendered: serde_json::json!({
                     "state": "partial",
                     "phase": "listener_exposure",
@@ -166,8 +167,13 @@ pub(super) fn detached_activation_failure(
             rendered["failure_kind"] = details["failure_kind"].clone();
             rendered["waiting_on"] = details["waiting_on"].clone();
         }
-        return RunnerError::CommandJsonFailure {
+        let human = effigy_ui::HumanError::new(sanitized_failure_cause(&error))
+            .evidence(&message)
+            .evidence(format!("failure_kind: {failure_kind}"))
+            .next_action("effigy container down");
+        return RunnerError::StructuredCommandFailure {
             rendered: rendered.to_string(),
+            human,
         };
     }
     RunnerError::task_invocation(format!(

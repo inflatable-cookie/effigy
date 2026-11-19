@@ -66,12 +66,14 @@ pub(crate) fn assert_schema_v1(parsed: &serde_json::Value, schema: &str) {
 pub(crate) fn run_invocation_json(root: PathBuf, name: &str, args: &[&str]) -> serde_json::Value {
     let invocation = match name {
         "completion" => TaskInvocation {
+            options: None,
             name: "config".to_owned(),
             args: std::iter::once("completion".to_owned())
                 .chain(args.iter().map(|arg| (*arg).to_owned()))
                 .collect(),
         },
         _ => TaskInvocation {
+            options: None,
             name: name.to_owned(),
             args: args.iter().map(|arg| (*arg).to_owned()).collect(),
         },
@@ -108,6 +110,7 @@ pub(crate) fn run_completion_task(
 ) -> Result<String, runtime::RunnerError> {
     run_manifest_task_with_cwd(
         &TaskInvocation {
+            options: None,
             name: "config".to_owned(),
             args: std::iter::once("completion".to_owned())
                 .chain(args.iter().map(|arg| (*arg).to_owned()))

@@ -259,6 +259,7 @@ fn help_group_slugs_are_not_command_names() {
 fn builtin_owned_help_routes_mirror_the_direct_command_invocation() {
     for name in HELP_COMMAND_BUILTIN_ROUTES {
         let expected = Command::Task(TaskInvocation {
+            options: None,
             name: (*name).to_owned(),
             args: vec!["--help".to_owned()],
         });

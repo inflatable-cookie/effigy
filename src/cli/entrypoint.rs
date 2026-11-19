@@ -431,6 +431,7 @@ fn parse_command_with_builtin_deferral(
     }
 
     Ok(Command::Task(effigy_cli::TaskInvocation {
+        options: None,
         name: first.clone(),
         args: args[1..].to_vec(),
     }))

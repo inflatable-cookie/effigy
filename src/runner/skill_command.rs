@@ -535,6 +535,7 @@ fn run_skill_task(
     let _secret_isolation = activate_external_task_source_isolation();
     let request = TaskExecutionRequestBuilder::new()
         .runtime_context(source_context)
+        .task_options(task.options.clone())
         .task(task.name.clone(), task.args)
         .surface(ExecutionSurface::DirectCli)
         .runtime_policy(ExecutionRuntimePolicy::host())
@@ -617,6 +618,7 @@ fn run_skill_task_passthrough(
     let _secret_isolation = activate_external_task_source_isolation();
     let request = TaskExecutionRequestBuilder::new()
         .runtime_context(source_context)
+        .task_options(task.options.clone())
         .task(task.name.clone(), task.args)
         .surface(ExecutionSurface::DirectCli)
         .runtime_policy(ExecutionRuntimePolicy::host())

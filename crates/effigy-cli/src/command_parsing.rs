@@ -366,6 +366,7 @@ where
             path,
             stdio,
             task: TaskInvocation {
+                options: None,
                 name: selector,
                 args: passthrough,
             },
@@ -604,6 +605,7 @@ where
     let request = request.ok_or(CliParseError::MissingTaskNameValue)?;
     Ok(Command::Defer(DeferArgs {
         task: TaskInvocation {
+            options: None,
             name: request,
             args: request_args,
         },
@@ -806,6 +808,7 @@ where
     // two spellings cannot drift in facts, output, or exit status.
     if let Some(name) = command_surface::help_builtin_route(&topic) {
         return Ok(Command::Task(TaskInvocation {
+            options: None,
             name: name.to_owned(),
             args: vec!["--help".to_owned()],
         }));
@@ -1006,6 +1009,7 @@ where
             // `unlock` and `cache` are built-in `tasks` subcommands: they take
             // the whole invocation unchanged, including the flags before them.
             return Ok(Command::Task(TaskInvocation {
+                options: None,
                 name: "tasks".to_owned(),
                 args: argv,
             }));
@@ -1534,6 +1538,7 @@ where
             "--all-catalogs" => all_catalogs = true,
             other => {
                 explain = Some(TaskInvocation {
+                    options: None,
                     name: other.to_owned(),
                     args: Vec::new(),
                 })
@@ -1590,6 +1595,7 @@ where
         }
     }
     Ok(Command::Task(TaskInvocation {
+        options: None,
         name,
         args: task_args,
     }))

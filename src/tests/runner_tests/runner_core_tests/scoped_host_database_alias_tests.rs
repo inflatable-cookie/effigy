@@ -1863,6 +1863,7 @@ fn rendered_command(root: &Path, selector: &str) -> crate::runner::execute::Task
     use crate::runner::execute::api::build_execution_preflight;
     use crate::runner::execute::{build_task_command, resolve_task_selection, SelectionResolution};
     let invocation = effigy_cli::TaskInvocation {
+        options: None,
         name: selector.to_owned(),
         args: Vec::new(),
     };

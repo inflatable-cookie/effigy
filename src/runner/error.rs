@@ -208,6 +208,10 @@ pub enum RunnerError {
     CommandJsonFailure {
         rendered: String,
     },
+    StructuredCommandFailure {
+        rendered: String,
+        human: effigy_ui::HumanError,
+    },
     TaskJsonFailure {
         rendered: String,
         code: i32,
@@ -507,6 +511,7 @@ impl RunnerError {
             // A command that reported its own outcome carries the next step in
             // its own document.
             | RunnerError::CommandJsonFailure { .. }
+            | RunnerError::StructuredCommandFailure { .. }
             | RunnerError::TaskJsonFailure { .. }
             | RunnerError::EnvSchema(_) => Category::Refused,
             // A step, a backend, a file, a service or a supervisor did not
@@ -549,7 +554,8 @@ impl RunnerError {
     /// command failure additionally names its exit code and output tail.
     pub fn human_error(&self) -> effigy_ui::HumanError {
         match self {
-            RunnerError::TaskJsonFailure { human, .. } => human.clone(),
+            RunnerError::TaskJsonFailure { human, .. }
+            | RunnerError::StructuredCommandFailure { human, .. } => human.clone(),
             RunnerError::TaskCommandFailure {
                 command,
                 code,

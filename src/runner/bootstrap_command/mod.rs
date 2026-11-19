@@ -118,6 +118,7 @@ fn run_bootstrap_selector(
     with_runtime_session_context(bootstrap_runtime_session_context(phase), || {
         run_manifest_task_with_surface(
             &TaskInvocation {
+                options: None,
                 name: selector.to_owned(),
                 args: Vec::new(),
             },

@@ -15,6 +15,7 @@ fn builtin_test_plan_json_contract_has_versioned_shape_and_suite_source_fields()
 
     let out = run_manifest_task_with_cwd(
         &TaskInvocation {
+            options: None,
             name: "test".to_owned(),
             args: vec!["--plan".to_owned(), "--json".to_owned()],
         },
@@ -56,6 +57,7 @@ fn builtin_test_results_json_contract_has_versioned_shape_and_hint_fields() {
 
     let err = run_manifest_task_with_cwd(
         &TaskInvocation {
+            options: None,
             name: "test".to_owned(),
             args: vec![
                 "--json".to_owned(),

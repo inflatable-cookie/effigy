@@ -79,6 +79,7 @@ pub(in crate::runner::tests) fn run_task_in_workspace(
 ) -> Result<String, RunnerError> {
     run_manifest_task_with_cwd(
         &TaskInvocation {
+            options: None,
             name: name.to_owned(),
             args: args.iter().map(|arg| (*arg).to_owned()).collect(),
         },

@@ -61,6 +61,7 @@ mod tests {
     fn normalize_defer_task_applies_top_level_flags() {
         let task = normalize_defer_task(DeferArgs {
             task: TaskInvocation {
+                options: None,
                 name: "prep".to_owned(),
                 args: vec!["--watch".to_owned()],
             },
@@ -84,6 +85,7 @@ mod tests {
     fn normalize_defer_task_injects_repo_before_passthrough_delimiter() {
         let task = normalize_defer_task(DeferArgs {
             task: TaskInvocation {
+                options: None,
                 name: "release".to_owned(),
                 args: vec!["--".to_owned(), "--dry-run".to_owned()],
             },
@@ -114,6 +116,7 @@ mod tests {
         let out = with_cwd(&root, || {
             run_defer(DeferArgs {
                 task: TaskInvocation {
+                    options: None,
                     name: "prep".to_owned(),
                     args: vec![],
                 },
