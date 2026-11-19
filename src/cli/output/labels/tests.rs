@@ -56,7 +56,6 @@ fn command_kind_and_name_maps_command_variants() {
         deep: false,
         catalog: None,
         all_catalogs: false,
-        refresh: false,
         explain: None,
     });
     let contracts = Command::Contracts(ContractsArgs {

@@ -487,7 +487,7 @@ impl HostDispatch {
         })?;
         use effigy_cli::{Command, ContainerSubcommand, RunsAction};
         let forbidden = match &command {
-            Command::Doctor(args) => args.repo_override.is_some() || args.fix || args.refresh,
+            Command::Doctor(args) => args.repo_override.is_some() || args.fix,
             Command::Tasks(args) => args.repo_override.is_some(),
             Command::Container(args) => {
                 args.repo_override.is_some()
@@ -1170,7 +1170,6 @@ mod level_one_routing_tests {
         assert_eq!(args.explain.unwrap().args, vec!["--", "two words"]);
         for query in [
             body("doctor", &["doctor", "--fix"], "."),
-            body("doctor", &["doctor", "--refresh"], "."),
             body("doctor", &["doctor", "--repo", "/private-cwd"], "."),
             body("doctor", &["release", "run"], "."),
             body(

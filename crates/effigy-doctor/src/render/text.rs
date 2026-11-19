@@ -87,15 +87,6 @@ fn render_run_summary(
     if let Some(phase) = &report.timeout_phase {
         pairs.push(("timeout-phase".to_owned(), phase.clone()));
     }
-    if report.mode == crate::DoctorMode::Deep {
-        pairs.push((
-            "cache".to_owned(),
-            format!(
-                "hits={} misses={} invalid={}",
-                report.cache.hits, report.cache.misses, report.cache.invalid_entries
-            ),
-        ));
-    }
     let rows = text_blocks::key_values_from_pairs(pairs);
     text_blocks::render_key_values(renderer, &rows).map_err(map_render_error)?;
     renderer.text("").map_err(map_render_error)?;
@@ -241,7 +232,6 @@ mod tests {
             complete: true,
             timeout_phase: None,
             check_runs: vec![],
-            cache: crate::DoctorCacheSummary::default(),
         }
     }
 

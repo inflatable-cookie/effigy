@@ -24,7 +24,6 @@ pub(crate) struct DoctorRunConfig {
     pub(crate) mode: DoctorMode,
     pub(crate) catalog: Option<String>,
     pub(crate) all_catalogs: bool,
-    pub(crate) refresh: bool,
     pub(crate) budget: Option<Duration>,
 }
 
@@ -56,7 +55,6 @@ impl DoctorRunConfig {
             },
             catalog: args.catalog.clone(),
             all_catalogs: args.all_catalogs,
-            refresh: args.refresh,
             budget: (timeout_ms != 0).then(|| Duration::from_millis(timeout_ms)),
         })
     }

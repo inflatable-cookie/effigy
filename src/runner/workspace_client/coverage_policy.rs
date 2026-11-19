@@ -75,7 +75,7 @@ fn channel_scope_unsupported(cmd: &Command) -> Option<&'static str> {
             }
         },
         Command::Doctor(args) if args.repo_override.is_some() => Some(CHECKOUT_OVERRIDE),
-        Command::Doctor(args) if args.fix || args.refresh => Some(DOCTOR_MUTATION),
+        Command::Doctor(args) if args.fix => Some(DOCTOR_MUTATION),
         Command::Doctor(_) => None,
         Command::InternalScriptRun(_)
         | Command::InternalGateway(_)

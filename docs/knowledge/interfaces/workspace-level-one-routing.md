@@ -122,7 +122,7 @@ read-only class agrees with `op` and any run identity, and resolves cwd against
 the published checkout's retained directory identity. Checkout overrides,
 traversal, symlink escape and a replaced checkout refuse before the adapter.
 It never invokes ordinary command setup, cache refresh, doctor repair or
-permission preparation. Doctor `--fix`/`--refresh` and logs `--follow` need an
+permission preparation. Doctor `--fix` and logs `--follow` need an
 explicit supported bounded read implementation; until then they refuse by name.
 Reads cannot widen to other checkouts or host-wide scope through flags.
 

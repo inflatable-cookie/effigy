@@ -849,7 +849,6 @@ pub struct DoctorArgs {
     pub deep: bool,
     pub catalog: Option<String>,
     pub all_catalogs: bool,
-    pub refresh: bool,
     pub explain: Option<TaskInvocation>,
 }
 

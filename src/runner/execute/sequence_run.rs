@@ -265,7 +265,7 @@ fn classify_builtin(command: &Command) -> bool {
     use effigy_cli::{RunsAction, TasksQaCommand};
     match command {
         Command::Version | Command::Help(_) | Command::HelpGroup(_) => true,
-        Command::Doctor(args) => !args.fix && !args.deep && !args.refresh,
+        Command::Doctor(args) => !args.fix && !args.deep,
         Command::Tasks(args) => matches!(
             args.qa,
             None | Some(

@@ -23,13 +23,10 @@ const SCAN_CHECK_NAMES: [(&str, &str); 2] = [
 const SCAN_STEP_LABELS: [ScanLabel; 2] = [GOD_FILES, DUPLICATE_BLOCKS];
 
 pub(super) struct DeepInventoryRequest<'a> {
-    pub(super) workspace_root: &'a Path,
     pub(super) scope_root: &'a Path,
-    pub(super) scope_alias: &'a str,
     pub(super) catalogs: &'a [LoadedCatalog],
     pub(super) pruned_roots: &'a [PathBuf],
     pub(super) deadline: Option<Instant>,
-    pub(super) refresh: bool,
 }
 
 pub(super) fn run_deep_inventory(
@@ -48,12 +45,9 @@ pub(super) fn run_deep_inventory(
     let findings_before = state.findings.len();
     let started = Instant::now();
     let result = run_doctor_scan_inventory(
-        request.workspace_root,
-        request.scope_alias,
         request.scope_root,
         request.pruned_roots,
         &options,
-        request.refresh,
         request.deadline,
     );
     let elapsed = started.elapsed();
@@ -92,19 +86,6 @@ pub(super) fn run_deep_inventory(
             return;
         }
     };
-    state.record_cache_summary(
-        result.cache_hits,
-        result.cache_misses,
-        result.invalid_cache_entries,
-    );
-    let fully_cached = result.cache_hits > 0 && result.cache_misses == 0;
-    for warning in &result.warnings {
-        state.add_check_warning(
-            check_id::SCAN_GOD_FILES,
-            warning,
-            "The disposable doctor cache was ignored; rerun `effigy doctor --deep --refresh` if the warning persists.",
-        );
-    }
     debug_assert_eq!(result.physical_walks, 1, "deep inventory must use one walk");
     apply_results(result, state);
     finish_scan_steps(
@@ -117,11 +98,7 @@ pub(super) fn run_deep_inventory(
     for (index, (name, _)) in SCAN_CHECK_NAMES.iter().enumerate() {
         if enabled[index] {
             let duration = if index == 0 { elapsed } else { Duration::ZERO };
-            if fully_cached {
-                state.record_cached_check(name, duration);
-            } else {
-                state.record_completed_check(name, duration);
-            }
+            state.record_completed_check(name, duration);
         } else {
             state.record_skipped_check(name);
         }
@@ -274,13 +251,10 @@ mod tests {
         let mut state = DoctorState::new();
         run_deep_inventory(
             DeepInventoryRequest {
-                workspace_root: root,
                 scope_root: root,
-                scope_alias: "root",
                 catalogs,
                 pruned_roots: &[],
                 deadline,
-                refresh: true,
             },
             &mut state,
             None,

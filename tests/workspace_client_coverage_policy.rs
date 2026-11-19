@@ -115,7 +115,6 @@ fn qa_subcommands_are_explicit_and_hidden_entries_never_reach_routing() {
 fn doctor_mutations_do_not_use_the_read_only_route() {
     assert_eq!(unsupported(&parse(&["doctor"])), None);
     assert!(unsupported(&parse(&["doctor", "--fix"])).is_some());
-    assert!(unsupported(&parse(&["doctor", "--deep", "--refresh"])).is_some());
 }
 
 #[test]

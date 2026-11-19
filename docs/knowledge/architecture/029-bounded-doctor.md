@@ -1,4 +1,4 @@
-# Bounded Doctor and Incremental Scan Architecture
+# Bounded Doctor and Shared Scan Inventory Architecture
 
 
 ## Problem
@@ -8,9 +8,8 @@ full-tree content scans and the repository-defined `health` task. Large
 monorepos therefore pay for repeated walks plus an unbounded task invocation.
 Cold non-interactive runs can appear silent until an outer caller times out.
 
-Caching alone cannot bound that cold path. The command needs a cheap default
-tier, an explicit expensive tier, one catalog-scoped inventory, and a deadline
-that produces useful partial evidence.
+A cheaper default tier bounds that cold path: an explicit expensive tier, one
+catalog-scoped inventory, and a deadline that produces useful partial evidence.
 
 ## Command tiers
 
@@ -26,11 +25,10 @@ path. There is no second schema table beside the loader.
 
 `effigy doctor --deep` adds content scans and the selected scope's `health`
 task. This is an explicit request for repository work, not a compatibility
-alias for the old unbounded behavior. `--refresh` is deep-only and bypasses
-cache reads while preserving atomic publication.
+alias for the old unbounded behavior, and it keeps no scan state between runs.
 
 `doctor <task>` remains explanation mode. It does not combine with deep,
-catalog, fan-out, or refresh flags.
+catalog, or fan-out flags.
 
 ## Scope selection
 
@@ -43,8 +41,8 @@ monorepo topology:
 - `--all-catalogs` explicitly fans out across root plus declared members;
 - declared external members are valid explicit or fan-out scopes.
 
-One-scope work must not walk, run health in, or write cache state for a sibling.
-Catalog aliases and canonical roots identify findings and cache ownership.
+One-scope work must not walk or run health in a sibling. Catalog aliases and
+canonical roots identify findings.
 
 Deep doctor guards each selected scope's `health` task with the scope's own JS
 bootstrap posture. A local `node_modules` satisfies the precondition only when
@@ -100,30 +98,18 @@ compatible with the standalone scan surfaces. v0.15 removed the other five
 scanners (Q-009), so the inventory no longer records comment counts, generated
 asset reasons, generated-in-source categories, or marker/suppression hits.
 
-## Incremental cache
+## No persistent scan state
 
-Disposable workspace-owned cache state lives under
-`.effigy/doctor/cache/v2/<encoded-scope>/`. Entries contain per-file reusable
-facts, not rendered doctor output. Facts may include line/code counts,
-generated classification, and normalized duplicate fingerprints.
+Deep doctor keeps no cache. Every deep run reads the selected scope's files,
+derives the shared observations, and discards them when the run ends. Nothing
+is written under `.effigy/doctor/`, no Git index identity subprocess runs, and
+an interrupted run leaves no partial scan state.
 
-Cache identity includes:
-
-- canonical repository and scope identity;
-- effective catalog topology;
-- scan configuration digest;
-- cache schema and scanner implementation versions;
-- ignore posture;
-- exact file identity.
-
-Clean tracked files may use the Git index blob identity. Dirty, untracked, and
-non-Git files use a content digest computed during inventory. Size and mtime
-alone are never sufficient. Warm runs still establish an exact inventory but
-do not reread or reanalyse unchanged content.
-
-Publication is locked and atomic. An incompatible or corrupt entry is ignored
-and rebuilt with a warning. Cancellation never replaces a previously valid
-cache generation with partial state.
+The cache was removed in v0.16. A consumer's cold deep run on a 42,880-file
+repository took 56 seconds with no cache hits, because the generation exceeded
+its own 128 MiB bound and never published; the persistent forms, locks and
+eviction therefore bought nothing at the scale they were meant for. Running
+`effigy doctor --deep` therefore has the same cost as its first run.
 
 ## Time budget and cancellation
 
@@ -142,16 +128,15 @@ warning-only success.
 
 ## Reporting
 
-The repository's seven cold doctor process fixtures reserve all configured
-test slots in the default nextest profile. The focused `doctor-process`
-profile inherits that reservation. These proofs require the intended phase
+The repository's cold doctor process fixtures reserve all configured test
+slots in the default nextest profile. These proofs require the intended phase
 and child readiness inside their original 800 ms or 1,000 ms deadline; running
 them alongside other process-heavy tests can exhaust the budget before that
 proof begins. The reservation changes runner scheduling, not production
 deadlines, readiness assertions, retries or selection. Unrelated tests remain
 parallel. It does not guarantee scheduling against arbitrary external host
-load. `test:doctor:cold-scheduling` covers both native profile inheritance and
-the actual captured default-profile proof family.
+load. `test:doctor:cold-scheduling` covers the captured default-profile proof
+family.
 
 Nextest's terminal status includes failed, slow, skipped and leaky identities;
 ordinary passing-case chatter is suppressed. This keeps diagnostic identities
@@ -163,13 +148,12 @@ Text and JSON report the selected mode and scopes, effective budget, total
 duration, completeness, and each check's duration and state:
 
 - `complete`
-- `cached`
 - `skipped`
 - `budget-exhausted`
 
-Deep scan reports also expose cache hit/miss counts. Non-interactive callers
-receive the same terminal evidence as interactive callers; correctness never
-depends on a spinner.
+The v0.16 report dropped the deep cache counters and the `cached` state.
+Non-interactive callers receive the same terminal evidence as interactive
+callers; correctness never depends on a spinner.
 
 ## Compatibility boundary
 
@@ -183,8 +167,7 @@ does not grant additional mutation authority.
 
 - a background daemon or watcher;
 - automatic catalog discovery;
-- remote or shared cache storage;
-- automatic cache pruning policy;
+- any persistent or shared scan cache;
 - changing scan thresholds or finding semantics;
 - making repository `health` safe by silently ignoring its failure;
 - workflow or release mutation.

@@ -20,7 +20,6 @@ fn run_doctor_rendered(root: PathBuf, output_json: bool) -> String {
         deep: true,
         catalog: None,
         all_catalogs: false,
-        refresh: false,
         explain: None,
     }) {
         Ok(rendered) => rendered,
@@ -38,7 +37,6 @@ fn run_doctor_json(root: PathBuf) -> serde_json::Value {
         deep: true,
         catalog: None,
         all_catalogs: false,
-        refresh: false,
         explain: None,
     })
     .expect("run doctor json");

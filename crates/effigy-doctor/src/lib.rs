@@ -53,6 +53,6 @@ pub use projection::{
     summarize_group, DoctorFindingSection, DoctorSectionFinding,
 };
 pub use report::{
-    finalize_fix_actions, DoctorCacheSummary, DoctorCheckRun, DoctorCheckRunState, DoctorFixAction,
-    DoctorFixStatus, DoctorMode, DoctorReport, DoctorScope, DoctorState, DoctorSummary,
+    finalize_fix_actions, DoctorCheckRun, DoctorCheckRunState, DoctorFixAction, DoctorFixStatus,
+    DoctorMode, DoctorReport, DoctorScope, DoctorState, DoctorSummary,
 };
