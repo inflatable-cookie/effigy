@@ -239,21 +239,10 @@ fn run_single_member(root: &Path, member: &QaGroupPlanMember) -> MemberAttempt {
             let (stdout, stderr) = extract_payload_output(&rendered);
             Ok((stdout, stderr))
         }
-        Err(RunnerError::TaskJsonFailure {
-            code,
-            stdout,
-            stderr,
-            ..
-        }) => Err((
-            Box::new(RunnerError::TaskCommandFailure {
-                command: member_command_label(member),
-                code: Some(code),
-                stdout: stdout.clone(),
-                stderr: stderr.clone(),
-            }),
-            stdout,
-            stderr,
-        )),
+        Err(failure @ RunnerError::TaskJsonFailure { .. }) => {
+            let (stdout, stderr) = task_failure_output(&failure);
+            Err((Box::new(failure), stdout, stderr))
+        }
         Err(RunnerError::CommandJsonFailure { rendered }) => {
             // The captured payload carries the task's real exit code and its
             // redacted output. Re-derive the typed failure from them so the
@@ -384,13 +373,28 @@ fn string_field(value: &serde_json::Value, key: &str) -> String {
 
 fn task_failure_output(error: &RunnerError) -> (String, String) {
     match error {
-        RunnerError::TaskCommandFailure { stdout, stderr, .. } => (stdout.clone(), stderr.clone()),
+        RunnerError::TaskCommandFailure { stdout, stderr, .. }
+        | RunnerError::TaskJsonFailure { stdout, stderr, .. } => (stdout.clone(), stderr.clone()),
         _ => (String::new(), String::new()),
     }
 }
 
 fn classify_member_failure(error: &RunnerError) -> (QaGroupMemberState, String, Option<i32>) {
     match error {
+        RunnerError::TaskJsonFailure {
+            outcome: effigy_kernel::outcome::WorkloadOutcome::Cancelled { .. },
+            code,
+            ..
+        } => (
+            QaGroupMemberState::Cancelled,
+            format!("interrupted (exit {code})"),
+            Some(*code),
+        ),
+        RunnerError::TaskJsonFailure { code, .. } => (
+            QaGroupMemberState::Failed,
+            format!("task command failed with exit {code}"),
+            Some(*code),
+        ),
         RunnerError::TaskCommandFailure { code, .. } if *code == Some(130) => (
             QaGroupMemberState::Cancelled,
             "interrupted (exit 130)".to_owned(),
@@ -429,6 +433,10 @@ fn classify_group_failure(error: &RunnerError) -> QaGroupOutcome {
         RunnerError::TaskCommandFailure { code, .. } if *code == Some(130) => {
             QaGroupOutcome::Cancelled
         }
+        RunnerError::TaskJsonFailure {
+            outcome: effigy_kernel::outcome::WorkloadOutcome::Cancelled { .. },
+            ..
+        } => QaGroupOutcome::Cancelled,
         _ => QaGroupOutcome::Failed,
     }
 }
@@ -643,6 +651,45 @@ mod tests {
             heavy_reasons: Vec::new(),
             declared_run_in: "host".to_owned(),
         }
+    }
+
+    #[test]
+    fn member_failure_keeps_the_producer_outcome_and_code() {
+        use effigy_execution::{QaGroupMemberState, QaGroupOutcome};
+        use effigy_kernel::{ctx::StopCause, outcome::WorkloadOutcome};
+        let cancelled = crate::runner::error::RunnerError::task_json_failure(
+            "{}".into(),
+            "check",
+            130,
+            WorkloadOutcome::Cancelled {
+                cause: StopCause::Requested,
+                signal: None,
+            },
+            "",
+            "stopped",
+        );
+        assert_eq!(
+            super::classify_member_failure(&cancelled).0,
+            QaGroupMemberState::Cancelled
+        );
+        assert_eq!(
+            super::classify_group_failure(&cancelled),
+            QaGroupOutcome::Cancelled
+        );
+        let failed = crate::runner::error::RunnerError::task_json_failure(
+            "{}".into(),
+            "check",
+            9,
+            WorkloadOutcome::Failed { code: 9 },
+            "",
+            "failure",
+        );
+        let (state, _, code) = super::classify_member_failure(&failed);
+        assert_eq!((state, code), (QaGroupMemberState::Failed, Some(9)));
+        assert_eq!(
+            super::classify_group_failure(&failed),
+            QaGroupOutcome::Failed
+        );
     }
 
     #[test]

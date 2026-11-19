@@ -36,15 +36,23 @@ pub(super) fn summarize_health_task_json_failure(payload: &str) -> String {
         );
     };
 
+    summarize_health_task_failure(output.exit_code, &output.stdout, &output.stderr)
+}
+
+pub(super) fn summarize_health_task_failure(
+    code: Option<i32>,
+    stdout: &str,
+    stderr: &str,
+) -> String {
     let mut parts = Vec::<String>::new();
-    if let Some(code) = output.exit_code {
+    if let Some(code) = code {
         parts.push(format!("exit={code}"));
     }
-    if !output.stdout.trim().is_empty() {
-        parts.push(format!("stdout={}", summarize_output(&output.stdout)));
+    if !stdout.trim().is_empty() {
+        parts.push(format!("stdout={}", summarize_output(stdout)));
     }
-    if !output.stderr.trim().is_empty() {
-        parts.push(format!("stderr={}", summarize_output(&output.stderr)));
+    if !stderr.trim().is_empty() {
+        parts.push(format!("stderr={}", summarize_output(stderr)));
     }
     if parts.is_empty() {
         "health task execution failed".to_owned()

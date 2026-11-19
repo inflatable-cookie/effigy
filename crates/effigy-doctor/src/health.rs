@@ -148,6 +148,12 @@ fn add_execute_success_finding(output: &str, state: &mut DoctorState) {
 
 fn add_execute_failure_finding(error: &DoctorError, state: &mut DoctorState) {
     let failure_evidence = match error {
+        DoctorError::TaskJsonFailure {
+            code,
+            stdout,
+            stderr,
+            ..
+        } => summarize::summarize_health_task_failure(Some(*code), stdout, stderr),
         DoctorError::CommandJsonFailure { rendered } => {
             summarize::summarize_health_task_json_failure(rendered)
         }

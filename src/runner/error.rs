@@ -1263,6 +1263,24 @@ impl From<effigy_builtin::BuiltinError> for RunnerError {
                 rendered,
             },
             B::CommandJsonFailure { rendered } => Self::CommandJsonFailure { rendered },
+            B::StructuredCommandFailure { rendered, human } => {
+                Self::StructuredCommandFailure { rendered, human }
+            }
+            B::TaskJsonFailure {
+                rendered,
+                code,
+                outcome,
+                human,
+                stdout,
+                stderr,
+            } => Self::TaskJsonFailure {
+                rendered,
+                code,
+                outcome,
+                human,
+                stdout,
+                stderr,
+            },
             B::Manifest(error) => map_manifest_error(error),
             B::Managed(error) => Self::from(error),
             B::Routing(error) => Self::from(error),
@@ -1287,6 +1305,24 @@ impl From<effigy_doctor::DoctorError> for RunnerError {
             D::TaskInvocation(message) => Self::TaskInvocation(message),
             D::Ui(message) => Self::Ui(message),
             D::CommandJsonFailure { rendered } => Self::CommandJsonFailure { rendered },
+            D::StructuredCommandFailure { rendered, human } => {
+                Self::StructuredCommandFailure { rendered, human }
+            }
+            D::TaskJsonFailure {
+                rendered,
+                code,
+                outcome,
+                human,
+                stdout,
+                stderr,
+            } => Self::TaskJsonFailure {
+                rendered,
+                code,
+                outcome,
+                human,
+                stdout,
+                stderr,
+            },
             D::Manifest(error) => map_manifest_error(error),
             D::Scan(error) => Self::from(error),
             D::Routing(error) => Self::from(error),
