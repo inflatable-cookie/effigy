@@ -9279,6 +9279,21 @@ else:
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(guest(words[3]), dest)
         guest(words[3]).unlink()
+    elif (len(words) == 17 and words[0] == 'object=$(mktemp'
+          and words[2:5] == ['||', 'exit', '1;'] and words[5] == 'trap'
+          and words[7] == 'EXIT;' and words[8] == 'install' and words[9] == '-m'
+          and words[12] == '$object' and words[13:15] == ['&&', 'ln']
+          and words[15] == '$object'):
+        # `install_immutable`: mktemp a fresh object beside the target, install
+        # the staged bytes into it, then hard-link it into place (effigy#1014
+        # publishes the pinned active version this way). Modelled as one
+        # no-replace copy, which is the outcome the guest observes.
+        dest = guest(words[16])
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if dest.exists() or dest.is_symlink(): sys.exit(3)
+        shutil.copyfile(guest(words[11]), dest)
+        dest.chmod(int(words[10], 8))
+        guest(words[11]).unlink()
     elif words[:2] == ['printf', '%s\\n'] and words[3] == '>' and words[5:8] == ['&&', 'mv', '-f']:
         dest = guest(words[-1])
         dest.parent.mkdir(parents=True, exist_ok=True)

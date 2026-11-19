@@ -131,9 +131,7 @@ impl<E> IntegratedFailure<'_, E> {
     pub(in crate::runner) fn diagnosis(&self) -> Option<String> {
         match self {
             Self::Guarded {
-                cause,
-                bound: None,
-                ..
+                cause, bound: None, ..
             } => Some(bounded_diagnosis(&cause.to_string())),
             Self::Publication { cause, .. } => Some(bounded_diagnosis(&cause.diagnosis())),
             Self::PhaseA(_)
@@ -148,7 +146,11 @@ impl<E> IntegratedFailure<'_, E> {
 
 fn bounded_diagnosis(message: &str) -> String {
     effigy_ui::human::bound_text(
-        &message.lines().map(str::trim).collect::<Vec<_>>().join("; "),
+        &message
+            .lines()
+            .map(str::trim)
+            .collect::<Vec<_>>()
+            .join("; "),
         DIAGNOSIS_BYTES,
     )
 }
@@ -161,7 +163,9 @@ mod diagnosis_tests {
 
     #[test]
     fn bind_reacquire_diagnosis_keeps_the_inner_cause() {
-        let cause = EnvError::Kernel(RunError::unavailable("backend binding refused: engine offline"));
+        let cause = EnvError::Kernel(RunError::unavailable(
+            "backend binding refused: engine offline",
+        ));
 
         assert!(bounded_diagnosis(&cause.to_string()).contains("engine offline"));
     }

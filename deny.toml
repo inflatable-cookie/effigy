@@ -33,12 +33,18 @@ ignore = [
     # stack used by the gateway's TLS. PEM parsing now lives in rustls-pki-types,
     # but our transitive graph still pulls the wrapper. No vuln. Reviewed 2026-06-10.
     { id = "RUSTSEC-2025-0134", reason = "reviewed 2026-06-10: unmaintained-only; transitive via rustls stack; no safe upgrade yet" },
-    # proc-macro-error2 is unmaintained; transitive build-time proc-macro dep,
-    # not shipped at runtime. No vuln. Reviewed 2026-06-10.
-    { id = "RUSTSEC-2026-0173", reason = "reviewed 2026-06-10: unmaintained-only; transitive build-time proc-macro dep; no runtime exposure" },
+    # proc-macro-error2 was unmaintained; the crate left the graph with the
+    # thiserror 2 stack, so its ignore is removed instead of kept as an unused
+    # exception. Reviewed 2026-11-19.
     # smartstring is unmaintained; Rhai uses it internally and currently offers
     # no feature or release that removes it. No vulnerability. Reviewed 2026-08-11.
     { id = "RUSTSEC-2026-0249", reason = "reviewed 2026-08-11: unmaintained-only; transitive via Rhai runtime; no safe upgrade yet" },
+    # chrono is unmaintained as of RUSTSEC-2026-0543 and every version is
+    # affected; there is no safe upgrade. Effigy uses it first-party (state,
+    # runtime, release, manifest, gateway, rhai), so leaving it is a scheduled
+    # migration to `jiff` or `time`, not a dependency bump. Tracked as a Nucleus
+    # lead; drop this entry when that migration lands. Reviewed 2026-11-19.
+    { id = "RUSTSEC-2026-0543", reason = "reviewed 2026-11-19: unmaintained-only, no vulnerability and no safe upgrade; first-party use is queued for a jiff/time migration" },
 ]
 
 [licenses]

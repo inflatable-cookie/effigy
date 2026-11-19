@@ -671,12 +671,17 @@ fn a_long_launch_refusal_keeps_its_cause_in_the_human_output() {
     });
     let human = failure.human_error();
     let rendered = human.render_text();
+    // The evidence budget wraps one long line at word boundaries rather than
+    // dropping its tail (effigy#1003), so the reason is present in the text but
+    // may straddle a wrap. Collapsing whitespace is what "the reason survives"
+    // means here; the head check below proves the wrap kept both ends.
+    let collapsed = rendered.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        rendered.contains("VM Compose interpolation requires retained kernel custody"),
+        collapsed.contains("VM Compose interpolation requires retained kernel custody"),
         "{rendered}"
     );
     assert!(
-        rendered.contains("colima nerdctl --profile effigy"),
+        collapsed.contains("colima nerdctl --profile effigy"),
         "the head still names the command: {rendered}"
     );
 }

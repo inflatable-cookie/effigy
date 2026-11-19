@@ -878,14 +878,20 @@ fn cli_contracts_contract_body_refusal_keeps_its_bytes() {
         what_failed.starts_with(r#"{"changed_only_base":null"#),
         "{what_failed}"
     );
-    assert!(what_failed.contains('…'), "{what_failed}");
-    let tail = &message[message.len().saturating_sub(96)..];
+    // The human bound wraps one long line at word boundaries rather than cutting
+    // it (effigy#1003), so the reason the line ended with is still present even
+    // when a wrap splits it: compare on collapsed whitespace, and hold the bound
+    // itself to one evidence line per wrapped line.
+    let collapse = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let tail = collapse(&message[message.len().saturating_sub(96)..]);
     assert!(
-        what_failed.ends_with(tail),
+        collapse(&what_failed).ends_with(&tail),
         "the bounded line keeps the reason it ended with: {what_failed}"
     );
     assert!(
-        what_failed.len() <= effigy_ui::human::MAX_EVIDENCE_BYTES + "…".len(),
+        what_failed
+            .lines()
+            .all(|line| line.len() <= effigy_ui::human::MAX_EVIDENCE_BYTES),
         "{what_failed}"
     );
     assert_eq!(

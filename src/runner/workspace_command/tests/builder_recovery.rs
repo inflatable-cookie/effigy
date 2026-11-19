@@ -599,6 +599,15 @@ esac
                 )),
             ),
             ("EFFIGY_COMPOSE_BACKEND", Some(backend.to_owned())),
+            // The fixture drives the Compose grammar through its private fake
+            // backend, never a Colima VM, so the temp-root guess does not apply
+            // to it. Without the named escape this fixture would only pass where
+            // the run's temporary root is outside the OS temp roots: a hosted
+            // runner's root is `/tmp`, and the guard refuses it there.
+            (
+                "EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK",
+                Some("1".to_owned()),
+            ),
             ("EFFIGY_RECOVERY_ROOT", Some(root.display().to_string())),
             (
                 "EFFIGY_RECOVERY_VERSION",

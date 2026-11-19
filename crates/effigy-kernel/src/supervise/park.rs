@@ -88,9 +88,9 @@ impl std::fmt::Display for ReleaseError {
         match self {
             Self::NotParked { run } => write!(
                 f,
-                "run {run} has no parked sentinel in this checkout; `effigy run release` only \
-                 asks a parked sentinel to drop its gates. An older sentinel that never wrote a \
-                 snapshot cannot handle the request"
+                "run {run} has no parked sentinel in this checkout; `effigy run release {run}` \
+                 only asks a parked sentinel to drop its gates. An older sentinel that never wrote \
+                 a snapshot cannot handle the request"
             ),
             Self::LiveMembers { run, pids } => {
                 let named = pids
@@ -101,14 +101,14 @@ impl std::fmt::Display for ReleaseError {
                 write!(
                     f,
                     "run {run} still has live process-group members (pids {named}); \
-                     `effigy run release` signals nothing. Stop those processes through their \
-                     own owner, then retry"
+                     `effigy run release {run}` signals nothing. Stop those processes through \
+                     their own owner, then retry"
                 )
             }
             Self::Unproven { run } => write!(
                 f,
                 "run {run}: process-group inventory could not prove emptiness; \
-                 `effigy run release` signals nothing"
+                 `effigy run release {run}` signals nothing"
             ),
             Self::Io(message) => f.write_str(message),
         }
