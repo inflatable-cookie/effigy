@@ -227,18 +227,20 @@ container mode. We shouldn't need a `*:tui` selector at all."
 Host-process sidecars are adopted as environment-owned detached kernel runs
 ([053 §8.1](contracts/053-environment-reconciler-contract.md#81-host-sidecars-adopted),
 effigy#320). The workspace session is a separate detached run that outlives
-`dev`; under [052 §8.7](contracts/052-runtime-kernel-contract.md#87-workspace-session-run),
+`dev`; under [052 §8.7](contracts/052-runtime-kernel-contract.md#8-host-and-guest-model),
 a workspace-invoked `dev` is its child and host/guest UIs can attach to that
 managed child. The kernel and runner session/channel/client/serving seams are
 implemented; the production activation caller and native qualification remain
-missing. See [052 §8.11](contracts/052-runtime-kernel-contract.md#811-workspace-client-interface-v1)
+missing. See [052 §8.11](contracts/052-runtime-kernel-contract.md#8-host-and-guest-model)
 for implementation and coverage limits; this does not make the managed dev run
 the workspace session or claim the intended terminal relationship is wired in
 production.
 
-**Operator ruling (Tom, 2026-11-01):** Level 1 includes managed `dev`
-admission and controls, attach/detach/reconnect and terminal input/resize
-through the selected workspace session as specified by [052 §8.6–§8.7](contracts/052-runtime-kernel-contract.md#86-coverage).
+**Operator ruling (Tom, 2026-11-01), superseded 2026-11-19:** Level 1 includes
+managed `dev` admission and controls, attach/detach/reconnect and terminal
+input/resize through the selected workspace session. Tom's D1 ruling on
+2026-11-19 retired that session and the channel: host actions run in the host
+CLI, and the guest runs locally ([052 §8](contracts/052-runtime-kernel-contract.md#8-host-and-guest-model)).
 Shared-lock tasks and pause are Level 2. This stages command coverage without
 changing the one-dev-session requirement, child ownership, host/guest TUI
 relationship or security gates; implemented seams are not qualified production
@@ -622,13 +624,12 @@ Asked: 2026-10-27
 Answered: 2026-10-27 by Tom
 Owners: Queue lanes `v015-workspace-client` and `operator-feedback`; [product guardrails](architecture/product-guardrails.md#human-facing-feedback)
 
-**Operator ruling (Tom, 2026-11-01):** v0.15 requires the Level 1
-workspace-client surface in [052 §8.6](contracts/052-runtime-kernel-contract.md#86-coverage).
-Level 2 and the rest of the former full command matrix follow after v0.15;
-unsupported operations refuse by name and point to an independently invoked
-host CLI. This narrows command coverage only. Acowtancy and CBS must qualify
-the Level 1 user flows, and positive full workspace-session publication and
-the authenticated host channel remain required on Colima, Docker Desktop and
+**Operator ruling (Tom, 2026-11-01), superseded 2026-11-19:** v0.15 required
+the staged Level 1 workspace-client surface. Tom's D1 ruling retired the
+authenticated host channel, the workspace session and the guest PTY: host
+actions run in the host CLI, and a guest runs locally on its own checkout and
+state. Acowtancy and CBS still qualify the guest's own flows, and the guest
+binary and context publication remain required on Colima, Docker Desktop and
 Linux Docker Engine. Hybrid mode provisions no guest Effigy. The native,
 guest-identity, pinned TLS, credential-secrecy, exact-run/generation, custody
 and no-fallback/`Unknown` gates remain unchanged.
@@ -666,7 +667,7 @@ ruling (Supervisor 2026-11-01)”.
   deadline. Gated reobserve must use an independent fresh backend read with
   that same deadline and exact ID/fence, never pass through an earlier
   observation, and fail closed on unknown, changed or missing evidence.
-  [052 §8.11](contracts/052-runtime-kernel-contract.md#811-workspace-client-interface-v1)
+  [052 §8.11](contracts/052-runtime-kernel-contract.md#8-host-and-guest-model)
   and [053 §3](contracts/053-environment-reconciler-contract.md#3-transitions)
   apply this requirement to the integration. This records the existing
   Queue-held direction; it does not claim #506 or native #512 behavior is shipped.
@@ -851,10 +852,12 @@ remains a finding. A changed blob gets scanned again.
 
 ## Q-021: Guest facts the workspace client channel still needs
 
-Status: open (kernel, guest identity, TLS transport, publication and serving seams implemented; production activation, wider command coverage and native qualification outstanding)
+Status: retired (Tom 2026-11-19, D1: the guest-to-host channel, its transport and
+its session are removed; host actions run in the host CLI, and the guest runs
+locally. The guest's identity observation and binary publication stay.)
 Asked: 2026-10-29
 Original seam owners: #482 (C identity/context/publication), #483 (A transport), #452 (glue).
-Authority: [contract 052 §8.11](contracts/052-runtime-kernel-contract.md#811-workspace-client-interface-v1).
+Authority: [contract 052 §8.11](contracts/052-runtime-kernel-contract.md#8-host-and-guest-model).
 
 Tom's 2026-10-30 ruling (decision 8c0ef812) bounds the normative seam to 250 lines,
 tied to the merged #484 reservation/publication APIs. The detailed E-step,
@@ -863,7 +866,7 @@ candidate material and is retained in Git history only. It does not qualify any
 backend or waive Q-017.
 
 The three originally missing facts now have implemented seams in
-[052 §8.11](contracts/052-runtime-kernel-contract.md#811-workspace-client-interface-v1):
+[052 §8.11](contracts/052-runtime-kernel-contract.md#8-host-and-guest-model):
 
 - **Guest-local identity:** `ProcGuestIdentity` and strict v2 context verification
   compare independently observed container/boot/platform/libc before credential

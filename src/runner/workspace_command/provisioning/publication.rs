@@ -580,7 +580,6 @@ fn install_pinned_guest_binary(
     Ok(())
 }
 
-
 /// Publish immutable snapshots before the context that names their digests.
 fn publish_source_snapshots(
     guest: &mut dyn GuestWorkspace,

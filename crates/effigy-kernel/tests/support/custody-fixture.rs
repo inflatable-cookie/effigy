@@ -823,4 +823,3 @@ fn fixture_engine(mut session: EngineSession, mut router: RouterHandle) -> Resul
 
 #[path = "probe-fixture.rs"]
 mod probe_fixture;
-

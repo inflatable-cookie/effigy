@@ -155,7 +155,6 @@ impl TestCreatorImage {
 /// Capture once at executable entry, before it can be replaced beside a live
 /// owner. Failure is sticky; a later pathname cannot seed a new birth snapshot.
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

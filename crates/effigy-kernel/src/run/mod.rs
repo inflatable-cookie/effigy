@@ -73,7 +73,6 @@ pub fn verify_prepared_foreground_gates(
     crate::gate::Gate::verify_prepared_foreground(root, &ids).map_err(RunError::from)
 }
 
-pub(crate) use attachments::{check_activation_fence, holder_attachment, publish_active_state};
 /// Disposable-fixture support: record one environment's own `active`
 /// publication exactly as an activation commit does, through the same fence
 /// check and the same transaction, so a process-lifetime proof can admit a
@@ -113,7 +112,7 @@ use crate::observe::UnknownReason;
 use crate::outcome::{Invocation, Outcome, WorkloadOutcome};
 use crate::root::StateRoot;
 use crate::store::{BusyWait, Store, StoreError, SETTLE_BUSY_WAIT};
-use rusqlite::{params, OptionalExtension};
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -483,9 +482,7 @@ impl<'a> Run<'a> {
         cleanup: impl FnOnce() -> Result<CleanupContext, RunError>,
         adapter: &mut impl SettlementAdapter,
     ) -> Result<Self, RunError> {
-        Self::begin_under(
-            cx, root, inv, opts, cleanup, adapter, None, None,
-        )
+        Self::begin_under(cx, root, inv, opts, cleanup, adapter, None, None)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -922,6 +919,9 @@ impl<'a> Run<'a> {
                 &self.cx.child(std::time::Duration::from_secs(30)),
                 |txn| {
                     journal::check_fence(txn.conn(), &self.owner)?;
+                    if spec.target != self.owner {
+                        journal::check_spec_target(txn.conn(), &spec)?;
+                    }
                     journal::insert_effect(txn, self.id, &spec)
                 },
             )?;

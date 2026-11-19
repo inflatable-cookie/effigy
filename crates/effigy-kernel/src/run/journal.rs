@@ -60,9 +60,13 @@ pub(super) fn check_fence(conn: &Connection, fence: &Fence) -> Result<(), RunErr
     }
     Ok(())
 }
+/// An intent's target check, before the effect exists.
+pub(super) fn check_spec_target(conn: &Connection, spec: &EffectSpec) -> Result<(), RunError> {
+    check_workspace_fence(conn, &spec.target)
+}
 pub(super) fn check_run_target(
     conn: &Connection,
-    id: RunId,
+    _id: RunId,
     owner: &Fence,
     effect: &Effect,
 ) -> Result<(), RunError> {

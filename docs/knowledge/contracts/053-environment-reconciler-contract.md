@@ -2,16 +2,11 @@
 
 Status: implemented in `crates/effigy-containers/src/environment/` (engine)
 and `src/runner/environment.rs` (runner cutover), effigy#232. The
-`data_from` data claim and retire as a transition are later work (§9). The
-workspace session run and its host authority channel are implemented at the
-kernel and runner seam (052 §8.3, §8.7, §8.11); ordinary production activation
-remains refused. The uninstalled #531 qualification path is described below;
-native backend qualification remains outstanding.
-
-For v0.15, workspace Level 1 forwards non-interactive commands only;
-guest PTY, attach, reconnect and detach acknowledgement are deferred to
-Level 2 as specified in 052 §8.11. This does not remove the environment
-activation or its detached session supervisor.
+`data_from` data claim and retire as a transition are later work (§9). Host
+actions run in the host CLI (Tom 2026-11-19, D1): the workspace session run, its
+host authority channel and the private activation fork are removed, so there is
+one ordinary activation path. The retired #531 qualification path is not
+described here; native backend qualification remains outstanding.
 
 ### Workspace apply boundary (effigy#533, 2026-11-02)
 
@@ -201,11 +196,11 @@ fails without saying so.
 | Idempotent recovery | In place. `unfinished_selection`/`selection_recovered`/`selection_abandoned` with `workspace_reserved_crash_after_commit_and_each_partial_switch_resumes_under_real_env_guard` and the unknown-liveness/dead-listener proof. |
 | Authenticated receipts | Guest publication receipts are authenticated (pinned TLS-only dial, `WorkspaceContextV2::verify`, canonical enrolment credential, `SelectionReceipt`/`SessionRef`). Integration effects are reconcilable, not authenticated receipts, as the slice interface records — an intent, not a claim. |
 | Absent ChildGrant real startup | Proven at this head. `test:workspace:effigy-build` builds the binary, then `effigy test:focused -- -p effigy --lib --features workspace-serving-fixture --run-ignored only -E 'test(reserved_engine_admits_default_and_named_profile_under_the_reserved_id)'` passes: the real reserved engine admits default and named profiles with no session passphrase and no ChildGrant. The test stays `#[ignore]`d because it needs that built binary, not because it is unproven. |
-| Checkout symlink/catalog identity | Not proven here. Source pins are frozen at reservation (`workspace_source_closure`, `PostPrepDeclaration::verify_sources`) and source refresh rechecks workspace mode, but a canonical symlink/catalog identity proof across guest routes needs the qualified private apply plus the native identity gate (052 §8.11). Deferred with them; no claim. |
+| Checkout symlink/catalog identity | Not proven here. Source pins are frozen at publication (`workspace_source_closure`) and source refresh rechecks workspace mode; a canonical symlink/catalog identity proof across guest routes needs the native identity gate. Deferred; no claim. |
 | Frozen plan/manifest drift | In place. Planned-policy equality, `plan.publish_inputs` equality, the retained seal match, and `PostPrepDeclaration::verify_policy`/`verify_sources` at the supervisor boundary all refuse drift. |
-| Observe status/context | Partly in place, proof deferred. The channel carries `ObserveQuery`/`ObserveBody` under `ObserveContext` and `run::status` returns `Observed<RunStatus>`; v2 context verification binds the exact session generation. The production-route exact-status/context proof needs the same apply capability as the production E2E, so it stays with #531; unproved adapters refuse by name (052 §8.6). |
-| Level 1 coverage and missing adapters | Recorded and implemented as policy. Tom's 2026-11-01 ruling in 052 §8.6, `workspace_client/coverage_policy.rs` and `tests/workspace_client_coverage_policy.rs`: Level 1 forwards; every other guest request refuses with a stable unsupported diagnostic. |
-| Level 2 PTY work | Not conflated. 052 §8.6/§8.11 keep attach, reconnect, terminal input and real PTY as Level 2; nothing in #533 claims them. |
+| Observe status/context | Host-side only. `run::status` returns `Observed<RunStatus>` and host actions run in the host CLI (052 §8); the retired channel carried no guest Observe. |
+| Guest coverage | Retired (Tom 2026-11-19, D1). `workspace_client/coverage_policy.rs` keeps only the hidden-internal-entry refusal a guest needs. |
+| Level 2 PTY work | Retired. The guest PTY and reconnect scaffolding are removed (Tom 2026-11-19, D2); nothing claims them. |
 | #529 helper custody | Its landed identity/ACK and anchor checks are preserved. Ordinary `Terminal::Discard` remains refused; the compile-time qualification candidate and its current limits are described above. |
 | #526 interpolation cleanup | Not this task's owner and untouched. Interpolation files are already per-invocation with a lock and a sweep (`policy/render/vm.rs`); #533 neither changes nor claims them. |
 | Discard refused | Unchanged. `run_private_detached_command` and `Terminal::Discard` still refuse; no Discard route was enabled. The unowned runner-side `support/workspace_private.rs` scaffold was retired in effigy#971, leaving the containers-side owner as the only refusal definition. |
@@ -301,7 +296,7 @@ A transition waits up to 10 minutes for the gate; idle stop does not wait.
   outcome; only the sealed workspace route may attribute creation. Complete
   before/after project inventories bind exact
   full IDs to frozen service, project, managed, scope and checkout labels and
-  explicit image capabilities (052 §8.12): container image ID; reference plus
+  explicit image capabilities (052 §8.7): container image ID; reference plus
   stable resolved image-inspect ID only for IDs created in this gate; digest-pinned
   reference; or attached reference/config-hash with no resolved container-image ID.
   Attached reference-only rows must match Compose's config hash for the merged
@@ -321,7 +316,7 @@ A transition waits up to 10 minutes for the gate; idle stop does not wait.
   new-ID difference must equal that optional workspace replacement plus the
   required fresh/recreated services; other attached dependencies retain their
   exact IDs (Supervisor under Tom’s standing delegation, 2026-10-31;
-  [Q-017 amendments](../questions.md#workspace-activation-amendments); 052 §8.12). The record is
+  [Q-017 amendments](../questions.md#workspace-activation-amendments); 052 §8.7). The record is
   explicitly a gate-scoped inference, never an engine create response. A same-user
   actor forging identical labels inside this exclusive window is outside the
   v0.15 guarantee (Operator ruling (Tom, 2026-10-31, on the Supervisor’s recommendation);
@@ -335,7 +330,7 @@ A transition waits up to 10 minutes for the gate; idle stop does not wait.
   fresh backend read on that same deadline, fenced to the exact ID, never a
   pass-through of an earlier observation, and it fails closed on unknown, changed
   or missing evidence (Supervisor under Tom’s standing delegation, 2026-11-01;
-  [Q-017 amendments](../questions.md#workspace-activation-amendments); 052 §8.11).
+  [Q-017 amendments](../questions.md#workspace-activation-amendments)).
   Every actual Compose input, including the generated Compose file, belongs to
   the frozen render closure. Before hashing/apply the adapter verifies the file
   list and exact bytes against that closure; a missing input refuses rather than
@@ -344,15 +339,8 @@ A transition waits up to 10 minutes for the gate; idle stop does not wait.
   Failed apply or incomplete observations produce no creation
   receipt. A retry reads only this run's journalled result and never reapplies or
   invents a later receipt. `created_by(project, full_id)` reads that journal;
-  missing evidence is Unknown, never a global NoCreator claim. Bare Active
-  publication refuses a reserved generation, including its claiming run; the
-  sanctioned reserved Active route is the merged `commit_selection`/
-  `commit_activation` transaction with guest/serving receipts (052 §8.11), while
-  the production activation caller (#506) and native guest E2E (#512) stay
-  separate, unmerged work. #510's native target-binding proof does NOT prove
-  guest workspace-session
-  commit/publication. Retained records
-  remain readable after settle (effigy#510, 052 §8.12).
+  missing evidence is Unknown, never a global NoCreator claim. Retained records
+  remain readable after settle (effigy#510, 052 §8.7).
 - **Failed admission.** Once admission owns a run, its refusal retains the
   original cause and the typed cleanup outcome, including residue and recovery
   commands. Cleanup-context and settlement errors are reported alongside the
@@ -563,16 +551,16 @@ v0.15 deletes them; `effigy doctor` lists what it finds.
 ## 8. Guest
 
 Inside a workspace container the engine runs with guest placement: every
-transition refuses `HostAuthorityRequired` before touching state (R1), and
-the record reads as kept on the host. Reading it through the host authority
-channel waits for that channel (052 §8.3).
+transition refuses `HostAuthorityRequired` before touching state (R1), and the
+record reads as kept on the host. A guest holds no host authority and requests
+nothing from the host: host actions run in the host CLI (052 §8).
 
-**Operator ruling (Tom, 2026-11-01):** v0.15 requires Level 1 of
-[052 §8.6](052-runtime-kernel-contract.md#86-coverage); unsupported Level 2
-guest operations refuse by name. Channel or identity failure never permits
-guest-state mutation, local fallback or resending an indeterminate request
-after `Unknown`. An independently invoked host CLI is not a guest retry and
-remains subject to the owning engine's session/reservation, canonical-gate,
+**Retired (Tom 2026-11-19, D1):** the guest-to-host channel, its Level 1/Level 2
+split, the guest PTY and the session reservation are removed; a guest runs
+locally and host actions run in the host CLI
+([052 §8](052-runtime-kernel-contract.md#8-host-and-guest-model)). An
+independently invoked host CLI remains subject to the owning engine's canonical
+gate,
 custody and authorization checks. The session-aware down and reserved
 outside-gate ordering in §3 remain mandatory.
 
@@ -660,12 +648,10 @@ a projection, never authority (effigy#458).
   guarded before preparation/admission until private-output runner and
   workspace-preparation paths are qualified and connected; review of cleanup-only
   guarded unwind and the integration-budget recheck after observation remains
-  required. This evidence does not qualify a real backend. Remaining Level 1
-  command and Observe coverage beyond `runs:list`, including run-specific
-  `runs:status`, and native backend qualification remain outstanding
-  (052 §8.6, §8.11, §8.12). Level 2 command coverage follows
-  v0.15. The session run and channel are implemented as kernel and runner
-  seams; those seams do not qualify the production caller or a backend.
+  required. This evidence does not qualify a real backend. The retired private
+  activation's command coverage no longer applies: a guest runs locally and host
+  actions run in the host CLI (052 §8). Native backend qualification remains
+  outstanding.
 
 ## 10. Proofs
 
@@ -703,8 +689,10 @@ runtime recovery or migration proof is claimed by this amendment.
 
 ## 11. Future detached-owner journal boundary
 
-The Supervisor's 2026-11-01 Level 1 ruling in 052 §8.7 requires lifecycle E to
-introduce a v2 owner-claim journal boundary, including read-only v1 observation,
+The retired 2026-11-01 Level 1 ruling required lifecycle E to introduce a v2
+owner-claim journal boundary; that detached-owner claim path is retired (Tom
+2026-11-19, D1), so this boundary is not introduced. Should a future feature
+need a claim journal, it would including read-only v1 observation,
 a verified, transactionally consistent adjacent 0600 SQLite backup including
 committed WAL state, atomic idempotent migration, explicit old-writer refusal and
 tested backup restoration for supported rollback. A crash before commit leaves

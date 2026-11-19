@@ -186,7 +186,8 @@ mod refusal_tests {
 
     #[test]
     fn a_refusal_is_read_from_any_line_of_a_bounded_stream() {
-        let stream = b"time=\"...\" level=info msg=starting\n[error] guest-local identity is unproven\n";
+        let stream =
+            b"time=\"...\" level=info msg=starting\n[error] guest-local identity is unproven\n";
         assert_eq!(
             ProbeRefusal::classify(stream),
             ProbeRefusal::IdentityUnproven

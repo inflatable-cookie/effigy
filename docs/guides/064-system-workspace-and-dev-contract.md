@@ -111,15 +111,10 @@ and then the `[systems].default` workspace container, so a repo that declares
 only `[systems]` still targets the environment its tasks use.
 `--system <NAME>` selects one declared system explicitly.
 
-Both spellings take the same ordinary Compose path. Naming a container or
-accepting the default container is the ordinary invocation even when a bundle
-declares that container as its default system/workspace: the mount rewrite,
-apply, readiness and handoff are the ones this command has always run.
-`--system <NAME>` selects the environment through that system's default
-workspace, so it is the explicit workspace activation request; while the
-workspace production cut is in force that request refuses by name before
-workspace preparation or apply, and the ordinary invocation keeps working
-(contract 052 §8.11).
+Both spellings take the same ordinary Compose path. Naming a container,
+accepting the default container and selecting a system with `--system <NAME>`
+all run the mount rewrite, apply, readiness and handoff this command has always
+run: there is one workspace activation path (Tom 2026-11-19, contract 052 §8).
 
 ### `effigy workspace`
 
@@ -144,21 +139,15 @@ Host-dispatched tasks bound to that workspace run as its declared user and
 home. They do not run as root or leave root-owned files in bind-mounted
 workspace volumes for the later `dev` handoff to trip over.
 
-The v0.15 release requires workspace-client commands to follow the staged Level 1 surface in
-[contract 052 §8.6](../knowledge/contracts/052-runtime-kernel-contract.md#86-coverage).
-Unsupported guest commands must refuse by name with instructions to run a separate
-host CLI invocation; they must not fall back to a guest engine or resend an
-indeterminate request after `Unknown`. Implementation and enforcement remain in
-progress. The session production path and each
-native backend still require their qualification; a prepared guest artifact
-alone is not that proof.
-
-For the required Level 1 behavior, closing a foreground owner's connection
-cancels its run. A detached child keeps running after its owner leaves only when
-its detach was acknowledged. A later authenticated client may explicitly claim
-ownership of that detached run; it cannot take ownership from a live owner.
-Secondary terminals do not stop the owner when they leave. This reconnect path
-remains lifecycle work and is not yet a qualified capability.
+Host actions run in the host CLI. A container-mode guest reads its published
+context for `effigy version` and `effigy tasks`, and runs everything else itself,
+on the container's own checkout and state, the way Effigy runs on the host
+(contract 052 §8, Tom 2026-11-19). A guest holds no host authority: there is no
+guest-to-host channel, no grant or session to enrol, and no attach or reconnect
+path. The one refusal is a task the checkout binds to the host, `run_in =
+"host"`, which fails in one line naming the host checkout. Closing a foreground
+owner's connection still cancels its run; a detached run keeps running only when
+its detach was acknowledged, and a later client observes it from the host CLI.
 
 That future capability requires a journal upgrade. Older Effigy writers must
 refuse a v2 journal with upgrade, down or reset guidance. A newer version can

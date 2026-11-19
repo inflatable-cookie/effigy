@@ -75,11 +75,11 @@ fn another_schema_is_refused_and_names_the_reprepare_command() {
         serde_json::from_slice(&context(4).render().expect("render")).expect("json");
     document["schema"] = serde_json::Value::from("effigy.workspace-context.v2");
 
-    let refusal = WorkspaceContext::parse(&serde_json::to_vec(&document).expect("json"))
-        .expect_err("schema");
+    let refusal =
+        WorkspaceContext::parse(&serde_json::to_vec(&document).expect("json")).expect_err("schema");
 
     assert_eq!(refusal.code, ContextRefusalCode::Unavailable);
-    assert!(refusal.names_reprepare());
+    assert!(refusal.message.contains("effigy.workspace-context.v1"));
 }
 
 #[test]
@@ -108,7 +108,11 @@ fn an_unknown_field_is_refused_rather_than_ignored() {
 fn the_published_generation_is_the_one_the_document_carries() {
     let mut guest = FakeGuest::default();
     guest.put_file(CONTEXT_CURRENT_PATH, b"4\n".to_vec(), 0o444);
-    guest.put_file(&context_path(4), context(4).render().expect("render"), 0o444);
+    guest.put_file(
+        &context_path(4),
+        context(4).render().expect("render"),
+        0o444,
+    );
 
     let published = read_published_context(&mut guest)
         .expect("published context")
@@ -122,7 +126,11 @@ fn the_published_generation_is_the_one_the_document_carries() {
 fn a_generation_directory_carrying_another_number_refuses() {
     let mut guest = FakeGuest::default();
     guest.put_file(CONTEXT_CURRENT_PATH, b"5\n".to_vec(), 0o444);
-    guest.put_file(&context_path(5), context(4).render().expect("render"), 0o444);
+    guest.put_file(
+        &context_path(5),
+        context(4).render().expect("render"),
+        0o444,
+    );
 
     assert!(read_published_context(&mut guest).is_err());
 }

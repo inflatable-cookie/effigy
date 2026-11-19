@@ -111,7 +111,6 @@ impl ComposeInvocation {
         }
     }
 
-
     /// Direct-child callers cannot safely transfer this owner into group custody.
     /// Refuse before spawn until they can admit a retained kernel Run.
     pub fn require_retained_custody_for_interpolation(&self) -> io::Result<()> {

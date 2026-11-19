@@ -100,7 +100,6 @@ pub(in crate::runner) struct TaskRunRequest<'a> {
     pub(in crate::runner) cwd: Option<&'a std::path::Path>,
 }
 
-
 /// A validated caller key. Admission binds it to the checkout before using
 /// its id. The unbound digest is retained solely to locate imported old runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -247,7 +246,6 @@ enum Standalone {
     Memory,
     Journal { scratch: bool, custody: bool },
 }
-
 
 impl TaskRun {
     pub(in crate::runner) fn begin(request: TaskRunRequest<'_>) -> Result<Self, RunnerError> {

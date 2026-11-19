@@ -57,7 +57,7 @@ features.
 
 - The only resident process is the user gateway. Supervisors and sentinels
   live for one run and its settle; a probe guard for its observer's open
-  probes. The channel listener lives with its workspace session run.
+  probes.
 - Every per-run process re-execs the binary identified at startup.
 - Foreground runs use memory records and checkout lock files. Only retained
   runs open a checkout journal. The machine store holds the shared facts listed
@@ -121,7 +121,7 @@ holder, recording residue for Unknown → admit, or refuse unless acknowledged
 | --- | --- |
 | Identity, context, gates, store, journal, settle, custody, signals, deadlines | contract 052 §5 |
 | Store layout, trust, retention and machine write budget | contract 052 §7 |
-| Host/guest model, session run, provisioning, workspace client authority | contract 052 §8 |
+| Host/guest model, guest context, provisioning and the guest's local dispatch | contract 052 §8 |
 | Authority map and legacy state | contract 052 §9, §11 |
 | Fault harness, matrices, ratchet and per-primitive obligations | contract 052 §12 |
 | Process and signal ownership on the container side | contract [005](../contracts/005-container-runtime-contract.md) |

@@ -409,7 +409,6 @@ impl ProcessOwner for Run<'_> {
         self.complete_prelaunch_interpolation(sequence)
     }
 
-
     fn closure_pin(&self) -> Result<Option<crate::closure::ClosurePin>, RunError> {
         self.checkout_closure_pin()
     }

@@ -43,11 +43,4 @@ sh "$root/scripts/oxide-selector.sh" clippy --workspace --all-targets \
   --features effigy-kernel/fault-injection -- -D warnings
 sh "$root/scripts/oxide-selector.sh" clippy -p effigy -p effigy-containers -p effigy-kernel \
   --all-targets --target aarch64-unknown-linux-gnu \
-  --features effigy/workspace-private-qualification,effigy-kernel/fault-injection -- -D warnings
-sh "$root/scripts/oxide-selector.sh" clippy -p effigy \
-  --bin effigy --test workspace_client --target aarch64-unknown-linux-gnu \
-  --features workspace-private-qualification,workspace-serving-fixture -- -D warnings
-sh "$root/scripts/oxide-selector.sh" clippy -p effigy-kernel \
-  --target aarch64-unknown-linux-gnu \
-  --features fault-injection,workspace-private-qualification \
-  --bin kernel-custody-fixture -- -D warnings
+  --features effigy-kernel/fault-injection -- -D warnings

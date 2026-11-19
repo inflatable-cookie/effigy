@@ -678,8 +678,7 @@ impl<'r> EnvRun<'r> {
         op: Operation,
         wait: Wait,
     ) -> Result<Self, EnvError> {
-        Self::admit_recoverable(ctx, env, op, wait, None)
-            .map_err(|failure| failure.settle(ctx))
+        Self::admit_recoverable(ctx, env, op, wait, None).map_err(|failure| failure.settle(ctx))
     }
 
     fn admit_recoverable(

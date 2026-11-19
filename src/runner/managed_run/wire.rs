@@ -27,7 +27,6 @@ pub(in crate::runner) struct Payload {
     pub(in crate::runner) terminal: Option<(u16, u16)>,
 }
 
-
 /// A supervisor event for its owning client. Delivery is best effort; every
 /// fact here is also in the run journal or a run log (K10).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

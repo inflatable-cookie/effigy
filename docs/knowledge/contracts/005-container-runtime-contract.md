@@ -379,8 +379,8 @@ unknown holder remains. Runs hold an environment through the hold API: task
 activation, `exec`, shells and data commands hold through a session run; a
 managed run is attached by its lifecycle's bring-up. A holder's own stop is
 exempt only once that run is settling. Gates are host-only (R1): Effigy inside
-a workspace container holds no host gate and requests host authority through
-the channel of contract 052 §8.
+a workspace container holds no host gate, and host actions run in the host CLI
+(contract 052 §8).
 
 A bring-up under live holders keeps the running generation and applies a
 changed render once they end. Lifecycle EXIT traps, including inline-workspace

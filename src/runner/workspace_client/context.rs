@@ -935,7 +935,6 @@ impl WorkspaceContext {
         }
         Ok(context)
     }
-
 }
 
 #[cfg(test)]

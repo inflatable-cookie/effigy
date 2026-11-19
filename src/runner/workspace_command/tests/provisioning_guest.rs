@@ -14,9 +14,9 @@ use crate::contract_test_support::EnvGuard;
 use crate::runner::workspace_client::context::{
     binary_path, context_path, read_published_context, sha256_text, snapshot_path, CheckoutReader,
     ContextRefusalCode, GuestLocalReads, GuestReader, GuestWorkspace, LocalRead, LocalReadError,
-    LocalReadOutcome, WorkspaceContainerIdentity, WorkspaceContext,
-    WorkspaceEnvironmentIdentity, BINARY_CURRENT_PATH, CHANNEL_PROTOCOL_VERSION,
-    COMPOSED_MANIFEST_KIND, CONTEXT_CURRENT_PATH, HOST_REPREPARE_COMMAND,
+    LocalReadOutcome, WorkspaceContainerIdentity, WorkspaceContext, WorkspaceEnvironmentIdentity,
+    BINARY_CURRENT_PATH, CHANNEL_PROTOCOL_VERSION, COMPOSED_MANIFEST_KIND, CONTEXT_CURRENT_PATH,
+    HOST_REPREPARE_COMMAND,
 };
 use crate::runner::workspace_client::guest_fake::{hex_sha256, DiskGuest, FakeGuest};
 use crate::runner::workspace_command::artifact_plan::EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV;
@@ -245,6 +245,30 @@ fn artifact(repo: &Path, bytes: &str) -> PathBuf {
     artifact_with_receipt(repo, bytes, Some(&sha256_text(bytes.as_bytes())))
 }
 
+/// A second pinned artifact at its own path, so a proof can publish different
+/// bytes into the same repository.
+fn rebuilt_artifact(repo: &Path, bytes: &str) -> PathBuf {
+    let path = repo.join("rebuilt/effigy-x86_64-unknown-linux-gnu");
+    std::fs::create_dir_all(path.parent().expect("artifact parent")).expect("artifact directory");
+    std::fs::write(&path, bytes).expect("artifact bytes");
+    std::fs::write(
+        workspace_effigy_active_version_file(&path),
+        format!("{}\n", effigy_core::build_info::active_version()),
+    )
+    .expect("active version");
+    std::fs::write(
+        workspace_artifact_receipt_path(&path),
+        format!(
+            "release_triple=x86_64-unknown-linux-gnu\nsha256={}\n",
+            sha256_text(bytes.as_bytes())
+                .strip_prefix("sha256:")
+                .unwrap_or_default()
+        ),
+    )
+    .expect("artifact receipt");
+    path
+}
+
 fn artifact_with_receipt(repo: &Path, bytes: &str, receipt_digest: Option<&str>) -> PathBuf {
     let path = repo.join("artifacts/effigy-x86_64-unknown-linux-gnu");
     std::fs::create_dir_all(path.parent().expect("artifact parent")).expect("artifact directory");
@@ -271,7 +295,7 @@ fn prepare(
     guest: &mut dyn crate::runner::workspace_client::context::GuestWorkspace,
     artifact: &Path,
     workspace: Option<OperatorWorkspace>,
-    container: WorkspaceContainerIdentity
+    container: WorkspaceContainerIdentity,
 ) -> Option<PreparedWorkspaceGuest> {
     let policy = policy(repo, workspace.is_some());
     prepare_workspace_guest(
@@ -330,8 +354,8 @@ fn published(repo: &Path, guest: &mut FakeGuest) -> PreparedWorkspaceGuest {
         guest,
         &artifact,
         Some(operator_workspace()),
-        container_identity()
-)
+        container_identity(),
+    )
     .expect("container mode prepares a guest")
 }
 
@@ -546,16 +570,16 @@ fn an_unchanged_publication_reuses_its_generation() {
         &mut guest,
         &artifact,
         Some(operator_workspace()),
-        container_identity()
-)
+        container_identity(),
+    )
     .expect("first prepare");
     let second = prepare(
         &repo,
         &mut guest,
         &artifact,
         Some(operator_workspace()),
-        container_identity()
-)
+        container_identity(),
+    )
     .expect("second prepare");
     assert_eq!(first.context_generation, second.context_generation);
     assert_eq!(guest.text(CONTEXT_CURRENT_PATH), Some("1".to_owned()));
@@ -579,8 +603,8 @@ fn a_changed_fact_publishes_a_new_generation_without_editing_the_old_one() {
         &mut guest,
         &artifact,
         Some(operator_workspace()),
-        container_identity()
-)
+        container_identity(),
+    )
     .expect("first prepare");
     let first_generation = guest.text(&context_path(1)).expect("first document");
     std::fs::write(
@@ -588,13 +612,14 @@ fn a_changed_fact_publishes_a_new_generation_without_editing_the_old_one() {
         "[tasks]\ndev = { run = \"true\" }\n",
     )
     .expect("manifest change");
+    let rebuilt = rebuilt_artifact(&repo, "rebuilt guest bytes");
     let second = prepare(
         &repo,
         &mut guest,
-        &artifact,
+        &rebuilt,
         Some(operator_workspace()),
-        container_identity()
-)
+        container_identity(),
+    )
     .expect("second prepare");
     assert_eq!(second.context_generation, 2);
     assert_eq!(guest.text(CONTEXT_CURRENT_PATH), Some("2".to_owned()));
@@ -606,7 +631,7 @@ fn a_changed_fact_publishes_a_new_generation_without_editing_the_old_one() {
     assert!(guest
         .text(&context_path(2))
         .expect("second document")
-        .contains("run-8"));
+        .contains(&second.binary.digest));
 }
 
 #[test]
@@ -614,13 +639,7 @@ fn hybrid_preparation_publishes_no_guest_at_all() {
     let repo = fixture("hybrid");
     let mut guest = guest();
     let artifact = artifact(&repo, "pinned guest bytes");
-    let prepared = prepare(
-        &repo,
-        &mut guest,
-        &artifact,
-        None,
-        container_identity()
-);
+    let prepared = prepare(&repo, &mut guest, &artifact, None, container_identity());
     assert_eq!(prepared, None);
     assert!(
         guest.paths().is_empty(),
@@ -657,8 +676,8 @@ fn a_linked_worktree_keeps_its_own_checkout_identity_and_path_map() {
         &mut primary_guest,
         &artifact,
         Some(operator_workspace()),
-        container_identity()
-)
+        container_identity(),
+    )
     .expect("primary prepare");
     let mut linked_guest = guest();
     let linked_prepared = prepare(
@@ -666,8 +685,8 @@ fn a_linked_worktree_keeps_its_own_checkout_identity_and_path_map() {
         &mut linked_guest,
         &artifact,
         Some(operator_workspace()),
-        container_identity()
-)
+        container_identity(),
+    )
     .expect("linked prepare");
     assert_ne!(
         primary_prepared.activation.checkout_id, linked_prepared.activation.checkout_id,
@@ -697,8 +716,8 @@ fn a_second_prepare_never_rewrites_an_installed_generation() {
         &mut guest,
         &artifact(&repo, "first pinned bytes"),
         Some(operator_workspace()),
-        container_identity()
-)
+        container_identity(),
+    )
     .expect("first prepare");
     let first_executable = binary_path(&first.binary.digest);
     let second = prepare(
@@ -706,8 +725,8 @@ fn a_second_prepare_never_rewrites_an_installed_generation() {
         &mut guest,
         &artifact(&repo, "second pinned bytes"),
         Some(operator_workspace()),
-        container_identity()
-)
+        container_identity(),
+    )
     .expect("second prepare");
     assert_ne!(first.binary.digest, second.binary.digest);
     assert_eq!(
@@ -779,13 +798,8 @@ fn missing_wrong_and_regular_entry_paths_refuse_before_handoff() {
     let guest_root = Fixture::new("effigy-entry-path-").expect("guest root");
     let mut guest = DiskGuest::new(guest_root.path().to_owned(), container_identity());
     let artifact = artifact_bytes(&repo, b"\x7fELF\x02\x01\x01pinned entry");
-    let prepared = prepare_disk(
-        &repo,
-        &mut guest,
-        &artifact,
-        Some(operator_workspace()),
-    )
-    .expect("prepare entry");
+    let prepared = prepare_disk(&repo, &mut guest, &artifact, Some(operator_workspace()))
+        .expect("prepare entry");
     let executable = binary_path(&prepared.binary.digest);
     verify_pinned_guest_binary(&mut guest, &entry()).expect("intact entry");
     let before = std::fs::read(guest.host_path(&executable).unwrap()).unwrap();
@@ -1486,13 +1500,8 @@ fn a_multi_megabyte_executable_is_authenticated_without_reading_its_bytes() {
     let mut bytes = vec![0u8; 4 * 1024 * 1024];
     bytes[..7].copy_from_slice(b"\x7fELF\x02\x01\x01");
     let artifact = artifact_bytes(&repo, &bytes);
-    let prepared = prepare_disk(
-        &repo,
-        &mut guest,
-        &artifact,
-        Some(operator_workspace()),
-    )
-    .expect("prepare a multi-megabyte guest");
+    let prepared = prepare_disk(&repo, &mut guest, &artifact, Some(operator_workspace()))
+        .expect("prepare a multi-megabyte guest");
     assert_eq!(
         guest
             .file_sha256(&binary_path(&prepared.binary.digest))
@@ -1533,13 +1542,8 @@ fn publishing_a_new_artifact_never_replaces_a_live_guest_executable() {
     // Artifact A is a real program: it prints the digest of the bytes it is
     // running from and then waits, so the test can publish while it runs.
     let artifact_a = script_artifact(&repo, "generation-a");
-    let first = prepare_disk(
-        &repo,
-        &mut guest,
-        &artifact_a,
-        Some(operator_workspace()),
-    )
-    .expect("first prepare");
+    let first = prepare_disk(&repo, &mut guest, &artifact_a, Some(operator_workspace()))
+        .expect("first prepare");
     let first_executable = binary_path(&first.binary.digest);
     let entered = guest.host_path(ENTRY_PATH).expect("entry path");
     let mut running = Command::new(&entered)
@@ -1586,13 +1590,8 @@ fn publishing_a_new_artifact_never_replaces_a_live_guest_executable() {
     // Publish artifact B while A runs.
     let before = before_bytes.clone();
     let artifact_b = script_artifact(&repo, "generation-b");
-    let second = prepare_disk(
-        &repo,
-        &mut guest,
-        &artifact_b,
-        Some(operator_workspace()),
-    )
-    .expect("second prepare");
+    let second = prepare_disk(&repo, &mut guest, &artifact_b, Some(operator_workspace()))
+        .expect("second prepare");
     assert_ne!(first.binary.digest, second.binary.digest);
     // The running process is untouched: it is still alive, and the file it
     // resolved is byte-identical.
@@ -2047,30 +2046,31 @@ fn interrupted_publication_skips_existing_context_documents() {
         &mut guest,
         &artifact,
         Some(operator_workspace()),
-        container_identity()
-)
+        container_identity(),
+    )
     .unwrap();
     let orphan = first.context_generation + 1;
-    let path = crate::runner::workspace_client::context::context_path(orphan);
+    let orphan_path = crate::runner::workspace_client::context::context_path(orphan);
     use crate::runner::workspace_client::context::GuestWorkspace;
     guest
         .write_file(
-            &path,
+            &orphan_path,
             b"retained orphan from interrupted publication",
             0o444,
         )
         .unwrap();
+    let rebuilt = rebuilt_artifact(&repo, "rebuilt executable");
     let next = prepare(
         &repo,
         &mut guest,
-        &artifact,
+        &rebuilt,
         Some(operator_workspace()),
-        container_identity()
-)
+        container_identity(),
+    )
     .unwrap();
     assert_eq!(next.context_generation, orphan + 1);
     assert_eq!(
-        guest.text(&path).unwrap(),
+        guest.text(&orphan_path).unwrap(),
         "retained orphan from interrupted publication"
     );
 }
@@ -2085,8 +2085,8 @@ fn prepare_refuses_to_overwrite_a_corrupt_immutable_executable() {
         &mut guest,
         &artifact,
         Some(operator_workspace()),
-        container_identity()
-)
+        container_identity(),
+    )
     .unwrap();
     let path = binary_path(&first.binary.digest);
     use crate::runner::workspace_client::context::GuestWorkspace;
