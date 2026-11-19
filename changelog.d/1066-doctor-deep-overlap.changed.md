@@ -1,0 +1,1 @@
+`effigy doctor --deep` runs the `health` task while the shared repository walk runs, instead of after it, so a deep scan on a large repository finishes in about the longer of the two rather than their sum. Findings, check order and the JSON contract are unchanged.
