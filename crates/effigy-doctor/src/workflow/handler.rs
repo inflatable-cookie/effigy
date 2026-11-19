@@ -163,12 +163,9 @@ impl phases::WorkflowPhaseHandler for DefaultWorkflowPhaseHandler<'_> {
             // task the deadline cut off is reported as budget-exhausted. If the
             // health task never started, the walk's incomplete state skips it.
             match health_run {
-                Some(run) => crate::checks::finish_health_check(
-                    run,
-                    deadline,
-                    state,
-                    self.progress.as_deref_mut(),
-                ),
+                Some(run) => {
+                    crate::checks::finish_health_check(run, state, self.progress.as_deref_mut())
+                }
                 None if state.is_complete() => crate::checks::record_health_budget_exhausted(state),
                 None => state.record_skipped_check("health_task"),
             }

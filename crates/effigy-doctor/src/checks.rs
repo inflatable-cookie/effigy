@@ -57,11 +57,14 @@ pub(super) struct HealthStep {
 }
 
 /// The step after its task has run: the plan, its outcome and the time taken.
+/// `stopped` is read the moment the task returns, so a task that finished in
+/// time is never reclassified by a deadline the walk reached later.
 pub(super) struct HealthRun {
     plan: crate::health::HealthPlan,
     label: Option<ScanLabel>,
     outcome: Option<Result<String, crate::DoctorError>>,
     elapsed: Duration,
+    stopped: bool,
 }
 
 /// Opens the health step, or `None` when the time budget is already gone.
@@ -95,11 +98,14 @@ impl HealthStep {
         let started = Instant::now();
         let budget = deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
         let outcome = self.plan.invoke(scope_root, ports, budget);
+        let elapsed = started.elapsed();
+        let stopped = deadline.is_some_and(|deadline| Instant::now() >= deadline);
         HealthRun {
             plan: self.plan,
             label: self.label,
             outcome,
-            elapsed: started.elapsed(),
+            elapsed,
+            stopped,
         }
     }
 }
@@ -112,7 +118,6 @@ pub(super) fn record_health_budget_exhausted(state: &mut DoctorState) {
 /// Records the health findings and closes the step's progress and check.
 pub(super) fn finish_health_check(
     run: HealthRun,
-    deadline: Option<Instant>,
     state: &mut DoctorState,
     progress: Option<&mut DoctorProgressReporter>,
 ) {
@@ -121,10 +126,10 @@ pub(super) fn finish_health_check(
         label,
         outcome,
         elapsed,
+        stopped,
     } = run;
     let findings_before = state.findings.len();
     plan.record(outcome, state);
-    let stopped = deadline.is_some_and(|deadline| Instant::now() >= deadline);
     if let (Some(progress), Some(label)) = (progress, label) {
         let outcome = if stopped {
             ScanOutcome::Stopped("stopped at the time budget")

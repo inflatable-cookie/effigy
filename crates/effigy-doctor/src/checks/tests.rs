@@ -51,10 +51,11 @@ fn health_that_finished_beside_a_budget_exhausted_walk_keeps_its_evidence() {
                 .to_owned(),
         )),
         elapsed: std::time::Duration::from_millis(5),
+        stopped: false,
     };
     let findings_before = state.findings.len();
 
-    super::finish_health_check(run, None, &mut state, None);
+    super::finish_health_check(run, &mut state, None);
 
     assert!(state.findings.len() > findings_before);
     assert!(matches!(
@@ -80,9 +81,10 @@ fn health_cut_off_by_the_deadline_is_reported_as_budget_exhausted() {
             phase: "health_task".to_owned(),
         })),
         elapsed: std::time::Duration::from_millis(5),
+        stopped: true,
     };
 
-    super::finish_health_check(run, Some(std::time::Instant::now()), &mut state, None);
+    super::finish_health_check(run, &mut state, None);
 
     assert!(matches!(
         state
