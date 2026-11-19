@@ -650,7 +650,8 @@ host listener section of the container runtime contract.
 
 - declare services from the catalog; a service the catalog lacks gets a
   project fragment under `infra/dev/catalog/<name>/`
-- a repo-owned `compose_file` is deprecated; migrate it (below)
+- a repo-owned `compose_file` is retired; `effigy container migrate` writes
+  its catalog fragments (below)
 
 ### Catalog-Driven
 
@@ -741,7 +742,7 @@ project name, published ports, routes — stays separate. Services that only
 one side declares keep their own volumes.
 
 Validation refuses, at manifest load, an unknown or self target, chains or
-cycles, driver mismatches, a retired `compose_file` on either side,
+cycles, driver mismatches, a `compose_file` awaiting migration on either side,
 `share_runtime_identity` on the borrower, and the same service name bound to
 different catalogs.
 
@@ -940,12 +941,11 @@ publish_address = "0.0.0.0"
 
 ### Migrating a Repo-Owned `compose_file`
 
-`compose_file` is deprecated in v0.15. Effigy reads each Compose service as a
-project catalog fragment for one release and prints a warning naming the
-command. Write the fragments out once:
+`compose_file` is retired. Ordinary commands refuse it with the command that
+migrates it; v0.15 was the last release that read it automatically. Write the
+fragments out once:
 
 ```sh
-effigy container render linux-release   # optional: the exact render
 effigy container migrate linux-release
 ```
 
@@ -956,7 +956,7 @@ file that declared it, and checks that the render did not change. Comments and
 other keys stay. Delete the old Compose file afterwards; it is no longer read.
 Rerunning after an interruption completes the migration.
 
-The translated environment is a normal catalog environment:
+The migrated environment is a normal catalog environment:
 
 - every service carries Effigy's checkout and scope labels, so the first `up`
   after upgrade recreates it once
@@ -967,9 +967,11 @@ The translated environment is a normal catalog environment:
   default) unless `[host].ports` fixes it
 - `data`, `cache` and `reset` commands apply
 
-Compose features a fragment cannot express (custom networks, volume options,
-`extends`, `$` interpolation and similar) refuse with the key to move. `eject`
-is retired: generated Compose stays internal.
+A direct upgrade from v0.14.1 goes through `effigy container migrate`; there is
+no automatic translation left. Compose features a fragment cannot express
+(custom networks, volume options, `extends`, `$` interpolation and similar)
+refuse with the key to move. `eject` is retired: generated Compose stays
+internal.
 
 ## Core Rules
 
@@ -980,7 +982,7 @@ Current v1 rules:
 - Docker/Desktop is a supported backend for bootstrap and runtime use, not just
   an ambient CLI fallback
 - `primary_service` is required
-- a deprecated `compose_file` must stay repo-relative
+- a `compose_file` awaiting migration must stay repo-relative
 - repo-relative `host.mounts` may not escape the repo root unless they use the
   structured `external = true` form
 - every volume and data action runs on the environment's exact backend and

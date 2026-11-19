@@ -854,7 +854,7 @@ mod tests {
         }
 
         fn policy(&self) -> EffectiveContainerPolicy {
-            effigy_containers::load_container_policy(&self.repo_root, None)
+            crate::runner::test_support::load_fixture_policy(&self.repo_root, None)
                 .expect("fixture container policy")
         }
     }

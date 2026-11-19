@@ -523,7 +523,7 @@ working_dir = "/workspace"
     )
     .unwrap();
     let _runtime = install_fake_container_runtime(&root);
-    let policy = effigy_containers::load_container_policy(&root, None).unwrap();
+    let policy = crate::runner::test_support::load_fixture_policy(&root, None).unwrap();
     let value = "named-secret-'quoted'\nwith newline\n";
     let script = format!(
         "set +x\nexport DATABASE_URL={}\n",

@@ -129,6 +129,7 @@ fn the_internal_header_marker_never_strips_a_container_hosts_envelope() {
 [[containers.web.host_processes]]\nname = \"worker\"\nrun = \"true\"\n",
     )
     .expect("write manifest");
+    crate::compose_migration::migrate_declared(&root);
 
     let output = run(&root, &["container", "web", "hosts", "--json"]);
 

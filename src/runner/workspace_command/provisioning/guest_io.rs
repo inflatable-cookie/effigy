@@ -328,7 +328,7 @@ exec "$@"
             "services:\n  app:\n    image: fixture:one\n",
         )
         .unwrap();
-        let policy = effigy_containers::load_container_policy(&root, Some("web")).unwrap();
+        let policy = crate::runner::test_support::load_fixture_policy(&root, Some("web")).unwrap();
         let now = Instant::now();
         let mut budget = BoundedCommandBudget::new(now, now + Duration::from_secs(10), 4096, 4096);
         let id = "a".repeat(64);
@@ -404,7 +404,7 @@ exec "$@"
             "services:\n  app:\n    image: fixture:one\n",
         )
         .unwrap();
-        let policy = effigy_containers::load_container_policy(&root, Some("web")).unwrap();
+        let policy = crate::runner::test_support::load_fixture_policy(&root, Some("web")).unwrap();
         let now = Instant::now();
         let mut budget =
             BoundedCommandBudget::new(now, now + Duration::from_secs(10), 65536, 65536);

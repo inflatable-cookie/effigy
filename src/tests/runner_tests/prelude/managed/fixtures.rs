@@ -135,7 +135,7 @@ exec "$@"
             Some(root.join(".effigy").display().to_string()),
         ),
     ]);
-    if let Ok(policy) = effigy_containers::load_container_policy(root, None) {
+    if let Ok(policy) = crate::runner::test_support::load_fixture_policy(root, None) {
         let checkout = root.canonicalize().expect("canonical fixture checkout");
         let mut labels = serde_json::json!({
             "com.docker.compose.project": policy.project_name,

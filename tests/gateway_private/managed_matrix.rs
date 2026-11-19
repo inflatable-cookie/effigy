@@ -214,6 +214,7 @@ impl<'a> Case<'a> {
             fs::write(state.join(format!("ps-{project}.txt")), rows).expect("owned inventory");
         }
         fs::write(root.join("effigy.toml"), manifest).expect("manifest");
+        crate::compose_migration::migrate_declared(&root);
         fs::write(root.join("volume-data"), "retained matrix data").expect("volume sentinel");
         fs::write(root.join("matrix-adapter.py"), ADAPTER).expect("private adapter");
         Self {

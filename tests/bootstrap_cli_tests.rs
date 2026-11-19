@@ -508,97 +508,29 @@ fn the_first_dev_acquires_a_missing_pinned_source() {
     );
 }
 
-fn retired_bootstrap_fixture(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("crates/effigy-manifest/tests/fixtures/retired-bootstrap")
-        .join(name)
-}
-
-/// A checkout whose manifest is a v0.14.1 fixture copied verbatim.
-fn retired_bootstrap_checkout(name: &str) -> PathBuf {
-    let root = temp_workspace("effigy-retired-bootstrap", name.trim_end_matches(".toml"));
-    fs::copy(retired_bootstrap_fixture(name), root.join("effigy.toml")).expect("copy fixture");
-    init_git_repo(&root);
-    root
-}
-
+/// A manifest that still carries a v0.15 `[bootstrap]` spelling is a parse
+/// error naming its replacement, for every command.
 #[test]
-fn v0141_bootstrap_fixtures_load_and_list_tasks() {
-    for (fixture, listed) in [
-        ("acowtancy.toml", "bootstrap:state"),
-        ("longhorn.toml", "bootstrap:deps"),
-        ("contact-patch.toml", "book:meta:test"),
-        ("cbs.toml", "bootstrap:run:1"),
-        ("jal-accounts.toml", "bootstrap:run:1"),
+fn a_retired_bootstrap_spelling_refuses_with_its_replacement() {
+    for (body, expected) in [
+        ("run = \"printf bootstrap\"", "[bootstrap].setup"),
+        ("children = []", "[sources.<name>]"),
+        (
+            "start = [{ task = \"dev\" }, { task = \"logs\" }]",
+            "[tasks.<name>]",
+        ),
+        ("submodules = \"recursive\"", "boolean"),
     ] {
-        let root = retired_bootstrap_checkout(fixture);
-        let output = effigy(&["tasks", "--all"], &root);
-        assert!(output.status.success(), "{fixture}: {output:?}");
-        let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
-        assert!(stdout.contains(listed), "{fixture}: {stdout}");
-        let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
-        let notices = stderr
-            .matches("retired v0.15 config still loads for one release")
-            .count();
-        assert_eq!(notices, 1, "{fixture}: one notice per manifest: {stderr}");
-        // Every compat notice carries the actionable migration pointer, not
-        // just the deprecation label.
+        let root = temp_workspace("effigy-retired-bootstrap", "refusal");
+        fs::write(root.join("effigy.toml"), format!("[bootstrap]\n{body}\n")).expect("manifest");
+        init_git_repo(&root);
+        let output = effigy(&["tasks"], &root);
+        assert!(!output.status.success(), "{body}: {output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(expected), "{body}: {stderr}");
         assert!(
-            stderr.contains("085-v0.15.0-consumer-migration.md"),
-            "{fixture}: notice must point at the migration guide: {stderr}"
+            stderr.contains("accepted through v0.15 only") || stderr.contains("boolean"),
+            "{body}: {stderr}"
         );
     }
-}
-
-#[test]
-fn the_retired_bootstrap_notice_reaches_the_json_envelope_warnings() {
-    let root = retired_bootstrap_checkout("underlay-bundle.toml");
-    let output = effigy(&["--json", "tasks"], &root);
-    assert!(output.status.success(), "{output:?}");
-    let parsed = parse_stdout_json(&output);
-    assert_eq!(parsed["schema"], "effigy.command.v1");
-    let warnings = parsed["warnings"]
-        .as_array()
-        .expect("warnings array in every envelope");
-    assert_eq!(warnings.len(), 1, "{parsed}");
-    assert!(
-        warnings[0]
-            .as_str()
-            .expect("warning text")
-            .contains("retired v0.15 config still loads for one release"),
-        "{parsed}"
-    );
-    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
-    assert!(
-        !stderr.contains("retired v0.15 config"),
-        "--json stderr stays quiet: {stderr}"
-    );
-}
-
-#[test]
-fn a_plan_over_retired_children_gives_the_actionable_refusal() {
-    let root = retired_bootstrap_checkout("contact-patch.toml");
-    let output = effigy(&["bootstrap", "--plan"], &root);
-    assert!(output.status.success(), "{output:?}");
-    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
-    assert!(stdout.contains("refused:"), "{stdout}");
-    assert!(stdout.contains("[sources.<name>]"), "{stdout}");
-    assert!(stdout.contains("rev_file"), "{stdout}");
-}
-
-#[test]
-fn bootstrap_alone_refuses_retired_children() {
-    let root = retired_bootstrap_checkout("contact-patch.toml");
-    let output = effigy(&["bootstrap"], &root);
-    assert!(
-        !output.status.success(),
-        "bootstrap must refuse: {output:?}"
-    );
-    let rendered = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(rendered.contains("[bootstrap].children"), "{rendered}");
-    assert!(rendered.contains("[sources.<name>]"), "{rendered}");
 }

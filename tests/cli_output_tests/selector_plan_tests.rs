@@ -210,11 +210,13 @@ default_workspace = "app"
 [systems.dev.workspaces.app]
 container = "web"
 
+
 [tasks.dev]
 workspace = "app"
 "#,
     )
     .expect("write manifest");
+    crate::compose_migration::migrate_declared(&root);
 
     let output = run_json_cli_command(&root, &["dev", "--plan"]);
     let stdout = String::from_utf8(output.stdout.clone()).expect("utf8 stdout");

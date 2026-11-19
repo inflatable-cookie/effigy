@@ -236,14 +236,14 @@ primary_service = "app"
         }
         match expected {
             Selection::Resolves(container) => {
-                let policy = load_container_policy(&root, requested).expect(name);
+                let policy = crate::tests::fixture_policy(&root, requested).expect(name);
                 assert_eq!(policy.name, container, "{name}");
                 if let Some(check) = check {
                     check(&policy);
                 }
             }
             Selection::Refused(token) => {
-                let error = load_container_policy(&root, requested).expect_err(name);
+                let error = crate::tests::fixture_policy(&root, requested).expect_err(name);
                 assert!(
                     matches!(error, ContainerPolicyError::TaskInvocation(_)),
                     "{name}: {error:?}"
@@ -295,7 +295,7 @@ fn colima_mount_budgets_refuse_over_budget_payloads() {
         )
         .expect("compose");
 
-        let mut policy = load_container_policy(&root, None).expect("policy");
+        let mut policy = crate::tests::fixture_policy(&root, None).expect("policy");
         let overlay = root.join("infra/dev/compose.overlay.yml");
         fs::write(
             &overlay,
@@ -418,11 +418,20 @@ fn colima_mount_budgets_refuse_over_budget_payloads() {
         )
         .expect("write manifest");
         fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+        fs::write(
+            root.join("infra/dev/docker-compose.yml"),
+            "services:\n  app:\n    image: example.invalid/synthetic\n",
+        )
+        .expect("write compose");
+        crate::tests::migrate_declared_compose_files(&root);
 
+        // The fixture migration wrote the project fragment, so a synthetic
+        // body is written where the render now reads it.
+        let fragment = root.join("infra/dev/catalog/web-app/compose.fragment.yml");
         let validate_colima = |content: &str| {
-            fs::write(root.join("infra/dev/docker-compose.yml"), content).expect("write compose");
+            fs::write(&fragment, content).expect("write compose");
             super::data_from::with_colima_nerdctl_preflight(|| {
-                let policy = load_container_policy(&root, None).expect("policy");
+                let policy = crate::tests::fixture_prepared_policy(&root, None).expect("policy");
                 crate::validate_compose_backend_runtime(&root, &policy)
             })
         };
@@ -453,7 +462,7 @@ fn colima_mount_budgets_refuse_over_budget_payloads() {
         assert!(!error.to_string().contains("/run/effigy/secrets"));
 
         with_test_compose_backend(ComposeBackend::Docker, || {
-            let policy = load_container_policy(&root, None).expect("policy");
+            let policy = crate::tests::fixture_prepared_policy(&root, None).expect("policy");
             crate::validate_compose_backend_runtime(&root, &policy)
                 .expect("Docker must not inherit Colima mount-budget refusals");
         });
@@ -600,7 +609,7 @@ project_name = "acowtancy-dev-wt-8bc5e921cbe1"
     let overlay = root.join("infra/dev/stack.workspace.compose.yml");
     fs::write(&overlay, acowtancy_workspace_overlay(checkout, omit)).expect("write overlay");
 
-    let mut policy = load_container_policy(&root, None).expect("policy");
+    let mut policy = crate::tests::fixture_policy(&root, None).expect("policy");
     policy.compose_files.push(overlay);
     super::data_from::with_colima_nerdctl_preflight(|| {
         crate::validate_compose_backend_runtime(&root, &policy)
@@ -730,7 +739,8 @@ fn creation_policy_resolves_workspace_mounts_for_creation() {
         )
         .expect("write compose");
 
-        let initially_loaded = load_container_policy(&root, Some("web")).expect("initial policy");
+        let initially_loaded =
+            crate::tests::fixture_policy(&root, Some("web")).expect("initial policy");
         let initial_compose = initially_loaded
             .read_compose(&initially_loaded.compose_files[0])
             .expect("initial workspace compose");
@@ -741,7 +751,7 @@ fn creation_policy_resolves_workspace_mounts_for_creation() {
         fs::create_dir(&absolute_source).expect("preparation creates absolute source");
 
         let (creation_policy, decisions) =
-            load_container_policy_for_creation(&root, Some("web")).expect("creation policy");
+            crate::tests::fixture_policy_for_creation(&root, Some("web")).expect("creation policy");
         let created_compose = creation_policy
             .read_compose(&creation_policy.compose_files[0])
             .expect("creation workspace compose");
@@ -805,7 +815,7 @@ fn creation_policy_resolves_workspace_mounts_for_creation() {
         .expect("write compose");
 
         let (policy, decisions) =
-            load_container_policy_for_creation(&root, Some("web")).expect("creation policy");
+            crate::tests::fixture_policy_for_creation(&root, Some("web")).expect("creation policy");
         let compose = policy
             .read_compose(&policy.compose_files[0])
             .expect("read compose");
@@ -851,12 +861,13 @@ fn creation_policy_resolves_workspace_mounts_for_creation() {
             )
             .expect("write manifest");
 
-            let initial = load_container_policy(&root, Some("web")).expect("initial policy");
+            let initial = crate::tests::fixture_policy(&root, Some("web")).expect("initial policy");
             assert_eq!(initial.compose_source, EffectiveComposeSource::Generated);
             fs::create_dir(root.join("late")).expect("preparation creates source");
 
             let (creation_policy, decisions) =
-                load_container_policy_for_creation(&root, Some("web")).expect("creation policy");
+                crate::tests::fixture_policy_for_creation(&root, Some("web"))
+                    .expect("creation policy");
             let compose = creation_policy
                 .read_compose(&creation_policy.compose_files[0])
                 .expect("creation workspace compose");
@@ -1025,14 +1036,14 @@ primary_service = "jobs"
             Expects::One(project_name) => {
                 let policy = {
                     let _lock = crate::test_env_lock();
-                    load_container_policy(&root, None).expect(name)
+                    crate::tests::fixture_policy(&root, None).expect(name)
                 };
                 assert_eq!(policy.project_name, project_name, "{name}");
             }
             Expects::RepoName => {
                 let policy = {
                     let _lock = crate::test_env_lock();
-                    load_container_policy(&root, None).expect(name)
+                    crate::tests::fixture_policy(&root, None).expect(name)
                 };
                 // A compose project name is the fixture's repo name, lowercased.
                 let expected = format!(
@@ -1045,7 +1056,7 @@ primary_service = "jobs"
                 assert_eq!(policy.project_name, expected, "{name}");
             }
             Expects::Two(web, worker) => {
-                let policies = load_all_container_policies(&root).expect(name);
+                let policies = crate::tests::fixture_all_policies(&root).expect(name);
                 assert_eq!(policies.len(), 2, "{name}");
                 assert_eq!(policies[0].name, "web", "{name}");
                 assert_eq!(policies[0].project_name, web, "{name}");
@@ -1085,7 +1096,7 @@ primary_service = "jobs"
         )
         .expect("compose");
 
-        let error = load_container_policy(&root, None).expect_err("should fail");
+        let error = crate::tests::fixture_policy(&root, None).expect_err("should fail");
         match error {
             ContainerPolicyError::TaskInvocation(message) => assert_eq!(
                 message,
@@ -1127,11 +1138,11 @@ mounts = ["early:/workspace-root/early:ro"]
     )
     .expect("write compose");
 
-    let _initial = load_container_policy(&root, Some("web")).expect("initial policy");
+    let _initial = crate::tests::fixture_policy(&root, Some("web")).expect("initial policy");
     fs::remove_dir_all(&source).expect("preparation removes source");
 
     let (creation_policy, decisions) =
-        load_container_policy_for_creation(&root, Some("web")).expect("creation policy");
+        crate::tests::fixture_policy_for_creation(&root, Some("web")).expect("creation policy");
     let created_compose = creation_policy
         .read_compose(&creation_policy.compose_files[0])
         .expect("creation workspace compose");
@@ -1182,6 +1193,7 @@ primary_service = "app"
     .expect("write compose");
 
     let mut stages = Vec::new();
+    crate::tests::migrate_declared_compose_files(&root);
     let (_policy, _decisions) =
         crate::load_container_policy_for_creation_observed(&root, Some("web"), &mut |stage| {
             stages.push(stage)
@@ -1238,7 +1250,7 @@ mounts = ["blocked/source:/workspace-root/blocked:ro"]
     )
     .expect("write compose");
 
-    let error = load_container_policy_for_creation(&root, Some("web"))
+    let error = crate::tests::fixture_policy_for_creation(&root, Some("web"))
         .expect_err("ENOTDIR is not evidence that the optional source is absent");
 
     assert!(error.to_string().contains("workspace extra mount source"));
@@ -1305,7 +1317,7 @@ mounts = [{ member = "underlay", target = "/workspace-root/underlay" }]
 
     let policy = {
         let _lock = crate::test_env_lock();
-        load_container_policy(&root, Some("stack")).expect("policy")
+        crate::tests::fixture_policy(&root, Some("stack")).expect("policy")
     };
 
     let rewritten = policy
@@ -1359,7 +1371,7 @@ services:
     )
     .expect("compose");
 
-    let policy = load_container_policy(&root, None).expect("policy");
+    let policy = crate::tests::fixture_policy(&root, None).expect("policy");
 
     // Translated ports follow catalog port policy: every published container
     // port is kept, and Prepare assigns the host side.
@@ -1549,7 +1561,7 @@ mounts = ["../outside:/workspace/outside"]
     // Host-mount resolution moved to intake (see `mount_spec`), so the
     // repo-escape check now fires at policy-load time, not at later
     // `validate_container_policy`.
-    let error = load_container_policy(&root, None).expect_err("should fail");
+    let error = crate::tests::fixture_policy(&root, None).expect_err("should fail");
     assert!(error.to_string().contains("escapes the repo root"));
 }
 
@@ -1578,7 +1590,7 @@ primary_service = "app"
     )
     .expect("compose");
 
-    let policy = load_container_policy(&root, None).expect("policy");
+    let policy = crate::tests::fixture_policy(&root, None).expect("policy");
     let error = with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
         crate::validate_compose_backend_runtime(&root, &policy).expect_err("should fail")
     });
@@ -1626,7 +1638,7 @@ fn validate_compose_backend_runtime_checks_staged_source_instead_of_temp_checkou
         ),
     )
     .expect("profile mounts");
-    let mut policy = load_container_policy(&source, Some("web")).expect("policy");
+    let mut policy = crate::tests::fixture_policy(&source, Some("web")).expect("policy");
     // Rebase only the in-memory snapshot's logical address. Validation still
     // reads the real rendered bytes, without publishing into the modeled mount.
     let render = policy.render.as_mut().expect("Compose snapshot");
@@ -1671,7 +1683,7 @@ primary_service = "app"
         "services:\n  app:\n    image: example.invalid/synthetic\n",
     )
     .expect("compose");
-    let mut policy = load_container_policy(&root, None).expect("policy");
+    let mut policy = crate::tests::fixture_policy(&root, None).expect("policy");
     let overlay = root.join("infra/dev/compose.overlay.yml");
     policy.compose_files.push(overlay.clone());
 
@@ -1795,7 +1807,7 @@ primary_service = "app"
     )
     .expect("compose");
 
-    let policy = load_container_policy(&root, None).expect("policy");
+    let policy = crate::tests::fixture_policy(&root, None).expect("policy");
     assert_eq!(
         effective_attach_mode(&policy, false, false),
         EffectiveAttachMode::Detached

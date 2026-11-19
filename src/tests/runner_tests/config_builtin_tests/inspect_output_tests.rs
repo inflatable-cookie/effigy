@@ -10,7 +10,7 @@ fn run_manifest_task_builtin_config_inspect_renders_composed_manifest_details() 
         &root,
         r#"
 [manifest]
-include = ["effigy.tasks.toml", { path = "effigy.docs.toml", override = ["tasks.qa"] }]
+include = ["effigy.tasks.toml", "effigy.docs.toml"]
 "#,
     );
     write_manifest(
@@ -30,7 +30,7 @@ run = "printf tasks"
 file = "docs/knowledge/README.md"
 dir = "docs/knowledge"
 
-[tasks.qa]
+[tasks.docs]
 run = "printf docs"
 "#,
     );
@@ -45,14 +45,14 @@ run = "printf docs"
             "2. effigy.tasks.toml",
             "3. effigy.docs.toml",
             "- effigy.toml -> effigy.tasks.toml",
-            "- effigy.toml -> effigy.docs.toml (override: tasks.qa)",
-            "- tasks.qa: effigy.tasks.toml -> effigy.docs.toml",
+            "- effigy.toml -> effigy.docs.toml",
             "effigy.docs.toml:",
             "- docs_policy.indexes.topic.file",
             "Effective Manifest",
             "[docs_policy.indexes.topic]",
             "[tasks.dev]",
             "[tasks.qa]",
+            "[tasks.docs]",
             "run = \"printf docs\"",
         ],
     );
@@ -65,7 +65,7 @@ fn run_manifest_task_builtin_config_inspect_path_renders_focused_source_and_valu
         &root,
         r#"
 [manifest]
-include = ["effigy.tasks.toml", { path = "effigy.docs.toml", override = ["tasks.qa"] }]
+include = ["effigy.tasks.toml", "effigy.docs.toml"]
 "#,
     );
     write_manifest(
@@ -78,22 +78,20 @@ run = "printf tasks"
     write_manifest(
         &root.join("effigy.docs.toml"),
         r#"
-[tasks.qa]
+[tasks.docs]
 run = "printf docs"
 "#,
     );
 
-    let out = run_builtin_ok(root, "config", &["--inspect", "--path", "tasks.qa.run"]);
+    let out = run_builtin_ok(root, "config", &["--inspect", "--path", "tasks.docs.run"]);
     assert_output_contains_all(
         &out,
         &[
             "Selected Path",
-            "Path: tasks.qa.run",
+            "Path: tasks.docs.run",
             "Source: effigy.docs.toml",
-            "Overrides:",
-            "- tasks.qa: effigy.tasks.toml -> effigy.docs.toml",
             "Selected Value",
-            "[tasks.qa]",
+            "[tasks.docs]",
             "run = \"printf docs\"",
         ],
     );
@@ -123,32 +121,7 @@ run = "printf dev"
 }
 
 #[test]
-fn run_manifest_task_builtin_config_inspect_reports_unused_override_paths() {
-    let root = temp_workspace("builtin-config-inspect-unused-override");
-    write_root_manifest(
-        &root,
-        r#"
-[manifest]
-include = [{ path = "effigy.tasks.toml", override = ["tasks.missing"] }]
-"#,
-    );
-    write_manifest(
-        &root.join("effigy.tasks.toml"),
-        r#"
-[tasks.dev]
-run = "printf dev"
-"#,
-    );
-
-    let err = run_builtin_err(root, "config", &["--inspect"]);
-    let rendered = err.to_string();
-    assert!(rendered.contains("strict manifest parse failed"));
-    assert!(rendered.contains("unused override path(s)"));
-    assert!(rendered.contains("tasks.missing"));
-}
-
-#[test]
-fn run_manifest_task_builtin_config_inspect_conflict_names_both_sources_and_override_hint() {
+fn run_manifest_task_builtin_config_inspect_conflict_names_both_sources_and_the_replacement() {
     let root = temp_workspace("builtin-config-inspect-conflict-sources");
     write_root_manifest(
         &root,
@@ -177,7 +150,8 @@ run = "printf docs"
     assert!(rendered.contains("manifest conflict at `tasks.qa.run`"));
     assert!(rendered.contains("effigy.tasks.toml"));
     assert!(rendered.contains("effigy.docs.toml"));
-    assert!(rendered.contains("override = [\"tasks.qa.run\"]"));
+    assert!(rendered.contains("[manifest].extend"));
+    assert!(rendered.contains("effigy.local.toml"));
 }
 
 /// A selected path renders once, and the text and JSON forms show that one

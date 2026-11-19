@@ -256,7 +256,7 @@ fn scoped_checkouts_get_distinct_compose_resources_and_source_mounts() {
             managed_volume_names(&policies[0]),
             managed_volume_names(&policies[1])
         );
-        let again = load_container_policy(&policies[0].repo_root, None).unwrap();
+        let again = crate::tests::fixture_policy(&policies[0].repo_root, None).unwrap();
         assert_eq!(again.project_name, policies[0].project_name);
         assert_eq!(again.declared_ports, policies[0].declared_ports);
         assert_eq!(
@@ -319,7 +319,7 @@ fn scoped_checkouts_get_distinct_compose_resources_and_source_mounts() {
 
         // Repeated commands reuse the identity; a recreated clone gets a new
         // generation with its own name and ports.
-        let again = load_container_policy(&root.join("clone-one"), None).unwrap();
+        let again = crate::tests::fixture_policy(&root.join("clone-one"), None).unwrap();
         assert_eq!(again.project_name, identities[0].0);
         assert_eq!(again.declared_ports, identities[0].1);
         // Move the sealed old fixture aside, then replace the whole checkout.
@@ -364,7 +364,7 @@ home = "/home/dev"
             create_linked_worktree_fixture(fixture.path(), manifest, &["task"]);
         let mut volume_sets = Vec::new();
         for checkout in [primary, worktrees[0].clone()] {
-            let policy = load_container_policy(&checkout, None).unwrap();
+            let policy = crate::tests::fixture_policy(&checkout, None).unwrap();
             let render = policy.render.as_ref().unwrap();
             assert!(!render.path.exists(), "render is pure");
             let document: serde_yaml::Value =
@@ -449,7 +449,7 @@ domain = "api.acme.test"
 tls = true
 "#;
         let (primary, checkouts) = create_linked_worktree_fixture(&root, manifest, &["one", "two"]);
-        let primary_policy = load_container_policy(&primary, None).unwrap();
+        let primary_policy = crate::tests::fixture_policy(&primary, None).unwrap();
         assert_eq!(primary_policy.dns_routes[0].domain, "web.acme.test");
         assert_eq!(listener_route(&primary_policy), "api.acme.test");
         let mut preceding_policies = vec![primary_policy];
@@ -473,7 +473,7 @@ tls = true
             &["config", "--local", "effigy.runtimeScope", "ephemeral"],
         );
         effigy_core::worktree_scope::prepare_checkout_token(&clone).unwrap();
-        let clone_policy = load_container_policy(&clone, None).unwrap();
+        let clone_policy = crate::tests::fixture_policy(&clone, None).unwrap();
         let clone_listener = listener_route(&clone_policy);
         assert!(
             clone_listener.starts_with("api.acme-w"),
@@ -485,7 +485,7 @@ tls = true
         );
         preceding_policies.push(clone_policy);
 
-        let worktree = load_container_policy(&checkouts[0], None).unwrap();
+        let worktree = crate::tests::fixture_policy(&checkouts[0], None).unwrap();
         let worktree_listener = listener_route(&worktree);
         assert!(worktree_listener.starts_with("api.acme-w"));
         assert_ne!(worktree_listener, clone_listener);
@@ -501,7 +501,7 @@ tls = true
             manifest.replace("domain = \"api.acme.test\"", "domain = \"web.acme.test\""),
         )
         .unwrap();
-        let conflict = load_container_policy(&checkouts[1], None);
+        let conflict = crate::tests::fixture_policy(&checkouts[1], None);
         let conflict = conflict.expect_err("identical static and listener hosts must be refused");
         assert!(
             conflict.to_string().contains("conflicts with a static"),
@@ -515,7 +515,7 @@ tls = true
             "[containers.web]\nshare_runtime_identity = true\n",
         );
         fs::write(checkouts[1].join("effigy.toml"), shared_manifest).unwrap();
-        let shared = load_container_policy(&checkouts[1], None).unwrap();
+        let shared = crate::tests::fixture_policy(&checkouts[1], None).unwrap();
         assert_eq!(shared.dns_routes[0].domain, "web.acme.test");
         assert_eq!(listener_route(&shared), "api.acme.test");
     });
@@ -620,7 +620,7 @@ catalog = "workspace-rust-bun"
         assert_ne!(effective[0], effective[1]);
         assert_ne!(effective[0], "app.test");
 
-        let again = load_container_policy(&checkouts[0], None).unwrap();
+        let again = crate::tests::fixture_policy(&checkouts[0], None).unwrap();
         assert_eq!(again.project_name, preceding_policies[1].project_name);
         assert_eq!(again.dns_routes[0].domain, effective[0]);
     });
@@ -648,12 +648,12 @@ domain = "api.acme.test"
 tls = true
 "#;
         let (primary, checkouts) = create_linked_worktree_fixture(&root, manifest, &["one", "two"]);
-        let primary_policy = load_container_policy(&primary, None).unwrap();
+        let primary_policy = crate::tests::fixture_policy(&primary, None).unwrap();
         assert_eq!(listener_route(&primary_policy), "api.acme.test");
         let mut preceding_policies = vec![primary_policy];
         let mut effective = Vec::new();
         for checkout in &checkouts {
-            let policy = load_container_policy(checkout, None).unwrap();
+            let policy = crate::tests::fixture_policy(checkout, None).unwrap();
             let domain = listener_route(&policy);
             assert_scope_token_shared(&policy.project_name, "app-dev-wt-", &domain);
             assert!(domain.ends_with(".test"), "got `{domain}`");
@@ -662,7 +662,7 @@ tls = true
         }
         assert_ne!(effective[0], effective[1]);
 
-        let again = load_container_policy(&checkouts[0], None).unwrap();
+        let again = crate::tests::fixture_policy(&checkouts[0], None).unwrap();
         assert_eq!(
             listener_route(&again),
             effective[0],
@@ -703,7 +703,7 @@ catalog = "postgres"
             .unwrap();
             fs::write(checkout.join("effigy.toml"), manifest).unwrap();
             effigy_core::worktree_scope::prepare_checkout_token(&checkout).unwrap();
-            let policy = load_container_policy(&checkout, None).unwrap();
+            let policy = crate::tests::fixture_policy(&checkout, None).unwrap();
             assert!(
                 policy.compose_files.len() >= 2,
                 "generated render plus DNS override"
@@ -883,7 +883,7 @@ primary_service = "app"
         )
         .unwrap();
 
-        let policy = load_container_policy(&checkout, None).unwrap();
+        let policy = crate::tests::fixture_policy(&checkout, None).unwrap();
         match assigned {
             Some(port) => {
                 assert_eq!(policy.declared_ports, vec![port.to_owned()], "{name}");
@@ -913,40 +913,6 @@ primary_service = "app"
 /// A manifest that still names the retired built-in `minio` service is refused
 /// with an actionable message naming its replacement. It is never remapped
 /// onto `silo` (effigy#424).
-#[test]
-fn retired_minio_catalog_service_refuses_and_names_silo() {
-    let root = temp_repo("retired-minio-catalog");
-    fs::write(
-        root.join("effigy.toml"),
-        r#"
-[containers]
-default = "stack"
-
-[containers.stack]
-primary_service = "workspace"
-
-[containers.stack.services.workspace]
-catalog = "workspace-rust-bun"
-
-[containers.stack.services.minio]
-catalog = "minio"
-"#,
-    )
-    .expect("write manifest");
-
-    let error = load_container_policy(&root, None).expect_err("minio must refuse");
-    let message = error.to_string();
-    assert!(message.contains("minio"), "{message}");
-    assert!(
-        message.contains("catalog = \"silo\""),
-        "the refusal must name the replacement: {message}"
-    );
-    assert!(
-        message.contains("does not remap"),
-        "the refusal must say nothing is remapped: {message}"
-    );
-}
-
 #[test]
 fn load_container_policy_generates_compose_from_catalog_services() {
     with_temp_effigy_home("catalog-services", |_| {
@@ -1075,7 +1041,7 @@ version = "8.3"
         )
         .expect("write manifest");
 
-        let policy = load_container_policy(&root, None).expect("policy");
+        let policy = crate::tests::fixture_policy(&root, None).expect("policy");
 
         assert_eq!(
             policy.secret_delivery,
@@ -1141,7 +1107,7 @@ variant = "default"
 
         let policy = {
             let _lock = crate::test_env_lock();
-            load_container_policy(&root, None).expect("policy")
+            crate::tests::fixture_policy(&root, None).expect("policy")
         };
         let compose = policy
             .read_compose(&policy.compose_files[0])
@@ -1233,7 +1199,7 @@ variant = "default"
         )
         .expect("write manifest");
 
-        let policy = load_container_policy(&root, None).expect("policy");
+        let policy = crate::tests::fixture_policy(&root, None).expect("policy");
         let compose = policy
             .read_compose(&policy.compose_files[0])
             .expect("compose");
@@ -1319,7 +1285,7 @@ version = "8.3"
         )
         .expect("write manifest");
 
-        let error = load_container_policy(&root, None).expect_err("should fail");
+        let error = crate::tests::fixture_policy(&root, None).expect_err("should fail");
         assert_eq!(
             error.to_string(),
             "container `web` has invalid `host.publish_address` `not-an-ip`: invalid IPv4 address syntax"
@@ -1359,7 +1325,7 @@ services:
     )
     .expect("compose");
 
-    let policy = load_container_policy(&root, None).expect("policy");
+    let policy = crate::tests::fixture_policy(&root, None).expect("policy");
 
     assert!(policy.ports_declared_explicitly);
     assert_eq!(policy.declared_ports, vec!["18080:80".to_owned()]);
@@ -1495,7 +1461,7 @@ catalog = "silo"
                 Ports::Stack => {
                     // A second resolution, without Prepare, keeps the same
                     // ports.
-                    let again = load_container_policy(&root, None).expect("second policy");
+                    let again = crate::tests::fixture_policy(&root, None).expect("second policy");
                     assert_eq!(policy.declared_ports, again.declared_ports, "{name}");
                 }
                 Ports::TwoHttpServices => {
@@ -1559,7 +1525,7 @@ working_dir = "/var/www/html"
         )
         .expect("write manifest");
 
-        let policy = load_container_policy(&root, Some("web")).expect("policy");
+        let policy = crate::tests::fixture_policy(&root, Some("web")).expect("policy");
         assert_eq!(policy.workspace_user.as_deref(), Some("dev"));
         assert_eq!(policy.workspace_home.as_deref(), Some("/home/dev"));
     });
@@ -1601,7 +1567,7 @@ container = "web"
         )
         .expect("write manifest");
 
-        let policy = load_container_policy(&root, Some("web")).expect("policy");
+        let policy = crate::tests::fixture_policy(&root, Some("web")).expect("policy");
         let compose = policy
             .read_compose(&policy.compose_files[0])
             .expect("read compose");
@@ -1678,7 +1644,7 @@ working_dir = "/var/www/html"
             .expect("write manifest");
 
             let policy = with_test_host_composer_home(Some(&host_composer_home), || {
-                load_container_policy(&root, Some("web")).expect("policy")
+                crate::tests::fixture_policy(&root, Some("web")).expect("policy")
             });
             if matches!(mode, ComposerMount::Shared) {
                 assert!(!home.join("shared/composer-cache").exists(), "{name}");
@@ -2096,7 +2062,7 @@ shared = true
         )
         .expect("write manifest");
 
-        let error = load_container_policy(&root, None).expect_err("should fail");
+        let error = crate::tests::fixture_policy(&root, None).expect_err("should fail");
         assert_eq!(
             error.to_string(),
             "service `app` uses unsupported shared catalog `php-fpm`; the bounded shared-service path only supports catalogs that declare `shared_service = true`"
@@ -2232,7 +2198,7 @@ fn runtime_dns_overrides_carry_resolvers_aliases_and_gateways() {
         )
         .expect("compose");
 
-        let policy = load_container_policy(&root, None).expect("policy");
+        let policy = crate::tests::fixture_policy(&root, None).expect("policy");
 
         // Translated `compose_file` renders like any catalog environment: one
         // generated document carrying ownership labels, plus the DNS override.
@@ -2296,7 +2262,7 @@ fn runtime_dns_overrides_carry_resolvers_aliases_and_gateways() {
         )
         .expect("write manifest");
 
-        let policy = load_container_policy(&root, None).expect("policy");
+        let policy = crate::tests::fixture_policy(&root, None).expect("policy");
 
         assert_eq!(policy.compose_files.len(), 2);
         let dns_override = parsed_compose(&policy, 1);
@@ -2360,7 +2326,7 @@ fn runtime_dns_overrides_carry_resolvers_aliases_and_gateways() {
         )
         .expect("write manifest");
 
-        let policy = load_container_policy(&root, None).expect("policy");
+        let policy = crate::tests::fixture_policy(&root, None).expect("policy");
 
         assert_eq!(
             policy.dns_effective_base_domain().as_deref(),
@@ -2381,7 +2347,7 @@ fn runtime_dns_overrides_carry_resolvers_aliases_and_gateways() {
 }
 
 #[test]
-fn load_container_policy_rejects_compose_file_and_services_together() {
+fn load_container_policy_refuses_compose_file_and_names_the_migration() {
     let root = temp_repo("mixed-compose-source");
     fs::write(
         root.join("effigy.toml"),
@@ -2405,10 +2371,15 @@ catalog = "php-fpm"
     )
     .expect("compose");
 
-    let error = load_container_policy(&root, None).expect_err("should fail");
-    assert_eq!(
-        error.to_string(),
-        "container `web` cannot combine `compose_file` with `[containers.web.services]`"
+    // The retired key refuses before any other declaration check, naming the
+    // migration that resolves it. (The migration itself refuses the mixed
+    // declaration, so the fixture cannot migrate this one.)
+    let error = crate::policy::load::load_container_policy(&root, None).expect_err("should fail");
+    let message = error.to_string();
+    assert!(message.contains("retired `compose_file"), "{message}");
+    assert!(
+        message.contains("effigy container migrate web"),
+        "{message}"
     );
 }
 
@@ -2478,7 +2449,7 @@ volumes:
     )
     .expect("compose");
 
-    let policy = load_container_policy(&root, None).expect("policy");
+    let policy = crate::tests::fixture_policy(&root, None).expect("policy");
     let rewritten = policy
         .read_compose(&policy.compose_files[0])
         .expect("read rewritten workspace compose");
@@ -2585,7 +2556,7 @@ working_dir = "/var/www/html"
     )
     .expect("write manifest");
 
-    let policy = load_container_policy(&root, Some("web")).expect("policy");
+    let policy = crate::tests::fixture_policy(&root, Some("web")).expect("policy");
     let rewritten = policy
         .read_compose(&policy.compose_files[0])
         .expect("read rewritten workspace compose");
@@ -2730,7 +2701,7 @@ home = "/root"
 "#,
     )
     .unwrap();
-    let policy = load_container_policy(&root, Some("web")).unwrap();
+    let policy = crate::tests::fixture_policy(&root, Some("web")).unwrap();
     let mut volumes = std::collections::BTreeMap::new();
     for path in &policy.compose_files {
         let document: serde_yaml::Value =

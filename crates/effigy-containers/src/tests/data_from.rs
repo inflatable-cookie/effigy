@@ -48,8 +48,8 @@ fn borrowing_environment_mounts_owner_data_volumes() {
         let root = temp_repo("data-from-borrow");
         write_manifest(&root, PAIR_MANIFEST);
 
-        let dev = load_container_policy(&root, Some("dev")).expect("dev policy");
-        let hybrid = load_container_policy(&root, Some("hybrid")).expect("hybrid policy");
+        let dev = crate::tests::fixture_policy(&root, Some("dev")).expect("dev policy");
+        let hybrid = crate::tests::fixture_policy(&root, Some("hybrid")).expect("hybrid policy");
 
         assert_eq!(hybrid.data_from.as_deref(), Some("dev"));
         let owner_volume = volume_named(&dev.managed_volumes, "-db-data");
@@ -94,8 +94,8 @@ fn borrowing_environment_mounts_owner_data_volumes() {
         let (_primary, checkouts) =
             super::compose::create_linked_worktree_fixture(&root, PAIR_MANIFEST, &["one"]);
         let checkout = &checkouts[0];
-        let dev = load_container_policy(checkout, Some("dev")).expect("dev policy");
-        let hybrid = load_container_policy(checkout, Some("hybrid")).expect("hybrid policy");
+        let dev = crate::tests::fixture_policy(checkout, Some("dev")).expect("dev policy");
+        let hybrid = crate::tests::fixture_policy(checkout, Some("hybrid")).expect("hybrid policy");
         let owner_volume = volume_named(&dev.managed_volumes, "-db-data");
         let borrowed = volume_named(&hybrid.borrowed_volumes, "-db-data");
         assert_eq!(borrowed.name, owner_volume.name);
@@ -115,8 +115,8 @@ fn owner_environment_reports_borrower_as_peer_and_keeps_its_volumes() {
         let root = temp_repo("data-from-owner-peer");
         write_manifest(&root, PAIR_MANIFEST);
 
-        let dev = load_container_policy(&root, Some("dev")).expect("dev policy");
-        let hybrid = load_container_policy(&root, Some("hybrid")).expect("hybrid policy");
+        let dev = crate::tests::fixture_policy(&root, Some("dev")).expect("dev policy");
+        let hybrid = crate::tests::fixture_policy(&root, Some("hybrid")).expect("hybrid policy");
 
         assert!(dev.data_from.is_none());
         assert!(dev.borrowed_volumes.is_empty());
@@ -158,14 +158,14 @@ fn adding_data_from_keeps_sibling_generated_compose_byte_identical() {
             render.closure.files()[name.to_string_lossy().as_ref()].clone()
         };
         write_manifest(&root, &pair_manifest_without_data_from());
-        let dev_without = load_container_policy(&root, Some("dev")).expect("dev policy");
+        let dev_without = crate::tests::fixture_policy(&root, Some("dev")).expect("dev policy");
         let compose_without = generated_bytes(&dev_without);
         let names_without = managed_volume_names(&dev_without);
 
         // The changed declaration creates a new generation. Compare the exact
         // immutable bytes, before internal readers expand its absolute root.
         write_manifest(&root, PAIR_MANIFEST);
-        let dev_with = load_container_policy(&root, Some("dev")).expect("dev policy");
+        let dev_with = crate::tests::fixture_policy(&root, Some("dev")).expect("dev policy");
         let compose_with = generated_bytes(&dev_with);
         assert_ne!(
             dev_with.render.as_ref().unwrap().closure.digest(),
@@ -263,7 +263,7 @@ fn reset_classification_never_offers_borrowed_volumes_for_removal() {
         let _lock = crate::test_env_lock();
         let root = temp_repo("data-from-reset-safety");
         write_manifest(&root, PAIR_MANIFEST);
-        let hybrid = load_container_policy(&root, Some("hybrid")).expect("hybrid policy");
+        let hybrid = crate::tests::fixture_policy(&root, Some("hybrid")).expect("hybrid policy");
 
         let borrowed_names = hybrid
             .borrowed_volumes
@@ -295,8 +295,8 @@ fn colima_mount_budget_admits_generated_external_data_from_volumes() {
         let root = temp_repo("data-from-colima-budget");
         write_manifest(&root, ACOW_SHAPED_MANIFEST);
 
-        let stack = load_container_policy(&root, Some("stack")).expect("stack policy");
-        let hybrid = load_container_policy(&root, Some("hybrid")).expect("hybrid policy");
+        let stack = crate::tests::fixture_policy(&root, Some("stack")).expect("stack policy");
+        let hybrid = crate::tests::fixture_policy(&root, Some("hybrid")).expect("hybrid policy");
 
         let owner_names = managed_volume_names(&stack);
         assert!(
@@ -389,7 +389,8 @@ fn colima_mount_budget_merges_identical_borrowed_volume_definitions_across_overl
         let root = temp_repo("data-from-colima-identical-overlay");
         write_manifest(&root, ACOW_SHAPED_MANIFEST);
 
-        let mut hybrid = load_container_policy(&root, Some("hybrid")).expect("hybrid policy");
+        let mut hybrid =
+            crate::tests::fixture_policy(&root, Some("hybrid")).expect("hybrid policy");
         let owner_volume = borrowed_volume_names(&hybrid)
             .into_iter()
             .find(|name| name.ends_with("-postgres-data"))
@@ -427,7 +428,8 @@ fn colima_mount_budget_refuses_unmodelled_external_volume_forms() {
         let root = temp_repo("data-from-colima-refusals");
         write_manifest(&root, ACOW_SHAPED_MANIFEST);
 
-        let mut hybrid = load_container_policy(&root, Some("hybrid")).expect("hybrid policy");
+        let mut hybrid =
+            crate::tests::fixture_policy(&root, Some("hybrid")).expect("hybrid policy");
         let owner_volume = borrowed_volume_names(&hybrid)
             .into_iter()
             .find(|name| name.ends_with("-postgres-data"))

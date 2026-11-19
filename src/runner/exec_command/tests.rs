@@ -87,6 +87,7 @@ container = "web"
         ),
     )
     .expect("write manifest");
+    crate::runner::test_support::migrate_declared_compose_files(root);
 }
 
 fn test_policy() -> effigy_containers::EffectiveContainerPolicy {
@@ -783,6 +784,7 @@ container = "web"
 "#,
     )
     .expect("write manifest");
+    crate::runner::test_support::migrate_declared_compose_files(&root);
 
     let surface = resolve_default_exec_surface(&root).expect("surface");
     assert_eq!(surface.container_name, "web");

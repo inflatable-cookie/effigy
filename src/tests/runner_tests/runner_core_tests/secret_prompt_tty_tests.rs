@@ -251,7 +251,7 @@ fn running_workspace_prepare_pty_helper() {
     }
     let root = PathBuf::from(std::env::var(FIXTURE_ROOT).expect("the fixture root"));
     effigy_ui::steps::configure(effigy_ui::steps::StepMode::Spinner);
-    let prepared = effigy_containers::load_container_policy(&root, Some("web"));
+    let prepared = crate::runner::test_support::load_fixture_policy(&root, Some("web"));
     let policy = match prepared {
         Ok(policy) => policy,
         Err(error) => {
@@ -334,7 +334,7 @@ fn optional_only_resolution_pty_helper() {
     }
     let root = PathBuf::from(std::env::var(FIXTURE_ROOT).expect("the fixture root"));
     crate::runner::secret_session::forget_session_passphrase_for_tests();
-    let policy = match effigy_containers::load_container_policy(&root, Some("web")) {
+    let policy = match crate::runner::test_support::load_fixture_policy(&root, Some("web")) {
         Ok(policy) => policy,
         Err(error) => {
             eprintln!("cannot load the fixture container policy: {error}");

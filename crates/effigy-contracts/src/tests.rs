@@ -732,7 +732,7 @@ fn container_status_contract_fixtures_bake_each_runtime_state() {
         assert!(root.join("effigy.toml").is_file(), "{}", case.token);
         assert_scripts_are_executable(&root);
         if case.ps_answers {
-            // The running fixture's exact inputs: manifest, Compose and stub
+            // The running fixture's exact inputs: manifest and stub
             // bytes plus PATH precedence so the stub answers, not a host docker.
             assert!(
                 std::fs::read_to_string(root.join("effigy.toml"))
@@ -756,11 +756,7 @@ fn container_status_contract_fixtures_bake_each_runtime_state() {
             );
             assert_eq!(
                 std::fs::read_to_string(root.join("effigy.toml")).unwrap(),
-                "[containers]\ndefault='web'\n[containers.web]\ncompose_file='compose.yml'\nprimary_service='app'\nprofile='effigy'\nproject_name='fixture-web-dev'\nworking_dir='/workspace'\n"
-            );
-            assert_eq!(
-                std::fs::read_to_string(root.join("compose.yml")).unwrap(),
-                "services:\n  app:\n    image: example\n"
+                "[containers]\ndefault='web'\n[containers.web]\nprimary_service='app'\nprofile='effigy'\nproject_name='fixture-web-dev'\nworking_dir='/workspace'\n[containers.web.services.app]\ncatalog='redis'\n"
             );
             assert_eq!(
                 std::fs::read_to_string(root.join("bin/docker")).unwrap(),

@@ -1082,7 +1082,7 @@ fn activation_returns_the_published_snapshot_for_its_exec_caller() {
     )
     .unwrap();
     effigy_containers::with_test_effigy_home(&home, || {
-        let observed = effigy_containers::load_container_policy(&repo, None).unwrap();
+        let observed = crate::runner::test_support::load_fixture_policy(&repo, None).unwrap();
         let prepared = effigy_containers::policy::render::prepare_resolved(&observed).unwrap();
         let plan = runtime_activation_plan_from_request(
             &repo,
@@ -1101,10 +1101,12 @@ fn activation_returns_the_published_snapshot_for_its_exec_caller() {
             true,
             |_, policy, _, _, _, _| {
                 effigy_containers::policy::render::verify(policy).unwrap();
-                // Editing source after activation must not replace the caller's snapshot.
+                // Editing the resolved source after activation must not replace
+                // the caller's snapshot. The migration wrote the fragment the
+                // declaration now resolves through.
                 fs::write(
-                    repo.join("compose.yml"),
-                    "services:\n  app:\n    image: changed\n",
+                    repo.join("infra/dev/catalog/web-app/compose.fragment.yml"),
+                    "services:\n  {{ service_name }}:\n    image: changed\n",
                 )
                 .unwrap();
                 Ok(true)
@@ -1123,7 +1125,7 @@ fn activation_returns_the_published_snapshot_for_its_exec_caller() {
             .contains("original"));
         assert_ne!(
             caller.render.as_ref().unwrap().closure.digest(),
-            effigy_containers::load_container_policy(&repo, None)
+            crate::runner::test_support::load_fixture_policy(&repo, None)
                 .unwrap()
                 .render
                 .unwrap()

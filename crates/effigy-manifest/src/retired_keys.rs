@@ -1,15 +1,15 @@
 //! Retired task-manifest keys.
 //!
-//! A v0.14.1 project keeps loading after an update (contract 052 §11), so two
-//! retirements are read for the whole v0.15 line instead of failing the parse:
-//! [`crate::retired_bootstrap`] translates retired `[bootstrap]` spellings, and
+//! A v0.14.1 project keeps loading after an update (contract 052 §11):
 //! [`crate::retired_sections`] ignores sections that configured a feature
-//! v0.15 removed when ignoring them changes nothing else. Both record one
+//! v0.15 removed when ignoring them changes nothing else, and records one
 //! deprecation notice per manifest ([`crate::retired_config`]).
 //!
-//! `[drafts]` and `draft` step references are still refused, with the
-//! replacement an operator can act on (contract 043):
-//! ignoring them would silently drop task definitions.
+//! Everything else that v0.15 accepted for one release is refused here with
+//! the replacement an operator can act on: retired `[bootstrap]` spellings
+//! ([`crate::retired_bootstrap`]), the `[manifest].include` flags, the public
+//! kebab-case aliases, `[drafts]`/`draft` step references (contract 043).
+//! Ignoring any of them would silently change what a manifest means.
 use serde::Deserialize;
 use toml::Value;
 
@@ -29,8 +29,7 @@ impl crate::ingress::ManifestInput {
     pub(crate) fn into_manifest(mut self) -> Result<TaskManifest, toml::de::Error> {
         self.retired_config
             .merge(crate::retired_sections::strip(&mut self.value));
-        reject_retired_tables(&self.value).map_err(serde::de::Error::custom)?;
-        self.normalize();
+        reject_retired_keys(&self.value).map_err(serde::de::Error::custom)?;
         let mut manifest = TaskManifest::deserialize(self.value)?;
         // Keep legacy delays and use the existing once-per-manifest notice.
         let retired_timers = manifest.retired_start_after_entries();
@@ -51,10 +50,36 @@ impl crate::ingress::ManifestInput {
     }
 }
 
-fn reject_retired_tables(value: &Value) -> Result<(), String> {
+fn reject_retired_keys(value: &Value) -> Result<(), String> {
+    crate::retired_bootstrap::reject(value)?;
     let Some(root) = value.as_table() else {
         return Ok(());
     };
+    if let Some(contracts) = root.get("contracts").and_then(Value::as_table) {
+        for (legacy, canonical) in [
+            ("schema-index", "schema_index"),
+            ("selection-contract", "selection_contract"),
+        ] {
+            if contracts.contains_key(legacy) {
+                return Err(format!(
+                    "`[contracts].{legacy}` was removed in v0.16; write `{canonical}` instead"
+                ));
+            }
+        }
+    }
+    if let Some(sources) = root.get("sources").and_then(Value::as_table) {
+        for source in sources.values() {
+            if source
+                .as_table()
+                .is_some_and(|table| table.contains_key("rev-file"))
+            {
+                return Err(
+                    "`[sources.<name>].rev-file` was removed in v0.16; write `rev_file` instead"
+                        .to_owned(),
+                );
+            }
+        }
+    }
     if root.contains_key("drafts") {
         return Err(
             "`[drafts]` was removed in v0.15; move each definition to `[tasks.<name>]` with `visibility = \"internal\"`, remove `created`/`expires`/`purpose`, and use ordinary `task` step references (see CHANGELOG.md)"

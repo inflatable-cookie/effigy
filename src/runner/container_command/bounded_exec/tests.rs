@@ -543,7 +543,7 @@ fn public_environment_identity(
             Some(home.join(".effigy").display().to_string()),
         ),
     ]);
-    let policy = effigy_containers::load_container_policy(repo_root, Some("web"))
+    let policy = crate::runner::test_support::load_fixture_policy(repo_root, Some("web"))
         .expect("fixture container policy");
     let env = crate::runner::environment::env_ref(&policy).expect("fixture environment ref");
     let context = crate::runner::environment::context(repo_root).expect("fixture environment ctx");
@@ -561,7 +561,7 @@ fn public_environment_identity(
 /// Assert the fixture context pins the activation fence this run will read, so
 /// a fixture that drifted fails loudly instead of as a product refusal.
 fn assert_public_activation_fence(repo_root: &Path, context_path: &Path, mode: &str) {
-    let policy = effigy_containers::load_container_policy(repo_root, Some("web"))
+    let policy = crate::runner::test_support::load_fixture_policy(repo_root, Some("web"))
         .expect("fixture container policy");
     let record = crate::runner::environment::record(&policy)
         .expect("fixture activation record before entry");
