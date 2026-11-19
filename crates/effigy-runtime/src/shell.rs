@@ -225,47 +225,28 @@ where
         bool,
     ) -> Result<Output, EffigyRuntimeError>,
 {
-    let optimistic_identity = optimistic_workspace_exec_identity(policy, service);
-    let first_output = execute_command_mode_shell(
-        repo_root,
+    let (output, _) = run_finite_shell_attempts(
         policy,
-        CommandModeShell {
-            service,
-            working_dir,
-            command,
-            shell,
-            workspace_identity: optimistic_identity.as_ref(),
+        service,
+        |identity| {
+            execute_command_mode_shell(
+                repo_root,
+                policy,
+                CommandModeShell {
+                    service,
+                    working_dir,
+                    command,
+                    shell,
+                    workspace_identity: identity,
+                },
+                run_exec,
+            )
         },
-        run_exec,
+        |output| {
+            !output.status.success()
+                && command_mode_failure_looks_like_missing_workspace_user(output)
+        },
     )?;
-    let output = if first_output.status.success() {
-        first_output
-    } else if optimistic_identity.is_some()
-        && command_mode_failure_looks_like_missing_workspace_user(&first_output)
-    {
-        emit_warning_lines(&[format!(
-            "workspace user `{}` is not present in running service `{service}` for container `{}`; falling back to root shell",
-            optimistic_identity
-                .as_ref()
-                .expect("optimistic identity should exist")
-                .user,
-            policy.name
-        )]);
-        execute_command_mode_shell(
-            repo_root,
-            policy,
-            CommandModeShell {
-                service,
-                working_dir,
-                command,
-                shell,
-                workspace_identity: None,
-            },
-            run_exec,
-        )?
-    } else {
-        first_output
-    };
     emit_captured_output(&output)?;
     if should_fail_container_shell_exit(true, output.status.success()) {
         return Err(EffigyRuntimeError::task_invocation(format!(
@@ -274,6 +255,26 @@ where
         )));
     }
     Ok(container_shell_completion(&policy.name, service))
+}
+
+/// Run a finite command once, retrying only the completed missing-user failure.
+/// Transport errors are returned immediately: execution may have been ambiguous.
+pub fn run_finite_shell_attempts<T, E>(
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+    mut launch: impl FnMut(Option<&ResolvedWorkspaceExecIdentity>) -> Result<T, E>,
+    missing_user: impl Fn(&T) -> bool,
+) -> Result<(T, bool), E> {
+    let identity = optimistic_workspace_exec_identity(policy, service);
+    let first = launch(identity.as_ref())?;
+    if identity.is_some() && missing_user(&first) {
+        emit_warning_lines(&[format!(
+            "workspace user `{}` is not present in running service `{service}` for container `{}`; falling back to root shell",
+            identity.as_ref().expect("identity exists").user, policy.name
+        )]);
+        return Ok((launch(None)?, true));
+    }
+    Ok((first, false))
 }
 
 struct CommandModeShell<'a> {

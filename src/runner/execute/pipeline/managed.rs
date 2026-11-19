@@ -29,7 +29,6 @@ use effigy_containers::session::{
 };
 use effigy_containers::EffectiveContainerPolicy;
 use effigy_env::secret::SecretString;
-use effigy_execution::{ExecutionBindingInput, ExecutionSelectionPlan};
 use effigy_managed::command::resolve_managed_task_plan;
 use effigy_managed::ManagedProcessRole;
 use effigy_managed::{
@@ -48,7 +47,6 @@ const EXEC_MARKER_DIR: &str = ".effigy/runtime/managed-exec";
 pub(in crate::runner) fn run_managed_task(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
-    selection_plan: &ExecutionSelectionPlan,
     run_key: Option<&RunKey>,
 ) -> Result<Option<String>, RunnerError> {
     let container_handoff = inside_container_handoff();
@@ -88,10 +86,6 @@ pub(in crate::runner) fn run_managed_task(
         selection.task,
         "managed task execution",
     )?;
-    let _binding_plan = binding_resolution.plan(ExecutionBindingInput::new(
-        selection_plan.clone(),
-        "managed task execution",
-    ));
     let container_binding = binding_resolution.binding();
     let runtime_args = managed_invocation
         .as_ref()

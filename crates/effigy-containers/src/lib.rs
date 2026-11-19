@@ -26,17 +26,7 @@ pub use artifact_source::{
 };
 pub use effigy_core::host_alias::HostAlias;
 pub use manager::*;
-pub use ops::{
-    ContainerCacheListOperation, ContainerCacheOperation, ContainerCachePruneOperation,
-    ContainerCapturedExecOperation, ContainerConfirmationPolicy, ContainerDataOperation,
-    ContainerDataTransferOperation, ContainerDownOperation, ContainerDumpOperation,
-    ContainerExecOperation, ContainerLifecycleOperation, ContainerLogsOperation,
-    ContainerOperationKind, ContainerOperationPlan, ContainerOperationRequest,
-    ContainerOperationResult, ContainerPromptedOperation, ContainerReadOperation,
-    ContainerResetOperation, ContainerShellOperation, ContainerSideEffectClass,
-    ContainerStatsOperation, ContainerStatusOperation, ContainerUpOperation,
-    ContainerVolumeListOperation, ContainerVolumeOperation, ContainerVolumePruneOperation,
-};
+pub use ops::ContainerCapturedExecOperation;
 pub use policy::data_from::{
     borrowed_volume_ensure_commands, plan_volume_data_handover, VolumeDataHandover,
 };

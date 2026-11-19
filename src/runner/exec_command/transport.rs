@@ -29,7 +29,8 @@ use argv::format_args as format_argv;
 pub(in crate::runner) use argv::{
     append_color_exec_env, build_routed_task_exec_args, copy_file_into_service_invocation,
     parse_compose_exec_args, resolve_host_program, routed_task_exec,
-    verified_native_exec_invocation, verified_target_exec_args, RoutedExec,
+    verified_native_exec_invocation, verified_target_exec_args, verified_target_exec_tail_args,
+    RoutedExec,
 };
 
 pub(in crate::runner) mod argv;

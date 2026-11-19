@@ -174,24 +174,7 @@ pub(in crate::runner) fn verified_native_exec_invocation(
         policy,
         deadline.unwrap_or_else(|| Instant::now() + OWNED_EXEC_VERIFICATION_TIMEOUT),
     )?;
-    let mut args = vec![OsString::from("exec")];
-    if attach_stdin {
-        args.push(OsString::from("-i"));
-    }
-    if parsed.tty {
-        args.push(OsString::from("-t"));
-    }
-    if let Some(dir) = parsed.working_dir {
-        args.extend([OsString::from("-w"), dir]);
-    }
-    if let Some(user) = parsed.user {
-        args.extend([OsString::from("-u"), user]);
-    }
-    for env in parsed.env {
-        args.extend([OsString::from("-e"), env]);
-    }
-    args.push(OsString::from(binding.id()));
-    args.extend(parsed.command);
+    let args = native_exec_args(parsed, binding.id(), attach_stdin);
     let mut detection = ContainerBackendDetection::from_env_and_path();
     detection.backend_override = Some(plan.backend_id.clone());
     let (program, args) = ContainerManager::defaults()
@@ -212,8 +195,29 @@ pub(in crate::runner) fn verified_target_exec_args(
     plan: &ContainerComposeInvocationPlan,
     target_id: &str,
 ) -> Result<Vec<OsString>, RunnerError> {
-    let parsed = parse_compose_exec_args(&plan.args)?;
+    verified_target_exec_tail_args(&plan.args, target_id)
+}
+
+pub(in crate::runner) fn verified_target_exec_tail_args(
+    args: &[OsString],
+    target_id: &str,
+) -> Result<Vec<OsString>, RunnerError> {
+    Ok(native_exec_args(
+        parse_compose_exec_args(args)?,
+        target_id,
+        false,
+    ))
+}
+
+fn native_exec_args(
+    parsed: ParsedComposeExec,
+    target_id: &str,
+    attach_stdin: bool,
+) -> Vec<OsString> {
     let mut args = vec![OsString::from("exec")];
+    if attach_stdin {
+        args.push(OsString::from("-i"));
+    }
     if parsed.tty {
         args.push(OsString::from("-t"));
     }
@@ -228,7 +232,7 @@ pub(in crate::runner) fn verified_target_exec_args(
     }
     args.push(OsString::from(target_id));
     args.extend(parsed.command);
-    Ok(args)
+    args
 }
 
 pub(in crate::runner) fn copy_file_into_service_invocation(

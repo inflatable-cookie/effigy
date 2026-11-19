@@ -20,7 +20,7 @@ pub(super) fn run_fallback_route<'a>(
     route: Route<'a>,
 ) -> Result<SelectionResolution<'a>, RunnerError> {
     match route {
-        Route::Task { selection, plan } => Ok(SelectionResolution::Selected { selection, plan }),
+        Route::Task { selection } => Ok(SelectionResolution::Selected { selection }),
         Route::Builtin => {
             let requirement = if builtin_runs_project_tests(&preflight.selector.task_name)
                 && !preflight.plan

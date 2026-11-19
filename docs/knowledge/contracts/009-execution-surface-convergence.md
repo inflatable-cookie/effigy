@@ -29,23 +29,11 @@ This contract defines:
 
 ## Covered surfaces
 
-The first covered surfaces are:
-
-- managed `dev`
-- managed task execution
-- standard routed task execution
-- deferred execution
-- bootstrap `run`
-- bootstrap `start`
-- `effigy workspace`
-- `stay_in_shell`
-- `effigy exec`
-- exec aliases
-- `effigy container up`
-- `effigy container shell`
-- run-array builtin command re-entry
-- Rhai `run_effigy_command`
-- Rhai `exec::run(...)`
+Every entry that starts local execution is covered: managed and standard task
+routes, deferred execution, bootstrap `run` and `start`, `effigy workspace`,
+`stay_in_shell`, `effigy exec` and its aliases, `container up` and
+`container shell`, run-array re-entry, and the Rhai runtime helpers. A new
+entry joins this contract by naming its owner in the ownership map below.
 
 This contract covers local execution semantics. It does not define provider
 export or production deployment behavior.
@@ -77,13 +65,12 @@ Current shared ownership should converge around:
 | --- | --- |
 | Repo targeting and resolved root semantics | `src/runner/command_context/*` |
 | Boot-time runtime context | `effigy_context::EffigyRuntimeContext` |
-| Task execution request and plan construction | `effigy_execution::TaskExecutionRequestBuilder`; contract `013-task-execution-request-contract.md` |
+| Task execution request and resolved target | `effigy_execution::TaskExecutionRequestBuilder`; contract `013-task-execution-request-contract.md` |
 | Embedded command repo targeting | shared helper under `src/runner/command_context/*` or adjacent shared runner module |
 | Execution binding resolution | `src/runner/execute/binding.rs` plus `effigy-execution` binding summaries |
 | Standard routing policy | `src/runner/execute/routing.rs`, `crates/effigy-exec`, and `effigy-execution` dispatch plans |
 | Runtime activation planning | `effigy-runtime-plan`; contract `015-runtime-operation-pipeline-contract.md` |
 | Runtime activation side effects | `src/runner/container_runtime_prep/*` stage adapters |
-| Container operation planning | `effigy-containers`; contract `015-runtime-operation-pipeline-contract.md` |
 | Container backend operations | `effigy-containers` and `effigy-runtime` adapters |
 | Data seed/dump planning | `effigy-data`; artifact transport through `effigy_state::artifact` |
 | Handoff marker and recursion guard | `src/runner/container_runtime.rs` |
@@ -95,28 +82,6 @@ Current shared ownership should converge around:
 
 No new caller path should re-own one of these responsibilities locally unless
 the contract is widened deliberately.
-
-## Responsibility matrix
-
-The table below describes the required behavior by surface.
-
-| Surface | Repo targeting source | Binding source | Runtime activation source | Gateway / alias behavior | Lease behavior | Session ownership | Cleanup ownership | JSON / projection posture | Inline workspace container posture | Recursion / handoff posture |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Managed `dev` | command-context resolved root | execution binding + managed plan | shared runtime prep before shell handoff | must reconcile before session opens | none; session-owned | session-owned | session ownership model | interactive only | unsupported until one shared interactive contract exists | must obey shared handoff marker |
-| Managed task execution | execution preflight resolved root | execution binding + managed plan | shared runtime prep when container-backed | same container contract as other container-backed tasks | non-shell paths refresh lease; shell paths do not | non-shell or session-owned depending on task shape | activation or session ownership model | task-shaped | unsupported surfaces must fail with shared family | must obey shared handoff marker |
-| Standard routed task execution | execution preflight resolved root | execution binding + routing | shared runtime activation | same container contract as other container-backed tasks | refresh lease for non-shell activation | none unless `stay_in_shell` | activation-owned | task-shaped | inline supported only where the shared contract says so | must obey shared handoff marker |
-| Deferred execution | deferral working dir resolved as repo root | execution binding resolved from target manifest | shared runtime activation | same container contract as standard task activation | same lease contract as explicit container task | none | activation-owned | deferral trace may differ; runtime semantics must not | same inline support/failure family as explicit task binding | must obey shared handoff marker |
-| Bootstrap `run` | bootstrap target repo root | embedded task or managed-run binding | same shared activation as equivalent task surface | same as equivalent task surface | same as equivalent task surface | none | activation-owned | bootstrap wraps phase labels only | same as delegated task surface | must not rely on path-specific recursion shortcuts |
-| Bootstrap `start` | bootstrap target repo root | delegated start selector binding | same prep and session-readiness contract as direct `dev` / workspace | same as equivalent shell surface | no lease; session-owned if interactive | session-owned | session ownership model | interactive only | same as delegated shell surface | same handoff contract as direct shell surface |
-| `effigy workspace` | command-context resolved root | workspace-backed binding | shared runtime prep before shell opens | must reconcile before shell opens | none | session-owned | session ownership model | interactive only | unsupported until one shared interactive contract exists | must obey shared handoff marker |
-| `stay_in_shell` | original task repo target | original task binding | same prep contract as interactive shell handoff | must reconcile before shell opens | none | session-owned | session ownership model | interactive only | must follow shared supported/unsupported rule | must obey shared handoff marker |
-| `effigy exec` | command-context resolved root | dev exec surface or explicit service target | shared runtime activation | same container contract as other container-backed execution surfaces | refresh lease when non-shell activation owns warm reuse | none | activation-owned | exec-shaped | not applicable unless exec widens to inline later | not a handoff by default; still must respect container recursion rules when applicable |
-| Exec aliases | same as `effigy exec` | alias table resolved from container config | same as `effigy exec` | same as `effigy exec` | same as `effigy exec` | none | activation-owned | exec-shaped | not applicable | same as `effigy exec` |
-| `effigy container up` | command-context resolved root | explicit container selection | direct lifecycle path, not task activation | must register gateway and reconcile aliases during bring-up | clears task lease on explicit operator up | attached mode is session-owned; detached mode is operator-owned runtime | explicit lifecycle policy | container command report | not applicable | no nested task handoff implied |
-| `effigy container shell` | command-context resolved root | explicit container selection | explicit operator path; runtime must already satisfy shell contract or prepare through shared shell-ready path once widened | shell-visible container contract must match workspace shell guarantees where both target the same runtime | no lease | session-owned | session ownership model | interactive only | not applicable | must set and respect shared handoff marker when re-entering Effigy |
-| Run-array builtin re-entry | parent task repo target | shared embedded-runner entry | delegated to the resolved inner surface | same as delegated inner surface | same as delegated inner surface | same as delegated inner surface | same as delegated inner surface | nested command projection rules only | same as delegated inner surface | must not invent its own recursion rules |
-| Rhai `run_effigy_command` | script repo target | shared embedded-runner entry | delegated to the resolved inner surface | same as delegated inner surface | same as delegated inner surface | same as delegated inner surface | same as delegated inner surface | nested command projection rules only | same as delegated inner surface | must not invent its own recursion rules |
-| Rhai `exec::run(...)` | script repo target from captured runtime context | `TaskExecutionRequestBuilder` command intent | resolved execution plan route | same as resolved execution route | non-shell container paths refresh lease where activation owns warm reuse | none | activation-owned | command-shaped | not applicable | container intent inside handoff resolves to local container handoff |
 
 ## Convergence rules
 
@@ -156,6 +121,12 @@ The following must converge across covered surfaces.
 
 - all non-shell container-backed activation must use one shared activation
   contract
+- non-shell activation refreshes the task lease; shell and interactive paths
+  do not. A session-owned shell holds no lease
+- explicit operator lifecycle (`container up`) may clear or supersede task
+  leases; a task surface may not
+- an inline workspace container is supported only where the shared contract
+  says so and fails with the shared family everywhere else
 - that contract owns:
   - startup
   - readiness

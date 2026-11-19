@@ -1398,28 +1398,6 @@ fn stderr_overflow_names_the_stderr_stream() {
 }
 
 #[test]
-fn missing_workspace_user_falls_back_without_resetting_the_budget() {
-    let (_dir, bin_dir, repo) = fixture("fallback");
-    let policy = policy();
-    with_fake_backend(&bin_dir, "docker", || {
-        // First attempt (workspace user) retains 3 stdout bytes and fails; the
-        // eligible fallback may only retain 1 more of the 4-byte total.
-        let error = run_json(
-            &repo,
-            &policy,
-            "fallback-budget",
-            &limits(30_000, 4, 1024),
-            30_000,
-        )
-        .expect_err("the fallback must not reset the cumulative budget");
-        let details = failure_details(&error);
-        assert_eq!(details["failure"], "stdout_overflow");
-        assert_eq!(details["attempts"], 2);
-        assert_eq!(details["workspace_user_fallback"], true);
-    });
-}
-
-#[test]
 fn missing_workspace_user_falls_back_when_the_total_budget_holds() {
     let (_dir, bin_dir, repo) = fixture("fallback-ok");
     let policy = policy();

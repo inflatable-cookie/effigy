@@ -695,6 +695,12 @@ fn spawn_bounded_reader<R: Read + Send + 'static>(
 /// A refusal carries versioned structural observations from one coherent
 /// snapshot at its decision point; the snapshot never calls `try_wait`, so it
 /// cannot reap the leader or observe anything the existing policy forbids.
+fn capture_process(repo_root: &Path, program: &OsStr, args: &[OsString]) -> ProcessCommand {
+    let mut command = ProcessCommand::new(program);
+    command.current_dir(repo_root).args(args);
+    command
+}
+
 pub(in crate::runner) fn run_command_capture_bounded(
     repo_root: &Path,
     program: &OsStr,
@@ -721,8 +727,7 @@ pub(in crate::runner) fn run_command_capture_bounded(
         });
     }
 
-    let mut command = ProcessCommand::new(&resolved_program);
-    command.current_dir(repo_root).args(args);
+    let mut command = capture_process(repo_root, &resolved_program, args);
     for (key, value) in env {
         command.env(key, value);
     }
@@ -1474,6 +1479,77 @@ pub(super) fn run_command_capture_allow_failure_with_stdin(
     run_command_capture_until(repo_root, program, args, stdin_file, None)
 }
 
+/// Finite commands share launch selection; bounded capture keeps its own
+/// collector so its caps and observations apply before any output is retained.
+pub(in crate::runner) enum FiniteCapturePolicy<'a> {
+    Unbounded {
+        deadline: Option<Instant>,
+    },
+    Bounded {
+        budget: &'a mut BoundedCommandBudget,
+        phase: BoundedCommandPhase,
+    },
+}
+
+pub(in crate::runner) enum FiniteCapture {
+    Unbounded(Output),
+    Bounded(BoundedCapture),
+}
+
+pub(in crate::runner) enum FiniteCaptureError {
+    Unbounded(RunnerError),
+    Bounded(BoundedScopedCaptureFailure),
+}
+
+pub(in crate::runner) fn launch_finite_capture(
+    repo_root: &Path,
+    program: &OsStr,
+    args: &[OsString],
+    stdin_file: Option<&Path>,
+    capture: FiniteCapturePolicy<'_>,
+) -> Result<FiniteCapture, FiniteCaptureError> {
+    match capture {
+        FiniteCapturePolicy::Unbounded { deadline } => {
+            capture_command_until(repo_root, program, args, stdin_file, deadline)
+                .map(FiniteCapture::Unbounded)
+                .map_err(|error| {
+                    FiniteCaptureError::Unbounded(match error {
+                        CommandCaptureError::Deadline { command } => {
+                            RunnerError::task_invocation(format!("{command} timed out"))
+                        }
+                        CommandCaptureError::Runner(error) => error,
+                    })
+                })
+        }
+        FiniteCapturePolicy::Bounded { budget, phase } => budget
+            .run_command(repo_root, program, args, stdin_file, &[], phase)
+            .map(FiniteCapture::Bounded)
+            .map_err(FiniteCaptureError::Bounded),
+    }
+}
+
+pub(in crate::runner) fn run_bounded_finite_capture(
+    repo_root: &Path,
+    program: &OsStr,
+    args: &[OsString],
+    budget: &mut BoundedCommandBudget,
+) -> Result<BoundedCapture, BoundedScopedCaptureFailure> {
+    match launch_finite_capture(
+        repo_root,
+        program,
+        args,
+        None,
+        FiniteCapturePolicy::Bounded {
+            budget,
+            phase: BoundedCommandPhase::CommandExecution,
+        },
+    ) {
+        Ok(FiniteCapture::Bounded(output)) => Ok(output),
+        Err(FiniteCaptureError::Bounded(error)) => Err(error),
+        _ => unreachable!("bounded capture policy returns bounded results"),
+    }
+}
+
 pub(in crate::runner) fn run_command_capture_until(
     repo_root: &Path,
     program: &OsStr,
@@ -1481,14 +1557,17 @@ pub(in crate::runner) fn run_command_capture_until(
     stdin_file: Option<&Path>,
     deadline: Option<Instant>,
 ) -> Result<Output, RunnerError> {
-    capture_command_until(repo_root, program, args, stdin_file, deadline).map_err(|error| {
-        match error {
-            CommandCaptureError::Deadline { command } => {
-                RunnerError::task_invocation(format!("{command} timed out"))
-            }
-            CommandCaptureError::Runner(error) => error,
-        }
-    })
+    match launch_finite_capture(
+        repo_root,
+        program,
+        args,
+        stdin_file,
+        FiniteCapturePolicy::Unbounded { deadline },
+    ) {
+        Ok(FiniteCapture::Unbounded(output)) => Ok(output),
+        Err(FiniteCaptureError::Unbounded(error)) => Err(error),
+        _ => unreachable!("unbounded capture policy returns unbounded results"),
+    }
 }
 
 pub(in crate::runner) enum CommandCaptureError {
@@ -1546,8 +1625,7 @@ pub(in crate::runner) fn capture_command_until(
             command: command_label,
         });
     }
-    let mut command = ProcessCommand::new(&resolved_program);
-    command.current_dir(repo_root).args(args);
+    let mut command = capture_process(repo_root, &resolved_program, args);
     if let Some(stdin_file) = stdin_file {
         let file =
             std::fs::File::open(stdin_file).map_err(|error| RunnerError::TaskCommandLaunch {

@@ -1,11 +1,7 @@
-use effigy_execution::ExecutionSelectionPlan;
 use effigy_manifest::TaskSelection;
 
 pub(in crate::runner) enum SelectionResolution<'a> {
-    Selected {
-        selection: TaskSelection<'a>,
-        plan: Box<ExecutionSelectionPlan>,
-    },
+    Selected { selection: TaskSelection<'a> },
     Output(String),
 }
 

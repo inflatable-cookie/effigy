@@ -1,17 +1,17 @@
 //! Execution routing decisions.
 //!
-//! Given a command and the project's execution context, determines whether
-//! the command should run on the host or inside a container, and which
-//! container/service to target.
+//! Given the project's execution context and what the selected task declares,
+//! determines whether the task runs on the host or inside a container, and
+//! which container/service to target. The caller has already selected the
+//! task; routing never looks at the task's name.
 //!
 //! ## Routing rules
 //!
 //! 1. If no default execution container is resolved → host.
-//! 2. If the command is a host-native built-in → host.
-//! 3. If the task explicitly declares `run_in = "host"` → host.
-//! 4. If the task explicitly declares `run_in = "container"` or binds to a
-//!    specific container → that container.
-//! 5. Otherwise (`run_in = "either"`) → the current/default context.
+//! 2. If the task declares the host (`run_in = "host"` or a host binding) → host.
+//! 3. If the task names a container (`run_in = "container"` or a named
+//!    binding) → that container.
+//! 4. Otherwise (`run_in = "either"`) → the default container.
 
 /// Describes the project's execution context configuration.
 #[derive(Debug, Clone)]
@@ -50,14 +50,15 @@ impl ExecContext {
     }
 }
 
-/// Per-task execution overrides.
-#[derive(Debug, Clone, Default)]
-pub struct TaskOverrides {
-    /// If true, force host execution regardless of context.
-    pub host: bool,
-
-    /// Explicit container target override.
-    pub container: Option<String>,
+/// Where the selected task's own declaration sends it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeclaredTarget {
+    /// No declared target: the default execution container applies.
+    Default,
+    /// The task is declared or bound to the host.
+    Host,
+    /// The task names this container.
+    Container(String),
 }
 
 /// The result of a routing decision.
@@ -82,49 +83,25 @@ pub enum ExecTarget {
     },
 }
 
-/// Commands that always run on the host (effigy's own management surface).
-const HOST_NATIVE_COMMANDS: &[&str] = &[
-    "doctor",
-    "container",
-    "gateway",
-    "service",
-    "catalog",
-    "release",
-    "tasks",
-    "help",
-    "version",
-    "init",
-    "migrate",
-    "bootstrap",
-];
-
-/// Determine where a command should execute.
-///
-/// `command_name` is the first argument to effigy (e.g., "test", "doctor",
-/// "exec"). `task_overrides` contains any per-task routing directives.
-pub fn route(
-    command_name: &str,
-    context: &ExecContext,
-    task_overrides: &TaskOverrides,
-) -> RoutingDecision {
+/// Determine where the selected task should execute.
+pub fn route(context: &ExecContext, declared: &DeclaredTarget) -> RoutingDecision {
     // 1. No default execution container → always host.
     let (container, service) = match (&context.default_container, &context.primary_service) {
         (Some(c), Some(s)) => (c.clone(), s.clone()),
         _ => return RoutingDecision::host("no default execution container resolved"),
     };
 
-    // 2. Host-native commands always run on host.
-    if HOST_NATIVE_COMMANDS.contains(&command_name) {
-        return RoutingDecision::host(format!("'{command_name}' is a host-native command"));
-    }
+    // 2. The task is declared or bound to the host.
+    let named = match declared {
+        DeclaredTarget::Host => {
+            return RoutingDecision::host("task declares run_in = \"host\"");
+        }
+        DeclaredTarget::Container(named) => Some(named),
+        DeclaredTarget::Default => None,
+    };
 
-    // 3. Explicit `run_in = "host"` override.
-    if task_overrides.host {
-        return RoutingDecision::host("task declares run_in = \"host\"");
-    }
-
-    // 4. Explicit container target override.
-    if let Some(ref container) = task_overrides.container {
+    // 3. The task names a container.
+    if let Some(container) = named {
         return if context.container_running {
             RoutingDecision::container(
                 container.clone(),
@@ -139,7 +116,7 @@ pub fn route(
         };
     }
 
-    // 6. Default → default execution container.
+    // 4. Default → default execution container.
     if !context.container_running {
         return RoutingDecision::not_running(
             container,

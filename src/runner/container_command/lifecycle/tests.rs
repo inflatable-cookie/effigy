@@ -5,7 +5,6 @@ use super::integrations::gateway_port_wait_stage;
 use super::integrations::integration_stage;
 use super::integrations::ContainerUpRuntimeIntegrations;
 use super::integrations::IntegrationOutcomePolicy;
-use super::lifecycle_operation_plan;
 use super::prepare::prepare_container_up;
 use super::report::detached_activation_failure;
 use super::report::detached_activation_identity;
@@ -26,7 +25,6 @@ use effigy_containers::{
     down_report, up_detached_report, ContainerAction, CreationPolicyStage, EffectiveComposeSource,
     EffectiveContainerPolicy, SharedServiceBinding,
 };
-use effigy_containers::{ContainerConfirmationPolicy, ContainerLifecycleOperation};
 use effigy_manifest::{
     ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
     ManifestContainerStartup,
@@ -79,6 +77,19 @@ pub(super) fn test_policy(shared_services: Vec<SharedServiceBinding>) -> Effecti
         detach_timeout_secs: 10,
         host_processes: Vec::new(),
     }
+}
+
+#[test]
+fn reset_wipe_requires_explicit_consent() {
+    let policy = test_policy(Vec::new());
+    let confirm =
+        crate::runner::container_command::closeout::maybe_confirm_container_reset_wipe_data;
+    assert!(confirm(&policy, false, true, false).is_ok());
+    assert!(confirm(&policy, true, true, true).is_ok());
+    assert!(confirm(&policy, true, true, false)
+        .expect_err("wipe needs consent")
+        .to_string()
+        .contains("requires confirmation"));
 }
 
 #[test]
@@ -587,33 +598,6 @@ fn detached_listener_exposure_json_names_exposed_and_withheld_routes() {
     );
 }
 
-#[test]
-fn lifecycle_reset_plan_requires_confirmation_only_for_wipe_data() {
-    let policy = test_policy(Vec::new());
-    let keep_data = lifecycle_operation_plan(
-        Path::new("/tmp/repo"),
-        &policy,
-        ContainerLifecycleOperation::reset(true, false, false),
-    );
-    assert_eq!(
-        keep_data.confirmation,
-        ContainerConfirmationPolicy::NoConfirmationRequired
-    );
-    assert!(!keep_data.consumes_declared_container_secrets());
-
-    let wipe_data = lifecycle_operation_plan(
-        Path::new("/tmp/repo"),
-        &policy,
-        ContainerLifecycleOperation::reset(false, true, false),
-    );
-    assert_eq!(
-        wipe_data.confirmation,
-        ContainerConfirmationPolicy::RequireConfirmation {
-            reason: "reset removes runtime data",
-        }
-    );
-    assert!(!wipe_data.consumes_declared_container_secrets());
-}
 pub(super) fn shared_service(name: &str, catalog: &str, host_port: u16) -> SharedServiceBinding {
     SharedServiceBinding {
         service_name: name.to_owned(),

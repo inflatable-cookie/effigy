@@ -25,8 +25,8 @@ pub(super) fn run_execution_pipeline(
     task: &TaskInvocation,
     preflight: ExecutionPreflight,
 ) -> Result<String, RunnerError> {
-    let (selection, selection_plan) = match resolve_task_selection(task, &preflight)? {
-        SelectionResolution::Selected { selection, plan } => (selection, plan),
+    let selection = match resolve_task_selection(task, &preflight)? {
+        SelectionResolution::Selected { selection } => selection,
         SelectionResolution::Output(output) => return Ok(output),
     };
 
@@ -40,12 +40,11 @@ pub(super) fn run_execution_pipeline(
         return render_resolved_selector_plan(&preflight, &selection);
     }
 
-    if let Some(output) = managed::run_managed_task(&preflight, &selection, &selection_plan, None)?
-    {
+    if let Some(output) = managed::run_managed_task(&preflight, &selection, None)? {
         return Ok(output);
     }
 
-    standard::run_standard_task(&preflight, &selection, &selection_plan, None, None)
+    standard::run_standard_task(&preflight, &selection, None, None)
 }
 
 /// Answer a selected catalog task's own `--help`: its declaration, never its
