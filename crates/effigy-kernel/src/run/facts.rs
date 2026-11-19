@@ -73,14 +73,12 @@ impl MachineFacts {
                 poisoned: false,
                 completed: Default::default(),
                 sentinel: None,
-                partial_sentinel: None,
                 closed_effects: None,
                 machine_startup: None,
                 checkout_custody: None,
                 ancestor_closure: None,
                 prelaunch_interpolations: Default::default(),
                 processes: Default::default(),
-                session_launch: Default::default(),
             };
             previous.settle_inner(cleanup, adapter)?;
             let effects = previous

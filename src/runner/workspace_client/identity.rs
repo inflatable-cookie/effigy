@@ -1,4 +1,4 @@
-//! Context-free guest observations (052 §8.11). Mount roots, not cgroup claims,
+//! Context-free guest observations (052 §8). Mount roots, not cgroup claims,
 //! identify the container. Native backend qualification remains a candidate gate.
 #![allow(dead_code)] // Joined to the guest entry by the workspace-client owner.
 

@@ -1,21 +1,14 @@
-//! The materialised guest context and its version lock (contract 052 §8.2,
-//! §8.8, §8.9 and §8.11).
+//! The materialised guest context and its version lock (contract 052 §8).
 //!
 //! The host's Prepare publishes one immutable generation of this context
-//! inside a container-mode workspace. Two publications write one: the qualified
-//! (reserved) path writes the strict v2 document in [`v2`], and the ordinary
-//! production path still writes this v1 document, which the guest reads through
-//! the separate `workspace_client::legacy` reader (effigy#1015). A guest reads
+//! inside a container-mode workspace. The guest reads this v1 document through
+//! the `workspace_client::legacy` reader. A guest reads
 //! exactly one generation for its whole run, checks it against the executable
 //! that is running and the container that is running it, and refuses before any
 //! effect when they disagree. Nothing here downloads, builds, enrols or writes
 //! host state: the publish side is `workspace_command::provisioning`, and
 //! reading is pure.
 //!
-//! Lane A (the host authority channel) binds a grant to
-//! [`VerifiedWorkspaceContext`]; lane B (the workspace session) records
-//! [`WorkspaceActivationIdentity`] for the session run it admits. Until that
-//! integration file lands, the verification seam has no caller in this crate.
 #![allow(dead_code)]
 
 use std::fmt;
@@ -25,15 +18,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::runner::error::RunnerError;
 
-#[path = "context_v2.rs"]
-pub(crate) mod v2;
-
 /// Wire schema of the published context. A context naming any other schema is
-/// unprepared, not a newer version to guess at (§8.11 unknown version).
+/// unprepared, not a newer version to guess at (§8 unknown version).
 pub(crate) const CONTEXT_SCHEMA: &str = "effigy.workspace-context.v1";
 
 /// Protocol version a context may pin. V1 selects protocol 1 only and there is
-/// no downgrade (§8.11).
+/// no downgrade (§8).
 pub(crate) const CHANNEL_PROTOCOL_VERSION: u32 = 1;
 
 /// Guest context root, outside the bind-mounted checkout.
@@ -47,12 +37,6 @@ pub(crate) const BINARY_ROOT: &str = "/run/effigy/bin";
 pub(crate) const SNAPSHOT_ROOT: &str = "/run/effigy/snapshots";
 /// File naming the executable generation new guest invocations run.
 pub(crate) const BINARY_CURRENT_PATH: &str = "/run/effigy/bin/current";
-/// Guest-private storage for a client session capability (never the checkout).
-pub(crate) const CLIENT_ROOT: &str = "/run/effigy/client";
-/// Guest-private storage for the narrow enrolment credential (§8.8).
-pub(crate) const ENROL_ROOT: &str = "/run/effigy/enrol";
-pub(crate) const ENROL_CREDENTIAL_PATH: &str = "/run/effigy/enrol/credential";
-
 /// The command a client names when its identity or version no longer matches
 /// what the host prepared (§8.9).
 pub(crate) const HOST_REPREPARE_COMMAND: &str = "effigy container up";
@@ -115,7 +99,7 @@ pub(crate) struct GuestBinaryIdentity {
     pub(crate) protocol: u32,
 }
 
-/// The host Effigy that published this context. §8.11 requires the client, the
+/// The host Effigy that published this context. §8 requires the client, the
 /// context and the host to agree on version and protocol.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -178,9 +162,7 @@ impl WorkspaceContainerIdentity {
     }
 }
 
-/// The identity a prepared workspace activation hands to the workspace session
-/// (lane B). It is everything a session run needs to record about where it is
-/// running, before any context generation exists.
+/// The identity of the environment and container prepared for a guest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkspaceActivationIdentity {
@@ -191,7 +173,15 @@ pub(crate) struct WorkspaceActivationIdentity {
 }
 
 /// Host checkout ↔ guest mount, workdir, workspace user and `HOME`.
-pub(crate) use effigy_kernel::workspace_session::GuestPaths as WorkspacePathMap;
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct WorkspacePathMap {
+    pub(crate) host_checkout: String,
+    pub(crate) guest_checkout: String,
+    pub(crate) workdir: String,
+    pub(crate) user: String,
+    pub(crate) home: String,
+}
 
 /// Backend descriptor: kind, profile or context, runtime and VM type (§8.2).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -213,31 +203,27 @@ pub(crate) const COMPOSED_MANIFEST_KIND: &str = "composed-manifest";
 /// One pinned source the context carries. `kind` is `bundle`, `catalog`,
 /// `manifest`, `source-lock` or `composed-manifest`; `snapshot` names the
 /// guest-readable bytes the digest belongs to.
-pub(crate) use effigy_kernel::workspace_session::GuestSourcePin as WorkspacePinnedSource;
-
-/// One declared or effective route the guest may read locally (§8.2).
-pub(crate) use effigy_kernel::workspace_session::GuestRoute as WorkspaceRoute;
-
-/// Where the host authority channel listens and which server identity the
-/// client pins before it sends a credential (§8.3, §8.11). Neither value is a
-/// credential.
-///
-/// Both stay absent until a transport is qualified for the backend in use.
-/// A context without them prepares the workspace for local reads only and
-/// reports host access unavailable; it never invents an endpoint.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WorkspaceChannelLocator {
+pub(crate) struct WorkspacePinnedSource {
+    pub(crate) kind: String,
+    pub(crate) name: String,
+    pub(crate) digest: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) endpoint: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) server_identity: Option<String>,
+    pub(crate) snapshot: Option<String>,
 }
 
-impl WorkspaceChannelLocator {
-    pub(crate) fn is_ready(&self) -> bool {
-        self.endpoint.is_some() && self.server_identity.is_some()
-    }
+/// One declared or effective route the guest may read locally (§8.2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct WorkspaceRoute {
+    pub(crate) declared_domain: String,
+    pub(crate) domain: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) service: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) port: Option<u16>,
+    pub(crate) tls: bool,
 }
 
 /// One immutable context generation, as published by the host's Prepare.
@@ -245,15 +231,12 @@ impl WorkspaceChannelLocator {
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkspaceContext {
     pub(crate) schema: String,
-    /// Monotonic context generation. A request carries the generation it read;
-    /// the host refuses a stale one (K7, §8.2).
+    /// Monotonic context generation.
     pub(crate) generation: u64,
     pub(crate) host: WorkspaceHostIdentity,
     pub(crate) binary: GuestBinaryIdentity,
     pub(crate) activation: WorkspaceActivationIdentity,
-    /// The workspace session run serving this context (§8.7). `None` means the
-    /// environment is prepared but no session has been admitted yet; a client
-    /// then has local reads only.
+    /// Retained v1 fields for compatibility with published contexts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) session_run_id: Option<String>,
     pub(crate) session_generation: Option<u64>,
@@ -263,45 +246,18 @@ pub(crate) struct WorkspaceContext {
     pub(crate) sources: Vec<WorkspacePinnedSource>,
     #[serde(default)]
     pub(crate) routes: Vec<WorkspaceRoute>,
-    pub(crate) channel: WorkspaceChannelLocator,
 }
 
-/// Everything the guest records about a run it is part of, and the generation
-/// its request carries.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct LiveGuestRun {
-    pub(crate) binary: GuestBinaryIdentity,
-    pub(crate) container: WorkspaceContainerIdentity,
-    pub(crate) environment_generation: String,
-    pub(crate) session_run_id: Option<String>,
-    pub(crate) session_generation: Option<u64>,
-    pub(crate) context_generation: u64,
-}
-
-/// The verified identity lane A binds a grant to. It carries no credential and
-/// no authority of its own; the host still re-resolves every request (§8.3).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct VerifiedWorkspaceContext {
-    pub(crate) generation: u64,
-    pub(crate) activation: WorkspaceActivationIdentity,
-    pub(crate) session_run_id: String,
-    pub(crate) session_generation: u64,
-    pub(crate) binary: GuestBinaryIdentity,
-    pub(crate) protocol: u32,
-    pub(crate) channel: WorkspaceChannelLocator,
-    pub(crate) paths: WorkspacePathMap,
-}
-
-/// Stable refusal codes from §8.11. A `response` carries one of these.
+/// Stable refusal codes from §8. A `response` carries one of these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ContextRefusalCode {
-    /// The request's context generation is no longer published.
+    /// The context generation is no longer published.
     StaleContext,
-    /// The context names another container, boot, environment or session.
+    /// The context names another container, boot or environment.
     IdentityMismatch,
     /// Client, context and host disagree on version or protocol.
     VersionMismatch,
-    /// No context, no admitted session or no qualified channel.
+    /// The context or provisioned guest is unavailable.
     Unavailable,
 }
 
@@ -356,11 +312,10 @@ impl ContextRefusal {
     }
 
     /// A version or identity refusal is the one class a host re-prepare
-    /// actually clears (§8.11), so it is the only one that adds the host
+    /// actually clears (§8), so it is the only one that adds the host
     /// command. A stale generation asks the client to reread `current`, and an
     /// `unavailable` refusal already carries the guidance its own cause needs:
-    /// re-preparing cannot grant an absent session, channel or provisioned
-    /// guest, and saying so would send the reader into the same refusal again.
+    /// re-preparing does not necessarily resolve its cause.
     pub(crate) fn names_reprepare(&self) -> bool {
         matches!(
             self.code,
@@ -427,7 +382,7 @@ pub(crate) trait CheckoutReader {
     fn read_checkout_file(&mut self, relative: &str) -> Result<Option<Vec<u8>>, RunnerError>;
 }
 
-/// One local read a container-mode guest performs without the host (§8.6).
+/// One local read a container-mode guest performs without the host (§8).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum LocalRead {
     /// Version and the pinned identity this guest is running under.
@@ -440,17 +395,6 @@ pub(crate) enum LocalRead {
     Sources,
     /// One file inside the mounted checkout.
     CheckoutFile(String),
-}
-
-impl LocalRead {
-    /// `Version`, `Tasks` and `Sources` are Static; a checkout read is Observe.
-    /// Neither enrols (§8.8).
-    pub(crate) fn class(&self) -> GuestOperationClass {
-        match self {
-            Self::Version | Self::Tasks | Self::Sources => GuestOperationClass::Static,
-            Self::CheckoutFile(_) => GuestOperationClass::Observe,
-        }
-    }
 }
 
 /// What a local read returned.
@@ -475,9 +419,6 @@ pub(crate) enum LocalReadError {
     Refused(ContextRefusal),
     /// The guest filesystem could not be read.
     Guest(RunnerError),
-    /// The command needs host authority, which this placement does not have.
-    /// It refuses rather than enrolling (§8.8, §8.10 R1).
-    HostAuthorityRequired(&'static str),
 }
 
 impl fmt::Display for LocalReadError {
@@ -485,12 +426,6 @@ impl fmt::Display for LocalReadError {
         match self {
             Self::Refused(refusal) => write!(formatter, "{refusal}"),
             Self::Guest(error) => write!(formatter, "{error}"),
-            Self::HostAuthorityRequired(operation) => write!(
-                formatter,
-                "{operation} needs host authority; a container-mode guest has none and does not \
-                 enrol for it. Run `{HOST_REPREPARE_COMMAND}` on the host, or open the command \
-                 in a terminal Effigy opened"
-            ),
         }
     }
 }
@@ -509,10 +444,7 @@ impl From<RunnerError> for LocalReadError {
 
 /// The pinned facts one local read is answered from.
 ///
-/// There is exactly one canonical document a guest reads (the strict v2
-/// `WorkspaceContextDocument`), and this is the narrow view a local read needs
-/// from it. The v1 projection implements it so the producer's own focused
-/// tests keep their semantics; the guest entry reads v2 only (§8.11).
+/// The v1 context supplies the facts used by local reads.
 pub(crate) trait LocalReadSource {
     fn context_generation(&self) -> u64;
     fn host_version(&self) -> &str;
@@ -550,8 +482,7 @@ impl LocalReadSource for WorkspaceContext {
 /// A container-mode guest's local read surface: the pinned context and the
 /// mounted checkout, nothing else (R2).
 ///
-/// It holds no capability and no enrolment credential, so a local read cannot
-/// enrol, and it has no writer, so a local read cannot write.
+/// It has no writer, so a local read cannot write.
 pub(crate) struct GuestLocalReads<'a> {
     pub(crate) context: &'a (dyn LocalReadSource + 'a),
     pub(crate) guest: &'a mut dyn GuestReader,
@@ -741,12 +672,6 @@ pub(crate) fn sha256(bytes: &[u8]) -> [u8; 32] {
     digest.finalize().into()
 }
 
-/// The refusal a container-mode guest gives an authority-bearing command: it
-/// has no host authority and does not enrol for one (§8.8, §8.10 R1).
-pub(crate) fn refuse_host_authority(operation: &'static str) -> LocalReadError {
-    LocalReadError::HostAuthorityRequired(operation)
-}
-
 /// A digest as `sha256:<hex>`, the form the context pins.
 pub(crate) fn sha256_text(bytes: &[u8]) -> String {
     render_digest(sha256(bytes))
@@ -782,7 +707,7 @@ pub(crate) trait GuestWorkspace: GuestReader {
             "guest adapter has no immutable executable operation",
         ))
     }
-    /// Give a published file to the workspace user (§8.2 grants, §8.8).
+    /// Give a published file to the workspace user (§8.2 grants, §8).
     fn set_owner(&mut self, path: &str, owner: &str) -> Result<(), RunnerError>;
     /// Copy a host file into a guest staging path before it is installed.
     fn stage_host_file(&mut self, host_path: &Path, guest_path: &str) -> Result<(), RunnerError>;
@@ -846,7 +771,7 @@ pub(crate) fn read_published_body(
 
 /// The `schema` a published document declares, read without interpreting any
 /// other field. The guest routes on this before it parses, so a document is
-/// never handed to a reader that would guess at its version (§8.11).
+/// never handed to a reader that would guess at its version (§8).
 pub(crate) fn declared_schema(bytes: &[u8]) -> Result<String, ContextRefusal> {
     let document: serde_json::Value = serde_json::from_slice(bytes).map_err(|error| {
         ContextRefusal::unavailable(format!(
@@ -914,9 +839,7 @@ pub(crate) fn read_published_generation(
     }
 }
 
-/// The facts one context generation is built from. The caller is the host's
-/// Prepare; `session_run_id` is `None` until lane B admits the session run for
-/// this environment.
+/// The facts one context generation is built from by the host's Prepare.
 pub(crate) struct WorkspaceContextInput {
     pub(crate) generation: u64,
     pub(crate) host: WorkspaceHostIdentity,
@@ -928,14 +851,6 @@ pub(crate) struct WorkspaceContextInput {
     pub(crate) backend: WorkspaceBackendDescriptor,
     pub(crate) sources: Vec<WorkspacePinnedSource>,
     pub(crate) routes: Vec<WorkspaceRoute>,
-    pub(crate) channel: WorkspaceChannelLocator,
-}
-
-impl WorkspaceContextInput {
-    pub(crate) fn bind_session(&mut self, session: &effigy_kernel::workspace_session::SessionRef) {
-        self.session_run_id = Some(session.run().to_string());
-        self.session_generation = Some(session.generation().get());
-    }
 }
 
 impl WorkspaceContext {
@@ -952,7 +867,6 @@ impl WorkspaceContext {
             backend: input.backend,
             sources: input.sources,
             routes: input.routes,
-            channel: input.channel,
         }
     }
 
@@ -968,7 +882,7 @@ impl WorkspaceContext {
     }
 
     /// Parse a published document. Unknown fields, another schema and a
-    /// non-protocol version are refused before any effect (§8.11).
+    /// non-protocol version are refused before any effect (§8).
     pub(crate) fn parse(body: &[u8]) -> Result<Self, ContextRefusal> {
         let context: Self = serde_json::from_slice(body).map_err(|error| {
             ContextRefusal::unavailable(format!(
@@ -994,186 +908,6 @@ impl WorkspaceContext {
             )));
         }
         Ok(context)
-    }
-
-    /// Check this context against the run that read it, and return the typed
-    /// identity lane A binds a grant to.
-    ///
-    /// Order matters: version and protocol first (no effect on a build that
-    /// cannot speak), then the generation the request carries, then the
-    /// container, boot, environment and session fences.
-    pub(crate) fn verify(
-        &self,
-        live: &LiveGuestRun,
-    ) -> Result<VerifiedWorkspaceContext, ContextRefusal> {
-        if live.binary != self.binary {
-            return Err(ContextRefusal::version_mismatch(format!(
-                "workspace client {} ({}) protocol {} does not match the prepared context {} ({}) \
-                 protocol {}; run `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the \
-                 workspace",
-                live.binary.version,
-                live.binary.digest,
-                live.binary.protocol,
-                self.binary.version,
-                self.binary.digest,
-                self.binary.protocol,
-            )));
-        }
-        if self.binary.version != self.host.version || self.binary.protocol != self.host.protocol {
-            return Err(ContextRefusal::version_mismatch(format!(
-                "workspace context pins client {} protocol {} but host {} protocol {}; run \
-                 `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the workspace",
-                self.binary.version, self.binary.protocol, self.host.version, self.host.protocol,
-            )));
-        }
-        if live.context_generation != self.generation {
-            return Err(ContextRefusal::stale_context(
-                live.context_generation,
-                self.generation,
-            ));
-        }
-        if !self.activation.container.boot_matches(&live.container)
-            || !self.activation.container.container_matches(&live.container)
-        {
-            return Err(ContextRefusal::identity_mismatch(format!(
-                "workspace context belongs to container `{}` on VM boot `{}` ({}), but this is \
-                 container `{}` on VM boot `{}` ({}); run `{HOST_REPREPARE_COMMAND}` on the host \
-                 to re-prepare the workspace",
-                self.activation.container.container_id,
-                self.activation.container.vm_boot_id,
-                self.activation.container.platform,
-                live.container.container_id,
-                live.container.vm_boot_id,
-                live.container.platform,
-            )));
-        }
-        if self.activation.environment.generation != live.environment_generation {
-            return Err(ContextRefusal::identity_mismatch(format!(
-                "workspace context was prepared for environment generation `{}`, but the current \
-                 `{}` generation is `{}`; run `{HOST_REPREPARE_COMMAND}` on the host to \
-                 re-prepare the workspace",
-                self.activation.environment.generation,
-                self.activation.environment.resource_id,
-                live.environment_generation,
-            )));
-        }
-        let Some(session_run_id) = self.session_run_id.as_deref() else {
-            return Err(ContextRefusal::unavailable(format!(
-                "workspace environment `{}` is prepared but no workspace session run has been \
-                 admitted; host access is unavailable and `{HOST_REPREPARE_COMMAND}` on the host \
-                 starts one",
-                self.activation.environment.resource_id
-            )));
-        };
-        let session_generation = self
-            .session_generation
-            .filter(|generation| *generation > 0)
-            .ok_or_else(|| {
-                ContextRefusal::unavailable(format!(
-                    "workspace context names no admitted session generation, so host access is \
-                     unavailable; `{HOST_REPREPARE_COMMAND}` on the host re-prepares and admits one"
-                ))
-            })?;
-        if live.session_generation != Some(session_generation) {
-            return Err(ContextRefusal::identity_mismatch(
-                "workspace session generation differs from the admitted context".to_owned(),
-            ));
-        }
-        if live.session_run_id.as_deref() != Some(session_run_id) {
-            return Err(ContextRefusal::identity_mismatch(format!(
-                "workspace context serves session run `{session_run_id}`, but this client is \
-                 enrolled for `{}`; run `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the \
-                 workspace",
-                live.session_run_id.as_deref().unwrap_or("no session")
-            )));
-        }
-        if !self.channel.is_ready() {
-            return Err(ContextRefusal::unavailable(format!(
-                "no host authority channel is qualified for backend `{}`; local reads work and \
-                 host access is unavailable",
-                self.backend.kind
-            )));
-        }
-        Ok(VerifiedWorkspaceContext {
-            generation: self.generation,
-            activation: self.activation.clone(),
-            session_run_id: session_run_id.to_owned(),
-            session_generation,
-            binary: self.binary.clone(),
-            protocol: self.binary.protocol,
-            channel: self.channel.clone(),
-            paths: self.paths.clone(),
-        })
-    }
-}
-
-/// What a guest command needs from the host. Static and local Observe read the
-/// context and the mounted checkout; a Mutate needs host authority.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GuestOperationClass {
-    /// Help, version, plans, config and static task reads (§8.6).
-    Static,
-    /// Reads of live host facts and the local mounted checkout.
-    Observe,
-    /// Admission, mutation or enrolment.
-    Mutate,
-}
-
-impl GuestOperationClass {
-    /// Only an authority-bearing operation enrols a direct terminal (§8.8).
-    /// Static and Observe never enrol, so they keep working without a
-    /// credential.
-    pub(crate) fn requires_enrolment(self) -> bool {
-        matches!(self, Self::Mutate)
-    }
-}
-
-/// The narrow enrolment credential Prepare installs for direct terminals
-/// (§8.8). It authorises session enrolment only, never an effect, and is bound
-/// to the environment generation and container identity that made it.
-pub(crate) struct WorkspaceEnrolmentCredential {
-    pub(crate) environment_generation: String,
-    pub(crate) container_id: String,
-    secret: String,
-}
-
-impl WorkspaceEnrolmentCredential {
-    pub(crate) fn new(
-        environment_generation: impl Into<String>,
-        container_id: impl Into<String>,
-        secret: impl Into<String>,
-    ) -> Self {
-        Self {
-            environment_generation: environment_generation.into(),
-            container_id: container_id.into(),
-            secret: secret.into(),
-        }
-    }
-
-    /// The credential secret itself. It stays in trusted host memory: it is
-    /// handed to the session's grant book, never logged, serialized or copied
-    /// into a guest-visible field.
-    pub(crate) fn secret(&self) -> &str {
-        &self.secret
-    }
-
-    /// The bytes Prepare writes 0600 for the workspace user. Never logged.
-    pub(crate) fn file_body(&self) -> String {
-        format!(
-            "environment_generation={}\ncontainer_id={}\ncredential={}\n",
-            self.environment_generation, self.container_id, self.secret
-        )
-    }
-}
-
-impl fmt::Debug for WorkspaceEnrolmentCredential {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("WorkspaceEnrolmentCredential")
-            .field("environment_generation", &self.environment_generation)
-            .field("container_id", &self.container_id)
-            .field("credential", &"<redacted>")
-            .finish()
     }
 }
 

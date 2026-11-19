@@ -25,16 +25,6 @@ pub(in crate::runner) struct Payload {
     pub(in crate::runner) state_home: PathBuf,
     /// The TUI's terminal size, for workload terminals.
     pub(in crate::runner) terminal: Option<(u16, u16)>,
-    /// Dispatcher-owned selection evidence for a reserved workspace request.
-    #[serde(default)]
-    pub(in crate::runner) workspace_resolution: Option<WorkspaceResolution>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(in crate::runner) struct WorkspaceResolution {
-    pub(in crate::runner) invocation: Vec<u8>,
-    pub(in crate::runner) checkout: PathBuf,
-    pub(in crate::runner) identity: effigy_kernel::fs::DirectoryIdentity,
 }
 
 /// A supervisor event for its owning client. Delivery is best effort; every
@@ -46,6 +36,15 @@ pub(in crate::runner) enum EngineEvent {
     Started { process: String, sequence: i64 },
     /// A workload's process ended with `code`.
     Exited { process: String, code: i32 },
+    /// Live presentation styles for bytes this run's log already holds. A
+    /// reader that attached later has no event and renders the same bytes
+    /// plain, so colour never needs a persisted sidecar.
+    Styled {
+        process: String,
+        chunk: effigy_core::terminal_text::StyledChunk,
+    },
+    /// All live styles through this committed offset were offered first.
+    OutputReady { process: String, through: u64 },
     /// Wake readers after a complete wait snapshot was journalled. A lost
     /// event does not change what the polling front ends observe.
     WaitsChanged,

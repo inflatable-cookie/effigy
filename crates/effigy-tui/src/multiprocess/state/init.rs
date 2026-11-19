@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::time::Instant;
 
 use vt100::Parser as VtParser;
@@ -10,7 +9,6 @@ use super::{ProcessStartupState, SessionState};
 
 impl SessionState {
     pub fn new(
-        repo_root: PathBuf,
         process_names: Vec<String>,
         vt_rows: u16,
         vt_cols: u16,
@@ -30,7 +28,6 @@ impl SessionState {
         let vt_saw_chunk = map_for_processes(&process_names, || false);
 
         Self {
-            repo_root,
             process_names,
             logs,
             scroll_offsets,

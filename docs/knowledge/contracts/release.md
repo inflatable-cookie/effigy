@@ -274,7 +274,7 @@ Effigy or define another install channel.
 - Hosted CI is not a task gate (`AGENTS.md`); it is a release gate here, and the
   `ci` gate checks the exact candidate SHA.
 - A supported release also carries the qualification its own contracts require:
-  [contract 052](052-runtime-kernel-contract.md) §8.11 keeps the workspace-client
+  [contract 052](052-runtime-kernel-contract.md) §8 keeps the guest
   identity, pinned TLS and session authority boundary, and Q-017 keeps the
   Colima, Docker Desktop and Linux Docker backend release gate. Those gates
   remain until their named native proofs pass; safe refusal and synthetic proof

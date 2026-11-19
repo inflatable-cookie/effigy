@@ -88,14 +88,8 @@ publish = false
 workspace = true
 
 [features]
-# Uninstalled private workspace qualification candidate; native activation needs review.
-workspace-private-qualification = ["effigy-kernel/workspace-private-qualification", "effigy-containers/workspace-private-qualification"]
 # Engine fault points for run-control proofs; never in a product build.
 fault-injection = ["effigy-kernel/fault-injection"]
-# The disposable activation the workspace-serving process-lifetime proof runs
-# in a detached process. Enables the kernel's fixture-only active-publication
-# transaction; absent from every product build.
-workspace-serving-fixture = ["effigy-kernel/test-support"]
 # Disposable HostCli source fixture; absent from ordinary binaries.
 signal-qualification-fixture = ["effigy-kernel/qualification-observer"]
 
@@ -181,7 +175,3 @@ nix = { version = "0.31", default-features = false, features = ["term"] }
 # beside a continuous writer answers at once (effigy#339).
 rusqlite = { version = "0.41.1", features = ["bundled"] }
 
-[[bin]]
-name = "workspace-qualification-fixture"
-path = "tests/support/workspace-qualification.rs"
-required-features = ["workspace-private-qualification"]

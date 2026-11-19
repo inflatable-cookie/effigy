@@ -133,26 +133,33 @@ fn assert_recoverable_settlement_retains_core(lost_response: bool) {
             crate::fault::Fault::Enospc,
         );
     }
-    let result = run.settle_workspace_recoverable(&cleanup, &mut Strict);
+    let result = run.settle_recoverable(&cleanup, &mut Strict);
     let fired = crate::fault::fired();
     crate::fault::arm(None);
     assert_eq!(
         fired, lost_response,
         "the selected response fault must fire"
     );
-    let (_, owner) = result.expect_err("unknown receipt must retain the owner");
-    assert!(
-        weak.upgrade().is_some(),
-        "the same process core stays with the returned Run"
-    );
-    drop(owner);
+    if lost_response {
+        let (_, owner) = result.expect_err("lost response must retain the owner");
+        assert!(
+            weak.upgrade().is_some(),
+            "the returned Run retains its process core"
+        );
+        drop(owner);
+    } else {
+        let outcome = result.expect("unknown receipt yields an incomplete outcome");
+        assert_eq!(
+            outcome.cleanup(),
+            crate::outcome::CleanupOutcome::Incomplete
+        );
+    }
     assert!(weak.upgrade().is_none());
 }
 
 #[test]
 fn recoverable_settlement_retains_the_exact_core() {
-    // The unknown-receipt and lost-response faults differ only in the armed
-    // fault; both must retain the same process core with the returned run.
+    // An unknown receipt remains incomplete; a lost response retains the owner.
     for lost_response in [false, true] {
         assert_recoverable_settlement_retains_core(lost_response);
     }
@@ -1487,7 +1494,6 @@ fn legacy_cutover_waits_for_the_existing_host_owner_gate() {
     .is_err());
     assert_eq!(std::fs::read(&path).unwrap(), raw);
     assert!(MergedLog::identity(&path).is_err());
-    assert!(!home.path().join(".legacy-host-logs").exists());
     prior
         .finish(crate::outcome::WorkloadOutcome::Succeeded)
         .unwrap();
@@ -1501,9 +1507,17 @@ fn legacy_cutover_waits_for_the_existing_host_owner_gate() {
         &mut Strict,
     )
     .unwrap();
+    // The old writer's bytes are never converted automatically: the operator
+    // moves them aside once, and only then does this path admit a writer.
+    assert!(MergedLog::prepare(&mut replacement, &path).is_err());
+    std::fs::rename(&path, home.path().join("app.log.legacy")).unwrap();
     let _log = MergedLog::prepare(&mut replacement, &path).unwrap();
     assert!(std::fs::read(&path).unwrap().is_empty());
     assert!(MergedLog::identity(&path).is_ok());
+    assert_eq!(
+        std::fs::read(home.path().join("app.log.legacy")).unwrap(),
+        raw
+    );
     replacement
         .finish(crate::outcome::WorkloadOutcome::Succeeded)
         .unwrap();
@@ -4054,18 +4068,6 @@ fn managed_standard_capture_keeps_merged_order_styles_and_complete_utf8_reads() 
         seen.extend(read.bytes);
     }
     assert_eq!(seen, expected);
-    let spans = crate::custody::read_styles(&capture.root, id(), 1, 0, expected);
-    assert_eq!(
-        spans
-            .iter()
-            .map(|span| span.text.as_str())
-            .collect::<String>()
-            .as_bytes(),
-        expected
-    );
-    assert!(spans
-        .iter()
-        .any(|span| span.text.contains("ready") && span.style != Default::default()));
 }
 
 /// One drain commits at most one bounded window per stream, not one append

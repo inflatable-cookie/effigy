@@ -35,12 +35,6 @@ impl Destination {
             }
         }
     }
-    fn publish_styles(&mut self, chunk: StyledChunk) -> io::Result<()> {
-        match self {
-            Self::Host(log) => log.publish_styles(chunk),
-            Self::Run(log) => log.publish_styles(chunk),
-        }
-    }
     fn mark_failed(&self) {
         if let Self::Run(log) = self {
             log.mark_truncated();
@@ -130,29 +124,6 @@ impl CanonicalOutput {
     }
     /// The workspace's separate streams are projections of the same merged
     /// sanitize/redact pass, redacted again after removing the other stream.
-    pub(crate) fn for_workspace(
-        log: super::capture::Log,
-        mut projections: [super::capture::Log; 2],
-        secrets: Vec<Vec<u8>>,
-        limits: &crate::ctx::Limits,
-    ) -> io::Result<Self> {
-        for projection in &mut projections {
-            if let Err(error) = projection.enable_plain(true) {
-                for log in &projections {
-                    log.mark_truncated();
-                }
-                return Err(error);
-            }
-        }
-        let output = Self::for_run(log, secrets.clone(), limits)?;
-        {
-            let mut writer = lock(&output.0);
-            writer.pipeline = OutputPipeline::for_capture(secrets, true, true);
-            writer.projections = Some(projections);
-            writer.projection_line_max = limits.line_max;
-        }
-        Ok(output)
-    }
     fn with_destination(
         log: Destination,
         secrets: Vec<Vec<u8>>,
@@ -318,8 +289,10 @@ impl CanonicalOutput {
     pub fn take_styled_output(&self) -> StyledOutput {
         let mut writer = lock(&self.0);
         writer.styled_bytes = 0;
+        let through = writer.log.committed_offset();
         StyledOutput {
             chunks: writer.styled.drain(..).collect(),
+            through,
             truncated: std::mem::take(&mut writer.truncated)
                 || writer.failed
                 || writer.incomplete(),
@@ -408,9 +381,6 @@ impl Writer {
             let spans = spans(&clean);
             self.styled_bytes = self.styled_bytes.saturating_add(bytes.len());
             let chunk = StyledChunk { offset, spans };
-            if self.log.publish_styles(chunk.clone()).is_err() {
-                self.truncated = true;
-            }
             self.styled.push_back(chunk);
             while self.styled_bytes > self.queue_max {
                 let Some(old) = self.styled.pop_front() else {
@@ -466,7 +436,7 @@ mod tests {
     use super::*;
     use effigy_core::terminal_text::Style;
     #[test]
-    fn generations_messages_and_tap_share_one_redaction_and_durability_boundary() {
+    fn generations_messages_and_live_styles_share_one_redaction_and_durability_boundary() {
         let home = effigy_test_support::short_tempdir("ho-").unwrap();
         let path = home.path().join("app.log");
         effigy_test_support::write_private(&path, b"\x1b[31mlegacy-secret\n").unwrap();
@@ -493,17 +463,24 @@ mod tests {
                 "deliberately inverted canonical safety assertion"
             );
         }
-        let styles = MergedLog::styles(&path, &read);
+        // Live styles stay in memory only; the committed log is plain text.
+        let live = output.take_styled_output();
+        assert_eq!(live.through, read.bytes.len() as u64);
         assert_eq!(
-            styles
+            live.chunks
                 .iter()
+                .flat_map(|chunk| chunk.spans.iter())
                 .map(|span| span.text.as_str())
                 .collect::<String>()
                 .as_bytes(),
-            read.bytes
+            b"safe\n[REDACTED]\nowner [REDACTED]\n"
         );
-        assert_ne!(styles[0].style, Style::default());
-        for span in &styles {
+        assert!(live
+            .chunks
+            .iter()
+            .flat_map(|chunk| chunk.spans.iter())
+            .any(|span| span.text.contains("safe") && span.style != Style::default()));
+        for span in live.chunks.iter().flat_map(|chunk| chunk.spans.iter()) {
             if span.text.contains("REDACTED") {
                 assert_eq!(span.style, Style::default());
             }

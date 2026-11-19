@@ -260,23 +260,6 @@ def scenario_base(temp, label, manifest=MANIFEST):
     return base, root, env
 
 
-def adjacent_style_published(base):
-    """The writer's optional style tap has published the controlled line.
-
-    Plain append precedes style publication by contract. The colour proof must
-    not mistake that permitted plain fallback for a lost published style.
-    """
-    for path in base.rglob("*.styled-tap"):
-        try:
-            window = json.loads(path.read_text())
-        except (OSError, ValueError):
-            continue
-        for chunk in window.get("chunks", []):
-            if any("Vite error" in span["text"] for span in chunk["spans"]):
-                return True
-    return False
-
-
 def pane_scenario(temp, label, cols, rows, evidence_dir):
     """One real `effigy dev` TUI whose Services tab starts a scrubbed Effigy."""
     base, root, env = scenario_base(temp, label)
@@ -284,7 +267,6 @@ def pane_scenario(temp, label, cols, rows, evidence_dir):
     raw = bytearray()
     services = b""
     adjacent = b""
-    paused = False
     colour_ready = False
     try:
         deadline = time.monotonic() + 180
@@ -294,20 +276,11 @@ def pane_scenario(temp, label, cols, rows, evidence_dir):
             services = pane_log(logs, b"[fixture] services-tab")
             adjacent = pane_log(logs, b"[fixture] adjacent-tab")
             if not colour_ready and b"adjacent-before" in adjacent:
-                # Suspend only our own reader before releasing the producer.
-                # Its independently supervised writer can publish the style tap
-                # before this reader consumes the corresponding canonical bytes.
-                client.send_signal(signal.SIGSTOP)
-                paused = True
-                _, status = os.waitpid(client.pid, os.WUNTRACED)
-                assert os.WIFSTOPPED(status), "owned TUI reader did not stop"
+                # Colour is live: the pane receives typed styles while this
+                # client watches the producer, with no persisted sidecar
+                # between the writer and the pane.
                 (root / "release-adjacent").touch()
-                while time.monotonic() < deadline and not adjacent_style_published(base):
-                    time.sleep(0.01)
-                assert adjacent_style_published(base), "adjacent style was not published"
                 colour_ready = True
-                client.send_signal(signal.SIGCONT)
-                paused = False
             if b"[error]" in services and b"adjacent-after" in adjacent:
                 break
             if client.poll() is not None:
@@ -327,8 +300,6 @@ def pane_scenario(temp, label, cols, rows, evidence_dir):
         while time.monotonic() < settle and not adjacent_colour(raw)[0]:
             drain(master, raw)
     finally:
-        if paused:
-            client.send_signal(signal.SIGCONT)
         exited, signalled, escalated = stop(client, master, raw)
         os.close(master)
     summary = measure(services, adjacent, bytes(raw), rows, cols)

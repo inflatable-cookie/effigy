@@ -7,9 +7,8 @@ use ratatui::Frame;
 use super::super::OptionsAction;
 use super::header::panel_block;
 
-const OPTIONS_ACTIONS: [OptionsAction; 6] = [
+const OPTIONS_ACTIONS: [OptionsAction; 5] = [
     OptionsAction::ToggleFollow,
-    OptionsAction::ExportTranscript,
     OptionsAction::Restart,
     OptionsAction::Stop,
     OptionsAction::Cancel,
@@ -36,7 +35,7 @@ pub(super) fn render_help_overlay(frame: &mut Frame<'_>, area: Rect) {
         Line::from("pgup/pgdn        scroll output by page"),
         Line::from("home/end         jump to top/bottom (end re-enables follow)"),
         Line::from("h               toggle this help"),
-        Line::from("o               open per-process options menu (export/restart/stop)"),
+        Line::from("o               open per-process options menu (restart/stop)"),
         Line::from("ctrl+c          quit and shut down managed processes"),
         Line::from(""),
         Line::from(vec![Span::styled(
@@ -62,7 +61,6 @@ fn options_action_label(action: OptionsAction, follow_enabled: bool) -> &'static
                 "Enable follow (f)"
             }
         }
-        OptionsAction::ExportTranscript => "Export transcript (y)",
         OptionsAction::Restart => "Restart process (r)",
         OptionsAction::Stop => "Stop process (s)",
         OptionsAction::Cancel => "Cancel (o)",

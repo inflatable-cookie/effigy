@@ -83,14 +83,7 @@ pub(in crate::test) fn run_builtin_test_targets_tui(
             before_shutdown: &none,
             after_shutdown: &none,
         };
-        run_multiprocess_tui_with_source(
-            ports.current_working_dir()?,
-            source,
-            tabs,
-            tab_order,
-            options,
-            Some(&control),
-        )
+        run_multiprocess_tui_with_source(source, tabs, tab_order, options, Some(&control))
     } else {
         run_multiprocess_tui(ports.current_working_dir()?, specs, tab_order, options)
     }

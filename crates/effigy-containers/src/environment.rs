@@ -16,12 +16,6 @@ mod remote;
 #[cfg(test)]
 mod tests;
 mod view;
-mod workspace_activation;
-pub use workspace_activation::{
-    CleanupParkedWorkspaceActivation, GuardedAbortCustody, ParkedAbortCustody,
-    ParkedWorkspaceActivation, WorkspaceActivation, WorkspaceBegin, WorkspaceBeginFailure,
-    WorkspaceFinishCustody,
-};
 
 pub use backend::{
     effective as effective_backend, parse_inspect, project_resources, select as select_backend,

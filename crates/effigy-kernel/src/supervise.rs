@@ -44,10 +44,6 @@ pub mod park;
 
 /// Qualification executables call this at process entry. It grants no spawn
 /// authority and is absent from ordinary product builds.
-#[cfg(feature = "workspace-private-qualification")]
-pub fn initialize_private_qualification_image() -> io::Result<()> {
-    image_identity::initialize()
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Placement {
@@ -137,50 +133,6 @@ pub(crate) struct SentinelLease {
     writer: Option<ChildStdin>,
 }
 
-/// A workspace sentinel whose startup was not qualified. It has no operation
-/// that can register effects or turn it into a lease after an error.
-#[allow(dead_code)]
-pub(crate) struct PartialSentinel {
-    child: Child,
-    writer: Option<ChildStdin>,
-    ready: Option<std::process::ChildStdout>,
-    log: std::fs::File,
-    configuration_started: bool,
-}
-impl PartialSentinel {
-    /// Close the exact child's owner pipe and observe its exit. This receipt
-    /// does not establish that any environment effects have settled.
-    pub(crate) fn close_and_reap(
-        &mut self,
-        cleanup: &CleanupContext,
-    ) -> Result<std::process::ExitStatus, RunError> {
-        if self.configuration_started {
-            return Err(RunError::unavailable(
-                "workspace sentinel configuration remains unsettled",
-            ));
-        }
-        cleanup.operation().check("partial sentinel close")?;
-        self.writer.take();
-        self.child.stdin.take();
-        crate::fault_point!(WorkspaceSentinelCloseWait)?;
-        loop {
-            cleanup.operation().check("partial sentinel reap")?;
-            if let Some(status) = self.child.try_wait()? {
-                return Ok(status);
-            }
-            std::thread::sleep(Duration::from_millis(2));
-        }
-    }
-}
-#[cfg(all(test, feature = "fault-injection"))]
-impl PartialSentinel {
-    pub(crate) fn child_id(&self) -> u32 {
-        self.child.id()
-    }
-    pub(crate) fn input_open(&self) -> bool {
-        self.writer.is_some() || self.child.stdin.is_some()
-    }
-}
 impl SentinelLease {
     /// Read-only evidence that this exact retained lease still has its owner
     /// pipe and the recorded process incarnation. This is not authority to
@@ -498,7 +450,6 @@ fn sentinel_attempt(
         cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
         env: std::env::vars_os().collect(),
         handoff: None,
-        admission: None,
     });
     let mut child = spawn_helper(executable, SENTINEL, &log, inherited.as_ref())?;
     // The fault driver waits for every helper, registered or not (§12.1).
@@ -548,104 +499,6 @@ fn sentinel_attempt(
     })
 }
 
-/// Opt-in workspace startup retains the exact child from spawn onwards.
-/// A partial child is cleanup-only; its existence is not a birth receipt.
-#[allow(dead_code)]
-pub(crate) fn spawn_workspace_sentinel(
-    run: &Run<'_>,
-    root: &StateRoot,
-    plan: &LifecyclePlan,
-    next: &Invocation,
-    cx: &EffectContext,
-) -> Result<SentinelLease, (RunError, Option<Box<PartialSentinel>>)> {
-    let prepare = || -> Result<_, RunError> {
-        if plan.placement == Placement::Guest {
-            return Err(RunError::refused("workspace sentinel needs host authority"));
-        }
-        let home = root
-            .path()
-            .parent()
-            .and_then(Path::parent)
-            .ok_or_else(|| RunError::unavailable("invalid state root"))?;
-        let config = SentinelConfig {
-            protocol: HELPER_PROTOCOL,
-            home: home.into(),
-            machine: root.is_machine(),
-            machine_gates: root.machine_gate_address(),
-            owner: run.fence().resource.clone(),
-            run: run.id(),
-            next: next.argv().iter().map(|a| a.as_bytes().to_vec()).collect(),
-            executable: plan.executable.clone(),
-        };
-        let log = helper_log(root)?;
-        let inherited = (plan.placement == Placement::Detached).then(|| EngineLaunch {
-            payload: Vec::new(),
-            cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
-            env: std::env::vars_os().collect(),
-            handoff: None,
-            admission: None,
-        });
-        let child = spawn_helper(&plan.executable, SENTINEL, &log, inherited.as_ref())?;
-        Ok((
-            config,
-            PartialSentinel {
-                child,
-                writer: None,
-                ready: None,
-                log,
-                configuration_started: false,
-            },
-        ))
-    };
-    let (config, mut partial) = prepare().map_err(|error| (error, None))?;
-    #[cfg(all(test, feature = "fault-injection"))]
-    crate::fault::note_helper(partial.child.id());
-    let result = (|| -> Result<ProcessIdentity, RunError> {
-        crate::fault_point!(WorkspaceSentinelAfterSpawn)?;
-        partial.writer = partial.child.stdin.take();
-        partial.ready = partial.child.stdout.take();
-        // A partial write is indistinguishable from a complete frame consumed
-        // by the child. Never close it as a known pre-configuration child.
-        partial.configuration_started = true;
-        let writer = partial
-            .writer
-            .as_mut()
-            .ok_or_else(|| RunError::unavailable("sentinel pipe missing"))?;
-        let ready = partial
-            .ready
-            .as_mut()
-            .ok_or_else(|| RunError::unavailable("sentinel ready pipe missing"))?;
-        nonblocking(writer.as_raw_fd())?;
-        let op = cx.child(Duration::from_secs(30));
-        write_workspace_frame(writer, &config, op.operation())?;
-        crate::fault_point!(WorkspaceSentinelAfterConfig)?;
-        nonblocking(ready.as_raw_fd())?;
-        let mut ack = [0u8];
-        read_exact_with(ready, &mut ack, op.operation())?;
-        if ack != [1] {
-            return Err(RunError::unavailable(
-                "sentinel acknowledgement unavailable",
-            ));
-        }
-        crate::fault_point!(WorkspaceSentinelAfterAck)?;
-        op.operation().check("workspace sentinel acknowledgement")?;
-        let identity = ident::process_identity(partial.child.id())
-            .verified()
-            .cloned()
-            .ok_or_else(|| RunError::unavailable("sentinel identity unavailable"))?;
-        op.operation().check("workspace sentinel identity")?;
-        Ok(identity)
-    })();
-    match result {
-        Ok(identity) => Ok(SentinelLease {
-            identity,
-            executable: plan.executable.clone(),
-            child: partial.child,
-            writer: partial.writer,
-        }),
-        Err(error) => Err((error, Some(Box::new(partial)))),
-    }
-}
 fn context(cancel: CancelToken, budget: Duration) -> OperationContext {
     OperationContext::new(
         Deadline::At(Instant::now() + budget),
@@ -675,26 +528,6 @@ fn write_frame_with(
     frame::write(writer, &frame, op).map_err(io::Error::other)
 }
 
-fn write_workspace_frame(
-    writer: &mut impl Write,
-    value: &impl Serialize,
-    op: &OperationContext,
-) -> Result<(), RunError> {
-    let frame = frame::encode(value).map_err(|error| match error {
-        frame::FrameError::Encode(error) => RunError::from(error),
-        other => RunError::broken(format!("workspace sentinel {other}")),
-    })?;
-    #[cfg(all(test, feature = "fault-injection"))]
-    {
-        let codec = |error: frame::FrameError| io::Error::other(error.to_string());
-        frame::write(writer, &frame[..1], op).map_err(codec)?;
-        crate::fault_point!(WorkspaceSentinelPartialConfig)?;
-        frame::write(writer, &frame[1..], op).map_err(codec)?;
-    }
-    #[cfg(not(all(test, feature = "fault-injection")))]
-    frame::write(writer, &frame, op).map_err(|error| io::Error::other(error.to_string()))?;
-    Ok(())
-}
 /// A bounded write to a nonblocking helper pipe.
 fn write_all(writer: &mut impl Write, frame: &[u8]) -> io::Result<()> {
     let op = context(CancelToken::default(), Duration::from_secs(30));
@@ -777,8 +610,8 @@ pub fn engine_entry(
         "__kernel-anchor" => anchor::entry(),
         SENTINEL => sentinel(adapter, validate_next),
         SUPERVISOR => read_supervisor_config().and_then(|config| match config.work {
-            Work::Engine { payload, admission } => {
-                EngineSession::open(payload, admission).and_then(|session| engine(session, router))
+            Work::Engine { payload } => {
+                EngineSession::open(payload).and_then(|session| engine(session, router))
             }
             work => supervisor(
                 &mut router,
@@ -1027,9 +860,6 @@ enum Work {
     },
     Engine {
         payload: Vec<u8>,
-        /// The engine's own admission, if its dispatcher reserved one.
-        #[serde(default)]
-        admission: Option<crate::run::AdmissionTicket>,
     },
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1266,16 +1096,10 @@ pub struct EngineLaunch {
     /// It is the only route a session secret takes to an engine supervisor: it
     /// is never in this environment, argv, or any later child's spawn spec.
     pub handoff: Option<std::sync::Arc<std::os::fd::OwnedFd>>,
-    /// A keyed workspace request's reservation, so an engine that admits its
-    /// own run in another process can bind it (052 §8.11). It travels in the
-    /// supervisor's private config frame and reaches the engine as
-    /// [`EngineSession::admission`]; admission re-checks the durable
-    /// reservation, so the ticket alone binds nothing.
-    pub admission: Option<crate::run::AdmissionTicket>,
 }
 impl std::fmt::Debug for EngineLaunch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("EngineLaunch { payload/cwd/env/handoff/admission: [REDACTED] }")
+        f.write_str("EngineLaunch { payload/cwd/env/handoff: [REDACTED] }")
     }
 }
 /// One detached engine supervisor per run, in its own session. The returned
@@ -1302,7 +1126,6 @@ pub fn start_engine_at(
 ) -> Result<SupervisorClient, RunError> {
     let work = Work::Engine {
         payload: launch_spec.payload.clone(),
-        admission: launch_spec.admission.clone(),
     };
     // Placeholder identity until the engine's `Admitted` names its run.
     let pending = (
@@ -1505,13 +1328,6 @@ impl OwningChannel {
         // could miss that detach and mistake it for owner death.
         let (eof, requests) =
             observe_client_requests(&mut self.input, &mut self.buffer, || run.requests())?;
-        match run.workspace_owner_release()? {
-            Some(crate::run::Release::Detach) => self.detached = true,
-            Some(crate::run::Release::Eof) => {
-                control.stop.get_or_insert(StopCause::OwnerLost);
-            }
-            None => {}
-        }
         for request in requests {
             match request.action {
                 RequestAction::Detach => self.detached = true,
@@ -1561,12 +1377,10 @@ impl OwningChannel {
 /// `Run::begin`, then calls `admitted` before its first workload effect.
 pub struct EngineSession {
     payload: Vec<u8>,
-    admission: Option<crate::run::AdmissionTicket>,
     events: std::os::fd::OwnedFd,
     channel: OwningChannel,
     output: Option<OutputCapture>,
     output_disabled: bool,
-    attachments: Vec<(run::Attachment, OwnerWatch)>,
 }
 impl std::fmt::Debug for EngineSession {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1578,17 +1392,13 @@ impl std::fmt::Debug for EngineSession {
 impl EngineSession {
     /// Moves the owning pipe and the event pipe off descriptors 0 and 1, so
     /// nothing the engine runs can read a client frame or write an event.
-    fn open(
-        payload: Vec<u8>,
-        admission: Option<crate::run::AdmissionTicket>,
-    ) -> Result<Self, RunError> {
+    fn open(payload: Vec<u8>) -> Result<Self, RunError> {
         let input = private_dup(libc::STDIN_FILENO)?;
         let events = private_dup(libc::STDOUT_FILENO)?;
         null_onto(libc::STDIN_FILENO)?;
         null_onto(libc::STDOUT_FILENO)?;
         Ok(Self {
             payload,
-            admission,
             events,
             channel: OwningChannel {
                 input: std::fs::File::from(input),
@@ -1598,17 +1408,10 @@ impl EngineSession {
             },
             output: None,
             output_disabled: false,
-            attachments: Vec::new(),
         })
     }
     pub fn payload(&self) -> &[u8] {
         &self.payload
-    }
-    /// The workspace request this engine must admit under, when its dispatcher
-    /// reserved one: pass it to `Run::begin_admitted` (052 §8.11). `None` is an
-    /// ordinary engine admission with no keyed request.
-    pub fn admission(&self) -> Option<&crate::run::AdmissionTicket> {
-        self.admission.as_ref()
     }
     fn emit(&self, event: &Event) {
         emit_to(self.events.as_raw_fd(), event);
@@ -1678,49 +1481,7 @@ impl EngineSession {
         run: &mut Run<'_>,
         routed: &[crate::signal::RoutedSignal],
     ) -> Result<Control, RunError> {
-        // Observe client loss independently of stream reads and backpressure.
-        let mut index = 0;
-        while index < self.attachments.len() {
-            let (attachment, watch) = &mut self.attachments[index];
-            if !run.workspace_attachment_held(attachment)? {
-                self.attachments.remove(index);
-            } else if watch.lost() {
-                run.release_workspace_attachment(attachment)?;
-                self.attachments.remove(index);
-            } else {
-                index += 1;
-            }
-        }
         self.channel.turn(run, routed)
-    }
-    /// Watch an authenticated client's liveness pipe in the existing supervisor.
-    /// EOF releases this attachment on the next control turn, even when its
-    /// terminal process is killed. Only owner loss requests stop. The caller
-    /// must retain the sole write end in that client, independently of data flow.
-    /// Registration borrows the handle, so a failed watch leaves it available
-    /// for explicit release or retry.
-    pub fn watch_attachment(
-        &mut self,
-        run: &Run<'_>,
-        attachment: &run::Attachment,
-        input: &std::fs::File,
-    ) -> Result<(), RunError> {
-        if !run.workspace_attachment_attached(attachment)? {
-            return Err(RunError::refused("this attachment was released"));
-        }
-        if self.attachments.len() > run::SECONDARY_MAX
-            || self
-                .attachments
-                .iter()
-                .any(|(held, _)| held.id() == attachment.id())
-        {
-            return Err(RunError::refused(
-                "this supervisor already watches this attachment or is full",
-            ));
-        }
-        self.attachments
-            .push((attachment.lifetime_handle(), OwnerWatch::start(input)?));
-        Ok(())
     }
     /// Whether the owning client detached: its death no longer stops the run.
     pub fn detached(&self) -> bool {
@@ -1746,7 +1507,7 @@ impl EngineSession {
         if self.output.is_some() {
             return Ok(crate::custody::CaptureState::Complete);
         }
-        match OutputCapture::start(run, secrets, self.admission.is_some()) {
+        match OutputCapture::start(run, secrets) {
             Ok(output) => {
                 self.output = Some(output);
                 Ok(crate::custody::CaptureState::Complete)
@@ -1848,36 +1609,13 @@ struct OutputCapture {
 }
 /// The output log's journal position: no effect has sequence 0.
 pub const OUTPUT_SEQUENCE: i64 = 0;
-// Workspace sequence 0 contains its separate reader-safe projections. Keep
-// their canonical merged provenance outside the positive process sequences.
-const WORKSPACE_MERGED_SEQUENCE: i64 = -1;
 impl OutputCapture {
-    fn start(run: &Run<'_>, secrets: Vec<Vec<u8>>, workspace: bool) -> io::Result<Self> {
+    fn start(run: &Run<'_>, secrets: Vec<Vec<u8>>) -> io::Result<Self> {
         let limits = run.limits();
         let log = run
-            .capture_log(
-                if workspace {
-                    WORKSPACE_MERGED_SEQUENCE
-                } else {
-                    OUTPUT_SEQUENCE
-                },
-                crate::custody::Stream::Stdout,
-                &limits,
-            )?
+            .capture_log(OUTPUT_SEQUENCE, crate::custody::Stream::Stdout, &limits)?
             .ok_or_else(|| io::Error::other("managed supervisor output needs a durable log"))?;
-        let output = if workspace {
-            let projection = |stream| {
-                run.capture_log(OUTPUT_SEQUENCE, stream, &limits)?
-                    .ok_or_else(|| io::Error::other("workspace output needs durable stream logs"))
-            };
-            let logs = [
-                projection(crate::custody::Stream::Stdout)?,
-                projection(crate::custody::Stream::Stderr)?,
-            ];
-            crate::custody::CanonicalOutput::for_workspace(log, logs, secrets, &limits)?
-        } else {
-            crate::custody::CanonicalOutput::for_run(log, secrets, &limits)?
-        };
+        let output = crate::custody::CanonicalOutput::for_run(log, secrets, &limits)?;
         if let crate::custody::CaptureState::Truncated(reason) = output.capture_state() {
             return Err(io::Error::other(reason));
         }

@@ -64,7 +64,7 @@ fn fake_hybrid_progress_reaches_the_services_frame_during_startup() {
     use effigy_process::{ProcessEvent, ProcessEventKind};
 
     let names = ["front", "admin", "api", "jobs", "services"].map(str::to_owned);
-    let mut state = SessionState::new(".".into(), names.to_vec(), 40, 140, 500);
+    let mut state = SessionState::new(names.to_vec(), 40, 140, 500);
     let mut diagnostics = RuntimeDiagnostics::from_env();
     let mut emit = |line: &str| {
         let event = ProcessEvent {

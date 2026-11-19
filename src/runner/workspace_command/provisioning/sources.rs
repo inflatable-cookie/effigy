@@ -91,7 +91,7 @@ pub(in crate::runner) fn host_user() -> String {
         .unwrap_or_else(|| "unknown".to_owned())
 }
 
-/// Read the engine's completed activation generation (§8.2, §8.11).
+/// Read the engine's completed activation generation (§8.2, §8).
 /// Even an activation with unchanged files advances this fence.
 pub(super) fn environment_generation(
     policy: &EffectiveContainerPolicy,

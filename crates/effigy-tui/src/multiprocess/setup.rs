@@ -67,7 +67,6 @@ pub(super) fn prepare_runtime_session(
         processes,
     ));
     let mut state = SessionState::new(
-        repo_root,
         process_names,
         VT_PARSER_ROWS,
         VT_PARSER_COLS,
@@ -92,7 +91,6 @@ pub(super) fn prepare_runtime_session(
 /// A session over processes another supervisor owns: the same state, with
 /// tabs from `tabs` instead of local specs.
 pub(super) fn prepare_source_session<'a>(
-    repo_root: PathBuf,
     supervisor: Box<dyn super::SessionProcesses + 'a>,
     tabs: Vec<super::SessionTab>,
     tab_order: Vec<String>,
@@ -101,7 +99,6 @@ pub(super) fn prepare_source_session<'a>(
     let default_tabs = tabs.iter().map(|tab| tab.name.clone()).collect();
     let process_names = select_process_tabs(default_tabs, tab_order);
     let mut state = SessionState::new(
-        repo_root,
         process_names,
         VT_PARSER_ROWS,
         VT_PARSER_COLS,

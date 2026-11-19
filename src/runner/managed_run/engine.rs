@@ -103,28 +103,6 @@ pub(in crate::runner) fn take_owner() -> Option<OwnerSession> {
         .take()
 }
 
-/// Reserved workspace engines may execute only the resolution carried by
-/// their owning dispatcher. Ordinary managed clients have no such fence.
-pub(in crate::runner) fn workspace_resolution(
-) -> Result<Option<super::wire::WorkspaceResolution>, RunnerError> {
-    let owner = OWNER
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    match owner.as_ref() {
-        Some(owner) if owner.session.admission().is_some() => owner
-            .payload
-            .workspace_resolution
-            .clone()
-            .map(Some)
-            .ok_or_else(|| {
-                RunnerError::task_invocation(
-                    "reserved workspace resolution evidence is unavailable",
-                )
-            }),
-        _ => Ok(None),
-    }
-}
-
 /// One workload as the run starts it.
 #[derive(Clone)]
 pub(in crate::runner) struct WorkloadSpec {
@@ -210,6 +188,7 @@ struct Workload {
     process: Option<OwnedProcess>,
     exit: Option<i32>,
     starts: u32,
+    watermark_sent: Option<Instant>,
     /// The redacted output tail of its last exit, for the failure report.
     tail: String,
 }
@@ -260,33 +239,6 @@ pub(in crate::runner) fn own<T>(
     } = owner;
     let ansi_front = matches!(payload.front, super::wire::Front::Tui);
     let _front = crate::runner::managed_color::enter(ansi_front);
-    let workspace_admission = match session.admission().cloned() {
-        Some(ticket) => {
-            let snapshot = payload
-                .workspace_resolution
-                .as_ref()
-                .and_then(|resolution| {
-                    effigy_kernel::id::ResolvedInvocation::decode(&resolution.invocation).ok()
-                })
-                .and_then(|resolved| {
-                    resolved
-                        .spec()
-                        .provenance
-                        .get("workspace:catalog-snapshot")
-                        .cloned()
-                });
-            let Some(snapshot) = snapshot else {
-                let message = "reserved workspace catalog snapshot is unavailable";
-                session.refused(Category::Refused, message);
-                return Err(RunnerError::task_invocation(message));
-            };
-            Some(task_engine::WorkspaceAdmission {
-                ticket,
-                catalog_snapshot: Some(snapshot),
-            })
-        }
-        None => None,
-    };
     // The commands were rendered against the generation selected at the start
     // of this invocation. The supervisor outlives its client, so it holds that
     // selection itself before it is admitted (contract 020).
@@ -303,7 +255,6 @@ pub(in crate::runner) fn own<T>(
         args: &plan.args,
         key: None,
         admission: plan.admission,
-        workspace_admission,
         cwd: Some(&plan.cwd),
     }) {
         Ok(run) => run,
@@ -349,11 +300,7 @@ pub(in crate::runner) fn own<T>(
         }
         wait_publisher.publish_entries(&states);
     };
-    let admitted = if session.admission().is_some() {
-        session.admitted_with_capture(&mut *run.run_mut()?, secrets.clone())
-    } else {
-        session.admitted(&mut *run.run_mut()?)
-    };
+    let admitted = session.admitted(&mut *run.run_mut()?);
     if let Err(error) = admitted {
         let message =
             format!("the managed run could not establish its control and capture ({error})");
@@ -593,6 +540,7 @@ impl Owner {
                 process: None,
                 exit: None,
                 starts: 0,
+                watermark_sent: None,
                 tail: String::new(),
             })
             .collect();
@@ -781,6 +729,7 @@ impl Owner {
         })?;
         let workload = &mut self.workloads[index];
         workload.starts += 1;
+        workload.watermark_sent = None;
         if let Some(group) = &workload.spec.exec_group {
             // K3: the remote group's intent precedes the exec client.
             let nonce = format!("{}:{}:{}", run.id(), workload.spec.name, workload.starts);
@@ -949,16 +898,46 @@ impl Owner {
     }
 
     fn poll(&mut self, run: &mut TaskRun, index: usize) -> Option<End> {
-        let workload = &mut self.workloads[index];
-        let process = workload.process.as_mut()?;
-        // Output is already in the run log; the in-memory queue is not read.
-        let _ = process.take_output();
-        let Observed::Verified(exit, _) = process.poll() else {
+        let (name, styled, exit, send_watermark) = {
+            let workload = &mut self.workloads[index];
+            let process = workload.process.as_mut()?;
+            // Output is already in the run log; only live styles travel in memory.
+            let _ = process.take_output();
+            let styled = process.take_styled_output();
+            let exit = process.poll();
+            let send_watermark = !styled.chunks.is_empty()
+                || styled.truncated
+                || workload
+                    .watermark_sent
+                    .is_none_or(|sent| sent.elapsed() >= Duration::from_secs(1));
+            if send_watermark {
+                workload.watermark_sent = Some(Instant::now());
+            }
+            (workload.spec.name.clone(), styled, exit, send_watermark)
+        };
+        // Deliver styles on every poll, before a final exit makes the client
+        // fold the remaining committed bytes into a plain read.
+        for chunk in styled.chunks {
+            self.event(&EngineEvent::Styled {
+                process: name.clone(),
+                chunk,
+            });
+        }
+        // Repeating the watermark also lets a follower recover from a lost
+        // event without waiting for another output burst or process exit.
+        if send_watermark {
+            self.event(&EngineEvent::OutputReady {
+                process: name.clone(),
+                through: styled.through,
+            });
+        }
+        let Observed::Verified(exit, _) = exit else {
             return None;
         };
+        let workload = &mut self.workloads[index];
+        let process = workload.process.as_mut()?;
         let _ = run.complete(process, exit);
         workload.tail = String::from_utf8_lossy(&process.tail()).into_owned();
-        let name = workload.spec.name.clone();
         let shutdown = workload.spec.shutdown_on_exit;
         workload.process = None;
         workload.exit = Some(exit.code);
@@ -1420,7 +1399,6 @@ mod tests {
             args: &[],
             key: None,
             admission: None,
-            workspace_admission: None,
             cwd: None,
         })
         .expect("managed journal run");
