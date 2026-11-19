@@ -17,7 +17,7 @@ MAX_DEADLINE = 1200
 
 VM_UUID = '433c9e5b-c7b9-469f-9633-24b4addcd3b5'
 DISK_UID = '{44b5d35e-b053-4aae-9140-266a00bbef9a}'
-PVM_HOME = '/Volumes/Stash/parallels/Ubuntu 26.04 ARM64.pvm'
+PVM_HOME = '/Volumes/Stash/vms/parallels/Ubuntu 26.04 ARM64.pvm'
 CONFIG_NAME = 'config.pvs'
 DISK_DIR = 'harddisk1.hdd'
 DESCRIPTOR_NAME = 'DiskDescriptor.xml'

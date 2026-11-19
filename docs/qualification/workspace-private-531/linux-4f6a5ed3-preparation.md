@@ -51,7 +51,7 @@ run scratch and copied to the retained evidence location in §8.
 | --- | --- | --- |
 | UUID / name | `433c9e5b-c7b9-469f-9633-24b4addcd3b5` / `Ubuntu 26.04 ARM64` | Matches planner |
 | State | `stopped` | Autostart off, Autostop `suspend`, Undo disks absent, Restore Image empty, Expiration disabled |
-| Home / config | `/Volumes/Stash/parallels/Ubuntu 26.04 ARM64.pvm/` / `config.pvs` | |
+| Home / config | `/Volumes/Stash/vms/parallels/Ubuntu 26.04 ARM64.pvm/` / `config.pvs` | |
 | Description | `Effigy Linux proof VM on Vault` | Stale label. Not backing proof. The bundle is on Stash |
 | config.pvs | sha256 `1d76ac9c57b29938de5ad2a3d641ca92165c11623c4e8b5487c5059f9dcf68b6`, dev `16777245`, inode `1989129`, uid `501`, mode `0744` | Matches planner |
 | .pvm directory | dev `16777245`, inode `1988635`, uid `501`, mode `0755` | Matches planner |

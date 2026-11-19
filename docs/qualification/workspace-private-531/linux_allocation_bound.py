@@ -781,7 +781,7 @@ def inspect_pre_rescue_originals(originals, records):
         raise Refusal('pre-rescue originals are incomplete')
     prlctl = '/Applications/Parallels Desktop.app/Contents/MacOS/prlctl'
     tool_sha = '2f61a1c60db2d51591fb8479a248a982a81658f136f1501a94733b7a81731c57'
-    home = '/Volumes/Stash/parallels/Ubuntu 26.04 ARM64.pvm'
+    home = '/Volumes/Stash/vms/parallels/Ubuntu 26.04 ARM64.pvm'
     host_argv = [prlctl, 'list', '--info', ACTIVATION_VM, '--json']
     boot_argv = [prlctl, 'exec', ACTIVATION_VM, '/bin/cat', '/proc/sys/kernel/random/boot_id']
     for name, argv in (('running_vm', host_argv), ('boot', boot_argv), ('stopped_vm', host_argv)):

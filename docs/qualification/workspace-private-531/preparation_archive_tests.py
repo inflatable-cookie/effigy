@@ -448,7 +448,7 @@ class PlacementChecks(unittest.TestCase):
     def test_absent_correlation_refuses_even_matching_guest(self):
         host = dict(vm_uuid='433c9e5b-c7b9-469f-9633-24b4addcd3b5',
                     disk_uid='44b5d35e-b053-4aae-9140-266a00bbef9a',
-                    package='/Volumes/Stash/parallels/Ubuntu 26.04 ARM64.pvm',
+                    package='/Volumes/Stash/vms/parallels/Ubuntu 26.04 ARM64.pvm',
                     disk='harddisk1.hdd', config_sha256='a' * 64)
         guest = dict(root_device='/dev/sda2', fstype='ext4',
                      root_uuid='d488be7b-682f-41ac-b79b-57bbf495a01d', parent='/dev/sda',
