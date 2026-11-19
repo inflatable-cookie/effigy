@@ -134,16 +134,10 @@ fn listener_handoff_close_oracle_refuses_an_unclosed_original() {
 fn listener_handoff_adopts_real_listening_loopback_sockets() {
     let (http_listener, http_addr) = listening_socket();
     let (https_listener, https_addr) = listening_socket();
-    let specs = [
-        spec("http", http_addr),
-        spec("https", https_addr),
-    ];
+    let specs = [spec("http", http_addr), spec("https", https_addr)];
     let activated = [
         ("http", vec![into_owned_fd(http_listener)]),
-        (
-            "https",
-            vec![into_owned_fd(https_listener)],
-        ),
+        ("https", vec![into_owned_fd(https_listener)]),
     ];
     let listeners = validate_and_adopt(&specs, &activated, &operator_identity()).expect("adoption");
     assert_eq!(listeners.http.local_addr().expect("addr"), http_addr);
@@ -187,12 +181,8 @@ fn listener_handoff_refuses_wrong_endpoint_and_closes_handed_descriptors() {
         "http",
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), actual_addr.port() + 1),
     )];
-    let error = validate_and_adopt(
-        &specs,
-        &[("http", vec![fd])],
-        &operator_identity(),
-    )
-    .expect_err("wrong endpoint must refuse");
+    let error = validate_and_adopt(&specs, &[("http", vec![fd])], &operator_identity())
+        .expect_err("wrong endpoint must refuse");
     let ListenerHandoffError::DescriptorRefused { socket, refusal } = &error else {
         panic!("expected a descriptor refusal, got {error:?}");
     };
@@ -218,12 +208,8 @@ fn listener_handoff_refuses_wrong_family() {
     let fd_witness = DescriptorCloseWitness::new(&listener);
     let fd = into_owned_fd(listener);
     let specs = [spec("http", loopback_ephemeral())];
-    let error = validate_and_adopt(
-        &specs,
-        &[("http", vec![fd])],
-        &operator_identity(),
-    )
-    .expect_err("wrong family must refuse");
+    let error = validate_and_adopt(&specs, &[("http", vec![fd])], &operator_identity())
+        .expect_err("wrong family must refuse");
     assert!(
         matches!(
             error,
@@ -247,12 +233,8 @@ fn listener_handoff_refuses_non_listening_stream_socket() {
     let fd = accepted.into_raw_fd();
     drop(stream);
     let specs = [spec("http", addr)];
-    let error = validate_and_adopt(
-        &specs,
-        &[("http", vec![fd])],
-        &operator_identity(),
-    )
-    .expect_err("non-listening socket must refuse");
+    let error = validate_and_adopt(&specs, &[("http", vec![fd])], &operator_identity())
+        .expect_err("non-listening socket must refuse");
     assert!(
         matches!(
             error,
@@ -274,12 +256,8 @@ fn listener_handoff_refuses_datagram_socket() {
     let fd_witness = DescriptorCloseWitness::new(&socket);
     let fd = socket.into_raw_fd();
     let specs = [spec("http", loopback_ephemeral())];
-    let error = validate_and_adopt(
-        &specs,
-        &[("http", vec![fd])],
-        &operator_identity(),
-    )
-    .expect_err("datagram socket must refuse");
+    let error = validate_and_adopt(&specs, &[("http", vec![fd])], &operator_identity())
+        .expect_err("datagram socket must refuse");
     assert!(
         matches!(
             error,
@@ -302,16 +280,10 @@ fn listener_handoff_refuses_duplicate_socket_object() {
     let duplicate_owned = fd_witness.original.try_clone().expect("duplicate socket");
     let duplicate_witness = DescriptorCloseWitness::new(&duplicate_owned);
     let duplicate = duplicate_owned.into_raw_fd();
-    let specs = [
-        spec("http", addr),
-        spec("https", addr),
-    ];
+    let specs = [spec("http", addr), spec("https", addr)];
     let error = validate_and_adopt(
         &specs,
-        &[
-            ("http", vec![fd]),
-            ("https", vec![duplicate]),
-        ],
+        &[("http", vec![fd]), ("https", vec![duplicate])],
         &operator_identity(),
     )
     .expect_err("duplicate socket object must refuse");
@@ -336,17 +308,10 @@ fn listener_handoff_refuses_missing_or_extra_socket_descriptors() {
     let fd_witness = DescriptorCloseWitness::new(&listener);
     let fd = into_owned_fd(listener);
     let extra = fd_witness.original.try_clone().expect("extra socket");
-    let specs = [
-        spec("http", addr),
-        spec("https", addr),
-    ];
+    let specs = [spec("http", addr), spec("https", addr)];
     // Missing https entry: zero descriptors for the name.
-    let error = validate_and_adopt(
-        &specs,
-        &[("http", vec![fd])],
-        &operator_identity(),
-    )
-    .expect_err("missing socket must refuse");
+    let error = validate_and_adopt(&specs, &[("http", vec![fd])], &operator_identity())
+        .expect_err("missing socket must refuse");
     assert!(
         matches!(
             error,
@@ -365,12 +330,8 @@ fn listener_handoff_refuses_missing_or_extra_socket_descriptors() {
     let extra_witness = DescriptorCloseWitness::new(&extra_owned);
     let extra = extra_owned.into_raw_fd();
     let specs = [spec("http", addr)];
-    let error = validate_and_adopt(
-        &specs,
-        &[("http", vec![fd, extra])],
-        &operator_identity(),
-    )
-    .expect_err("two descriptors for one name must refuse");
+    let error = validate_and_adopt(&specs, &[("http", vec![fd, extra])], &operator_identity())
+        .expect_err("two descriptors for one name must refuse");
     assert!(
         matches!(
             error,
@@ -407,12 +368,8 @@ fn listener_handoff_refuses_root_and_sudo_identities() {
         effective_uid: 501,
         sudo_environment_present: true,
     };
-    let error = validate_and_adopt(
-        &[spec("http", addr)],
-        &[("http", vec![fd])],
-        &sudo,
-    )
-    .expect_err("sudo environment must refuse");
+    let error = validate_and_adopt(&[spec("http", addr)], &[("http", vec![fd])], &sudo)
+        .expect_err("sudo environment must refuse");
     assert!(matches!(error, ListenerHandoffError::ElevatedInvocation));
     assert_descriptor_closed(&fd_witness);
 }

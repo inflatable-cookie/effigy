@@ -63,7 +63,11 @@ fn standard_probe_has_typed_checks() {
     let kinds: Vec<ProbeKind> = spec.checks.iter().map(|check| check.kind).collect();
     assert_eq!(
         kinds,
-        [ProbeKind::EffigyInstallation, ProbeKind::Bash, ProbeKind::Sh]
+        [
+            ProbeKind::EffigyInstallation,
+            ProbeKind::Bash,
+            ProbeKind::Sh
+        ]
     );
     let commands: Vec<Vec<String>> = spec
         .checks

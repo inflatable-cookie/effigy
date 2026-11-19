@@ -1236,51 +1236,51 @@ async fn run_gateway_with_cancel(
     let (publication_tx, publication_rx) = watch::channel(config.is_private());
     let mut server_tasks = tokio::task::JoinSet::new();
     let prebound_https_listener = {
-            let dns_config = runtime_config.dns.clone();
-            let proxy_config = runtime_config.proxy.clone();
-            let dns_table = Arc::clone(&shared_table);
-            let proxy_table = Arc::clone(&shared_table);
-            let dns_stats = Arc::clone(&stats);
-            let proxy_stats = Arc::clone(&stats);
-            let dns_cache = Arc::clone(&dns_cache);
-            let dns_shutdown = shutdown_rx.clone();
-            let mut publication_rx = publication_rx.clone();
-            let proxy_shutdown = shutdown_rx.clone();
-            server_tasks.spawn(async move {
-                (
-                    "DNS server",
-                    async {
-                        while !*publication_rx.borrow() {
-                            if publication_rx.changed().await.is_err() {
-                                return Ok(());
-                            }
+        let dns_config = runtime_config.dns.clone();
+        let proxy_config = runtime_config.proxy.clone();
+        let dns_table = Arc::clone(&shared_table);
+        let proxy_table = Arc::clone(&shared_table);
+        let dns_stats = Arc::clone(&stats);
+        let proxy_stats = Arc::clone(&stats);
+        let dns_cache = Arc::clone(&dns_cache);
+        let dns_shutdown = shutdown_rx.clone();
+        let mut publication_rx = publication_rx.clone();
+        let proxy_shutdown = shutdown_rx.clone();
+        server_tasks.spawn(async move {
+            (
+                "DNS server",
+                async {
+                    while !*publication_rx.borrow() {
+                        if publication_rx.changed().await.is_err() {
+                            return Ok(());
                         }
-                        run_dns_server_on(
-                            listeners.dns,
-                            dns_config,
-                            dns_table,
-                            dns_stats,
-                            dns_cache,
-                            dns_shutdown,
-                        )
-                        .await
                     }
-                    .await,
-                )
-            });
-            server_tasks.spawn(async move {
-                (
-                    "proxy server",
-                    run_proxy_server_on(
-                        listeners.proxy,
-                        proxy_config,
-                        proxy_table,
-                        proxy_stats,
-                        proxy_shutdown,
+                    run_dns_server_on(
+                        listeners.dns,
+                        dns_config,
+                        dns_table,
+                        dns_stats,
+                        dns_cache,
+                        dns_shutdown,
                     )
-                    .await,
+                    .await
+                }
+                .await,
+            )
+        });
+        server_tasks.spawn(async move {
+            (
+                "proxy server",
+                run_proxy_server_on(
+                    listeners.proxy,
+                    proxy_config,
+                    proxy_table,
+                    proxy_stats,
+                    proxy_shutdown,
                 )
-            });
+                .await,
+            )
+        });
         Some(listeners.https)
     };
 

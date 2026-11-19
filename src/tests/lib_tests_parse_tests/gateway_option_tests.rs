@@ -143,8 +143,11 @@ fn parse_internal_gateway_run_takes_no_listener_handoff_flag() {
         parse_command([String::from("__gateway-run")]).expect("parse should succeed"),
         Command::InternalGateway(InternalGatewayArgs { private: None }),
     );
-    parse_command([String::from("__gateway-run"), String::from("--listener-handoff")])
-        .expect_err("the retired direct handoff flag must be refused");
+    parse_command([
+        String::from("__gateway-run"),
+        String::from("--listener-handoff"),
+    ])
+    .expect_err("the retired direct handoff flag must be refused");
 }
 
 #[test]
