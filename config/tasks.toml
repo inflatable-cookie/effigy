@@ -2056,61 +2056,24 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 "check:workspace:reserved-input" = { visibility = "internal", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-containers -p effigy-kernel --all-targets", timeout_ms = 1800000 }] }
 "lint:workspace:reserved-input" = { visibility = "internal", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-containers -p effigy-kernel --all-targets -- -D warnings", timeout_ms = 1800000 }] }
 
-# Acow ordinary-Compose consumer qualification packet (task effigy#540): the
-# committed fake-backend refusal battery for
-# docs/qualification/acow-ordinary-compose-5f466914/ — no runtime call,
-# consumer stack, vault read, warm-up, build/install or native probe. The
-# packet's proof routes are the separately GO-armed launchers documented in
-# its packet-r1.md, never this selector.
-# Runs through the test-only harness in docs/qualification/consumer-packets-r1/
-# (effigy#757): the historical boundaries.py runs unchanged, with only its
-# fixture SCRATCH relocated under the run TMPDIR. The historical packet bytes
-# are not edited.
-"test:qualification:acow" = { durable = true, visibility = "internal", group = "Maintenance", description = "Run the Acow ordinary-Compose qualification packet's fake-backend refusal boundaries through the test-only TMPDIR scratch harness; no native effects.", run = [{ run = "python3 -I -B docs/qualification/consumer-packets-r1/acow_battery.py", timeout_ms = 300000 }] }
+# One proof per supported backend for the v0.15 re-qualification (D12). Each
+# route brings up a real workspace with ordinary Effigy commands, runs one
+# representative task in it, tears the stack down and requires the engine
+# inventory to return to its starting state. It writes one verdict file below a
+# durable evidence root; there are no sealed occurrences or sidecar pins. See
+# docs/qualification/README.md.
+"qualification:backend:colima" = { durable = true, visibility = "internal", group = "Maintenance", description = "Bring up a real workspace on Colima, run one representative task, tear down and check the inventory restored.", run = [{ run = "python3 -I -B scripts/qualification_backend_proof.py --backend colima {args}", timeout_ms = 3600000 }] }
+"qualification:backend:desktop" = { durable = true, visibility = "internal", group = "Maintenance", description = "Bring up a real workspace on Docker Desktop, run one representative task, tear down and check the inventory restored.", run = [{ run = "python3 -I -B scripts/qualification_backend_proof.py --backend desktop {args}", timeout_ms = 3600000 }] }
+"qualification:backend:linux" = { durable = true, visibility = "internal", group = "Maintenance", description = "Bring up a real workspace on a Linux host's Docker Engine, run one representative task, tear down and check the inventory restored.", run = [{ run = "python3 -I -B scripts/qualification_backend_proof.py --backend linux {args}", timeout_ms = 3600000 }] }
+"test:qualification:backend-proof" = { visibility = "internal", group = "Maintenance", description = "Prove the per-backend proof's own flow and refusals against a fake candidate executable; no engine, checkout or native effect.", run = [{ run = "python3 -I -B scripts/test_qualification_backend_proof.py", timeout_ms = 120000 }] }
 
-# Current-candidate consumer packets for the #625 Acow/CBS continuity proof
-# (task effigy#757): docs/qualification/consumer-packets-r1/. Source and
-# fixture controls only. Every pin is pending, so the proof-entry selectors
-# refuse before any child runs; no engine, consumer, network or native effect.
-"test:qualification:consumer-packets" = { durable = true, visibility = "internal", group = "Maintenance", description = "Run the consumer packet controls: unarmed refusals, request gates, supervised harmless children, and fixture end-to-end Acow and CBS runs; no native or consumer effects.", run = [{ run = "python3 -I -B docs/qualification/consumer-packets-r1/tests.py", timeout_ms = 300000 }] }
-"check:qualification:consumer-packets:compile" = { visibility = "internal", group = "Maintenance", description = "Compile the consumer packet Python entry modules and helpers in memory.", run = [{ run = "python3 -I -B -c 'from pathlib import Path; [compile(p.read_bytes(), str(p), \"exec\") for p in Path(\"docs/qualification/consumer-packets-r1\").glob(\"*.py\")]'", timeout_ms = 300000 }] }
-"qualification:acow-consumer:proof-only" = { visibility = "internal", group = "Maintenance", description = "Nucleus proof-only entry for the Acow consumer packet: one hash-pinned request under recorded authority. Unarmed in source until route pins are concrete.", run = [{ run = "python3 -I -B docs/qualification/consumer-packets-r1/proof_entry.py acow {args}", timeout_ms = 7200000 }] }
-"qualification:cbs-consumer:proof-only" = { visibility = "internal", group = "Maintenance", description = "Nucleus proof-only entry for the CBS consumer packet: one hash-pinned request under recorded authority. Unarmed in source until route pins are concrete.", run = [{ run = "python3 -I -B docs/qualification/consumer-packets-r1/proof_entry.py cbs {args}", timeout_ms = 3600000 }] }
-# Ordinary Acow acquisition check (task effigy#785): one armed occurrence, legacy then
-# modern, detached `container stack up`. Unarmed in source until its route pins are concrete.
-"qualification:acow-acquisition:proof-only" = { visibility = "internal", group = "Maintenance", description = "Nucleus proof-only entry for the ordinary Acow Linux-artifact acquisition check: one hash-pinned request under recorded authority. Unarmed in source until route pins are concrete.", run = [{ run = "python3 -I -B docs/qualification/consumer-packets-r1/proof_entry.py acow-acquisition {args}", timeout_ms = 7200000 }] }
+# Real-engine signal settlement is the existing kill matrix: the real Effigy
+# binary settles every owner signal on the host (test:task-engine:kill-matrix)
+# and on a real Linux engine host (test:task-engine:kill-matrix:linux). The
+# task-engine signal packet and its feature-gated observer are gone.
 
-"proof:workspace:private-qualification:old-sentinel" = { durable = true, visibility = "internal", group = "Maintenance", description = "Host source control: the older Effigy named by EFFIGY_OLD_CUSTODY_BINARY is admitted as sentinel and its Discard refuses before process intent; no native credit.", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(custody::tests::discard_old_sentinel_refuses_before_child_exec)' --run-ignored only --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }] }
-
-"build:workspace:private-qualification:cargo-metadata" = { visibility = "internal", group = "Maintenance", description = "Export source metadata for prebuilt nextest native proof execution; no native effects.", run = "sh scripts/oxide-selector.sh metadata --format-version 1 --no-deps" }
-
-
-
-# Task-engine signal-matrix packet (tasks effigy#579/#582/#585/#739): committed
-# fake-backend refusal battery, labeled-double execute control-flow, and
-# owned local HostCli fake-executable plumbing for
-# docs/qualification/task-engine-signal-matrix/ — no VM, engine, container,
-# image, install or native task. Doubles and local fixtures prove packet
-# admission, execute ordering and driver identity wiring, not native
-# closure. The packet stays UNARMED; a later GO window is separately
-# authorized. Native linux-custody.sh sequence TERM/HUP remains owed.
-# effigy#739: the proof-only entry admits one hash-pinned request under an
-# external Nucleus launch precondition and reaches the production HostCliDriver
-# through the in-memory overlay only; the committed manifest stays unarmed.
-"test:qualification:task-engine-signals" = { durable = true, visibility = "internal", group = "Maintenance", description = "Compile the task-engine signal-matrix packet sources, then run its fake-backend refusal, proof-entry admission, labeled-double execute and local HostCli fixture boundaries; no native effects.", run = [{ run = "python3 -I -B -c 'from pathlib import Path; [compile(p.read_bytes(), str(p), \"exec\") for p in Path(\"docs/qualification/task-engine-signal-matrix\").glob(\"*.py\")]'", timeout_ms = 300000 }, { run = "python3 -I -B docs/qualification/task-engine-signal-matrix/boundaries.py", timeout_ms = 300000 }] }
-"qualification:task-engine-signals:proof-only" = { visibility = "internal", group = "Maintenance", description = "Nucleus proof-only entry for the task-engine signal packet: one hash-pinned request, pinned GO, one five-cell HostCli pass. Needs external Nucleus launch.", run = "python3 -I -B docs/qualification/task-engine-signal-matrix/signal_proof.py {args}", timeout_ms = 1800000 }
-"test:qualification:signal-hostcli" = { durable = true, visibility = "internal", group = "Maintenance", description = "Exercise owned HostCli registration, signal settlement and cleared-environment discovery using a fake backend.", run = [{ run = "sh scripts/oxide-selector.sh nextest run --locked --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --features signal-qualification-fixture -E 'test(hostcli_registration_and_signals_settle_through_real_owner_and_sentinel) | test(hostcli_changed_backend_refuses_owner_death_recovery) | test(recovery_discovery_without_environment_does_not_invent_a_backend)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
-"test:qualification:signal-kernel" = { durable = true, visibility = "internal", group = "Maintenance", description = "Exercise the kernel registration producer and qualification observer binding.", run = [{ run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 }, { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --locked --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --lib --features fault-injection,qualification-observer -E 'test(qualification_registration_refuses_partial_foreign_and_ambiguous_effects) | test(qualification_nonce_changes_with_run_fence_and_effect_position) | test(journal_first_launch_strips_ack_and_local_exit_is_not_remote_completion)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
-"test:qualification:signal-binding" = { durable = true, visibility = "internal", group = "Maintenance", description = "Exercise owned backend identity capture and conservative recovery refusal.", run = [{ run = "sh scripts/oxide-selector.sh nextest run --locked --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(recovery_binding_rejects_changed_or_missing_executable_and_directory) | test(hostcli_recovery_refuses_missing_or_changed_binding) | test(docker_launch_forwards_values_privately_and_keeps_the_operator_terminal) | test(colima_launch_relays_values_to_the_vm_and_attaches_stdin_for_a_terminal) | test(launch_refuses_multi_line_values_unportable_names_and_recovery_adapters)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
-"check:qualification:signal-compile" = { visibility = "internal", group = "Maintenance", description = "Compile the private signal observer and owned HostCli fixture.", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-kernel -p effigy-containers --all-targets --features effigy/signal-qualification-fixture,effigy-kernel/fault-injection,effigy-kernel/qualification-observer", timeout_ms = 900000 }] }
-"check:qualification:signal-clippy" = { visibility = "internal", group = "Maintenance", description = "Strictly lint the private signal observer and owned HostCli fixture.", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-kernel -p effigy-containers --all-targets --features effigy/signal-qualification-fixture,effigy-kernel/fault-injection,effigy-kernel/qualification-observer -- -D warnings", timeout_ms = 900000 }] }
-
-# Fake-only proof (effigy#542) that the ordinary-Compose Colima qualification
-# launcher enforces its complete read-only entry sweep: exact network/volume
-# identity baselines, fixture-ancestor mount and symlink safety, GO/manifest
-# integrity and sweep-before-create ordering, all through deterministic fake
-# runners with no Colima, VM or scratch qualification state touched.
-"test:qualification:entry-sweep" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "python3 tests/scripts/qualification-entry-sweep.py {args}", timeout_ms = 600000 }] }
+# Retained product tests the retired signal-binding selector used to route.
+"test:containers:recovery-binding" = { durable = true, visibility = "internal", group = "Maintenance", description = "Exercise owned backend identity capture and conservative recovery refusal.", run = [{ run = "sh scripts/oxide-selector.sh nextest run --locked --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(recovery_binding_rejects_changed_or_missing_executable_and_directory) | test(docker_launch_forwards_values_privately_and_keeps_the_operator_terminal) | test(colima_launch_relays_values_to_the_vm_and_attaches_stdin_for_a_terminal) | test(launch_refuses_multi_line_values_unportable_names_and_recovery_adapters)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 
 # ---- Static hygiene guards --------------------------------------------------
 # Owned synthetic-tree proofs for the Cargo-route and mktemp detectors. Live

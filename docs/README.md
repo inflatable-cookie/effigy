@@ -25,6 +25,8 @@ topic.
 
 ## Records
 
-Qualification packets and migration records are kept as evidence under
-[qualification/](qualification/), one folder per packet, for example the
-[changelog fragment migration](qualification/changelog-fragment-migration-804/README.md).
+Qualification evidence lives under [qualification/](qualification/): the
+per-backend proof routes for the v0.15 re-qualification, an index of retired
+packets by reviewed commit, the owner-run consumer continuity checklist and the
+[changelog fragment migration](qualification/changelog-fragment-migration-804/README.md)
+record.

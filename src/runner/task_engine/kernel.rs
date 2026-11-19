@@ -624,55 +624,6 @@ pub(in crate::runner) fn valid_next(argv: &[OsString]) -> bool {
     effigy_cli::parse_command(args).is_ok()
 }
 
-/// The owned HostCli fixture records the actual sentinel environment. This
-/// test-only observation never changes its backend discovery or scratch. It is
-/// a named item so the kernel ratchet classifies it as the test code it is.
-///
-/// The sentinel runs with a cleared environment, so the run's own temp
-/// directory is not readable here. The directory is proven owned by the
-/// fixture's name, its canonical form, its 0700 mode and its own marker;
-/// naming the operator's scratch root would be both unreadable and stale.
-#[cfg(all(test, feature = "signal-qualification-fixture"))]
-fn record_hostcli_sentinel_environment() {
-    use std::os::unix::fs::MetadataExt;
-    if let Ok(root) = std::env::current_dir() {
-        let marker = root.join("signal-fixture-owned");
-        let name = root.file_name().and_then(|name| name.to_str());
-        let valid = (|| {
-            let name = name?;
-            let suffix = name.strip_prefix("signal-hostcli-")?;
-            if suffix.len() < 6
-                || !suffix.bytes().all(|byte| byte.is_ascii_alphanumeric())
-                || std::fs::canonicalize(&root).ok()? != root
-            {
-                return None;
-            }
-            let directory = std::fs::symlink_metadata(&root).ok()?;
-            let file = std::fs::symlink_metadata(&marker).ok()?;
-            if !directory.is_dir()
-                || directory.mode() & 0o077 != 0
-                || !file.file_type().is_file()
-                || file.nlink() != 1
-                || file.uid() != directory.uid()
-                || file.mode() & 0o077 != 0
-                || std::fs::read_to_string(&marker).ok()?.trim() != name
-            {
-                return None;
-            }
-            Some(())
-        })()
-        .is_some();
-        if valid {
-            let cleared =
-                std::env::var_os("PATH").is_none() && std::env::var_os("TMPDIR").is_none();
-            let _ = std::fs::write(
-                root.join("sentinel-environment"),
-                if cleared { "cleared" } else { "inherited" },
-            );
-        }
-    }
-}
-
 /// Hidden kernel entry points (`__kernel-sentinel`, `__kernel-supervise`).
 /// `None` means an ordinary invocation.
 pub fn run_internal_kernel_entry(entry: &str) -> Option<i32> {
@@ -681,10 +632,6 @@ pub fn run_internal_kernel_entry(entry: &str) -> Option<i32> {
     // returns, leaving the host serving. Present only in a fixture build.
     if !entry.starts_with("__kernel-") {
         return None;
-    }
-    #[cfg(all(test, feature = "signal-qualification-fixture"))]
-    if entry == "__kernel-sentinel" {
-        record_hostcli_sentinel_environment();
     }
     let policy = match entry {
         "__kernel-sentinel" => RouterPolicy::Sentinel,

@@ -5,13 +5,6 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-const RECOVERY_CHILD: &str = "run::lifecycle::tests::layered_recovery_child";
-
-fn layered_owner() -> ResourceId {
-    let checkout = layered_checkout();
-    ResourceId::environment(checkout, "layered-sentinel-recovery").unwrap()
-}
-
 fn layered_checkout() -> crate::id::CheckoutId {
     crate::id::CheckoutId::new(crate::id::CheckoutKind::EphemeralClone, [7; 16])
 }

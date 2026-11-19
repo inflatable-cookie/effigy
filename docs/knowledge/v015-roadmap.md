@@ -23,8 +23,11 @@ machine. Owner-approved proofs must establish real outcomes and streaming,
 positive publication of the guest binary and context, exact owner and custody,
 pinned binary identity and credential secrecy, and the guest behavior on
 Colima, Docker Desktop and Linux Docker Engine. Hybrid mode provisions no
-guest. The existing refusal, identity and baseline packets cannot establish
-these positive claims; they need a qualification-capable packet.
+guest. One small proof per backend establishes these positive claims
+(effigy#1056): it brings up a real workspace with ordinary Effigy commands,
+runs one representative task, tears the stack down and checks the engine
+inventory returned to its starting state. The retired packets are an index of
+reviewed commits, not an executable gate.
 
 Ordinary-Compose synthetic proof is useful fixture evidence, not proof from an
 actual Acow consumer. Worktree health is not data continuity: preserve the
@@ -36,40 +39,33 @@ consumer journey. A landed dependency or packet-source PR is not qualification.
 The selected order is recorded in Tom's 2026-11-02 v2 decision d01912ac
 (relayed by Queue planner d070792d):
 
-1. **Reviewed test-only candidate and packet.** Keep production refusal intact.
-   Review the candidate, test-only path and evidence packet. This is not a
-   production switch, native window, installation or consumer activation.
-2. **Native full-session qualification.** Prove the actual positive flows on
-   Colima, Docker Desktop and Linux, with separate owner-approved GOs for the
-   required native and consumer windows. Keep the exact inputs and outcomes in
-   the packet. Any candidate-changing fix resets affected evidence.
+1. **Reviewed candidate.** Keep production refusal intact. Review the candidate
+   and its evidence routes. This is not a production switch, native window,
+   installation or consumer activation.
+2. **Native per-backend qualification.** Prove the actual positive flows on
+   Colima, Docker Desktop and Linux with separate owner-approved GOs for the
+   required native and consumer windows. Each backend keeps one verdict file
+   under the durable evidence root. Any candidate-changing fix resets affected
+   evidence.
 3. **Production enablement decision.** Only after proofs pass and review is
    complete may Tom give a distinct release-kind GO for production enablement.
    That GO is separate from the qualification GOs and grants no publication
    authority.
 
 Tom's 2026-11-03 [source-split ruling](contracts/release.md#release-proof-obligations)
-allows the reviewed implementation and test-only packet to merge after
-current-main integration review with ordinary production Discard still refused.
-Separate owned tasks carry the deferred source proofs, final candidate and
-independent backend packet bindings, each of the three native backend proofs,
-aggregate receipt judgment, actual Acow/CBS consumer continuity and final
-production enablement. All backend receipts must name the same final candidate
-and inputs; every required backend and consumer gate must pass before Tom's
-separate production-enable GO. Each launcher invocation requires one explicit
-backend; the independent offline aggregate judges the three retained receipts.
-Source delivery transfers these obligations; it does not satisfy them. The
-[owned follow-up map](contracts/release.md#release-proof-obligations)
-is effigy#619 (source controls), #620 (candidate/bindings), #621–#623 (Colima,
-Desktop, Linux), #624 (aggregate judgment), #625 (Acow/CBS continuity) and #626
-(reviewed production enablement after Tom's final GO).
+allows the reviewed implementation to merge after current-main integration
+review with ordinary production Discard still refused. Separate owned tasks
+carry the per-backend proofs, the Acow/CBS consumer continuity check and final
+production enablement. All backend verdicts must name the same final candidate
+inputs; every required backend and consumer gate must pass before Tom's
+separate production-enable GO.
 
-The #625 source preparation (effigy#757) is
-[`docs/qualification/consumer-packets-r1/`](../qualification/consumer-packets-r1/README.md):
-Acow and CBS routes built on the current candidate, unarmed. Every candidate,
-positive624, window and engine pin is still pending, so the routes refuse before
-any child. The armed entry runs only at the Nucleus launch precondition from #739. Their fixture controls prove refusals and sequencing
-only. They grant no consumer credit. The 5f466914 Acow packet stays historical.
+The per-backend routes and evidence rule are in
+[`docs/qualification/README.md`](../qualification/README.md). Consumer
+continuity is the owner-run
+[checklist](../qualification/consumer-continuity-checklist.md): Tom checks
+consumers by real use (2026-11-19, ruling 45). Neither route grants credit
+until its own owner-approved execution records the result.
 
 The former proof-before-enablement cycle is superseded. No stage implies the
 next stage's authority or completion.

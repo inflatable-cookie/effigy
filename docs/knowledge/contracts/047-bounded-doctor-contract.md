@@ -111,6 +111,12 @@ partial-report behavior. A deep run keeps no persistent scan state.
    the phase, preserves completed evidence, and gives a useful retry action.
 5. A timed-out health task has its owned process tree terminated and reaped.
    No health side effect may continue after doctor exits.
+6. Deep mode starts the `health` task beside the shared inventory walk, under
+   the same deadline. If the walk runs out of budget, a health task that
+   completed keeps its findings and reports `complete`; one the deadline cut
+   off reports `budget-exhausted`. A health task that never started, or a walk
+   that fails for a reason other than the budget, leaves the state as the
+   checks above describe. Neither task outlasts the shared deadline.
 
 ## Inventory contract
 
