@@ -4190,8 +4190,9 @@ server-key generation and TLS verification: `qualification::prepare_channel`
 binds its listener/key through `SessionTlsListener::bind` and transfers them to
 `SessionLaunch`. The merged `workspace_client/supervisor.rs` owns the serving
 handoff and retirement seam; production activation and native end-to-end
-qualification remain outstanding. Appendix B adds no normative requirements or
-implementation claims to this compact seam.
+qualification remain outstanding. Only these merged seams are normative and
+implemented; the deferred E-step, fault, retry and ownership-transfer drafts are
+Git history, not requirements or implementation claims for this seam.
 
 **Glue and proofs.** #452 owns `src/runner/workspace_client.rs` integration only: read context → observe guest → verify
 context/artifact/session → open qualified TLS → check server pin → Hello/hello_ok → authenticate/enrol → request. Identity and
