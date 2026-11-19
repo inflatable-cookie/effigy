@@ -1,134 +1,10 @@
 use std::collections::BTreeSet;
 
-use crate::command_surface::{self, CommandDescriptor};
+use crate::command_surface;
 use crate::HelpTopic;
 
 use super::topics;
 use super::{HelpRenderer, HelpResult};
-
-pub(crate) struct HelpTopicDescriptor {
-    pub(crate) command: &'static CommandDescriptor,
-    pub(crate) render: fn(&mut dyn HelpRenderer, &BTreeSet<String>) -> HelpResult<()>,
-}
-
-const HELP_TOPIC_DESCRIPTORS: &[HelpTopicDescriptor] = &[
-    HelpTopicDescriptor {
-        command: descriptor(HelpTopic::General),
-        render: render_general,
-    },
-    HelpTopicDescriptor {
-        command: descriptor(HelpTopic::Bundle),
-        render: render_bundle,
-    },
-    HelpTopicDescriptor {
-        command: descriptor(HelpTopic::Deploy),
-        render: render_deploy,
-    },
-    HelpTopicDescriptor {
-        command: descriptor(HelpTopic::Deps),
-        render: render_deps,
-    },
-    HelpTopicDescriptor {
-        command: descriptor(HelpTopic::Secrets),
-        render: render_secrets,
-    },
-    HelpTopicDescriptor {
-        command: descriptor(HelpTopic::Defer),
-        render: render_defer,
-    },
-    HelpTopicDescriptor {
-        command: descriptor(HelpTopic::Exec),
-        render: render_exec,
-    },
-    HelpTopicDescriptor {
-        command: descriptor(HelpTopic::State),
-        render: render_state,
-    },
-    HelpTopicDescriptor {
-        command: descriptor(HelpTopic::Workspace),
-        render: render_workspace,
-    },
-    HelpTopicDescriptor {
-        command: descriptor(HelpTopic::Gateway),
-        render: render_gateway,
-    },
-    HelpTopicDescriptor {
-        command: descriptor(HelpTopic::Service),
-        render: render_service,
-    },
-    HelpTopicDescriptor {
-        command: descriptor(HelpTopic::Rhai),
-        render: render_rhai,
-    },
-    HelpTopicDescriptor {
-        command: descriptor(HelpTopic::Skill),
-        render: render_skill,
-    },
-    HelpTopicDescriptor {
-        command: descriptor(HelpTopic::Docs),
-        render: render_docs,
-    },
-    HelpTopicDescriptor {
-        command: descriptor(HelpTopic::Contracts),
-        render: render_contracts,
-    },
-    HelpTopicDescriptor {
-        command: descriptor(HelpTopic::Container),
-        render: render_container,
-    },
-    HelpTopicDescriptor {
-        command: descriptor(HelpTopic::Bootstrap),
-        render: render_bootstrap,
-    },
-    HelpTopicDescriptor {
-        command: descriptor(HelpTopic::Release),
-        render: render_release,
-    },
-    HelpTopicDescriptor {
-        command: descriptor(HelpTopic::Doctor),
-        render: render_doctor,
-    },
-    HelpTopicDescriptor {
-        command: descriptor(HelpTopic::Tasks),
-        render: render_tasks,
-    },
-    HelpTopicDescriptor {
-        command: descriptor(HelpTopic::Test),
-        render: render_test,
-    },
-    HelpTopicDescriptor {
-        command: descriptor(HelpTopic::Init),
-        render: render_init,
-    },
-    HelpTopicDescriptor {
-        command: descriptor(HelpTopic::Uninstall),
-        render: render_uninstall,
-    },
-    HelpTopicDescriptor {
-        command: descriptor(HelpTopic::Runs),
-        render: render_runs,
-    },
-    HelpTopicDescriptor {
-        command: descriptor(HelpTopic::Changelog),
-        render: render_changelog,
-    },
-    HelpTopicDescriptor {
-        command: descriptor(HelpTopic::Fmt),
-        render: render_fmt,
-    },
-];
-
-const fn descriptor(topic: HelpTopic) -> &'static CommandDescriptor {
-    let mut index = 0;
-    while index < command_surface::COMMAND_DESCRIPTORS.len() {
-        let descriptor = &command_surface::COMMAND_DESCRIPTORS[index];
-        if descriptor.topic as u8 == topic as u8 {
-            return descriptor;
-        }
-        index += 1;
-    }
-    panic!("missing command descriptor for help topic")
-}
 
 pub(crate) fn builtin_help_topic(command: &str) -> Option<HelpTopic> {
     command_surface::help_topic_for_command(command)
@@ -139,11 +15,34 @@ pub(crate) fn render_help_topic(
     topic: HelpTopic,
     deferred_builtins: &BTreeSet<String>,
 ) -> HelpResult<()> {
-    let descriptor = HELP_TOPIC_DESCRIPTORS
-        .iter()
-        .find(|descriptor| descriptor.command.topic == topic)
-        .ok_or_else(|| std::io::Error::other("unknown help topic"))?;
-    (descriptor.render)(renderer, deferred_builtins)
+    match topic {
+        HelpTopic::General => render_general(renderer, deferred_builtins),
+        HelpTopic::Bundle => render_bundle(renderer, deferred_builtins),
+        HelpTopic::Deploy => render_deploy(renderer, deferred_builtins),
+        HelpTopic::Deps => render_deps(renderer, deferred_builtins),
+        HelpTopic::Secrets => render_secrets(renderer, deferred_builtins),
+        HelpTopic::Defer => render_defer(renderer, deferred_builtins),
+        HelpTopic::Exec => render_exec(renderer, deferred_builtins),
+        HelpTopic::State => render_state(renderer, deferred_builtins),
+        HelpTopic::Workspace => render_workspace(renderer, deferred_builtins),
+        HelpTopic::Gateway => render_gateway(renderer, deferred_builtins),
+        HelpTopic::Service => render_service(renderer, deferred_builtins),
+        HelpTopic::Rhai => render_rhai(renderer, deferred_builtins),
+        HelpTopic::Skill => render_skill(renderer, deferred_builtins),
+        HelpTopic::Docs => render_docs(renderer, deferred_builtins),
+        HelpTopic::Contracts => render_contracts(renderer, deferred_builtins),
+        HelpTopic::Container => render_container(renderer, deferred_builtins),
+        HelpTopic::Bootstrap => render_bootstrap(renderer, deferred_builtins),
+        HelpTopic::Release => render_release(renderer, deferred_builtins),
+        HelpTopic::Doctor => render_doctor(renderer, deferred_builtins),
+        HelpTopic::Tasks => render_tasks(renderer, deferred_builtins),
+        HelpTopic::Test => render_test(renderer, deferred_builtins),
+        HelpTopic::Init => render_init(renderer, deferred_builtins),
+        HelpTopic::Uninstall => render_uninstall(renderer, deferred_builtins),
+        HelpTopic::Runs => render_runs(renderer, deferred_builtins),
+        HelpTopic::Changelog => render_changelog(renderer, deferred_builtins),
+        HelpTopic::Fmt => render_fmt(renderer, deferred_builtins),
+    }
 }
 
 fn render_general(
