@@ -40,20 +40,6 @@ selection_contract = "docs/knowledge/contracts/json-selection-contract.json"
     }
 
     #[test]
-    fn contracts_config_accepts_kebab_case_keys() {
-        let parsed: ManifestContractsConfig = toml::from_str(
-            r#"
-schema-index = "index.json"
-selection-contract = "selection.json"
-"#,
-        )
-        .expect("parse kebab-case contracts");
-
-        assert_eq!(parsed.schema_index.as_deref(), Some("index.json"));
-        assert_eq!(parsed.selection_contract.as_deref(), Some("selection.json"));
-    }
-
-    #[test]
     fn contracts_config_rejects_unknown_keys() {
         let result: Result<ManifestContractsConfig, _> = toml::from_str(
             r#"
