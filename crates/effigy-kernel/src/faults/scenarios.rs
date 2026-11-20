@@ -568,15 +568,15 @@ impl Scenario for Steps {
                     run,
                     &cx,
                     fake,
-                    process.write_stdin(b"\n", Instant::now() + Duration::from_secs(1))
+                    process.write_stdin(b"\n", Instant::now() + Duration::from_secs(5))
                 );
             }
             // The last member of a group may linger; settle stops it.
             let waited = processes.len() - usize::from(processes.len() > 1);
             for process in processes.iter_mut().take(waited) {
-                // Workloads exit in milliseconds; an Unknown exit waits out
-                // only this bound, never the whole operation deadline.
-                let exit = match process.wait(&cx.operation().child(Duration::from_secs(1))) {
+                // Workloads exit quickly once released, while still bounding
+                // a slow shell spawn under parallel QA shard contention.
+                let exit = match process.wait(&cx.operation().child(Duration::from_secs(5))) {
                     Observed::Verified(exit, _) => exit,
                     _ => return settle(run, &cx, fake).and(None),
                 };
@@ -2148,7 +2148,7 @@ impl Held {
         let Some(process) = self.process.as_ref() else {
             return Ok(());
         };
-        match process.write_stdin(b"\n", Instant::now() + Duration::from_secs(1)) {
+        match process.write_stdin(b"\n", Instant::now() + Duration::from_secs(5)) {
             // A workload that already exited closed its own read end: the hold
             // is finished, not failed.
             Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
@@ -2225,7 +2225,7 @@ fn anchor_stop_delivery(home: &Home, lead: Lead) -> bool {
         Lead::Natural => {}
     }
     let mut process = held.release();
-    let exit = match process.wait(&cx.operation().child(Duration::from_secs(1))) {
+    let exit = match process.wait(&cx.operation().child(Duration::from_secs(5))) {
         Observed::Verified(exit, _) => exit,
         other => panic!("workload exit: {other:?}"),
     };
