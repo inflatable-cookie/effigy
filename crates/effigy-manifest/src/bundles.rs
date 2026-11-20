@@ -132,7 +132,7 @@ pub(crate) fn apply_bundle_defaults(
         manifest_path,
         &resolved_source.local_path,
         &normalized_inputs,
-        resolved_source.stale,
+        &resolved_source,
     )?;
     let LocalBundleDefaults {
         mut defaults,
@@ -218,7 +218,7 @@ fn resolve_local_bundle_defaults(
     manifest_path: &Path,
     bundle_dir: &Path,
     inputs: &BTreeMap<String, Value>,
-    stale: bool,
+    source: &ResolvedBundleSource,
 ) -> Result<LocalBundleDefaults, ManifestError> {
     if !bundle_dir.is_dir() {
         return Err(ManifestError::Compose {
@@ -238,7 +238,7 @@ fn resolve_local_bundle_defaults(
         })?;
     let descriptor = parse_bundle_descriptor_source(&descriptor_path, &descriptor_source)?;
     validate_local_bundle_descriptor(manifest_path, &descriptor)?;
-    let resolved = resolve_local_bundle_inputs(manifest_path, &descriptor, inputs, stale)?;
+    let resolved = resolve_local_bundle_inputs(manifest_path, &descriptor, inputs, source)?;
 
     let defaults_path = bundle_dir.join(&descriptor.bundle.defaults);
     let defaults_template =
@@ -379,7 +379,7 @@ fn resolve_local_bundle_inputs(
     manifest_path: &Path,
     descriptor: &LocalBundleDescriptor,
     provided: &BTreeMap<String, Value>,
-    stale: bool,
+    source: &ResolvedBundleSource,
 ) -> Result<ResolvedBundleInputs, ManifestError> {
     let bundle_name = descriptor.bundle.name.trim();
     let declared = descriptor
@@ -396,7 +396,7 @@ fn resolve_local_bundle_inputs(
         }
     }
 
-    let user_inputs = user_bundle_inputs(descriptor, stale);
+    let user_inputs = user_bundle_inputs(manifest_path, descriptor, source);
     let mut resolved = BTreeMap::new();
     let mut inputs = Vec::new();
     for input in &descriptor.inputs {
@@ -465,13 +465,18 @@ fn resolve_local_bundle_inputs(
 /// a warning here would judge the operator's file against the pin Tom is about
 /// to lose (papercut 1f529edc). Withholding it keeps the one accurate warning,
 /// which `validate_source_snapshot` emits from the refreshed descriptor.
-fn user_bundle_inputs(descriptor: &LocalBundleDescriptor, stale: bool) -> BTreeMap<String, Value> {
+fn user_bundle_inputs(
+    manifest_path: &Path,
+    descriptor: &LocalBundleDescriptor,
+    source: &ResolvedBundleSource,
+) -> BTreeMap<String, Value> {
     let bundle_name = descriptor.bundle.name.trim();
+    let manifest_display = manifest_path.display();
     let config = match crate::user_config::load_user_config() {
         Ok(config) => config,
         Err(error) => {
             crate::retired_notice::warn(format!(
-                "ignoring machine-local bundle inputs for bundle `{bundle_name}`: {error}"
+                "while loading {manifest_display}: ignoring machine-local bundle inputs for bundle `{bundle_name}`: {error}"
             ));
             return BTreeMap::new();
         }
@@ -492,18 +497,43 @@ fn user_bundle_inputs(descriptor: &LocalBundleDescriptor, stale: bool) -> BTreeM
     let mut accepted = BTreeMap::new();
     for (key, value) in bundle_input_entries(entries) {
         let Some(input) = declared.get(key.as_str()) else {
-            if !stale {
+            if !source.stale {
                 let declared_names = declared.keys().copied().collect::<Vec<_>>().join(", ");
+                let declared_names = if declared_names.is_empty() {
+                    "none"
+                } else {
+                    &declared_names
+                };
+                let bundle_label = match source.source_type {
+                    BundleSourceType::Git | BundleSourceType::Oci => match &source.version_hint {
+                        Some(version) => format!(
+                            "pinned bundle `{bundle_name}` ({})",
+                            format_bundle_version(version)
+                        ),
+                        None => format!("pinned bundle `{bundle_name}`"),
+                    },
+                    BundleSourceType::Path => format!("bundle `{bundle_name}`"),
+                };
+                let setting = format!("`[bundle.{bundle_name}].inputs.{key}`");
+                let remedy = match source.source_type {
+                    BundleSourceType::Git | BundleSourceType::Oci => format!(
+                        "if the bundle recently added `{key}`, run `effigy bundle sync` in {}; otherwise remove or fix `{setting}` in `{config_path}`",
+                        manifest_path.parent().unwrap_or_else(|| Path::new(".")).display()
+                    ),
+                    BundleSourceType::Path => {
+                        format!("remove or fix `{setting}` in `{config_path}`")
+                    }
+                };
                 crate::retired_notice::warn(format!(
-                    "{config_path} sets `[bundle.{bundle_name}].inputs.{key}`, but bundle `{bundle_name}` does not declare that input; ignoring the machine-local value (declared inputs: {declared_names})"
+                    "while loading {manifest_display}: {config_path} sets {setting}, but {bundle_label} does not declare that input; ignoring the machine-local value (declared inputs: {declared_names}). {remedy}"
                 ));
             }
             continue;
         };
         if !bundle_input_type_matches(input.value_type, &value) {
-            if !stale {
+            if !source.stale {
                 crate::retired_notice::warn(format!(
-                    "{config_path} sets `[bundle.{bundle_name}].inputs.{key}` to {}, but bundle `{bundle_name}` declares `{key}` as {}; ignoring the machine-local value and using the project value or the bundle default",
+                    "while loading {manifest_display}: {config_path} sets `[bundle.{bundle_name}].inputs.{key}` to {}, but bundle `{bundle_name}` declares `{key}` as {}; ignoring the machine-local value and using the project value or the bundle default",
                     render_bundle_input_value(&value),
                     bundle_input_type_name(input.value_type),
                 ));
@@ -513,6 +543,20 @@ fn user_bundle_inputs(descriptor: &LocalBundleDescriptor, stale: bool) -> BTreeM
         insert_bundle_input_value(&mut accepted, &key, value);
     }
     accepted
+}
+
+/// Keep content identifiers readable in diagnostics while leaving tags and
+/// other source version labels untouched.
+fn format_bundle_version(version: &str) -> String {
+    if let Some(digest) = version.strip_prefix("sha256:") {
+        if digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return format!("sha256:{}…", &digest[..8]);
+        }
+    }
+    if version.len() == 40 && version.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return format!("{}…", &version[..8]);
+    }
+    version.to_owned()
 }
 
 /// Flatten a bundle's input table to leaf dotted paths, so a hand-written

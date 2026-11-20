@@ -127,6 +127,48 @@ description = "Node version to run."
         .expect("write source lock");
     }
 
+    /// Materialize a Git pin whose descriptor has not yet gained the
+    /// machine-local input. The revision is deliberately a full Git SHA so
+    /// warning formatting exercises the short pin label.
+    fn write_git_pin_without_php_version(&self, name: &str, revision: &str) {
+        let object = self.repo().join(".effigy/cache/sources/pinned-git");
+        std::fs::create_dir_all(&object).expect("mkdir pinned git snapshot");
+        std::fs::write(
+            object.join("bundle.toml"),
+            format!(
+                r#"
+[bundle]
+name = "{name}"
+description = "Pinned Git bundle."
+
+[[inputs]]
+name = "node_version"
+type = "string"
+default = "22"
+description = "Node version to run."
+"#
+            ),
+        )
+        .expect("write pinned git descriptor");
+        std::fs::write(
+            object.join("effigy.toml"),
+            "[tasks.php]\nrun = \"echo php pinned git\"\n",
+        )
+        .expect("write pinned git defaults");
+        std::fs::write(
+            self.manifest_path(),
+            "[bundle]\nbase = { type = \"git\", url = \"https://example.invalid/acme.git\", ref = \"main\" }\n",
+        )
+        .expect("write git bundle manifest");
+        std::fs::write(
+            self.repo().join(".effigy/sources.lock.json"),
+            format!(
+                r#"{{"version":1,"sources":{{"bundle":{{"declaration":{{"type":"git","url":"https://example.invalid/acme.git","ref":"main"}},"object":"cache/sources/pinned-git","version":"v1","revision":"{revision}"}}}}}}"#
+            ),
+        )
+        .expect("write git source lock");
+    }
+
     /// Load the project manifest with this fixture's Effigy home active.
     fn load(&self) -> LoadedTaskManifest {
         with_test_user_config_home(&Self::effigy_home(self.owner.path()), || {
@@ -301,7 +343,52 @@ inputs = { php_versoin = "8.5" }
         .unwrap_or_else(|| panic!("no warning named the undeclared input: {warnings:?}"));
     assert!(warning.contains("config.toml"), "{warning}");
     assert!(warning.contains("[bundle.undeclared-acme]"), "{warning}");
+    assert!(
+        warning.contains(&fixture.manifest_path().display().to_string()),
+        "{warning}"
+    );
+    assert!(warning.contains("remove or fix"), "{warning}");
+    assert!(
+        warning.contains(&format!(
+            "in `{}`",
+            fixture
+                .owner
+                .path()
+                .join("home/.effigy/config.toml")
+                .display()
+        )),
+        "{warning}"
+    );
     assert!(warning.contains("ignoring"), "{warning}");
+}
+
+#[test]
+fn an_undeclared_user_input_for_a_git_pin_names_the_revision_and_sync_remedy() {
+    let _guard = NOTICE_LEDGER.lock().expect("notice ledger lock");
+    let fixture = Fixture::new("pinned-acme");
+    let revision = "45d80aae1234567890abcdef1234567890abcdef";
+    fixture.write_git_pin_without_php_version("pinned-acme", revision);
+    fixture.write_user_config(
+        r#"
+[bundle.pinned-acme]
+inputs = { php_version = "8.5" }
+"#,
+    );
+    let (_loaded, warnings) = load_and_collect_warnings(&fixture);
+    let warning = warnings
+        .iter()
+        .find(|warning| warning.contains("php_version"))
+        .unwrap_or_else(|| panic!("no warning named the undeclared input: {warnings:?}"));
+    assert!(
+        warning.contains(&fixture.manifest_path().display().to_string()),
+        "{warning}"
+    );
+    assert!(warning.contains("45d80aae…"), "{warning}");
+    assert!(warning.contains("effigy bundle sync"), "{warning}");
+    assert!(
+        warning.contains(&format!("in {}", fixture.repo().display())),
+        "{warning}"
+    );
 }
 
 #[test]
@@ -327,6 +414,10 @@ inputs = { php_version = 8.5 }
     assert!(warning.contains("config.toml"), "{warning}");
     assert!(warning.contains("php_version"), "{warning}");
     assert!(warning.contains("a string"), "{warning}");
+    assert!(
+        warning.contains(&fixture.manifest_path().display().to_string()),
+        "{warning}"
+    );
 }
 
 #[test]
@@ -358,7 +449,9 @@ fn a_malformed_user_config_warns_instead_of_failing_every_project() {
     assert!(
         warnings
             .iter()
-            .any(|warning| warning.contains("config.toml") && warning.contains("ignoring")),
+            .any(|warning| warning.contains("config.toml")
+                && warning.contains("ignoring")
+                && warning.contains(&fixture.manifest_path().display().to_string())),
         "{warnings:?}"
     );
 }
