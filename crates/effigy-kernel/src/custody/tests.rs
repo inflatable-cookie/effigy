@@ -4221,16 +4221,8 @@ fn a_full_drain_commits_one_window_per_stream() {
 #[cfg(feature = "fault-injection")]
 #[test]
 fn a_poll_that_observes_the_exit_keeps_the_output_written_just_before_it() {
-    use crate::fault::Point;
     use std::cell::Cell;
     use std::rc::Rc;
-    struct Reset;
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            crate::fault::hook(None);
-            crate::fault::arm(None);
-        }
-    }
     let pid = std::process::id();
     let receipt = ProcessReceipt {
         identity: crate::ident::process_identity(pid)
@@ -4281,9 +4273,9 @@ fn a_poll_that_observes_the_exit_keeps_the_output_written_just_before_it() {
     let written = Rc::new(Cell::new(false));
     let armed = written.clone();
     let fd = stdout_write.as_raw_fd();
-    let _reset = Reset;
-    crate::fault::hook(Some(Box::new(move |at| {
-        if at == Point::PollBeforeExit && !armed.replace(true) {
+    let _reset = PollBeforeExitReset;
+    set_poll_before_exit_hook(Some(Box::new(move || {
+        if !armed.replace(true) {
             // SAFETY: live blocking pipe write end and an initialized slice.
             let count = unsafe { libc::write(fd, late.as_ptr().cast(), late.len()) };
             assert_eq!(count, late.len() as isize, "write in the exit gap");
@@ -4293,7 +4285,7 @@ fn a_poll_that_observes_the_exit_keeps_the_output_written_just_before_it() {
         matches!(core.poll(), Observed::Verified(..)),
         "the exit is observed"
     );
-    crate::fault::hook(None);
+    set_poll_before_exit_hook(None);
     assert!(written.get(), "the bytes were written in the exit gap");
     assert_eq!(
         core.streams[0].iter().copied().collect::<Vec<u8>>(),
