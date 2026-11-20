@@ -1470,7 +1470,18 @@ impl ProcessCore {
     }
     fn poll(&mut self) -> Observed<Exit> {
         self.drain();
-        self.poll_exit()
+        let _ = crate::fault_point!(PollBeforeExit);
+        let observed = self.poll_exit();
+        // A child that writes and exits between the drain above and this
+        // reap leaves its bytes in the OS pipe. Callers break on `Verified`
+        // and take only what the core already committed, so drain again
+        // before reporting the exit: the pipes are nonblocking, so a
+        // surviving descendant holding one open stops this drain at
+        // `WouldBlock` instead of blocking the owner (effigy#1076).
+        if matches!(observed, Observed::Verified(..)) {
+            self.drain();
+        }
+        observed
     }
     fn poll_exit(&mut self) -> Observed<Exit> {
         if let Some(exit) = self.exit {

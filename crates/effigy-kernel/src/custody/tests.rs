@@ -4212,6 +4212,103 @@ fn a_full_drain_commits_one_window_per_stream() {
     drop(core);
 }
 
+/// A child that writes just before exiting can land its bytes between one poll
+/// turn's drain and that turn's exit check: the drain sees `WouldBlock`, the
+/// reap then reports `Verified`, and a caller that stops on the exit takes only
+/// what the core already committed. `poll` drains again before reporting that
+/// exit, so those bytes are captured, and it still stops at `WouldBlock`
+/// instead of waiting for a writer that outlives the child (effigy#1076).
+#[cfg(feature = "fault-injection")]
+#[test]
+fn a_poll_that_observes_the_exit_keeps_the_output_written_just_before_it() {
+    use crate::fault::Point;
+    use std::cell::Cell;
+    use std::rc::Rc;
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            crate::fault::hook(None);
+            crate::fault::arm(None);
+        }
+    }
+    let pid = std::process::id();
+    let receipt = ProcessReceipt {
+        identity: crate::ident::process_identity(pid)
+            .verified()
+            .expect("own process identity")
+            .clone(),
+        pgid: pid,
+        nonce: "poll-post-exit".into(),
+        grace_millis: 20,
+    };
+    let (stdout_read, stdout_write) = spawn::pipe().unwrap();
+    let (stderr_read, stderr_write) = spawn::pipe().unwrap();
+    for fd in [&stdout_read, &stderr_read] {
+        // SAFETY: live pipe end and a supported descriptor flag.
+        if unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) } < 0 {
+            panic!("nonblocking capture pipe");
+        }
+    }
+    let mut core = ProcessCore {
+        receipt,
+        interpolation: None,
+        anchor: None,
+        logs: [None, None],
+        canonical_output: None,
+        output: VecDeque::new(),
+        streams: [VecDeque::new(), VecDeque::new()],
+        queue_max: 4096,
+        output_truncated: false,
+        source_capture: false,
+        stdout: Some(stdout_read),
+        stderr: Some(stderr_read),
+        stdin: None,
+        pipeline: OutputPipeline::new(vec![]),
+        tail: VecDeque::new(),
+        tail_max: 4096,
+        capture: CaptureState::Complete,
+        // The exit is already proven, so this turn's drain runs first and the
+        // pipe is still empty when it ends.
+        exit: Some(Exit { code: 0 }),
+        reaped: false,
+        deadline: None,
+        terminal: None,
+        pty: false,
+        registration: None,
+        capture_eof_sent: false,
+    };
+    let late = b"written as the child exited\n";
+    let written = Rc::new(Cell::new(false));
+    let armed = written.clone();
+    let fd = stdout_write.as_raw_fd();
+    let _reset = Reset;
+    crate::fault::hook(Some(Box::new(move |at| {
+        if at == Point::PollBeforeExit && !armed.replace(true) {
+            // SAFETY: live blocking pipe write end and an initialized slice.
+            let count = unsafe { libc::write(fd, late.as_ptr().cast(), late.len()) };
+            assert_eq!(count, late.len() as isize, "write in the exit gap");
+        }
+    })));
+    assert!(
+        matches!(core.poll(), Observed::Verified(..)),
+        "the exit is observed"
+    );
+    crate::fault::hook(None);
+    assert!(written.get(), "the bytes were written in the exit gap");
+    assert_eq!(
+        core.streams[0].iter().copied().collect::<Vec<u8>>(),
+        late,
+        "output written just before the exit is still captured"
+    );
+    assert!(core.streams[1].is_empty(), "the other stream saw nothing");
+    assert!(
+        core.stdout.is_some(),
+        "a live writer keeps the pipe open, so the drain stops at WouldBlock"
+    );
+    drop(stdout_write);
+    drop(stderr_write);
+}
+
 #[test]
 fn source_capture_exit_interleaving() {
     for mode in ["complete", "overflow", "deadline"] {

@@ -53,6 +53,9 @@ points! {
     SocketBind,
     CaptureWrite,
     CaptureSync,
+    // Between a poll turn's drain and the exit check, so a test can make
+    // output arrive exactly in the turn that observes the exit.
+    PollBeforeExit,
     CaptureCommitAfterPublish,
     CapturePendingRemoval,
     CapturePendingSync,
