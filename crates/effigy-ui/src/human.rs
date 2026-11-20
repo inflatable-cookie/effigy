@@ -390,6 +390,18 @@ pub fn exit_code(code: Option<i32>) -> String {
     }
 }
 
+/// Append non-empty `stdout:` and `stderr:` sections, omitting blank blocks.
+pub fn push_non_empty_streams(out: &mut String, stdout: &str, stderr: &str) {
+    if !stdout.trim().is_empty() {
+        out.push_str("\nstdout:\n");
+        out.push_str(stdout);
+    }
+    if !stderr.trim().is_empty() {
+        out.push_str("\nstderr:\n");
+        out.push_str(stderr);
+    }
+}
+
 /// Replace values that look like credentials. Evidence comes from command
 /// output and environment records, so it is redacted before it is stored,
 /// not only before it is printed.

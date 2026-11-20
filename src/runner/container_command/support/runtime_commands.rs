@@ -214,12 +214,16 @@ fn capture_runtime(
             if output.status.success() {
                 Ok(output)
             } else {
-                Err(RunnerError::task_invocation(format!(
-                    "{description} failed ({})\nstdout:\n{}\nstderr:\n{}",
+                let mut message = format!(
+                    "{description} failed ({})",
                     effigy_ui::human::exit_code(output.status.code()),
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
-                )))
+                );
+                effigy_ui::human::push_non_empty_streams(
+                    &mut message,
+                    &String::from_utf8_lossy(&output.stdout),
+                    &String::from_utf8_lossy(&output.stderr),
+                );
+                Err(RunnerError::task_invocation(message))
             }
         })
 }

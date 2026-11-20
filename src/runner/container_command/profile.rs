@@ -1031,12 +1031,16 @@ fn command_failure(
         Some(profile) => format!("{label} for profile `{profile}`"),
         None => label.to_owned(),
     };
-    RunnerError::task_invocation(format!(
-        "{subject} failed ({})\nnext: read the Colima output below, check `effigy container profile status`, then rerun the command\nstdout:\n{}\nstderr:\n{}",
+    let mut message = format!(
+        "{subject} failed ({})\nnext: read the Colima output below, check `effigy container profile status`, then rerun the command",
         effigy_ui::human::exit_code(code),
-        String::from_utf8_lossy(stdout),
-        String::from_utf8_lossy(stderr)
-    ))
+    );
+    effigy_ui::human::push_non_empty_streams(
+        &mut message,
+        &String::from_utf8_lossy(stdout),
+        &String::from_utf8_lossy(stderr),
+    );
+    RunnerError::task_invocation(message)
 }
 
 /// The profile a Colima command names with `--profile`, when it names one.

@@ -84,17 +84,9 @@ impl From<ContainerExecError> for EffigyRuntimeError {
             ContainerExecError::Refusal { command, reason } => {
                 Self::task_invocation(format!("{command} refused: {reason}"))
             }
-            ContainerExecError::Failure {
-                command,
-                code,
-                stdout,
-                stderr,
-            } => Self::task_invocation(format!(
-                "{command} failed ({})\nstdout:\n{}\nstderr:\n{}",
-                effigy_ui::human::exit_code(code),
-                stdout,
-                stderr
-            )),
+            failure @ ContainerExecError::Failure { .. } => {
+                Self::task_invocation(failure.to_string())
+            }
         }
     }
 }

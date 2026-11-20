@@ -551,7 +551,14 @@ fn probe_colima_runtime(
     repo_root: &Path,
     timeout: Duration,
 ) -> Result<(), String> {
-    let per_probe_timeout = (timeout / 2).min(COLIMA_RUNTIME_PROBE_TIMEOUT);
+    let per_probe_timeout = if timeout.is_zero() {
+        Duration::ZERO
+    } else {
+        (timeout / 2)
+            .max(Duration::from_millis(1))
+            .min(timeout)
+            .min(COLIMA_RUNTIME_PROBE_TIMEOUT)
+    };
     run_colima_readiness_command(
         repo_root,
         &colima_runtime_probe_args(policy),
@@ -619,8 +626,8 @@ fn wait_for_runtime_readiness(
         pause(interval.min(remaining));
     }
     Err(format!(
-        "Colima containerd and BuildKit did not become ready within {}s; last runtime probe: {}",
-        timeout.as_secs(),
+        "Colima containerd and BuildKit did not become ready within {}; last runtime probe: {}",
+        super::process::format_timeout_duration(timeout),
         last_error.as_deref().unwrap_or("no probe completed")
     ))
 }
@@ -1033,7 +1040,57 @@ mod tests {
         assert!(started.elapsed() < Duration::from_millis(250));
         assert_eq!(
             error,
-            "Colima containerd and BuildKit did not become ready within 0s; last runtime probe: containerd endpoint unavailable"
+            "Colima containerd and BuildKit did not become ready within 10ms; last runtime probe: containerd endpoint unavailable"
+        );
+    }
+
+    #[test]
+    fn runtime_readiness_subsecond_final_probe_never_reports_zero_seconds_and_names_window() {
+        let mut probe_calls = 0;
+        let window_error = wait_for_runtime_readiness(
+            Duration::from_millis(1200),
+            Duration::from_millis(1),
+            |remaining| {
+                probe_calls += 1;
+                if probe_calls == 1 {
+                    std::thread::sleep(Duration::from_millis(850));
+                    Err("nerdctl info: containerd not ready yet".to_owned())
+                } else {
+                    assert!(
+                        remaining < Duration::from_secs(1),
+                        "remaining={remaining:?}"
+                    );
+                    let per_probe = (remaining / 2).max(Duration::from_millis(1));
+                    let failure = run_command_capture_with_timeout(
+                        Path::new("."),
+                        "/bin/sh",
+                        &["-c", "/bin/sleep 2"],
+                        "Colima containerd readiness probe",
+                        per_probe,
+                    )
+                    .expect_err("sub-second final probe should time out");
+                    Err(failure.to_string())
+                }
+            },
+            std::thread::sleep,
+        )
+        .expect_err("readiness window should time out");
+
+        assert!(
+            window_error.contains("within 1s"),
+            "names readiness window: {window_error}"
+        );
+        assert!(
+            !window_error.contains("after 0s"),
+            "never truncates sub-second probe to 0s: {window_error}"
+        );
+        assert!(
+            !window_error.contains("\nstdout:\n"),
+            "omits empty stdout block: {window_error}"
+        );
+        assert!(
+            window_error.contains("ms: owned capture child terminated and reaped"),
+            "reports sub-second timeout honestly in milliseconds: {window_error}"
         );
     }
 
@@ -1490,7 +1547,7 @@ esac
         let error = reset_colima_runtime(&policy, &fixture.root).unwrap_err();
         assert_eq!(
             error.to_string(),
-            "colima status failed (no exit code: the command ended on a signal)\nstdout:\n[check] resetting Colima profile `effigy` to a fully stopped state\n[ok] stopped Colima profile `effigy`\nstderr:\ncolima status failed (exit code 1)\nstdout:\n\nstderr:\nColima stop status is unproven: status unavailable\n; refusing profile recovery. Verify pidfile ownership before manually running `colima stop -p effigy --force`; Effigy did not run it."
+            "colima status failed (no exit code: the command ended on a signal)\nstdout:\n[check] resetting Colima profile `effigy` to a fully stopped state\n[ok] stopped Colima profile `effigy`\nstderr:\ncolima status failed (exit code 1)\nstderr:\nColima stop status is unproven: status unavailable\n; refusing profile recovery. Verify pidfile ownership before manually running `colima stop -p effigy --force`; Effigy did not run it."
         );
 
         // Phase 2: a registry failure never stops or restarts the shared profile.

@@ -54,13 +54,17 @@ pub(super) fn execute_pull_production_hook(
     if output.status.success() {
         Ok(())
     } else {
-        Err(RunnerError::task_invocation(format!(
-            "pull_production hook for container `{}` failed ({})\nstdout:\n{}\nstderr:\n{}",
+        let mut message = format!(
+            "pull_production hook for container `{}` failed ({})",
             policy.name,
             effigy_ui::human::exit_code(output.status.code()),
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        )))
+        );
+        effigy_ui::human::push_non_empty_streams(
+            &mut message,
+            &String::from_utf8_lossy(&output.stdout),
+            &String::from_utf8_lossy(&output.stderr),
+        );
+        Err(RunnerError::task_invocation(message))
     }
 }
 

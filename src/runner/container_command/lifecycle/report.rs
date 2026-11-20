@@ -176,9 +176,17 @@ pub(super) fn detached_activation_failure(
             Some(error.workload_outcome()),
         );
     }
-    RunnerError::task_invocation(format!(
-        "{error}\ndetached activation unavailable: readiness and exposure are unverified. Inspect with `effigy container status`; retry `effigy container up --detach`. `effigy container down` stops the scope; `effigy container retire --yes` removes owned mutable data."
-    ))
+    let child = error.human_error();
+    let mut lines = vec![child.what_failed().to_owned()];
+    lines.extend(child.evidence_lines().iter().cloned());
+    lines.push(
+        "detached activation unavailable: readiness and exposure are unverified. Inspect with `effigy container status`; retry `effigy container up --detach`. `effigy container down` stops the scope; `effigy container retire --yes` removes owned mutable data."
+            .to_owned(),
+    );
+    if let Some(next) = child.next_action_text() {
+        lines.push(format!("next: {next}"));
+    }
+    RunnerError::task_invocation(lines.join("\n"))
 }
 
 /// The machine-readable details of a container wait that ended unfinished.
@@ -197,10 +205,17 @@ pub(super) fn detached_activation_error(
     if matches!(&error, RunnerError::ManagedHostReadiness { .. }) {
         return error;
     }
-    RunnerError::task_invocation(format!(
-        "{error}\ncontainer `{}` stays as Compose left it: gateway exposure is unverified and no teardown ran. Re-run `effigy container up --detach` to reconcile from what is running, or `effigy container down` to stop it.",
+    let child = error.human_error();
+    let mut lines = vec![child.what_failed().to_owned()];
+    lines.extend(child.evidence_lines().iter().cloned());
+    lines.push(format!(
+        "container `{}` stays as Compose left it: gateway exposure is unverified and no teardown ran. Re-run `effigy container up --detach` to reconcile from what is running, or `effigy container down` to stop it.",
         policy.name
-    ))
+    ));
+    if let Some(next) = child.next_action_text() {
+        lines.push(format!("next: {next}"));
+    }
+    RunnerError::task_invocation(lines.join("\n"))
 }
 
 /// The routes this activation verified and published, as one line each, for

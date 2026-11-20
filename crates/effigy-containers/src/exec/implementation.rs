@@ -111,9 +111,16 @@ impl std::fmt::Display for ContainerExecError {
             } => {
                 write!(
                     f,
-                    "{command} failed ({})\nstdout:\n{stdout}\nstderr:\n{stderr}",
+                    "{command} failed ({})",
                     effigy_ui::human::exit_code(*code)
-                )
+                )?;
+                if !stdout.trim().is_empty() {
+                    write!(f, "\nstdout:\n{stdout}")?;
+                }
+                if !stderr.trim().is_empty() {
+                    write!(f, "\nstderr:\n{stderr}")?;
+                }
+                Ok(())
             }
         }
     }

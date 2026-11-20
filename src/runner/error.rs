@@ -851,7 +851,9 @@ pub(in crate::runner) fn task_command_failure_human(
     // its last lines say how it ended. Both streams are shown when both said
     // something, because a runner that prints progress to stderr and failures
     // to stdout would otherwise hide its own cause (effigy#364).
-    error = error.evidence_output("stderr", stderr);
+    if !stderr.trim().is_empty() {
+        error = error.evidence_output("stderr", stderr);
+    }
     if !stdout.trim().is_empty() {
         error = error.evidence_output("stdout", stdout);
     }
@@ -1047,10 +1049,15 @@ fn human_error_from_lines(rendered: &str, include_evidence: bool) -> effigy_ui::
     } else {
         lines.by_ref().find(|line| !line.trim().is_empty())
     };
-    let what_failed = first
+    let raw_what_failed = first
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .unwrap_or("the command failed");
+    let what_failed = raw_what_failed
+        .strip_prefix("[error]")
+        .map(str::trim_start)
+        .filter(|line| !line.is_empty())
+        .unwrap_or(raw_what_failed);
     let mut error = effigy_ui::HumanError::new(effigy_ui::human::bound_text(
         what_failed,
         effigy_ui::human::RELAY_MAX_BYTES,
@@ -1068,7 +1075,15 @@ fn human_error_from_lines(rendered: &str, include_evidence: bool) -> effigy_ui::
                 error = error.next_action(action.trim())
             }
             Some(_) => {}
-            None if include_evidence => error = error.evidence(line),
+            None if include_evidence => {
+                let mut cleaned = line;
+                while let Some(rest) = cleaned.strip_prefix("cause:") {
+                    cleaned = rest.trim_start();
+                }
+                if !cleaned.is_empty() {
+                    error = error.evidence(cleaned);
+                }
+            }
             None => {}
         }
     }
@@ -1404,9 +1419,11 @@ fn map_container_exec_failure(
         ));
     }
     if lowered.contains("no space left on device") {
-        return RunnerError::TaskInvocation(format!(
-            "Container runtime storage is out of space or inodes while running `{command}`.\nnext: check `effigy container profile status`; `effigy container profile resize` stops and restarts the managed profile and may irreversibly grow a disk below target. Then retry the Effigy command. If disk pressure remains, inspect `effigy container cache list --global` and prune purge-safe caches with `effigy container cache prune --global --yes`.\nstdout:\n{stdout}\nstderr:\n{stderr}"
-        ));
+        let mut message = format!(
+            "Container runtime storage is out of space or inodes while running `{command}`.\nnext: check `effigy container profile status`; `effigy container profile resize` stops and restarts the managed profile and may irreversibly grow a disk below target. Then retry the Effigy command. If disk pressure remains, inspect `effigy container cache list --global` and prune purge-safe caches with `effigy container cache prune --global --yes`."
+        );
+        effigy_ui::human::push_non_empty_streams(&mut message, &stdout, &stderr);
+        return RunnerError::TaskInvocation(message);
     }
 
     RunnerError::TaskCommandFailure {

@@ -590,7 +590,7 @@ fn exit141_cancelled_captures_distinguish_writer_from_eof() {
         .expect_err("the client is cancelled at its original deadline");
         assert_eq!(
             error.to_string(),
-            "private early capture failed (no exit code: the command ended on a signal)\nstdout:\n\nstderr:\n[effigy] command timed out after 0s: owned capture child terminated and reaped; stdout/stderr EOF verified"
+            "private early capture failed (no exit code: the command ended on a signal)\nstderr:\n[effigy] command timed out after 600ms: owned capture child terminated and reaped; stdout/stderr EOF verified"
         );
         assert!(!fixture.root.join("service-writer.json").exists());
         assert!(!fixture.root.join("witness-started.json").exists());
@@ -637,7 +637,7 @@ fn exit141_cancelled_captures_distinguish_writer_from_eof() {
         .expect_err("a client that never exits is cancelled");
         assert_eq!(
             error.to_string(),
-            "private attached capture failed (no exit code: the command ended on a signal)\nstdout:\n\nstderr:\n[effigy] command timed out after 0s: capture unavailable: child exited but inherited pipe EOF was not verified; writer provenance and settlement unknown"
+            "private attached capture failed (no exit code: the command ended on a signal)\nstderr:\n[effigy] command timed out after 600ms: capture unavailable: child exited but inherited pipe EOF was not verified; writer provenance and settlement unknown"
         );
         let client = fixture.wait_json("capture-client.json", Duration::from_secs(5));
         assert_eq!(

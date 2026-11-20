@@ -132,7 +132,7 @@ fn name_store_conflicts_report_foreign_owners_and_retry_only_own_ones() {
     assert_eq!(
             error.to_string(),
             format!(
-                "docker compose up failed (exit code 1)\nstdout:\n\nstderr:\n[effigy] detached backend failed (exit code 1); its output was isolated from service writers and retained at {}\n[effigy] backend output tail:\nmsg={:?}",
+                "docker compose up failed (exit code 1)\nstderr:\n[effigy] detached backend failed (exit code 1); its output was isolated from service writers and retained at {}\n[effigy] backend output tail:\nmsg={:?}",
                 root.join(".effigy/runtime/logs/app-dev-wt-abcdef012345.compose.log").display(),
                 format!("name-store error: name \"app-dev-wt-abcdef012345-app-1\" is already used by ID {ID}")
             )

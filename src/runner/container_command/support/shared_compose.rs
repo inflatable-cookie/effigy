@@ -135,12 +135,16 @@ pub(super) fn run_shared_compose_capture(
     if output.status.success() {
         return Ok(output);
     }
-    Err(RunnerError::task_invocation(format!(
-        "{label} failed ({})\nstdout:\n{}\nstderr:\n{}",
+    let mut message = format!(
+        "{label} failed ({})",
         effigy_ui::human::exit_code(output.status.code()),
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    )))
+    );
+    effigy_ui::human::push_non_empty_streams(
+        &mut message,
+        &String::from_utf8_lossy(&output.stdout),
+        &String::from_utf8_lossy(&output.stderr),
+    );
+    Err(RunnerError::task_invocation(message))
 }
 
 /// Exec a command in one shared service's own Compose project and render.

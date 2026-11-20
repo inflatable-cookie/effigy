@@ -918,3 +918,59 @@ fn workspace_guest_failures_are_classified_by_what_the_host_observed() {
         effigy_kernel::human::Category::Unavailable
     ));
 }
+
+#[test]
+fn readiness_failure_human_rendering_avoids_duplicate_cause_empty_streams_and_doubled_chain() {
+    let inner_probe = ContainerExecError::Failure {
+        command: "Colima containerd readiness probe".to_owned(),
+        code: None,
+        stdout: String::new(),
+        stderr: "[effigy] command timed out after 375ms: owned capture child terminated and reaped; stdout/stderr EOF verified".to_owned(),
+    };
+    let inner_rendered = inner_probe.to_string();
+    assert!(
+        !inner_rendered.contains("stdout:"),
+        "empty stdout must be omitted: {inner_rendered}"
+    );
+
+    let readiness = RunnerError::from(ContainerExecError::Failure {
+        command: "Colima runtime readiness".to_owned(),
+        code: None,
+        stdout: String::new(),
+        stderr: format!(
+            "Colima containerd and BuildKit did not become ready within 90s; last runtime probe: {inner_rendered}"
+        ),
+    });
+    let wrapped = RunnerError::task_invocation(format!(
+        "{readiness}\ndetached activation unavailable: readiness and exposure are unverified."
+    ));
+    let rendered = wrapped.human_error().render_text();
+
+    assert!(
+        !rendered.contains("cause: cause:"),
+        "must not duplicate cause prefix: {rendered}"
+    );
+    assert!(
+        !rendered.contains("[error] [error]"),
+        "must not duplicate [error] prefix: {rendered}"
+    );
+    assert!(
+        !rendered.contains("stdout:"),
+        "must not include empty stdout header: {rendered}"
+    );
+    assert!(
+        !rendered.contains("after 0s"),
+        "must not truncate sub-second timeout to 0s: {rendered}"
+    );
+    assert_eq!(
+        rendered
+            .matches("Colima containerd readiness probe failed")
+            .count(),
+        1,
+        "must not double-print the readiness probe error chain: {rendered}"
+    );
+    assert!(
+        rendered.contains("within 90s") && rendered.contains("after 375ms"),
+        "keeps readiness window and sub-second probe detail: {rendered}"
+    );
+}
