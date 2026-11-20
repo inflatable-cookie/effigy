@@ -189,6 +189,52 @@ enum SourcePlan {
     Keep,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreparationAction {
+    Keep,
+    Acquire,
+    Refuse(&'static str),
+}
+
+fn preparation_action(
+    mode: Mode,
+    plans: &BTreeMap<String, SourcePlan>,
+    in_workspace_container: bool,
+) -> PreparationAction {
+    if !in_workspace_container {
+        return if plans.values().all(|plan| *plan == SourcePlan::Keep) {
+            PreparationAction::Keep
+        } else {
+            PreparationAction::Acquire
+        };
+    }
+
+    if mode != Mode::Sync
+        && plans
+            .values()
+            .all(|plan| matches!(plan, SourcePlan::Keep | SourcePlan::RemoteCheck))
+    {
+        return PreparationAction::Keep;
+    }
+
+    let message = if mode == Mode::Sync {
+        "cannot sync bundles from inside a workspace container; exit the container and run `effigy bundle sync` on the host"
+    } else if plans
+        .values()
+        .any(|plan| *plan == SourcePlan::Acquire(RefreshReason::Declaration))
+    {
+        "this project's bundle declaration changed since it was last synced on the host; exit the container and run `effigy bundle sync` on the host"
+    } else if plans
+        .values()
+        .any(|plan| *plan == SourcePlan::Acquire(RefreshReason::Content))
+    {
+        "this project's local path bundle changed since it was last snapshotted on the host; exit the container and run `effigy bundle sync` on the host"
+    } else {
+        "this project's bundle is not synced yet; exit the container and run `effigy bundle sync` on the host before running tasks inside the workspace"
+    };
+    PreparationAction::Refuse(message)
+}
+
 fn prepare(
     manifest: &Path,
     preparation: &SourcePreparation,
@@ -259,12 +305,15 @@ fn prepare(
             Ok((name.clone(), plan))
         })
         .collect::<Result<BTreeMap<_, _>, ManifestError>>()?;
-    // No gate, token or file creation when every selected source is current.
-    if plans.values().all(|plan| *plan == SourcePlan::Keep) {
-        return Ok(None);
-    }
-    if effigy_core::container_detection::process_is_inside_effigy_workspace_container() {
-        return Err(error(&manifest, "source acquisition requires host authority; run `effigy bundle sync` on the host before entering the workspace"));
+    // Guests keep materialized pins when only a floating Git remote check is due.
+    match preparation_action(
+        mode,
+        &plans,
+        effigy_core::container_detection::process_is_inside_effigy_workspace_container(),
+    ) {
+        PreparationAction::Keep => return Ok(None),
+        PreparationAction::Acquire => {}
+        PreparationAction::Refuse(message) => return Err(error(&manifest, message)),
     }
     let deadline = Instant::now()
         .checked_add(preparation.budget)
@@ -1737,6 +1786,64 @@ mod tests {
         let mut entries = BTreeMap::new();
         visit(root, root, &mut entries);
         entries
+    }
+
+    fn plans(plans: &[SourcePlan]) -> BTreeMap<String, SourcePlan> {
+        plans
+            .iter()
+            .enumerate()
+            .map(|(index, plan)| (format!("source:{index}"), *plan))
+            .collect()
+    }
+
+    #[test]
+    fn guest_keeps_materialized_pins_when_only_remote_check_is_due() {
+        let plans = plans(&[SourcePlan::Keep, SourcePlan::RemoteCheck]);
+
+        assert_eq!(
+            preparation_action(Mode::Refresh, &plans, true),
+            PreparationAction::Keep
+        );
+    }
+
+    #[test]
+    fn guest_missing_pin_requires_host_sync() {
+        let plans = plans(&[SourcePlan::Acquire(RefreshReason::Missing)]);
+
+        assert_eq!(
+            preparation_action(Mode::Refresh, &plans, true),
+            PreparationAction::Refuse("this project's bundle is not synced yet; exit the container and run `effigy bundle sync` on the host before running tasks inside the workspace")
+        );
+    }
+
+    #[test]
+    fn guest_changed_declaration_requires_host_sync() {
+        let plans = plans(&[SourcePlan::Acquire(RefreshReason::Declaration)]);
+
+        assert_eq!(
+            preparation_action(Mode::Refresh, &plans, true),
+            PreparationAction::Refuse("this project's bundle declaration changed since it was last synced on the host; exit the container and run `effigy bundle sync` on the host")
+        );
+    }
+
+    #[test]
+    fn guest_changed_path_content_requires_host_sync() {
+        let plans = plans(&[SourcePlan::Acquire(RefreshReason::Content)]);
+
+        assert_eq!(
+            preparation_action(Mode::Refresh, &plans, true),
+            PreparationAction::Refuse("this project's local path bundle changed since it was last snapshotted on the host; exit the container and run `effigy bundle sync` on the host")
+        );
+    }
+
+    #[test]
+    fn guest_sync_requires_running_on_host() {
+        let plans = plans(&[SourcePlan::Acquire(RefreshReason::Missing)]);
+
+        assert_eq!(
+            preparation_action(Mode::Sync, &plans, true),
+            PreparationAction::Refuse("cannot sync bundles from inside a workspace container; exit the container and run `effigy bundle sync` on the host")
+        );
     }
 
     #[test]
