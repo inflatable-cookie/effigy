@@ -54,6 +54,40 @@ pub(crate) const DRAIN_COMMIT_BOUND: usize = 64 * 1024;
 /// keeps its own descriptor and closes it when the spawn returns.
 pub const HANDOFF_FD: i32 = 11;
 
+// Test-only hook run between one poll turn's drain and its exit check, so a
+// test can make output arrive exactly in the turn that observes the exit.
+// Unlike a fault point it never enters `fault::trace()`, so the fault-matrix
+// driver cannot arm it (effigy#1077).
+#[cfg(test)]
+thread_local! {
+    static POLL_BEFORE_EXIT_HOOK: std::cell::RefCell<Option<Box<dyn Fn()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+/// Install the [`POLL_BEFORE_EXIT_HOOK`] (or clear it with `None`).
+#[cfg(test)]
+pub(crate) fn set_poll_before_exit_hook(hook: Option<Box<dyn Fn()>>) {
+    POLL_BEFORE_EXIT_HOOK.with(|slot| *slot.borrow_mut() = hook);
+}
+/// RAII guard that clears the poll-before-exit hook on drop.
+#[cfg(test)]
+pub(crate) struct PollBeforeExitReset;
+#[cfg(test)]
+impl Drop for PollBeforeExitReset {
+    fn drop(&mut self) {
+        set_poll_before_exit_hook(None);
+    }
+}
+#[cfg(test)]
+fn run_poll_before_exit_hook() {
+    POLL_BEFORE_EXIT_HOOK.with(|slot| {
+        if let Some(hook) = slot.borrow().as_ref() {
+            hook();
+        }
+    });
+}
+#[cfg(not(test))]
+fn run_poll_before_exit_hook() {}
+
 /// Reported when a group's closure cannot be positively established: an
 /// inventory row vanished or moved inside the round, so a member forked and
 /// orphaned in that window cannot be excluded. The anchor stays alive as the
@@ -1470,7 +1504,7 @@ impl ProcessCore {
     }
     fn poll(&mut self) -> Observed<Exit> {
         self.drain();
-        let _ = crate::fault_point!(PollBeforeExit);
+        run_poll_before_exit_hook();
         let observed = self.poll_exit();
         // A child that writes and exits between the drain above and this
         // reap leaves its bytes in the OS pipe. Callers break on `Verified`
