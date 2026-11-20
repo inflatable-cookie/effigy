@@ -561,7 +561,7 @@ fn user_bundle_inputs(
                         ("manifest", &manifest_display),
                         ("bundle", &bundle),
                         ("config", &config_path),
-                        ("declared", &declared_names),
+                        ("declared", declared_names),
                     ],
                 ));
             }
