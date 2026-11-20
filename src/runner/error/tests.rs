@@ -377,6 +377,199 @@ fn task_manifest_parse_error_with_stale_install_names_recovery() {
     );
 }
 
+/// A manifest only a newer binary understands leads with the headline, the
+/// parse position and the one recovery: refresh the repository-local install.
+/// The path and identities sit in `Details:` instead of the headline
+/// (effigy#1090).
+#[test]
+fn a_stale_install_parse_refusal_leads_with_the_headline_and_the_recovery() {
+    let error: toml::de::Error = toml::from_str::<toml::Value>("unknown =").unwrap_err();
+    let stale = StaleLocalInstall {
+        executable: Path::new("/repo/.local-install/bin/effigy").to_path_buf(),
+        repo_root: Path::new("/repo").to_path_buf(),
+        installed_identity: "v0.12.1+local.abc1234".to_owned(),
+        current_identity: "v0.12.1+local.def5678".to_owned(),
+    };
+    let err = RunnerError::TaskManifestParse {
+        path: Path::new("/repo/effigy.toml").to_path_buf(),
+        error,
+        stale_local_install: Some(Box::new(stale)),
+    };
+
+    let human = err.human_error();
+    assert_eq!(human.what_failed(), "Invalid effigy.toml");
+    assert!(
+        human
+            .explanation_lines()
+            .iter()
+            .any(|line| line.contains("TOML parse error at line")),
+        "{human:?}"
+    );
+    assert_eq!(
+        human.next_action_text(),
+        Some(
+            "Run `effigy install:local` (or `cargo run --bin effigy -- install:local`) from the \
+             checkout root"
+        )
+    );
+    let labels: Vec<&str> = human
+        .detail_entries()
+        .iter()
+        .map(|(label, _)| label.as_str())
+        .collect();
+    assert_eq!(labels, ["manifest", "cause", "installed", "current"]);
+    assert!(human
+        .detail_entries()
+        .iter()
+        .any(|(_, value)| value == "v0.12.1+local.abc1234"));
+
+    let rendered = human.render_text();
+    assert!(
+        rendered.contains("\n\n  Next: Run `effigy install:local`"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("\n\n  Details:\n"), "{rendered}");
+    assert!(rendered.contains("manifest:"), "{rendered}");
+    assert!(rendered.contains("/repo/effigy.toml"), "{rendered}");
+    // `Display` keeps its own sentence for `error.message`.
+    assert!(err
+        .to_string()
+        .starts_with("failed to parse /repo/effigy.toml:"));
+}
+
+/// A composition refusal states the problem, moves its own remedy to `Next:`
+/// and keeps the manifest path in `Details:` (effigy#1090).
+#[test]
+fn a_compose_refusal_splits_the_statement_from_its_remedy() {
+    let err = RunnerError::TaskManifestCompose {
+        path: Path::new("/repo/effigy.toml").to_path_buf(),
+        detail: "manifest compose failed in /repo/effigy.toml: `tasks.test` was removed in v0.11; \
+                 move the command to a named `[test.suites]` entry"
+            .to_owned(),
+    };
+    let human = err.human_error();
+    assert_eq!(human.what_failed(), "Invalid effigy.toml");
+    assert_eq!(
+        human.explanation_lines(),
+        ["`tasks.test` was removed in v0.11"]
+    );
+    assert_eq!(
+        human.next_action_text(),
+        Some("move the command to a named `[test.suites]` entry")
+    );
+    assert_eq!(
+        human.detail_entries(),
+        [("manifest".to_owned(), "/repo/effigy.toml".to_owned())]
+    );
+    let rendered = human.render_text();
+    assert!(
+        !rendered.contains("manifest compose failed in"),
+        "the internal prefix stays out of the human view: {rendered}"
+    );
+    assert!(rendered.contains("Details:"), "{rendered}");
+}
+
+/// Task routing refusals name the inventory to run and keep the catalog list
+/// out of the headline (effigy#1090).
+#[test]
+fn task_routing_refusals_name_the_inventory_and_the_prefix() {
+    let not_found = RunnerError::TaskNotFound {
+        name: "deply".to_owned(),
+        path: Path::new("/repo/effigy.toml").to_path_buf(),
+    };
+    let human = not_found.human_error();
+    assert_eq!(human.what_failed(), "Task `deply` is not defined");
+    assert_eq!(
+        human.next_action_text(),
+        Some("Run `effigy tasks` to list available tasks")
+    );
+    assert!(human.render_text().contains("/repo/effigy.toml"));
+
+    let ambiguous = RunnerError::TaskAmbiguous {
+        name: "dev".to_owned(),
+        candidates: vec!["web".to_owned(), "infra".to_owned()],
+    };
+    let human = ambiguous.human_error();
+    assert_eq!(human.what_failed(), "Task `dev` matches multiple catalogs");
+    assert!(
+        human
+            .next_action_text()
+            .is_some_and(|action| action.contains("`<catalog>:dev`")),
+        "{human:?}"
+    );
+    assert_eq!(
+        human.detail_entries(),
+        [("matches".to_owned(), "web, infra".to_owned())]
+    );
+}
+
+/// A container that is not running names the command that starts it; with no
+/// machine facts it keeps the compact layout instead of an empty `Details:`
+/// block (effigy#1090).
+#[test]
+fn a_container_that_is_not_running_names_the_command_that_starts_it() {
+    let human = RunnerError::ContainerSurfaceNotRunning {
+        container: "web".to_owned(),
+    }
+    .human_error();
+    assert_eq!(human.what_failed(), "Container `web` is not running");
+    assert_eq!(
+        human.next_action_text(),
+        Some("Start it with `effigy container web up`")
+    );
+    let rendered = human.render_text();
+    assert!(!rendered.contains("Details:"), "{rendered}");
+    assert_eq!(
+        rendered,
+        "[error] Container `web` is not running\n  \
+         next: Start it with `effigy container web up`"
+    );
+}
+
+/// Gateway refusals keep the phase, path and cause below the headline and name
+/// the inspection command (effigy#1090).
+#[test]
+fn gateway_refusals_keep_the_phase_and_the_cause_below_the_headline() {
+    let error = RunnerError::gateway_route_table(
+        "load",
+        "/home/operator/.effigy/gateway/routes.json",
+        "invalid json",
+    );
+    let human = error.human_error();
+    assert_eq!(human.what_failed(), "Gateway route table load failed");
+    assert_eq!(
+        human.detail_entries()[0],
+        ("phase".to_owned(), "load".to_owned())
+    );
+    assert_eq!(
+        human.detail_entries()[1],
+        ("cause".to_owned(), "invalid json".to_owned())
+    );
+    let rendered = human.render_text();
+    assert!(
+        rendered.contains("Next: Run `effigy gateway status`"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("path:"), "{rendered}");
+    assert!(
+        rendered.contains("/home/operator/.effigy/gateway/routes.json"),
+        "{rendered}"
+    );
+
+    let human = RunnerError::GatewayEndpointStore {
+        kind: EndpointStoreRefusal::ObservationUnknown,
+        reason: "store unreadable".to_owned(),
+    }
+    .human_error();
+    assert_eq!(human.what_failed(), "The gateway endpoint store refused");
+    let rendered = human.render_text();
+    assert!(
+        rendered.contains("store: observation unknown"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("cause: store unreadable"), "{rendered}");
+}
+
 #[test]
 fn command_json_failure_survives_builtin_port_round_trip() {
     let payload =

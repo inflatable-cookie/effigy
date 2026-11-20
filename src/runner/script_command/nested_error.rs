@@ -109,13 +109,15 @@ mod tests {
         assert!(
             projected
                 .message
-                .contains("container `stack` is not defined"),
+                .contains("Container `stack` is not defined"),
             "got: {}",
             projected.message
         );
         assert_eq!(
-            projected.message, "container `stack` is not defined in `[containers]`",
-            "a failure that names no next step gains none"
+            projected.message,
+            "Container `stack` is not defined\n  \
+             next: Check `[containers]` in `effigy.toml` or run `effigy container status`",
+            "the human view keeps the headline and the next step, and adds no `Details:` block"
         );
     }
 

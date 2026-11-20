@@ -17,6 +17,8 @@ use effigy_tasks::TaskError;
 
 #[path = "error/display.rs"]
 mod display;
+#[path = "error/human.rs"]
+mod human;
 #[path = "error/rendered_output.rs"]
 mod rendered_output;
 
@@ -596,7 +598,13 @@ impl RunnerError {
             // never ran (effigy#328).
             RunnerError::AdmissionRefused { detail, .. } => human_error_from_display(detail),
             RunnerError::CommandJsonFailure(failure) => failure.human.clone(),
-            _ => human_error_from_display(&self.to_string()),
+            // The day-to-day refusals name their own headline, reason and next
+            // action, and keep the paths, catalog lists and backend
+            // diagnostics in a separated `Details:` block (effigy#1090).
+            other => match human::mapped(other) {
+                Some(human) => human,
+                None => human_error_from_display(&other.to_string()),
+            },
         }
     }
 
@@ -1023,6 +1031,23 @@ fn embedded_human_error(human: &serde_json::Value) -> effigy_ui::HumanError {
         .filter(|line| !line.is_empty())
     {
         error = error.evidence(line);
+    }
+    // A structured producer's `Details:` entries travel with the block, so a
+    // relay re-renders the same machine facts instead of dropping them
+    // (effigy#1090). An older payload simply has no `details` key.
+    for entry in human
+        .get("details")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let field = |key: &str| {
+            entry
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+        };
+        error = error.detail(field("label"), field("value"));
     }
     match text("next_action") {
         Some(action) => error.next_action(action),

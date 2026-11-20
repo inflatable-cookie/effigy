@@ -190,13 +190,41 @@ A failure rendered for a person carries three facts:
    redacted;
 3. the next action, as an exact command when one exists.
 
-Build those with `effigy_ui::human::HumanError`: `render_text()` prints
-`[error] <what failed>` with `cause:` lines and a `next:` line, and `to_json()`
-is the same value for `--json` (`error.human` in the `effigy.command.v1`
-envelope). The runner's top-level printer uses it, so a `RunnerError` that
-renders through `Display` already supplies the sentence; a refusal that also
-carries structured details lifts their `cause`, phase and `stop`/`next` keys,
-so the text and `--json` tell the same story.
+Build those with `effigy_ui::human::HumanError`. An error that names only a
+failure with its evidence keeps the compact layout: `render_text()` prints
+`[error] <what failed>` with `cause:` lines and a `next:` line. A refusal that
+also knows *why*, or whose machine facts would bury the headline, adds them
+with `explain()` and `detail()` and renders the separated block instead:
+
+```text
+[error] Invalid effigy.toml
+
+  TOML parse error at line 1, column 11: missing value
+
+  Next: run `effigy install:local` from the checkout root
+
+  Details:
+    manifest:  /repo/effigy.toml
+    cause:     TOML parse error at line 1, column 11
+    installed: v0.12.1+local.abc1234
+    current:   v0.12.1+local.def5678
+```
+
+Sections with nothing to say are omitted, `Details:` keys pad to the widest
+label so values line up, and evidence carried alongside an explanation moves
+under `Details:` as `cause` rather than sitting between the headline and
+`Next:`. `render_warning_text()` is the same block titled `[warning]`.
+
+`to_json()` is the same value for `--json` (`error.human` in the
+`effigy.command.v1` envelope). It always keeps `what_failed`, `evidence` and
+`next_action`, and adds a `details` array of `{label, value}` only when a detail
+was set, so an error without details keeps its exact earlier shape. The runner's
+top-level printer uses it, so a `RunnerError` that renders through `Display`
+already supplies the sentence; the day-to-day variants map their own typed facts
+(this is the one place a path or a catalog list belongs) instead of one run-on
+`Display` line, and a refusal that carries structured details lifts their
+`cause`, phase and `stop`/`next` keys, so the text and `--json` tell the same
+story.
 
 Rust `Debug` output, enum and variant names, and nested
 `Unknown(StoreUnreadable(…))` chains must not reach a person. Render the value
