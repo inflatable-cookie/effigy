@@ -91,6 +91,50 @@ pub fn prepare(policy: &EffectiveContainerPolicy) -> Result<(), ContainerPolicyE
     Ok(())
 }
 
+/// A published shared render is read by the container's own user, not by the
+/// host user that wrote it: MariaDB's entrypoint runs as `mysql` and reads its
+/// init SQL from a bind mount. The host umask must not decide that access, so
+/// publication sets the mode it wants instead of the one `std::fs::write` and
+/// `create_dir_all` inherited (a `0077` umask otherwise leaves `0600` files in
+/// `0700` directories the container cannot read through, and MariaDB exits 1).
+///
+/// The modes match what an ordinary `0022` host umask already produced, so this
+/// restores the v0.14.1 behaviour on a restrictive host rather than widening
+/// access on a standard one.
+fn make_readable(path: &Path, mode: u32) -> Result<(), ContainerPolicyError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).map_err(|error| {
+        ContainerPolicyError::Read {
+            path: path.into(),
+            error,
+        }
+    })
+}
+
+/// Every directory from `directory` up to (and including) the `shared-services`
+/// root this publication created, so a container user can traverse to a bind
+/// source. Nothing above that root is touched: the Effigy home is the user's,
+/// and a path that is not a shared-service render is left exactly as it is.
+fn make_traversable(directory: &Path) -> Result<(), ContainerPolicyError> {
+    const ROOT: &str = "shared-services";
+    if !directory
+        .components()
+        .any(|component| component.as_os_str() == OsStr::new(ROOT))
+    {
+        return Ok(());
+    }
+    let mut current = Some(directory);
+    while let Some(directory) = current {
+        make_readable(directory, 0o755)?;
+        if directory.file_name() == Some(OsStr::new(ROOT)) {
+            break;
+        }
+        current = directory.parent();
+    }
+    Ok(())
+}
+
 /// Write a shared render's files where its digest names them. Every file is
 /// content-addressed, so an identical file already there is left alone and a
 /// concurrent writer of the same bytes writes the same bytes (through a
@@ -103,6 +147,12 @@ pub fn publish_shared_render(shared: &crate::SharedRender) -> Result<(), Contain
     for (relative, bytes) in &shared.files {
         let path = shared.directory.join(relative);
         if std::fs::read(&path).is_ok_and(|existing| existing == *bytes) {
+            // An identical file already there keeps its bytes, but a render
+            // published under a restrictive umask still becomes readable.
+            if let Some(parent) = path.parent() {
+                make_traversable(parent)?;
+            }
+            make_readable(&path, 0o644)?;
             continue;
         }
         if let Some(parent) = path.parent() {
@@ -110,12 +160,14 @@ pub fn publish_shared_render(shared: &crate::SharedRender) -> Result<(), Contain
                 path: parent.into(),
                 error,
             })?;
+            make_traversable(parent)?;
         }
         let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
         std::fs::write(&temporary, bytes).map_err(|error| ContainerPolicyError::Read {
             path: temporary.clone(),
             error,
         })?;
+        make_readable(&temporary, 0o644)?;
         std::fs::rename(&temporary, &path).map_err(|error| ContainerPolicyError::Read {
             path: path.clone(),
             error,
