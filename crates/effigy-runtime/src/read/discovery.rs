@@ -374,13 +374,16 @@ mod tests {
         fs::write(repo.join("effigy.toml"), "[manifest]\n").expect("write manifest");
         let render = immutable_render_dir(repo);
         assert_eq!(
-            render.strip_prefix(repo).expect("under repo").components().count(),
+            render
+                .strip_prefix(repo)
+                .expect("under repo")
+                .components()
+                .count(),
             8,
             "the immutable render is eight levels below the repo root"
         );
 
-        let resolved =
-            resolve_effigy_repo_root(&render, MAX_REPO_ROOT_WALKUP).expect("resolved");
+        let resolved = resolve_effigy_repo_root(&render, MAX_REPO_ROOT_WALKUP).expect("resolved");
 
         assert_eq!(resolved, repo);
     }

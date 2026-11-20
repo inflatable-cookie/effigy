@@ -576,11 +576,7 @@ impl OwnershipContext {
                 }
                 if crate::exec::parse::parse_full_container_id(id).is_some()
                     && project == policy.project_name
-                    && self.owns_binding(
-                        present(working_dir),
-                        present(checkout),
-                        present(scope),
-                    )
+                    && self.owns_binding(present(working_dir), present(checkout), present(scope))
                 {
                     continue;
                 }
@@ -634,11 +630,7 @@ impl OwnershipContext {
             || !id.bytes().all(|byte| byte.is_ascii_hexdigit())
             || !crate::exec::parse::compose_status_is_running(status)
             || oneoff
-            || !self.owns_binding(
-                present(working_dir),
-                present(checkout),
-                present(scope),
-            )
+            || !self.owns_binding(present(working_dir), present(checkout), present(scope))
         {
             return Err(refuse(
                 "full-ID/oneoff/running/checkout/scope ownership changed or is unknown",
@@ -838,9 +830,8 @@ mod immutable_render_ownership_tests {
         let shutdown = format!("{id}\t{project}\t{working_dir}\t{label}\t\n");
         let listed = format!("{id}\trunning\tfalse\t{working_dir}\t{label}\t\n");
         let inspected_json = inspect(&project, working_dir, checkout);
-        let inspected = crate::compose::with_test_compose_backend(
-            ComposeBackend::ColimaNerdctl,
-            || {
+        let inspected =
+            crate::compose::with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
                 fixture
                     .context
                     .verify_inspected(
@@ -850,8 +841,7 @@ mod immutable_render_ownership_tests {
                         &inspected_json,
                     )
                     .is_ok()
-            },
-        );
+            });
         [
             fixture
                 .context
@@ -937,7 +927,9 @@ mod immutable_render_ownership_tests {
         }
         // A `..` segment resolves outside the object directory before any check.
         fs::create_dir_all(fixture.root.join(".effigy/state/objects")).expect("objects");
-        let escaped = fixture.root.join(".effigy/state/checkout/.effigy/runtime/compose");
+        let escaped = fixture
+            .root
+            .join(".effigy/state/checkout/.effigy/runtime/compose");
         fs::create_dir_all(&escaped).expect("escaped render");
         let dotdot = format!("{root}/.effigy/state/objects/../checkout/.effigy/runtime/compose");
         assert_eq!(
@@ -957,7 +949,10 @@ mod immutable_render_ownership_tests {
         );
         let short = own.display().to_string().replace(&digest(), "abc");
         assert_eq!(immutable_render_checkout(Path::new(&short)), None);
-        let wrong_tail = own.display().to_string().replace("/runtime/compose", "/runtime/other");
+        let wrong_tail = own
+            .display()
+            .to_string()
+            .replace("/runtime/compose", "/runtime/other");
         assert_eq!(immutable_render_checkout(Path::new(&wrong_tail)), None);
     }
 }
