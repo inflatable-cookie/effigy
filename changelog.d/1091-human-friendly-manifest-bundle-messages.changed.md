@@ -1,0 +1,1 @@
+Manifest, bundle, and retired-config errors and warnings now read in short, plain English with a clear `Next:` action up top and a separated `Details:` block underneath for paths, bundle pins, declared input lists, and keys, instead of dense multi-clause run-on paragraphs.

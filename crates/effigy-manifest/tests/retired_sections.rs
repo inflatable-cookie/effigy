@@ -139,10 +139,15 @@ run = "printf built"
         .notice(&manifest_path)
         .expect("one notice");
     assert_eq!(notice.matches(" is ignored").count(), 4, "{notice}");
-    assert_eq!(
-        notice.lines().count(),
-        1,
-        "the notice stays one line: {notice}"
+    assert!(
+        notice.starts_with("[warning] retired v0.15 config still loads for one release"),
+        "{notice}"
+    );
+    assert!(notice.contains("Next:"), "{notice}");
+    assert!(notice.contains("Details:"), "{notice}");
+    assert!(
+        notice.contains("guide: docs/guides/085-v0.15.0-consumer-migration.md"),
+        "{notice}"
     );
 }
 

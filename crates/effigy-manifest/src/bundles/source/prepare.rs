@@ -189,11 +189,11 @@ enum SourcePlan {
     Keep,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum PreparationAction {
     Keep,
     Acquire,
-    Refuse(&'static str),
+    Refuse(String),
 }
 
 fn preparation_action(
@@ -217,22 +217,40 @@ fn preparation_action(
         return PreparationAction::Keep;
     }
 
-    let message = if mode == Mode::Sync {
-        "cannot sync bundles from inside a workspace container; exit the container and run `effigy bundle sync` on the host"
+    const HOST_SYNC_NEXT: &str = "Exit the container and run `effigy bundle sync` on the host.";
+    let (headline, explanation) = if mode == Mode::Sync {
+        (
+            "Bundles cannot be synced from inside a workspace container",
+            None,
+        )
     } else if plans
         .values()
         .any(|plan| *plan == SourcePlan::Acquire(RefreshReason::Declaration))
     {
-        "this project's bundle declaration changed since it was last synced on the host; exit the container and run `effigy bundle sync` on the host"
+        (
+            "This project's bundle needs to be synced on the host",
+            Some("Its declaration changed since it was last synced on the host."),
+        )
     } else if plans
         .values()
         .any(|plan| *plan == SourcePlan::Acquire(RefreshReason::Content))
     {
-        "this project's local path bundle changed since it was last snapshotted on the host; exit the container and run `effigy bundle sync` on the host"
+        (
+            "This project's bundle needs to be synced on the host",
+            Some("The local path bundle changed since it was last snapshotted on the host."),
+        )
     } else {
-        "this project's bundle is not synced yet; exit the container and run `effigy bundle sync` on the host before running tasks inside the workspace"
+        (
+            "This project's bundle needs to be synced on the host",
+            Some("It has not been synced yet."),
+        )
     };
-    PreparationAction::Refuse(message)
+    PreparationAction::Refuse(crate::retired_notice::format_error_detail(
+        headline,
+        explanation,
+        Some(HOST_SYNC_NEXT),
+        &[],
+    ))
 }
 
 fn prepare(
@@ -1810,40 +1828,67 @@ mod tests {
     fn guest_missing_pin_requires_host_sync() {
         let plans = plans(&[SourcePlan::Acquire(RefreshReason::Missing)]);
 
-        assert_eq!(
-            preparation_action(Mode::Refresh, &plans, true),
-            PreparationAction::Refuse("this project's bundle is not synced yet; exit the container and run `effigy bundle sync` on the host before running tasks inside the workspace")
-        );
+        let PreparationAction::Refuse(message) = preparation_action(Mode::Refresh, &plans, true)
+        else {
+            panic!("a missing pin refuses inside a workspace container");
+        };
+        for expected in [
+            "This project's bundle needs to be synced on the host",
+            "It has not been synced yet.",
+            "Next: Exit the container and run `effigy bundle sync` on the host.",
+        ] {
+            assert!(message.contains(expected), "{message}");
+        }
     }
 
     #[test]
     fn guest_changed_declaration_requires_host_sync() {
         let plans = plans(&[SourcePlan::Acquire(RefreshReason::Declaration)]);
 
-        assert_eq!(
-            preparation_action(Mode::Refresh, &plans, true),
-            PreparationAction::Refuse("this project's bundle declaration changed since it was last synced on the host; exit the container and run `effigy bundle sync` on the host")
-        );
+        let PreparationAction::Refuse(message) = preparation_action(Mode::Refresh, &plans, true)
+        else {
+            panic!("a changed declaration refuses inside a workspace container");
+        };
+        for expected in [
+            "This project's bundle needs to be synced on the host",
+            "Its declaration changed since it was last synced on the host.",
+            "Next: Exit the container and run `effigy bundle sync` on the host.",
+        ] {
+            assert!(message.contains(expected), "{message}");
+        }
     }
 
     #[test]
     fn guest_changed_path_content_requires_host_sync() {
         let plans = plans(&[SourcePlan::Acquire(RefreshReason::Content)]);
 
-        assert_eq!(
-            preparation_action(Mode::Refresh, &plans, true),
-            PreparationAction::Refuse("this project's local path bundle changed since it was last snapshotted on the host; exit the container and run `effigy bundle sync` on the host")
-        );
+        let PreparationAction::Refuse(message) = preparation_action(Mode::Refresh, &plans, true)
+        else {
+            panic!("changed path content refuses inside a workspace container");
+        };
+        for expected in [
+            "This project's bundle needs to be synced on the host",
+            "The local path bundle changed since it was last snapshotted on the host.",
+            "Next: Exit the container and run `effigy bundle sync` on the host.",
+        ] {
+            assert!(message.contains(expected), "{message}");
+        }
     }
 
     #[test]
     fn guest_sync_requires_running_on_host() {
         let plans = plans(&[SourcePlan::Acquire(RefreshReason::Missing)]);
 
-        assert_eq!(
-            preparation_action(Mode::Sync, &plans, true),
-            PreparationAction::Refuse("cannot sync bundles from inside a workspace container; exit the container and run `effigy bundle sync` on the host")
-        );
+        let PreparationAction::Refuse(message) = preparation_action(Mode::Sync, &plans, true)
+        else {
+            panic!("an explicit sync refuses inside a workspace container");
+        };
+        for expected in [
+            "Bundles cannot be synced from inside a workspace container",
+            "Next: Exit the container and run `effigy bundle sync` on the host.",
+        ] {
+            assert!(message.contains(expected), "{message}");
+        }
     }
 
     #[test]

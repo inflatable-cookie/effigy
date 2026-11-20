@@ -294,12 +294,23 @@ fn reject_retired_bundle_vault_keys(
     };
     Err(ManifestError::Compose {
         path: manifest_path.to_path_buf(),
-        detail: format!(
-            "bundle `{bundle_name}` export {location} declares retired `[secrets.vault] {key}`; \
-             the key was removed in v0.15 and only restated the passphrase default. A pinned or \
-             cached bundle is stale: run `effigy bundle sync` to refresh it to a bundle that no \
-             longer declares the key. If you own this bundle, delete the line from its export \
-             instead"
+        detail: crate::retired_notice::format_error_detail(
+            &format!(
+                "The pinned copy of `{bundle_name}` still uses a removed `[secrets.vault]` key"
+            ),
+            Some(&format!(
+                "It declares `[secrets.vault] {key}`, which was removed in v0.15 and only \
+                 restated the passphrase default."
+            )),
+            Some(
+                "Run `effigy bundle sync` to refresh to a bundle that no longer declares the \
+                 key. If you own this bundle, delete the line from its export instead.",
+            ),
+            &[
+                ("manifest", &manifest_path.display().to_string()),
+                ("bundle", bundle_name),
+                ("export", &location),
+            ],
         ),
     })
 }
@@ -471,12 +482,26 @@ fn user_bundle_inputs(
     source: &ResolvedBundleSource,
 ) -> BTreeMap<String, Value> {
     let bundle_name = descriptor.bundle.name.trim();
-    let manifest_display = manifest_path.display();
+    let manifest_display = manifest_path.display().to_string();
+    let config_path = crate::user_config::user_config_path()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "~/.effigy/config.toml".to_owned());
     let config = match crate::user_config::load_user_config() {
         Ok(config) => config,
         Err(error) => {
-            crate::retired_notice::warn(format!(
-                "while loading {manifest_display}: ignoring machine-local bundle inputs for bundle `{bundle_name}`: {error}"
+            crate::retired_notice::warn(crate::retired_notice::format_warning(
+                &format!("Ignoring machine-local bundle inputs from {config_path}"),
+                Some(
+                    "Could not read your global Effigy config, so project and bundle defaults \
+                     will be used instead.",
+                ),
+                Some(&format!("Fix the syntax error in {config_path}.")),
+                &[
+                    ("manifest", &manifest_display),
+                    ("bundle", bundle_name),
+                    ("config", &config_path),
+                    ("cause", &error.to_string()),
+                ],
             ));
             return BTreeMap::new();
         }
@@ -490,9 +515,6 @@ fn user_bundle_inputs(
         .iter()
         .map(|input| (input.name.as_str(), input))
         .collect::<BTreeMap<_, _>>();
-    let config_path = crate::user_config::user_config_path()
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| "~/.effigy/config.toml".to_owned());
 
     let mut accepted = BTreeMap::new();
     for (key, value) in bundle_input_entries(entries) {
@@ -504,38 +526,65 @@ fn user_bundle_inputs(
                 } else {
                     &declared_names
                 };
-                let bundle_label = match source.source_type {
-                    BundleSourceType::Git | BundleSourceType::Oci => match &source.version_hint {
-                        Some(version) => format!(
-                            "pinned bundle `{bundle_name}` ({})",
-                            format_bundle_version(version)
-                        ),
-                        None => format!("pinned bundle `{bundle_name}`"),
-                    },
-                    BundleSourceType::Path => format!("bundle `{bundle_name}`"),
+                let pinned = !matches!(source.source_type, BundleSourceType::Path);
+                let explanation = if pinned {
+                    format!("The pinned copy of `{bundle_name}` does not declare `{key}`.")
+                } else {
+                    format!("Bundle `{bundle_name}` does not declare `{key}`.")
                 };
-                let setting = format!("`[bundle.{bundle_name}].inputs.{key}`");
-                let remedy = match source.source_type {
-                    BundleSourceType::Git | BundleSourceType::Oci => format!(
-                        "if the bundle recently added `{key}`, run `effigy bundle sync` in {}; otherwise remove or fix `{setting}` in `{config_path}`",
+                let bundle = match source.source_type {
+                    BundleSourceType::Git | BundleSourceType::Oci => match &source.version_hint {
+                        Some(version) => {
+                            format!("{bundle_name} ({})", format_bundle_version(version))
+                        }
+                        None => bundle_name.to_owned(),
+                    },
+                    BundleSourceType::Path => bundle_name.to_owned(),
+                };
+                let setting = format!("[bundle.{bundle_name}].inputs.{key}");
+                let next =
+                    match source.source_type {
+                        BundleSourceType::Git | BundleSourceType::Oci => format!(
+                        "Run `effigy bundle sync` in {} if the bundle recently added `{key}`, or \
+                         remove `{setting}` from {config_path}.",
                         manifest_path.parent().unwrap_or_else(|| Path::new(".")).display()
                     ),
-                    BundleSourceType::Path => {
-                        format!("remove or fix `{setting}` in `{config_path}`")
-                    }
-                };
-                crate::retired_notice::warn(format!(
-                    "while loading {manifest_display}: {config_path} sets {setting}, but {bundle_label} does not declare that input; ignoring the machine-local value (declared inputs: {declared_names}). {remedy}"
+                        BundleSourceType::Path => {
+                            format!("Remove or fix `{setting}` in {config_path}.")
+                        }
+                    };
+                crate::retired_notice::warn(crate::retired_notice::format_warning(
+                    &format!("Ignoring `{key}` from your global config for `{bundle_name}`"),
+                    Some(&explanation),
+                    Some(&next),
+                    &[
+                        ("manifest", &manifest_display),
+                        ("bundle", &bundle),
+                        ("config", &config_path),
+                        ("declared", &declared_names),
+                    ],
                 ));
             }
             continue;
         };
         if !bundle_input_type_matches(input.value_type, &value) {
             if !source.stale {
-                crate::retired_notice::warn(format!(
-                    "while loading {manifest_display}: {config_path} sets `[bundle.{bundle_name}].inputs.{key}` to {}, but bundle `{bundle_name}` declares `{key}` as {}; ignoring the machine-local value and using the project value or the bundle default",
-                    render_bundle_input_value(&value),
-                    bundle_input_type_name(input.value_type),
+                let expected = bundle_input_type_name(input.value_type);
+                crate::retired_notice::warn(crate::retired_notice::format_warning(
+                    &format!("Ignoring `{key}` from your global config for `{bundle_name}`"),
+                    Some(&format!(
+                        "Expected {expected}, but `{config_path}` sets `{key}` to `{}`. Using the \
+                         project or bundle default instead.",
+                        render_bundle_input_value(&value),
+                    )),
+                    Some(&format!(
+                        "Update `[bundle.{bundle_name}].inputs.{key}` in {config_path} to {expected}."
+                    )),
+                    &[
+                        ("manifest", &manifest_display),
+                        ("bundle", bundle_name),
+                        ("config", &config_path),
+                    ],
                 ));
             }
             continue;
