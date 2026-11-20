@@ -822,9 +822,10 @@ mod tests {
             "the remedy belongs in Next: {human:?}"
         );
         assert!(
-            human.detail_entries().iter().any(|(label, value)| {
-                label == "manifest" && value == "/repo/effigy.toml"
-            }),
+            human
+                .detail_entries()
+                .iter()
+                .any(|(label, value)| { label == "manifest" && value == "/repo/effigy.toml" }),
             "manifest path stays in Details: {human:?}"
         );
     }
