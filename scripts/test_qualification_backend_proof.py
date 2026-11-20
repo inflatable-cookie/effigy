@@ -44,6 +44,16 @@ def envelope(result):
                       "result": result}))
 
 
+def exec_envelope(stdout, code=0, ok=True, stderr=""):
+    envelope({"schema": "effigy.exec.v1", "ok": ok, "code": code,
+              "stdout": stdout, "stderr": stderr})
+
+
+def guest_envelope(result):
+    return json.dumps({"schema": "effigy.command.v1", "schema_version": 1,
+                       "ok": True, "result": result})
+
+
 if argv == ["--json", "version"]:
     envelope({"schema": "effigy.version.v1", "schema_version": 1, "ok": True,
               "version": "0.15.0"})
@@ -68,11 +78,14 @@ elif argv[:2] == ["container", "retire"]:
 elif argv[:2] == ["container", "status"]:
     envelope({"schema": "effigy.container.status.v1", "ok": True, "backend": backend,
               "manifest_driver": "colima", "runtime_running": True})
-elif argv == ["exec", "--", "effigy", "--json", "version"]:
-    envelope({"schema": "effigy.version.v1", "schema_version": 1, "ok": True,
-              "version": "0.15.0"})
-elif argv == ["exec", "--", "effigy", "--json", "tasks"]:
-    envelope({"schema": "effigy.tasks.v1", "schema_version": 1, "ok": True})
+elif argv == ["exec", "--json", "--", "effigy", "--json", "version"]:
+    exec_envelope(guest_envelope({"schema": "effigy.version.v1", "schema_version": 1,
+                                  "ok": True, "version": "0.15.0"}))
+elif argv == ["exec", "--json", "--", "effigy", "--json", "tasks"]:
+    tasks = json.loads(os.environ.get("FAKE_TASKS", '["hello"]'))
+    exec_envelope(guest_envelope({"schema": os.environ.get(
+        "FAKE_TASK_SCHEMA", "effigy.workspace-client.v1"), "schema_version": 1,
+        "ok": True, "tasks": tasks}))
 else:
     print(json.dumps({"schema": "effigy.command.v1", "ok": False,
                       "error": {"message": "unexpected " + repr(argv)}}))
@@ -146,6 +159,36 @@ class Harness(unittest.TestCase):
         self.assertLess(names.index("workspace.task"), names.index("container.retire"))
         self.assertTrue(Path(verdict["effigy"]).is_file())
         self.assertEqual(len(verdict["effigy_sha256"]), 64)
+        workspace_steps = {
+            step["name"]: step["argv"]
+            for step in verdict["steps"]
+            if step["name"].startswith("workspace.")
+        }
+        self.assertEqual(workspace_steps["workspace.version"][1:4], ["exec", "--json", "--"])
+        self.assertEqual(workspace_steps["workspace.task"][1:4], ["exec", "--json", "--"])
+
+    def test_tasks_v1_remains_accepted(self) -> None:
+        self.environment["FAKE_TASK_SCHEMA"] = "effigy.tasks.v1"
+        code, _ = self.run_proof()
+        self.assertEqual(code, 0)
+
+    def test_unknown_guest_task_schema_fails_the_proof(self) -> None:
+        self.environment["FAKE_TASK_SCHEMA"] = "effigy.other.v1"
+        code, _ = self.run_proof()
+        self.assertEqual(code, 1)
+        self.assertIn("did not answer its contract", self.verdict()["failure"])
+
+    def test_workspace_client_requires_nonempty_task_list(self) -> None:
+        self.environment["FAKE_TASKS"] = "[]"
+        code, _ = self.run_proof()
+        self.assertEqual(code, 1)
+        self.assertIn("no workspace-client tasks", self.verdict()["failure"])
+
+    def test_workspace_client_requires_task_list_shape(self) -> None:
+        self.environment["FAKE_TASKS"] = "{\"name\": \"hello\"}"
+        code, _ = self.run_proof()
+        self.assertEqual(code, 1)
+        self.assertIn("no workspace-client tasks", self.verdict()["failure"])
 
     def test_wrong_backend_fails_but_still_tears_down_and_writes(self) -> None:
         self.environment["FAKE_BACKEND"] = "docker"

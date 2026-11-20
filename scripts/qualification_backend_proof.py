@@ -23,9 +23,9 @@ Steps, in order:
 3. ``effigy container up --detach --json`` in the checkout.
 4. ``effigy container status --json``; the chosen backend must be the one this
    proof is for.
-5. ``effigy exec -- effigy --json version`` and ``effigy exec -- effigy
-   --json <task>`` (default ``tasks``); both need exit 0, and the task needs
-   output.
+5. ``effigy exec --json -- effigy --json version`` and ``effigy exec --json
+   -- effigy --json <task>`` (default ``tasks``); both need exit 0, and the
+   task needs output.
 6. ``effigy container down --json``, then ``effigy container retire --yes
    --json`` so the brings-up's containers, volumes and networks are gone.
 7. Snapshot the inventory again; it must equal step 2 byte for byte.
@@ -172,6 +172,22 @@ def result(envelope: dict, what: str) -> dict:
     return payload
 
 
+def exec_output(step: Step, what: str) -> str:
+    """Unwrap Effigy's exec result and return the guest command's JSON text."""
+    envelope = parse_json(step.stdout, what)
+    execution = result(envelope, what)
+    if execution.get("schema") != "effigy.exec.v1":
+        raise Refusal(f"{what} did not answer the exec contract")
+    if execution.get("ok") is not True or execution.get("code") != 0:
+        raise Refusal(
+            f"{what} failed: {execution.get('stderr') or execution.get('code')}"
+        )
+    output = execution.get("stdout")
+    if not isinstance(output, str):
+        raise Refusal(f"{what} did not return guest stdout")
+    return output
+
+
 @dataclass
 class Step:
     name: str
@@ -286,12 +302,15 @@ class Proof:
             if observed.get("runtime_running") is not True:
                 self.fail("container status does not report a running runtime")
         version = self.effigy_step(
-            "workspace.version", "exec", "--", "effigy", "--json", "version"
+            "workspace.version", "exec", "--json", "--", "effigy", "--json", "version"
         )
         if self.failure is None:
             try:
                 guest = result(
-                    parse_json(version.stdout, "workspace effigy version"),
+                    parse_json(
+                        exec_output(version, "workspace effigy version"),
+                        "workspace effigy version",
+                    ),
                     "workspace effigy version",
                 )
             except Refusal as refusal:
@@ -300,18 +319,28 @@ class Proof:
             if guest.get("schema") != "effigy.version.v1" or not guest.get("version"):
                 self.fail("workspace effigy version is not the published contract")
         task = self.effigy_step(
-            "workspace.task", "exec", "--", "effigy", "--json", self.task
+            "workspace.task", "exec", "--json", "--", "effigy", "--json", self.task
         )
         if self.failure is None:
             try:
                 answered = result(
-                    parse_json(task.stdout, f"workspace task {self.task}"),
+                    parse_json(
+                        exec_output(task, f"workspace task {self.task}"),
+                        f"workspace task {self.task}",
+                    ),
                     f"workspace task {self.task}",
                 )
             except Refusal as refusal:
                 self.fail(str(refusal))
                 answered = {}
-            if answered.get("schema") != "effigy.tasks.v1":
+            schema = answered.get("schema")
+            if schema == "effigy.workspace-client.v1":
+                tasks = answered.get("tasks")
+                if not isinstance(tasks, list) or not tasks:
+                    self.fail(
+                        f"workspace task {self.task} returned no workspace-client tasks"
+                    )
+            elif schema != "effigy.tasks.v1":
                 self.fail(f"workspace task {self.task} did not answer its contract")
         self.teardown()
         return self.record()
