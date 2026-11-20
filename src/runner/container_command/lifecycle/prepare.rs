@@ -107,7 +107,8 @@ fn prepare_container_up_with_loader(
             prepared
         }
         Err(error) => {
-            ports_step.fail(error.to_string());
+            let message = error.to_string();
+            ports_step.fail(message.lines().next().unwrap_or_default());
             return Err(error.into());
         }
     };

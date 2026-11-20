@@ -530,7 +530,12 @@ fn run_steps(
                     {
                         (stdout.clone(), stderr.clone())
                     }
-                    _ => (String::new(), error.human_error().render_text_body()),
+                    _ => {
+                        let human = error.human_error();
+                        let mut lines = vec![human.what_failed().to_owned()];
+                        lines.extend(human.evidence_lines().iter().cloned());
+                        (String::new(), lines.join("\n"))
+                    }
                 };
                 let workload = pending.map(|(_, outcome)| outcome).unwrap_or_else(|| {
                     if let RunnerError::TaskJsonFailure(failure) = &error {
@@ -779,6 +784,7 @@ fn execute_step(
             } else {
                 run_plain(run, plain)?
             };
+            let streamed_live = helper && relay_helper && streams_output();
             if helper && !preflight.output_json && !relay_helper {
                 print!("{}", String::from_utf8_lossy(&exit.stdout));
                 if exit.code == 0 {
@@ -787,8 +793,16 @@ fn execute_step(
             }
             Ok((
                 exit.code,
-                String::from_utf8_lossy(&exit.stdout).into_owned(),
-                String::from_utf8_lossy(&exit.stderr).into_owned(),
+                if streamed_live {
+                    String::new()
+                } else {
+                    String::from_utf8_lossy(&exit.stdout).into_owned()
+                },
+                if streamed_live {
+                    String::new()
+                } else {
+                    String::from_utf8_lossy(&exit.stderr).into_owned()
+                },
                 exit.workload,
             ))
         }

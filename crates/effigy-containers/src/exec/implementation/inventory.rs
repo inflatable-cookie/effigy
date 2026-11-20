@@ -801,7 +801,7 @@ mod inventory_tests {
             [RuntimeInventoryFailure {
                 backend: "docker".to_owned(),
                 profile: "default".to_owned(),
-                error: "runtime ps failed (exit code 1)\nstdout:\n\nstderr:\nCannot connect to the Docker daemon at unix:///var/run/docker.sock".to_owned(),
+                error: "runtime ps failed (exit code 1)\nstderr:\nCannot connect to the Docker daemon at unix:///var/run/docker.sock".to_owned(),
                 stopped_profile: false,
             }],
             "{what}"

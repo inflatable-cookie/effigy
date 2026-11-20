@@ -406,7 +406,9 @@ fn run_container_up_compose(
                 live.fail(&format!("The stack did not start: {error}"));
             }
             if let Some(whole_stack) = whole_stack {
-                whole_stack.fail(format!("the stack did not start: {error}"));
+                let message = error.to_string();
+                let headline = message.lines().next().unwrap_or_default();
+                whole_stack.fail(format!("the stack did not start: {headline}"));
             }
             Ok(Some(AttachedComposeEnd::Failed(error.to_string())))
         }

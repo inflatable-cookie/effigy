@@ -996,6 +996,22 @@ pub(super) fn format_args(args: &[OsString]) -> String {
         .join(" ")
 }
 
+/// Format a timeout budget without truncating positive sub-second values to `0s`.
+pub(super) fn format_timeout_duration(duration: Duration) -> String {
+    if duration.is_zero() {
+        return "0s".to_owned();
+    }
+    if duration < Duration::from_secs(1) {
+        let millis = duration.as_millis();
+        return if millis == 0 {
+            "<1ms".to_owned()
+        } else {
+            format!("{millis}ms")
+        };
+    }
+    format!("{}s", duration.as_secs())
+}
+
 pub(super) fn run_command_capture_with_timeout(
     repo_root: &Path,
     program: &str,
@@ -1161,8 +1177,8 @@ fn supervise_capture_child(
                 code: None,
                 stdout: String::new(),
                 stderr: format!(
-                    "[effigy] command timed out after {}s: {error}",
-                    reported_timeout.as_secs()
+                    "[effigy] command timed out after {}: {error}",
+                    format_timeout_duration(reported_timeout)
                 ),
             })
         }
@@ -1273,8 +1289,8 @@ fn run_command_stream_with_timeout(
                     code: status.code(),
                     stdout: String::new(),
                     stderr: format!(
-                        "[effigy] `{label}` timed out after {}s while streaming output directly to the terminal",
-                        timeout.as_secs()
+                        "[effigy] `{label}` timed out after {} while streaming output directly to the terminal",
+                        format_timeout_duration(timeout)
                     ),
                 });
             }
@@ -1513,7 +1529,7 @@ mod tests {
         };
         assert_eq!(
             failure.to_string(),
-            "docker compose up failed (exit code 1)\nstdout:\n\nstderr:\nboom"
+            "docker compose up failed (exit code 1)\nstderr:\nboom"
         );
         // A child that ended on a signal has no exit code, and it says so
         // instead of printing a `None` (effigy#402).
@@ -1525,8 +1541,16 @@ mod tests {
         };
         assert_eq!(
             signalled.to_string(),
-            "docker compose up failed (no exit code: the command ended on a signal)\nstdout:\n\nstderr:\nboom"
+            "docker compose up failed (no exit code: the command ended on a signal)\nstderr:\nboom"
         );
+        // Empty stdout and stderr omit both headers.
+        let silent = ContainerExecError::Failure {
+            command: "docker compose up".to_owned(),
+            code: Some(2),
+            stdout: String::new(),
+            stderr: "   \n".to_owned(),
+        };
+        assert_eq!(silent.to_string(), "docker compose up failed (exit code 2)");
     }
 
     /// A refused deadline reports the same exact failure: the caller's
@@ -1536,7 +1560,7 @@ mod tests {
         assert_eq!(
             error.to_string(),
             format!(
-                "{command} failed (no exit code: the command ended on a signal)\nstdout:\n\nstderr:\n[effigy] command timed out"
+                "{command} failed (no exit code: the command ended on a signal)\nstderr:\n[effigy] command timed out"
             )
         );
     }
@@ -1544,11 +1568,11 @@ mod tests {
     /// Both capture paths report a deadline kill with the same exact
     /// failure: the caller's label, no exit code, no output, and the full
     /// timeout text naming the reaped child.
-    fn assert_exact_timeout_failure(error: &ContainerExecError, command: &str) {
+    fn assert_exact_timeout_failure(error: &ContainerExecError, command: &str, timeout: &str) {
         assert_eq!(
             error.to_string(),
             format!(
-                "{command} failed (no exit code: the command ended on a signal)\nstdout:\n\nstderr:\n[effigy] command timed out after 0s: owned capture child terminated and reaped; stdout/stderr EOF verified"
+                "{command} failed (no exit code: the command ended on a signal)\nstderr:\n[effigy] command timed out after {timeout}: owned capture child terminated and reaped; stdout/stderr EOF verified"
             )
         );
     }
@@ -1564,7 +1588,7 @@ mod tests {
         )
         .expect_err("sleep should time out");
 
-        assert_exact_timeout_failure(&error, "sleep test");
+        assert_exact_timeout_failure(&error, "sleep test", "200ms");
     }
 
     /// A nonzero exit kept as output, on both the captured and the streamed
@@ -1601,7 +1625,7 @@ mod tests {
         .expect_err("command should fail");
         assert_eq!(
             error.to_string(),
-            "stream test failed (exit code 7)\nstdout:\n\nstderr:\n[effigy] `stream test` failed after streaming output directly to the terminal"
+            "stream test failed (exit code 7)\nstderr:\n[effigy] `stream test` failed after streaming output directly to the terminal"
         );
     }
 
@@ -1618,7 +1642,7 @@ mod tests {
         )
         .expect_err("sleep should time out");
 
-        assert_exact_timeout_failure(&error, "start hang");
+        assert_exact_timeout_failure(&error, "start hang", "200ms");
     }
 
     #[test]
@@ -1826,7 +1850,20 @@ mod tests {
         )
         .expect_err("a deadline already past at spawn must fail closed");
         drop(guard);
-        assert_exact_timeout_failure(&error, "slow spawn absolute probe");
+        let rendered = error.to_string();
+        assert!(
+            rendered.starts_with(
+                "slow spawn absolute probe failed (no exit code: the command ended on a signal)\nstderr:\n[effigy] command timed out after "
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.ends_with(
+                "ms: owned capture child terminated and reaped; stdout/stderr EOF verified"
+            ),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("after 0s"), "{rendered}");
         assert!(
             !marker.exists(),
             "the origin must not be reset after spawn: the child must be reaped before it finishes"
@@ -2287,7 +2324,7 @@ while True:
         assert_eq!(
             error.to_string(),
             format!(
-                "private detached up failed (exit code 7)\nstdout:\n\nstderr:\n[effigy] detached backend failed (exit code 7); its output was isolated from service writers and retained at {}\n[effigy] backend output tail:\nbuild failed: missing base image",
+                "private detached up failed (exit code 7)\nstderr:\n[effigy] detached backend failed (exit code 7); its output was isolated from service writers and retained at {}\n[effigy] backend output tail:\nbuild failed: missing base image",
                 record.display()
             )
         );
