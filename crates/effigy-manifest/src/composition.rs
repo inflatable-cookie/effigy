@@ -312,21 +312,24 @@ fn reject_retired_include_flags(
         let Some(table) = entry.as_table() else {
             continue;
         };
-        for (flag, replacement) in [
+        for (flag, next) in [
             (
                 "optional",
-                "omit a missing include, or rely on auto-discovered `effigy.local.toml`",
+                "Omit a missing include, or rely on auto-discovered `effigy.local.toml`.",
             ),
             (
                 "override",
-                "use auto-discovered `effigy.local.toml` for machine-local replacement, or `[manifest].extend` for arrays",
+                "Use auto-discovered `effigy.local.toml` for machine-local replacement, or `[manifest].extend` for arrays.",
             ),
         ] {
             if table.contains_key(flag) {
                 return Err(ManifestError::Compose {
                     path: manifest_path.to_path_buf(),
-                    detail: format!(
-                        "`[manifest].include` `{flag}` was removed in v0.16; {replacement}"
+                    detail: crate::retired_notice::format_error_detail(
+                        &format!("`[manifest].include` `{flag}` is no longer supported"),
+                        None,
+                        Some(next),
+                        &[("manifest", &manifest_path.display().to_string())],
                     ),
                 });
             }
@@ -1574,7 +1577,8 @@ minimum_effigy_version = "latest"
             let error = load_task_manifest_with_inspection(&root).expect_err("refused");
             let error = error.to_string();
             assert!(error.contains(&format!("`{flag}`")), "{flag}: {error}");
-            assert!(error.contains("removed in v0.16"), "{flag}: {error}");
+            assert!(error.contains("is no longer supported"), "{flag}: {error}");
+            assert!(error.contains("Next:"), "{flag}: {error}");
             assert!(error.contains(replacement), "{flag}: {error}");
         }
     }

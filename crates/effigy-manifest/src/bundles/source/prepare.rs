@@ -189,11 +189,11 @@ enum SourcePlan {
     Keep,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum PreparationAction {
     Keep,
     Acquire,
-    Refuse(&'static str),
+    Refuse(String),
 }
 
 fn preparation_action(
@@ -245,14 +245,11 @@ fn preparation_action(
             Some("It has not been synced yet."),
         )
     };
-    PreparationAction::Refuse(Box::leak(
-        crate::retired_notice::format_error_detail(
-            headline,
-            explanation,
-            Some(HOST_SYNC_NEXT),
-            &[],
-        )
-        .into_boxed_str(),
+    PreparationAction::Refuse(crate::retired_notice::format_error_detail(
+        headline,
+        explanation,
+        Some(HOST_SYNC_NEXT),
+        &[],
     ))
 }
 
