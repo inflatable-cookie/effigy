@@ -20,7 +20,7 @@ Steps, in order:
 1. Record the candidate binary's SHA-256 and ``effigy --json version``.
 2. Snapshot the engine inventory: ``container status --global --json`` and
    ``container volume list --global --json``.
-3. ``effigy container up --json`` in the checkout.
+3. ``effigy container up --detach --json`` in the checkout.
 4. ``effigy container status --json``; the chosen backend must be the one this
    proof is for.
 5. ``effigy exec -- effigy --json version`` and ``effigy exec -- effigy
