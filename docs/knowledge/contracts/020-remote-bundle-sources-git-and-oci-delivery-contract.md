@@ -189,8 +189,11 @@ run through `Custody::spawn_source`, with journalled intent and a registered
 sentinel. Source command output is consumed only after both captured streams reach
 EOF within the original command deadline; incomplete or truncated capture fails
 the acquisition or check. Failure and cancellation settle through the kernel. Guests consume
-materialized pins; source acquisition requires host authority, so a guest with
-a stale pin is told to run `effigy bundle sync` on the host.
+materialized pins. When a floating-Git remote-check TTL expires, a guest keeps
+its valid materialized pin without probing the remote. An explicit `bundle sync`,
+a missing or unimported pin, or a pin behind its declaration or path content
+refuses and tells the operator to exit the container and run
+`effigy bundle sync` on the host.
 
 ## Pinned extra sources
 
