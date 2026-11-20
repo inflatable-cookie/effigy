@@ -2,12 +2,25 @@
 
 use super::*;
 
+fn label_value<'a>(labels: Option<&'a serde_json::Value>, name: &str) -> Option<&'a str> {
+    labels
+        .and_then(|labels| labels.get(name))
+        .and_then(|value| value.as_str())
+}
+
+/// The raw Compose working directory and explicit checkout labels, before the
+/// checkout is chosen from them. [`OwnershipContext::owns_binding`] judges both.
+pub(super) fn compose_binding_sources(
+    labels: Option<&serde_json::Value>,
+) -> (Option<&str>, Option<&str>) {
+    (
+        label_value(labels, "com.docker.compose.project.working_dir"),
+        label_value(labels, crate::runtime::scope::CHECKOUT_LABEL),
+    )
+}
+
 pub(super) fn compose_binding_labels(labels: Option<&serde_json::Value>) -> (Option<&str>, bool) {
-    let label = |name: &str| {
-        labels
-            .and_then(|labels| labels.get(name))
-            .and_then(|value| value.as_str())
-    };
+    let label = |name: &str| label_value(labels, name);
     let working_dir = checkout_label(
         label("com.docker.compose.project.working_dir"),
         label(crate::runtime::scope::CHECKOUT_LABEL),
@@ -31,6 +44,47 @@ fn checkout_label<'a>(
     } else {
         working_dir.or(checkout)
     }
+}
+
+/// Whether `name` is one immutable render generation's object digest: a
+/// 64-character lowercase hexadecimal name under `.effigy/state/objects`.
+fn is_object_digest(name: &str) -> bool {
+    name.len() == 64
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// The checkout root `path` is an immutable Compose render directory of, when
+/// it is exactly `<root>/.effigy/state/objects/<64-hex>/checkout/.effigy/runtime/compose`.
+/// Docker Desktop and Native Linux stamp that directory as the project working
+/// directory of an unscoped primary checkout. Any other shape, including a
+/// malformed digest, returns `None`.
+fn immutable_render_checkout(path: &Path) -> Option<&Path> {
+    // Matched from the leaf upward; `None` marks the digest segment.
+    const SUFFIX: [Option<&str>; 8] = [
+        Some("compose"),
+        Some("runtime"),
+        Some(".effigy"),
+        Some("checkout"),
+        None,
+        Some("objects"),
+        Some("state"),
+        Some(".effigy"),
+    ];
+    let mut current = path;
+    for expected in SUFFIX {
+        let name = current.file_name()?.to_str()?;
+        let matches = match expected {
+            Some(literal) => name == literal,
+            None => is_object_digest(name),
+        };
+        if !matches {
+            return None;
+        }
+        current = current.parent()?;
+    }
+    Some(current)
 }
 
 #[cfg(test)]
@@ -448,7 +502,9 @@ impl OwnershipContext {
     }
 
     /// Whether a container's checkout label and scope label name this
-    /// checkout and scope.
+    /// checkout and scope. An unscoped container's own immutable render
+    /// directory names this checkout too; [`Self::owns_binding`] adds the
+    /// explicit-label cross-check that such a render needs.
     pub(super) fn owns(&self, checkout: Option<&str>, scope: Option<&str>) -> bool {
         let scope_matches = match (self.scope_token.as_deref(), scope) {
             (None, None) => true,
@@ -461,11 +517,44 @@ impl OwnershipContext {
         let Some(path) = checkout.and_then(|path| Path::new(path).canonicalize().ok()) else {
             return false;
         };
+        let own_render =
+            scope.is_none() && immutable_render_checkout(&path) == Some(self.canonical.as_path());
         path == self.canonical
+            || own_render
             || self
                 .staged_render
                 .as_ref()
                 .is_some_and(|plan| plan.owns_staged_render_directory(&path))
+    }
+
+    /// Whether a container's Compose working directory and checkout label
+    /// together name this checkout and scope.
+    ///
+    /// Docker Desktop and Native Linux stamp an unscoped primary checkout's
+    /// immutable render directory as its project working directory, so the
+    /// label Compose selects is the render, not the checkout. Such a container
+    /// is owned only when its explicit `com.effigy.checkout` label also
+    /// canonicalizes to this checkout: the render names a generation, the label
+    /// names the owner. Every other working directory is judged by
+    /// [`Self::owns`] over the label Compose selects.
+    pub(super) fn owns_binding(
+        &self,
+        working_dir: Option<&str>,
+        checkout: Option<&str>,
+        scope: Option<&str>,
+    ) -> bool {
+        let own_render = scope.is_none()
+            && working_dir
+                .and_then(|dir| Path::new(dir).canonicalize().ok())
+                .is_some_and(|dir| {
+                    immutable_render_checkout(&dir) == Some(self.canonical.as_path())
+                });
+        if own_render {
+            let explicit = checkout.and_then(|value| Path::new(value).canonicalize().ok());
+            return explicit.as_deref() == Some(self.canonical.as_path())
+                && self.owns(checkout, scope);
+        }
+        self.owns(checkout_label(working_dir, checkout, scope), scope)
     }
 
     /// Verify every full-ID project row before teardown, including stopped
@@ -487,10 +576,7 @@ impl OwnershipContext {
                 }
                 if crate::exec::parse::parse_full_container_id(id).is_some()
                     && project == policy.project_name
-                    && self.owns(
-                        checkout_label(present(working_dir), present(checkout), present(scope)),
-                        present(scope),
-                    )
+                    && self.owns_binding(present(working_dir), present(checkout), present(scope))
                 {
                     continue;
                 }
@@ -544,10 +630,7 @@ impl OwnershipContext {
             || !id.bytes().all(|byte| byte.is_ascii_hexdigit())
             || !crate::exec::parse::compose_status_is_running(status)
             || oneoff
-            || !self.owns(
-                checkout_label(present(working_dir), present(checkout), present(scope)),
-                present(scope),
-            )
+            || !self.owns_binding(present(working_dir), present(checkout), present(scope))
         {
             return Err(refuse(
                 "full-ID/oneoff/running/checkout/scope ownership changed or is unknown",
@@ -587,12 +670,13 @@ impl OwnershipContext {
         let labels = record
             .and_then(|record| record.get("Config"))
             .and_then(|config| config.get("Labels"));
-        let (working_dir, oneoff_label_ok) = compose_binding_labels(labels);
+        let oneoff_label_ok = compose_binding_labels(labels).1;
+        let (inspected_working_dir, inspected_checkout) = compose_binding_sources(labels);
         let inspected_scope = labels
             .and_then(|labels| labels.get(crate::runtime::scope::SCOPE_LABEL))
             .map(|value| value.as_str().unwrap_or_default());
         let owned = self.inspected_identity_matches(policy, row, &identity, oneoff_label_ok, true)
-            && self.owns(working_dir, inspected_scope);
+            && self.owns_binding(inspected_working_dir, inspected_checkout, inspected_scope);
         if !owned {
             return Err(ContainerExecError::refused(
                 "inspect owned binding",
@@ -642,5 +726,233 @@ impl OwnershipContext {
             profile: policy.profile.clone(),
             backend: crate::compose::resolve_compose_backend_for_repo(repo_root, policy),
         })
+    }
+}
+
+#[cfg(test)]
+mod immutable_render_ownership_tests {
+    use super::*;
+    use std::collections::BTreeSet;
+    use std::fs;
+
+    use crate::compose::ComposeBackend;
+
+    fn digest() -> String {
+        "0123456789abcdef".repeat(4)
+    }
+
+    fn other_digest() -> String {
+        "fedcba9876543210".repeat(4)
+    }
+
+    struct Fixture {
+        _temp: tempfile::TempDir,
+        root: PathBuf,
+        foreign: PathBuf,
+        context: OwnershipContext,
+        policy: EffectiveContainerPolicy,
+    }
+
+    fn fixture() -> Fixture {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("repo");
+        let foreign = temp.path().join("foreign");
+        fs::create_dir_all(&root).expect("repo");
+        fs::create_dir_all(&foreign).expect("foreign");
+        let root = root.canonicalize().expect("canonical repo");
+        let foreign = foreign.canonicalize().expect("canonical foreign");
+        let policy = crate::policy::model::test_policy(&root);
+        let context = OwnershipContext {
+            declared: BTreeSet::from(["app".to_owned()]),
+            canonical: root.clone(),
+            scope_token: None,
+            staged_render: None,
+        };
+        Fixture {
+            _temp: temp,
+            root,
+            foreign,
+            context,
+            policy,
+        }
+    }
+
+    /// Create `<checkout>/.effigy/state/objects/<digest>/checkout/.effigy/runtime/compose`
+    /// and return its path as Compose would label it.
+    fn render_dir(checkout: &Path, digest: &str) -> String {
+        let dir = checkout
+            .join(".effigy/state/objects")
+            .join(digest)
+            .join("checkout/.effigy/runtime/compose");
+        fs::create_dir_all(&dir).expect("render directory");
+        dir.display().to_string()
+    }
+
+    fn inspect(project: &str, working_dir: &str, checkout: Option<&str>) -> Vec<u8> {
+        let mut labels = serde_json::json!({
+            "com.docker.compose.project": project,
+            "com.docker.compose.service": "app",
+            "com.docker.compose.oneoff": "False",
+            "com.docker.compose.project.working_dir": working_dir,
+        });
+        if let Some(checkout) = checkout {
+            labels[crate::runtime::scope::CHECKOUT_LABEL] = serde_json::json!(checkout);
+        }
+        serde_json::to_vec(&serde_json::json!([{
+            "Id": "ab".repeat(32),
+            "Name": "/app-1",
+            "State": {"Status": "running", "Running": true},
+            "Config": {"Labels": labels},
+            "NetworkSettings": {"Ports": {}},
+            "Mounts": [],
+        }]))
+        .expect("inspect json")
+    }
+
+    fn row(project: &str) -> RunningComposeContainer {
+        RunningComposeContainer {
+            container_name: "app-1".to_owned(),
+            status: "Up".into(),
+            ports: vec![],
+            project_name: Some(project.to_owned()),
+            working_dir: None,
+            service: Some("app".to_owned()),
+            oneoff: false,
+        }
+    }
+
+    /// Whether each verifier accepts a container with this working directory
+    /// and checkout label, in order: shutdown listing, service listing, inspect.
+    fn verdicts(fixture: &Fixture, working_dir: &str, checkout: Option<&str>) -> [bool; 3] {
+        let project = fixture.policy.project_name.clone();
+        let id = "ab".repeat(32);
+        let label = checkout.unwrap_or("");
+        let shutdown = format!("{id}\t{project}\t{working_dir}\t{label}\t\n");
+        let listed = format!("{id}\trunning\tfalse\t{working_dir}\t{label}\t\n");
+        let inspected_json = inspect(&project, working_dir, checkout);
+        let inspected =
+            crate::compose::with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
+                fixture
+                    .context
+                    .verify_inspected(
+                        &fixture.root,
+                        &fixture.policy,
+                        &row(&project),
+                        &inspected_json,
+                    )
+                    .is_ok()
+            });
+        [
+            fixture
+                .context
+                .verify_shutdown_listing(&fixture.policy, shutdown.as_bytes())
+                .is_ok(),
+            fixture
+                .context
+                .verify_listed_service("app", listed.as_bytes())
+                .is_ok(),
+            inspected,
+        ]
+    }
+
+    #[test]
+    fn unscoped_checkout_accepts_its_own_immutable_render_in_every_verifier() {
+        let fixture = fixture();
+        let root = fixture.root.display().to_string();
+        let current = render_dir(&fixture.root, &digest());
+        let previous = render_dir(&fixture.root, &other_digest());
+
+        assert_eq!(verdicts(&fixture, &current, Some(&root)), [true; 3]);
+        // A previous valid generation still reconciles across edits.
+        assert_eq!(verdicts(&fixture, &previous, Some(&root)), [true; 3]);
+    }
+
+    #[test]
+    fn immutable_render_directories_are_refused_unless_they_belong_to_this_checkout() {
+        let fixture = fixture();
+        let root = fixture.root.display().to_string();
+        let foreign = fixture.foreign.display().to_string();
+        let own = render_dir(&fixture.root, &digest());
+        let foreign_render = render_dir(&fixture.foreign, &digest());
+
+        // A foreign checkout's render, with this checkout's label or its own.
+        assert_eq!(
+            verdicts(&fixture, &foreign_render, Some(&root)),
+            [false; 3],
+            "foreign render with spoofed local label"
+        );
+        assert_eq!(
+            verdicts(&fixture, &foreign_render, Some(&foreign)),
+            [false; 3],
+            "foreign render with its own label"
+        );
+        // This checkout's own render, with a label naming another checkout.
+        assert_eq!(
+            verdicts(&fixture, &own, Some(&foreign)),
+            [false; 3],
+            "own render with foreign label"
+        );
+        assert_eq!(
+            verdicts(&fixture, &own, None),
+            [false; 3],
+            "own render without a checkout label"
+        );
+        assert_eq!(
+            verdicts(&fixture, &own, Some(&format!("{root}/.effigy"))),
+            [false; 3],
+            "own render with a label below the checkout root"
+        );
+        // Spoofing through the working directory alone is still refused.
+        assert_eq!(
+            verdicts(&fixture, &foreign, Some(&root)),
+            [false; 3],
+            "foreign working directory with spoofed local label"
+        );
+    }
+
+    #[test]
+    fn malformed_digest_directories_are_refused() {
+        let fixture = fixture();
+        let root = fixture.root.display().to_string();
+        let uppercase = "0123456789ABCDEF".repeat(4);
+        let short = "0123456789abcdef";
+        let non_hex = "g".repeat(64);
+        for digest in [uppercase.as_str(), short, non_hex.as_str()] {
+            let malformed = render_dir(&fixture.root, digest);
+            assert_eq!(
+                verdicts(&fixture, &malformed, Some(&root)),
+                [false; 3],
+                "malformed digest `{digest}`"
+            );
+        }
+        // A `..` segment resolves outside the object directory before any check.
+        fs::create_dir_all(fixture.root.join(".effigy/state/objects")).expect("objects");
+        let escaped = fixture
+            .root
+            .join(".effigy/state/checkout/.effigy/runtime/compose");
+        fs::create_dir_all(&escaped).expect("escaped render");
+        let dotdot = format!("{root}/.effigy/state/objects/../checkout/.effigy/runtime/compose");
+        assert_eq!(
+            verdicts(&fixture, &dotdot, Some(&root)),
+            [false; 3],
+            "dot-dot render path"
+        );
+    }
+
+    #[test]
+    fn immutable_render_checkout_names_only_the_exact_render_shape() {
+        let fixture = fixture();
+        let own = PathBuf::from(render_dir(&fixture.root, &digest()));
+        assert_eq!(
+            immutable_render_checkout(&own),
+            Some(fixture.root.as_path())
+        );
+        let short = own.display().to_string().replace(&digest(), "abc");
+        assert_eq!(immutable_render_checkout(Path::new(&short)), None);
+        let wrong_tail = own
+            .display()
+            .to_string()
+            .replace("/runtime/compose", "/runtime/other");
+        assert_eq!(immutable_render_checkout(Path::new(&wrong_tail)), None);
     }
 }

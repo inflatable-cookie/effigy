@@ -26,11 +26,11 @@ pub(crate) struct DiscoveredRunningEnvironment {
 /// `com.docker.compose.project.working_dir` label looking for an
 /// `effigy.toml` marker.
 ///
-/// Generated compose stacks live at `<repo>/.effigy/runtime/compose/`,
-/// which Docker labels as the project working_dir (three levels deep).
-/// `MAX_REPO_ROOT_WALKUP` allows for that plus a small grace margin so
-/// future relocations of the compose payload still resolve.
-pub const MAX_REPO_ROOT_WALKUP: usize = 6;
+/// An unscoped primary checkout's immutable render is the project working_dir
+/// Docker Desktop and Native Linux stamp: `<repo>/.effigy/state/objects/<hash>/checkout/.effigy/runtime/compose`,
+/// eight levels below `<repo>`. `MAX_REPO_ROOT_WALKUP` covers that path plus a
+/// small grace margin so future relocations of the compose payload still resolve.
+pub const MAX_REPO_ROOT_WALKUP: usize = 10;
 
 pub(crate) fn discover_running_environments(
 ) -> Result<Vec<DiscoveredRunningEnvironment>, EffigyRuntimeError> {
@@ -254,10 +254,13 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         let repo = temp.path();
         fs::write(repo.join("effigy.toml"), "[manifest]\n").expect("write manifest");
-        let deep = repo.join("a/b/c/d/e/f/g/h");
+        // One level beyond MAX_REPO_ROOT_WALKUP, which exceeds the budget.
+        let mut deep = repo.to_path_buf();
+        for level in 0..=MAX_REPO_ROOT_WALKUP {
+            deep.push(format!("level-{level}"));
+        }
         fs::create_dir_all(&deep).expect("deep dir");
 
-        // Eight levels deep, which exceeds MAX_REPO_ROOT_WALKUP.
         let resolved = resolve_effigy_repo_root(&deep, MAX_REPO_ROOT_WALKUP);
         assert!(
             resolved.is_none(),
@@ -349,6 +352,70 @@ mod tests {
         let real_repo = fs::canonicalize(&real_repo).expect("canonical real repo");
 
         assert_eq!(discovered, vec![real_repo]);
+    }
+
+    const RENDER_DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    /// Create an unscoped checkout's immutable render directory, eight levels
+    /// below `repo`, and return it as Docker labels it.
+    fn immutable_render_dir(repo: &std::path::Path) -> std::path::PathBuf {
+        let dir = repo
+            .join(".effigy/state/objects")
+            .join(RENDER_DIGEST)
+            .join("checkout/.effigy/runtime/compose");
+        fs::create_dir_all(&dir).expect("mkdir immutable render dir");
+        dir
+    }
+
+    #[test]
+    fn resolve_effigy_repo_root_walks_up_from_immutable_render_directory() {
+        let temp = tempdir().expect("tempdir");
+        let repo = temp.path();
+        fs::write(repo.join("effigy.toml"), "[manifest]\n").expect("write manifest");
+        let render = immutable_render_dir(repo);
+        assert_eq!(
+            render
+                .strip_prefix(repo)
+                .expect("under repo")
+                .components()
+                .count(),
+            8,
+            "the immutable render is eight levels below the repo root"
+        );
+
+        let resolved = resolve_effigy_repo_root(&render, MAX_REPO_ROOT_WALKUP).expect("resolved");
+
+        assert_eq!(resolved, repo);
+    }
+
+    #[test]
+    fn working_dir_belongs_to_repo_accepts_own_immutable_render_directory() {
+        let temp = tempdir().expect("tempdir");
+        let repo = temp.path();
+        fs::write(repo.join("effigy.toml"), "[manifest]\n").expect("write manifest");
+        let render = immutable_render_dir(repo);
+
+        assert!(super::working_dir_belongs_to_repo(
+            &render.display().to_string(),
+            repo
+        ));
+    }
+
+    #[test]
+    fn working_dir_belongs_to_repo_rejects_foreign_immutable_render_directory() {
+        let temp = tempdir().expect("tempdir");
+        let repo = temp.path().join("demo");
+        let foreign = temp.path().join("foreign");
+        for root in [&repo, &foreign] {
+            fs::create_dir_all(root).expect("mkdir repo");
+            fs::write(root.join("effigy.toml"), "[manifest]\n").expect("write manifest");
+        }
+        let foreign_render = immutable_render_dir(&foreign);
+
+        assert!(!super::working_dir_belongs_to_repo(
+            &foreign_render.display().to_string(),
+            &repo
+        ));
     }
 
     #[test]
