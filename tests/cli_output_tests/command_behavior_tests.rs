@@ -5264,7 +5264,19 @@ detach_timeout_secs = 1
             .map(str::to_owned)
     };
     let marker_deadline = Instant::now() + Duration::from_secs(60);
-    while !marker.is_file() {
+    let mut pgid = None;
+    while pgid.is_none() {
+        pgid = fs::read_to_string(&marker)
+            .ok()
+            .and_then(|contents| {
+                contents
+                    .split_whitespace()
+                    .next()
+                    .and_then(|value| value.parse::<u32>().ok())
+            });
+        if pgid.is_some() {
+            break;
+        }
         assert!(
             Instant::now() < marker_deadline,
             "timed out waiting for the remote session leader marker to be recorded; colima tail={} remote-done={:?}",
@@ -5284,12 +5296,7 @@ detach_timeout_secs = 1
         );
         std::thread::sleep(Duration::from_millis(200));
     }
-    let pgid: u32 = fs::read_to_string(&marker)
-        .expect("read session leader marker")
-        .split_whitespace()
-        .next()
-        .and_then(|pgid| pgid.parse().ok())
-        .expect("session leader pgid");
+    let pgid = pgid.expect("session leader pgid was parsed before the deadline");
     let remote_logs = || -> String {
         let mut logs = String::new();
         for entry in fs::read_dir(&remote_done_dir)

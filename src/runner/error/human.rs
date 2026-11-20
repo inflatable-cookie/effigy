@@ -138,10 +138,22 @@ fn manifest_parse(
     error: &toml::de::Error,
     stale_local_install: Option<&StaleLocalInstall>,
 ) -> HumanError {
+    let summary = parse_summary(error);
+    let next_action = parse_next_action(error);
     let mut human = HumanError::new("Invalid effigy.toml")
-        .explain(parse_summary(error))
+        .explain(summary.clone())
         .detail("manifest", path.display().to_string())
-        .detail("cause", error.to_string());
+        .detail(
+            "cause",
+            if next_action.is_some() {
+                summary
+            } else {
+                error.to_string()
+            },
+        );
+    if let Some(next_action) = next_action {
+        human = human.next_action(next_action);
+    }
     if let Some(stale) = stale_local_install {
         human = human
             .explain(format!(
@@ -167,8 +179,13 @@ fn parse_summary(error: &toml::de::Error) -> String {
     let Some(first) = lines.first() else {
         return String::new();
     };
+    let next_index = lines
+        .iter()
+        .position(|line| line.starts_with("Next:"))
+        .unwrap_or(lines.len());
     let message = lines
         .iter()
+        .take(next_index)
         .rev()
         .copied()
         .filter(|line| !is_parse_snippet(line))
@@ -177,6 +194,28 @@ fn parse_summary(error: &toml::de::Error) -> String {
         Some(message) => format!("{first}: {message}"),
         None => (*first).to_owned(),
     }
+}
+
+fn parse_next_action(error: &toml::de::Error) -> Option<String> {
+    let rendered = error.to_string();
+    let lines: Vec<&str> = rendered
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    let index = lines.iter().position(|line| line.starts_with("Next:"))?;
+    let inline = lines[index].trim_start_matches("Next:").trim();
+    Some(if inline.is_empty() {
+        lines
+            .iter()
+            .skip(index + 1)
+            .copied()
+            .find(|line| !line.starts_with("Details:"))
+            .unwrap_or_default()
+            .to_owned()
+    } else {
+        inline.to_owned()
+    })
 }
 
 /// A TOML error's snippet furniture (`|`, `1 | key = value`, `|     ^`), which
@@ -754,6 +793,39 @@ mod tests {
         assert!(
             !message.contains(" | "),
             "snippet furniture stays out: {summary}"
+        );
+    }
+
+    #[test]
+    fn a_retired_manifest_parse_lifts_next_action_out_of_the_explanation() {
+        let error = <toml::de::Error as serde::de::Error>::custom(
+            "`[bootstrap].run` is no longer supported\n\n  Next: Replace it with `[bootstrap].setup`",
+        );
+        let error = RunnerError::TaskManifestParse {
+            path: Path::new("/repo/effigy.toml").to_path_buf(),
+            error,
+            stale_local_install: None,
+        };
+
+        let human = mapped(&error).expect("manifest parse errors have a human view");
+        assert_eq!(human.what_failed(), "Invalid effigy.toml");
+        assert_eq!(
+            human.explanation_lines(),
+            ["`[bootstrap].run` is no longer supported"]
+        );
+        assert_eq!(
+            human.next_action_text(),
+            Some("Replace it with `[bootstrap].setup`")
+        );
+        assert!(
+            !human.explanation_lines()[0].contains(": Next:"),
+            "the remedy belongs in Next: {human:?}"
+        );
+        assert!(
+            human.detail_entries().iter().any(|(label, value)| {
+                label == "manifest" && value == "/repo/effigy.toml"
+            }),
+            "manifest path stays in Details: {human:?}"
         );
     }
 }
