@@ -1215,3 +1215,42 @@ fn a_task_apply_delivers_runtime_files_it_resolved_and_never_writes_empty_ones()
     )
     .expect("a compose-env delivery has nothing to write");
 }
+
+/// Exec preparation ensures the resolved backend, never Colima (effigy#1087).
+///
+/// This fixture declares no `effigy.toml`, so preparation stops at the exec
+/// working-dir read — the stage immediately after the runtime ensure. What the
+/// proof owns is the call before it: a Docker backend is ensured with
+/// `docker ps`, and no `colima` is spawned on the way.
+#[cfg(unix)]
+#[test]
+fn exec_prep_ensures_the_docker_backend_without_invoking_colima() {
+    use crate::runner::container_runtime_prep::{prepare_container_exec_runtime, StartPolicy};
+    use crate::runner::test_support::DockerBackendFixture;
+    use effigy_containers::environment::Retention;
+
+    let fixture = DockerBackendFixture::new();
+    let policy = fixture.policy("demo", "workspace");
+    let error = prepare_container_exec_runtime(
+        fixture.root(),
+        &policy,
+        None,
+        StartPolicy {
+            retention: Retention::Held,
+            holders: &[],
+            reconcile_shared_services: false,
+        },
+    )
+    .expect_err("the fixture declares no exec target");
+
+    let calls = fixture.calls();
+    assert!(
+        calls.iter().any(|call| call == "ps"),
+        "the ensure probes the selected backend: {calls:#?}"
+    );
+    let message = error.to_string();
+    assert!(
+        !message.contains("colima"),
+        "no step names the backend this host does not have: {message}"
+    );
+}

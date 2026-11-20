@@ -1073,3 +1073,37 @@ exec "$@"
     .is_err());
     assert_eq!(fs::read(&destination).unwrap(), bytes);
 }
+
+/// Effigy exec's runtime check asks the resolved backend, never Colima
+/// (effigy#1087). On the Native Linux qualification host the backend is Docker
+/// and there is no `colima` binary, so the old unconditional `colima status`
+/// probe failed the task with an `ENOENT` launch error before anything ran.
+#[cfg(unix)]
+#[test]
+fn exec_runtime_check_never_invokes_colima_on_a_docker_backend() {
+    use crate::runner::test_support::DockerBackendFixture;
+
+    let fixture = DockerBackendFixture::new();
+    let policy = fixture.policy("demo", "workspace");
+
+    super::ensure_container_running(fixture.root(), &policy, "demo-workspace-1")
+        .expect("a Docker backend is probed through `docker ps`");
+
+    let calls = fixture.calls();
+    assert!(
+        calls
+            .iter()
+            .any(|call| call == "ps" || call.starts_with("ps ")),
+        "the runtime probe is `docker ps`: {calls:#?}"
+    );
+
+    // A stopped engine is still the surface's own "not running" answer, not a
+    // launcher failure, so the check reports the container rather than a spawn.
+    fixture.state_engine_stopped();
+    let error = super::ensure_container_running(fixture.root(), &policy, "demo-workspace-1")
+        .expect_err("a stopped engine refuses the surface");
+    assert!(matches!(
+        error,
+        RunnerError::ContainerSurfaceNotRunning { .. }
+    ));
+}

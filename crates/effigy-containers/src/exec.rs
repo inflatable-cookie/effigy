@@ -36,8 +36,9 @@ pub use colima_runtime::{
     ensure_runtime_backend_running_report, observe_runtime_backend, recover_colima_runtime,
     recover_colima_runtime_with_progress, reset_colima_runtime, reset_colima_runtime_with_progress,
     run_runtime_command_capture_for_policy_with_timeout, running_colima_profiles,
-    runtime_backend_is_running, selected_backend_label, verify_runtime_backend_no_change,
-    ColimaEnsureReport, ColimaRecoveryPhase, ColimaRecoveryReport, RuntimeObservation,
+    runtime_backend_is_running, runtime_backend_is_running_with_deadline, selected_backend_label,
+    verify_runtime_backend_no_change, ColimaEnsureReport, ColimaRecoveryPhase,
+    ColimaRecoveryReport, RuntimeObservation,
 };
 pub use compose_progress::{
     parse_compose_step_event, service_from_container_name, ComposeStepEvent,
