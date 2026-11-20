@@ -1032,3 +1032,257 @@ fn generated_yaml_config_is_literal_even_when_it_has_compose_keys() {
         );
     });
 }
+
+/// Restore the process umask when a restricted-publication window ends, even
+/// on unwind, so a stuck umask never leaks into another test.
+struct RestrictedUmask(nix::libc::mode_t);
+
+impl RestrictedUmask {
+    fn set() -> Self {
+        // SAFETY: `umask` is always defined on Unix, takes no pointers and
+        // returns the previous mask; setting it here is the subject of the
+        // test, and the guard restores it.
+        Self(unsafe { nix::libc::umask(0o077) })
+    }
+}
+
+impl Drop for RestrictedUmask {
+    fn drop(&mut self) {
+        // SAFETY: as above; restoring the mask this guard replaced.
+        unsafe {
+            nix::libc::umask(self.0);
+        }
+    }
+}
+
+/// Every shared catalog that binds a file into its container publishes a
+/// regular, readable file at exactly the path its fragment names, whatever the
+/// host umask was when it was written.
+///
+/// v0.14.1 wrote the render at a different directory from the bind source it
+/// rendered, so the runtime created a directory at the missing path and MariaDB
+/// exited 1 with `Can't read from a directory 'stdin'`. A `0077` umask leaves
+/// `std::fs::write` at `0600` and `create_dir_all` at `0700`, which MariaDB's
+/// own non-root user cannot read through either.
+#[test]
+fn shared_render_binds_regular_readable_files_for_every_shared_catalog() {
+    let _lock = crate::test_env_lock();
+    crate::tests::with_temp_effigy_home("shared-render-bind-files", |home| {
+        let checkout = crate::tests::temp_repo("shared-render-bind-files-checkout");
+        std::fs::write(
+            checkout.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.web.services.db]
+catalog = "mariadb"
+shared = true
+version = "10.11"
+databases = ["app", "legacy"]
+
+[containers.web.services.pg]
+catalog = "postgres"
+shared = true
+
+[containers.web.services.cache]
+catalog = "redis"
+shared = true
+
+[containers.web.services.memo]
+catalog = "memcached"
+shared = true
+"#,
+        )
+        .expect("write manifest");
+
+        let policy = crate::tests::fixture_policy(&checkout, None).expect("shared policy");
+        let renders = &policy.render.as_ref().expect("rendered").shared;
+        assert_eq!(renders.len(), 4, "one render per shared service");
+
+        // Publish into a fresh home under the most restrictive ordinary host
+        // umask, which is what a container user's readable file must survive.
+        {
+            let _restricted = RestrictedUmask::set();
+            for render in renders {
+                publish_shared_render(render).expect("publish shared render");
+            }
+        }
+
+        for shared in &policy.shared_services {
+            assert_eq!(shared.render_digest.len(), 64);
+            let render = renders
+                .iter()
+                .find(|render| {
+                    render.directory.file_name().and_then(|name| name.to_str())
+                        == Some(shared.render_digest.as_str())
+                })
+                .expect("the published render names the binding's digest");
+            assert!(
+                render.directory.starts_with(home.join("shared-services")),
+                "a shared render lives at the machine-wide home: {}",
+                render.directory.display()
+            );
+            assert_eq!(
+                shared.compose_file,
+                render
+                    .directory
+                    .join(format!("{}.generated.compose.yml", shared.project_name)),
+                "the binding names the published compose file"
+            );
+
+            let compose = std::fs::read_to_string(&shared.compose_file)
+                .expect("the published compose file is readable");
+            let document: serde_yaml::Value =
+                serde_yaml::from_str(&compose).expect("shared compose is YAML");
+
+            // Every named volume keeps the identity an existing consumer's
+            // data was created under (Q-012 volume continuity).
+            match document["volumes"].as_mapping() {
+                Some(volumes) => {
+                    for (name, volume) in volumes {
+                        assert_eq!(volume["name"], *name, "the volume keeps its full name");
+                        assert!(
+                            name.as_str().is_some_and(
+                                |name| name.starts_with(&format!("{}-", shared.project_name))
+                            ),
+                            "the volume belongs to the shared project: {name:?}"
+                        );
+                    }
+                }
+                None => assert_eq!(
+                    shared.catalog, "memcached",
+                    "only a catalog with no data volume declares none: {}",
+                    shared.catalog
+                ),
+            }
+
+            let mut bind_sources = Vec::new();
+            for (service_name, service) in document["services"]
+                .as_mapping()
+                .expect("the shared render declares its service")
+            {
+                let Some(volumes) = service["volumes"].as_sequence() else {
+                    continue;
+                };
+                for mount in volumes.iter().filter_map(serde_yaml::Value::as_str) {
+                    let source = mount.split(':').next().expect("a mount has a source");
+                    let path = Path::new(source);
+                    if !path.is_absolute() {
+                        continue;
+                    }
+                    bind_sources.push((
+                        service_name.as_str().unwrap_or("?").to_owned(),
+                        source.to_owned(),
+                    ));
+
+                    // A missing path makes the runtime create a directory at the
+                    // bind source, which is the v0.14.1 failure: the source is
+                    // a regular file the render itself wrote.
+                    assert!(
+                        path.is_file(),
+                        "shared service {service_name:?} binds a regular file, not a directory or a missing path: {mount}"
+                    );
+                    let mode = std::fs::metadata(path)
+                        .expect("bind source metadata")
+                        .permissions()
+                        .mode();
+                    assert_eq!(
+                        mode & 0o777,
+                        0o644,
+                        "a non-root container user reads {} whatever the host umask: {mode:o}",
+                        path.display()
+                    );
+                    let mut ancestor = path.parent();
+                    while let Some(directory) = ancestor {
+                        let mode = std::fs::metadata(directory)
+                            .expect("bind source ancestor")
+                            .permissions()
+                            .mode();
+                        assert_eq!(
+                            mode & 0o777,
+                            0o755,
+                            "a container user traverses {}: {mode:o}",
+                            directory.display()
+                        );
+                        if directory == render.directory {
+                            break;
+                        }
+                        ancestor = directory.parent();
+                    }
+                    let relative = path
+                        .strip_prefix(&render.directory)
+                        .expect("the bind source is inside the published render");
+                    assert_eq!(
+                        std::fs::read(path).expect("the bind source reads"),
+                        render.files[relative],
+                        "the bind source holds the rendered bytes: {mount}"
+                    );
+                }
+            }
+
+            match shared.catalog.as_str() {
+                "mariadb" => {
+                    assert!(
+                        shared.project_name.starts_with("effigy-shared-mariadb-"),
+                        "the project keeps its v0.14.1 identity: {}",
+                        shared.project_name
+                    );
+                    assert!(
+                        document["services"]["db"]["volumes"]
+                            .as_sequence()
+                            .expect("the shared service mounts its data volume")
+                            .contains(&serde_yaml::Value::String(format!(
+                                "{}-db-data:/var/lib/mysql",
+                                shared.project_name
+                            ))),
+                        "the data volume keeps its v0.14.1 name: {compose}"
+                    );
+                    let init = bind_sources
+                        .iter()
+                        .find(|(_, source)| source.ends_with("/.effigy/runtime/compose/db.conf"))
+                        .map(|(_, source)| std::fs::read_to_string(source).expect("init SQL"))
+                        .expect("the fragment binds its init SQL");
+                    assert!(
+                        init.contains("CREATE DATABASE IF NOT EXISTS `app`"),
+                        "{init}"
+                    );
+                    assert!(
+                        init.contains("CREATE DATABASE IF NOT EXISTS `legacy`"),
+                        "{init}"
+                    );
+                }
+                "postgres" => {
+                    assert!(shared.project_name.starts_with("effigy-shared-postgres-"));
+                    assert!(
+                        document["services"]["pg"]["volumes"]
+                            .as_sequence()
+                            .expect("the shared service mounts its data volume")
+                            .contains(&serde_yaml::Value::String(format!(
+                                "{}-pg-data:/var/lib/postgresql/data",
+                                shared.project_name
+                            ))),
+                        "the data volume keeps its v0.14.1 name: {compose}"
+                    );
+                    let init = bind_sources
+                        .iter()
+                        .find(|(_, source)| source.ends_with("/.effigy/runtime/compose/pg.conf"))
+                        .map(|(_, source)| std::fs::read_to_string(source).expect("init SQL"))
+                        .expect("the fragment binds its init SQL");
+                    assert!(init.contains("CREATE DATABASE \"app\""), "{init}");
+                }
+                catalog => assert!(
+                    bind_sources.is_empty(),
+                    "`{catalog}` binds no host path, so no render writes one"
+                ),
+            }
+        }
+    });
+}

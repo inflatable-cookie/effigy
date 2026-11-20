@@ -745,6 +745,12 @@ Compose input and every file its fragment binds (MariaDB and Postgres init SQL)
 are published at one machine-wide, content-addressed directory under the Effigy
 home — `<effigy home>/shared-services/<project>/<digest>/` — with absolute bind
 sources. Its digest covers relative file references before their absolute binding.
+Those files are published at mode `0644` inside traversable `0755` directories, up
+to and including the `shared-services` root: the container's own non-root user
+reads them through the bind mount, so the host umask never decides that access
+(a `0077` umask otherwise left MariaDB's entrypoint unable to read its init
+SQL). Nothing above that root is changed, so the Effigy home keeps the user's
+own modes.
 Two checkouts with the same shared declaration therefore hand Compose
 byte-identical input at the same absolute path, and its config-hash does not
 change with the checkout. That render also names itself on the service it
