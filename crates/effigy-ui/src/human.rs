@@ -1,10 +1,12 @@
 //! One human error renderer for every command plane.
 //!
-//! A [`HumanError`] carries the three things a person needs from a failure:
-//! what failed, the evidence, and the next action. It renders as text for a
-//! person and as a structured value for the `--json` envelope, from the same
-//! facts. Evidence is bounded and redacted before it is stored, so neither
-//! form can carry an unbounded log tail or a credential.
+//! A [`HumanError`] carries what a person needs from a failure: what failed,
+//! why, the next action, and — separately — the machine-oriented detail. It
+//! renders as text for a person and as a structured value for the `--json`
+//! envelope, from the same facts. A headline and `Next:` stay readable, while
+//! paths, catalog lists and backend output sit in a `Details:` block below
+//! them. Evidence and detail values are bounded and redacted before they are
+//! stored, so neither form can carry an unbounded log tail or a credential.
 //!
 //! ```no_run
 //! use effigy_ui::human::HumanError;
@@ -28,6 +30,9 @@ pub const OUTPUT_CAUSE_LINES: usize = 2;
 /// Bytes a supervisor relay keeps of a refusal message: enough for the category
 /// sentence, the cause and the end of a backend's last line.
 pub const RELAY_MAX_BYTES: usize = 3072;
+/// Longest `Details:` label padded for alignment: a short key, not a sentence.
+/// A longer label is printed whole and only its own value loses alignment.
+pub const MAX_DETAIL_LABEL_CHARS: usize = 16;
 /// What a line that names a cause contains, lowercased.
 const CAUSE_MARKERS: [&str; 3] = ["error", "fatal", "panic"];
 /// What replaces a redacted value.
@@ -41,10 +46,13 @@ fn omitted_count(line: &str) -> Option<usize> {
         .ok()
 }
 
-/// An error a person reads: what failed, the evidence, the next action.
+/// An error a person reads: what failed, why, the next action, and the
+/// machine-oriented detail underneath.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HumanError {
     what_failed: String,
+    explanation: Vec<String>,
+    details: Vec<(String, String)>,
     evidence: Vec<String>,
     next_action: Option<String>,
 }
@@ -55,9 +63,39 @@ impl HumanError {
     pub fn new(what_failed: impl Into<String>) -> Self {
         Self {
             what_failed: bound(&what_failed.into()),
+            explanation: Vec::new(),
+            details: Vec::new(),
             evidence: Vec::new(),
             next_action: None,
         }
+    }
+
+    /// Add one bounded, redacted explanation line: why this failed, in the
+    /// sentence a person reads above `Next:`. An empty line is skipped, so a
+    /// caller can pass optional context without breaking the layout.
+    pub fn explain(mut self, line: impl Into<String>) -> Self {
+        let line = bound(&redact(&line.into()));
+        if !line.trim().is_empty() {
+            self.explanation.push(line);
+        }
+        self
+    }
+
+    /// Add one bounded, redacted machine-oriented detail: the path, catalog
+    /// list, identity or backend diagnostic the headline leaves out. The value
+    /// is skipped when it is empty, so an optional fact never prints a blank
+    /// `label:`. A `Details:` block appears only once at least one is present.
+    pub fn detail(mut self, label: impl Into<String>, value: impl Into<String>) -> Self {
+        let value = bound(&redact(&value.into()));
+        if value.trim().is_empty() {
+            return self;
+        }
+        let label = bound(&redact(&label.into()));
+        if label.trim().is_empty() {
+            return self;
+        }
+        self.details.push((label, value));
+        self
     }
 
     /// Add one bounded, redacted piece of evidence. Beyond the line budget the
@@ -146,12 +184,31 @@ impl HumanError {
         &self.evidence
     }
 
+    /// The explanation lines, bounded and redacted.
+    pub fn explanation_lines(&self) -> &[String] {
+        &self.explanation
+    }
+
+    /// The machine-oriented detail entries, bounded and redacted.
+    pub fn detail_entries(&self) -> &[(String, String)] {
+        &self.details
+    }
+
+    /// Whether the renderer shows the separated structured block instead of the
+    /// original compact `cause:`/`next:` form. A caller that sets neither
+    /// `explain` nor `detail` keeps the exact earlier rendering.
+    pub fn is_structured(&self) -> bool {
+        !self.explanation.is_empty() || !self.details.is_empty()
+    }
+
     /// The next action, when the failure has one.
     pub fn next_action_text(&self) -> Option<&str> {
         self.next_action.as_deref()
     }
 
-    /// The text form: a title, indented evidence, then the next action.
+    /// The text form. A caller that sets neither `explain` nor `detail` keeps
+    /// the original compact layout (a title, indented evidence, the next
+    /// action); anything structured renders as the separated block below.
     ///
     /// ```text
     /// [error] container `web` never became healthy
@@ -162,10 +219,30 @@ impl HumanError {
         format!("[error] {}", self.render_text_body())
     }
 
-    /// The same text without the `[error]` title prefix: for a refusal that is
-    /// already the body of a larger message, such as a `Display` sentence a
-    /// wrapper quotes.
+    /// The same structured block with a `[warning]` title: a condition a person
+    /// should read but that does not stop the command.
+    pub fn render_warning_text(&self) -> String {
+        format!("[warning] {}", self.render_text_body())
+    }
+
+    /// The same text without the title prefix: for a refusal that is already
+    /// the body of a larger message, such as a `Display` sentence a wrapper
+    /// quotes.
     pub fn render_text_body(&self) -> String {
+        if self.is_structured() {
+            return self.render_structured_body();
+        }
+        self.render_compact_body()
+    }
+
+    /// The original compact form: a title, `cause:` lines, then `next:`.
+    ///
+    /// ```text
+    /// [error] container `web` never became healthy
+    ///   cause: health check answered HTTP 404 (attempt 12, 60s)
+    ///   next: run `effigy container web logs`
+    /// ```
+    fn render_compact_body(&self) -> String {
         let mut text = self.what_failed.clone();
         for (index, line) in self.evidence.iter().enumerate() {
             let indent = if index == 0 { "  cause: " } else { "         " };
@@ -190,14 +267,129 @@ impl HumanError {
         text
     }
 
-    /// The structured form for the `--json` envelope: the same three facts.
+    /// The structured form: the headline, the explanation, `Next:`, then every
+    /// machine-oriented fact under `Details:`.
+    ///
+    /// ```text
+    /// [error] Invalid effigy.toml
+    ///
+    ///   TOML parse error at line 1, column 11: missing value
+    ///
+    ///   Next: run `effigy install:local` from the checkout root
+    ///
+    ///   Details:
+    ///     manifest: /repo/effigy.toml
+    ///     cause:    TOML parse error at line 1, column 11
+    /// ```
+    fn render_structured_body(&self) -> String {
+        let mut sections: Vec<String> = Vec::new();
+        if !self.explanation.is_empty() {
+            sections.push(indented_block(&self.explanation, "  "));
+        }
+        if let Some(action) = self.next_action.as_deref() {
+            let mut lines = action.lines();
+            let mut section = String::from("  Next: ");
+            section.push_str(lines.next().unwrap_or_default());
+            for line in lines {
+                section.push_str("\n        ");
+                section.push_str(line);
+            }
+            sections.push(section);
+        }
+        let rows = self.detail_rows();
+        if !rows.is_empty() {
+            sections.push(details_block(&rows));
+        }
+        let mut text = self.what_failed.clone();
+        for section in sections {
+            text.push_str("\n\n");
+            text.push_str(&section);
+        }
+        text
+    }
+
+    /// The rows the `Details:` block shows. Evidence comes first under `cause`,
+    /// so a wrapper that carries raw output keeps it below the human summary and
+    /// `Next:` rather than losing it.
+    fn detail_rows(&self) -> Vec<(String, Vec<String>)> {
+        let mut rows: Vec<(String, Vec<String>)> = Vec::new();
+        if !self.evidence.is_empty() {
+            let lines = self
+                .evidence
+                .iter()
+                .flat_map(|line| line.lines().map(str::to_owned))
+                .collect();
+            rows.push(("cause".to_owned(), lines));
+        }
+        for (label, value) in &self.details {
+            rows.push((label.clone(), value.lines().map(str::to_owned).collect()));
+        }
+        rows
+    }
+
+    /// The structured form for the `--json` envelope: the three keys every
+    /// existing consumer reads, plus `details` only when one was set, so a
+    /// snapshot with no details stays byte-for-byte identical.
     pub fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
+        let mut value = serde_json::json!({
             "what_failed": self.what_failed,
             "evidence": self.evidence,
             "next_action": self.next_action,
-        })
+        });
+        if !self.details.is_empty() {
+            value["details"] = serde_json::Value::Array(
+                self.details
+                    .iter()
+                    .map(|(label, detail)| serde_json::json!({ "label": label, "value": detail }))
+                    .collect(),
+            );
+        }
+        value
     }
+}
+
+/// A list of lines at one indent, each wrapped part on its own line.
+fn indented_block(lines: &[String], indent: &str) -> String {
+    let mut block = String::new();
+    for line in lines {
+        for part in line.lines() {
+            if !block.is_empty() {
+                block.push('\n');
+            }
+            block.push_str(indent);
+            block.push_str(part);
+        }
+    }
+    block
+}
+
+/// The `Details:` section: `label:` padded to the widest key in the block, so
+/// the values line up and stay scannable.
+fn details_block(rows: &[(String, Vec<String>)]) -> String {
+    let width = rows
+        .iter()
+        .map(|(label, _)| label.chars().count())
+        .max()
+        .unwrap_or(0)
+        .min(MAX_DETAIL_LABEL_CHARS);
+    let mut block = String::from("  Details:");
+    for (label, values) in rows {
+        let label_width = label.chars().count();
+        let indent = 4 + width.max(label_width) + 2;
+        for (index, value) in values.iter().enumerate() {
+            block.push('\n');
+            if index == 0 {
+                let _ = write!(
+                    block,
+                    "    {label}:{} {value}",
+                    " ".repeat(width.saturating_sub(label_width))
+                );
+            } else {
+                let _ = write!(block, "{}{value}", " ".repeat(indent));
+            }
+        }
+    }
+    block
 }
 
 /// Whether a line names a cause: the line a person needs from a log.
@@ -536,6 +728,124 @@ mod tests {
             .as_array()
             .is_some_and(|rows| rows.is_empty()));
         assert!(json["next_action"].is_null());
+    }
+
+    #[test]
+    fn an_error_without_explanation_or_detail_keeps_the_compact_layout() {
+        // The pre-existing renderers, kernel relays and snapshots read this
+        // exact text, so an unset explanation/detail pair must reproduce it
+        // byte for byte, including the JSON key set.
+        let error = HumanError::new("task `dev` failed")
+            .evidence("exit code 2")
+            .next_action("run `effigy dev` again");
+        assert_eq!(
+            error.render_text(),
+            "[error] task `dev` failed\n  cause: exit code 2\n  next: run `effigy dev` again"
+        );
+        assert_eq!(
+            error.render_text(),
+            format!("[error] {}", error.render_text_body())
+        );
+        let json = error.to_json();
+        assert_eq!(
+            json.as_object().map(|object| object.len()),
+            Some(3),
+            "no `details` key may appear for an error without details: {json}"
+        );
+        assert!(json.get("details").is_none());
+        assert!(error.detail_entries().is_empty());
+        assert!(error.explanation_lines().is_empty());
+    }
+
+    #[test]
+    fn an_empty_detail_value_is_skipped_so_optional_context_stays_compact() {
+        let error = HumanError::new("starting web failed").detail("manifest", "   ");
+        assert!(error.detail_entries().is_empty());
+        assert_eq!(
+            error.render_text(),
+            "[error] starting web failed",
+            "an absent detail must not add an empty Details: block"
+        );
+    }
+
+    #[test]
+    fn structured_errors_render_the_separated_details_block() {
+        let error = HumanError::new("Invalid effigy.toml")
+            .explain("TOML parse error at line 1, column 11: missing value")
+            .next_action("Run `effigy install:local` from the checkout root")
+            .detail("manifest", "/repo/effigy.toml")
+            .detail("cause", "missing value");
+        assert_eq!(
+            error.render_text(),
+            "[error] Invalid effigy.toml\n\n  \
+             TOML parse error at line 1, column 11: missing value\n\n  \
+             Next: Run `effigy install:local` from the checkout root\n\n  \
+             Details:\n    \
+             manifest: /repo/effigy.toml\n    \
+             cause:    missing value"
+        );
+        assert_eq!(
+            error.render_warning_text(),
+            format!("[warning] {}", error.render_text_body())
+        );
+        assert!(error
+            .render_warning_text()
+            .starts_with("[warning] Invalid effigy.toml"));
+    }
+
+    #[test]
+    fn structured_evidence_moves_under_details_after_the_next_action() {
+        let error = HumanError::new("command `npm run build` failed")
+            .next_action("read the output, fix the cause, then run it again")
+            .evidence("exit code 2")
+            .evidence("stderr: error TS2304: Cannot find name 'widget'.")
+            .detail("manifest", "/repo/effigy.toml");
+        let rendered = error.render_text();
+        assert_eq!(
+            rendered,
+            "[error] command `npm run build` failed\n\n  \
+             Next: read the output, fix the cause, then run it again\n\n  \
+             Details:\n    \
+             cause:    exit code 2\n              \
+             stderr: error TS2304: Cannot find name 'widget'.\n    \
+             manifest: /repo/effigy.toml"
+        );
+        let next = rendered.find("Next:").expect("next action");
+        let details = rendered.find("Details:").expect("details block");
+        assert!(next < details, "Next: stays above Details: {rendered}");
+        assert!(details < rendered.find("exit code 2").unwrap());
+    }
+
+    #[test]
+    fn structured_json_keeps_the_three_facts_and_adds_only_details() {
+        let error = HumanError::new("Invalid effigy.toml")
+            .explain("the manifest does not parse")
+            .next_action("fix the manifest")
+            .detail("manifest", "/repo/effigy.toml");
+        let json = error.to_json();
+        assert_eq!(json["what_failed"], "Invalid effigy.toml");
+        assert_eq!(json["next_action"], "fix the manifest");
+        assert_eq!(json["details"][0]["label"], "manifest");
+        assert_eq!(json["details"][0]["value"], "/repo/effigy.toml");
+        assert_eq!(json.as_object().map(|object| object.len()), Some(4));
+    }
+
+    #[test]
+    fn explanation_and_detail_values_are_bounded_and_redacted() {
+        let long = "x".repeat(MAX_EVIDENCE_BYTES * 2);
+        let error = HumanError::new("bundle fetch failed")
+            .explain(format!("authorization=Bearer-abc123 {long}"))
+            .detail("bundle", format!("token=abc123 {long}"));
+        let rendered = error.render_text();
+        assert!(!rendered.contains("abc123"), "{rendered}");
+        assert!(rendered.contains("authorization=<redacted>"), "{rendered}");
+        for line in error.explanation_lines() {
+            assert!(line.lines().all(|part| part.len() <= MAX_EVIDENCE_BYTES));
+        }
+        for (_, value) in error.detail_entries() {
+            assert!(value.lines().all(|part| part.len() <= MAX_EVIDENCE_BYTES));
+        }
+        assert_eq!(error.detail_entries()[0].0, "bundle");
     }
 
     #[test]
