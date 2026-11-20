@@ -31,7 +31,7 @@ git ls-files -c -o --exclude-standard -z | tar --null -T - -cf "$proof_dir/sourc
 tar -xf "$proof_dir/source.tar" -C "$source_dir"
 # Stop only this invocation's private VM, even when validation fails. Retain
 # files and logs for inspection; never prune another worker's resources.
-trap 'result=$?; stop_rc=0; colima stop --force > "$proof_dir/stop.log" 2>&1 || stop_rc=$?; printf "exit=%s\n" "$result" >> "$proof_dir/result.log"; printf "Linux qualification private VM stopped (exit=%s, stop_exit=%s, log=%s/stop.log)\n" "$result" "$stop_rc" "$proof_dir"; exit "$result"' EXIT
+trap 'result=$?; stop_rc=0; colima stop --force > "$proof_dir/stop.log" 2>&1 || stop_rc=$?; printf "exit=%s stop_exit=%s\n" "$result" "$stop_rc" >> "$proof_dir/result.log"; printf "Linux qualification private VM stopped (exit=%s, stop_exit=%s, log=%s/stop.log)\n" "$result" "$stop_rc" "$proof_dir"; exit "$result"' EXIT
 colima start --runtime docker --activate=false --ssh-config=false --template=false \
     --binfmt=false --cpus 2 --memory 3 --disk 10 --root-disk 10 --mount "$proof_dir:w" --mount-type virtiofs
 # Teardown fault affordance: with the private VM already running, fail before
