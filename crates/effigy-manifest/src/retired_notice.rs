@@ -71,6 +71,91 @@ fn lock_ledger() -> std::sync::MutexGuard<'static, Ledger> {
     }
 }
 
+/// One plain-English warning or error, rendered the same way everywhere in
+/// `effigy-manifest` (which must stay self-contained: it does not depend on
+/// `effigy-ui`). The shape matches [`effigy_ui::HumanError`]: a short
+/// headline up top, an optional one-paragraph explanation, a clear `Next:`
+/// action, and a separated `Details:` block for paths, pins, declared inputs
+/// and keys. Sections are separated by blank lines; the body lines carry a
+/// two-space indent and each `Details:` row a four-space indent. Empty
+/// sections are omitted cleanly, so a headline-only message stays one line.
+///
+/// ```text
+/// [warning] Ignoring `php_version` from your global config for `acme`
+///
+///   The pinned copy of `acme` does not declare `php_version`.
+///
+///   Next: Remove or fix `[bundle.acme].inputs.php_version` in ~/.effigy/config.toml.
+///
+///   Details:
+///     manifest: /repo/effigy.toml
+///     bundle: acme (abc12345…)
+/// ```
+#[allow(clippy::too_many_arguments)]
+fn format_report(
+    tag: Option<&str>,
+    headline: &str,
+    explanation: Option<&str>,
+    next: Option<&str>,
+    details: &[(&str, &str)],
+) -> String {
+    let mut report = String::new();
+    if let Some(tag) = tag {
+        report.push_str(&format!("[{tag}] "));
+    }
+    report.push_str(headline.trim());
+    let mut section = |body: &str| {
+        let body = body.trim();
+        if !body.is_empty() {
+            report.push_str("\n\n  ");
+            report.push_str(&body.replace('\n', "\n  "));
+        }
+    };
+    if let Some(explanation) = explanation {
+        section(explanation);
+    }
+    if let Some(next) = next {
+        let next = next.trim();
+        if !next.is_empty() {
+            section(&format!("Next: {next}"));
+        }
+    }
+    let rows = details
+        .iter()
+        .map(|(key, value)| (key.trim(), value.trim()))
+        .filter(|(key, value)| !key.is_empty() && !value.is_empty())
+        .collect::<Vec<_>>();
+    if !rows.is_empty() {
+        report.push_str("\n\n  Details:");
+        for (key, value) in rows {
+            report.push_str(&format!("\n    {key}: {value}"));
+        }
+    }
+    report
+}
+
+/// Format one machine-local or retired-config warning for the notice ledger.
+pub(crate) fn format_warning(
+    headline: &str,
+    explanation: Option<&str>,
+    next: Option<&str>,
+    details: &[(&str, &str)],
+) -> String {
+    format_report(Some("warning"), headline, explanation, next, details)
+}
+
+/// Format one manifest error body: the same headline / `Next:` / `Details:`
+/// shape without the `[warning]` tag, since the error channel already names
+/// the failure (`manifest compose failed in …`).
+pub(crate) fn format_error_detail(
+    headline: &str,
+    explanation: Option<&str>,
+    next: Option<&str>,
+    details: &[(&str, &str)],
+) -> String {
+    format_report(None, headline, explanation, next, details)
+}
+
 /// Choose this invocation's notice channel. The binary calls this before it
 /// answers a command; the default is the ordinary stderr notice.
 pub fn set_delivery(delivery: RetiredNoticeDelivery) {
@@ -234,6 +319,36 @@ mod tests {
         let nested = root.path().join("apps/web");
         std::fs::create_dir_all(&nested).expect("nested manifest directory");
         assert_eq!(checkout_root(&nested.join("effigy.toml")), root.path());
+    }
+
+    #[test]
+    fn a_warning_names_the_headline_the_next_action_and_the_details() {
+        let rendered = super::format_warning(
+            "Ignoring `php_version` from your global config for `acme`",
+            Some("The pinned copy of `acme` does not declare `php_version`."),
+            Some("Remove or fix `[bundle.acme].inputs.php_version`."),
+            &[("manifest", "/repo/effigy.toml"), ("bundle", "acme")],
+        );
+        assert_eq!(
+            rendered,
+            "[warning] Ignoring `php_version` from your global config for `acme`\n\
+             \n  The pinned copy of `acme` does not declare `php_version`.\n\
+             \n  Next: Remove or fix `[bundle.acme].inputs.php_version`.\n\
+             \n  Details:\n    manifest: /repo/effigy.toml\n    bundle: acme",
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn empty_warning_sections_are_omitted_cleanly() {
+        assert_eq!(
+            super::format_warning(" headline ", None, Some(" "), &[]),
+            "[warning] headline"
+        );
+        assert_eq!(
+            super::format_error_detail("headline", Some("why"), None, &[]),
+            "headline\n\n  why"
+        );
     }
 
     #[test]

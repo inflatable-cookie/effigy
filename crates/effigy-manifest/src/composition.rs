@@ -1599,7 +1599,8 @@ minimum_effigy_version = "latest"
                 .expect_err("refused")
                 .to_string();
             assert!(error.contains(canonical), "{canonical}: {error}");
-            assert!(error.contains("removed in v0.16"), "{canonical}: {error}");
+            assert!(error.contains("is no longer supported"), "{canonical}: {error}");
+            assert!(error.contains("Next:"), "{canonical}: {error}");
         }
     }
 

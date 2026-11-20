@@ -341,16 +341,24 @@ inputs = { php_versoin = "8.5" }
         .iter()
         .find(|warning| warning.contains("php_versoin"))
         .unwrap_or_else(|| panic!("no warning named the undeclared input: {warnings:?}"));
+    assert!(
+        warning.starts_with(
+            "[warning] Ignoring `php_versoin` from your global config for `undeclared-acme`"
+        ),
+        "{warning}"
+    );
     assert!(warning.contains("config.toml"), "{warning}");
     assert!(warning.contains("[bundle.undeclared-acme]"), "{warning}");
     assert!(
         warning.contains(&fixture.manifest_path().display().to_string()),
         "{warning}"
     );
-    assert!(warning.contains("remove or fix"), "{warning}");
+    assert!(warning.contains("Remove or fix"), "{warning}");
+    assert!(warning.contains("Next:"), "{warning}");
+    assert!(warning.contains("Details:"), "{warning}");
     assert!(
         warning.contains(&format!(
-            "in `{}`",
+            "in {}",
             fixture
                 .owner
                 .path()
@@ -359,7 +367,7 @@ inputs = { php_versoin = "8.5" }
         )),
         "{warning}"
     );
-    assert!(warning.contains("ignoring"), "{warning}");
+    assert!(warning.contains("declared: none") || warning.contains("declared:"), "{warning}");
 }
 
 #[test]
@@ -380,9 +388,17 @@ inputs = { php_version = "8.5" }
         .find(|warning| warning.contains("php_version"))
         .unwrap_or_else(|| panic!("no warning named the undeclared input: {warnings:?}"));
     assert!(
+        warning.starts_with(
+            "[warning] Ignoring `php_version` from your global config for `pinned-acme`"
+        ),
+        "{warning}"
+    );
+    assert!(
         warning.contains(&fixture.manifest_path().display().to_string()),
         "{warning}"
     );
+    assert!(warning.contains("The pinned copy of `pinned-acme` does not declare `php_version`."), "{warning}");
+    assert!(warning.contains("Next: Run `effigy bundle sync`"), "{warning}");
     assert!(warning.contains("45d80aae…"), "{warning}");
     assert!(warning.contains("effigy bundle sync"), "{warning}");
     assert!(
@@ -411,9 +427,16 @@ inputs = { php_version = 8.5 }
         .iter()
         .find(|warning| warning.contains("8.5"))
         .unwrap_or_else(|| panic!("no warning named the ill-typed value: {warnings:?}"));
+    assert!(
+        warning.starts_with(
+            "[warning] Ignoring `php_version` from your global config for `ill-typed-acme`"
+        ),
+        "{warning}"
+    );
     assert!(warning.contains("config.toml"), "{warning}");
     assert!(warning.contains("php_version"), "{warning}");
-    assert!(warning.contains("a string"), "{warning}");
+    assert!(warning.contains("Expected a string"), "{warning}");
+    assert!(warning.contains("Next: Update `[bundle.ill-typed-acme].inputs.php_version`"), "{warning}");
     assert!(
         warning.contains(&fixture.manifest_path().display().to_string()),
         "{warning}"
@@ -449,8 +472,10 @@ fn a_malformed_user_config_warns_instead_of_failing_every_project() {
     assert!(
         warnings
             .iter()
-            .any(|warning| warning.contains("config.toml")
-                && warning.contains("ignoring")
+            .any(|warning| warning.contains("[warning] Ignoring machine-local bundle inputs")
+                && warning.contains("config.toml")
+                && warning.contains("Next: Fix the syntax error")
+                && warning.contains("Details:")
                 && warning.contains(&fixture.manifest_path().display().to_string())),
         "{warnings:?}"
     );

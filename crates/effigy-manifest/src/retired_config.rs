@@ -30,14 +30,33 @@ impl RetiredConfigDeclaration {
     }
 
     /// One concise deprecation notice for this manifest, or `None`.
+    ///
+    /// The retired statements keep their exact wording (operators and tests
+    /// match on them); the notice only gains the plain-English headline, a
+    /// `Next:` action and a separated `Details:` block.
     pub fn notice(&self, manifest_path: &Path) -> Option<String> {
         if self.statements.is_empty() {
             return None;
         }
-        Some(format!(
-            "{}: retired v0.15 config still loads for one release: {}. Update the manifest; this compatibility path is removed after v0.15 (see CHANGELOG.md and docs/guides/085-v0.15.0-consumer-migration.md).",
-            manifest_path.display(),
-            self.statements.join("; ")
+        let manifest = manifest_path.display().to_string();
+        let mut items = String::new();
+        for statement in &self.statements {
+            if !items.is_empty() {
+                items.push('\n');
+            }
+            items.push_str("- ");
+            items.push_str(statement);
+        }
+        Some(crate::retired_notice::format_warning(
+            "retired v0.15 config still loads for one release",
+            Some(&items),
+            Some(
+                "Update the manifest; this compatibility path is removed after v0.15 (see CHANGELOG.md and the consumer migration guide).",
+            ),
+            &[
+                ("manifest", &manifest),
+                ("guide", "docs/guides/085-v0.15.0-consumer-migration.md"),
+            ],
         ))
     }
 
@@ -76,14 +95,24 @@ mod tests {
             .notice(Path::new("/repo/effigy.toml"))
             .expect("notice");
         assert!(
-            notice.starts_with("/repo/effigy.toml: retired v0.15 config"),
+            notice.starts_with("[warning] retired v0.15 config still loads for one release"),
             "{notice}"
         );
         assert!(notice.contains("[scan.attention_markers]"), "{notice}");
         assert!(notice.contains("[shell]"), "{notice}");
-        assert_eq!(notice.matches("effigy.toml").count(), 1, "{notice}");
+        assert!(notice.contains("Next:"), "{notice}");
+        assert!(notice.contains("Details:"), "{notice}");
         assert!(
-            notice.contains("docs/guides/085-v0.15.0-consumer-migration.md"),
+            notice.contains("manifest: /repo/effigy.toml"),
+            "{notice}"
+        );
+        assert!(
+            notice.contains("guide: docs/guides/085-v0.15.0-consumer-migration.md"),
+            "{notice}"
+        );
+        assert_eq!(
+            notice.matches("retired v0.15 config still loads for one release").count(),
+            1,
             "{notice}"
         );
     }

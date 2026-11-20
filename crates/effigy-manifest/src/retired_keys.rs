@@ -61,8 +61,11 @@ fn reject_retired_keys(value: &Value) -> Result<(), String> {
             ("selection-contract", "selection_contract"),
         ] {
             if contracts.contains_key(legacy) {
-                return Err(format!(
-                    "`[contracts].{legacy}` was removed in v0.16; write `{canonical}` instead"
+                return Err(crate::retired_notice::format_error_detail(
+                    &format!("`[contracts].{legacy}` is no longer supported"),
+                    None,
+                    Some(&format!("Write `{canonical}` instead.")),
+                    &[],
                 ));
             }
         }
@@ -73,24 +76,34 @@ fn reject_retired_keys(value: &Value) -> Result<(), String> {
                 .as_table()
                 .is_some_and(|table| table.contains_key("rev-file"))
             {
-                return Err(
-                    "`[sources.<name>].rev-file` was removed in v0.16; write `rev_file` instead"
-                        .to_owned(),
-                );
+                return Err(crate::retired_notice::format_error_detail(
+                    "`[sources.<name>].rev-file` is no longer supported",
+                    None,
+                    Some("Write `rev_file` instead."),
+                    &[],
+                ));
             }
         }
     }
     if root.contains_key("drafts") {
-        return Err(
-            "`[drafts]` was removed in v0.15; move each definition to `[tasks.<name>]` with `visibility = \"internal\"`, remove `created`/`expires`/`purpose`, and use ordinary `task` step references (see CHANGELOG.md)"
-                .to_owned(),
-        );
+        return Err(crate::retired_notice::format_error_detail(
+            "`[drafts]` was removed in v0.15",
+            None,
+            Some(
+                "Move each definition to `[tasks.<name>]` with `visibility = \"internal\"`, remove `created`/`expires`/`purpose`, and use ordinary `task` step references (see CHANGELOG.md).",
+            ),
+            &[],
+        ));
     }
     if root.contains_key("state") {
-        return Err(
-            "`[state.*]` layered state stacks were removed in v0.16; the workflow moved to repository tasks: seed and dump with `container data seed|dump`, stage plain artifacts with `effigy state artifact`, and keep app-specific migrations and overlays as `[tasks]` (see docs/knowledge/deployment-data-workflows.md)"
-                .to_owned(),
-        );
+        return Err(crate::retired_notice::format_error_detail(
+            "`[state.*]` layered state stacks are no longer supported",
+            Some("The workflow moved to repository tasks."),
+            Some(
+                "Seed and dump with `container data seed|dump`, stage plain artifacts with `effigy state artifact`, and keep app-specific migrations and overlays as `[tasks]` (see docs/knowledge/deployment-data-workflows.md).",
+            ),
+            &[],
+        ));
     }
     if let Some(tasks) = root.get("tasks").and_then(Value::as_table) {
         for task in tasks.values() {
@@ -107,10 +120,14 @@ fn reject_draft_in_step(step: &Value) -> Result<(), String> {
         .as_table()
         .is_some_and(|table| table.contains_key("draft"))
     {
-        return Err(
-            "`draft` step reference was removed in v0.15; use `task = \"<name>\"` and declare the task under `[tasks]` with `visibility = \"internal\"` when it is not public (see CHANGELOG.md)"
-                .to_owned(),
-        );
+        return Err(crate::retired_notice::format_error_detail(
+            "`draft` step reference was removed in v0.15",
+            None,
+            Some(
+                "Use `task = \"<name>\"` and declare the task under `[tasks]` with `visibility = \"internal\"` when it is not public (see CHANGELOG.md).",
+            ),
+            &[],
+        ));
     }
     Ok(())
 }
@@ -207,6 +224,7 @@ mod tests {
         assert!(error.contains("[tasks.<name>]"), "{error}");
         assert!(error.contains("visibility = \"internal\""), "{error}");
         assert!(error.contains("CHANGELOG.md"), "{error}");
+        assert!(error.contains("Next:"), "{error}");
     }
 
     /// The retired layered state table names the owning note, the surviving
@@ -219,9 +237,10 @@ mod tests {
         .expect_err("retired state table");
         let error = error.to_string();
         assert!(
-            error.contains("`[state.*]` layered state stacks were removed in v0.16"),
+            error.contains("`[state.*]` layered state stacks are no longer supported"),
             "{error}"
         );
+        assert!(error.contains("Next:"), "{error}");
         assert!(error.contains("container data seed|dump"), "{error}");
         assert!(error.contains("effigy state artifact"), "{error}");
         assert!(
@@ -243,6 +262,7 @@ mod tests {
         );
         assert!(error.contains("task ="), "{error}");
         assert!(error.contains("CHANGELOG.md"), "{error}");
+        assert!(error.contains("Next:"), "{error}");
     }
 
     #[test]
