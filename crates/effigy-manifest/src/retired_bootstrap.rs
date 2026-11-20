@@ -105,7 +105,10 @@ mod tests {
     #[test]
     fn a_retired_run_list_names_setup() {
         let error = error("[bootstrap]\nrun = \"echo hi\"\n");
-        assert!(error.contains("`[bootstrap].run` is no longer supported"), "{error}");
+        assert!(
+            error.contains("`[bootstrap].run` is no longer supported"),
+            "{error}"
+        );
         assert!(error.contains("[bootstrap].setup"), "{error}");
         assert!(error.contains("Next:"), "{error}");
         assert!(!error.contains("was accepted through"), "{error}");
@@ -134,7 +137,10 @@ mod tests {
     #[test]
     fn a_children_table_names_pinned_sources() {
         let error = error("[bootstrap]\nchildren = []\n");
-        assert!(error.contains("`[bootstrap].children` is no longer supported"), "{error}");
+        assert!(
+            error.contains("`[bootstrap].children` is no longer supported"),
+            "{error}"
+        );
         assert!(error.contains("[sources.<name>]"), "{error}");
         assert!(error.contains("Next:"), "{error}");
     }

@@ -102,16 +102,15 @@ mod tests {
         assert!(notice.contains("[shell]"), "{notice}");
         assert!(notice.contains("Next:"), "{notice}");
         assert!(notice.contains("Details:"), "{notice}");
-        assert!(
-            notice.contains("manifest: /repo/effigy.toml"),
-            "{notice}"
-        );
+        assert!(notice.contains("manifest: /repo/effigy.toml"), "{notice}");
         assert!(
             notice.contains("guide: docs/guides/085-v0.15.0-consumer-migration.md"),
             "{notice}"
         );
         assert_eq!(
-            notice.matches("retired v0.15 config still loads for one release").count(),
+            notice
+                .matches("retired v0.15 config still loads for one release")
+                .count(),
             1,
             "{notice}"
         );

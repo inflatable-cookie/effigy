@@ -534,25 +534,25 @@ fn user_bundle_inputs(
                 };
                 let bundle = match source.source_type {
                     BundleSourceType::Git | BundleSourceType::Oci => match &source.version_hint {
-                        Some(version) => format!(
-                            "{bundle_name} ({})",
-                            format_bundle_version(version)
-                        ),
+                        Some(version) => {
+                            format!("{bundle_name} ({})", format_bundle_version(version))
+                        }
                         None => bundle_name.to_owned(),
                     },
                     BundleSourceType::Path => bundle_name.to_owned(),
                 };
                 let setting = format!("[bundle.{bundle_name}].inputs.{key}");
-                let next = match source.source_type {
-                    BundleSourceType::Git | BundleSourceType::Oci => format!(
+                let next =
+                    match source.source_type {
+                        BundleSourceType::Git | BundleSourceType::Oci => format!(
                         "Run `effigy bundle sync` in {} if the bundle recently added `{key}`, or \
                          remove `{setting}` from {config_path}.",
                         manifest_path.parent().unwrap_or_else(|| Path::new(".")).display()
                     ),
-                    BundleSourceType::Path => {
-                        format!("Remove or fix `{setting}` in {config_path}.")
-                    }
-                };
+                        BundleSourceType::Path => {
+                            format!("Remove or fix `{setting}` in {config_path}.")
+                        }
+                    };
                 crate::retired_notice::warn(crate::retired_notice::format_warning(
                     &format!("Ignoring `{key}` from your global config for `{bundle_name}`"),
                     Some(&explanation),
