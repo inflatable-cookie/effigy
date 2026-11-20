@@ -27,8 +27,16 @@ from pathlib import Path
 
 state = Path(os.environ["FAKE_STATE"])
 running = state.read_text().strip() == "running"
-backend = os.environ.get("FAKE_BACKEND", "colima-nerdctl")
+backend = os.environ.get("FAKE_BACKEND", "containerd")
 argv = sys.argv[1:]
+
+expected = os.environ.get("FAKE_EXPECTED_BACKEND", "colima")
+actual = os.environ.get("EFFIGY_COMPOSE_BACKEND")
+if actual != expected:
+    print(json.dumps({"schema": "effigy.command.v1", "ok": False,
+                      "error": {"message": "EFFIGY_COMPOSE_BACKEND is "
+                      + repr(actual) + ", expected " + repr(expected)}}))
+    sys.exit(9)
 
 
 def envelope(result):
@@ -36,7 +44,7 @@ def envelope(result):
                       "result": result}))
 
 
-if argv == ["version", "--json"]:
+if argv == ["--json", "version"]:
     envelope({"schema": "effigy.version.v1", "schema_version": 1, "ok": True,
               "version": "0.15.0"})
 elif argv[:2] == ["container", "status"] and "--global" in argv:
@@ -49,7 +57,7 @@ elif argv[:3] == ["container", "volume", "list"]:
     live = ["data"] if running and state.read_text().strip() != "retired" else []
     envelope({"schema": "effigy.container.volume-list.v1", "ok": True,
               "volumes": [{"name": name, "backend": "colima"} for name in live]})
-elif argv[:2] == ["container", "up"]:
+elif argv == ["container", "up", "--detach", "--json"]:
     state.write_text("running")
     envelope({"schema": "effigy.container.up.v1", "ok": True})
 elif argv[:2] == ["container", "down"]:
@@ -60,10 +68,10 @@ elif argv[:2] == ["container", "retire"]:
 elif argv[:2] == ["container", "status"]:
     envelope({"schema": "effigy.container.status.v1", "ok": True, "backend": backend,
               "manifest_driver": "colima", "runtime_running": True})
-elif argv[:2] == ["exec", "--"] and argv[2:5] == ["effigy", "version", "--json"]:
+elif argv == ["exec", "--", "effigy", "--json", "version"]:
     envelope({"schema": "effigy.version.v1", "schema_version": 1, "ok": True,
               "version": "0.15.0"})
-elif argv[:2] == ["exec", "--"] and argv[2:4] == ["effigy", "tasks"]:
+elif argv == ["exec", "--", "effigy", "--json", "tasks"]:
     envelope({"schema": "effigy.tasks.v1", "schema_version": 1, "ok": True})
 else:
     print(json.dumps({"schema": "effigy.command.v1", "ok": False,
@@ -86,7 +94,8 @@ class Harness(unittest.TestCase):
         self.candidate.chmod(0o755)
         self.environment = {
             "FAKE_STATE": str(self.state),
-            "FAKE_BACKEND": "colima-nerdctl",
+            "FAKE_BACKEND": "containerd",
+            "FAKE_EXPECTED_BACKEND": "colima",
             "TMPDIR": str(self.root / "run-scratch"),
         }
 

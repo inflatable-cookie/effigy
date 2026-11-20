@@ -17,14 +17,15 @@ Usage::
 
 Steps, in order:
 
-1. Record the candidate binary's SHA-256 and ``effigy version --json``.
+1. Record the candidate binary's SHA-256 and ``effigy --json version``.
 2. Snapshot the engine inventory: ``container status --global --json`` and
    ``container volume list --global --json``.
-3. ``effigy container up --json`` in the checkout.
+3. ``effigy container up --detach --json`` in the checkout.
 4. ``effigy container status --json``; the chosen backend must be the one this
    proof is for.
-5. ``effigy exec -- effigy version --json`` and ``effigy exec -- effigy
-   <task>`` (default ``tasks``); both need exit 0, and the task needs output.
+5. ``effigy exec -- effigy --json version`` and ``effigy exec -- effigy
+   --json <task>`` (default ``tasks``); both need exit 0, and the task needs
+   output.
 6. ``effigy container down --json``, then ``effigy container retire --yes
    --json`` so the brings-up's containers, volumes and networks are gone.
 7. Snapshot the inventory again; it must equal step 2 byte for byte.
@@ -63,15 +64,22 @@ class Backend:
     name: str
     system: str
     driver: str
+    compose_backend: str
 
     def identity_ok(self, status: dict) -> bool:
         return status.get("backend") == self.driver and platform.system() == self.system
 
 
 BACKENDS = {
-    "colima": Backend(name="colima", system="Darwin", driver="colima-nerdctl"),
-    "desktop": Backend(name="desktop", system="Darwin", driver="docker"),
-    "linux": Backend(name="linux", system="Linux", driver="docker"),
+    "colima": Backend(
+        name="colima", system="Darwin", driver="containerd", compose_backend="colima"
+    ),
+    "desktop": Backend(
+        name="desktop", system="Darwin", driver="docker", compose_backend="docker"
+    ),
+    "linux": Backend(
+        name="linux", system="Linux", driver="docker", compose_backend="docker"
+    ),
 }
 
 
@@ -205,6 +213,10 @@ class Proof:
 
     def effigy_step(self, name: str, *argv: str) -> Step:
         command = [self.effigy, *argv]
+        environment = {
+            **os.environ,
+            "EFFIGY_COMPOSE_BACKEND": self.backend.compose_backend,
+        }
         try:
             done = subprocess.run(
                 command,
@@ -212,6 +224,7 @@ class Proof:
                 capture_output=True,
                 text=True,
                 timeout=3600,
+                env=environment,
             )
             step = Step(name, command, done.returncode, done.stdout, done.stderr)
         except subprocess.TimeoutExpired:
@@ -247,7 +260,9 @@ class Proof:
 
     def prove(self) -> dict:
         self.inventory_before = self.inventory()
-        up = self.effigy_step("container.up", "container", "up", "--json")
+        up = self.effigy_step(
+            "container.up", "container", "up", "--detach", "--json"
+        )
         if self.failure is None:
             try:
                 result(parse_json(up.stdout, "container up"), "container up")
@@ -271,7 +286,7 @@ class Proof:
             if observed.get("runtime_running") is not True:
                 self.fail("container status does not report a running runtime")
         version = self.effigy_step(
-            "workspace.version", "exec", "--", "effigy", "version", "--json"
+            "workspace.version", "exec", "--", "effigy", "--json", "version"
         )
         if self.failure is None:
             try:
@@ -285,7 +300,7 @@ class Proof:
             if guest.get("schema") != "effigy.version.v1" or not guest.get("version"):
                 self.fail("workspace effigy version is not the published contract")
         task = self.effigy_step(
-            "workspace.task", "exec", "--", "effigy", self.task, "--json"
+            "workspace.task", "exec", "--", "effigy", "--json", self.task
         )
         if self.failure is None:
             try:
