@@ -16,6 +16,7 @@ let link_dir = if env("EFFIGY_LOCAL_BIN_DIR") == "" {
 };
 
 let stable_target = path::join(repo_root, ".local-install/bin/effigy");
+let staged_target = path::join(repo_root, ".local-install/bin/effigy.new");
 let stable_link = path::join(link_dir, "effigy");
 let staged_link = path::join(link_dir, ".effigy-wrapper.new");
 
@@ -94,7 +95,11 @@ fn explain_preserved(predicate, link_path) {
     log_warn("       to adopt the maintained wrapper, move it aside and re-run `effigy install:local`");
 }
 
-require_regular_file(stable_target, "stable effigy binary");
+// The launcher names the stable path. On a first install that path is not yet
+// populated: the staged build is what activate-local-bin.rhai, the next step,
+// renames into place, so the staged regular file is the one to check here.
+let launch_binary_ready = if fs::exists(stable_target) { stable_target } else { staged_target };
+require_regular_file(launch_binary_ready, "stable effigy binary");
 
 fs::create_dir(link_dir);
 

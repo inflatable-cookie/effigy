@@ -261,6 +261,9 @@ fn allowed_first_party_process_script(relative: &str, contents: &str) -> bool {
             contents.contains("process::stream(program, process_args, options)")
         }
         "scripts/install-local-bin-links.rhai" => contents.contains("process::run("),
+        "scripts/activate-local-bin.rhai" => {
+            contents.contains("process::run(program, process_args)")
+        }
         "scripts/profile-container-shell-matrix.rhai" => {
             contents.contains("process::run(program, process_args)")
                 && contents.contains("process::run(\"/bin/sh\",")

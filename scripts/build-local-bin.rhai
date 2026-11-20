@@ -1,4 +1,4 @@
-// Build this checkout's optimized release binary and activate it as the
+// Build this checkout's optimized release binary and stage it as the
 // checkout-local stable `effigy` (`.local-install/bin/effigy`).
 //
 // The build goes through Oxide (`oxide build --release --bin effigy`), which
@@ -13,22 +13,31 @@
 // requirement instead of looking like a new program to Gatekeeper. The identity
 // policy lives in `scripts/local-codesign.sh`; the selection runs before the
 // build so an identity problem fails in seconds, and a signing failure fails
-// the install before the staged binary replaces the active one.
+// the install before anything staged replaces the active one.
 //
-// Activation is staged and ordered so a failure cannot destroy the active
-// binary or its version receipt:
+// Install is three steps in `config/tasks.toml`, and this file is the first:
 //
-//   1. select or provision the local signing identity (a no-op off macOS);
-//   2. clear the stale release artifact and build the release binary;
-//   3. refuse to proceed if the active path is not a regular file;
-//   4. copy the active binary/stamp into the owner-only rollback channel;
-//   5. copy the release binary to `effigy.new`, verify the bytes, sign it with
-//      that identity and mark it executable;
-//   6. rename the staged binary over the active path;
-//   7. publish the new version receipt by rename, never by truncating it;
-//   8. publish the source receipt (`effigy.source-receipt`) by rename, naming the
-//      activated bytes, the checkout's HEAD and tree, and whether it was dirty.
-//      The entry rejects a stale receipt because its binary hash no longer matches.
+//   1. build-local-bin.rhai (here): select the identity, build, stage and sign
+//      the release binary as `effigy.new`, keep the active binary and its
+//      receipt as the rollback channel, and stage the version and source
+//      receipt as `.new` files. The active path is not touched.
+//   2. install-local-bin-links.rhai: maintain the PATH launcher.
+//   3. activate-local-bin.rhai: rename `effigy.new` over the active path, then
+//      publish the staged receipts. Binary activation is its last spawn.
+//
+// Why the swap waits for the last step: the runner admits every step by
+// launching a kernel helper from the effigy binary path on disk. Once the
+// active path holds the new build, a step admitted by the old parent would
+// launch the new helper and be refused on protocol mismatch (v0.14.1 to v0.15
+// crosses helper protocol 6). So the active path changes only in the final
+// step, and nothing is admitted after it.
+//
+// The source receipt is what Recipe E verifies a host binary against. It names
+// the final activated bytes (after signing), the checkout's HEAD and tree, the
+// active version written beside it, the build kind and the feature set. A dirty
+// checkout is recorded as `dirty=true`, never hidden. Without git the install
+// still succeeds, the head and tree are left empty and the dirty flag is true,
+// so the receipt names no source and Recipe E refuses it.
 let source = path::join(repo_root, "target/release/effigy");
 let install_dir = path::join(repo_root, ".local-install/bin");
 let target = path::join(install_dir, "effigy");
@@ -174,42 +183,6 @@ fn verify_staged_copy(source, staged, label) {
     }
 }
 
-fn preserve_previous_local_install(target, previous_target, active_version_file, previous_version_file) {
-    if fs::exists(target) && fs::is_file(target) {
-        let staged_previous = previous_target + ".new";
-        run_check("preserve previous local effigy binary", "cp", [target, staged_previous]);
-        verify_staged_copy(target, staged_previous, "preserved previous local effigy binary");
-        run_check(
-            "restrict previous local effigy binary to owner-only",
-            "chmod",
-            ["0700", staged_previous],
-        );
-        run_check(
-            "activate preserved previous local effigy binary",
-            "mv",
-            [staged_previous, previous_target],
-        );
-        if fs::exists(active_version_file) && fs::is_file(active_version_file) {
-            let staged_previous_version = previous_version_file + ".new";
-            run_check(
-                "preserve previous local effigy version",
-                "cp",
-                [active_version_file, staged_previous_version],
-            );
-            run_check(
-                "restrict previous local effigy version to owner-only",
-                "chmod",
-                ["0600", staged_previous_version],
-            );
-            run_check(
-                "activate preserved previous local effigy version",
-                "mv",
-                [staged_previous_version, previous_version_file],
-            );
-        }
-    }
-}
-
 // Sign the staged copy with the selected local identity. The helper is the
 // whole policy (selection, provisioning, `EFFIGY_LOCAL_CODESIGN=off`, the
 // non-macOS no-op), and an empty identity means this activation was asked to
@@ -260,13 +233,71 @@ fn local_codesign_identity() {
     str::trim(result["stdout"].to_string())
 }
 
-// The source receipt is what Recipe E verifies a host binary against. It names
-// the final activated bytes (after signing), the checkout's HEAD and tree, the
-// active version written beside it, the build kind and the feature set. A dirty
-// checkout is recorded as `dirty=true`, never hidden. Without git the install
-// still succeeds, the head and tree are left empty and the dirty flag is true,
-// so the receipt names no source and Recipe E refuses it.
-fn local_source_receipt(target, version) {
+// Stage the release binary beside the active path and make it ready to
+// activate: byte-identical to the build, signed, and executable. Nothing here
+// touches the active path.
+fn stage_local_binary(source, staged_target, codesign_identity) {
+    require_regular_file(source, "built effigy release binary");
+    run_check("stage local effigy binary", "cp", [source, staged_target]);
+    verify_staged_copy(source, staged_target, "staged local effigy binary");
+    sign_staged_local_binary(staged_target, codesign_identity);
+    run_check(
+        "mark staged local effigy binary executable",
+        "chmod",
+        ["0755", staged_target],
+    );
+}
+
+// Keep the rollback channel holding the binary that was active before this
+// install. When the active binary already holds the bytes just staged, an
+// earlier attempt activated this build and its rollback copy is the one to keep:
+// copying the active binary over it would replace the real previous install
+// with the new build.
+fn preserve_previous_local_install(target, staged_target, previous_target, active_version_file, previous_version_file) {
+    if !(fs::exists(target) && fs::is_file(target)) {
+        return;
+    }
+    if fs::sha256(target) == fs::sha256(staged_target) {
+        log("[ok] active effigy already holds this build; keeping the existing rollback binary");
+        return;
+    }
+
+    let staged_previous = previous_target + ".new";
+    run_check("preserve previous local effigy binary", "cp", [target, staged_previous]);
+    verify_staged_copy(target, staged_previous, "preserved previous local effigy binary");
+    run_check(
+        "restrict previous local effigy binary to owner-only",
+        "chmod",
+        ["0700", staged_previous],
+    );
+    run_check(
+        "activate preserved previous local effigy binary",
+        "mv",
+        [staged_previous, previous_target],
+    );
+    if fs::exists(active_version_file) && fs::is_file(active_version_file) {
+        let staged_previous_version = previous_version_file + ".new";
+        run_check(
+            "preserve previous local effigy version",
+            "cp",
+            [active_version_file, staged_previous_version],
+        );
+        run_check(
+            "restrict previous local effigy version to owner-only",
+            "chmod",
+            ["0600", staged_previous_version],
+        );
+        run_check(
+            "activate preserved previous local effigy version",
+            "mv",
+            [staged_previous_version, previous_version_file],
+        );
+    }
+}
+
+// The source receipt names the bytes the active path will hold, so it is
+// computed from the staged copy: activation renames those same bytes into place.
+fn local_source_receipt(binary, version) {
     let head = capture_process("git", ["rev-parse", "HEAD"]);
     let tree = capture_process("git", ["rev-parse", "HEAD^{tree}"]);
     let known = !(head == () || head == "" || tree == () || tree == "");
@@ -279,7 +310,7 @@ fn local_source_receipt(target, version) {
     let completed = capture_process("date", ["-u", "+%Y-%m-%dT%H:%M:%SZ"]);
     "source_head=" + (if known { head } else { "" }) + "\n"
         + "source_tree=" + (if known { tree } else { "" }) + "\n"
-        + "binary_sha256=" + fs::sha256(target) + "\n"
+        + "binary_sha256=" + fs::sha256(binary) + "\n"
         + "active_version=" + version + "\n"
         + "build_kind=install-local\n"
         + "features=\n"
@@ -287,31 +318,13 @@ fn local_source_receipt(target, version) {
         + "completed_at=" + (if completed == () { "" } else { completed }) + "\n"
 }
 
-fn activate_local_install(source, staged_target, target, active_version_file, version, codesign_identity) {
-    require_regular_file(source, "built effigy release binary");
-    run_check("stage local effigy binary", "cp", [source, staged_target]);
-    verify_staged_copy(source, staged_target, "staged local effigy binary");
-    sign_staged_local_binary(staged_target, codesign_identity);
-    run_check(
-        "mark staged local effigy binary executable",
-        "chmod",
-        ["0755", staged_target],
-    );
-    run_check("activate local effigy binary", "mv", [staged_target, target]);
-    let staged_version_file = active_version_file + ".new";
-    fs::write_file(staged_version_file, version + "\n");
-    run_check(
-        "activate local effigy version",
-        "mv",
-        [staged_version_file, active_version_file],
-    );
-    let receipt_file = target + ".source-receipt";
-    let staged_receipt_file = receipt_file + ".new";
-    fs::write_file(staged_receipt_file, local_source_receipt(target, version));
-    run_check(
-        "activate local effigy source receipt",
-        "mv",
-        [staged_receipt_file, receipt_file],
+// Stage the version receipt and the source receipt beside their active paths.
+// Activation renames both into place after the binary.
+fn stage_local_receipts(target, staged_target, active_version_file, version) {
+    fs::write_file(active_version_file + ".new", version + "\n");
+    fs::write_file(
+        target + ".source-receipt.new",
+        local_source_receipt(staged_target, version),
     );
 }
 
@@ -335,16 +348,9 @@ if !fs::exists(source) || !fs::is_file(source) {
 
 fs::create_dir(install_dir);
 require_replaceable_active_binary(target);
-preserve_previous_local_install(target, previous_target, active_version_file, previous_version_file);
-activate_local_install(
-    source,
-    staged_target,
-    target,
-    active_version_file,
-    local_active_version(),
-    codesign_identity,
-);
+stage_local_binary(source, staged_target, codesign_identity);
+preserve_previous_local_install(target, staged_target, previous_target, active_version_file, previous_version_file);
+stage_local_receipts(target, staged_target, active_version_file, local_active_version());
 
 log("[ok] built local effigy release binary");
-log("[ok] installed " + target);
-log("[ok] wrote local active version " + active_version_file);
+log("[ok] staged " + staged_target + "; activate-local-bin.rhai installs it as the last step");

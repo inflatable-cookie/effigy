@@ -113,6 +113,7 @@ new_fixture() {
   cp "$here/scripts/build-local-bin.rhai" \
     "$here/scripts/local-codesign.sh" \
     "$here/scripts/install-local-bin-links.rhai" \
+    "$here/scripts/activate-local-bin.rhai" \
     "$here/scripts/oxide-selector.sh" "$repo/scripts/"
   cat >"$repo/Cargo.toml" <<'TOML'
 [workspace]
@@ -129,6 +130,7 @@ alias = "effigy"
 "install:local" = { visibility = "internal", group = "Maintenance", run = [
   { rhai = "scripts/build-local-bin.rhai" },
   { rhai = "scripts/install-local-bin-links.rhai" },
+  { rhai = "scripts/activate-local-bin.rhai" },
 ] }
 TOML
   : >"$log"
@@ -281,7 +283,7 @@ run_install() { # [env assignment ...]
     GIT_CEILING_DIRECTORIES="$fx" \
     REAL_CP="$real_cp" REAL_MV="$real_mv" REAL_CHMOD="$real_chmod" \
     PATH="$stubs:/usr/bin:/bin:/usr/sbin:/sbin" \
-    "$@" "$binary" install:local) >"$out" 2>&1
+    "$@" "${parent_binary:-$binary}" install:local) >"$out" 2>&1
 }
 
 # Run the signing helper itself, against the same private keychain.
@@ -328,6 +330,11 @@ new_fixture
 run_install
 rc=$?
 check_eq "fresh install exits 0" "$rc" 0
+last_log=$(tail -n 1 "$log")
+case $last_log in
+  "mv "*"/.local-install/bin/effigy.new "*"/.local-install/bin/effigy") ok "activation renames the staged binary as the last side effect" ;;
+  *) fail "activation is not the last side effect: last call was [$last_log]" ;;
+esac
 check_contains "fresh install builds the release binary through Oxide" "$log" "oxide build --release --bin effigy"
 check_absent "fresh install never falls back to Cargo" "$log" "cargo "
 check_file_eq "fresh install activates the release artifact" "$active" "release-1"
@@ -533,9 +540,12 @@ check_mode "signed active binary is executable" "$active" 755
 # ---- 16. a refused signature leaves the active install and rollback intact --
 new_fixture
 run_install
+set_version 1.2.4
+run_install STUB_RELEASE_BODY=release-2
+check_file_eq "rollback holds the prior binary before the refused signature" "$previous" "release-1"
 snapshot_install
 : >"$log"
-run_install STUB_CODESIGN_FAIL=1
+run_install STUB_CODESIGN_FAIL=1 STUB_RELEASE_BODY=release-3
 rc=$?
 [ "$rc" -ne 0 ] && ok "signing failure fails the install" || fail "signing failure exited 0"
 check_contains "signing failure is reported" "$out" "sign staged local effigy binary failed"
@@ -653,6 +663,38 @@ check_eq "install without git exits 0" "$?" 0
 receipt="$repo/.local-install/bin/effigy.source-receipt"
 check_eq "install without git names no source head" "$(receipt_field "$receipt" source_head)" ""
 check_eq "install without git records dirty=true" "$(receipt_field "$receipt" dirty)" "true"
+
+# ---- 25. the installed parent survives a protocol-refusing new build --------
+# The runner admits each step by starting a helper from the effigy path on disk.
+# Here the parent is the installed binary, and the build that replaces it
+# refuses every helper, as a protocol-bumped binary does. Admission of the
+# steps and the launcher all run before the swap, so the install still exits 0.
+new_fixture
+run_install
+cp "$binary" "$active"
+parent_binary=$active
+refusing_build='#!/bin/sh
+if [ "$1" = __kernel-sentinel ]; then echo "protocol refused" >&2; exit 1; fi
+exit 0'
+: >"$log"
+run_install STUB_RELEASE_BODY="$refusing_build"
+rc=$?
+parent_binary=""
+check_eq "installed parent survives a protocol-refusing new build" "$rc" 0
+check_contains "the refusing build is the active binary after install" "$active" "protocol refused"
+check_contains "the installed parent completes the install" "$out" "[ok] installed"
+
+# ---- 26. rerunning the same build keeps the rollback binary -----------------
+new_fixture
+run_install
+set_version 1.2.4
+run_install STUB_RELEASE_BODY=release-2
+check_file_eq "rollback holds the prior binary before the retry" "$previous" "release-1"
+run_install STUB_RELEASE_BODY=release-2
+check_eq "retry of the same build exits 0" "$?" 0
+check_file_eq "retry of the same build keeps the rollback binary" "$previous" "release-1"
+check_file_eq "retry of the same build keeps the rollback version" "$previous_version" "v1.2.3+local.unknown"
+check_contains "retry names why the rollback binary was kept" "$out" "keeping the existing rollback binary"
 
 echo
 if [ "$fails" -eq 0 ]; then

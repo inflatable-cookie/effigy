@@ -63,12 +63,16 @@ In the checkout:
 - `.local-install/bin/effigy.previous` and `.previous.version` — the
   owner-only rollback channel, refreshed on each activation
 
-The active path is staged (`effigy.new`), byte-compared with the release
-artifact, signed with the local identity on macOS, marked executable, and only
-then renamed over the active binary. The version receipt is published by rename
-too, so a failed build, copy, signature or rename leaves the previously active
-binary and receipt intact instead of truncating them. A non-regular active path
-(for example a symlink) is refused before anything is copied.
+The build is staged (`effigy.new`), byte-compared with the release artifact,
+signed with the local identity on macOS and marked executable. The rollback
+channel is refreshed from the active binary, unless the active binary already
+holds that staged build: an earlier run activated it, so its rollback copy is
+kept rather than replaced. The launcher is maintained next. The staged binary is
+renamed over the active path last, after the version and source receipts are in
+place, and nothing starts after that rename. A failed build, copy, signature or
+rename leaves the previously active binary and receipts intact instead of
+truncating them. A non-regular active path (for example a symlink) is refused
+before anything is copied.
 
 ### Signing on macOS
 

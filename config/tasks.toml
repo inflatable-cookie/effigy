@@ -111,6 +111,7 @@
 "install:local" = { visibility = "internal", group = "Maintenance", run = [
   { rhai = "scripts/build-local-bin.rhai" },
   { rhai = "scripts/install-local-bin-links.rhai" },
+  { rhai = "scripts/activate-local-bin.rhai" },
 ] }
 
 # Pure discovery and pinned executable-source acquisition (contract 052 R2).
