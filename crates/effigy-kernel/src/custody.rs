@@ -58,26 +58,26 @@ pub const HANDOFF_FD: i32 = 11;
 // test can make output arrive exactly in the turn that observes the exit.
 // Unlike a fault point it never enters `fault::trace()`, so the fault-matrix
 // driver cannot arm it (effigy#1077).
-#[cfg(test)]
+#[cfg(all(test, feature = "fault-injection"))]
 thread_local! {
     static POLL_BEFORE_EXIT_HOOK: std::cell::RefCell<Option<Box<dyn Fn()>>> =
         const { std::cell::RefCell::new(None) };
 }
 /// Install the [`POLL_BEFORE_EXIT_HOOK`] (or clear it with `None`).
-#[cfg(test)]
+#[cfg(all(test, feature = "fault-injection"))]
 pub(crate) fn set_poll_before_exit_hook(hook: Option<Box<dyn Fn()>>) {
     POLL_BEFORE_EXIT_HOOK.with(|slot| *slot.borrow_mut() = hook);
 }
 /// RAII guard that clears the poll-before-exit hook on drop.
-#[cfg(test)]
+#[cfg(all(test, feature = "fault-injection"))]
 pub(crate) struct PollBeforeExitReset;
-#[cfg(test)]
+#[cfg(all(test, feature = "fault-injection"))]
 impl Drop for PollBeforeExitReset {
     fn drop(&mut self) {
         set_poll_before_exit_hook(None);
     }
 }
-#[cfg(test)]
+#[cfg(all(test, feature = "fault-injection"))]
 fn run_poll_before_exit_hook() {
     POLL_BEFORE_EXIT_HOOK.with(|slot| {
         if let Some(hook) = slot.borrow().as_ref() {
@@ -85,7 +85,7 @@ fn run_poll_before_exit_hook() {
         }
     });
 }
-#[cfg(not(test))]
+#[cfg(not(all(test, feature = "fault-injection")))]
 fn run_poll_before_exit_hook() {}
 
 /// Reported when a group's closure cannot be positively established: an
