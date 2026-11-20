@@ -221,6 +221,7 @@ thread_local! {
     static PER_POINT: RefCell<Vec<(Point, usize)>> = const { RefCell::new(Vec::new()) };
     static ARMED: Cell<Option<(usize, Fault)>> = const { Cell::new(None) };
     static FIRED: Cell<bool> = const { Cell::new(false) };
+    static FIRED_UNKNOWN: Cell<bool> = const { Cell::new(false) };
     static CROSSED: Cell<usize> = const { Cell::new(0) };
     static TRACE: RefCell<Vec<Point>> = const { RefCell::new(Vec::new()) };
     static OBSERVATIONS: RefCell<Vec<&'static Location<'static>>> = const { RefCell::new(Vec::new()) };
@@ -247,6 +248,7 @@ pub(crate) fn injected<T>() -> Option<Observed<T>> {
     let armed = OBSERVATION_ARMED.with(Cell::get) == Some(index);
     if armed {
         FIRED.with(|fired| fired.set(true));
+        FIRED_UNKNOWN.with(|fired| fired.set(true));
     }
     let next = NEXT_UNKNOWN.with(|flag| flag.replace(false));
     (armed || next || UNKNOWN.with(Cell::get)).then_some(Observed::Unknown(UnknownReason::Injected))
@@ -293,6 +295,9 @@ pub(crate) fn point(point: Point) -> io::Result<()> {
     match named.or(by_nth).or_else(|| ARMED.with(Cell::get)) {
         Some((armed, fault)) if armed == index => {
             FIRED.with(|fired| fired.set(true));
+            if fault == Fault::Unknown {
+                FIRED_UNKNOWN.with(|fired| fired.set(true));
+            }
             match fault {
                 Fault::Kill => loop {
                     // SAFETY: signalling our own pid; SIGKILL does not return.
@@ -343,6 +348,7 @@ pub(crate) fn arm(fault: Option<(usize, Fault)>) {
     PER_POINT.with(|counts| counts.borrow_mut().clear());
     ARMED.with(|armed| armed.set(fault));
     FIRED.with(|fired| fired.set(false));
+    FIRED_UNKNOWN.with(|fired| fired.set(false));
     CROSSED.with(|crossed| crossed.set(0));
     TRACE.with(|trace| trace.borrow_mut().clear());
     OBSERVATIONS.with(|seen| seen.borrow_mut().clear());
@@ -360,6 +366,10 @@ pub(crate) fn observations() -> Vec<&'static Location<'static>> {
 /// Whether the armed fault was delivered since the last `arm`.
 pub(crate) fn fired() -> bool {
     FIRED.with(Cell::get)
+}
+/// Whether an `Unknown` point fault or observation fault was delivered since the last `arm`.
+pub(crate) fn fired_unknown() -> bool {
+    FIRED_UNKNOWN.with(Cell::get)
 }
 /// Injected wall-clock offset (ClockJump); zero unless armed.
 pub(crate) fn clock_skew_ms() -> i64 {

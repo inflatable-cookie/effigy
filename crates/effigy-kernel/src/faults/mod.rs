@@ -48,10 +48,12 @@ pub(super) fn observe() -> ObserveContext {
         .observe()
         .expect("observe context")
 }
-/// Unfaulted prefixes need recovery time to reach their armed boundary.
-/// After delivery, `Unknown` waits out the bound, so keep it short.
+/// Unfaulted prefixes need recovery time to reach their armed boundary, and
+/// non-`Unknown` faults (such as observability `Enospc` before settlement)
+/// still run real store commits. After `Unknown` delivery, settlement waits
+/// out the bound, so keep it short.
 pub(super) fn cleanup(cx: &EffectContext) -> CleanupContext {
-    if !crate::fault::fired() {
+    if !crate::fault::fired_unknown() {
         return recovery_cleanup(cx);
     }
     cx.operation()
@@ -144,4 +146,34 @@ pub(super) fn reap_exited() {
             return;
         }
     }
+}
+
+#[test]
+fn cleanup_keeps_recovery_budget_for_non_unknown_faults() {
+    use crate::fault::{self, Fault, Point};
+
+    let cx = mutate();
+    for delivered in [Fault::Enospc, Fault::Eperm, Fault::ClockJump] {
+        fault::arm_point(Point::CaptureWrite, delivered);
+        let _ = fault::point(Point::CaptureWrite);
+        assert!(fault::fired());
+        assert!(!fault::fired_unknown());
+        assert!(
+            cleanup(&cx).operation().remaining().unwrap() > Duration::from_secs(5),
+            "{delivered:?} should keep recovery cleanup budget"
+        );
+        fault::arm(None);
+    }
+
+    fault::arm_point(Point::RequestBefore, Fault::Unknown);
+    fault::point(Point::RequestBefore).expect("deliver Unknown");
+    assert!(fault::fired_unknown());
+    assert!(cleanup(&cx).operation().remaining().unwrap() <= Duration::from_secs(1));
+    fault::arm(None);
+
+    fault::arm_observation(0);
+    assert!(fault::injected::<()>().is_some());
+    assert!(fault::fired_unknown());
+    assert!(cleanup(&cx).operation().remaining().unwrap() <= Duration::from_secs(1));
+    fault::arm(None);
 }
