@@ -1722,7 +1722,7 @@ A writer primitive alone does not qualify the delivered path.
   fixture-tagged process survives (O1a). The signal matrix runs on Linux
   through the private disposable-VM route (`test:task-engine:kill-matrix:linux`,
   `crates/effigy-kernel/tests/scripts/linux-custody.sh` mode
-  `task-engine-fixtures`), never the operator's Colima profile, contexts or
+  `task-engine`), never the operator's Colima profile, contexts or
   another VM. A statically resolved plain foreground tree keeps no runtime
   record, so its proof is the released foreground gate plus settled
   descendants and no later step, not a journal row; a declared `durable = true`
