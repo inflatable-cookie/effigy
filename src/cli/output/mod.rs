@@ -2,6 +2,8 @@ mod envelope;
 mod labels;
 mod metadata;
 
+#[cfg(test)]
+pub(crate) use envelope::build_json_envelope_error_with_human;
 pub(crate) use envelope::emit_json_envelope_success_with_binary;
 
 pub use envelope::{

@@ -174,7 +174,7 @@ pub(in crate::runner) fn resolve_task_secret_env(
             return Ok(Vec::new());
         }
         return Err(RunnerError::task_invocation(
-            "required task secrets need `[secrets].backend = \"effigy-vault\"`",
+            "required task secrets need `[secrets].backend = \"effigy-vault\"`\nnext: set `backend = \"effigy-vault\"` under `[secrets]` in `effigy.toml`",
         ));
     }
 
@@ -190,7 +190,8 @@ pub(in crate::runner) fn resolve_task_secret_env(
         }
         if !vault_path.exists() {
             return Err(RunnerError::task_invocation(format!(
-                "required task secrets are declared but the vault is missing at {}",
+                "required task secrets ({}) are declared, but the vault is missing\nvault: {}\nnext: run `effigy secrets init` and add each key with `effigy secrets set <KEY>`",
+                required_names.join(", "),
                 vault_path.display()
             )));
         }
@@ -249,8 +250,16 @@ pub(in crate::runner) fn resolve_task_secret_env(
         .collect::<Vec<_>>();
 
     if !missing_required.is_empty() {
+        let next = if let [single] = missing_required.as_slice() {
+            format!("run `effigy secrets set {single}`")
+        } else {
+            format!(
+                "run `effigy secrets set <KEY>` for each missing key ({})",
+                missing_required.join(", ")
+            )
+        };
         return Err(RunnerError::task_invocation(format!(
-            "required task secret(s) missing from the vault: {}",
+            "required task secret(s) missing from the vault: {}\nnext: {next}",
             missing_required.join(", ")
         )));
     }
@@ -360,7 +369,7 @@ fn read_task_secret_passphrase(
         vault_path,
         optional_only,
         "Vault passphrase: ",
-        "task secrets require an unlocked vault passphrase and secret input requires an interactive TTY",
+        "task secrets require an unlocked vault passphrase and secret input requires an interactive TTY\nnext: run `effigy secrets unlock` at a terminal",
     )
 }
 
@@ -370,7 +379,7 @@ fn read_local_dev_upgrade_passphrase(
     crate::runner::secret_session::read_local_dev_upgrade_passphrase(
         optional_only,
         "Vault passphrase (one-time local-dev setup): ",
-        "local-dev secrets need one passphrase unlock to create the unattended dev key, and secret input requires an interactive TTY",
+        "local-dev secrets need one passphrase unlock to create the unattended dev key, and secret input requires an interactive TTY\nnext: run `effigy secrets unlock` or `effigy dev` at an interactive terminal",
     )
 }
 

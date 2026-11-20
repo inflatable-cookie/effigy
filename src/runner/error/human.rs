@@ -18,6 +18,7 @@ use effigy_gateway::EndpointStoreRefusal;
 use effigy_ui::HumanError;
 
 use super::RunnerError;
+use crate::runner::host_process::ManagedHostListenerFailure;
 
 /// The next step after a manifest that only a newer binary understands.
 const INSTALL_LOCAL_NEXT: &str =
@@ -66,6 +67,26 @@ pub(super) fn mapped(error: &RunnerError) -> Option<HumanError> {
             container,
             detail,
         } => container_surface_policy(phase, container, detail),
+        RunnerError::ContainerWaitRefused {
+            environment,
+            diagnostic,
+            details,
+            ..
+        } => container_wait_refused(environment, diagnostic, details),
+        RunnerError::ManagedHostReadiness {
+            process,
+            diagnostic,
+            observed_status,
+        } => managed_host_readiness(process, diagnostic, *observed_status),
+        RunnerError::ManagedListenerExposure {
+            environment,
+            exposed,
+            failures,
+        } => managed_listener_exposure(environment, exposed, failures),
+        RunnerError::WorkspaceSessionCleanup {
+            shell_error,
+            cleanup_error,
+        } => workspace_session_cleanup(shell_error, cleanup_error),
         RunnerError::ContainerRuntimePolicy { phase, detail } => {
             container_runtime_policy(phase, detail)
         }
@@ -176,6 +197,9 @@ fn is_parse_snippet(line: &str) -> bool {
 
 fn manifest_compose(path: &Path, detail: &str) -> HumanError {
     let detail = strip_compose_prefix(detail);
+    if is_structured_compose_detail(detail) {
+        return structured_manifest_compose(path, detail);
+    }
     let (statement, remedy) = split_remedy(detail);
     let mut human = HumanError::new("Invalid effigy.toml")
         .explain(statement)
@@ -184,6 +208,113 @@ fn manifest_compose(path: &Path, detail: &str) -> HumanError {
         human = human.next_action(remedy);
     }
     human
+}
+
+fn is_structured_compose_detail(detail: &str) -> bool {
+    detail.contains("\n  Next:")
+        || detail.contains("\nNext:")
+        || detail.contains("\n  Details:")
+        || detail.contains("\nDetails:")
+        || detail.contains("\n\n")
+}
+
+fn structured_manifest_compose(path: &Path, detail: &str) -> HumanError {
+    enum Section {
+        Explanation,
+        Next,
+        Details,
+    }
+
+    let mut lines = detail.lines();
+    let headline = lines
+        .by_ref()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("Invalid effigy.toml");
+
+    let mut explanations = Vec::new();
+    let mut next_action = String::new();
+    let mut details: Vec<(String, String)> = Vec::new();
+    let mut section = Section::Explanation;
+    let mut detail_key_indent: Option<usize> = None;
+
+    for raw_line in lines {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some(action) = trimmed
+            .strip_prefix("Next:")
+            .or_else(|| trimmed.strip_prefix("next:"))
+        {
+            section = Section::Next;
+            let action = action.trim();
+            if !action.is_empty() {
+                if !next_action.is_empty() {
+                    next_action.push('\n');
+                }
+                next_action.push_str(action);
+            }
+            continue;
+        }
+        if trimmed.eq_ignore_ascii_case("Details:") {
+            section = Section::Details;
+            continue;
+        }
+        match section {
+            Section::Explanation => explanations.push(trimmed.to_owned()),
+            Section::Next => {
+                if !next_action.is_empty() {
+                    next_action.push('\n');
+                }
+                next_action.push_str(trimmed);
+            }
+            Section::Details => {
+                let indent = raw_line.len() - raw_line.trim_start().len();
+                let is_top_level_row = detail_key_indent.is_none_or(|base| indent <= base);
+                if is_top_level_row {
+                    if let Some((label, value)) = split_detail_row(trimmed) {
+                        detail_key_indent.get_or_insert(indent);
+                        details.push((label.to_owned(), value.to_owned()));
+                        continue;
+                    }
+                }
+                if let Some((_, value)) = details.last_mut() {
+                    if !value.is_empty() {
+                        value.push('\n');
+                    }
+                    value.push_str(trimmed);
+                } else {
+                    explanations.push(trimmed.to_owned());
+                }
+            }
+        }
+    }
+
+    let mut human = HumanError::new(headline);
+    for line in explanations {
+        human = human.explain(line);
+    }
+    if !next_action.trim().is_empty() {
+        human = human.next_action(next_action);
+    }
+    let has_manifest = details.iter().any(|(label, _)| label == "manifest");
+    for (label, value) in details {
+        human = human.detail(label, value);
+    }
+    if !has_manifest {
+        human = human.detail("manifest", path.display().to_string());
+    }
+    human
+}
+
+fn split_detail_row(trimmed: &str) -> Option<(&str, &str)> {
+    let (label, value) = trimmed.split_once(':')?;
+    let label = label.trim();
+    if label.is_empty() || label.chars().any(char::is_whitespace) {
+        return None;
+    }
+    Some((label, value.trim()))
 }
 
 /// A composition refusal's detail without the internal
@@ -305,6 +436,190 @@ fn container_surface_policy(phase: &str, container: &str, detail: &str) -> Human
         human = human.explain(summary);
     }
     human
+}
+
+fn container_wait_refused(
+    environment: &str,
+    diagnostic: &str,
+    details: &serde_json::Value,
+) -> HumanError {
+    let mut human = HumanError::new(format!(
+        "Container `{environment}` did not become ready in time"
+    ))
+    .next_action(format!(
+        "Run `effigy container {environment} logs` to inspect startup output"
+    ));
+    let first_sentence = concise_diagnostic_sentence(diagnostic);
+    if !first_sentence.is_empty() {
+        human = human.explain(&first_sentence);
+    }
+    if let Some(waiting_summary) = waiting_on_summary(details) {
+        if !first_sentence.contains(&waiting_summary) {
+            human = human.explain(format!("Waiting on: {waiting_summary}"));
+        }
+    }
+    human = human.detail("container", environment);
+    if let Some(failure_kind) = details
+        .get("failure_kind")
+        .and_then(serde_json::Value::as_str)
+    {
+        human = human.detail("failure_kind", failure_kind);
+    }
+    human.detail("cause", diagnostic)
+}
+
+fn concise_diagnostic_sentence(diagnostic: &str) -> String {
+    let Some(first_line) = diagnostic
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+    else {
+        return String::new();
+    };
+    let without_tail = first_line
+        .split_once("; last container output:")
+        .or_else(|| first_line.split_once("; last runtime probe:"))
+        .map_or(first_line, |(head, _)| head)
+        .trim();
+    without_tail.trim_end_matches(':').trim().to_owned()
+}
+
+fn waiting_on_summary(details: &serde_json::Value) -> Option<String> {
+    let entries = details
+        .get("waiting_on")
+        .and_then(serde_json::Value::as_array)?;
+    let summaries: Vec<String> = entries
+        .iter()
+        .filter_map(|entry| {
+            let kind = entry.get("kind").and_then(serde_json::Value::as_str);
+            match kind {
+                Some("service") => entry
+                    .get("problem")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+                    .or_else(|| {
+                        let service = entry.get("service").and_then(serde_json::Value::as_str)?;
+                        let state = entry
+                            .get("state")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("unready");
+                        Some(format!("{service} ({state})"))
+                    }),
+                Some("health_check") => {
+                    let subject = entry
+                        .get("container")
+                        .and_then(serde_json::Value::as_str)
+                        .or_else(|| entry.get("service").and_then(serde_json::Value::as_str))
+                        .unwrap_or("container");
+                    let answer = entry
+                        .get("answer")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unready");
+                    match entry.get("status").and_then(serde_json::Value::as_u64) {
+                        Some(status) => {
+                            Some(format!("{subject} health check {answer} (HTTP {status})"))
+                        }
+                        None => Some(format!("{subject} health check {answer}")),
+                    }
+                }
+                Some("shared_service") => {
+                    let service = entry
+                        .get("service")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("shared");
+                    let step = entry
+                        .get("step")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("readiness");
+                    Some(format!("shared service `{service}` ({step})"))
+                }
+                Some("probe") => {
+                    let probe = entry
+                        .get("probe")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("runtime");
+                    let error = entry
+                        .get("error")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unanswered");
+                    Some(format!("probe `{probe}`: {error}"))
+                }
+                _ => entry
+                    .get("problem")
+                    .and_then(serde_json::Value::as_str)
+                    .or_else(|| entry.get("service").and_then(serde_json::Value::as_str))
+                    .map(str::to_owned),
+            }
+        })
+        .collect();
+    (!summaries.is_empty()).then(|| summaries.join("; "))
+}
+
+fn managed_host_readiness(
+    process: &str,
+    diagnostic: &str,
+    observed_status: Option<u16>,
+) -> HumanError {
+    let explanation = match observed_status {
+        Some(status) => {
+            format!("The readiness check received HTTP {status} before the process stopped.")
+        }
+        None => "The process failed before its readiness check passed.".to_owned(),
+    };
+    let mut human = HumanError::new(format!("Host process `{process}` did not become ready"))
+        .explain(explanation)
+        .next_action(format!(
+            "Check `{process}` output or run it directly to see why it failed"
+        ))
+        .detail("process", process);
+    if let Some(status) = observed_status {
+        human = human.detail("http_status", status.to_string());
+    }
+    human.detail("cause", diagnostic)
+}
+
+fn managed_listener_exposure(
+    environment: &str,
+    exposed: &[String],
+    failures: &[ManagedHostListenerFailure],
+) -> HumanError {
+    let mut human = HumanError::new(format!(
+        "Some routes for `{environment}` could not be published"
+    ))
+    .explain(format!(
+        "{} route(s) were withheld while {} published.",
+        failures.len(),
+        exposed.len()
+    ))
+    .next_action("Fix the failing host listener(s) listed below and re-run `effigy dev`")
+    .detail("environment", environment);
+    if !exposed.is_empty() {
+        human = human.detail("published", exposed.join(", "));
+    }
+    for failure in failures {
+        human = human.detail("withheld", failure.summary());
+        if let Some(tail) = failure
+            .output_tail
+            .as_deref()
+            .map(str::trim)
+            .filter(|tail| !tail.is_empty())
+        {
+            human = human.detail(
+                "output",
+                effigy_ui::human::bound_text(tail, effigy_ui::human::MAX_EVIDENCE_BYTES),
+            );
+        }
+    }
+    human
+}
+
+fn workspace_session_cleanup(shell_error: &str, cleanup_error: &str) -> HumanError {
+    HumanError::new("Workspace session ended with a cleanup error")
+        .explain(shell_error)
+        .next_action(
+            "Run `effigy container status` to check whether the workspace container is still running",
+        )
+        .detail("cleanup", cleanup_error)
 }
 
 fn container_runtime_policy(phase: &str, detail: &str) -> HumanError {

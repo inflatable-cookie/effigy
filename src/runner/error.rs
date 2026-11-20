@@ -1316,6 +1316,12 @@ impl From<ScanError> for RunnerError {
     }
 }
 
+impl From<ManifestError> for RunnerError {
+    fn from(value: ManifestError) -> Self {
+        map_manifest_error(value)
+    }
+}
+
 fn map_manifest_error(error: ManifestError) -> RunnerError {
     match error {
         ManifestError::Read { path, error } => RunnerError::TaskManifestRead { path, error },
@@ -1451,12 +1457,52 @@ fn map_container_exec_failure(
         return RunnerError::TaskInvocation(message);
     }
 
+    if let Some(absence) = effigy_containers::exec::EngineAbsence::observed_in(&stdout, &stderr) {
+        return map_engine_absence_failure(&command, absence, &stdout, &stderr);
+    }
+    if code.is_none() && stderr.contains("\nnext:") {
+        return RunnerError::TaskInvocation(stderr.trim().to_owned());
+    }
+
     RunnerError::TaskCommandFailure {
         command,
         code,
         stdout,
         stderr,
     }
+}
+
+fn map_engine_absence_failure(
+    command: &str,
+    absence: effigy_containers::exec::EngineAbsence,
+    stdout: &str,
+    stderr: &str,
+) -> RunnerError {
+    if stderr.contains("\nnext:") {
+        return RunnerError::TaskInvocation(stderr.trim().to_owned());
+    }
+    let (headline, next) = match absence {
+        effigy_containers::exec::EngineAbsence::Colima {
+            profile: Some(profile),
+        } => (
+            format!("Colima profile `{profile}` is not running"),
+            format!(
+                "start it with `colima start --profile {profile}` or run `effigy container up`"
+            ),
+        ),
+        effigy_containers::exec::EngineAbsence::Colima { profile: None } => (
+            "Colima is not running".to_owned(),
+            "start it with `colima start` or run `effigy container up`".to_owned(),
+        ),
+        effigy_containers::exec::EngineAbsence::DockerDaemon => (
+            "Docker daemon is not running".to_owned(),
+            "start Docker Desktop or the Docker daemon, then retry".to_owned(),
+        ),
+    };
+    let mut message = format!("{headline}\ncommand: `{command}`");
+    effigy_ui::human::push_non_empty_streams(&mut message, stdout, stderr);
+    message.push_str(&format!("\nnext: {next}"));
+    RunnerError::TaskInvocation(message)
 }
 
 #[cfg(test)]

@@ -68,11 +68,13 @@ fn declared_vault_path(
 ) -> Result<PathBuf, RunnerError> {
     let vault = secrets.vault.as_ref().ok_or_else(|| {
         RunnerError::task_invocation(
-            "`[secrets]` selects `effigy-vault` but `[secrets.vault]` is missing",
+            "`[secrets]` selects `effigy-vault` but `[secrets.vault]` is missing\nnext: add `[secrets.vault]` with `path = \".effigy/secrets/local.vault\"` in `effigy.toml`",
         )
     })?;
     let path = vault.path.as_deref().ok_or_else(|| {
-        RunnerError::task_invocation(format!("`[secrets.vault].path` is required for {purpose}"))
+        RunnerError::task_invocation(format!(
+            "`[secrets.vault].path` is required for {purpose}\nnext: set `path` under `[secrets.vault]` in `effigy.toml`"
+        ))
     })?;
     Ok(PathBuf::from(path))
 }
