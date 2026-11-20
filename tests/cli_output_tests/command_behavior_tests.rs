@@ -5266,14 +5266,12 @@ detach_timeout_secs = 1
     let marker_deadline = Instant::now() + Duration::from_secs(60);
     let mut pgid = None;
     while pgid.is_none() {
-        pgid = fs::read_to_string(&marker)
-            .ok()
-            .and_then(|contents| {
-                contents
-                    .split_whitespace()
-                    .next()
-                    .and_then(|value| value.parse::<u32>().ok())
-            });
+        pgid = fs::read_to_string(&marker).ok().and_then(|contents| {
+            contents
+                .split_whitespace()
+                .next()
+                .and_then(|value| value.parse::<u32>().ok())
+        });
         if pgid.is_some() {
             break;
         }
