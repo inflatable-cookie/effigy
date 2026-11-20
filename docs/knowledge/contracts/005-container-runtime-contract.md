@@ -1,7 +1,7 @@
 # 005 - Container Runtime Contract
 
 Owner: Platform
-Last Updated: 2026-11-10
+Last Updated: 2026-11-20
 
 This contract defines the required runtime guarantees for container-backed
 task execution in Effigy.
@@ -2311,20 +2311,22 @@ and each required nested path depth, then checks read/write access as the
 resolved numeric uid/gid for present non-symlink paths. Overlapping declared
 targets reuse a sampled nested path. A sample on a mount stops its later
 nested probes; the doctor does not walk the whole tree. Every preliminary
-liveness probe (Colima profile `status`, the primary-service Colima/`compose
-ps` check, and the SSH-agent socket preflight) and every metadata or numeric
-user batch converts the same remaining doctor deadline exactly once,
-immediately before spawning, so no subprocess gets a fresh budget of its own.
-An already-expired deadline never spawns a probe, and a hung probe is killed
-and reaped at that deadline (only its own recorded process group). The Colima
-direct-exec path keeps that absolute deadline through its uncached service
-discovery and the capture it supervises: discovery converts the remaining
-budget once, and a spawn that returns after the deadline has its owned process
-group terminated and reaped instead of being granted a fresh origin. An
-unavailable batch discards partial permission samples and reports verification
-incomplete with its sampled paths; it never reports a permission fault or
-clean ownership. A bounded doctor run never triggers a Colima runtime repair.
-Stopped, unavailable, and no-workspace-user states are distinct from clean.
+liveness probe (the selected backend's own runtime probe: Colima profile
+`status`, or `docker ps` when Docker is the selected backend, then the
+primary-service `ps` check, and the SSH-agent socket preflight) and every
+metadata or numeric user batch converts the same remaining doctor deadline
+exactly once, immediately before spawning, so no subprocess gets a fresh
+budget of its own. An already-expired deadline never spawns a probe, and a
+hung probe is killed and reaped at that deadline (only its own recorded
+process group). The Colima direct-exec path keeps that absolute deadline
+through its uncached service discovery and the capture it supervises:
+discovery converts the remaining budget once, and a spawn that returns after
+the deadline has its owned process group terminated and reaped instead of
+being granted a fresh origin. An unavailable batch discards partial permission
+samples and reports verification incomplete with its sampled paths; it never
+reports a permission fault or clean ownership. A bounded doctor run never
+triggers a Colima runtime repair. Stopped, unavailable, and no-workspace-user
+states are distinct from clean.
 
 ## Alias contract
 

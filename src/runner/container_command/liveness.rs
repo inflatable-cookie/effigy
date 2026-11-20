@@ -6,8 +6,8 @@
 pub(super) use super::support::exec_error_means_runtime_not_running;
 use effigy_containers::{
     exec::{
-        colima_is_running_with_deadline, list_running_compose_containers_for_policy_with_deadline,
-        RunningComposeContainer,
+        list_running_compose_containers_for_policy_with_deadline,
+        runtime_backend_is_running_with_deadline, RunningComposeContainer,
     },
     EffectiveContainerPolicy,
 };
@@ -39,7 +39,7 @@ pub(in crate::runner) fn is_primary_service_running_with_deadline(
     if let Some(scripted) = sequence_scripted_liveness(repo_root, policy, deadline) {
         return scripted;
     }
-    if !colima_is_running_with_deadline(policy, repo_root, deadline)
+    if !runtime_backend_is_running_with_deadline(policy, repo_root, deadline)
         .map_err(Into::<RunnerError>::into)?
     {
         return Ok(false);
@@ -197,5 +197,43 @@ mod tests {
                 error: std::io::Error::other("spawn failed"),
             }
         ));
+    }
+
+    /// Routed-task liveness asks the resolved backend. On a Docker backend that
+    /// is `docker ps` followed by the project inventory, and `colima` is never
+    /// spawned (effigy#1087: the Native Linux qualification host has none).
+    #[cfg(unix)]
+    #[test]
+    fn primary_service_liveness_probes_the_docker_backend_without_colima() {
+        use crate::runner::test_support::DockerBackendFixture;
+
+        let fixture = DockerBackendFixture::new();
+        let policy = fixture.policy("demo", "workspace");
+        fixture.state_running_row("demo", "workspace");
+
+        assert!(
+            is_primary_service_running_with_deadline(fixture.root(), &policy, None)
+                .expect("docker-backed liveness"),
+            "the running row is this repo's primary service"
+        );
+        let calls = fixture.calls();
+        assert_eq!(
+            calls.first().map(String::as_str),
+            Some("ps"),
+            "liveness asks `docker ps`: {calls:#?}"
+        );
+        assert!(
+            calls.iter().any(|call| call.starts_with("ps --filter")),
+            "the inventory probe follows on the same backend: {calls:#?}"
+        );
+
+        // A stopped engine answers "not running"; it never becomes a spawn
+        // failure of a backend this host does not have.
+        fixture.state_engine_stopped();
+        assert!(
+            !is_primary_service_running_with_deadline(fixture.root(), &policy, None)
+                .expect("stopped engine is not running"),
+            "a stopped engine is not a running primary service"
+        );
     }
 }

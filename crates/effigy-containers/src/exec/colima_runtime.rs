@@ -313,20 +313,42 @@ fn runtime_unit_start_refusal(
     }
 }
 
+/// Liveness of the resolved runtime backend. Only the backend actually
+/// selected is probed: a Docker backend runs `docker ps` and never asks Colima
+/// anything, because a Native Linux or Docker Desktop host has no `colima`
+/// binary to answer (effigy#1087).
 pub fn runtime_backend_is_running(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
 ) -> Result<bool, ContainerExecError> {
+    runtime_backend_is_running_with_deadline(policy, repo_root, None)
+}
+
+/// Deadline-aware liveness of the resolved runtime backend. A bounded caller's
+/// monotonic deadline supervises the spawn on either backend, so an expired
+/// deadline never spawns and a slow probe cannot extend the budget. The Colima
+/// branch keeps its read-only status probe (effigy#371); the Docker branch is
+/// the plain `docker ps` the runtime exposes, and its non-zero exit is the
+/// engine's own "not running" answer rather than a launcher failure.
+pub fn runtime_backend_is_running_with_deadline(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+    deadline: Option<Instant>,
+) -> Result<bool, ContainerExecError> {
     match resolve_compose_backend_for_repo(repo_root, policy) {
         ComposeBackend::Docker => {
-            let output = run_runtime_command_capture_for_policy_allow_failure(
+            let output = run_runtime_command_capture_for_policy_allow_failure_with_deadline(
                 repo_root,
                 policy,
                 &[OsString::from("ps")],
+                "docker ps",
+                deadline,
             )?;
             Ok(output.status.success())
         }
-        ComposeBackend::ColimaNerdctl => colima_is_running(policy, repo_root),
+        ComposeBackend::ColimaNerdctl => {
+            colima_is_running_with_deadline(policy, repo_root, deadline)
+        }
     }
 }
 
@@ -806,6 +828,34 @@ pub(super) fn run_runtime_command_capture_for_policy_with_absolute_deadline(
         label,
         deadline,
         reported_timeout,
+    )
+}
+
+/// Deadline-aware allow-failure runtime capture on the policy's exact backend.
+/// One caller-visible deadline supervises the spawn; with none the unbounded
+/// path keeps its current behavior.
+pub(super) fn run_runtime_command_capture_for_policy_allow_failure_with_deadline(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    docker_args: &[OsString],
+    label: &str,
+    deadline: Option<Instant>,
+) -> Result<Output, ContainerExecError> {
+    let detection = runtime_detection_for_policy(repo_root, policy);
+    let (program, args) = ContainerManager::defaults()
+        .runtime_process_invocation(&detection, policy.profile.as_str(), "docker", docker_args)
+        .map_err(container_manager_error)?;
+    let program = program.to_string_lossy().into_owned();
+    let rendered = args
+        .iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    run_command_capture_allow_failure_with_deadline(
+        repo_root,
+        &program,
+        &rendered.iter().map(String::as_str).collect::<Vec<_>>(),
+        label,
+        deadline,
     )
 }
 
@@ -1783,6 +1833,144 @@ esac
                 || call.starts_with("restart ")
                 || call.starts_with("delete ")),
             "no-change never starts or creates the profile: {calls:#?}"
+        );
+    }
+
+    /// A fake Docker CLI double that records the arguments it receives and
+    /// answers the liveness probe from a fixture marker file.
+    const DOCKER_BACKEND_STUB: &str = "#!/bin/sh\n# Private Docker CLI double: records its arguments, answers from markers.\nprintf '%s\\n' \"$*\" >> '__FIXTURE__/docker-calls'\nif [ -f '__FIXTURE__/ps-fails' ]; then\n    exit 1\nfi\nexit 0\n";
+
+    /// A Docker-backend host with no `colima` binary anywhere on `PATH`.
+    ///
+    /// This is the Native Linux qualification host (2026-11-20 evidence run):
+    /// Docker Engine is the resolved backend, and every `colima` invocation is
+    /// an `ENOENT` launch failure.
+    struct DockerBackendFixture {
+        _dir: tempfile::TempDir,
+        root: std::path::PathBuf,
+        _env: EnvRestore,
+    }
+
+    impl DockerBackendFixture {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let root = dir.path().canonicalize().expect("canonical fixture");
+            let bin = root.join("bin");
+            let home = root.join("home");
+            std::fs::create_dir_all(&bin).expect("mkdir bin");
+            std::fs::create_dir_all(&home).expect("mkdir home");
+            let docker = bin.join("docker");
+            std::fs::write(
+                &docker,
+                DOCKER_BACKEND_STUB.replace("__FIXTURE__", &root.to_string_lossy()),
+            )
+            .expect("write fake docker");
+            let mut permissions = std::fs::metadata(&docker).expect("metadata").permissions();
+            std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+            std::fs::set_permissions(&docker, permissions).expect("chmod fake docker");
+            // Only the fixture's own bin: `colima` is not merely unselected,
+            // it is absent, exactly as on the failing host.
+            let env = EnvRestore::set(&[
+                ("PATH", bin.into_os_string()),
+                ("HOME", home.into_os_string()),
+                ("EFFIGY_COMPOSE_BACKEND", "docker".into()),
+            ]);
+            Self {
+                _dir: dir,
+                root,
+                _env: env,
+            }
+        }
+
+        fn policy(&self) -> EffectiveContainerPolicy {
+            let mut policy = test_policy();
+            policy.repo_root = self.root.clone();
+            policy
+        }
+
+        fn state(&self, name: &str) {
+            std::fs::write(self.root.join(name), "").expect("fixture state");
+        }
+
+        fn calls(&self) -> Vec<String> {
+            std::fs::read_to_string(self.root.join("docker-calls"))
+                .unwrap_or_default()
+                .lines()
+                .map(str::to_owned)
+                .collect()
+        }
+
+        fn clear_calls(&self) {
+            let _ = std::fs::remove_file(self.root.join("docker-calls"));
+        }
+    }
+
+    /// Liveness on the resolved Docker backend asks `docker ps` and never
+    /// spawns `colima` (effigy#1087). Before this, all three call sites asked
+    /// Colima regardless of the backend and failed with `ENOENT` on any host
+    /// without a `colima` binary.
+    #[test]
+    fn docker_backend_liveness_probes_docker_ps_and_never_colima() {
+        let _lock = crate::test_env_lock();
+        let fixture = DockerBackendFixture::new();
+        let policy = fixture.policy();
+
+        assert!(
+            runtime_backend_is_running(&policy, &fixture.root).expect("docker backend liveness"),
+            "a successful `docker ps` is a running backend"
+        );
+        assert!(
+            runtime_backend_is_running_with_deadline(&policy, &fixture.root, None)
+                .expect("deadline-aware docker backend liveness"),
+            "the deadline-aware form keeps the same answer"
+        );
+        let calls = fixture.calls();
+        assert_eq!(calls, ["ps".to_owned(), "ps".to_owned()], "{calls:#?}");
+
+        // A failing `docker ps` is the engine's own "not running" answer, not
+        // a launch failure.
+        fixture.state("ps-fails");
+        assert!(
+            !runtime_backend_is_running(&policy, &fixture.root).expect("stopped docker backend"),
+            "a failed `docker ps` is a stopped backend"
+        );
+
+        // An expired deadline refuses before the spawn.
+        fixture.clear_calls();
+        let deadline = Instant::now()
+            .checked_sub(Duration::from_secs(1))
+            .expect("expired deadline");
+        let error =
+            runtime_backend_is_running_with_deadline(&policy, &fixture.root, Some(deadline))
+                .expect_err("an expired deadline must refuse before spawning");
+        assert!(error.to_string().contains("command timed out"), "{error}");
+        let calls = fixture.calls();
+        assert!(
+            calls.is_empty(),
+            "an expired deadline never spawns: {calls:#?}"
+        );
+    }
+
+    /// The Colima backend keeps its own read-only probe: selecting Docker never
+    /// changes what Colima hosts do.
+    #[test]
+    fn colima_backend_liveness_still_probes_colima_status() {
+        let _lock = crate::test_env_lock();
+        let fixture = ManagedProfileFixture::new();
+        fixture.state("listed");
+        fixture.state("running");
+        let policy = fixture.policy();
+
+        assert!(
+            runtime_backend_is_running_with_deadline(&policy, &fixture.root, None)
+                .expect("colima backend liveness")
+        );
+        let calls = fixture.calls();
+        assert!(
+            calls
+                .iter()
+                .any(|call| call.starts_with("status --profile effigy")),
+            "{calls:#?}"
         );
     }
 

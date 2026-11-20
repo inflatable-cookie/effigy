@@ -3,7 +3,7 @@ use effigy_manifest::{
     ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
     ManifestContainerStartup,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub(in crate::runner) fn effective_container_policy(
     name: &str,
@@ -134,3 +134,122 @@ pub(crate) fn load_fixture_policy_for_creation(
     migrate_declared_compose_files(repo_root);
     effigy_containers::load_container_policy_for_creation(repo_root, requested_name)
 }
+
+/// A private Docker-backend runtime: only a stub `docker` on `PATH`, and no
+/// `colima` binary anywhere.
+///
+/// This is the shape of the Native Linux qualification host (2026-11-20 run):
+/// Docker Engine is the resolved backend, so every `colima` invocation is an
+/// `ENOENT` launch failure rather than a runtime answer (effigy#1087). The stub
+/// records its arguments and answers `ps` from fixture markers, so a caller can
+/// prove the backend actually selected was the one probed.
+#[cfg(unix)]
+pub(in crate::runner) struct DockerBackendFixture {
+    _dir: tempfile::TempDir,
+    root: std::path::PathBuf,
+    _env: crate::contract_test_support::EnvGuard,
+}
+
+#[cfg(unix)]
+impl DockerBackendFixture {
+    pub(in crate::runner) fn new() -> Self {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().canonicalize().expect("canonical fixture");
+        let bin = root.join("bin");
+        let home = root.join("home");
+        std::fs::create_dir_all(&bin).expect("mkdir bin");
+        std::fs::create_dir_all(&home).expect("mkdir home");
+        let docker = bin.join("docker");
+        std::fs::write(
+            &docker,
+            DOCKER_BACKEND_STUB.replace("__FIXTURE__", &root.to_string_lossy()),
+        )
+        .expect("write stub docker");
+        let mut permissions = std::fs::metadata(&docker).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&docker, permissions).expect("chmod stub docker");
+        // The stub is the whole `PATH`: `colima` is absent, not merely unused.
+        let env = crate::contract_test_support::EnvGuard::set_many(&[
+            ("PATH", Some(bin.display().to_string())),
+            ("HOME", Some(home.display().to_string())),
+            ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
+        ]);
+        Self {
+            _dir: dir,
+            root,
+            _env: env,
+        }
+    }
+
+    /// The fixture directory, which is also the repo root and Compose root.
+    pub(in crate::runner) fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// A Direct-Compose policy whose repo root is this fixture.
+    pub(in crate::runner) fn policy(
+        &self,
+        project_name: &str,
+        primary_service: &str,
+    ) -> EffectiveContainerPolicy {
+        let compose = self.root.join("compose.yml");
+        std::fs::write(&compose, COMPOSE_DECLARATION).expect("write compose declaration");
+        let mut policy = effective_container_policy("web", project_name, primary_service, compose);
+        policy.repo_root = self.root.clone();
+        policy
+    }
+
+    /// Fail every `docker` invocation, as a stopped engine does.
+    pub(in crate::runner) fn state_engine_stopped(&self) {
+        std::fs::write(self.root.join("ps-fails"), "").expect("fixture state");
+    }
+
+    /// Answer the Compose `ps` probe with one running row for this project and
+    /// service, in the exact `--format` the production parser reads.
+    pub(in crate::runner) fn state_running_row(&self, project_name: &str, service: &str) {
+        let row = format!(
+            "{project_name}-{service}-1\tUp 10 seconds\t\t{project_name}\t{}\t{service}\tFalse\n",
+            self.root.display()
+        );
+        std::fs::write(self.root.join("compose-ps-row"), row).expect("write compose ps row");
+    }
+
+    /// Every argument list the stub `docker` received, one call per line.
+    pub(in crate::runner) fn calls(&self) -> Vec<String> {
+        std::fs::read_to_string(self.root.join("docker-calls"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+}
+
+#[cfg(unix)]
+const COMPOSE_DECLARATION: &str =
+    "services:\n  app:\n    image: busybox\n  workspace:\n    image: busybox\n";
+
+/// Private Docker CLI double. It records its arguments, then answers from the
+/// fixture's markers: `ps-fails` fails every call, and `compose-ps-row` is the
+/// inventory row printed for the project-filtered `ps` every inventory probe
+/// asks for (the bare liveness `ps` stays empty). Only shell builtins are
+/// used, because the fixture's `PATH` deliberately holds nothing else.
+#[cfg(unix)]
+const DOCKER_BACKEND_STUB: &str = "#!/bin/sh
+printf '%s\\n' \"$*\" >> '__FIXTURE__/docker-calls'
+if [ -f '__FIXTURE__/ps-fails' ]; then
+    echo 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?' >&2
+    exit 1
+fi
+case \"$*\" in
+    *--filter*)
+        if [ -f '__FIXTURE__/compose-ps-row' ]; then
+            while IFS= read -r row; do
+                printf '%s\\n' \"$row\"
+            done < '__FIXTURE__/compose-ps-row'
+        fi
+        ;;
+esac
+exit 0
+";
