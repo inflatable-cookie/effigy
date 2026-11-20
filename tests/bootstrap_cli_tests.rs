@@ -528,9 +528,17 @@ fn a_retired_bootstrap_spelling_refuses_with_its_replacement() {
         assert!(!output.status.success(), "{body}: {output:?}");
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains(expected), "{body}: {stderr}");
-        assert!(
-            stderr.contains("accepted through v0.15 only") || stderr.contains("boolean"),
-            "{body}: {stderr}"
-        );
+        if body.starts_with("start = ") {
+            assert!(
+                stderr.contains("takes one task selector string"),
+                "{body}: {stderr}"
+            );
+        } else {
+            assert!(
+                stderr.contains("is no longer supported") || stderr.contains("boolean"),
+                "{body}: {stderr}"
+            );
+        }
+        assert!(stderr.contains("Next:"), "{body}: {stderr}");
     }
 }
