@@ -215,9 +215,7 @@ fn run_active_bundle_inspect(
             discover_bundle_manifest_path(&cwd)?
         }
     };
-    let Some(report) = inspect_bundle_source(&manifest_path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?
-    else {
+    let Some(report) = inspect_bundle_source(&manifest_path).map_err(RunnerError::from)? else {
         return Err(RunnerError::task_invocation(
             "current repo does not declare a `[bundle]` source".to_owned(),
         ));
@@ -259,8 +257,8 @@ fn run_active_bundle_inspect(
 fn run_bundle_sync(output_json: bool) -> Result<String, RunnerError> {
     let cwd = crate::runner::command_context::active_invocation_cwd()?;
     let manifest_path = discover_bundle_manifest_path(&cwd)?;
-    let Some(report) = sync_bundle_source(&manifest_path, &source_preparation()?)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+    let Some(report) =
+        sync_bundle_source(&manifest_path, &source_preparation()?).map_err(RunnerError::from)?
     else {
         return Err(RunnerError::task_invocation(
             "current repo does not declare a `[bundle]` source or catalog sources".to_owned(),
@@ -534,7 +532,7 @@ pub(in crate::runner) fn prepare_bundle_sources_for_manifest(
     } else {
         effigy_manifest::prepare_missing_bundle_sources(manifest, &preparation)
     };
-    prepared.map_err(|err| RunnerError::task_invocation(err.to_string()))?;
+    prepared.map_err(RunnerError::from)?;
     Ok(())
 }
 
@@ -543,16 +541,14 @@ pub(in crate::runner) fn prepare_bundle_sources_for_manifest(
 pub(in crate::runner) fn prepare_pinned_sources_for_manifest(
     manifest: &Path,
 ) -> Result<(), RunnerError> {
-    effigy_manifest::prepare_pinned_sources(manifest)
-        .map_err(|err| RunnerError::task_invocation(err.to_string()))?;
+    effigy_manifest::prepare_pinned_sources(manifest).map_err(RunnerError::from)?;
     Ok(())
 }
 
 /// Clone the pinned `[sources.<name>]` working copies that are missing, and
 /// nothing else: a source this checkout already has costs no `git` call.
 fn prepare_missing_pinned_sources_for_manifest(manifest: &Path) -> Result<(), RunnerError> {
-    effigy_manifest::prepare_missing_pinned_sources(manifest)
-        .map_err(|err| RunnerError::task_invocation(err.to_string()))
+    effigy_manifest::prepare_missing_pinned_sources(manifest).map_err(RunnerError::from)
 }
 
 /// Select sources at command start: bundle and catalog sources first, then
@@ -577,7 +573,7 @@ pub(in crate::runner) fn prepare_missing_sources_for_manifest(
     manifest: &Path,
 ) -> Result<(), RunnerError> {
     effigy_manifest::prepare_missing_bundle_sources(manifest, &source_preparation()?)
-        .map_err(|err| RunnerError::task_invocation(err.to_string()))?;
+        .map_err(RunnerError::from)?;
     prepare_missing_pinned_sources_for_manifest(manifest)
 }
 

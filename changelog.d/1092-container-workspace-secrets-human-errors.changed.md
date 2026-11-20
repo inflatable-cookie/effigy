@@ -1,0 +1,1 @@
+Improved container bring-up, readiness wait, workspace cleanup, runtime/ownership refusal, bundle preparation, and secrets human errors to surface short plain-English headlines, `Next:` actions, and separated `Details:` blocks while preserving `ManifestError::Compose` structure through bundle preparation and keeping `effigy.command.v1` JSON envelopes backward-compatible.

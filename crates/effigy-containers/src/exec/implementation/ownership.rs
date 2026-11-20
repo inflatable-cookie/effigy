@@ -192,7 +192,7 @@ impl VerifiedComposeContainer {
         }
         Err(ContainerExecError::refused(
             "inspect owned binding",
-            "binding unavailable: container full ID or checkout/scope/backend binding changed before effect",
+            "container binding changed before effect\ncontainer full ID or checkout/scope/backend binding changed\nnext: retry the command or run `effigy container status`",
         ))
     }
 }
@@ -582,8 +582,15 @@ impl OwnershipContext {
                 }
             }
             return Err(ContainerExecError::Failure {
-                command: "verify managed shutdown ownership".to_owned(), code: None,
-                stdout: String::new(), stderr: "project container has unknown or foreign full-ID/checkout/scope ownership; no teardown ran".to_owned(),
+                command: "verify managed shutdown ownership".to_owned(),
+                code: None,
+                stdout: String::new(),
+                stderr: format!(
+                    "Refused container teardown: project `{}` has an unknown or foreign container\nno teardown ran (full-ID/checkout/scope ownership could not be verified)\nproject: {}\ncheckout: {}\nnext: inspect running containers with `effigy container status`",
+                    policy.project_name,
+                    policy.project_name,
+                    self.canonical.display(),
+                ),
             });
         }
         Ok(())
@@ -598,28 +605,29 @@ impl OwnershipContext {
         service: &str,
         listing_stdout: &[u8],
     ) -> Result<String, ContainerExecError> {
-        let refuse = |reason: &str| {
-            ContainerExecError::refused(
-                "list owned service",
-                format!("binding unavailable: {reason}"),
-            )
-        };
+        let refuse = |reason: String| ContainerExecError::refused("list owned service", reason);
         if !self.declared.contains(service) {
-            return Err(refuse(
-                "service is not declared by the selected Compose files",
-            ));
+            return Err(refuse(format!(
+                "service `{service}` is not declared by the selected Compose files\nnext: check the service name in `effigy.toml` or Compose configuration"
+            )));
         }
         let listing = String::from_utf8_lossy(listing_stdout);
         let mut rows = listing.lines().filter(|line| !line.trim().is_empty());
-        let row = rows
-            .next()
-            .ok_or_else(|| refuse("no running container for the service"))?;
+        let row = rows.next().ok_or_else(|| {
+            refuse(format!(
+                "container service `{service}` is not running\nnext: inspect with `effigy container status` or start it with `effigy container up`"
+            ))
+        })?;
         if rows.next().is_some() {
-            return Err(refuse("more than one container for the service"));
+            return Err(refuse(format!(
+                "more than one running container found for service `{service}`\nnext: inspect running containers with `effigy container status`"
+            )));
         }
         let fields = row.split('\t').map(str::trim).collect::<Vec<_>>();
         let [id, status, oneoff, working_dir, checkout, scope] = fields[..] else {
-            return Err(refuse("service listing is malformed"));
+            return Err(refuse(
+                "binding unavailable: service listing is malformed\nnext: inspect running containers with `effigy container status`".to_owned(),
+            ));
         };
         // Listings print an empty string for an absent label.
         fn present(value: &str) -> Option<&str> {
@@ -632,9 +640,15 @@ impl OwnershipContext {
             || oneoff
             || !self.owns_binding(present(working_dir), present(checkout), present(scope))
         {
-            return Err(refuse(
-                "full-ID/oneoff/running/checkout/scope ownership changed or is unknown",
-            ));
+            let mut reason = format!(
+                "container for service `{service}` is not owned by this checkout or is not running\nfull-ID/oneoff/running/checkout/scope ownership changed or is unknown\nservice: {service}\ncheckout: {}",
+                self.canonical.display(),
+            );
+            if let Some(dir) = present(working_dir) {
+                reason.push_str(&format!("\ncompose_working_dir: {dir}"));
+            }
+            reason.push_str("\nnext: inspect running containers with `effigy container status`");
+            return Err(refuse(reason));
         }
         Ok(id.to_owned())
     }
@@ -678,14 +692,21 @@ impl OwnershipContext {
         let owned = self.inspected_identity_matches(policy, row, &identity, oneoff_label_ok, true)
             && self.owns_binding(inspected_working_dir, inspected_checkout, inspected_scope);
         if !owned {
-            return Err(ContainerExecError::refused(
-                "inspect owned binding",
-                format!(
-                    "binding unavailable: full-ID/project/service/oneoff/running/checkout/scope ownership does not match owned project `{}` at `{}`",
-                    policy.project_name,
-                    self.canonical.display(),
-                ),
-            ));
+            let mut detail = format!(
+                "container `{}` does not match owned project `{}`\nfull-ID/project/service/oneoff/running/checkout/scope ownership does not match\nproject: {}\ncheckout: {}",
+                row.container_name,
+                policy.project_name,
+                policy.project_name,
+                self.canonical.display(),
+            );
+            if let Some(working_dir) = inspected_working_dir {
+                detail.push_str(&format!("\ncompose_working_dir: {working_dir}"));
+            }
+            if let Some(checkout) = inspected_checkout {
+                detail.push_str(&format!("\ncontainer_checkout: {checkout}"));
+            }
+            detail.push_str("\nnext: inspect running containers with `effigy container status`");
+            return Err(ContainerExecError::refused("inspect owned binding", detail));
         }
         let Some(ports) = record
             .and_then(|record| record.get("NetworkSettings"))
@@ -694,7 +715,11 @@ impl OwnershipContext {
         else {
             return Err(ContainerExecError::refused(
                 "inspect owned binding",
-                "binding unavailable: fresh published-port associations are missing",
+                format!(
+                    "container `{}` has no published-port associations\nbinding unavailable: fresh published-port associations are missing\nproject: {}\nnext: inspect running containers with `effigy container status`",
+                    row.container_name,
+                    policy.project_name,
+                ),
             ));
         };
         let mut current = row.clone();

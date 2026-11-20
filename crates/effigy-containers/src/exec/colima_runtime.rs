@@ -181,16 +181,14 @@ fn ensure_running_managed_profile_ready(
             let planned_bytes = resources.memory_gib.saturating_mul(1024 * 1024 * 1024);
             if entry.memory < planned_bytes {
                 let actual_gib = (entry.memory / (1024 * 1024 * 1024)).max(1);
-                let warning = crate::colima::ManagedColimaProfileDrift::MemoryBelowPlan {
-                    actual_gib,
-                    planned_gib: resources.memory_gib,
-                }
-                .warning(&policy.profile);
                 return Err(ContainerExecError::Failure {
                     command: "Colima profile resources".to_owned(),
                     code: None,
                     stdout: String::new(),
-                    stderr: warning,
+                    stderr: format!(
+                        "Colima profile `{}` is running with {actual_gib}GiB RAM (requires {planned_gib}GiB)\nEffigy wrote the managed settings and did not restart the VM.\nnext: restart it deliberately with `colima restart {}`",
+                        policy.profile, policy.profile, planned_gib = resources.memory_gib
+                    ),
                 });
             }
         }
@@ -307,7 +305,7 @@ fn runtime_unit_start_refusal(
         code: None,
         stdout: String::new(),
         stderr: format!(
-            "Colima profile `{profile}` is running but containerd/BuildKit are not ready, and starting those units inside the VM did not recover them within {}s. Effigy did not stop or restart the profile: that stops every stack on it.\nfirst readiness probe: {readiness_error}{start}\nruntime probe after unit start: {probe_error}\nRetry, then recover this profile in place with `effigy container profile repair`, or stop it deliberately with `effigy container profile reset-runtime`.",
+            "Colima profile `{profile}` is running but containerd/BuildKit are not ready\nStarting those units inside the VM did not recover them within {}s; Effigy did not stop or restart the profile because that stops every stack on it.\nfirst readiness probe: {readiness_error}{start}\nruntime probe after unit start: {probe_error}\nnext: retry, recover this profile in place with `effigy container profile repair`, or stop it deliberately with `effigy container profile reset-runtime`",
             COLIMA_UNIT_START_TIMEOUT.as_secs(),
         ),
     }
@@ -446,11 +444,28 @@ pub fn ensure_runtime_backend_running_report(
             if output.status.success() {
                 Ok(ColimaEnsureReport::default())
             } else {
+                let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+                let raw_stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+                let stderr = if crate::exec::EngineAbsence::observed_in(&stdout, &raw_stderr)
+                    == Some(crate::exec::EngineAbsence::DockerDaemon)
+                {
+                    let mut lines = vec!["Docker daemon is not running".to_owned()];
+                    let trimmed = raw_stderr.trim();
+                    if !trimmed.is_empty() {
+                        lines.push(format!("stderr: {trimmed}"));
+                    }
+                    lines.push(
+                        "next: start Docker Desktop or the Docker daemon, then retry".to_owned(),
+                    );
+                    lines.join("\n")
+                } else {
+                    raw_stderr
+                };
                 Err(ContainerExecError::Failure {
                     command: "docker ps".to_owned(),
                     code: output.status.code(),
-                    stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-                    stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                    stdout,
+                    stderr,
                 })
             }
         }
@@ -478,22 +493,34 @@ fn verify_colima_profile_no_change(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
 ) -> Result<ColimaEnsureReport, ContainerExecError> {
-    let refusal = |reason: &str| {
+    let refusal = |reason: &str, next: String| {
         ContainerExecError::Failure {
         command: "Colima profile no-change check".to_owned(),
         code: None,
         stdout: String::new(),
         stderr: format!(
-            "Colima profile `{}` {reason}; no-change mode refuses to start, create, restart, rewrite or unit-start the shared profile",
+            "Colima profile `{}` {reason}\nno-change mode refuses to start, create, restart, rewrite or unit-start the shared profile\nnext: {next}",
             policy.profile
         ),
     }
     };
     if !colima_is_running(policy, repo_root)? {
-        return Err(refusal("is not running"));
+        return Err(refusal(
+            "is not running",
+            format!(
+                "start it with `colima start --profile {}` or run without no-change mode",
+                policy.profile
+            ),
+        ));
     }
     if managed_colima_profile_drift(&policy.profile).is_some() {
-        return Err(refusal("has managed settings that differ from Effigy's"));
+        return Err(refusal(
+            "has managed settings that differ from Effigy's",
+            format!(
+                "restart it deliberately with `colima restart {}` or run without no-change mode",
+                policy.profile
+            ),
+        ));
     }
     ensure_running_profile_runtime_ready(
         policy.profile.as_str(),
@@ -1781,11 +1808,17 @@ esac
                 assert_eq!(command, "Colima profile no-change check");
                 assert_eq!(code, None);
                 assert!(stdout.is_empty());
-                assert_eq!(
-                    stderr,
-                    format!(
-                        "Colima profile `effigy` {reason}; no-change mode refuses to start, create, restart, rewrite or unit-start the shared profile"
-                    )
+                assert!(
+                    stderr.starts_with(&format!("Colima profile `effigy` {reason}\n")),
+                    "expected summary line first, got: {stderr}"
+                );
+                assert!(
+                    stderr.contains("no-change mode refuses to start, create, restart, rewrite or unit-start the shared profile"),
+                    "expected refusal explanation, got: {stderr}"
+                );
+                assert!(
+                    stderr.contains("\nnext: "),
+                    "expected next line, got: {stderr}"
                 );
             }
             other => panic!("expected the no-change refusal, got {other}"),

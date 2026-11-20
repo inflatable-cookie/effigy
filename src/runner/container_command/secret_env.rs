@@ -61,7 +61,8 @@ impl ResolvedContainerSecretRuntime {
 
 // Written once so every undelivered-key warning names the same remedy the
 // user can act on.
-const UNLOCK_FIX: &str = "run `effigy secrets unlock` at a terminal, or rerun `effigy dev` on one";
+const UNLOCK_FIX: &str =
+    "run `effigy secrets unlock` at a terminal, or run `effigy dev` interactively";
 
 /// The reason line for a run that holds a local-dev key but is not a `dev`
 /// session: the key is a `dev` factor, so a direct command's warning says so
@@ -147,11 +148,11 @@ pub(in crate::runner) fn resolve_container_secret_runtime(
                 delivery,
                 &container_keys,
                 "`[secrets].backend` is not `\"effigy-vault\"`",
-                "select the effigy-vault backend and store the value",
+                "set `backend = \"effigy-vault\"` under `[secrets]` and store values with `effigy secrets set <KEY>`",
             ));
         }
         return Err(RunnerError::task_invocation(
-            "required container secrets need `[secrets].backend = \"effigy-vault\"`",
+            "required container secrets need `[secrets].backend = \"effigy-vault\"`\nnext: set `backend = \"effigy-vault\"` under `[secrets]` in `effigy.toml`",
         ));
     }
 
@@ -166,11 +167,12 @@ pub(in crate::runner) fn resolve_container_secret_runtime(
                 delivery,
                 &container_keys,
                 &format!("the vault is missing at {}", vault_path.display()),
-                "run `effigy secrets init` and store the value",
+                "run `effigy secrets init` and store values with `effigy secrets set <KEY>`",
             ));
         }
         return Err(RunnerError::task_invocation(format!(
-            "required container secrets are declared but the vault is missing at {}",
+            "required container secrets ({}) are declared, but the vault is missing\nvault: {}\nnext: run `effigy secrets init` and add each key with `effigy secrets set <KEY>`",
+            required_names.join(", "),
             vault_path.display()
         )));
     }
@@ -187,7 +189,7 @@ pub(in crate::runner) fn resolve_container_secret_runtime(
                     crate::runner::secret_session::read_local_dev_upgrade_passphrase(
                         optional_only,
                         "Vault passphrase (one-time local-dev setup): ",
-                        "local-dev container secrets need one passphrase unlock to create the unattended dev key, and secret input requires an interactive TTY",
+                        "local-dev container secrets need one passphrase unlock to create the unattended dev key, and secret input requires an interactive TTY\nnext: run `effigy secrets unlock` or `effigy dev` at an interactive terminal",
                     )?
                 else {
                     return Ok(ResolvedContainerSecretRuntime::undelivered(
@@ -229,7 +231,7 @@ pub(in crate::runner) fn resolve_container_secret_runtime(
             &vault_path,
             false,
             "Vault passphrase: ",
-            "container secrets require an unlocked vault passphrase and secret input requires an interactive TTY",
+            "container secrets require an unlocked vault passphrase and secret input requires an interactive TTY\nnext: run `effigy secrets unlock` at a terminal, or run `effigy dev` interactively",
         )? {
             Some(passphrase) => Some(crate::runner::secret_vault::read_effigy_vault_payload(
                 &vault_path,
@@ -265,13 +267,21 @@ pub(in crate::runner) fn resolve_container_secret_runtime(
             )),
             None if key.required => missing_required.push(name.to_owned()),
             None => warnings.push(format!(
-                "container secret `{name}` was not delivered: it is declared but not stored in the vault; run `effigy secrets set {name}`"
+                "container secret `{name}` was not delivered: declared in `effigy.toml` but not stored in the vault; run `effigy secrets set {name}`"
             )),
         }
     }
     if !missing_required.is_empty() {
+        let next = if let [single] = missing_required.as_slice() {
+            format!("run `effigy secrets set {single}`")
+        } else {
+            format!(
+                "run `effigy secrets set <KEY>` for each missing key ({})",
+                missing_required.join(", ")
+            )
+        };
         return Err(RunnerError::task_invocation(format!(
-            "required container secret(s) missing from the vault: {}",
+            "required container secret(s) missing from the vault: {}\nnext: {next}",
             missing_required.join(", ")
         )));
     }

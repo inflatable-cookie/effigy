@@ -1167,3 +1167,299 @@ fn readiness_failure_human_rendering_avoids_duplicate_cause_empty_streams_and_do
         "keeps readiness window and sub-second probe detail: {rendered}"
     );
 }
+
+#[test]
+fn container_wait_refused_renders_short_headline_next_and_details() {
+    let error = RunnerError::container_wait_refused(
+        "web",
+        "environment `web` did not become ready within 60s; last container output: nginx failed"
+            .to_owned(),
+        serde_json::json!({
+            "failure_kind": "container_readiness",
+            "waiting_on": [{
+                "kind": "service",
+                "service": "app",
+                "problem": "app is unhealthy after 4 failed checks",
+            }],
+        }),
+    );
+
+    let human = error.human_error();
+    assert_eq!(
+        human.what_failed(),
+        "Container `web` did not become ready in time"
+    );
+    assert_eq!(
+        human.explanation_lines(),
+        [
+            "environment `web` did not become ready within 60s",
+            "Waiting on: app is unhealthy after 4 failed checks",
+        ]
+    );
+    assert_eq!(
+        human.next_action_text(),
+        Some("Run `effigy container web logs` to inspect startup output")
+    );
+    assert_eq!(
+        human.detail_entries(),
+        [
+            ("container".to_owned(), "web".to_owned()),
+            ("failure_kind".to_owned(), "container_readiness".to_owned()),
+            (
+                "cause".to_owned(),
+                "environment `web` did not become ready within 60s; last container output: nginx failed".to_owned(),
+            ),
+        ]
+    );
+    let rendered = human.render_text();
+    assert!(rendered.starts_with("[error] Container `web` did not become ready in time\n\n"));
+    assert!(
+        rendered.contains("\n\n  Next: Run `effigy container web logs` to inspect startup output")
+    );
+    assert!(rendered.contains("\n\n  Details:\n"));
+}
+
+#[test]
+fn managed_host_readiness_renders_with_and_without_observed_status() {
+    let with_status = RunnerError::ManagedHostReadiness {
+        process: "vite".to_owned(),
+        diagnostic: "managed listener answered /health with HTTP 502".to_owned(),
+        observed_status: Some(502),
+    };
+    let human = with_status.human_error();
+    assert_eq!(
+        human.what_failed(),
+        "Host process `vite` did not become ready"
+    );
+    assert_eq!(
+        human.explanation_lines(),
+        ["The readiness check received HTTP 502 before the process stopped."]
+    );
+    assert_eq!(
+        human.next_action_text(),
+        Some("Check `vite` output or run it directly to see why it failed")
+    );
+    assert_eq!(
+        human.detail_entries(),
+        [
+            ("process".to_owned(), "vite".to_owned()),
+            ("http_status".to_owned(), "502".to_owned()),
+            (
+                "cause".to_owned(),
+                "managed listener answered /health with HTTP 502".to_owned()
+            ),
+        ]
+    );
+
+    let without_status = RunnerError::ManagedHostReadiness {
+        process: "worker".to_owned(),
+        diagnostic: "child exited with status 1".to_owned(),
+        observed_status: None,
+    };
+    let human = without_status.human_error();
+    assert_eq!(
+        human.explanation_lines(),
+        ["The process failed before its readiness check passed."]
+    );
+    assert_eq!(
+        human.detail_entries(),
+        [
+            ("process".to_owned(), "worker".to_owned()),
+            ("cause".to_owned(), "child exited with status 1".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn managed_listener_exposure_renders_partial_routes_and_withheld_details() {
+    let error = RunnerError::ManagedListenerExposure {
+        environment: "web".to_owned(),
+        exposed: vec!["web.test -> 127.0.0.1:8080".to_owned()],
+        failures: vec![crate::runner::host_process::ManagedHostListenerFailure {
+            name: "front".to_owned(),
+            status: crate::runner::host_process::HostLifecycleStatus::Failed,
+            declared_route_domain: "front.test".to_owned(),
+            route_domain: Some("front.test".to_owned()),
+            observed_status: Some(500),
+            detail: "readiness check failed".to_owned(),
+            output_tail: Some("error: port in use".to_owned()),
+            log: "/repo/.effigy/runtime/front.log".to_owned(),
+        }],
+    };
+    let human = error.human_error();
+    assert_eq!(
+        human.what_failed(),
+        "Some routes for `web` could not be published"
+    );
+    assert_eq!(
+        human.explanation_lines(),
+        ["1 route(s) were withheld while 1 published."]
+    );
+    assert_eq!(
+        human.next_action_text(),
+        Some("Fix the failing host listener(s) listed below and re-run `effigy dev`")
+    );
+    assert_eq!(
+        human.detail_entries(),
+        [
+            ("environment".to_owned(), "web".to_owned()),
+            ("published".to_owned(), "web.test -> 127.0.0.1:8080".to_owned()),
+            (
+                "withheld".to_owned(),
+                "host listener `front` kept route front.test withheld: readiness check failed (observed HTTP 500)".to_owned(),
+            ),
+            ("output".to_owned(), "error: port in use".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn workspace_session_cleanup_renders_headline_next_and_cleanup_detail() {
+    let error = RunnerError::workspace_session_cleanup(
+        "shell exited with status 1",
+        "container stop timed out",
+    );
+    let human = error.human_error();
+    assert_eq!(
+        human.what_failed(),
+        "Workspace session ended with a cleanup error"
+    );
+    assert_eq!(human.explanation_lines(), ["shell exited with status 1"]);
+    assert_eq!(
+        human.next_action_text(),
+        Some("Run `effigy container status` to check whether the workspace container is still running")
+    );
+    assert_eq!(
+        human.detail_entries(),
+        [("cleanup".to_owned(), "container stop timed out".to_owned())]
+    );
+}
+
+#[test]
+fn structured_manifest_compose_promotes_headline_preserves_details_and_dedups_manifest() {
+    let err = RunnerError::from(effigy_manifest::ManifestError::Compose {
+        path: Path::new("/var/www/brains/effigy.toml").to_path_buf(),
+        detail: "This project's bundle needs to be synced on the host\n\n  The workspace container cannot fetch remote bundle sources.\n\n  Next: Exit the container and run `effigy bundle sync` on the host\n\n  Details:\n    manifest: /var/www/brains/effigy.toml\n    source:   git"
+            .to_owned(),
+    });
+    assert!(matches!(err, RunnerError::TaskManifestCompose { .. }));
+    let human = err.human_error();
+    assert_eq!(
+        human.what_failed(),
+        "This project's bundle needs to be synced on the host"
+    );
+    assert_eq!(
+        human.explanation_lines(),
+        ["The workspace container cannot fetch remote bundle sources."]
+    );
+    assert_eq!(
+        human.next_action_text(),
+        Some("Exit the container and run `effigy bundle sync` on the host")
+    );
+    assert_eq!(
+        human.detail_entries(),
+        [
+            (
+                "manifest".to_owned(),
+                "/var/www/brains/effigy.toml".to_owned()
+            ),
+            ("source".to_owned(), "git".to_owned()),
+        ]
+    );
+    let rendered = human.render_text();
+    assert_eq!(rendered.matches("manifest:").count(), 1, "{rendered}");
+
+    // Without an existing manifest row in Details:, manifest_compose adds it once.
+    let without_manifest = RunnerError::TaskManifestCompose {
+        path: Path::new("/repo/effigy.toml").to_path_buf(),
+        detail: "This project's bundle needs to be synced on the host\n\n  Next: Run `effigy bundle sync` on the host"
+            .to_owned(),
+    };
+    let human = without_manifest.human_error();
+    assert_eq!(
+        human.detail_entries(),
+        [("manifest".to_owned(), "/repo/effigy.toml".to_owned())]
+    );
+}
+
+#[test]
+fn json_command_envelope_remains_backward_compatible_with_structured_human_errors() {
+    let error = RunnerError::container_wait_refused(
+        "web",
+        "environment `web` did not become ready within 60s".to_owned(),
+        serde_json::json!({
+            "failure_kind": "container_readiness",
+            "waiting_on": [{ "kind": "service", "service": "app", "problem": "app is starting" }],
+        }),
+    );
+    let details = error
+        .json_error_details()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok());
+    let envelope = crate::cli::output::build_json_envelope_error_with_human(
+        "container",
+        "up",
+        "RunnerError",
+        "refused",
+        &error.to_string(),
+        details,
+        error.human_error().to_json(),
+    );
+
+    assert_eq!(envelope["schema"], "effigy.command.v1");
+    assert_eq!(envelope["schema_version"], 1);
+    assert_eq!(envelope["ok"], false);
+    assert_eq!(envelope["error"]["kind"], "refused");
+    assert_eq!(envelope["error"]["type"], "RunnerError");
+    assert_eq!(
+        envelope["error"]["message"],
+        "environment `web` did not become ready within 60s"
+    );
+    assert_eq!(
+        envelope["error"]["details"]["failure_kind"],
+        "container_readiness"
+    );
+    assert_eq!(
+        envelope["error"]["human"]["what_failed"],
+        "Container `web` did not become ready in time"
+    );
+    assert_eq!(
+        envelope["error"]["human"]["next_action"],
+        "Run `effigy container web logs` to inspect startup output"
+    );
+    assert_eq!(
+        envelope["error"]["human"]["details"][0],
+        serde_json::json!({"label": "container", "value": "web"})
+    );
+}
+
+#[test]
+fn engine_absence_container_failures_render_plain_headline_and_next() {
+    let docker = RunnerError::from(ContainerExecError::Failure {
+        command: "docker ps".to_owned(),
+        code: Some(1),
+        stdout: String::new(),
+        stderr: "Cannot connect to the Docker daemon at unix:///var/run/docker.sock".to_owned(),
+    });
+    let human = docker.human_error();
+    assert_eq!(human.what_failed(), "Docker daemon is not running");
+    assert_eq!(
+        human.next_action_text(),
+        Some("start Docker Desktop or the Docker daemon, then retry")
+    );
+
+    let colima = RunnerError::from(ContainerExecError::Failure {
+        command: "colima status".to_owned(),
+        code: Some(1),
+        stdout: String::new(),
+        stderr: "level=fatal msg=\"colima [profile=effigy] is not running\"".to_owned(),
+    });
+    let human = colima.human_error();
+    assert_eq!(
+        human.what_failed(),
+        "Colima profile `effigy` is not running"
+    );
+    assert_eq!(
+        human.next_action_text(),
+        Some("start it with `colima start --profile effigy` or run `effigy container up`")
+    );
+}
