@@ -1,0 +1,1 @@
+Explicit `run_in = "either"` tasks now run directly on the host when invoked there, without probing or starting containers, and continue to run locally when invoked inside a workspace container; omitted `run_in` still follows the configured default workspace.

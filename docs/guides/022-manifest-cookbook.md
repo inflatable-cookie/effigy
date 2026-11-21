@@ -221,7 +221,13 @@ fail_on_non_zero = true
 ```
 
 Use full task tables when you need broad task settings (`fail_on_non_zero`, `env`, `mode`, `profiles`, etc.).
-`run_in` accepts `host`, `container`, or `either`; `either` is the default and means use the current/default execution context.
+`run_in` accepts `host`, `container`, or `either`:
+
+- `host` always runs on the host and refuses execution from inside a workspace container.
+- `container` runs in the configured container, starting it on the host when needed; inside a workspace container, it runs locally there.
+- `either` runs where invoked: directly on the host without probing or starting containers, or locally inside the workspace container.
+- When `run_in` is omitted, `[task_defaults].run_in` applies; otherwise the task follows the project's default workspace/container when configured.
+
 For a single `run`, `task`, or `rhai` step, `run_in` can live in the compact
 inline task object instead.
 
@@ -427,7 +433,7 @@ Behavior:
 mode = "tui"
 lock = "dev-stack"
 fail_on_non_zero = true
-run_in = "either"               # host, container, or either/current context
+run_in = "either"               # wherever invoked: host or current workspace container
 # optional managed bindings (flattened, no nested subtables):
 system = "dev"                   # pin this managed task to a declared system
 workspace = "main"               # pin to a specific workspace inside that system
