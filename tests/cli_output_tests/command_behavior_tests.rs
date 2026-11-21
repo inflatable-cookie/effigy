@@ -825,9 +825,23 @@ fn cli_contracts_contract_body_refusal_keeps_its_bytes() {
     // check-json refusal reason, and the JSON envelope carries the check-json
     // identity as its `error.message` string. Both complete streams are pinned,
     // including the bounded `human.what_failed` view of that message.
-    let text = run_cli_command(&root, &["contracts", "check-json"]);
+    let run_check_json = |json: bool| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+        if json {
+            command.arg("--json");
+        }
+        command
+            .arg("--repo")
+            .arg(&root)
+            .args(["contracts", "check-json"])
+            .env("NO_COLOR", "1")
+            .env("EFFIGY_BROWSER_TERMINAL_COLS", "240")
+            .output_owned()
+            .expect("run effigy")
+    };
+    let text = run_check_json(false);
     assert!(!text.status.success());
-    let json = run_json_cli_command(&root, &["contracts", "check-json"]);
+    let json = run_check_json(true);
     assert!(!json.status.success());
 
     // Only values that move with the environment are normalized: the fixture
