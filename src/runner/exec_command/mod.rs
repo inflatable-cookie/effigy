@@ -454,11 +454,7 @@ pub(in crate::runner) fn run_routed_task_remote(
         request.secret_env,
         workspace_identity,
         &mapped_cwd,
-        // Colima reports no backend terminal (the kernel frames on stderr),
-        // so only Docker workloads get terminal colour settings.
-        crate::runner::task_engine::remote_tty(capture)
-            && crate::runner::environment::backend(repo_root, policy).kind
-                != effigy_containers::environment::BackendKind::Colima,
+        crate::runner::task_engine::remote_tty(capture),
     );
     run_in_service(
         repo_root,

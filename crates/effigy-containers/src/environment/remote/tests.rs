@@ -517,31 +517,26 @@ fn colima_launch_relays_values_to_the_vm_and_attaches_stdin_for_a_terminal() {
         Some(exec_options()),
     );
     let target = RemoteContainer::new(&colima(), "effigy".into(), ID);
-    // The VM shell carries the values on stdin, so no terminal there: the
-    // adapter reports the downgrade, and a terminal reaching launch refuses.
     let colima_id = ContainerIdentity {
         id: target.encode(),
         ..identity()
     };
     assert_eq!(
         launcher.terminal(&colima_id, RemoteTerminal::Tty),
-        RemoteTerminal::Stdin
-    );
-    assert_eq!(
-        launcher.terminal(&colima_id, RemoteTerminal::Stdin),
-        RemoteTerminal::Stdin
-    );
-    assert_eq!(
-        launcher.terminal(&identity(), RemoteTerminal::Tty),
         RemoteTerminal::Tty
     );
-    assert!(launcher
+    let spec = launcher
         .launch_spec(
             &target,
             command(RemoteTerminal::Tty),
-            Instant::now() + Duration::from_secs(5)
+            Instant::now() + Duration::from_secs(5),
         )
-        .is_err());
+        .unwrap();
+    let argv = strings(&spec.argv);
+    assert_eq!(argv[2], COLIMA_TTY_RELAY);
+    assert!(argv[10].ends_with("ssh"));
+    assert_eq!(&argv[11..14], ["exec", "-i", "-t"]);
+    assert!(!argv.iter().any(|arg| arg.contains("hunter2")));
     for (terminal, mode, flags) in [
         (RemoteTerminal::None, "none", vec![]),
         (RemoteTerminal::Stdin, "stdin", vec!["-i"]),
@@ -575,6 +570,94 @@ fn colima_launch_relays_values_to_the_vm_and_attaches_stdin_for_a_terminal() {
         assert_eq!(argv[12..12 + expected.len()], expected);
         assert!(!argv.iter().any(|arg| arg.contains("hunter2")));
     }
+}
+
+#[test]
+fn colima_tty_relay_stages_private_environment_and_preserves_exit_status() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let write = |name: &str, body: &str| {
+        let path = root.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    };
+    let colima = write(
+        "colima",
+        &format!(
+            r#"
+case $1 in
+ssh-config) printf 'Host colima-test\n  HostName localhost\n' ;;
+ssh)
+    shift 4
+    case $1 in
+    sh) cat > '{root}/vm-script'; printf '/tmp/effigy-remote-tty.ABC123\n' ;;
+    rm) rm -f '{root}/vm-script' ;;
+    esac ;;
+esac
+"#,
+            root = root.display()
+        ),
+    );
+    let ssh = write(
+        "ssh",
+        &format!(
+            r#"
+printf '%s\n' "$@" > '{root}/ssh-argv'
+cfg=$2
+ls -l "$cfg" > '{root}/mode'
+printf '%s' "$cfg" > '{root}/config-path'
+sh '{root}/vm-script'
+"#,
+            root = root.display()
+        ),
+    );
+    write("sudo", "shift; exec \"$@\"\n");
+    write(
+        "nerdctl",
+        &format!(
+            r#"
+test ! -e '{root}/vm-script' || exit 99
+printf '%s\n' "$@" > '{root}/runtime-argv'
+printf '%s' "$SECRET" > '{root}/value'
+exit 37
+"#,
+            root = root.display()
+        ),
+    );
+    let path = format!("{}:/usr/bin:/bin", root.display());
+    let output = Command::new("/bin/sh")
+        .args(["-c", COLIMA_TTY_RELAY, "relay", "1", "SECRET"])
+        .arg(&colima)
+        .arg("test")
+        .arg(&ssh)
+        .args(["exec", "-i", "-t", "container", "quoted'argument"])
+        .env("PATH", path)
+        .env("TMPDIR", root)
+        .env("EFFIGY_REMOTE_V0", "secret' value")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(37), "{output:?}");
+    assert_eq!(
+        std::fs::read_to_string(root.join("mode")).unwrap()[..10],
+        *"-rw-------"
+    );
+    let cfg = std::fs::read_to_string(root.join("config-path")).unwrap();
+    assert!(!std::path::Path::new(&cfg).exists());
+    assert!(!std::fs::read_to_string(root.join("ssh-argv"))
+        .unwrap()
+        .contains("secret"));
+    assert_eq!(
+        std::fs::read_to_string(root.join("value")).unwrap(),
+        "secret' value"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("runtime-argv")).unwrap(),
+        "exec\n-i\n-t\ncontainer\nquoted'argument\n"
+    );
 }
 
 #[test]

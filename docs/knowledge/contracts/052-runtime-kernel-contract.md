@@ -2190,9 +2190,9 @@ is gone or shows different start ticks. Exec failure is `Unknown`, never
   `KEY=value` lines from its own private environment: Docker reads them as an
   env file on a private descriptor, leaving stdin to the operator; Colima's
   VM shell reads them from stdin, exports them and passes them to `nerdctl` by
-  name. Values that span lines are refused. Colima cannot carry a terminal
-  while its stdin carries the values, so its adapter reports `Tty` as
-  `Stdin`: the frame stays on stderr and its launch refuses a terminal.
+  name. Values that span lines are refused. For a terminal, Colima stages a
+  private VM launch file over stdin, then uses OpenSSH to allocate a PTY; the
+  file unlinks itself before the container command starts.
 - A fixed POSIX helper runs as root in the registered container: it lists
   `/proc` with session facts and nonce evidence, and rechecks boot,
   namespace, start ticks and nonce immediately before each signal.
