@@ -11,7 +11,9 @@
 //! 2. If the task declares the host (`run_in = "host"` or a host binding) → host.
 //! 3. If the task names a container (`run_in = "container"` or a named
 //!    binding) → that container.
-//! 4. Otherwise (`run_in = "either"`) → the default container.
+//! 4. Otherwise (no `run_in` declaration) → the default container when one is
+//!    resolved, or the host. Explicit `run_in = "either"` is resolved as host
+//!    on the host and remains local when invoked inside a workspace container.
 
 /// Describes the project's execution context configuration.
 #[derive(Debug, Clone)]

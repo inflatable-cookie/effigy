@@ -296,6 +296,48 @@ container = "web"
     }
 
     #[test]
+    fn explicit_either_runs_on_host_without_checking_default_container() {
+        let _env = EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", None)]);
+        let containers = containers_toml(
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+"#,
+        );
+        let systems = systems_toml(
+            r#"
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+"#,
+        );
+        let task = ManifestTask {
+            run_in: Some(ManifestTaskRunIn::Either),
+            ..Default::default()
+        };
+
+        let routed = route_standard_task_execution(
+            "deploy",
+            None,
+            &task,
+            Some(&systems),
+            Some(&containers),
+            |_| panic!("explicit either must not probe or touch the container"),
+        )
+        .expect("route");
+
+        assert!(matches!(routed.decision.target, ExecTarget::Host));
+    }
+
+    #[test]
     fn declared_task_named_like_an_effigy_command_routes_by_its_declaration() {
         // A declared task called `doctor`, `tasks` or `release` is routed by
         // its own `run_in`, exactly like any other task. The name never sends

@@ -89,13 +89,25 @@ pub fn resolve_task_execution_binding_from_parts(
 ) -> Result<Option<ResolvedTaskExecutionBinding>, ExecutionBindingResolveError> {
     let has_workspace_binding = task.system.is_some() || task.workspace.is_some();
     let implicit_default_target_available = has_implicit_default_target(containers);
-    let effective_run_in = task.effective_run_in(default_run_in);
-    if effective_run_in == ManifestTaskRunIn::Host {
+    let declared_run_in = task
+        .run_in
+        .or_else(|| {
+            if task.container_lifecycle.unwrap_or(false) {
+                Some(ManifestTaskRunIn::Container)
+            } else {
+                None
+            }
+        })
+        .or(default_run_in);
+    if declared_run_in == Some(ManifestTaskRunIn::Host) {
         if has_workspace_binding {
             return Err(ExecutionBindingResolveError::new(format!(
                 "task `{task_name}` cannot combine `run_in = \"host\"` with container or workspace execution binding"
             )));
         }
+        return Ok(Some(ResolvedTaskExecutionBinding::Host));
+    }
+    if declared_run_in == Some(ManifestTaskRunIn::Either) && !has_workspace_binding {
         return Ok(Some(ResolvedTaskExecutionBinding::Host));
     }
 
@@ -649,7 +661,7 @@ default_workspace = "app"
 container = "app"
 
 [tasks.dev]
-run_in = "either"
+run_in = "container"
 run = "npm run dev"
 "#,
         );
@@ -658,6 +670,102 @@ run = "npm run dev"
 
         assert!(matches!(
             resolved,
+            Some(ResolvedTaskExecutionBinding::Workspace(_))
+        ));
+    }
+
+    #[test]
+    fn explicit_either_does_not_bind_the_default_system_workspace() {
+        let manifest = parse_manifest(
+            r#"
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "app"
+
+[tasks.deploy]
+run_in = "either"
+run = "npm run deploy"
+"#,
+        );
+        let task = manifest.tasks.get("deploy").expect("task");
+        let resolved = resolve_task_execution_binding(&manifest, "deploy", task).expect("resolve");
+
+        assert_eq!(resolved, Some(ResolvedTaskExecutionBinding::Host));
+    }
+
+    #[test]
+    fn default_either_runs_host_unless_task_binds_a_workspace() {
+        let manifest = parse_manifest(
+            r#"
+[task_defaults]
+run_in = "either"
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "app"
+
+[tasks.deploy]
+run = "npm run deploy"
+
+[tasks.container]
+run_in = "container"
+run = "npm run container"
+
+[tasks.workspace]
+workspace = "app"
+run = "npm run workspace"
+"#,
+        );
+
+        let deploy = manifest.tasks.get("deploy").expect("deploy task");
+        assert_eq!(
+            resolve_task_execution_binding(&manifest, "deploy", deploy).expect("resolve"),
+            Some(ResolvedTaskExecutionBinding::Host)
+        );
+
+        let container = manifest.tasks.get("container").expect("container task");
+        assert!(matches!(
+            resolve_task_execution_binding(&manifest, "container", container).expect("resolve"),
+            Some(ResolvedTaskExecutionBinding::Workspace(_))
+        ));
+
+        let workspace = manifest.tasks.get("workspace").expect("workspace task");
+        assert!(matches!(
+            resolve_task_execution_binding(&manifest, "workspace", workspace).expect("resolve"),
+            Some(ResolvedTaskExecutionBinding::Workspace(_))
+        ));
+    }
+
+    #[test]
+    fn omitted_run_in_still_uses_default_system_workspace() {
+        let manifest = parse_manifest(
+            r#"
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "app"
+
+[tasks.build]
+run = "npm run build"
+"#,
+        );
+        let task = manifest.tasks.get("build").expect("task");
+        assert!(matches!(
+            resolve_task_execution_binding(&manifest, "build", task).expect("resolve"),
             Some(ResolvedTaskExecutionBinding::Workspace(_))
         ));
     }
