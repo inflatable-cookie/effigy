@@ -1734,14 +1734,25 @@ effigy gateway setup
 effigy gateway setup --suffix dev.example.org
 effigy gateway up
 effigy gateway status --json
+effigy gateway restart
 effigy gateway down
 ```
 
-`gateway up` starts the daemon when none is running, and `gateway down`
-followed by `gateway up` is what replaces a running one: `container up`, `dev`
-and every other path that needs the gateway only start it when it is absent and
-otherwise use the running daemon, printing one warning that names both builds
-when it is a different Effigy build.
+`gateway up` starts the daemon when none is running. An upgrade does not
+replace a running daemon, so the new binary owns the gateway only after
+`effigy gateway restart`, which stops the running gateway if there is one and
+starts this build (`--json` reports `action: "restart"` with the previous and
+the current build). `effigy gateway status` names the running build in text and,
+when it is not this binary, prints the mismatch with `Next: Run `effigy gateway
+restart``.
+
+`container up`, `dev` and every other path that needs the gateway only start it
+when it is absent and otherwise use the running daemon. When that daemon is a
+different Effigy build, an interactive terminal is asked once
+(`Reload gateway now? [Y/n]:`): the default reloads it on this build, `n` keeps
+it and names `effigy gateway restart`. A non-interactive run, `--json`, CI or a
+fixture/test process never prompts, never blocks on stdin and never replaces the
+machine gateway; it prints the structured warning instead.
 
 Setup includes suffixes already present in the route table and the managed
 `test` suffix. Re-run setup when adding a new resolver suffix. macOS receives

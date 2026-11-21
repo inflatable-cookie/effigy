@@ -963,7 +963,8 @@ fn managed_start_reuses_a_running_gateway_of_another_build() {
     let running = verified_gateway_status_for_up(&config)
         .status
         .expect("a running gateway is observable");
-    let note = running_gateway_build_note(&running.status).expect("another build is named");
+    let note = gateway_build_mismatch_warning(running.status.binary_version.as_deref())
+        .expect("another build is named");
     assert!(
         note.contains("v0.13.1+local.test"),
         "warning must name the running build: {note}"
@@ -971,6 +972,10 @@ fn managed_start_reuses_a_running_gateway_of_another_build() {
     assert!(
         note.contains(effigy_core::build_info::active_version().as_str()),
         "warning must name this build: {note}"
+    );
+    assert!(
+        note.contains("effigy gateway restart"),
+        "warning must name the one reload command: {note}"
     );
     let before = [
         std::fs::read(&pid_path).expect("PID"),
@@ -2602,4 +2607,228 @@ fn the_route_read_step_finishes_with_what_it_read_or_why_it_could_not() {
         "{line}"
     );
     assert!(line.contains(&cause), "{line}");
+}
+
+fn operator_status(binary_version: Option<&str>, ready: bool) -> effigy_gateway::operator::Status {
+    effigy_gateway::operator::Status {
+        status: if ready { "running" } else { "stopped" },
+        ready,
+        run: None,
+        control_socket: None,
+        binary_version: binary_version.map(str::to_owned),
+        reason: None,
+        launcher: None,
+    }
+}
+
+/// `gateway status` text names the build the daemon reports and, when that
+/// build is not this binary, prints the structured reload warning.
+#[test]
+fn gateway_status_text_names_the_running_build_and_warns_when_it_differs() {
+    let current = effigy_core::build_info::active_version();
+    let matching = render_gateway_status_text(&operator_status(Some(current.as_str()), true));
+    assert!(
+        matching.contains(&format!("binary_version: {current}")),
+        "{matching}"
+    );
+    assert!(!matching.contains("[warning]"), "{matching}");
+
+    let older = render_gateway_status_text(&operator_status(Some("v0.14.1+local.d7fc077"), true));
+    assert!(
+        older.contains("binary_version: v0.14.1+local.d7fc077"),
+        "{older}"
+    );
+    assert!(
+        older.contains("[warning] Gateway is running a different Effigy build"),
+        "{older}"
+    );
+    assert!(
+        older.contains(
+            "Next: Run `effigy gateway restart` to reload the gateway on the current build"
+        ),
+        "{older}"
+    );
+    assert!(older.contains("running:"), "{older}");
+    assert!(older.contains("v0.14.1+local.d7fc077"), "{older}");
+    assert!(older.contains("current:"), "{older}");
+    assert!(older.contains(current.as_str()), "{older}");
+
+    // A stopped gateway has no build to compare and prints no warning.
+    let stopped =
+        render_gateway_status_text(&operator_status(Some("v0.14.1+local.d7fc077"), false));
+    assert!(!stopped.contains("[warning]"), "{stopped}");
+}
+
+/// The status JSON payload keeps its own fields: the mismatch warning is text
+/// only, so no consumer schema moves.
+#[test]
+fn gateway_status_json_keeps_its_fields_on_a_build_mismatch() {
+    let status = operator_status(Some("v0.14.1+local.d7fc077"), true);
+    let rendered: serde_json::Value = serde_json::to_value(&status).expect("json payload");
+    let object = rendered.as_object().expect("status is an object");
+    assert_eq!(
+        object.get("binary_version"),
+        Some(&serde_json::json!("v0.14.1+local.d7fc077"))
+    );
+    assert_eq!(object.get("ready"), Some(&serde_json::json!(true)));
+    assert_eq!(object.get("status"), Some(&serde_json::json!("running")));
+    assert!(
+        object.get("warning").is_none(),
+        "the text warning must never enter the status payload: {rendered}"
+    );
+}
+
+/// `gateway restart` reports both builds: the one that ran and the one this
+/// binary started.
+#[test]
+fn gateway_restart_reports_the_previous_and_current_build() {
+    let config = GatewayConfig::standard(PathBuf::from("/tmp/effigy/gateway"));
+    let text = render_gateway_restart_result(
+        &config,
+        Some("v0.14.1+local.d7fc077"),
+        Some("v0.15.0+local.abc".to_owned()),
+        false,
+    )
+    .expect("restart text");
+    assert!(text.contains("[ok] gateway restarted"), "{text}");
+    assert!(
+        text.contains("previous_build: v0.14.1+local.d7fc077"),
+        "{text}"
+    );
+    assert!(text.contains("binary_version: v0.15.0+local.abc"), "{text}");
+    assert!(text.contains("state: /tmp/effigy/gateway"), "{text}");
+
+    let json: serde_json::Value = serde_json::from_str(
+        &render_gateway_restart_result(&config, None, Some("v0.15.0+local.abc".to_owned()), true)
+            .expect("restart json"),
+    )
+    .expect("restart payload parses");
+    assert_eq!(json["schema"], "effigy.gateway.command.v1");
+    assert_eq!(json["action"], "restart");
+    assert_eq!(json["running"], true);
+    assert!(json["previous_binary_version"].is_null());
+    assert_eq!(json["binary_version"], "v0.15.0+local.abc");
+}
+
+/// The one reload question: Enter, `y` and `yes` reload; `n`, `no`, any other
+/// word, EOF and an unreadable stdin keep the gateway.
+#[test]
+fn gateway_reload_answers_default_to_reloading_and_keep_everything_else() {
+    for answer in [
+        Some(""),
+        Some("\n"),
+        Some("y"),
+        Some("Y\n"),
+        Some("yes"),
+        Some(" YES "),
+    ] {
+        assert_eq!(
+            parse_gateway_reload_answer(answer),
+            GatewayReloadAnswer::Reload,
+            "{answer:?}"
+        );
+    }
+    for answer in [Some("n"), Some("no"), Some("N\n"), Some("later"), None] {
+        assert_eq!(
+            parse_gateway_reload_answer(answer),
+            GatewayReloadAnswer::Keep,
+            "{answer:?}"
+        );
+    }
+}
+
+/// The prompt is offered only to a person: never in a JSON or CI run, never
+/// without a terminal on both streams, and never from a fixture or test build.
+#[test]
+fn only_an_interactive_person_is_asked_to_reload_the_gateway() {
+    assert!(gateway_reload_may_prompt(
+        false, true, true, false, false, false
+    ));
+    for (output_json, stdin_tty, stderr_tty, ci, test_harness, fixture) in [
+        (true, true, true, false, false, false),
+        (false, false, true, false, false, false),
+        (false, true, false, false, false, false),
+        (false, true, true, true, false, false),
+        (false, true, true, false, true, false),
+        (false, true, true, false, false, true),
+    ] {
+        assert!(
+            !gateway_reload_may_prompt(
+                output_json,
+                stdin_tty,
+                stderr_tty,
+                ci,
+                test_harness,
+                fixture
+            ),
+            "json={output_json} stdin={stdin_tty} stderr={stderr_tty} ci={ci} test={test_harness} fixture={fixture}"
+        );
+    }
+}
+
+/// Yes, Enter and `y` all reload the outdated gateway exactly once.
+#[test]
+fn a_person_agreeing_reloads_the_outdated_gateway_once() {
+    let reloads = std::cell::Cell::new(0);
+    let outcome = settle_outdated_gateway(
+        "v0.14.1+local.d7fc077",
+        "v0.15.0+local.abc",
+        "warning".to_owned(),
+        true,
+        |running, current| {
+            assert_eq!(running, "v0.14.1+local.d7fc077");
+            assert_eq!(current, "v0.15.0+local.abc");
+            GatewayReloadAnswer::Reload
+        },
+        || {
+            reloads.set(reloads.get() + 1);
+            Ok(())
+        },
+    );
+    assert_eq!(outcome, GatewayReloadOutcome::Reloaded);
+    assert_eq!(reloads.get(), 1, "one answer reloads once");
+}
+
+/// `n` keeps the running gateway and nothing is stopped or started.
+#[test]
+fn a_person_declining_keeps_the_running_gateway() {
+    let outcome = settle_outdated_gateway(
+        "v0.14.1+local.d7fc077",
+        "v0.15.0+local.abc",
+        "warning".to_owned(),
+        true,
+        |_, _| GatewayReloadAnswer::Keep,
+        || panic!("declining must not reload the gateway"),
+    );
+    assert_eq!(outcome, GatewayReloadOutcome::Kept);
+}
+
+/// A non-interactive caller never prompts: the running gateway stays, the
+/// structured warning names both builds, and no reload is attempted.
+#[test]
+fn a_non_interactive_caller_never_prompts_and_keeps_the_gateway() {
+    let outcome = settle_outdated_gateway(
+        "v0.14.1+local.d7fc077",
+        "v0.15.0+local.abc",
+        gateway_build_mismatch_warning(Some("v0.14.1+local.d7fc077")).expect("another build warns"),
+        false,
+        |_, _| panic!("a non-interactive caller must never prompt"),
+        || panic!("a non-interactive caller must never reload the gateway"),
+    );
+    assert_eq!(outcome, GatewayReloadOutcome::Kept);
+}
+
+/// A reload that fails keeps the gateway and reports the failure instead of
+/// claiming a reload.
+#[test]
+fn a_failed_reload_is_reported_and_never_claimed() {
+    let outcome = settle_outdated_gateway(
+        "v0.14.1+local.d7fc077",
+        "v0.15.0+local.abc",
+        "warning".to_owned(),
+        true,
+        |_, _| GatewayReloadAnswer::Reload,
+        || Err("the gateway supervisor refused admission".to_owned()),
+    );
+    assert_eq!(outcome, GatewayReloadOutcome::ReloadFailed);
 }

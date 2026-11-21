@@ -698,8 +698,8 @@ fn up_with_executable_observed(
     }
 }
 /// One warning when the gateway `up` is using runs a different build. `up`
-/// never replaces a running gateway; the operator action that does is `down`
-/// followed by `up`.
+/// never replaces a running gateway; `effigy gateway restart` is the one
+/// command that does.
 ///
 /// A reuse that is not verified ready is named by its observation instead:
 /// only a ready gateway is reported as running, so an unverifiable identity
@@ -713,7 +713,7 @@ fn note_reused_gateway_build(status: &Status) {
             .map(|reason| format!(": {reason}"))
             .unwrap_or_default();
         eprintln!(
-            "[gateway] the gateway could not be verified running (status `{}`{reason}); using its state as it is instead of starting a replacement. `effigy gateway down` then `effigy gateway up` replaces it",
+            "[gateway] the gateway could not be verified running (status `{}`{reason}); using its state as it is instead of starting a replacement. Run `effigy gateway restart` to replace it",
             status.status,
         );
         return;
@@ -723,7 +723,7 @@ fn note_reused_gateway_build(status: &Status) {
         return;
     }
     eprintln!(
-        "[gateway] the gateway is running build {}; using it instead of replacing it with build {current}; `effigy gateway down` then `effigy gateway up` replaces it",
+        "[gateway] the gateway is running build {}; using it instead of replacing it with build {current}; run `effigy gateway restart` to reload it",
         status.binary_version.as_deref().unwrap_or("unknown"),
     );
 }
