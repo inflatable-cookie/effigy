@@ -108,6 +108,7 @@ pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
         GatewaySubcommand::Setup { .. } => unreachable!("setup dispatched before config"),
         GatewaySubcommand::Up => run_gateway_up_with_config(&config, args.output_json),
         GatewaySubcommand::Down => run_gateway_down_with_config(&config, args.output_json),
+        GatewaySubcommand::Restart => run_gateway_restart_with_config(&config, args.output_json),
         GatewaySubcommand::Status => run_gateway_status_with_config(&config, args.output_json),
         GatewaySubcommand::SetupTls => run_gateway_setup_tls_with_config(&config, args.output_json),
     }
@@ -145,9 +146,10 @@ pub(in crate::runner) fn managed_gateway_up(
     }
     match preflight(config).status {
         Ok(running) => {
-            if let Some(note) = running_gateway_build_note(&running.status) {
-                eprintln!("{note}");
-            }
+            settle_outdated_gateway_for_managed_start(
+                config,
+                running.status.binary_version.as_deref(),
+            );
             Ok(())
         }
         Err(effigy_gateway::GatewayError::NotRunning) => {
@@ -278,23 +280,44 @@ fn record_gateway_setup(config: &GatewayConfig, remove: bool) {
 /// daemon, or stop the operator's one (papercut 01530b7e, 06d1cd9e). Fixtures
 /// own a private gateway root.
 fn refuse_a_fixtures_operator_gateway_mutation(config: &GatewayConfig) -> Result<(), RunnerError> {
-    // A unit-test build reads an isolated standard gateway directory, so it
-    // can never reach the machine gateway from here.
-    let test_build = !cfg!(test)
-        && std::env::current_exe()
-            .ok()
-            .and_then(|exe| exe.parent().map(|parent| parent.ends_with("deps")))
-            .unwrap_or(false);
-    let fixture = cfg!(debug_assertions)
-        && !cfg!(test)
-        && std::env::vars_os()
-            .any(|(key, _)| key.to_string_lossy().starts_with("EFFIGY_TEST_") || key == "NEXTEST");
-    if may_drive_the_operator_gateway(config.is_private(), test_build, fixture) {
+    refuse_a_fixtures_operator_gateway_mutation_with(
+        config,
+        gateway_process_is_test_harness(),
+        gateway_process_is_fixture(),
+    )
+}
+
+/// [`refuse_a_fixtures_operator_gateway_mutation`] over explicit process facts,
+/// so a test drives the real refusal without pretending to be a fixture.
+fn refuse_a_fixtures_operator_gateway_mutation_with(
+    config: &GatewayConfig,
+    test_harness: bool,
+    fixture: bool,
+) -> Result<(), RunnerError> {
+    if may_drive_the_operator_gateway(config.is_private(), test_harness, fixture) {
         return Ok(());
     }
     Err(RunnerError::task_invocation(format!(
         "this is a fixture process with no private gateway root; refusing to start, stop or replace the machine gateway. Set `{GATEWAY_PRIVATE_STATE_ROOT_ENV}` to an owned directory"
     )))
+}
+
+/// Whether this is a unit-test build. A unit-test build reads an isolated
+/// standard gateway directory, so it can never reach the machine gateway.
+fn gateway_process_is_test_harness() -> bool {
+    !cfg!(test)
+        && std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|parent| parent.ends_with("deps")))
+            .unwrap_or(false)
+}
+
+/// Whether this process is a fixture or runs under a test harness.
+fn gateway_process_is_fixture() -> bool {
+    cfg!(debug_assertions)
+        && !cfg!(test)
+        && std::env::vars_os()
+            .any(|(key, _)| key.to_string_lossy().starts_with("EFFIGY_TEST_") || key == "NEXTEST")
 }
 
 /// Only a released binary outside a fixture may start, stop or replace the
@@ -312,11 +335,13 @@ fn gateway_up_for_managed_task_with(
     let state = if effigy_core::executable_override::current().is_some() {
         ManagedStartState::Unverified
     } else {
-        match preflight(&gateway_config()?).status {
+        let config = gateway_config()?;
+        match preflight(&config).status {
             Ok(running) => {
-                if let Some(note) = running_gateway_build_note(&running.status) {
-                    eprintln!("{note}");
-                }
+                settle_outdated_gateway_for_managed_start(
+                    &config,
+                    running.status.binary_version.as_deref(),
+                );
                 return Ok(());
             }
             Err(effigy_gateway::GatewayError::NotRunning) => ManagedStartState::Stopped,
@@ -330,16 +355,219 @@ fn gateway_up_for_managed_task_with(
     run_managed_gateway_start(command)
 }
 
-/// One warning when the gateway a managed start uses runs a different build.
-fn running_gateway_build_note(status: &GatewayStatus) -> Option<String> {
+/// One warning when the gateway is running a different Effigy build: the
+/// structured block names both builds, the anomaly and the one command that
+/// reloads the gateway. `None` when the gateway already runs this build.
+fn gateway_build_mismatch_warning(binary_version: Option<&str>) -> Option<String> {
     let current = effigy_core::build_info::active_version();
-    if status.binary_version.as_deref() == Some(current.as_str()) {
+    if binary_version == Some(current.as_str()) {
         return None;
     }
-    Some(format!(
-        "[gateway] the gateway is running build {}; using it instead of replacing it with build {current}; `effigy gateway down` then `effigy gateway up` replaces it",
-        status.binary_version.as_deref().unwrap_or("unknown"),
-    ))
+    Some(
+        effigy_ui::HumanError::new("Gateway is running a different Effigy build")
+            .explain(format!(
+                "the running gateway serves the build that started it; this binary is {current}"
+            ))
+            .next_action("Run `effigy gateway restart` to reload the gateway on the current build")
+            .detail("running", binary_version.unwrap_or("unknown"))
+            .detail("current", current.as_str())
+            .render_warning_text(),
+    )
+}
+
+/// A managed start never replaces the gateway that runs. A gateway on another
+/// build is named in one warning, or, on an interactive terminal, offered once
+/// as a reload; a fixture or test process never reaches here.
+fn settle_outdated_gateway_for_managed_start(config: &GatewayConfig, binary_version: Option<&str>) {
+    let Some(warning) = gateway_build_mismatch_warning(binary_version) else {
+        return;
+    };
+    let current = effigy_core::build_info::active_version();
+    let running = binary_version.unwrap_or("unknown").to_owned();
+    let _ = settle_outdated_gateway(
+        &running,
+        &current,
+        warning,
+        // A managed start carries no output flag of its own: only a terminal
+        // stdout proves this run is a person's, not an envelope or a pipe.
+        managed_gateway_reload_interactive(),
+        prompt_gateway_reload,
+        || {
+            // A managed start that reloads writes the one event this process
+            // records for it, before the first replacement effect.
+            record_managed_gateway_start(config);
+            reload_gateway_now(config)
+        },
+    );
+}
+
+/// What a person answered to the one reload question.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GatewayReloadAnswer {
+    /// Enter, `y` or `yes`: stop the outdated gateway and start this build.
+    Reload,
+    /// `n`, `no`, any other word, EOF, or an unreadable stdin: keep it running.
+    Keep,
+}
+
+/// What became of a running gateway on another build.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GatewayReloadOutcome {
+    /// The gateway was stopped and started again on this build.
+    Reloaded,
+    /// The running gateway stays as it is.
+    Kept,
+    /// A requested reload failed; the warning already names the failure.
+    ReloadFailed,
+}
+
+/// Whether this process may ask a person to reload the gateway. It never
+/// prompts in a JSON or CI run, without a terminal on both input and output, or
+/// from a test harness or fixture (`#382`: a test never replaces the machine
+/// gateway).
+fn gateway_reload_may_prompt(
+    output_json: bool,
+    stdin_is_terminal: bool,
+    stderr_is_terminal: bool,
+    ci: bool,
+    test_harness: bool,
+    fixture: bool,
+) -> bool {
+    !output_json
+        && !ci
+        && stdin_is_terminal
+        && stderr_is_terminal
+        && may_drive_the_operator_gateway(false, test_harness, fixture)
+}
+
+/// [`gateway_reload_may_prompt`] for this process, given the caller's output
+/// mode: whether this run may ask a person to reload the gateway.
+fn gateway_reload_interactive(output_json: bool) -> bool {
+    gateway_reload_may_prompt(
+        output_json,
+        std::io::stdin().is_terminal(),
+        std::io::stderr().is_terminal(),
+        is_ci_environment(),
+        gateway_process_is_test_harness(),
+        gateway_process_is_fixture(),
+    )
+}
+
+/// [`gateway_reload_interactive`] for a managed start (`dev`, `container up`),
+/// which carries no output flag of its own: the CLI entrypoint's process-wide
+/// JSON answer is the same `--json` decision the command was dispatched with, so
+/// a terminal `--json` run never prompts. A stream's terminal state is never
+/// evidence either way.
+fn managed_gateway_reload_interactive() -> bool {
+    managed_gateway_reload_interactive_with(
+        effigy_ui::steps::json_output(),
+        std::io::stdin().is_terminal(),
+        std::io::stderr().is_terminal(),
+        is_ci_environment(),
+        gateway_process_is_test_harness(),
+        gateway_process_is_fixture(),
+    )
+}
+
+/// [`managed_gateway_reload_interactive`] over explicit facts, so a test drives
+/// every managed-start answer without writing the process-wide step state.
+fn managed_gateway_reload_interactive_with(
+    json_output: bool,
+    stdin_is_terminal: bool,
+    stderr_is_terminal: bool,
+    ci: bool,
+    test_harness: bool,
+    fixture: bool,
+) -> bool {
+    gateway_reload_may_prompt(
+        json_output,
+        stdin_is_terminal,
+        stderr_is_terminal,
+        ci,
+        test_harness,
+        fixture,
+    )
+}
+
+/// The answer a line of input carries. An empty line, `y` or `yes` reloads
+/// (the question's default); everything else keeps the gateway.
+fn parse_gateway_reload_answer(line: Option<&str>) -> GatewayReloadAnswer {
+    match line.map(str::trim).map(str::to_ascii_lowercase) {
+        Some(answer) if answer.is_empty() || answer == "y" || answer == "yes" => {
+            GatewayReloadAnswer::Reload
+        }
+        _ => GatewayReloadAnswer::Keep,
+    }
+}
+
+/// Ask the one reload question on stderr and read one line from stdin. EOF or
+/// an unreadable line keeps the gateway, so a closed stdin never reloads it.
+fn prompt_gateway_reload(running: &str, current: &str) -> GatewayReloadAnswer {
+    use std::io::Write as _;
+    let mut stderr = std::io::stderr();
+    let _ = write!(
+        stderr,
+        "Gateway is running build {running} (current is {current}). Reload gateway now? [Y/n]: "
+    );
+    let _ = stderr.flush();
+    let mut answer = String::new();
+    match std::io::stdin().read_line(&mut answer) {
+        Ok(0) => GatewayReloadAnswer::Keep,
+        Ok(_) => parse_gateway_reload_answer(Some(&answer)),
+        Err(_) => GatewayReloadAnswer::Keep,
+    }
+}
+
+/// Settle a running gateway on another build: keep it and explain how to reload
+/// it, or ask, and reload when the person agrees. The prompt and the reload are
+/// injected, so every branch is testable without a terminal or a real gateway.
+fn settle_outdated_gateway(
+    running: &str,
+    current: &str,
+    warning: String,
+    interactive: bool,
+    prompt: impl FnOnce(&str, &str) -> GatewayReloadAnswer,
+    reload: impl FnOnce() -> Result<(), String>,
+) -> GatewayReloadOutcome {
+    if !interactive {
+        eprintln!("{warning}");
+        return GatewayReloadOutcome::Kept;
+    }
+    match prompt(running, current) {
+        GatewayReloadAnswer::Keep => {
+            eprintln!(
+                "[gateway] keeping running gateway ({running}); run `effigy gateway restart` when ready"
+            );
+            GatewayReloadOutcome::Kept
+        }
+        GatewayReloadAnswer::Reload => match reload() {
+            Ok(()) => {
+                eprintln!("[gateway] reloaded gateway ({running} \u{2192} {current})");
+                GatewayReloadOutcome::Reloaded
+            }
+            Err(error) => {
+                eprintln!(
+                    "{}",
+                    effigy_ui::HumanError::new("The gateway could not be reloaded")
+                        .explain(format!("reloading it on build {current} failed: {error}"))
+                        .next_action("Run `effigy gateway restart` and read its output")
+                        .detail("running", running)
+                        .detail("current", current)
+                        .render_warning_text()
+                );
+                GatewayReloadOutcome::ReloadFailed
+            }
+        },
+    }
+}
+
+/// Replace the running gateway on this build: the same stop and start the
+/// explicit commands run. It writes no event of its own: the command boundary
+/// that asked for the reload already recorded its one action.
+fn reload_gateway_now(config: &GatewayConfig) -> Result<(), String> {
+    stop_gateway_with_config(config, false).map_err(|error| error.to_string())?;
+    start_gateway_with_config(config, false).map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 fn run_managed_gateway_start(command: &str) -> Result<(), RunnerError> {
@@ -627,7 +855,22 @@ fn run_gateway_up_with_config(
 ) -> Result<String, RunnerError> {
     refuse_a_fixtures_operator_gateway_mutation(config)?;
     record_gateway_up_command(config);
+    start_gateway_with_config(config, output_json)
+}
+
+/// The start `gateway up` runs, without the command-boundary refusal and event:
+/// `gateway restart` and the reload prompt record their own action.
+fn start_gateway_with_config(
+    config: &GatewayConfig,
+    output_json: bool,
+) -> Result<String, RunnerError> {
     if !config.is_private() {
+        // `up` never replaces a running gateway, so one on another build is the
+        // one case it reports without starting: named once, offered once as a
+        // reload, and otherwise reported as it runs.
+        if let Some(running) = settle_outdated_gateway_for_up(config, output_json)? {
+            return render_gateway_up_status(&running, output_json);
+        }
         let result = live_progress(
             "starting the gateway process",
             &format!("the gateway to answer on {}", config.proxy.bind_addr),
@@ -642,18 +885,70 @@ fn run_gateway_up_with_config(
         // published. This is a read of existing state, never a publication,
         // and its own step reports a read failure without failing the command.
         read_existing_routes_step(config);
-        return Ok(if output_json {
-            serde_json::to_string(&result)
-                .map_err(|e| RunnerError::task_invocation(e.to_string()))?
-        } else {
-            format!(
-                "Gateway {}{}",
-                result.status,
-                result.reason.map(|r| format!(": {r}")).unwrap_or_default()
-            )
-        });
+        return render_gateway_up_status(&result, output_json);
     }
     run_private_gateway_up(config, output_json)
+}
+
+/// `gateway up` never replaces a running gateway, so a gateway on another
+/// Effigy build is the one case it settles without starting: the caller gets
+/// the status to report when the gateway stays, and `None` when it should take
+/// its own start path. An unreadable or not-ready status stays that path's own
+/// report.
+fn settle_outdated_gateway_for_up(
+    config: &GatewayConfig,
+    output_json: bool,
+) -> Result<Option<effigy_gateway::operator::Status>, RunnerError> {
+    let Ok(status) = effigy_gateway::operator::status(config) else {
+        return Ok(None);
+    };
+    let Some(warning) = gateway_build_mismatch_warning(status.binary_version.as_deref()) else {
+        return Ok(None);
+    };
+    if !status.ready {
+        return Ok(None);
+    }
+    let current = effigy_core::build_info::active_version();
+    let running = status
+        .binary_version
+        .clone()
+        .unwrap_or_else(|| "unknown".to_owned());
+    let outcome = settle_outdated_gateway(
+        &running,
+        &current,
+        warning,
+        gateway_reload_interactive(output_json),
+        prompt_gateway_reload,
+        || reload_gateway_now(config),
+    );
+    // Whether it was reloaded or kept, this command reports the gateway it now
+    // finds. A failed reload already printed its own warning, and the running
+    // gateway is reported as it is.
+    if outcome == GatewayReloadOutcome::Reloaded {
+        return effigy_gateway::operator::status(config)
+            .map(Some)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()));
+    }
+    Ok(Some(status))
+}
+
+fn render_gateway_up_status(
+    status: &effigy_gateway::operator::Status,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    Ok(if output_json {
+        serde_json::to_string(status).map_err(|e| RunnerError::task_invocation(e.to_string()))?
+    } else {
+        format!(
+            "Gateway {}{}",
+            status.status,
+            status
+                .reason
+                .as_ref()
+                .map(|r| format!(": {r}"))
+                .unwrap_or_default()
+        )
+    })
 }
 
 fn run_private_gateway_up(
@@ -782,6 +1077,15 @@ fn run_gateway_down_with_config(
 ) -> Result<String, RunnerError> {
     refuse_a_fixtures_operator_gateway_mutation(config)?;
     record_gateway_down_command(config);
+    stop_gateway_with_config(config, output_json)
+}
+
+/// The stop `gateway down` runs, without the command-boundary refusal and
+/// event: `gateway restart` and the reload prompt record their own action.
+fn stop_gateway_with_config(
+    config: &GatewayConfig,
+    output_json: bool,
+) -> Result<String, RunnerError> {
     if !config.is_private() {
         let result = live_progress(
             "stopping the gateway process",
@@ -803,7 +1107,11 @@ fn run_gateway_down_with_config(
             format!(
                 "Gateway {}{}",
                 result.status,
-                result.reason.map(|r| format!(": {r}")).unwrap_or_default()
+                result
+                    .reason
+                    .as_ref()
+                    .map(|r| format!(": {r}"))
+                    .unwrap_or_default()
             )
         });
     }
@@ -932,6 +1240,81 @@ fn run_gateway_down_with_config(
     })
 }
 
+/// `effigy gateway restart`: stop the gateway when one runs, then start this
+/// build. It is the one-command reload an upgraded binary names when the daemon
+/// still serves an older build, and it works in text and `--json` alike.
+fn run_gateway_restart_with_config(
+    config: &GatewayConfig,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    run_gateway_restart_with(
+        config,
+        output_json,
+        refuse_a_fixtures_operator_gateway_mutation,
+        |config| stop_gateway_with_config(config, false).map(|_| ()),
+        |config| start_gateway_with_config(config, false).map(|_| ()),
+    )
+}
+
+/// The restart's whole lifecycle: refuse a fixture before any effect, record the
+/// one action, read the build that runs, stop, start, then report both builds.
+/// The gate and the two effects are injected so a unit test proves their order,
+/// the refusal and both renders without touching a machine gateway.
+fn run_gateway_restart_with(
+    config: &GatewayConfig,
+    output_json: bool,
+    gate: impl FnOnce(&GatewayConfig) -> Result<(), RunnerError>,
+    stop: impl FnOnce(&GatewayConfig) -> Result<(), RunnerError>,
+    start: impl FnOnce(&GatewayConfig) -> Result<(), RunnerError>,
+) -> Result<String, RunnerError> {
+    gate(config)?;
+    // One action is one record: the restart is recorded as the `up` that
+    // requested the replacement, with its cause naming the stop it performs.
+    record_operator_action(
+        config,
+        effigy_kernel::run::OperatorAction::Up,
+        "gateway restart command",
+    );
+    // The build that runs now is read before the stop clears its records.
+    let previous = effigy_gateway::identity::read_gateway_version(&config.pid_file_path)
+        .ok()
+        .flatten();
+    stop(config)?;
+    start(config)?;
+    let binary_version = effigy_gateway::identity::read_gateway_version(&config.pid_file_path)
+        .ok()
+        .flatten();
+    render_gateway_restart_result(config, previous.as_deref(), binary_version, output_json)
+}
+
+fn render_gateway_restart_result(
+    config: &GatewayConfig,
+    previous: Option<&str>,
+    binary_version: Option<String>,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    if output_json {
+        return Ok(json!({
+            "schema": "effigy.gateway.command.v1",
+            "schema_version": 1,
+            "ok": true,
+            "action": "restart",
+            "running": true,
+            "previous_binary_version": previous,
+            "binary_version": binary_version,
+            "gateway_dir": config_dir_display(config),
+            "warnings": Vec::<String>::new(),
+        })
+        .to_string());
+    }
+    Ok(format!(
+        "[ok] gateway restarted\nprevious_build: {}\nbinary_version: {}\nstate: {}",
+        previous.unwrap_or("none (the gateway was stopped)"),
+        binary_version.as_deref().unwrap_or("unknown"),
+        config_dir_display(config),
+    ))
+}
+
 /// Structured refusal for a gateway status this caller cannot prove.
 ///
 /// The truth stays `unknown`: `ok` is false and the command exits non-zero, so
@@ -1042,6 +1425,30 @@ fn resolve_status_for_status_command(
     }
 }
 
+/// The plain-text `gateway status` report for the operator gateway: the state,
+/// the build the running daemon reports, and the reload warning when that build
+/// is not this one. The JSON payload keeps its own fields unchanged.
+fn render_gateway_status_text(status: &effigy_gateway::operator::Status) -> String {
+    let mut lines = vec![format!(
+        "Gateway {}{}",
+        status.status,
+        status
+            .reason
+            .as_ref()
+            .map(|reason| format!(": {reason}"))
+            .unwrap_or_default()
+    )];
+    if let Some(version) = status.binary_version.as_deref() {
+        lines.push(format!("binary_version: {version}"));
+    }
+    if status.ready {
+        if let Some(warning) = gateway_build_mismatch_warning(status.binary_version.as_deref()) {
+            lines.push(warning);
+        }
+    }
+    lines.join("\n")
+}
+
 fn run_gateway_status_with_config(
     config: &GatewayConfig,
     output_json: bool,
@@ -1074,11 +1481,7 @@ fn run_gateway_status_with_config(
             serde_json::to_string(&result)
                 .map_err(|e| RunnerError::task_invocation(e.to_string()))?
         } else {
-            format!(
-                "Gateway {}{}",
-                result.status,
-                result.reason.map(|r| format!(": {r}")).unwrap_or_default()
-            )
+            render_gateway_status_text(&result)
         });
     }
     let probed = live_progress(
@@ -1176,6 +1579,11 @@ fn run_gateway_status_with_config(
             lines.push(format!("binary_version: {version}"));
         }
         lines.push(format!("live_routes: {}", running.route_count));
+        // A running gateway keeps serving the build that started it: name the
+        // mismatch and the one command that reloads it.
+        if let Some(warning) = gateway_build_mismatch_warning(running.binary_version.as_deref()) {
+            lines.push(warning);
+        }
     }
     if !conflicts.is_empty() {
         lines.push(format!(

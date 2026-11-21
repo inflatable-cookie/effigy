@@ -98,6 +98,7 @@ pub fn run_main(raw_args: Vec<String>) -> std::io::Result<()> {
                 || matches!(command, effigy_cli::Command::Gateway(args)
                     if args.private.is_none() && matches!(args.subcommand,
                         effigy_cli::GatewaySubcommand::Up
+                        | effigy_cli::GatewaySubcommand::Restart
                         | effigy_cli::GatewaySubcommand::Setup { .. }
                         | effigy_cli::GatewaySubcommand::SetupTls))
         });

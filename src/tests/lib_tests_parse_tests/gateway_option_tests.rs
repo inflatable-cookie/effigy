@@ -3,8 +3,8 @@ use crate::tests::prelude::{
     InternalGatewayArgs, PathBuf,
 };
 
-/// One row per simple `gateway` subcommand mapping: status, up, down and
-/// setup-tls with the local `--json` arm.
+/// One row per simple `gateway` subcommand mapping: status, up, down,
+/// restart and setup-tls with the local `--json` arm.
 #[test]
 fn parse_gateway_subcommands_map_their_flags() {
     let cases: &[(&[&str], GatewaySubcommand, bool)] = &[
@@ -15,6 +15,11 @@ fn parse_gateway_subcommands_map_their_flags() {
         ),
         (&["gateway", "up"], GatewaySubcommand::Up, false),
         (&["gateway", "down"], GatewaySubcommand::Down, false),
+        (
+            &["gateway", "restart", "--json"],
+            GatewaySubcommand::Restart,
+            true,
+        ),
         (
             &["gateway", "setup-tls", "--json"],
             GatewaySubcommand::SetupTls,
@@ -79,6 +84,37 @@ fn parse_gateway_private_startup_and_tls_options() {
             ..
         })
     ));
+}
+
+#[test]
+fn parse_gateway_restart_takes_the_same_private_startup_options_as_up() {
+    let restart = parse_command(vec![
+        "gateway".to_owned(),
+        "restart".to_owned(),
+        "--private-state-root".to_owned(),
+        "/tmp/effigy-gateway-private".to_owned(),
+        "--dns-addr".to_owned(),
+        "127.0.0.1:0".to_owned(),
+        "--proxy-addr".to_owned(),
+        "127.0.0.1:0".to_owned(),
+        "--https-addr".to_owned(),
+        "127.0.0.1:0".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("private gateway restart options");
+    assert_eq!(
+        restart,
+        Command::Gateway(GatewayArgs {
+            subcommand: GatewaySubcommand::Restart,
+            private: Some(GatewayPrivateArgs {
+                state_root: PathBuf::from("/tmp/effigy-gateway-private"),
+                dns_addr: Some("127.0.0.1:0".parse().unwrap()),
+                proxy_addr: Some("127.0.0.1:0".parse().unwrap()),
+                https_addr: Some("127.0.0.1:0".parse().unwrap()),
+            }),
+            output_json: true,
+        })
+    );
 }
 
 #[test]

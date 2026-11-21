@@ -27,6 +27,7 @@ where
         },
         "up" => GatewaySubcommand::Up,
         "down" => GatewaySubcommand::Down,
+        "restart" => GatewaySubcommand::Restart,
         "status" => GatewaySubcommand::Status,
         "repair" => {
             return Err(CliParseError::InvalidArguments(
@@ -74,6 +75,7 @@ where
                     subcommand,
                     GatewaySubcommand::Up
                         | GatewaySubcommand::Down
+                        | GatewaySubcommand::Restart
                         | GatewaySubcommand::Status
                         | GatewaySubcommand::SetupTls
                 ) && private_state_root.is_none() =>
@@ -85,7 +87,12 @@ where
                     },
                 )?));
             }
-            "--dns-addr" if matches!(subcommand, GatewaySubcommand::Up) && dns_addr.is_none() => {
+            "--dns-addr"
+                if matches!(
+                    subcommand,
+                    GatewaySubcommand::Up | GatewaySubcommand::Restart
+                ) && dns_addr.is_none() =>
+            {
                 dns_addr = Some(parse_gateway_addr(
                     "--dns-addr",
                     next_required_value(
@@ -97,7 +104,10 @@ where
                 )?);
             }
             "--proxy-addr"
-                if matches!(subcommand, GatewaySubcommand::Up) && proxy_addr.is_none() =>
+                if matches!(
+                    subcommand,
+                    GatewaySubcommand::Up | GatewaySubcommand::Restart
+                ) && proxy_addr.is_none() =>
             {
                 proxy_addr = Some(parse_gateway_addr(
                     "--proxy-addr",
@@ -110,7 +120,10 @@ where
                 )?);
             }
             "--https-addr"
-                if matches!(subcommand, GatewaySubcommand::Up) && https_addr.is_none() =>
+                if matches!(
+                    subcommand,
+                    GatewaySubcommand::Up | GatewaySubcommand::Restart
+                ) && https_addr.is_none() =>
             {
                 https_addr = Some(parse_gateway_addr(
                     "--https-addr",

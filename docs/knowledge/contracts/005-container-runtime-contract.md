@@ -669,8 +669,14 @@ Gateway route publication and withdrawal write the owner-checked route table
 without gating on daemon identity. Managed startup reuses a running daemon and
 warns when its build differs; only positive absence starts one. An unavailable
 observation warns and proceeds without starting a second daemon. Replacement
-belongs to explicit `gateway down` / `gateway up`. Fixture commands require a
-private root, including stops.
+belongs to explicit `gateway down` / `gateway up` or `gateway restart`. On an
+interactive terminal a managed start or `gateway up` asks once whether to
+reload a daemon on another build; a non-interactive run, `--json`, CI or a
+fixture/test process never prompts, never reads stdin and never replaces the
+machine gateway. Fixture commands require a private root, including stops.
+
+`gateway restart` is one operator action: it is recorded as the `up` event that
+requested the replacement, with its cause naming the stop it performs.
 
 Every operative `gateway up`, `gateway down` and `gateway setup` action appends
 one bounded event to `gateway.stderr.log` in the gateway state directory it

@@ -485,9 +485,15 @@ pub enum BundleSubcommand {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GatewaySubcommand {
-    Setup { suffixes: Vec<String>, remove: bool },
+    Setup {
+        suffixes: Vec<String>,
+        remove: bool,
+    },
     Up,
     Down,
+    /// Stop the running gateway, if any, then start this build: the explicit
+    /// reload an upgraded binary asks for when another build owns the daemon.
+    Restart,
     Status,
     SetupTls,
 }

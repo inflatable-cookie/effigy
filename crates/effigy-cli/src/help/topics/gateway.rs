@@ -14,11 +14,13 @@ pub(crate) fn render_gateway_help<R: HelpRenderer + ?Sized>(renderer: &mut R) ->
             "On Linux, the administrator prompt installs the split-DNS unit and applies only `CAP_NET_BIND_SERVICE` to the installed binary; setup then proves it by binding the configured low ports as you. `gateway setup --remove` removes those, and only records Effigy wrote.",
             "A route's owner is its checkout path. The same checkout replaces its own route; another checkout takes the domain automatically when that path is gone or its target is not listening, and is refused by name otherwise.",
             "`gateway up`, `down`, `status` and route registration never request administrator access; run setup to migrate a v0.14.1 root daemon.",
+            "`gateway restart` stops the running gateway, if one runs, and starts this build: it is the one command that replaces a daemon left running an older Effigy after an upgrade.",
             "`--private-state-root <DIR>` (or `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT=<DIR>` for managed startup) runs a disposable, unprivileged loopback gateway with its own CA. It never touches host trust or resolver state; clients trust `<DIR>/ca/rootCA.pem` and use the reported addresses.",
         ],
         &[
             "effigy gateway setup [--suffix <DOMAIN>] [--remove] [--json]",
             "effigy gateway up [--private-state-root <DIR>] [--dns-addr <IP:PORT>] [--proxy-addr <IP:PORT>] [--https-addr <IP:PORT>] [--json]",
+            "effigy gateway restart [--private-state-root <DIR>] [--dns-addr <IP:PORT>] [--proxy-addr <IP:PORT>] [--https-addr <IP:PORT>] [--json]",
             "effigy gateway down [--private-state-root <DIR>] [--json]",
             "effigy gateway status [--private-state-root <DIR>] [--json]",
             "effigy gateway setup-tls [--private-state-root <DIR>] [--json]",
@@ -37,6 +39,7 @@ pub(crate) fn render_gateway_help<R: HelpRenderer + ?Sized>(renderer: &mut R) ->
             "effigy gateway up",
             "effigy gateway status --json",
             "effigy gateway setup",
+            "effigy gateway restart",
             "effigy gateway down",
         ],
     )
