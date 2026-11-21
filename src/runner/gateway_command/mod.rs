@@ -280,11 +280,21 @@ fn record_gateway_setup(config: &GatewayConfig, remove: bool) {
 /// daemon, or stop the operator's one (papercut 01530b7e, 06d1cd9e). Fixtures
 /// own a private gateway root.
 fn refuse_a_fixtures_operator_gateway_mutation(config: &GatewayConfig) -> Result<(), RunnerError> {
-    if may_drive_the_operator_gateway(
-        config.is_private(),
+    refuse_a_fixtures_operator_gateway_mutation_with(
+        config,
         gateway_process_is_test_harness(),
         gateway_process_is_fixture(),
-    ) {
+    )
+}
+
+/// [`refuse_a_fixtures_operator_gateway_mutation`] over explicit process facts,
+/// so a test drives the real refusal without pretending to be a fixture.
+fn refuse_a_fixtures_operator_gateway_mutation_with(
+    config: &GatewayConfig,
+    test_harness: bool,
+    fixture: bool,
+) -> Result<(), RunnerError> {
+    if may_drive_the_operator_gateway(config.is_private(), test_harness, fixture) {
         return Ok(());
     }
     Err(RunnerError::task_invocation(format!(
@@ -444,10 +454,39 @@ fn gateway_reload_interactive(output_json: bool) -> bool {
 }
 
 /// [`gateway_reload_interactive`] for a managed start (`dev`, `container up`),
-/// which has no output flag of its own: a piped or envelope-owned stdout means
-/// a machine caller, so only a terminal stdout may be asked.
+/// which carries no output flag of its own: the CLI entrypoint's process-wide
+/// JSON answer is the same `--json` decision the command was dispatched with, so
+/// a terminal `--json` run never prompts. A stream's terminal state is never
+/// evidence either way.
 fn managed_gateway_reload_interactive() -> bool {
-    gateway_reload_interactive(!std::io::stdout().is_terminal())
+    managed_gateway_reload_interactive_with(
+        effigy_ui::steps::json_output(),
+        std::io::stdin().is_terminal(),
+        std::io::stderr().is_terminal(),
+        is_ci_environment(),
+        gateway_process_is_test_harness(),
+        gateway_process_is_fixture(),
+    )
+}
+
+/// [`managed_gateway_reload_interactive`] over explicit facts, so a test drives
+/// every managed-start answer without writing the process-wide step state.
+fn managed_gateway_reload_interactive_with(
+    json_output: bool,
+    stdin_is_terminal: bool,
+    stderr_is_terminal: bool,
+    ci: bool,
+    test_harness: bool,
+    fixture: bool,
+) -> bool {
+    gateway_reload_may_prompt(
+        json_output,
+        stdin_is_terminal,
+        stderr_is_terminal,
+        ci,
+        test_harness,
+        fixture,
+    )
 }
 
 /// The answer a line of input carries. An empty line, `y` or `yes` reloads
@@ -1208,7 +1247,27 @@ fn run_gateway_restart_with_config(
     config: &GatewayConfig,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    refuse_a_fixtures_operator_gateway_mutation(config)?;
+    run_gateway_restart_with(
+        config,
+        output_json,
+        refuse_a_fixtures_operator_gateway_mutation,
+        |config| stop_gateway_with_config(config, false).map(|_| ()),
+        |config| start_gateway_with_config(config, false).map(|_| ()),
+    )
+}
+
+/// The restart's whole lifecycle: refuse a fixture before any effect, record the
+/// one action, read the build that runs, stop, start, then report both builds.
+/// The gate and the two effects are injected so a unit test proves their order,
+/// the refusal and both renders without touching a machine gateway.
+fn run_gateway_restart_with(
+    config: &GatewayConfig,
+    output_json: bool,
+    gate: impl FnOnce(&GatewayConfig) -> Result<(), RunnerError>,
+    stop: impl FnOnce(&GatewayConfig) -> Result<(), RunnerError>,
+    start: impl FnOnce(&GatewayConfig) -> Result<(), RunnerError>,
+) -> Result<String, RunnerError> {
+    gate(config)?;
     // One action is one record: the restart is recorded as the `up` that
     // requested the replacement, with its cause naming the stop it performs.
     record_operator_action(
@@ -1220,8 +1279,8 @@ fn run_gateway_restart_with_config(
     let previous = effigy_gateway::identity::read_gateway_version(&config.pid_file_path)
         .ok()
         .flatten();
-    stop_gateway_with_config(config, false)?;
-    start_gateway_with_config(config, false)?;
+    stop(config)?;
+    start(config)?;
     let binary_version = effigy_gateway::identity::read_gateway_version(&config.pid_file_path)
         .ok()
         .flatten();

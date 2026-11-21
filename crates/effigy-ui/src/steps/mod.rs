@@ -608,6 +608,14 @@ pub fn mode() -> StepMode {
     global_sink().mode()
 }
 
+/// Whether this invocation asked for machine output (`--json`). The CLI
+/// entrypoint resolves the request once for every command and stores it here,
+/// so a nested step deep in a run reads the same answer instead of guessing
+/// from a stream's terminal state.
+pub fn json_output() -> bool {
+    JSON_OUTPUT.load(Ordering::SeqCst)
+}
+
 /// Write one plain line to stderr, above any running spinner: a warning or a
 /// note that is not a step's outcome. `--json` writes none; the envelope
 /// carries what the operator needs.

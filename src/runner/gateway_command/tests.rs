@@ -2766,6 +2766,40 @@ fn only_an_interactive_person_is_asked_to_reload_the_gateway() {
     }
 }
 
+/// A managed start (`dev`, `container up`) never prompts in a JSON run, even
+/// with every stream a terminal: it reads the CLI's process-wide `--json`
+/// answer, never a stream's terminal state. A plain terminal run is asked.
+#[test]
+fn a_managed_start_never_prompts_in_a_json_run_on_a_terminal() {
+    assert!(
+        !managed_gateway_reload_interactive_with(true, true, true, false, false, false),
+        "a terminal `--json` run must never be asked"
+    );
+    assert!(
+        managed_gateway_reload_interactive_with(false, true, true, false, false, false),
+        "a person at a plain terminal is asked"
+    );
+    for (output_json, stdin_tty, stderr_tty, ci, test_harness, fixture) in [
+        (false, false, true, false, false, false),
+        (false, true, false, false, false, false),
+        (false, true, true, true, false, false),
+        (false, true, true, false, true, false),
+        (false, true, true, false, false, true),
+    ] {
+        assert!(
+            !managed_gateway_reload_interactive_with(
+                output_json,
+                stdin_tty,
+                stderr_tty,
+                ci,
+                test_harness,
+                fixture
+            ),
+            "json={output_json} stdin={stdin_tty} stderr={stderr_tty} ci={ci} test={test_harness} fixture={fixture}"
+        );
+    }
+}
+
 /// Yes, Enter and `y` all reload the outdated gateway exactly once.
 #[test]
 fn a_person_agreeing_reloads_the_outdated_gateway_once() {
@@ -2831,4 +2865,158 @@ fn a_failed_reload_is_reported_and_never_claimed() {
         || Err("the gateway supervisor refused admission".to_owned()),
     );
     assert_eq!(outcome, GatewayReloadOutcome::ReloadFailed);
+}
+
+/// A fixture or test process may not restart the machine gateway: the refusal
+/// comes before any effect and writes no action record.
+#[test]
+fn gateway_restart_refuses_a_fixture_process_before_any_effect() {
+    let home = tempfile::tempdir().expect("fresh gateway home");
+    let config = GatewayConfig::standard(home.path().join(GATEWAY_DIR_NAME));
+    let refused = run_gateway_restart_with(
+        &config,
+        false,
+        |config| refuse_a_fixtures_operator_gateway_mutation_with(config, false, true),
+        |_| panic!("a refused restart must not stop the gateway"),
+        |_| panic!("a refused restart must not start the gateway"),
+    )
+    .expect_err("a fixture process may not restart the machine gateway");
+    let message = refused.to_string();
+    assert!(message.contains("fixture process"), "{message}");
+    assert!(
+        message.contains("refusing to start, stop or replace the machine gateway"),
+        "{message}"
+    );
+    assert!(
+        !config
+            .pid_file_path
+            .parent()
+            .expect("gateway directory")
+            .join("gateway.stderr.log")
+            .exists(),
+        "a refused restart writes no action record"
+    );
+}
+
+/// A restart reads the build that runs before the stop clears its records,
+/// stops before it starts, records one `up` action, and reports both builds.
+#[test]
+fn gateway_restart_stops_before_it_starts_and_reports_both_builds() {
+    let dir = tempfile::tempdir().expect("private gateway fixture");
+    let root = std::fs::canonicalize(dir.path()).expect("canonical private root");
+    std::fs::set_permissions(&root, std::os::unix::fs::PermissionsExt::from_mode(0o700))
+        .expect("private root mode");
+    let config = GatewayConfig::private(root.clone());
+    let version_path = config.pid_file_path.with_extension("version");
+    std::fs::write(&version_path, "v0.14.1+local.d7fc077\n").expect("running build record");
+    std::fs::set_permissions(
+        &version_path,
+        std::os::unix::fs::PermissionsExt::from_mode(0o600),
+    )
+    .expect("running build record mode");
+
+    let order = std::cell::RefCell::new(Vec::new());
+    let reported = run_gateway_restart_with(
+        &config,
+        false,
+        |_| Ok(()),
+        |config| {
+            order.borrow_mut().push("stop");
+            assert!(
+                config.pid_file_path.with_extension("version").is_file(),
+                "the stop runs after the running build was read, and before its record is cleared"
+            );
+            std::fs::remove_file(config.pid_file_path.with_extension("version"))
+                .expect("the stop clears the old build record");
+            Ok(())
+        },
+        |config| {
+            order.borrow_mut().push("start");
+            let current = effigy_core::build_info::active_version();
+            let version_path = config.pid_file_path.with_extension("version");
+            std::fs::write(&version_path, format!("{current}\n")).expect("started build record");
+            std::fs::set_permissions(
+                &version_path,
+                std::os::unix::fs::PermissionsExt::from_mode(0o600),
+            )
+            .expect("started build record mode");
+            Ok(())
+        },
+    )
+    .expect("a restart reports what it did");
+    assert_eq!(*order.borrow(), ["stop", "start"]);
+    assert!(
+        reported.contains("previous_build: v0.14.1+local.d7fc077"),
+        "{reported}"
+    );
+    assert!(
+        reported.contains(&format!(
+            "binary_version: {}",
+            effigy_core::build_info::active_version()
+        )),
+        "{reported}"
+    );
+
+    let log = std::fs::read_to_string(root.join("gateway.stderr.log"))
+        .expect("the restart is recorded beside the gateway records");
+    let record: serde_json::Value = serde_json::from_str(log.trim()).expect("one event line");
+    assert_eq!(record["event"], "gateway_up");
+    assert_eq!(record["action"], "up");
+    assert_eq!(record["cause"], "gateway restart command");
+}
+
+/// A stop that fails ends the restart: the start never runs and no reload is
+/// claimed.
+#[test]
+fn gateway_restart_never_starts_after_a_failed_stop() {
+    let home = tempfile::tempdir().expect("fresh gateway home");
+    let config = GatewayConfig::private(home.path().to_path_buf());
+    let refused = run_gateway_restart_with(
+        &config,
+        false,
+        |_| Ok(()),
+        |_| Err(RunnerError::task_invocation("the gateway stop was refused")),
+        |_| panic!("a failed stop must not be followed by a start"),
+    )
+    .expect_err("a failed stop ends the restart");
+    assert!(
+        refused.to_string().contains("the gateway stop was refused"),
+        "{refused}"
+    );
+}
+
+/// `run_gateway` routes `restart` into the restart command itself: the answer is
+/// the gateway lifecycle's own refusal, never a routing or argument error, and
+/// the machine gateway is never touched. In `nextest` the run is a fixture
+/// process, so the library's isolation guard is what refuses the stop before any
+/// effect; without it the start reaches its own setup refusal.
+#[test]
+fn gateway_restart_dispatches_to_the_restart_command() {
+    let home = tempfile::tempdir().expect("fresh gateway home");
+    let _home_guard = set_test_gateway_home(home.path());
+    let error = run_gateway(GatewayArgs {
+        subcommand: GatewaySubcommand::Restart,
+        private: None,
+        output_json: false,
+    })
+    .expect_err("a test process cannot restart the machine gateway");
+    let message = error.to_string();
+    assert!(
+        !message.contains("unknown argument") && !message.contains("unknown subcommand"),
+        "restart must be routed, not refused as an argument: {message}"
+    );
+    assert!(
+        message.contains("refusing operator gateway mutation")
+            || message.contains("effigy gateway setup")
+            || message.contains("gateway.setup"),
+        "the gateway lifecycle itself must answer a restart: {message}"
+    );
+    assert!(
+        !home
+            .path()
+            .join(GATEWAY_DIR_NAME)
+            .join("gateway.pid")
+            .exists(),
+        "a refused restart leaves no PID record: {message}"
+    );
 }
