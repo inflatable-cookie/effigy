@@ -195,6 +195,9 @@ impl BackendCli for HostCli {
     }
 
     fn launch_program(&self, program: &str, deadline: Instant) -> Result<OsString, String> {
+        if program == "ssh" {
+            return Ok(host_program(program));
+        }
         let binding = self.binding.as_ref().ok_or("backend binding missing")?;
         Ok(binding.verify(program, deadline)?.0.as_os_str().to_owned())
     }
@@ -464,17 +467,10 @@ impl<C: BackendCli> ComposeRemote<C> {
         }
         let mut flags = Vec::new();
         let colima = container.kind == BackendKind::Colima;
-        // `terminal` reported Colima's downgrade, so the kernel frames on
-        // stderr; a terminal reaching here would frame on the wrong stream.
-        match (cmd.terminal, colima) {
-            (RemoteTerminal::None, _) => {}
-            (RemoteTerminal::Stdin, _) => flags.push(OsString::from("-i")),
-            (RemoteTerminal::Tty, true) => {
-                return Err(inconsistent("Colima cannot carry a backend terminal"))
-            }
-            (RemoteTerminal::Tty, false) => {
-                flags.extend(["-i", "-t"].map(OsString::from));
-            }
+        match cmd.terminal {
+            RemoteTerminal::None => {}
+            RemoteTerminal::Stdin => flags.push(OsString::from("-i")),
+            RemoteTerminal::Tty => flags.extend(["-i", "-t"].map(OsString::from)),
         }
         if let Some(user) = &exec.user {
             flags.extend([OsString::from("-u"), OsString::from(user)]);
@@ -484,7 +480,11 @@ impl<C: BackendCli> ComposeRemote<C> {
         }
         let mut argv = vec![OsString::from("/bin/sh"), OsString::from("-c")];
         if colima {
-            argv.push(OsString::from(COLIMA_RELAY));
+            argv.push(OsString::from(if cmd.terminal == RemoteTerminal::Tty {
+                COLIMA_TTY_RELAY
+            } else {
+                COLIMA_RELAY
+            }));
             argv.push(OsString::from("effigy-remote"));
             argv.push(OsString::from(names.len().to_string()));
             argv.extend(names.iter().cloned());
@@ -494,12 +494,20 @@ impl<C: BackendCli> ComposeRemote<C> {
                     .map_err(|error| inconsistent(&error))?,
             );
             argv.push(OsString::from(&container.context));
-            argv.push(OsString::from(if cmd.terminal == RemoteTerminal::None {
-                "none"
+            if cmd.terminal == RemoteTerminal::Tty {
+                argv.push(
+                    self.cli
+                        .launch_program("ssh", deadline)
+                        .map_err(|error| inconsistent(&error))?,
+                );
             } else {
-                "stdin"
-            }));
-            argv.push(OsString::from(COLIMA_VM));
+                argv.push(OsString::from(if cmd.terminal == RemoteTerminal::None {
+                    "none"
+                } else {
+                    "stdin"
+                }));
+                argv.push(OsString::from(COLIMA_VM));
+            }
             argv.push(OsString::from("exec"));
             argv.extend(flags);
             for name in &names {
@@ -739,17 +747,8 @@ impl<C: BackendCli> RemoteExecAdapter for ComposeRemote<C> {
             .restore_recovery(binding, deadline)
             .map_err(|error| inconsistent(&error))
     }
-    /// Colima's VM shell carries the forwarded values on stdin, so it cannot
-    /// also hold a terminal: a terminal request there attaches stdin only.
-    fn terminal(&self, id: &ContainerIdentity, requested: RemoteTerminal) -> RemoteTerminal {
-        match RemoteContainer::parse(&id.id) {
-            Some(container)
-                if container.kind == BackendKind::Colima && requested == RemoteTerminal::Tty =>
-            {
-                RemoteTerminal::Stdin
-            }
-            _ => requested,
-        }
+    fn terminal(&self, _id: &ContainerIdentity, requested: RemoteTerminal) -> RemoteTerminal {
+        requested
     }
 
     fn identity(
@@ -1145,6 +1144,49 @@ wait "$pid"
 status=$?
 trap '' TERM
 kill -TERM 0 2>/dev/null
+exit "$status"
+"#;
+
+/// TTY relay: stage the private launch script before attaching the terminal.
+pub(crate) const COLIMA_TTY_RELAY: &str = r#"n=$1; shift
+names=
+while [ "$n" -gt 0 ]; do names="$names $1"; shift; n=$((n - 1)); done
+colima=$1 profile=$2 ssh=$3; shift 3
+umask 077
+cfg=$(mktemp "${TMPDIR:-/tmp}/effigy-ssh.XXXXXX") || exit 125
+vm_file=
+cleanup() {
+    rm -f "$cfg"
+    if [ -n "$vm_file" ]; then
+        "$colima" ssh --profile "$profile" -- rm -f "$vm_file" </dev/null >/dev/null 2>&1 || :
+    fi
+}
+trap cleanup EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
+trap 'exit 129' HUP
+"$colima" ssh-config --profile "$profile" > "$cfg" || exit 125
+host=$(awk 'tolower($1) == "host" && NF == 2 { print $2; exit }' "$cfg")
+case $host in ''|*[!A-Za-z0-9_.-]*) exit 125 ;; esac
+quote() { printf "'"; printf '%s' "$1" | sed "s/'/'\\\\''/g"; printf "'"; }
+vm_file=$(
+    {
+        printf '{\nkeep=\n'
+        i=0
+        for name in $names; do
+            value=$(printenv "EFFIGY_REMOTE_V$i") || exit 125
+            printf 'export %s=' "$name"; quote "$value"; printf '\n'
+            printf 'keep="${keep:+$keep,}%s"\n' "$name"
+            i=$((i + 1))
+        done
+        printf 'rm -f "$0" || exit 125\nexec sudo --preserve-env="$keep" nerdctl'
+        for arg do printf ' '; quote "$arg"; done
+        printf '\n}\n'
+    } | "$colima" ssh --profile "$profile" -- sh -c 'umask 077; f=$(mktemp /tmp/effigy-remote-tty.XXXXXX) || exit 125; trap "rm -f \"$f\"; exit 125" HUP INT TERM; cat > "$f" || { rm -f "$f"; exit 125; }; printf "%s\n" "$f"'
+) || exit 125
+case $vm_file in /tmp/effigy-remote-tty.*) suffix=${vm_file#/tmp/effigy-remote-tty.}; case $suffix in ''|*[!A-Za-z0-9]*) vm_file=; exit 125 ;; esac ;; *) vm_file=; exit 125 ;; esac
+"$ssh" -F "$cfg" -o LogLevel=ERROR -tt "$host" "sh '$vm_file'"
+status=$?
 exit "$status"
 "#;
 
