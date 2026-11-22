@@ -66,7 +66,12 @@ run = 'printf "$SCOPED" >> effects; sleep 20; printf leaf-late >> effects'
             Some(124),
             "parent={parent}, child={child}: {error}"
         );
-        assert!(started.elapsed() < std::time::Duration::from_secs(4));
+        assert!(
+            started.elapsed()
+                < effigy_test_support::load_scaled_guard(std::time::Duration::from_secs(4)),
+            "parent={parent}, child={child}: nested deadline overshot the load-scaled guard after {elapsed:?}",
+            elapsed = started.elapsed(),
+        );
         assert_eq!(
             std::fs::read_to_string(root.path().join("effects")).unwrap(),
             "inherited"

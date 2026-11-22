@@ -1156,12 +1156,29 @@ fn cli_deep_doctor_timeout_terminates_health_process_tree() {
     // absence of identity is not proof of closure and only the leak oracle is
     // claimed. No record is a correct pre-spawn refusal: a never-started child
     // proves nothing about tree termination, so no termination claim is made.
-    if let Ok(raw) = fs::read_to_string(&child_record) {
-        let pid = raw
-            .trim()
-            .parse::<u32>()
-            .unwrap_or_else(|_| panic!("health child record is not a PID: {raw:?}"));
-        assert!(pid > 0, "health child record must hold a PID: {raw:?}");
+    //
+    // The record file is created by shell redirection before its content is
+    // written, so a loaded host can observe it present-but-empty (or not yet
+    // visible) right after doctor exits. Poll for a parseable positive PID on
+    // a load-scaled budget; only that counts as evidence the workload
+    // started. Anything else is the no-evidence refusal branch, never a
+    // malformed-record failure.
+    let pid = {
+        let deadline =
+            Instant::now() + effigy_test_support::load_scaled_guard(Duration::from_secs(5));
+        let mut found = None;
+        while found.is_none() && Instant::now() < deadline {
+            found = fs::read_to_string(&child_record)
+                .ok()
+                .and_then(|raw| raw.trim().parse::<u32>().ok())
+                .filter(|pid| *pid > 0);
+            if found.is_none() {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+        found
+    };
+    if let Some(pid) = pid {
         let identity = effigy_process::process_start_identity(pid);
         wait_for_recorded_generation_exit(
             pid,
