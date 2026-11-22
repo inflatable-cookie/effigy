@@ -69,6 +69,14 @@ pub enum RunnerError {
         details: serde_json::Value,
         details_json: std::sync::OnceLock<String>,
     },
+    /// A detached container activation that did not finish. `cause` is the
+    /// refusal that stopped it, kept typed so its own kind, evidence and
+    /// readiness facts reach the human view and `--json` without being
+    /// flattened into a sentence first (effigy#1105).
+    DetachedActivationFailure {
+        container: Option<String>,
+        cause: Box<RunnerError>,
+    },
     ContainerSurfaceRegistryMissing,
     ContainerSurfaceDefaultTargetMissing,
     ContainerSurfaceNotDefined {
@@ -484,6 +492,7 @@ impl RunnerError {
             | RunnerError::Ui(_)
             | RunnerError::TaskInvocation(_)
             | RunnerError::ContainerWaitRefused { .. }
+            | RunnerError::DetachedActivationFailure { .. }
             | RunnerError::ContainerSurfaceRegistryMissing
             | RunnerError::ContainerSurfaceDefaultTargetMissing
             | RunnerError::ContainerSurfaceNotDefined { .. }
@@ -683,6 +692,31 @@ impl RunnerError {
         }
     }
 
+    /// Wrap a detached activation's refusal once. Wrapping an already-wrapped
+    /// failure keeps the first wrapper, so the human view never states the
+    /// same paragraph twice (effigy#1105).
+    pub(in crate::runner) fn wrap_detached_activation(
+        container: Option<String>,
+        cause: RunnerError,
+    ) -> Self {
+        match cause {
+            wrapped @ RunnerError::DetachedActivationFailure { .. } => wrapped,
+            cause => RunnerError::DetachedActivationFailure {
+                container,
+                cause: Box::new(cause),
+            },
+        }
+    }
+
+    /// The refusal a detached activation wrapper carries, or the error itself
+    /// when it is not wrapped. `--json` classifies by this, never by the wrapper.
+    pub(in crate::runner) fn detached_activation_cause(&self) -> &RunnerError {
+        match self {
+            RunnerError::DetachedActivationFailure { cause, .. } => cause.as_ref(),
+            other => other,
+        }
+    }
+
     pub(in crate::runner) fn container_runtime_policy(
         phase: &'static str,
         detail: impl Into<String>,
@@ -850,6 +884,13 @@ pub(in crate::runner) fn task_command_failure_human(
     stdout: &str,
     stderr: &str,
 ) -> effigy_ui::HumanError {
+    // Effigy's own deadline ended the command. That is a timeout, not a signal
+    // the command received, so it gets its own plain sentence (effigy#1105).
+    if code.is_none() {
+        if let Some((duration, output)) = command_timeout(stderr) {
+            return task_command_timeout_human(command, stdout, duration.as_deref(), &output);
+        }
+    }
     let mut error = effigy_ui::HumanError::new(format!("command `{command}` failed"));
     error = error.evidence(match code {
         Some(code) => format!("exit code {code}"),
@@ -872,6 +913,73 @@ pub(in crate::runner) fn task_command_failure_human(
 /// `--json` `error.human.next_action` both take it from here.
 pub(in crate::runner) const TASK_COMMAND_FAILURE_NEXT: &str =
     "read the output above, fix the cause, then run the command again";
+
+/// The line Effigy's exec layer writes to stderr when its own deadline stops a
+/// command. The rest of that line (the duration, the reaper note) is noise to
+/// a person.
+const COMMAND_TIMEOUT_MARKER: &str = "[effigy] command timed out";
+
+/// The next step after a command hit its deadline.
+const COMMAND_TIMEOUT_NEXT: &str =
+    "run the command again; if it keeps timing out, check what it is waiting on";
+
+/// Whether a next step is one of the generic advice lines a failed command
+/// carries. A wrapper that states its own next step drops these.
+pub(in crate::runner) fn is_generic_command_next(next: &str) -> bool {
+    next == TASK_COMMAND_FAILURE_NEXT || next == COMMAND_TIMEOUT_NEXT
+}
+
+/// The deadline marker in stderr, read as the timeout it reports: the duration
+/// Effigy stopped after, when the marker names one, and the stderr that is
+/// left. A retained-output path stays, because a person can open that file.
+/// The reaper note and the bare `stderr:` header of Effigy's own sentence do
+/// not.
+fn command_timeout(stderr: &str) -> Option<(Option<String>, String)> {
+    let mut duration = None;
+    let mut timed_out = false;
+    let mut kept = Vec::new();
+    for line in stderr.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix(COMMAND_TIMEOUT_MARKER) {
+            timed_out = true;
+            duration = rest
+                .trim_start()
+                .strip_prefix("after ")
+                .and_then(|after| after.split(':').next())
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty());
+            if let Some((_, path)) = trimmed.split_once("output retained at ") {
+                kept.push(format!("output retained at {path}"));
+            }
+        } else if !trimmed.is_empty() && trimmed != "stderr:" && trimmed != "stdout:" {
+            kept.push(line.to_owned());
+        }
+    }
+    timed_out.then(|| (duration, kept.join("\n")))
+}
+
+fn task_command_timeout_human(
+    command: &str,
+    stdout: &str,
+    duration: Option<&str>,
+    stderr: &str,
+) -> effigy_ui::HumanError {
+    let reason = match duration {
+        Some(duration) => {
+            format!("it did not finish before its deadline, so Effigy stopped it after {duration}")
+        }
+        None => "it did not finish before its deadline, so Effigy stopped it".to_owned(),
+    };
+    let mut error =
+        effigy_ui::HumanError::new(format!("command `{command}` timed out")).evidence(reason);
+    if !stderr.trim().is_empty() {
+        error = error.evidence_output("stderr", stderr);
+    }
+    if !stdout.trim().is_empty() {
+        error = error.evidence_output("stdout", stdout);
+    }
+    error.next_action(COMMAND_TIMEOUT_NEXT)
+}
 
 /// A wrapper's sentence around a child failure: what the wrapper was doing,
 /// the child's own failure as evidence, and the next action. Sections stay on

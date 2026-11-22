@@ -1134,10 +1134,12 @@ fn readiness_failure_human_rendering_avoids_duplicate_cause_empty_streams_and_do
             "Colima containerd and BuildKit did not become ready within 90s; last runtime probe: {inner_rendered}"
         ),
     });
-    let wrapped = RunnerError::task_invocation(format!(
-        "{readiness}\ndetached activation unavailable: readiness and exposure are unverified."
-    ));
+    let wrapped = RunnerError::wrap_detached_activation(Some("web".to_owned()), readiness);
     let rendered = wrapped.human_error().render_text();
+    assert!(
+        !rendered.contains("detached activation unavailable"),
+        "the wrapper states its own next step, not a stacked paragraph: {rendered}"
+    );
 
     assert!(
         !rendered.contains("cause: cause:"),
@@ -1462,4 +1464,177 @@ fn engine_absence_container_failures_render_plain_headline_and_next() {
         human.next_action_text(),
         Some("start it with `colima start --profile effigy` or run `effigy container up`")
     );
+}
+
+/// A detached activation that timed out in a runtime command renders one
+/// headline, one explanation, one `Next:` and a `Details:` block. The timeout
+/// is named plainly, and no stacked paragraph or generic next step survives
+/// (effigy#1105).
+#[test]
+fn detached_container_timeout_renders_one_clean_error() {
+    let timeout = RunnerError::TaskCommandFailure {
+        command: "runtime ps".to_owned(),
+        code: None,
+        stdout: String::new(),
+        stderr: "[effigy] command timed out".to_owned(),
+    };
+    let error = RunnerError::wrap_detached_activation(Some("web".to_owned()), timeout);
+    let human = error.human_error();
+    assert_eq!(
+        human.what_failed(),
+        "Container `web` did not finish starting"
+    );
+    assert_eq!(
+        human.next_action_text(),
+        Some(
+            "Run `effigy container up --detach` to finish setup, or `effigy container down` to stop it"
+        )
+    );
+    let rendered = human.render_text();
+    assert!(
+        rendered.contains("command `runtime ps` timed out"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("Details:"), "{rendered}");
+    assert_eq!(
+        rendered.matches("Compose left the stack").count(),
+        1,
+        "{rendered}"
+    );
+    assert_eq!(rendered.matches("Next:").count(), 1, "{rendered}");
+    for stale in [
+        "a signal stopped it",
+        "[effigy] command timed out",
+        "stays as Compose left it",
+        "detached activation unavailable",
+        "read the output above",
+        "cause: cause:",
+    ] {
+        assert!(!rendered.contains(stale), "`{stale}` leaked: {rendered}");
+    }
+}
+
+/// A timeout the command produced output before is still a timeout. The
+/// output stays as bounded evidence, and only the marker line goes.
+#[test]
+fn timed_out_command_keeps_its_output_and_drops_the_marker() {
+    let human = RunnerError::TaskCommandFailure {
+        command: "docker compose up".to_owned(),
+        code: None,
+        stdout: String::new(),
+        stderr: "pulling web\n[effigy] command timed out after 15s: owned capture child terminated and reaped; stdout/stderr EOF verified".to_owned(),
+    }
+    .human_error();
+    assert_eq!(human.what_failed(), "command `docker compose up` timed out");
+    let evidence = human.evidence_lines().join("\n");
+    assert!(evidence.contains("pulling web"), "{evidence}");
+    assert!(
+        !evidence.contains("[effigy] command timed out"),
+        "{evidence}"
+    );
+    assert!(!evidence.contains("reaped"), "{evidence}");
+}
+
+/// A timeout that names a retained output file keeps the path, because a
+/// person can open that file.
+#[test]
+fn timed_out_command_keeps_the_retained_output_path() {
+    let human = RunnerError::TaskCommandFailure {
+        command: "docker ps".to_owned(),
+        code: None,
+        stdout: String::new(),
+        stderr: "[effigy] command timed out; output retained at /tmp/effigy/run.log".to_owned(),
+    }
+    .human_error();
+    let evidence = human.evidence_lines().join("\n");
+    assert!(
+        evidence.contains("output retained at /tmp/effigy/run.log"),
+        "{evidence}"
+    );
+}
+
+/// A command that died on a signal, without Effigy's deadline, keeps the
+/// signal sentence. Only the timeout marker changes the wording.
+#[test]
+fn signal_end_without_a_deadline_keeps_the_signal_sentence() {
+    let human = RunnerError::TaskCommandFailure {
+        command: "docker ps".to_owned(),
+        code: None,
+        stdout: String::new(),
+        stderr: "killed by the host".to_owned(),
+    }
+    .human_error();
+    assert_eq!(human.what_failed(), "command `docker ps` failed");
+    assert!(
+        human
+            .evidence_lines()
+            .contains(&"a signal stopped it before it reported an exit code".to_owned()),
+        "{:?}",
+        human.evidence_lines()
+    );
+}
+
+/// A detached failure with no typed cause still renders one headline and one
+/// `Next:`, and an unnamed container is named as such.
+#[test]
+fn detached_activation_failure_without_a_name_renders_one_paragraph() {
+    let inner = RunnerError::task_invocation(
+        "gateway domain `api.app.test` is claimed by a container route from checkout `/gone/worktree`",
+    );
+    let error = RunnerError::wrap_detached_activation(None, inner);
+    let human = error.human_error();
+    assert_eq!(human.what_failed(), "Container did not finish starting");
+    let rendered = human.render_text();
+    assert_eq!(rendered.matches("Next:").count(), 1, "{rendered}");
+    assert!(rendered.contains("/gone/worktree"), "{rendered}");
+    assert!(!rendered.contains("stays as Compose"), "{rendered}");
+}
+
+/// Wrapping an already-wrapped failure keeps the first wrapper, so the
+/// activation never states the same paragraph twice.
+#[test]
+fn detached_activation_wrapping_is_idempotent() {
+    let once = RunnerError::wrap_detached_activation(
+        Some("web".to_owned()),
+        RunnerError::task_invocation("boom"),
+    );
+    let twice = RunnerError::wrap_detached_activation(Some("api".to_owned()), once);
+    let RunnerError::DetachedActivationFailure { container, cause } = &twice else {
+        panic!("a wrapped failure stays wrapped: {twice:?}");
+    };
+    assert_eq!(container.as_deref(), Some("web"));
+    assert!(
+        !matches!(
+            cause.as_ref(),
+            RunnerError::DetachedActivationFailure { .. }
+        ),
+        "the wrapper never nests: {twice:?}"
+    );
+    assert_eq!(twice.to_string(), "boom");
+}
+
+/// A long backend output keeps its last line, the one that says why it
+/// stopped, through the detached wrapper (effigy#364).
+#[test]
+fn detached_activation_keeps_the_fatal_tail_of_long_backend_output() {
+    let mut stderr = String::new();
+    for index in 0..200 {
+        stderr.push_str(&format!("progress step {index}\n"));
+    }
+    stderr.push_str("level=fatal msg=\"runtime socket closed before the container started\"");
+    let error = RunnerError::wrap_detached_activation(
+        Some("web".to_owned()),
+        RunnerError::TaskCommandFailure {
+            command: "docker compose up".to_owned(),
+            code: Some(1),
+            stdout: String::new(),
+            stderr,
+        },
+    );
+    let rendered = error.human_error().render_text();
+    assert!(
+        rendered.contains("runtime socket closed before the container started"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("read the output above"), "{rendered}");
 }

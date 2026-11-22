@@ -976,13 +976,34 @@ fn detached_gateway_registration_failure_keeps_started_scope() {
         !cleaned.get(),
         "detached bring-up must not tear the scope down"
     );
-    let rendered = error.to_string();
-    assert!(rendered.starts_with("timed out waiting for declared gateway services"));
-    assert!(rendered.contains("container `web` stays as Compose left it"));
-    assert!(rendered.contains("gateway exposure is unverified"));
-    assert!(rendered.contains("no teardown ran"));
-    assert!(rendered.contains("effigy container up --detach"));
-    assert!(rendered.contains("reconcile from what is running"));
+    // The refusal stays typed inside the wrapper; its sentence is the cause.
+    let RunnerError::DetachedActivationFailure { container, cause } = &error else {
+        panic!("a detached failure keeps its typed wrapper: {error:?}");
+    };
+    assert_eq!(container.as_deref(), Some("web"));
+    assert!(matches!(
+        cause.as_ref(),
+        RunnerError::TaskInvocation(message) if message == "timed out waiting for declared gateway services"
+    ));
+    assert_eq!(
+        error.to_string(),
+        "timed out waiting for declared gateway services"
+    );
+    let rendered = error.human_error().render_text();
+    assert!(
+        rendered.contains("Container `web` did not finish starting"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("nothing was torn down"), "{rendered}");
+    assert!(
+        rendered.contains("effigy container up --detach"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("effigy container down"), "{rendered}");
+    assert!(
+        !rendered.contains("stays as Compose left it"),
+        "the stacked paragraph is gone: {rendered}"
+    );
 }
 
 #[test]
@@ -1775,4 +1796,106 @@ fn container_status_carries_the_current_tls_exposure_per_route() {
 
     let text = super::status::annotate_gateway_route_status("running".to_owned(), routes, false);
     assert!(text.contains("app.demo.test TLS exposure pending"));
+}
+
+/// A detached timeout through the integration seam is one typed wrapper that
+/// names the container, and a second pass through the seam adds nothing
+/// (effigy#1105).
+#[test]
+fn detached_integration_failure_wraps_once_and_names_the_container() {
+    use super::report::detached_activation_error;
+    let policy = test_policy(Vec::new());
+    let timeout = RunnerError::TaskCommandFailure {
+        command: "runtime ps".to_owned(),
+        code: None,
+        stdout: String::new(),
+        stderr: "[effigy] command timed out".to_owned(),
+    };
+    let once = detached_activation_error(&policy, timeout);
+    let twice = detached_activation_error(&policy, once);
+    let RunnerError::DetachedActivationFailure { container, cause } = &twice else {
+        panic!("the seam wraps the refusal: {twice:?}");
+    };
+    assert_eq!(container.as_deref(), Some("web"));
+    assert!(
+        matches!(cause.as_ref(), RunnerError::TaskCommandFailure { .. }),
+        "the typed cause is kept, not flattened: {twice:?}"
+    );
+    let rendered = twice.human_error().render_text();
+    assert!(
+        rendered.starts_with("[error] Container `web` did not finish starting"),
+        "{rendered}"
+    );
+    assert_eq!(
+        rendered.matches("Compose left the stack").count(),
+        1,
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("command `runtime ps` timed out"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("a signal stopped it"), "{rendered}");
+}
+
+/// The detached JSON envelope classifies by the typed cause inside the
+/// wrapper, so its kind is the refusal's own and its cause is that refusal
+/// without the stacked Compose paragraph.
+#[test]
+fn detached_json_classifies_the_wrapped_cause() {
+    let operation = DetachedOperationState {
+        active: true,
+        stage: Some("persistent_owner"),
+        identity: Some(detached_activation_identity(&test_policy(Vec::new()))),
+        ..Default::default()
+    };
+    let wrapped = RunnerError::wrap_detached_activation(
+        Some("web".to_owned()),
+        RunnerError::GatewayEndpointStore {
+            kind: effigy_gateway::EndpointStoreRefusal::Refused,
+            reason: "revision changed".to_owned(),
+        },
+    );
+    let RunnerError::StructuredCommandFailure(failure) =
+        detached_activation_failure(&operation, true, wrapped)
+    else {
+        panic!("detached JSON mode must render a machine failure");
+    };
+    let document: serde_json::Value = failure.json_value();
+    assert_eq!(document["failure_kind"], "endpoint_store_refusal");
+    assert_eq!(document["state"], "unavailable");
+    assert_eq!(document["recovery"], "effigy container up --detach");
+    assert_eq!(
+        document["cause"],
+        "gateway endpoint store: revision changed"
+    );
+}
+
+/// Outside JSON, a detached failure carries the operation's container name into
+/// the typed wrapper.
+#[test]
+fn detached_text_failure_is_typed_and_names_the_operation_container() {
+    let operation = DetachedOperationState {
+        active: true,
+        container: Some("web".to_owned()),
+        ..Default::default()
+    };
+    let failure = detached_activation_failure(
+        &operation,
+        false,
+        RunnerError::task_invocation("gateway route refused"),
+    );
+    let RunnerError::DetachedActivationFailure { container, .. } = &failure else {
+        panic!("text mode keeps the typed wrapper: {failure:?}");
+    };
+    assert_eq!(container.as_deref(), Some("web"));
+    let rendered = failure.human_error().render_text();
+    assert!(
+        rendered.contains("Container `web` did not finish starting"),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("detached activation unavailable"),
+        "{rendered}"
+    );
 }

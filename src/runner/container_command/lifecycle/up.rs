@@ -119,6 +119,7 @@ fn run_container_up_inner(
     let result = (|| {
         operation.active = plan.attach_mode == EffectiveAttachMode::Detached;
         operation.identity = Some(detached_activation_identity(&plan.policy));
+        operation.container = Some(plan.policy.name.clone());
 
         if container_up_stop_requested(&plan) {
             return render_container_up_interrupted(repo_root, &plan);
