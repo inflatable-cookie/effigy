@@ -819,24 +819,27 @@ pub(in crate::runner) fn list_running_rows_with_colima_repair(
                 &detail,
                 io::stdin().is_terminal(),
                 io::stdout().is_terminal(),
-                std::env::args_os().any(|arg| arg == "--json"),
+                effigy_ui::steps::json_output() || std::env::args_os().any(|arg| arg == "--json"),
+                effigy_ui::steps::in_managed_pane(),
                 || {
-                    eprint!("{detail}\nRestart this profile now? [y/N] ");
-                    io::stderr().flush().map_err(|write_error| {
-                        RunnerError::task_invocation(format!(
-                            "{detail}\nfailed to write restart prompt: {write_error}"
+                    effigy_ui::steps::prompt_terminal(|| {
+                        eprint!("{detail}\nRestart this profile now? [y/N] ");
+                        io::stderr().flush().map_err(|write_error| {
+                            RunnerError::task_invocation(format!(
+                                "{detail}\nfailed to write restart prompt: {write_error}"
+                            ))
+                        })?;
+                        let mut answer = String::new();
+                        io::stdin().read_line(&mut answer).map_err(|read_error| {
+                            RunnerError::task_invocation(format!(
+                                "{detail}\nfailed to read restart choice: {read_error}"
+                            ))
+                        })?;
+                        Ok(matches!(
+                            answer.trim().to_ascii_lowercase().as_str(),
+                            "y" | "yes"
                         ))
-                    })?;
-                    let mut answer = String::new();
-                    io::stdin().read_line(&mut answer).map_err(|read_error| {
-                        RunnerError::task_invocation(format!(
-                            "{detail}\nfailed to read restart choice: {read_error}"
-                        ))
-                    })?;
-                    Ok(matches!(
-                        answer.trim().to_ascii_lowercase().as_str(),
-                        "y" | "yes"
-                    ))
+                    })
                 },
                 || restart_colima_profile(repo_root, policy, &command, &detail),
             )?;
@@ -860,10 +863,11 @@ fn run_colima_restart_if_confirmed<T>(
     stdin_terminal: bool,
     stdout_terminal: bool,
     json: bool,
+    in_managed_pane: bool,
     confirm: impl FnOnce() -> Result<bool, RunnerError>,
     restart: impl FnOnce() -> Result<T, RunnerError>,
 ) -> Result<T, RunnerError> {
-    if !stdin_terminal || !stdout_terminal || json {
+    if !stdin_terminal || !stdout_terminal || json || in_managed_pane {
         return Err(RunnerError::task_invocation(detail.to_owned()));
     }
     if !confirm()? {

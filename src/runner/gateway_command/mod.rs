@@ -432,9 +432,11 @@ fn gateway_reload_may_prompt(
     ci: bool,
     test_harness: bool,
     fixture: bool,
+    in_managed_pane: bool,
 ) -> bool {
     !output_json
         && !ci
+        && !in_managed_pane
         && stdin_is_terminal
         && stderr_is_terminal
         && may_drive_the_operator_gateway(false, test_harness, fixture)
@@ -450,6 +452,7 @@ fn gateway_reload_interactive(output_json: bool) -> bool {
         is_ci_environment(),
         gateway_process_is_test_harness(),
         gateway_process_is_fixture(),
+        effigy_ui::steps::in_managed_pane(),
     )
 }
 
@@ -466,6 +469,7 @@ fn managed_gateway_reload_interactive() -> bool {
         is_ci_environment(),
         gateway_process_is_test_harness(),
         gateway_process_is_fixture(),
+        effigy_ui::steps::in_managed_pane(),
     )
 }
 
@@ -478,6 +482,7 @@ fn managed_gateway_reload_interactive_with(
     ci: bool,
     test_harness: bool,
     fixture: bool,
+    in_managed_pane: bool,
 ) -> bool {
     gateway_reload_may_prompt(
         json_output,
@@ -486,6 +491,7 @@ fn managed_gateway_reload_interactive_with(
         ci,
         test_harness,
         fixture,
+        in_managed_pane,
     )
 }
 
@@ -504,18 +510,20 @@ fn parse_gateway_reload_answer(line: Option<&str>) -> GatewayReloadAnswer {
 /// an unreadable line keeps the gateway, so a closed stdin never reloads it.
 fn prompt_gateway_reload(running: &str, current: &str) -> GatewayReloadAnswer {
     use std::io::Write as _;
-    let mut stderr = std::io::stderr();
-    let _ = write!(
-        stderr,
-        "Gateway is running build {running} (current is {current}). Reload gateway now? [Y/n]: "
-    );
-    let _ = stderr.flush();
-    let mut answer = String::new();
-    match std::io::stdin().read_line(&mut answer) {
-        Ok(0) => GatewayReloadAnswer::Keep,
-        Ok(_) => parse_gateway_reload_answer(Some(&answer)),
-        Err(_) => GatewayReloadAnswer::Keep,
-    }
+    effigy_ui::steps::prompt_terminal(|| {
+        let mut stderr = std::io::stderr();
+        let _ = write!(
+            stderr,
+            "Gateway is running build {running} (current is {current}). Reload gateway now? [Y/n]: "
+        );
+        let _ = stderr.flush();
+        let mut answer = String::new();
+        match std::io::stdin().read_line(&mut answer) {
+            Ok(0) => GatewayReloadAnswer::Keep,
+            Ok(_) => parse_gateway_reload_answer(Some(&answer)),
+            Err(_) => GatewayReloadAnswer::Keep,
+        }
+    })
 }
 
 /// Settle a running gateway on another build: keep it and explain how to reload
@@ -530,30 +538,31 @@ fn settle_outdated_gateway(
     reload: impl FnOnce() -> Result<(), String>,
 ) -> GatewayReloadOutcome {
     if !interactive {
-        eprintln!("{warning}");
+        effigy_ui::steps::print_line(&warning);
         return GatewayReloadOutcome::Kept;
     }
     match prompt(running, current) {
         GatewayReloadAnswer::Keep => {
-            eprintln!(
+            effigy_ui::steps::print_line(&format!(
                 "[gateway] keeping running gateway ({running}); run `effigy gateway restart` when ready"
-            );
+            ));
             GatewayReloadOutcome::Kept
         }
         GatewayReloadAnswer::Reload => match reload() {
             Ok(()) => {
-                eprintln!("[gateway] reloaded gateway ({running} \u{2192} {current})");
+                effigy_ui::steps::print_line(&format!(
+                    "[gateway] reloaded gateway ({running} \u{2192} {current})"
+                ));
                 GatewayReloadOutcome::Reloaded
             }
             Err(error) => {
-                eprintln!(
-                    "{}",
-                    effigy_ui::HumanError::new("The gateway could not be reloaded")
+                effigy_ui::steps::print_line(
+                    &effigy_ui::HumanError::new("The gateway could not be reloaded")
                         .explain(format!("reloading it on build {current} failed: {error}"))
                         .next_action("Run `effigy gateway restart` and read its output")
                         .detail("running", running)
                         .detail("current", current)
-                        .render_warning_text()
+                        .render_warning_text(),
                 );
                 GatewayReloadOutcome::ReloadFailed
             }

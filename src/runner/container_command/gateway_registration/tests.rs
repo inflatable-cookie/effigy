@@ -3,10 +3,11 @@ use super::*;
 #[test]
 fn unreachable_profile_wrapper_never_restarts_without_interactive_non_json_yes() {
     let detail = "profile is running but unreachable; repair command; stops every container";
-    for (stdin_tty, stdout_tty, json) in [
-        (false, true, false),
-        (true, false, false),
-        (true, true, true),
+    for (stdin_tty, stdout_tty, json, managed_pane) in [
+        (false, true, false, false),
+        (true, false, false, false),
+        (true, true, true, false),
+        (true, true, false, true),
     ] {
         let mut restart_called = false;
         let result = run_colima_restart_if_confirmed(
@@ -14,6 +15,7 @@ fn unreachable_profile_wrapper_never_restarts_without_interactive_non_json_yes()
             stdin_tty,
             stdout_tty,
             json,
+            managed_pane,
             || panic!("must not prompt for non-interactive or JSON calls"),
             || {
                 restart_called = true;
@@ -30,6 +32,7 @@ fn unreachable_profile_wrapper_never_restarts_without_interactive_non_json_yes()
         true,
         true,
         false,
+        false,
         || Ok(false),
         || {
             restart_called = true;
@@ -43,6 +46,7 @@ fn unreachable_profile_wrapper_never_restarts_without_interactive_non_json_yes()
         detail,
         true,
         true,
+        false,
         false,
         || Ok(true),
         || {
