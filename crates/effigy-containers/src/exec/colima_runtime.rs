@@ -135,7 +135,7 @@ fn ensure_colima_profile_running(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
 ) -> Result<ColimaProfileAction, ContainerExecError> {
-    if colima_is_running(policy, repo_root)? {
+    if colima_is_running_for_start(policy, repo_root)? {
         return ensure_running_managed_profile_ready(policy, repo_root);
     }
     // A profile that is not running is either stopped or gone. Only the
@@ -531,6 +531,31 @@ fn verify_colima_profile_no_change(
     Ok(ColimaEnsureReport::default())
 }
 
+fn colima_is_running_for_start(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+) -> Result<bool, ContainerExecError> {
+    let output = colima_status_output(policy, repo_root, None)?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success()
+        && docker_failure_looks_like_colima_runtime_state_loss(&stdout, &stderr)
+        && colima_profile_entry(repo_root, &policy.profile)
+            .is_some_and(|entry| entry.status.eq_ignore_ascii_case("running"))
+    {
+        return Err(ContainerExecError::Failure {
+            command: "colima status".to_owned(),
+            code: output.status.code(),
+            stdout: stdout.into_owned(),
+            stderr: format!(
+                "Colima profile `{0}` is running with an empty runtime record. Run `colima stop --profile {0} && colima start --profile {0}`, then retry.",
+                policy.profile
+            ),
+        });
+    }
+    Ok(output.status.success() && parse_colima_running(&stdout, &stderr))
+}
+
 pub fn colima_is_running(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
@@ -547,21 +572,29 @@ pub fn colima_is_running_with_deadline(
     repo_root: &Path,
     deadline: Option<Instant>,
 ) -> Result<bool, ContainerExecError> {
-    let cmd = colima_status_command(policy);
-    let args: Vec<&str> = cmd.args.iter().map(|s| s.as_str()).collect();
-    let output = run_command_capture_allow_failure_with_deadline(
-        repo_root,
-        &cmd.program,
-        &args,
-        &cmd.label,
-        deadline,
-    )?;
+    let output = colima_status_output(policy, repo_root, deadline)?;
     if !output.status.success() {
         return Ok(false);
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     Ok(parse_colima_running(&stdout, &stderr))
+}
+
+fn colima_status_output(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+    deadline: Option<Instant>,
+) -> Result<Output, ContainerExecError> {
+    let cmd = colima_status_command(policy);
+    let args: Vec<&str> = cmd.args.iter().map(|s| s.as_str()).collect();
+    run_command_capture_allow_failure_with_deadline(
+        repo_root,
+        &cmd.program,
+        &args,
+        &cmd.label,
+        deadline,
+    )
 }
 
 fn colima_runtime_probe_args(policy: &EffectiveContainerPolicy) -> Vec<OsString> {
@@ -1321,7 +1354,10 @@ root="$EFFIGY_MANAGED_PROFILE_FIXTURE"
 printf '%s\n' "$*" >> "$root/colima-calls"
 case "$1" in
   status)
-    if [ -f "$root/status-unknown" ]; then
+    if [ -f "$root/runtime-empty" ]; then
+      printf 'error retrieving current runtime: empty value\n' >&2
+      exit 1
+    elif [ -f "$root/status-unknown" ]; then
       printf 'status unavailable\n' >&2
       exit 1
     elif [ -f "$root/running" ]; then
@@ -1729,6 +1765,31 @@ esac
         assert!(
             !calls.iter().any(|call| call.starts_with("stop ")),
             "the shared profile is never stopped: {calls:#?}"
+        );
+    }
+
+    #[test]
+    fn colima_running_release_profile_with_empty_runtime_reports_remedy() {
+        let _lock = crate::test_env_lock();
+        let fixture = ManagedProfileFixture::new();
+        fixture.state("listed");
+        fixture.state("running");
+        fixture.state("release-profile");
+        fixture.state("runtime-empty");
+        let error = ensure_colima_running_report(&fixture.release_policy(), &fixture.root)
+            .expect_err("runtime record loss must stop before starting or waiting");
+        let message = error.to_string();
+        assert!(
+            message.contains(
+                "colima stop --profile effigy-release && colima start --profile effigy-release"
+            ),
+            "{message}"
+        );
+        let calls = fixture.calls();
+        assert_eq!(
+            calls,
+            ["status --profile effigy-release", "list --json"],
+            "{calls:?}"
         );
     }
 
