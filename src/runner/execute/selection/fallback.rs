@@ -41,7 +41,7 @@ pub(super) fn run_fallback_route<'a>(
                     "`--run-id` names a task run, but this selector starts no task run",
                 ));
             }
-            let label = format!("effigy {}", preflight.selector.task_name);
+            let label = format!("effigy {}", task.name);
             let root = &preflight.resolved.resolved_root;
             let mut suite_run = if let Some(key) = key {
                 Some(TaskRun::standalone_keyed_test(

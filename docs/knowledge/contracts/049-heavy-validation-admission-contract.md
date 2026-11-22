@@ -274,7 +274,8 @@ row. Durable runs journal their lifecycle (contract 052 §3.1).
   remain unique within retention (newest 20 settled runs per task). Records
   found after a concurrent admission failure are checked against the recorded
   task before attachment; an unreadable record never authorizes attachment.
-  Managed tasks keep their existing `--run-id` refusal.
+  Built-in `test` accepts the key when it starts suites; observation-only test
+  invocations refuse it. Managed tasks keep their existing `--run-id` refusal.
 - **`effigy runs [--limit N] [--all]`.** This checkout's durable task and
   QA-group runs, foreground terminal rows and verified live diagnostics, newest first.
   `--all` uses bounded checkout discovery in 052 §7.6. JSON remains
@@ -303,9 +304,11 @@ row. Durable runs journal their lifecycle (contract 052 §3.1).
   was recorded). An owner that cannot be verified is refused. Stop cannot
   resurrect a vanished foreground record or signal its old group by number.
 
-`--run-id` still captures output unless both stdout and stderr are terminals;
-relay/redaction, missing-log diagnostics and workload outcome rules stay as
-before. `--json` alone does not force persistence: foreground JSON captures
+`--run-id` captures a single workload’s output unless both stdout and stderr
+are terminals. A built-in `test` run owns suite child runs rather than one
+workload log; `run logs <key>` reports its outcome and that no parent log was
+kept. Multi-step task runs have the same limitation. Relay/redaction,
+missing-log diagnostics and workload outcome rules stay as before. `--json` alone does not force persistence: foreground JSON captures
 in bounded memory and streams to its caller. Other foreground text invocations
 keep the operator's descriptors untouched. A durable capture failure never
 changes the workload's outcome (K10).
