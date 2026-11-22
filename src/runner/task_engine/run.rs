@@ -320,6 +320,7 @@ impl TaskRun {
             root,
             label,
             admission,
+            None,
             Standalone::Journal {
                 scratch: false,
                 custody: false,
@@ -341,6 +342,7 @@ impl TaskRun {
             root,
             label,
             None,
+            None,
             Standalone::Journal {
                 scratch: true,
                 custody: true,
@@ -352,7 +354,7 @@ impl TaskRun {
         root: &std::path::Path,
         label: &str,
     ) -> Result<Self, RunnerError> {
-        Self::standalone_with(root, label, None, Standalone::Memory)
+        Self::standalone_with(root, label, None, None, Standalone::Memory)
     }
 
     pub(in crate::runner) fn standalone_custody(
@@ -363,8 +365,27 @@ impl TaskRun {
             root,
             label,
             None,
+            None,
             Standalone::Journal {
                 scratch: false,
+                custody: true,
+            },
+        )
+    }
+
+    pub(in crate::runner) fn standalone_keyed_test(
+        root: &std::path::Path,
+        label: &str,
+        key: &RunKey,
+        scratch: bool,
+    ) -> Result<Self, RunnerError> {
+        Self::standalone_with(
+            root,
+            label,
+            None,
+            Some(key),
+            Standalone::Journal {
+                scratch,
                 custody: true,
             },
         )
@@ -374,6 +395,7 @@ impl TaskRun {
         root: &std::path::Path,
         label: &str,
         admission: Option<effigy_manifest::ManifestTaskAdmission>,
+        key: Option<&RunKey>,
         storage: Standalone,
     ) -> Result<Self, RunnerError> {
         let nonce = new_run_id()?;
@@ -399,14 +421,14 @@ impl TaskRun {
             scratch,
             managed_run_token: None,
             args: &[],
-            key: None,
+            key,
             admission,
             cwd: Some(root),
         };
         match storage {
             Standalone::Memory => Self::begin_foreground_with(request, false),
             Standalone::Journal { .. } => {
-                Self::begin_with(request, false, LifecyclePlacement::Inline)
+                Self::begin_with(request, key.is_some(), LifecyclePlacement::Inline)
             }
         }
     }

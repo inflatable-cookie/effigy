@@ -16,6 +16,14 @@ pub(in crate::runner) fn resolve_task_selection<'a>(
     task: &TaskInvocation,
     preflight: &'a ExecutionPreflight,
 ) -> Result<SelectionResolution<'a>, RunnerError> {
+    resolve_task_selection_with_key(task, preflight, None)
+}
+
+pub(super) fn resolve_task_selection_with_key<'a>(
+    task: &TaskInvocation,
+    preflight: &'a ExecutionPreflight,
+    key: Option<&crate::runner::task_engine::RunKey>,
+) -> Result<SelectionResolution<'a>, RunnerError> {
     let route = super::route::resolve_route(task, preflight)?;
-    fallback::run_fallback_route(task, preflight, route)
+    fallback::run_fallback_route(task, preflight, route, key)
 }
