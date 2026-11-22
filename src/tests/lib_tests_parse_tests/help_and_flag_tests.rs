@@ -185,6 +185,17 @@ fn parse_command_carries_the_run_id_key_only_to_a_selector() {
             args: Vec::new(),
         })
     );
+    let test = parse_command(vec![
+        "--run-id".into(),
+        "ci-1234".into(),
+        "test".into(),
+        "--".into(),
+        "--no-fail-fast".into(),
+    ])
+    .expect("built-in test accepts a run key");
+    assert!(
+        matches!(test, Command::Task(TaskInvocation { name, options: Some(GlobalCliOptions { run_id: Some(key), .. }), .. }) if name == "test" && key == "ci-1234")
+    );
     let error = parse_command(vec![
         "--run-id".to_owned(),
         "ci-1234".to_owned(),

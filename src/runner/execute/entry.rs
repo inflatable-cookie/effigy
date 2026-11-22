@@ -26,10 +26,9 @@ fn run_manifest_task_with_preflight_input(
         refuse_key_without_run(run_key.as_ref(), "`--plan` starts no run")?;
         return run_execution_pipeline(&task, preflight);
     }
-    let selection = match super::selection::resolve_task_selection(&task, &preflight)? {
+    let selection = match resolve_selection_with_key(&task, &preflight, run_key.as_ref())? {
         super::selection::SelectionResolution::Selected { selection } => selection,
         super::selection::SelectionResolution::Output(output) => {
-            refuse_key_without_run(run_key.as_ref(), "this selector starts no task run")?;
             return Ok(output);
         }
     };
@@ -54,10 +53,9 @@ fn run_manifest_task_with_preflight_input_and_env(
         refuse_key_without_run(run_key.as_ref(), "`--plan` starts no run")?;
         return run_execution_pipeline(&task, preflight);
     }
-    let selection = match super::selection::resolve_task_selection(&task, &preflight)? {
+    let selection = match resolve_selection_with_key(&task, &preflight, run_key.as_ref())? {
         super::selection::SelectionResolution::Selected { selection } => selection,
         super::selection::SelectionResolution::Output(output) => {
-            refuse_key_without_run(run_key.as_ref(), "this selector starts no task run")?;
             return Ok(output);
         }
     };
@@ -109,6 +107,20 @@ pub(super) fn run_selected_task(
     match result {
         Err(RunnerError::RunKeyExists { run }) => {
             crate::runner::run_control::attach(&run, preflight.output_json)
+        }
+        other => other,
+    }
+}
+
+fn resolve_selection_with_key<'a>(
+    task: &TaskInvocation,
+    preflight: &'a super::planning::ExecutionPreflight,
+    key: Option<&RunKey>,
+) -> Result<super::selection::SelectionResolution<'a>, RunnerError> {
+    match super::selection::resolve_task_selection_with_key(task, preflight, key) {
+        Err(RunnerError::RunKeyExists { run }) => {
+            crate::runner::run_control::attach(&run, preflight.output_json)
+                .map(super::selection::SelectionResolution::Output)
         }
         other => other,
     }

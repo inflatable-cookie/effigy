@@ -9,7 +9,7 @@ use crate::runner::builtin_ports::RunnerBuiltinPorts;
 use crate::runner::deferral::run_deferred_request;
 use crate::runner::error::RunnerError;
 use crate::runner::exec_command::try_run_exec_alias;
-use crate::runner::task_engine::TaskRun;
+use crate::runner::task_engine::{RunKey, TaskRun};
 use effigy_builtin::{try_run_builtin_task, TestRunRequirement};
 
 /// Carries out the route the one resolver chose for a selector that names
@@ -18,6 +18,7 @@ pub(super) fn run_fallback_route<'a>(
     task: &TaskInvocation,
     preflight: &'a ExecutionPreflight,
     route: Route<'a>,
+    key: Option<&RunKey>,
 ) -> Result<SelectionResolution<'a>, RunnerError> {
     match route {
         Route::Task { selection } => Ok(SelectionResolution::Selected { selection }),
@@ -35,25 +36,40 @@ pub(super) fn run_fallback_route<'a>(
             } else {
                 TestRunRequirement::Observe
             };
-            let label = format!("effigy {}", preflight.selector.task_name);
+            if key.is_some() && matches!(requirement, TestRunRequirement::Observe) {
+                return Err(RunnerError::task_invocation(
+                    "`--run-id` names a task run, but this selector starts no task run",
+                ));
+            }
+            let label = format!("effigy {}", task.name);
             let root = &preflight.resolved.resolved_root;
-            let mut suite_run = match requirement {
-                TestRunRequirement::Observe => None,
-                TestRunRequirement::Checkout => Some(if crate::runner::scratch::wanted() {
-                    TaskRun::standalone_scratching(root, &label)?
-                } else {
-                    TaskRun::standalone_custody(root, &label)?
-                }),
-                TestRunRequirement::Local(sources) => {
-                    let local =
-                        super::super::sequence_run::foreground_test_sources(preflight, sources)?;
-                    Some(if crate::runner::scratch::wanted() {
+            let mut suite_run = if let Some(key) = key {
+                Some(TaskRun::standalone_keyed_test(
+                    root,
+                    &label,
+                    key,
+                    crate::runner::scratch::wanted(),
+                )?)
+            } else {
+                match requirement {
+                    TestRunRequirement::Observe => None,
+                    TestRunRequirement::Checkout => Some(if crate::runner::scratch::wanted() {
                         TaskRun::standalone_scratching(root, &label)?
-                    } else if !local || preflight.task_source.is_some() {
-                        TaskRun::standalone_custody(root, &label)?
                     } else {
-                        TaskRun::standalone_foreground(root, &label)?
-                    })
+                        TaskRun::standalone_custody(root, &label)?
+                    }),
+                    TestRunRequirement::Local(sources) => {
+                        let local = super::super::sequence_run::foreground_test_sources(
+                            preflight, sources,
+                        )?;
+                        Some(if crate::runner::scratch::wanted() {
+                            TaskRun::standalone_scratching(root, &label)?
+                        } else if !local || preflight.task_source.is_some() {
+                            TaskRun::standalone_custody(root, &label)?
+                        } else {
+                            TaskRun::standalone_foreground(root, &label)?
+                        })
+                    }
                 }
             };
             let outcome = match suite_run.as_mut() {
@@ -105,9 +121,16 @@ pub(super) fn run_fallback_route<'a>(
                     task,
                     preflight,
                     resolve_route_past_builtin(task, preflight)?,
+                    key,
                 ),
             }
         }
+        Route::ExecAlias if key.is_some() => Err(RunnerError::task_invocation(
+            "`--run-id` names a task run, but this selector starts no task run",
+        )),
+        Route::Defer { .. } if key.is_some() => Err(RunnerError::task_invocation(
+            "`--run-id` names a task run, but this selector starts no task run",
+        )),
         Route::ExecAlias => try_run_exec_alias(
             &preflight.resolved.resolved_root,
             &preflight.invocation_cwd,

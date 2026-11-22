@@ -751,6 +751,46 @@ fn a_run_id_repeat_after_settle_attaches_with_the_real_result_and_never_reruns()
 }
 
 #[test]
+fn builtin_test_run_id_records_outcome_and_attaches_without_rerunning() {
+    let fixture = Fixture::new();
+    fs::write(
+        fixture.repo.join("effigy.toml"),
+        format!("{MANIFEST}\n[test.suites.unit]\nrun = \"echo start >> runs.log; echo suite-out; echo suite-err >&2\"\n"),
+    )
+    .expect("manifest with test suite");
+
+    let first = fixture.run(&["--run-id", "test-key", "test"]);
+    assert!(first.status.success(), "{}", text(&first));
+    assert_eq!(fixture.status_json("test-key")["state"], "succeeded");
+    let logs = fixture.run(&["run", "logs", "test-key"]);
+    assert!(logs.status.success(), "{}", text(&logs));
+    assert!(
+        text(&logs).contains("kept no output log"),
+        "{}",
+        text(&logs)
+    );
+    let repeat = fixture.run(&["--run-id", "test-key", "test"]);
+    assert!(repeat.status.success(), "{}", text(&repeat));
+    assert_eq!(fixture.read("runs.log"), "start\n");
+}
+
+#[test]
+fn builtin_test_run_id_refuses_observation_and_non_run_builtins() {
+    let fixture = Fixture::new();
+    for args in [
+        &["--run-id", "not-a-run", "test", "--plan"][..],
+        &["--run-id", "not-a-run", "test", "--help"][..],
+        &["--run-id", "not-a-run", "doctor"][..],
+        &["--run-id", "not-a-run", "tasks"][..],
+        &["--run-id", "not-a-run", "help"][..],
+    ] {
+        let result = fixture.run(args);
+        assert!(!result.status.success(), "{}", text(&result));
+        assert!(text(&result).contains("--run-id"), "{}", text(&result));
+    }
+}
+
+#[test]
 fn run_stop_settles_a_running_task_and_its_children() {
     let fixture = Fixture::new();
     let mut owner = fixture

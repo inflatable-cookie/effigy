@@ -132,6 +132,7 @@ pub fn apply_global_cli_options(
     // Task arguments retain their original boundaries; globals travel separately.
     if let Command::Task(task) = &mut cmd {
         if options.run_id.is_some()
+            && task.name.rsplit('/').next().unwrap_or(&task.name) != "test"
             && effigy_core::builtin_tasks::is_builtin_task_name(
                 task.name.rsplit('/').next().unwrap_or(&task.name),
             )

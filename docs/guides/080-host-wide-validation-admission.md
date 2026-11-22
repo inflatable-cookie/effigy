@@ -112,9 +112,11 @@ cannot handle the request.
 A repeat of `--run-id ci-1234` never starts a second run: it attaches to the
 first and exits with that run's result, even when the run already finished.
 
-A run started with `--run-id` logs its output, redacted, unless both stdout
-and stderr were terminals; other runs keep no log. A follower that
-loses its connection resumes exactly where it stopped:
+A single workload started with `--run-id` logs its output, redacted, unless
+both stdout and stderr were terminals. Built-in `test` and multi-step tasks
+own child runs rather than one workload log: `run logs <key>` reports the
+parent outcome and that no parent log was kept. Other runs keep no log. A
+follower that loses its connection resumes exactly where it stopped:
 
 ```sh
 effigy run logs ci-1234 --follow --stdout-offset 5120 --stderr-offset 96
