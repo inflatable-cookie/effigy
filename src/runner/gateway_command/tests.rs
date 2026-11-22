@@ -2742,15 +2742,16 @@ fn gateway_reload_answers_default_to_reloading_and_keep_everything_else() {
 #[test]
 fn only_an_interactive_person_is_asked_to_reload_the_gateway() {
     assert!(gateway_reload_may_prompt(
-        false, true, true, false, false, false
+        false, true, true, false, false, false, false
     ));
-    for (output_json, stdin_tty, stderr_tty, ci, test_harness, fixture) in [
-        (true, true, true, false, false, false),
-        (false, false, true, false, false, false),
-        (false, true, false, false, false, false),
-        (false, true, true, true, false, false),
-        (false, true, true, false, true, false),
-        (false, true, true, false, false, true),
+    for (output_json, stdin_tty, stderr_tty, ci, test_harness, fixture, managed_pane) in [
+        (true, true, true, false, false, false, false),
+        (false, false, true, false, false, false, false),
+        (false, true, false, false, false, false, false),
+        (false, true, true, true, false, false, false),
+        (false, true, true, false, true, false, false),
+        (false, true, true, false, false, true, false),
+        (false, true, true, false, false, false, true),
     ] {
         assert!(
             !gateway_reload_may_prompt(
@@ -2759,9 +2760,10 @@ fn only_an_interactive_person_is_asked_to_reload_the_gateway() {
                 stderr_tty,
                 ci,
                 test_harness,
-                fixture
+                fixture,
+                managed_pane,
             ),
-            "json={output_json} stdin={stdin_tty} stderr={stderr_tty} ci={ci} test={test_harness} fixture={fixture}"
+            "json={output_json} stdin={stdin_tty} stderr={stderr_tty} ci={ci} test={test_harness} fixture={fixture} managed_pane={managed_pane}"
         );
     }
 }
@@ -2772,19 +2774,20 @@ fn only_an_interactive_person_is_asked_to_reload_the_gateway() {
 #[test]
 fn a_managed_start_never_prompts_in_a_json_run_on_a_terminal() {
     assert!(
-        !managed_gateway_reload_interactive_with(true, true, true, false, false, false),
+        !managed_gateway_reload_interactive_with(true, true, true, false, false, false, false),
         "a terminal `--json` run must never be asked"
     );
     assert!(
-        managed_gateway_reload_interactive_with(false, true, true, false, false, false),
+        managed_gateway_reload_interactive_with(false, true, true, false, false, false, false),
         "a person at a plain terminal is asked"
     );
-    for (output_json, stdin_tty, stderr_tty, ci, test_harness, fixture) in [
-        (false, false, true, false, false, false),
-        (false, true, false, false, false, false),
-        (false, true, true, true, false, false),
-        (false, true, true, false, true, false),
-        (false, true, true, false, false, true),
+    for (output_json, stdin_tty, stderr_tty, ci, test_harness, fixture, managed_pane) in [
+        (false, false, true, false, false, false, false),
+        (false, true, false, false, false, false, false),
+        (false, true, true, true, false, false, false),
+        (false, true, true, false, true, false, false),
+        (false, true, true, false, false, true, false),
+        (false, true, true, false, false, false, true),
     ] {
         assert!(
             !managed_gateway_reload_interactive_with(
@@ -2793,9 +2796,10 @@ fn a_managed_start_never_prompts_in_a_json_run_on_a_terminal() {
                 stderr_tty,
                 ci,
                 test_harness,
-                fixture
+                fixture,
+                managed_pane
             ),
-            "json={output_json} stdin={stdin_tty} stderr={stderr_tty} ci={ci} test={test_harness} fixture={fixture}"
+            "json={output_json} stdin={stdin_tty} stderr={stderr_tty} ci={ci} test={test_harness} fixture={fixture} managed_pane={managed_pane}"
         );
     }
 }
