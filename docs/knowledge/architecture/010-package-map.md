@@ -126,7 +126,7 @@ these callers. `deny.toml` remains the dependency policy authority.
 | Module | Responsibility |
 | --- | --- |
 | [`src/runner/entrypoints.rs`](../../../src/runner/entrypoints.rs) | top-level command dispatch into runner surfaces |
-| [`src/runner/command_context/*`](../../../src/runner/command_context.rs) | context-backed cwd/repo helper wrappers, resolved-root semantics, embedded repo override handling |
+| [`src/runner/command_context/*`](../../../src/runner/command_context.rs) | context-backed cwd/repo helper wrappers, resolved-root semantics, embedded repo override handling; `command_context/cwd.rs` is the single owned `current_dir` fallback |
 | [`src/runner/embedded_runner.rs`](../../../src/runner/embedded_runner.rs) | shared embedded command replay for Rhai, bootstrap, and builtin nested dispatch |
 
 ### Runtime/container activation
@@ -148,6 +148,7 @@ these callers. `deny.toml` remains the dependency policy authority.
 | [`src/runner/skill_command.rs`](../../../src/runner/skill_command.rs) | explicit external task-source resolution, isolated inventory/run preflight, host-only rejection, and source/target evidence rendering |
 | [`src/runner/exec_command/mod.rs`](../../../src/runner/exec_command/mod.rs) | `effigy exec` command surface and container exec dispatch over runtime activation and transport adapters |
 | [`src/runner/exec_command/surface.rs`](../../../src/runner/exec_command/surface.rs) | dev-container and named-container selection for exec surfaces |
+| [`src/runner/exec_command/transport/argv.rs`](../../../src/runner/exec_command/transport/argv.rs) | compose-exec argv owner: the arguments for a routed exec, an owned compose exec, and a verified container target, plus the parser that reads them back |
 | [`src/runner/deferral/*`](../../../src/runner/deferral.rs) | deferral selection, tracing, and delegated runtime activation |
 | [`src/runner/script_command.rs`](../../../src/runner/script_command/mod.rs) | Rhai-owned runner entry surface over captured runtime context and execution request helpers |
 
@@ -162,6 +163,7 @@ these callers. `deny.toml` remains the dependency policy authority.
 | [`src/runner/container_command/data.rs`](../../../src/runner/container_command/data.rs) | container data command glue over `effigy-data`, `effigy-state::artifact`, and runtime IO adapters |
 | [`src/runner/db_seed.rs`](../../../src/runner/db_seed.rs) | bootstrap and task-facing DB seed glue over `effigy-data` source normalization, artifact staging, and task execution requests |
 | [`src/runner/state_command_artifact.rs`](../../../src/runner/state_command_artifact.rs) | `effigy state artifact` command glue over `effigy_state::artifact` refs, OCI transport, staging, and capture plans |
+| [`src/runner/container_command/workspace_artifact_builder.rs`](../../../src/runner/container_command/workspace_artifact_builder.rs) | source-bound Linux builder staging and build adapter, including the Colima VM OOM-kill diagnostic read |
 
 ### Deploy surfaces
 
@@ -183,7 +185,7 @@ and secret management stay outside Effigy core and outside these modules.
 | Module | Responsibility |
 | --- | --- |
 | [`src/runner/workspace_command/session.rs`](../../../src/runner/workspace_command/session.rs) | public workspace session lifecycle, ownership classification, shell-plus-cleanup combination |
-| [`src/runner/workspace_command/provisioning.rs`](../../../src/runner/workspace_command/provisioning.rs) | workspace artifact install, permission-prep progress, linux workspace binary provisioning |
+| [`src/runner/workspace_command/provisioning.rs`](../../../src/runner/workspace_command/provisioning.rs) | workspace artifact install, permission-prep progress, linux workspace binary provisioning; `provisioning/guest_io.rs` owns guest-side compose exec argv and verified-guest filesystem/identity I/O |
 | [`src/runner/workspace_command/permissions.rs`](../../../src/runner/workspace_command/permissions.rs) | resolved-user rust/cache permission prep, non-root write/lock verification, read-only doctor diagnosis; compose exec goes through the manager invocation plan |
 | [`src/runner/workspace_command/permissions_gnu_accept.rs`](../../../src/runner/workspace_command/permissions_gnu_accept.rs) | private ignored GNU-findutils Colima acceptance fixture; not a production compose or raw-runtime adapter |
 | [`src/runner/workspace_command/mod.rs`](../../../src/runner/workspace_command/mod.rs) | command-surface glue, workspace handoff shell, residual session helpers, shutdown/render helpers |
@@ -193,8 +195,8 @@ and secret management stay outside Effigy core and outside these modules.
 
 | Module | Responsibility |
 | --- | --- |
-| [`src/runner/container_command/gateway_registration.rs`](../../../src/runner/container_command/gateway_registration/mod.rs) | gateway route reconciliation, runtime target translation, route-table mutation |
-| [`src/runner/container_command/support.rs`](../../../src/runner/container_command/support.rs) | gateway/runtime support helpers shared by lifecycle and runtime prep |
+| [`src/runner/container_command/gateway_registration.rs`](../../../src/runner/container_command/gateway_registration/mod.rs) | gateway route reconciliation, runtime target translation, route-table mutation, and Colima profile restart/reachability probing |
+| [`src/runner/container_command/support.rs`](../../../src/runner/container_command/support.rs) | gateway/runtime support facade shared by lifecycle and runtime prep; `support/shared_compose.rs` owns shared-service compose argv and bounded exec capture, `support/shared_services.rs` owns shared-service bring-up |
 | [`src/runner/gateway_command/*`](../../../src/runner/gateway_command/mod.rs) | operator gateway command surfaces and daemon management |
 
 ### Failure model

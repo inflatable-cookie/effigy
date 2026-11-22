@@ -80,7 +80,7 @@ fn expect_rejected(label, unexpected, path_prefix) {
 
 let guard_source = fs::read_file(path::join(repo_root, "scripts/check-runtime-container-drift.rhai"));
 
-require_contains(guard_source, `^src/runner/exec_command/tests\.rs$`, "cwd allowlist");
+require_contains(guard_source, `command_context/cwd|exec_command/tests`, "cwd allowlist");
 require_contains(
     guard_source,
     `src/runner/workspace_command/permissions_gnu_accept\.rs`,
@@ -101,10 +101,10 @@ let raw_pattern = `Command::new\("(docker|colima|nerdctl)"`;
 let compose_pattern = `compose_args\(`;
 let glob = #{ glob: "*.rs" };
 
-let cwd_allow = `^src/runner/exec_command/tests\.rs$`;
-let backend_allow = `^(src/runner/doctor_ports\.rs|src/runner/exec_command/transport\.rs|src/runner/container_command/lifecycle/prepare\.rs)$`;
-let raw_allow = `^(src/runner/doctor_ports\.rs|src/runner/bootstrap_command/mod\.rs|src/runner/workspace_command/permissions_gnu_accept\.rs)$`;
-let compose_allow = `^(crates/effigy-runtime/src/container_manager\.rs|src/runner/managed_shell\.rs|src/runner/exec_command/transport\.rs|src/runner/exec_command/transport/colima\.rs|src/runner/container_runtime_prep/prep\.rs|src/runner/container_runtime_prep/mod\.rs|src/runner/container_command/support\.rs|src/runner/deferral/run\.rs|src/runner/execute/pipeline/managed\.rs|src/runner/workspace_command/provisioning\.rs)$`;
+let cwd_allow = `^src/runner/(command_context/cwd|exec_command/tests)\.rs$`;
+let backend_allow = `^(src/runner/doctor_ports\.rs|src/runner/exec_command/transport\.rs|src/runner/exec_command/transport/argv\.rs|src/runner/container_command/lifecycle/prepare\.rs|src/runner/container_command/gateway_registration/mod\.rs)$`;
+let raw_allow = `^(src/runner/doctor_ports\.rs|src/runner/workspace_command/permissions_gnu_accept\.rs|src/runner/container_command/gateway_registration/mod\.rs|src/runner/container_command/workspace_artifact_builder\.rs)$`;
+let compose_allow = `^(crates/effigy-runtime/src/container_manager\.rs|src/runner/managed_shell\.rs|src/runner/exec_command/transport\.rs|src/runner/exec_command/transport/colima\.rs|src/runner/deferral/run\.rs|src/runner/execute/pipeline/managed\.rs|src/runner/container_command/support/shared_compose\.rs|src/runner/container_command/support/shared_services\.rs|src/runner/workspace_command/provisioning/guest_io\.rs)$`;
 
 require_contains(guard_source, cwd_allow, "cwd allowlist regex");
 require_contains(guard_source, backend_allow, "backend allowlist regex");
@@ -118,6 +118,10 @@ let runtime = path::join(fixture, "crates/effigy-runtime/src");
 fs::write_file(
     path::join(runner, "exec_command/tests.rs"),
     "fn fixture() { let _ = std::env::current_dir(); }\n",
+);
+fs::write_file(
+    path::join(runner, "command_context/cwd.rs"),
+    "fn adapter() { let _ = std::env::current_dir(); }\n",
 );
 fs::write_file(
     path::join(runner, "qa_group_command/execute.rs"),
@@ -138,6 +142,18 @@ fs::write_file(
 fs::write_file(
     path::join(runner, "container_command/lifecycle/prepare.rs"),
     "fn adapter() { let _ = ComposeBackend::ColimaNerdctl; }\n",
+);
+fs::write_file(
+    path::join(runner, "exec_command/transport/argv.rs"),
+    "fn adapter() { let _ = resolve_compose_backend(); }\n",
+);
+fs::write_file(
+    path::join(runner, "container_command/gateway_registration/mod.rs"),
+    "fn adapter() {\n    let _ = resolve_compose_backend();\n    let _ = std::process::Command::new(\"colima\");\n}\n",
+);
+fs::write_file(
+    path::join(runner, "container_command/workspace_artifact_builder.rs"),
+    "fn adapter() { let _ = std::process::Command::new(\"colima\"); }\n",
 );
 fs::write_file(
     path::join(runner, "container_command/lifecycle/up.rs"),
@@ -191,6 +207,18 @@ fs::write_file(
     path::join(runner, "workspace_command/provisioning.rs"),
     "fn adapter() { let _ = compose_args(policy, [\"exec\"]); }\n",
 );
+fs::write_file(
+    path::join(runner, "container_command/support/shared_compose.rs"),
+    "fn adapter() { let _ = compose_args(policy, [\"up\"]); }\n",
+);
+fs::write_file(
+    path::join(runner, "container_command/support/shared_services.rs"),
+    "fn adapter() { let _ = compose_args(policy, [\"up\"]); }\n",
+);
+fs::write_file(
+    path::join(runner, "workspace_command/provisioning/guest_io.rs"),
+    "fn adapter() { let _ = compose_args(policy, [\"exec\"]); }\n",
+);
 
 // The repaired runner callers are not newly allowed adapters. Reintroducing
 // their original bypasses must still be rejected by the unchanged guard.
@@ -210,12 +238,15 @@ let shared_roots = [runner_root, runtime_root];
 
 let cwd_hits = unexpected_matches(fixture, cwd_roots, cwd_pattern, glob, cwd_allow);
 expect_allowed("cwd", cwd_hits, "src/runner/exec_command/tests.rs");
+expect_allowed("cwd", cwd_hits, "src/runner/command_context/cwd.rs");
 expect_rejected("current_dir", cwd_hits, "src/runner/qa_group_command/execute.rs");
 
 let backend_hits = unexpected_matches(fixture, shared_roots, backend_pattern, glob, backend_allow);
 expect_allowed("backend", backend_hits, "src/runner/doctor_ports.rs");
 expect_allowed("backend", backend_hits, "src/runner/exec_command/transport.rs");
 expect_allowed("backend", backend_hits, "src/runner/container_command/lifecycle/prepare.rs");
+expect_allowed("backend", backend_hits, "src/runner/exec_command/transport/argv.rs");
+expect_allowed("backend", backend_hits, "src/runner/container_command/gateway_registration/mod.rs");
 expect_rejected("backend", backend_hits, "src/runner/container_command/lifecycle/up.rs");
 expect_rejected("backend", backend_hits, "src/runner/execute/pipeline/standard.rs");
 expect_rejected("backend", backend_hits, "src/runner/container_command/shell_prep.rs");
@@ -223,13 +254,21 @@ expect_rejected("backend", backend_hits, "src/runner/environment.rs");
 
 let raw_hits = unexpected_matches(fixture, shared_roots, raw_pattern, glob, raw_allow);
 expect_allowed("raw runtime", raw_hits, "src/runner/doctor_ports.rs");
-expect_allowed("raw runtime", raw_hits, "src/runner/bootstrap_command/mod.rs");
+expect_allowed("raw runtime", raw_hits, "src/runner/container_command/gateway_registration/mod.rs");
+expect_allowed("raw runtime", raw_hits, "src/runner/container_command/workspace_artifact_builder.rs");
+expect_rejected("raw runtime", raw_hits, "src/runner/bootstrap_command/mod.rs");
 expect_allowed("raw runtime", raw_hits, "src/runner/workspace_command/permissions_gnu_accept.rs");
 expect_rejected("raw runtime", raw_hits, "src/runner/workspace_command/permissions.rs");
 
 let compose_hits = unexpected_matches(fixture, shared_roots, compose_pattern, glob, compose_allow);
 expect_allowed("compose_args", compose_hits, "crates/effigy-runtime/src/container_manager.rs");
-expect_allowed("compose_args", compose_hits, "src/runner/workspace_command/provisioning.rs");
+expect_allowed("compose_args", compose_hits, "src/runner/container_command/support/shared_compose.rs");
+expect_allowed("compose_args", compose_hits, "src/runner/container_command/support/shared_services.rs");
+expect_allowed("compose_args", compose_hits, "src/runner/workspace_command/provisioning/guest_io.rs");
+expect_rejected("compose_args", compose_hits, "src/runner/workspace_command/provisioning.rs");
+expect_rejected("compose_args", compose_hits, "src/runner/container_command/support.rs");
+expect_rejected("compose_args", compose_hits, "src/runner/container_runtime_prep/prep.rs");
+expect_rejected("compose_args", compose_hits, "src/runner/container_runtime_prep/mod.rs");
 expect_rejected("compose_args", compose_hits, "src/runner/execute/pipeline/standard.rs");
 expect_rejected("compose_args", compose_hits, "src/runner/doctor_ports.rs");
 expect_rejected("compose_args", compose_hits, "src/runner/workspace_command/permissions.rs");
