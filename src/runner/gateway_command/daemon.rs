@@ -189,6 +189,9 @@ pub(super) fn wait_for_private_gateway_ready_with_probe(
         let blocker = match probe() {
             Ok(()) => return Ok(()),
             Err(effigy_gateway::GatewayError::NotRunning) => "the gateway is not answering yet",
+            Err(effigy_gateway::GatewayError::RecordLockTimeout) => {
+                "the gateway record is still being published"
+            }
             Err(effigy_gateway::GatewayError::Io(error))
                 if error.kind() == std::io::ErrorKind::NotFound =>
             {

@@ -16,9 +16,8 @@ const MAX_PID_BYTES: usize = 32;
 const MAX_IDENTITY_BYTES: usize = 1024;
 const MAX_VERSION_BYTES: usize = 256;
 /// Upper bound on how long a reader waits for an in-flight publication before
-/// it falls back to validating the files it can see. A publisher holds the
-/// exclusive record lock for two renames, so this is only reached by a writer
-/// that is stopped mid-publication.
+/// it refuses the read. A publisher holds the exclusive record lock for two
+/// renames, so the files cannot be safely validated while it remains held.
 #[cfg(unix)]
 const READ_LOCK_BUDGET: Duration = Duration::from_secs(2);
 
@@ -447,8 +446,8 @@ fn gateway_directory_absent(pid_path: &Path) -> Result<bool, GatewayError> {
 /// startup probe racing its own daemon saw (papercut dcc3fbd2). Readers take
 /// the shared half of the same lock, so an in-flight publication is either
 /// invisible or already complete. Validation still fails closed when this
-/// caller cannot coordinate (no lock file yet, a lock it may not open, or a
-/// publisher that holds it past [`READ_LOCK_BUDGET`]), and the interrupted-pair
+/// caller cannot coordinate (no lock file yet or a lock it may not open). A
+/// lock held past [`READ_LOCK_BUDGET`] refuses the read, and the interrupted-pair
 /// refusal is unchanged.
 fn read_snapshot_coordinated(
     pid_path: &Path,
@@ -1066,9 +1065,8 @@ impl GatewayRecordLock {
     /// Shared half of the record lock for readers. The boolean names an absent
     /// lock at open time. `None` means this caller
     /// could not coordinate with a publisher: no lock file exists yet, the
-    /// lock file is not openable by this caller, or a publisher held it for
-    /// longer than [`READ_LOCK_BUDGET`]. Record validation still runs in every
-    /// case, so an uncoordinated read keeps failing closed.
+    /// lock file is not openable by this caller. A publisher holding the lock
+    /// beyond [`READ_LOCK_BUDGET`] causes a refusal instead of an unsafe read.
     fn share(pid_path: &Path, owner_uid: u32) -> Result<(Option<Self>, bool), GatewayError> {
         use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 
@@ -1111,7 +1109,7 @@ impl GatewayRecordLock {
                 Ok(()) => return Ok((Some(Self(file)), false)),
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     if Instant::now() >= deadline {
-                        return Ok((None, false));
+                        return Err(GatewayError::RecordLockTimeout);
                     }
                     std::thread::sleep(Duration::from_millis(2));
                 }
@@ -1601,6 +1599,27 @@ mod tests {
         .expect("coordinate the newly created lock")
         .expect("complete pair");
         assert_eq!(snapshot.digest(), published.unwrap().digest());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gateway_identity_held_lock_refuses_then_checks_interrupted_pair() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = private_fixture_dir();
+        let pid_path = dir.path().join("gateway.pid");
+        let owner_uid = fs::metadata(dir.path()).unwrap().uid();
+        let lock = GatewayRecordLock::acquire(&pid_path, owner_uid).unwrap();
+        write_private_fixture(&identity_path(&pid_path), br#"{"format_version":1}"#);
+
+        assert!(matches!(
+            read_snapshot(&pid_path),
+            Err(GatewayError::RecordLockTimeout)
+        ));
+        drop(lock);
+        let error = read_snapshot(&pid_path).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("gateway identity exists without its PID"));
     }
 
     #[test]
