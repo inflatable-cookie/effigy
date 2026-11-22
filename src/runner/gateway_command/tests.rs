@@ -72,6 +72,30 @@ fn private_gateway_publication_obeys_its_finite_kernel_budget() {
 }
 
 #[test]
+fn private_gateway_publication_retries_record_lock_timeout() {
+    let operation = effigy_gateway::operator::context(
+        std::time::Duration::from_secs(1),
+        effigy_kernel::ctx::EffectClass::Observe,
+    );
+    let mut probes = 0;
+    daemon::wait_for_private_gateway_ready_with_probe(
+        &operation,
+        &readiness_progress(),
+        readiness_listener(),
+        || {
+            probes += 1;
+            if probes == 1 {
+                Err(effigy_gateway::GatewayError::RecordLockTimeout)
+            } else {
+                Ok(())
+            }
+        },
+    )
+    .expect("publication can finish after the record lock timeout");
+    assert_eq!(probes, 2);
+}
+
+#[test]
 fn private_gateway_publication_never_retries_an_unverified_permission_refusal() {
     let operation = effigy_gateway::operator::context(
         std::time::Duration::from_secs(15),

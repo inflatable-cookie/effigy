@@ -37,8 +37,10 @@ state rather than classifying absence.
 First-launch identity reads also coordinate when the record lock did not exist
 at the first open: after reading the pair, a newly created trusted lock causes
 a fresh read under that lock. A real identity-only record still refuses. An
-unsafe, inaccessible or persistently held lock retains the existing
-uncoordinated validation path; no startup budget changes.
+unsafe or inaccessible lock retains the existing uncoordinated validation path.
+A lock held beyond the reader budget refuses the read; the startup readiness
+poll retries that specific refusal within its existing budget. After the lock
+is released, an interrupted pair still refuses.
 
 ## Unprovable status and the headless precondition
 

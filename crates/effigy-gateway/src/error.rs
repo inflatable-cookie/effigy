@@ -112,6 +112,10 @@ pub enum GatewayError {
     )]
     LegacyIdentityRequired { pid: u32 },
 
+    /// The gateway record is being published and could not be read in time.
+    #[error("gateway record lock remained held while reading identity")]
+    RecordLockTimeout,
+
     /// Another `gateway up`, `down`, or `recover` holds the transition lock.
     #[error(
         "another gateway up, down, or recover command holds the transition lock; retry when that command finishes"
