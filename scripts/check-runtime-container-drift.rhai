@@ -73,7 +73,7 @@ failure_count += check_no_unlisted_matches(
     ["src/runner"],
     `std::env::current_dir\(`,
     #{ glob: "*.rs" },
-    `^src/runner/exec_command/tests\.rs$`,
+    `^src/runner/(command_context/cwd|exec_command/tests)\.rs$`,
 );
 
 failure_count += check_no_unlisted_matches(
@@ -81,7 +81,7 @@ failure_count += check_no_unlisted_matches(
     ["src/runner", "crates/effigy-runtime/src"],
     `resolve_compose_backend|ComposeBackend`,
     #{ glob: "*.rs" },
-    `^(src/runner/doctor_ports\.rs|src/runner/exec_command/transport\.rs|src/runner/container_command/lifecycle/prepare\.rs)$`,
+    `^(src/runner/doctor_ports\.rs|src/runner/exec_command/transport\.rs|src/runner/exec_command/transport/argv\.rs|src/runner/container_command/lifecycle/prepare\.rs|src/runner/container_command/gateway_registration/mod\.rs)$`,
 );
 
 failure_count += check_no_unlisted_matches(
@@ -89,7 +89,7 @@ failure_count += check_no_unlisted_matches(
     ["src/runner", "crates/effigy-runtime/src"],
     `Command::new\("(docker|colima|nerdctl)"`,
     #{ glob: "*.rs" },
-    `^(src/runner/doctor_ports\.rs|src/runner/bootstrap_command/mod\.rs|src/runner/workspace_command/permissions_gnu_accept\.rs)$`,
+    `^(src/runner/doctor_ports\.rs|src/runner/workspace_command/permissions_gnu_accept\.rs|src/runner/container_command/gateway_registration/mod\.rs|src/runner/container_command/workspace_artifact_builder\.rs)$`,
 );
 
 failure_count += check_no_unlisted_matches(
@@ -97,7 +97,7 @@ failure_count += check_no_unlisted_matches(
     ["src/runner", "crates/effigy-runtime/src"],
     `compose_args\(`,
     #{ glob: "*.rs" },
-    `^(crates/effigy-runtime/src/container_manager\.rs|src/runner/managed_shell\.rs|src/runner/exec_command/transport\.rs|src/runner/exec_command/transport/colima\.rs|src/runner/container_runtime_prep/prep\.rs|src/runner/container_runtime_prep/mod\.rs|src/runner/container_command/support\.rs|src/runner/deferral/run\.rs|src/runner/execute/pipeline/managed\.rs|src/runner/workspace_command/provisioning\.rs)$`,
+    `^(crates/effigy-runtime/src/container_manager\.rs|src/runner/managed_shell\.rs|src/runner/exec_command/transport\.rs|src/runner/exec_command/transport/colima\.rs|src/runner/deferral/run\.rs|src/runner/execute/pipeline/managed\.rs|src/runner/container_command/support/shared_compose\.rs|src/runner/container_command/support/shared_services\.rs|src/runner/workspace_command/provisioning/guest_io\.rs)$`,
 );
 
 failure_count += check_no_unlisted_matches(
