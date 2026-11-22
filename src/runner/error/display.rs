@@ -38,6 +38,9 @@ pub(super) fn fmt_runner_error(
         // this text can carry the stream and the bytes it moved.
         RunnerError::WorkspaceGuest { message, .. } => f.write_str(message),
         RunnerError::ContainerWaitRefused { diagnostic, .. } => f.write_str(diagnostic),
+        // The wrapper adds no sentence of its own: its cause is the text a
+        // person and a machine read (effigy#1105).
+        RunnerError::DetachedActivationFailure { cause, .. } => std::fmt::Display::fmt(cause, f),
         RunnerError::ManagedHostReadiness {
             process,
             diagnostic,

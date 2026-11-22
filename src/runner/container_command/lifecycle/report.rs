@@ -25,6 +25,8 @@ pub(super) struct DetachedOperationState {
     /// Workspace preparation diagnostics must not echo backend/secret values.
     /// The environment and checkout the activation was asked to bring up.
     pub(super) identity: Option<String>,
+    /// The environment the activation brings up, named in the human headline.
+    pub(super) container: Option<String>,
 }
 
 /// The exact activation identity a detached JSON failure reports, so an
@@ -72,11 +74,14 @@ pub(super) fn detached_activation_failure(
     // which listener withheld its own. It gets its own envelope so a failing
     // host listener never reads as a whole-activation exposure failure
     // (effigy#455).
+    // The refusal inside a detached wrapper decides the envelope; the wrapper
+    // itself only says the activation did not finish (effigy#1105).
+    let inner = error.detached_activation_cause();
     if let RunnerError::ManagedListenerExposure {
         environment,
         exposed,
         failures,
-    } = &error
+    } = inner
     {
         let withheld = failures
             .iter()
@@ -121,14 +126,14 @@ pub(super) fn detached_activation_failure(
         }
         return RunnerError::task_invocation(message);
     }
-    let message = match &error {
+    let message = match inner {
         RunnerError::ManagedHostReadiness { diagnostic, .. } => {
             format!("Detached activation did not complete: {diagnostic}")
         }
         _ => "Detached activation did not complete: readiness and exposure are unverified. Re-run `effigy container up --detach`; the next activation reconciles from what is running.".to_owned(),
     };
     if output_json {
-        let failure_kind = match &error {
+        let failure_kind = match inner {
             // The store's own typed answer decides the kind; the message is
             // never read for it (effigy#933).
             RunnerError::GatewayEndpointStore {
@@ -152,7 +157,7 @@ pub(super) fn detached_activation_failure(
                 "preparation_step": operation.preparation_step.filter(|_| operation.stage == Some("preparation")),
                 "identity": operation.identity,
                 "failure_kind": failure_kind,
-                "cause": sanitized_failure_cause(&error),
+                "cause": sanitized_failure_cause(inner),
                 "readiness": "unverified",
                 "exposure": "unverified",
                 "recovery": "effigy container up --detach",
@@ -161,11 +166,11 @@ pub(super) fn detached_activation_failure(
                 "message": message,
         });
         // A wait the bring-up could not finish names its own kind and waits.
-        if let Some(details) = wait_refusal_details(&error) {
+        if let Some(details) = wait_refusal_details(inner) {
             rendered["failure_kind"] = details["failure_kind"].clone();
             rendered["waiting_on"] = details["waiting_on"].clone();
         }
-        let human = effigy_ui::HumanError::new(sanitized_failure_cause(&error))
+        let human = effigy_ui::HumanError::new(sanitized_failure_cause(inner))
             .evidence(&message)
             .evidence(format!("failure_kind: {failure_kind}"))
             .next_action("effigy container down");
@@ -176,17 +181,7 @@ pub(super) fn detached_activation_failure(
             Some(error.workload_outcome()),
         );
     }
-    let child = error.human_error();
-    let mut lines = vec![child.what_failed().to_owned()];
-    lines.extend(child.evidence_lines().iter().cloned());
-    lines.push(
-        "detached activation unavailable: readiness and exposure are unverified. Inspect with `effigy container status`; retry `effigy container up --detach`. `effigy container down` stops the scope; `effigy container retire --yes` removes owned mutable data."
-            .to_owned(),
-    );
-    if let Some(next) = child.next_action_text() {
-        lines.push(format!("next: {next}"));
-    }
-    RunnerError::task_invocation(lines.join("\n"))
+    RunnerError::wrap_detached_activation(operation.container.clone(), error)
 }
 
 /// The machine-readable details of a container wait that ended unfinished.
@@ -205,17 +200,7 @@ pub(super) fn detached_activation_error(
     if matches!(&error, RunnerError::ManagedHostReadiness { .. }) {
         return error;
     }
-    let child = error.human_error();
-    let mut lines = vec![child.what_failed().to_owned()];
-    lines.extend(child.evidence_lines().iter().cloned());
-    lines.push(format!(
-        "container `{}` stays as Compose left it: gateway exposure is unverified and no teardown ran. Re-run `effigy container up --detach` to reconcile from what is running, or `effigy container down` to stop it.",
-        policy.name
-    ));
-    if let Some(next) = child.next_action_text() {
-        lines.push(format!("next: {next}"));
-    }
-    RunnerError::task_invocation(lines.join("\n"))
+    RunnerError::wrap_detached_activation(Some(policy.name.clone()), error)
 }
 
 /// The routes this activation verified and published, as one line each, for

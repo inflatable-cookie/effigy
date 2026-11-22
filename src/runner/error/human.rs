@@ -73,6 +73,9 @@ pub(super) fn mapped(error: &RunnerError) -> Option<HumanError> {
             details,
             ..
         } => container_wait_refused(environment, diagnostic, details),
+        RunnerError::DetachedActivationFailure { container, cause } => {
+            detached_activation_failed(container.as_deref(), cause)
+        }
         RunnerError::ManagedHostReadiness {
             process,
             diagnostic,
@@ -505,6 +508,47 @@ fn container_wait_refused(
         human = human.detail("failure_kind", failure_kind);
     }
     human.detail("cause", diagnostic)
+}
+
+/// The next step after a detached bring-up that did not finish: finish it, or
+/// stop it. It replaces the cause's generic next step.
+const DETACHED_ACTIVATION_NEXT: &str =
+    "Run `effigy container up --detach` to finish setup, or `effigy container down` to stop it";
+
+/// A detached activation that did not finish. The headline names the
+/// container, one explanation says what Compose left behind, `Next:` names the
+/// two commands that finish or stop it, and the cause's own facts sit under
+/// `Details:`. The cause's generic next step is dropped, so it never reads as
+/// the advice for this failure (effigy#1105).
+fn detached_activation_failed(container: Option<&str>, cause: &RunnerError) -> HumanError {
+    let headline = match container {
+        Some(name) => format!("Container `{name}` did not finish starting"),
+        None => "Container did not finish starting".to_owned(),
+    };
+    let child = cause.human_error();
+    let mut human = HumanError::new(headline)
+        .explain(
+            "Compose left the stack as it was: nothing was torn down, but readiness and gateway routes are unverified.",
+        )
+        .next_action(DETACHED_ACTIVATION_NEXT)
+        .evidence(child.what_failed());
+    for line in child
+        .explanation_lines()
+        .iter()
+        .chain(child.evidence_lines())
+    {
+        human = human.evidence(line);
+    }
+    if let Some(hint) = child
+        .next_action_text()
+        .filter(|hint| !super::is_generic_command_next(hint))
+    {
+        human = human.detail("hint", hint);
+    }
+    for (label, value) in child.detail_entries() {
+        human = human.detail(label, value);
+    }
+    human
 }
 
 fn concise_diagnostic_sentence(diagnostic: &str) -> String {
