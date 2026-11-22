@@ -1632,10 +1632,15 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
     /// test's own checkout so concurrent tests probe different ports.
     ///
     /// The probe only proves a port is free at one instant, so two test
-    /// processes in the same checkout would otherwise probe the same first
-    /// port and race the child that binds it. Mixing in a per-process nonce
-    /// keeps two concurrent suites on different addresses; repeated calls in
-    /// one process keep the seed sequence they had.
+    /// processes would otherwise pick the same port and race the child that
+    /// binds it — including across a restart, where the port sits free
+    /// between the old generation's death and the new child's bind
+    /// (effigy#1108). Each returned port is therefore claimed under a
+    /// cross-process lock before it is probed, and the claim is held for the
+    /// test process's lifetime, so no concurrent nextest process can select
+    /// it afterwards. Mixing in a per-process nonce keeps two concurrent
+    /// suites on different addresses; repeated calls in one process keep the
+    /// seed sequence they had.
     fn fixture_listener_bind(seed: &str) -> String {
         static NONCE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
         let nonce = *NONCE.get_or_init(|| {
@@ -1644,17 +1649,69 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
                 .map_or(0, |since| since.subsec_nanos());
             std::process::id().rotate_left(16) ^ started
         });
+        struct Claims {
+            reserved: Vec<u16>,
+            held: Vec<std::fs::File>,
+        }
+        static CLAIMS: std::sync::Mutex<Claims> = std::sync::Mutex::new(Claims {
+            reserved: Vec::new(),
+            held: Vec::new(),
+        });
+        // One probe-and-claim at a time per process: two threads must never
+        // probe the same free port before either of them claims it.
+        let mut claims = CLAIMS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let start = seed.bytes().fold(nonce, |hash, byte| {
             hash.wrapping_mul(31).wrapping_add(u32::from(byte))
         });
         for offset in 0..1024 {
             let port = 20_000 + (start.wrapping_add(offset) % 4_000);
             let port = u16::try_from(port).expect("fixture listener port");
+            if claims.reserved.contains(&port) {
+                continue;
+            }
+            // Claim the port across test processes before probing it: a
+            // concurrent nextest process that probed it first still loses
+            // the race here and moves on to a different port.
+            let Some(lock) = claim_fixture_listener_port(port) else {
+                continue;
+            };
             if std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).is_ok() {
+                claims.reserved.push(port);
+                claims.held.push(lock);
                 return format!("127.0.0.1:{port}");
             }
+            // A live port outside the suite holds this one; release our
+            // claim and keep probing. Dropping the file releases its lock.
+            drop(lock);
         }
         panic!("no free fixture listener port outside the ephemeral range");
+    }
+
+    /// An exclusive, non-blocking cross-process claim on a fixture listener
+    /// port. The returned file keeps its lock until the test process exits;
+    /// a dead process releases its locks with it, so a stale lock file never
+    /// blocks a port. Returns `None` when another live test process already
+    /// claimed the port.
+    fn claim_fixture_listener_port(port: u16) -> Option<std::fs::File> {
+        let dir = std::env::temp_dir().join("effigy-fixture-listener-ports");
+        std::fs::create_dir_all(&dir).expect("fixture listener port lock directory");
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(dir.join(format!("{port}.lock")))
+            .expect("fixture listener port lock file");
+        // SAFETY: `flock` receives only the file's own descriptor and flags.
+        let claimed = unsafe {
+            libc::flock(
+                std::os::unix::io::AsRawFd::as_raw_fd(&file),
+                libc::LOCK_EX | libc::LOCK_NB,
+            )
+        } == 0;
+        claimed.then_some(file)
     }
 
     /// One declared host process with a managed listener route on `domain`,
@@ -2735,12 +2792,32 @@ while True:
         });
 
         fs::remove_file(&url_path).expect("clear the dependent's record");
-        let report = super::kernel_run::restart_host_processes_for_container(
-            &fixture.checkout,
-            &policy,
-            &["app".to_owned()],
-        )
-        .expect("the named listener restarts");
+        // A restart frees the published port between the old generation's
+        // death and the new child's bind. The fixture reservation keeps every
+        // concurrent test process off that port, but the successor can still
+        // arrive while the kernel releases the predecessor's socket, so a
+        // transient collision retries instead of failing the suite
+        // (effigy#1108). Any other restart failure still fails at once.
+        let mut report = None;
+        for attempt in 1..=3 {
+            match super::kernel_run::restart_host_processes_for_container(
+                &fixture.checkout,
+                &policy,
+                &["app".to_owned()],
+            ) {
+                Ok(restarted) => {
+                    report = Some(restarted);
+                    break;
+                }
+                Err(error)
+                    if attempt < 3 && error.to_string().contains("Address already in use") =>
+                {
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+                Err(error) => panic!("the named listener restarts: {error}"),
+            }
+        }
+        let report = report.expect("the named listener restarts");
         let restarted = report
             .processes
             .iter()
