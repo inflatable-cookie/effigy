@@ -399,6 +399,62 @@ fn staged_socket_accepted(raw: &Path, expected: &Path, ns: &impl Namespace) -> b
     socket.kind == Kind::Socket && socket.uid == 0 && socket.mode & 0o007 == 0
 }
 
+/// How long to keep retrying a transient broker connect after `launchctl
+/// bootstrap`, while launchd finishes binding the activated socket.
+const CONNECT_RETRY_BUDGET: Duration = Duration::from_secs(2);
+/// Pause between transient broker connect attempts.
+const CONNECT_RETRY_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Only a missing socket or a refused connection is transient: launchd binds
+/// the activated socket asynchronously after `launchctl bootstrap`, so the
+/// first connect can race it. Trust refusals never retry.
+fn transient_connect(failure: &io::Error) -> bool {
+    matches!(
+        failure.kind(),
+        io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound
+    )
+}
+
+/// Names the broker socket, its log, and setup when the socket never comes
+/// up inside the retry budget, in the same style as [`no_reply`]. The
+/// original kind is preserved so callers keep classifying the failure.
+fn broker_unavailable(uid: u32, failure: io::Error) -> io::Error {
+    io::Error::new(
+        failure.kind(),
+        format!(
+            "bind broker is not listening yet on {}; check {} or re-run `effigy gateway setup`: {failure}",
+            socket_path(uid).display(),
+            log_path(uid).display(),
+        ),
+    )
+}
+
+/// Runs one connect attempt to a result, retrying transient
+/// `ConnectionRefused` / `NotFound` failures until `budget` expires. The
+/// attempt closure re-runs the full trust checks on every try, and
+/// security/trust refusals return immediately without retrying. Takes the
+/// budget, interval, and sleep so tests inject fakes instead of waiting.
+fn connect_with_retry(
+    uid: u32,
+    budget: Duration,
+    interval: Duration,
+    sleep: impl Fn(Duration),
+    mut attempt: impl FnMut() -> io::Result<UnixStream>,
+) -> io::Result<UnixStream> {
+    let deadline = std::time::Instant::now() + budget;
+    loop {
+        match attempt() {
+            Ok(stream) => return Ok(stream),
+            Err(failure) if transient_connect(&failure) => {
+                if std::time::Instant::now() >= deadline {
+                    return Err(broker_unavailable(uid, failure));
+                }
+                sleep(interval);
+            }
+            Err(failure) => return Err(failure),
+        }
+    }
+}
 /// Names the broker, its socket and log, and setup when a request gets no reply
 /// in time. Other I/O failures pass through unchanged.
 fn no_reply(uid: u32, failure: io::Error) -> io::Error {
@@ -425,23 +481,31 @@ pub fn request(addresses: [SocketAddr; 2]) -> io::Result<HandedListeners> {
 }
 
 fn trusted_connection(uid: u32) -> io::Result<UnixStream> {
-    let path = socket_path(uid);
-    let parent = std::fs::symlink_metadata(Path::new("/private/var/run"))?;
-    let metadata = std::fs::symlink_metadata(&path)?;
-    if !socket_parent_trusted(parent.uid(), parent.gid(), parent.mode(), parent.is_dir())
-        || !metadata.file_type().is_socket()
-        || metadata.uid() != 0
-        || metadata.mode() & 0o007 != 0
-    {
-        return Err(error(
-            "untrusted bind broker socket; run `effigy gateway setup`",
-        ));
-    }
-    let stream = UnixStream::connect(path)?;
-    if peer_uid(&stream)? != 0 {
-        return Err(error("bind broker is not root-owned"));
-    }
-    Ok(stream)
+    connect_with_retry(
+        uid,
+        CONNECT_RETRY_BUDGET,
+        CONNECT_RETRY_INTERVAL,
+        std::thread::sleep,
+        || {
+            let path = socket_path(uid);
+            let parent = std::fs::symlink_metadata(Path::new("/private/var/run"))?;
+            let metadata = std::fs::symlink_metadata(&path)?;
+            if !socket_parent_trusted(parent.uid(), parent.gid(), parent.mode(), parent.is_dir())
+                || !metadata.file_type().is_socket()
+                || metadata.uid() != 0
+                || metadata.mode() & 0o007 != 0
+            {
+                return Err(error(
+                    "untrusted bind broker socket; run `effigy gateway setup`",
+                ));
+            }
+            let stream = UnixStream::connect(path)?;
+            if peer_uid(&stream)? != 0 {
+                return Err(error("bind broker is not root-owned"));
+            }
+            Ok(stream)
+        },
+    )
 }
 
 /// Ensure a pool address is present on macOS `lo0` through the bind broker.
@@ -1026,5 +1090,97 @@ mod tests {
         }
         let passthrough = no_reply(501, io::Error::from(io::ErrorKind::BrokenPipe));
         assert_eq!(passthrough.kind(), io::ErrorKind::BrokenPipe);
+    }
+
+    fn connect_attempts(
+        failures: Vec<io::ErrorKind>,
+        budget: Duration,
+    ) -> (io::Result<UnixStream>, usize) {
+        let mut failures = failures.into_iter();
+        let mut attempts = 0;
+        let result = connect_with_retry(
+            501,
+            budget,
+            Duration::from_millis(1),
+            |_| {},
+            || {
+                attempts += 1;
+                match failures.next() {
+                    Some(kind) => Err(io::Error::from(kind)),
+                    None => {
+                        let (client, _broker) = UnixStream::pair()?;
+                        Ok(client)
+                    }
+                }
+            },
+        );
+        (result, attempts)
+    }
+
+    #[test]
+    fn broker_connect_retries_transient_failures_until_the_socket_comes_up() {
+        for kind in [io::ErrorKind::ConnectionRefused, io::ErrorKind::NotFound] {
+            let (result, attempts) = connect_attempts(vec![kind, kind], Duration::from_secs(5));
+            assert!(result.is_ok(), "transient {kind:?} should retry");
+            assert_eq!(attempts, 3, "two transient {kind:?} then success");
+        }
+    }
+
+    #[test]
+    fn broker_connect_gives_up_with_broker_context_after_the_budget() {
+        let mut attempts = 0;
+        let result = connect_with_retry(
+            501,
+            Duration::from_millis(20),
+            Duration::from_millis(1),
+            |_| {},
+            || {
+                attempts += 1;
+                Err(io::Error::from(io::ErrorKind::ConnectionRefused))
+            },
+        );
+        let failure = result.expect_err("persistent refusal must fail");
+        assert_eq!(failure.kind(), io::ErrorKind::ConnectionRefused);
+        assert!(attempts > 1, "must retry before giving up");
+        let message = failure.to_string();
+        assert!(
+            message.contains("bind broker is not listening yet"),
+            "{message}"
+        );
+        assert!(
+            message.contains(&socket_path(501).display().to_string()),
+            "{message}"
+        );
+        assert!(
+            message.contains(&log_path(501).display().to_string()),
+            "{message}"
+        );
+        assert!(message.contains("effigy gateway setup"), "{message}");
+    }
+
+    #[test]
+    fn broker_connect_never_retries_trust_refusals() {
+        // PermissionDenied and trust errors (Other) fail on the first attempt.
+        for failure in [
+            io::Error::from(io::ErrorKind::PermissionDenied),
+            error("untrusted bind broker socket; run `effigy gateway setup`"),
+            error("bind broker is not root-owned"),
+        ] {
+            let kind = failure.kind();
+            let message = failure.to_string();
+            let mut attempts = 0;
+            let result = connect_with_retry(
+                501,
+                Duration::from_secs(5),
+                Duration::from_millis(1),
+                |_| panic!("trust refusal must not sleep for a retry"),
+                || {
+                    attempts += 1;
+                    Err(io::Error::new(kind, message.clone()))
+                },
+            );
+            assert!(result.is_err());
+            assert_eq!(attempts, 1, "{kind:?} must not retry");
+        }
     }
 }
