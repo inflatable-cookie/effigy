@@ -28,6 +28,7 @@ use std::time::{Duration, Instant};
 use effigy_containers::EffectiveContainerPolicy;
 
 use crate::runner::error::RunnerError;
+use crate::runner::workspace_command::permissions::NAMED_VOLUME_MOUNTINFO_MARKER;
 
 /// Model cost charged for one executed script operation. This is the
 /// controlled backend latency the pre-batching doctor measured per round trip;
@@ -45,6 +46,7 @@ pub(in crate::runner) enum ScriptedPhase {
     Identity,
     MetadataBatch,
     AccessBatch,
+    MountInfo,
     Unexpected,
 }
 
@@ -58,6 +60,7 @@ impl ScriptedPhase {
             Self::Identity => "identity",
             Self::MetadataBatch => "metadata",
             Self::AccessBatch => "access",
+            Self::MountInfo => "named-volume-mounts",
             Self::Unexpected => "unexpected",
         }
     }
@@ -363,6 +366,9 @@ pub(in crate::runner) fn classify(program: &str, args: &[String]) -> ScriptedReq
             {
                 ScriptedPhase::AccessBatch
             }
+            _ if args.iter().any(|arg| arg == NAMED_VOLUME_MOUNTINFO_MARKER) => {
+                ScriptedPhase::MountInfo
+            }
             _ if args.iter().any(|arg| arg.contains("BUN_INSTALL")) => ScriptedPhase::BunProbe,
             _ if args.iter().any(|arg| arg == "ps") => {
                 if args.iter().any(|arg| arg == "-q") {
@@ -380,6 +386,7 @@ pub(in crate::runner) fn classify(program: &str, args: &[String]) -> ScriptedReq
     let paths = match phase {
         ScriptedPhase::MetadataBatch => marker_paths("effigy-workspace-doctor-inspect-batch"),
         ScriptedPhase::AccessBatch => marker_paths("effigy-workspace-doctor-access-batch"),
+        ScriptedPhase::MountInfo => marker_paths(NAMED_VOLUME_MOUNTINFO_MARKER),
         _ => Vec::new(),
     };
 
@@ -637,7 +644,21 @@ pub(in crate::runner) fn ownership_handler(
                     .join("\n");
                 ScriptedAnswer::ok(format!("{records}\n"))
             }
+            ScriptedPhase::MountInfo => ScriptedAnswer::ok(synthetic_mountinfo(&request.paths)),
             ScriptedPhase::Unexpected => ScriptedAnswer::failed(127, "unexpected scripted launch"),
         }
     })
+}
+
+/// A mount table in which each declared path is mounted, as a live container
+/// reports its named volumes. Only the declared paths are reported.
+fn synthetic_mountinfo(paths: &[String]) -> String {
+    paths
+        .iter()
+        .enumerate()
+        .map(|(index, path)| {
+            let id = 100 + index;
+            format!("{id} 0 0:{id} / {path} rw,relatime - ext4 /dev/vdb rw\n")
+        })
+        .collect()
 }

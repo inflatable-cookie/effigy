@@ -1375,7 +1375,11 @@ const WORKSPACE_ACCESS_BATCH_SCRIPT: &str = "while [ \"$#\" -ge 2 ]; do\n  path=
 const WORKSPACE_MKDIR_BATCH_SCRIPT: &str = "for path do mkdir -p -- \"$path\" || exit 1; done";
 const WORKSPACE_CHOWN_SHALLOW_BATCH_SCRIPT: &str =
     "spec=$1; shift; for path do chown -h \"$spec\" -- \"$path\" || exit 1; done";
-const WORKSPACE_CHMOD_BATCH_SCRIPT: &str = "while [ \"$#\" -ge 2 ]; do path=$1; kind=$2; shift 2; mode=u+w; [ \"$kind\" = dir ] && mode=u+wx; chmod \"$mode\" -- \"$path\" || exit 1; done";
+/// Shared by prep and the doctor. The marker lets argv-level harnesses recognize
+/// this read and answer for the declared paths that follow it.
+pub(in crate::runner) const NAMED_VOLUME_MOUNTINFO_MARKER: &str = "effigy-named-volume-mounts";
+const NAMED_VOLUME_MOUNTINFO_SCRIPT: &str = "cat /proc/self/mountinfo";
+const WORKSPACE_CHMOD_BATCH_SCRIPT: &str ="while [ \"$#\" -ge 2 ]; do path=$1; kind=$2; shift 2; mode=u+w; [ \"$kind\" = dir ] && mode=u+wx; chmod \"$mode\" -- \"$path\" || exit 1; done";
 
 fn ownership_find_batch_script(
     paths: &[String],
@@ -1635,10 +1639,17 @@ impl WorkspaceAccessBackend for ComposeAccessBackend<'_> {
         }
         // `cat` runs in the container's mount namespace, so its /proc/self
         // reports submounts that the host can no longer see through VirtioFS.
-        let output = self.exec_root(
-            &["cat", "/proc/self/mountinfo"],
-            "workspace named-volume mount verification",
-        )?;
+        // The declared paths follow a marker argument the script ignores; they
+        // are not read here, but they let argv-level harnesses answer for the
+        // exact volumes under test.
+        let mut argv = vec![
+            "sh",
+            "-c",
+            NAMED_VOLUME_MOUNTINFO_SCRIPT,
+            NAMED_VOLUME_MOUNTINFO_MARKER,
+        ];
+        argv.extend(paths.iter().map(String::as_str));
+        let output = self.exec_root(&argv, "workspace named-volume mount verification")?;
         if output.trim().is_empty() {
             return Err(PermissionPrepError::new(
                 "workspace named-volume mount verification read an empty /proc/self/mountinfo",

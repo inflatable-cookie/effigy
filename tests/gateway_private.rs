@@ -4403,6 +4403,13 @@ PYDYNAMIC
         shift
         args="$*"
         case "$args" in
+          *effigy-named-volume-mounts*)
+            record=0
+            for arg in "$@"; do
+              if [ "$arg" = effigy-named-volume-mounts ]; then record=1; continue; fi
+              if [ "$record" -eq 1 ]; then printf "1 0 0:1 / %s rw - ext4 /dev/vdb rw\n" "$arg"; fi
+            done
+            ;;
           *effigy-perm-inspect-batch*)
             record=0
             for arg in "$@"; do
@@ -9090,6 +9097,13 @@ elif [ "${1-}" = compose ]; then
       # stays silent success.
       args="$*"
       case "$args" in
+        *effigy-named-volume-mounts*)
+          record=0
+          for arg in "$@"; do
+            if [ "$arg" = effigy-named-volume-mounts ]; then record=1; continue; fi
+            if [ "$record" -eq 1 ]; then printf "1 0 0:1 / %s rw - ext4 /dev/vdb rw\n" "$arg"; fi
+          done
+          ;;
         *effigy-perm-inspect-batch*)
           record=0
           for arg in "$@"; do
@@ -9438,6 +9452,13 @@ elif [ "${1-}" = compose ]; then
         esac
       fi
       case "$args" in
+        *effigy-named-volume-mounts*)
+          record=0
+          for arg in "$@"; do
+            if [ "$arg" = effigy-named-volume-mounts ]; then record=1; continue; fi
+            if [ "$record" -eq 1 ]; then printf "1 0 0:1 / %s rw - ext4 /dev/vdb rw\n" "$arg"; fi
+          done
+          ;;
         *effigy-perm-inspect-batch*)
           record=0
           for arg in "$@"; do

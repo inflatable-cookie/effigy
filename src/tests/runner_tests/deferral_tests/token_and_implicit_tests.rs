@@ -143,6 +143,13 @@ case "$*" in
   *execdir*chown*501:20*) : > '{}'; exit 0 ;;
 esac
 case "$*" in
+  *effigy-named-volume-mounts*)
+    record=0
+    for arg in "$@"; do
+      if [ "$arg" = effigy-named-volume-mounts ]; then record=1; continue; fi
+      if [ "$record" -eq 1 ]; then printf "1 0 0:1 / %s rw - ext4 /dev/vdb rw\n" "$arg"; fi
+    done
+    ;;
   *effigy-perm-inspect-batch*)
     record=0
     for arg in "$@"; do
