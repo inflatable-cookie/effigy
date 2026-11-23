@@ -85,9 +85,9 @@ Legacy root dependencies that required separation:
   leave those files to the explicit setup path, rather than silently prompting
   or failing to provide a newly registered domain's DNS.
 - Creating `lo0` aliases for the bounded `127.1.0.1`–`127.1.0.250` pool requires
-  administrator network setup. The allocation registry is user state, separate
-  from those interface changes. Alias setup may need repeating after reboot;
-  "one-time" does not establish persistent interface configuration.
+  administrator privileges. The bind broker applies those interface changes
+  on demand, while the allocation registry remains user state. Setup retires
+  the legacy launch job and clears its pool aliases.
 - HTTP and HTTPS currently bind `127.0.0.1:80` and `127.0.0.1:443`. Effigy
   currently treats all Unix low ports as requiring elevation. The claim that
   recent macOS permits every unprivileged low-port bind is insufficient:
@@ -143,7 +143,7 @@ has no supported path.
 
 The operator daemon lifecycle uses the kernel gateway run and its control
 socket in `~/.effigy/gateway/runtime/`. Routine control must not elevate.
-Platform mutations belong to `gateway setup`; the three existing JSON
+Persistent platform setup belongs to `gateway setup`; the three existing JSON
 registries remain the route/allocation input until endpoint-store adoption.
 
 Direct low-port binding is not a qualified macOS transport. An unprivileged
@@ -152,9 +152,12 @@ fallback (planner ruling, 2026-10-19) is a minimal root bind broker. Setup
 installs a root-owned helper image and a per-operator LaunchDaemon whose Unix
 socket is root-owned, group-connectable (0660), and under the root-owned run
 directory. Its arguments pin the operator UID. `getpeereid` must match that UID
-before the broker reads a fixed-size request. Only TCP 80 and 443 at
-127.0.0.1 or the setup-installed 127.1.0.1–250 range are accepted. No wildcard
-bind, route/state reads, client accepts, TLS or HTTP processing run as root.
+before the broker reads a fixed-size request. The 16-byte `EGB1` request accepts
+only TCP 80 and 443 at `127.0.0.1` or a pool address. The 16-byte `EGL1`
+request only adds or removes a pool address on `lo0`. Setup writes scoped
+resolver files without creating `.prev` domains and removes prior Effigy-owned
+resolver backups. The broker reads no routes or user state and performs no
+wildcard binds, client accepts, TLS or HTTP processing.
 The broker sends two listening descriptors using SCM_RIGHTS and retains its
 copies until the operator validates and adopts them, then acknowledges that
 ownership. The acknowledgement uses the same bounded socket I/O. Exact
@@ -164,7 +167,9 @@ adoption. Refused/partial exchanges publish nothing.
 The daemon starts normally under kernel custody, then requests its listeners
 after exec. No listener crosses the custody spawn barrier and no inherited-FD
 kernel API is added. Dropping a daemon's listeners releases them; its next
-Run can acquire a new pair through the same broker. Status and ordinary
+Run can acquire a new pair through the same broker. The TCP alias manager adds
+a /32 before binding its first listener on an address, then closes listeners
+before removing unused aliases through the broker. Status and ordinary
 lifecycle remain unprivileged. Linux uses the executable-local
 CAP_NET_BIND_SERVICE adapter; setup never changes the host port threshold.
 Both adapters refuse foreign setup output before changing it.

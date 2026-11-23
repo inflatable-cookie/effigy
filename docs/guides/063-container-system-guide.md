@@ -1724,7 +1724,7 @@ routes = [
 ### Operator gateway setup and control
 
 Run `effigy gateway setup` from your normal user account once. This is the
-administrator step: it installs resolver and loopback prerequisites and trusts
+administrator step. It configures the resolver and privileged bind support and trusts
 your existing mkcert CA. Install mkcert first. The daemon, route registration,
 and ordinary `up`, `down` and `status` run as your user and never elevate.
 
@@ -1755,14 +1755,17 @@ fixture/test process never prompts, never blocks on stdin and never replaces the
 machine gateway; it prints the structured warning instead.
 
 Setup includes suffixes already present in the route table and the managed
-`test` suffix. Re-run setup when adding a new resolver suffix. macOS receives
-scoped `/etc/resolver` files and a native loopback alias boot job. If direct
-loopback port 80/443 binds are denied, a root-owned, socket-activated bind
-broker supplies only those listeners. Its setup-pinned operator UID is checked
-with `getpeereid`; allowed addresses are `127.0.0.1` and `127.1.0.1` through
-`127.1.0.250`. It transfers descriptors after the user daemon starts and drops
-its copies after the daemon acknowledges adoption. It never reads routes,
-certificates or user state, or serves traffic.
+`test` suffix. Re-run setup when adding a new resolver suffix. On macOS, setup
+writes scoped `/etc/resolver` files and installs a root-owned, socket-activated
+bind broker. Re-run setup when upgrading from a build that installed the
+loopback boot job. Setup retires that job, clears its pool aliases and removes
+Effigy-owned resolver backups.
+
+The broker checks the setup-pinned operator UID with `getpeereid`. When direct
+port 80/443 binds fail, it supplies those listeners on `127.0.0.1` or a pool
+address and drops its copies after the daemon acknowledges adoption. It also
+adds and removes pool addresses on `lo0` for TCP service listeners. It reads
+no routes, certificates or user state and serves no traffic.
 The helper image is copied into a root-owned private directory, rather than
 executed from a user-writable installation.
 
@@ -1970,9 +1973,8 @@ previous `effigy gateway repair` and its `--owner-checkout` filter are retired.
 
 Removal is an administrator action. It removes only verified setup-owned
 resolver entries, the bind broker, the boot jobs and the Linux login launch
-unit. Leaf certificates, mkcert CA trust and existing interface aliases are
-preserved. A live alias may predate
-setup, so owning the boot job does not authorize deleting that address. The
+unit. Retiring the legacy macOS loopback job also clears its pool aliases.
+Leaf certificates and mkcert CA trust are preserved. The
 v0.14.1 `gateway up` restores its normal resolver/alias behavior and starts the
 root gateway; use that binary's normal administrator prompt.
 
@@ -2450,8 +2452,10 @@ unchanged stack renders the same port on every `up`.
 ## Loopback aliases
 
 Each checkout holds one address in the bounded `127.1.0.1`-`127.1.0.250`
-loopback pool that `gateway setup` materialises as one `lo0` alias per address,
-and its aliased routes answer with it. The route table is the
+loopback pool, and its aliased routes answer with it. On macOS the standard
+gateway adds an address to `lo0` before binding a TCP service listener and
+removes it when the last listener using that address stops, including on
+gateway shutdown. The route table is the
 only record: an address is in use exactly when some route references it, as its
 `dns_ip` or as its target. `up` gives a checkout the address its routes already
 answer with, or the lowest address no route references, and `down` and

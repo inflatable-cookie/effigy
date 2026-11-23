@@ -1,8 +1,8 @@
-//! Privileged bind-and-pass boundary. No route state or serving code runs here.
+//! Privileged listener and loopback operations. No route state or serving code runs here.
 //!
 //! The root-owned launchd definition fixes the operator UID. Requests have a
-//! fixed 16-byte shape, bounded I/O, and exactly two listening descriptors.
-//! Custody starts the operator daemon normally; it connects after exec.
+//! fixed 16-byte shape and bounded I/O. Low-port binds pass two descriptors.
+//! Custody starts the operator daemon normally, and it connects after exec.
 use std::io::{self, IoSlice, IoSliceMut, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
@@ -29,13 +29,13 @@ pub fn log_path(uid: u32) -> PathBuf {
 /// The longest the broker may take to answer one request, in either direction.
 const REPLY_TIMEOUT: Duration = Duration::from_secs(3);
 
-// The gateway's standard endpoint and its setup-installed alias range. Keep
+// The gateway's standard endpoint and its loopback pool. Keep
 // this policy independent of operator-writable JSON and request parameters;
 // the range is the crate's compile-time pool, never a recorded value.
 fn allowed(address: SocketAddr) -> bool {
     matches!(address, SocketAddr::V4(addr) if
         (*addr.ip() == Ipv4Addr::LOCALHOST
-         || crate::loopback::pool().any(|candidate| candidate == *addr.ip()))
+         || crate::loopback::in_pool(*addr.ip()))
         && matches!(addr.port(), 80 | 443))
 }
 fn authorize(operator: u32, peer: u32, addresses: [SocketAddr; 2]) -> io::Result<()> {
@@ -77,6 +77,47 @@ fn decode(bytes: [u8; 16]) -> io::Result<[SocketAddr; 2]> {
     }
     Ok(addresses)
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+enum LoopbackAction {
+    Add = 1,
+    Remove = 2,
+}
+
+fn authorize_loopback(operator: u32, peer: u32, ip: Ipv4Addr) -> io::Result<()> {
+    if operator == 0 || peer != operator || !crate::loopback::in_pool(ip) {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "bind broker refused loopback request",
+        ));
+    }
+    Ok(())
+}
+
+fn encode_loopback(action: LoopbackAction, ip: Ipv4Addr) -> [u8; 16] {
+    let mut bytes = [0; 16];
+    bytes[..4].copy_from_slice(b"EGL1");
+    bytes[4] = action as u8;
+    bytes[5..9].copy_from_slice(&ip.octets());
+    bytes
+}
+
+fn decode_loopback(bytes: [u8; 16]) -> io::Result<(LoopbackAction, Ipv4Addr)> {
+    if bytes[9..] != [0; 7] {
+        return Err(error("invalid loopback request padding"));
+    }
+    let action = match bytes[4] {
+        1 => LoopbackAction::Add,
+        2 => LoopbackAction::Remove,
+        _ => return Err(error("unknown loopback action")),
+    };
+    Ok((
+        action,
+        Ipv4Addr::new(bytes[5], bytes[6], bytes[7], bytes[8]),
+    ))
+}
+
 fn bounded(stream: &UnixStream) -> io::Result<()> {
     #[cfg(target_os = "macos")]
     {
@@ -115,6 +156,7 @@ fn serve_one(
     stream: &mut UnixStream,
     operator: u32,
     bind: impl Fn(SocketAddr) -> io::Result<TcpListener>,
+    loopback: impl Fn(LoopbackAction, Ipv4Addr) -> io::Result<()>,
 ) -> io::Result<()> {
     bounded(stream)?;
     let peer = peer_uid(stream)?;
@@ -124,6 +166,12 @@ fn serve_one(
     }
     let mut bytes = [0; 16];
     stream.read_exact(&mut bytes)?;
+    if &bytes[..4] == b"EGL1" {
+        let (action, ip) = decode_loopback(bytes)?;
+        authorize_loopback(operator, peer, ip)?;
+        loopback(action, ip)?;
+        return stream.write_all(b"1");
+    }
     let addresses = decode(bytes)?;
     authorize(operator, peer, addresses)?;
     let listeners = [bind(addresses[0])?, bind(addresses[1])?];
@@ -372,6 +420,11 @@ fn no_reply(uid: u32, failure: io::Error) -> io::Error {
 pub fn request(addresses: [SocketAddr; 2]) -> io::Result<HandedListeners> {
     let uid = nix::unistd::Uid::effective().as_raw();
     authorize(uid, uid, addresses)?;
+    let mut stream = trusted_connection(uid)?;
+    receive(&mut stream, addresses).map_err(|failure| no_reply(uid, failure))
+}
+
+fn trusted_connection(uid: u32) -> io::Result<UnixStream> {
     let path = socket_path(uid);
     let parent = std::fs::symlink_metadata(Path::new("/private/var/run"))?;
     let metadata = std::fs::symlink_metadata(&path)?;
@@ -384,11 +437,87 @@ pub fn request(addresses: [SocketAddr; 2]) -> io::Result<HandedListeners> {
             "untrusted bind broker socket; run `effigy gateway setup`",
         ));
     }
-    let mut stream = UnixStream::connect(path)?;
+    let stream = UnixStream::connect(path)?;
     if peer_uid(&stream)? != 0 {
         return Err(error("bind broker is not root-owned"));
     }
-    receive(&mut stream, addresses).map_err(|failure| no_reply(uid, failure))
+    Ok(stream)
+}
+
+/// Ensure a pool address is present on macOS `lo0` through the bind broker.
+#[cfg(target_os = "macos")]
+pub fn ensure_loopback_alias(ip: Ipv4Addr) -> io::Result<()> {
+    request_loopback(LoopbackAction::Add, ip)
+}
+
+/// Remove a pool address from macOS `lo0` through the bind broker.
+#[cfg(target_os = "macos")]
+pub fn remove_loopback_alias(ip: Ipv4Addr) -> io::Result<()> {
+    request_loopback(LoopbackAction::Remove, ip)
+}
+
+#[cfg(target_os = "macos")]
+fn request_loopback(action: LoopbackAction, ip: Ipv4Addr) -> io::Result<()> {
+    let uid = nix::unistd::Uid::effective().as_raw();
+    authorize_loopback(uid, uid, ip)?;
+    let result = (|| {
+        let mut stream = trusted_connection(uid)?;
+        bounded(&stream)?;
+        stream.write_all(&encode_loopback(action, ip))?;
+        let mut reply = [0];
+        stream.read_exact(&mut reply)?;
+        if reply != *b"1" {
+            return Err(error("invalid bind broker loopback reply"));
+        }
+        Ok(())
+    })();
+    result.map_err(|failure| match failure.kind() {
+        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut => no_reply(uid, failure),
+        _ => io::Error::new(
+            failure.kind(),
+            format!(
+                "bind broker loopback {action:?} for {ip} failed: {failure}; check {} or re-run `effigy gateway setup`",
+                log_path(uid).display()
+            ),
+        ),
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn apply_loopback(action: LoopbackAction, ip: Ipv4Addr) -> io::Result<()> {
+    fn ifconfig(args: &[&str]) -> io::Result<Vec<u8>> {
+        let output = std::process::Command::new("/sbin/ifconfig")
+            .args(args)
+            .output()?;
+        if !output.status.success() {
+            return Err(error(format!(
+                "ifconfig {} failed ({}): {}",
+                args.join(" "),
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            )));
+        }
+        Ok(output.stdout)
+    }
+
+    match action {
+        LoopbackAction::Add => {
+            ifconfig(&[
+                "lo0",
+                "alias",
+                &ip.to_string(),
+                "netmask",
+                "255.255.255.255",
+            ])?;
+        }
+        LoopbackAction::Remove => {
+            let interface = String::from_utf8(ifconfig(&["lo0"])?).map_err(error)?;
+            if crate::loopback::observed_pool_aliases(&interface).any(|alias| alias == ip) {
+                ifconfig(&["lo0", "-alias", &ip.to_string()])?;
+            }
+        }
+    }
+    Ok(())
 }
 /// Binary entry. The privileged process reads only setup-pinned arguments and
 /// launchd's socket, never HOME, routes, certificates, or the kernel Store.
@@ -427,7 +556,11 @@ pub fn entry(uid: u32) -> io::Result<()> {
     for stream in listener.incoming() {
         let mut stream = stream?;
         // A refused/malformed peer has no effect on other requests.
-        let _ = serve_one(&mut stream, uid, TcpListener::bind);
+        let _ = serve_one(&mut stream, uid, TcpListener::bind, |action, ip| {
+            apply_loopback(action, ip).inspect_err(|failure| {
+                eprintln!("effigy bind broker: loopback {action:?} for {ip}: {failure}");
+            })
+        });
     }
     Ok(())
 }
@@ -527,12 +660,17 @@ mod tests {
             let (mut client, mut broker) = UnixStream::pair().unwrap();
             let thread = std::thread::spawn(move || {
                 let reserved = reserved.map(|listener| std::cell::RefCell::new(Some(listener)));
-                serve_one(&mut broker, uid, |address| {
-                    Ok(reserved[usize::from(address.port() == 443)]
-                        .borrow_mut()
-                        .take()
-                        .expect("each endpoint requested once"))
-                })
+                serve_one(
+                    &mut broker,
+                    uid,
+                    |address| {
+                        Ok(reserved[usize::from(address.port() == 443)]
+                            .borrow_mut()
+                            .take()
+                            .expect("each endpoint requested once"))
+                    },
+                    |_, _| panic!("EGB1 reached the loopback handler"),
+                )
                 .unwrap()
             });
             client
@@ -591,9 +729,12 @@ mod tests {
     fn broker_foreign_peer_never_reaches_binder() {
         let uid = nix::unistd::Uid::effective().as_raw();
         let (_client, mut broker) = UnixStream::pair().unwrap();
-        assert!(serve_one(&mut broker, uid + 1, |_| panic!(
-            "foreign peer reached binder"
-        ))
+        assert!(serve_one(
+            &mut broker,
+            uid + 1,
+            |_| panic!("foreign peer reached binder"),
+            |_, _| panic!("foreign peer reached loopback handler"),
+        )
         .is_err());
     }
     #[test]
@@ -601,7 +742,12 @@ mod tests {
         let uid = nix::unistd::Uid::effective().as_raw();
         let (mut client, mut broker) = UnixStream::pair().unwrap();
         let thread = std::thread::spawn(move || {
-            serve_one(&mut broker, uid, |_| TcpListener::bind("127.0.0.1:0"))
+            serve_one(
+                &mut broker,
+                uid,
+                |_| TcpListener::bind("127.0.0.1:0"),
+                |_, _| panic!("EGB1 reached the loopback handler"),
+            )
         });
         client
             .write_all(
@@ -618,6 +764,69 @@ mod tests {
             .unwrap()
             .expect_err("invalid adoption receipt");
         assert!(error.to_string().contains("not acknowledged"));
+    }
+
+    #[test]
+    fn loopback_frames_dispatch_only_authorized_actions() {
+        let uid = nix::unistd::Uid::effective().as_raw();
+        let start = crate::loopback::DEFAULT_LOOPBACK_START;
+        let end = crate::loopback::DEFAULT_LOOPBACK_END;
+        for (action, ip) in [(LoopbackAction::Add, start), (LoopbackAction::Remove, end)] {
+            let frame = encode_loopback(action, ip);
+            assert_eq!(&frame[..4], b"EGL1");
+            assert_eq!(frame[4], if action == LoopbackAction::Add { 1 } else { 2 });
+            assert_eq!(frame[5..9], ip.octets());
+            assert_eq!(frame[9..], [0; 7]);
+            let (mut client, mut broker) = UnixStream::pair().unwrap();
+            client.write_all(&frame).unwrap();
+            serve_one(
+                &mut broker,
+                uid,
+                |_| panic!("EGL1 reached the binder"),
+                |applied, address| {
+                    assert_eq!((applied, address), (action, ip));
+                    Ok(())
+                },
+            )
+            .unwrap();
+            let mut reply = [0];
+            client.read_exact(&mut reply).unwrap();
+            assert_eq!(reply, *b"1");
+        }
+
+        let add = encode_loopback(LoopbackAction::Add, start);
+        let mut bad_action = add;
+        bad_action[4] = 3;
+        let mut bad_padding = add;
+        bad_padding[15] = 1;
+        for (operator, frame) in [
+            (uid, bad_action),
+            (uid, bad_padding),
+            (uid + 1, add),
+            (0, add),
+            (
+                uid,
+                encode_loopback(LoopbackAction::Add, Ipv4Addr::LOCALHOST),
+            ),
+            (
+                uid,
+                encode_loopback(LoopbackAction::Add, Ipv4Addr::UNSPECIFIED),
+            ),
+            (
+                uid,
+                encode_loopback(LoopbackAction::Remove, Ipv4Addr::new(127, 1, 0, 251)),
+            ),
+        ] {
+            let (mut client, mut broker) = UnixStream::pair().unwrap();
+            client.write_all(&frame).unwrap();
+            assert!(serve_one(
+                &mut broker,
+                operator,
+                |_| panic!("refused EGL1 reached the binder"),
+                |_, _| panic!("refused EGL1 reached the loopback handler"),
+            )
+            .is_err());
+        }
     }
 
     const STAGED: &str = "/private/var/run/com.apple.launchd.dvGRrkujvv";

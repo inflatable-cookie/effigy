@@ -1284,25 +1284,7 @@ async fn run_gateway_with_cancel(
         Some(listeners.https)
     };
 
-    let alias_table = Arc::clone(&shared_table);
     let alias_shutdown = shutdown_rx.clone();
-    let (alias_ready_tx, alias_ready_rx) = tokio::sync::oneshot::channel();
-    let private = config.is_private();
-    server_tasks.spawn(async move {
-        let result = if private {
-            let _ = alias_ready_tx.send(Ok(()));
-            run_tcp_alias_manager(alias_table, alias_shutdown).await
-        } else {
-            crate::tcp_alias::run_tcp_alias_manager_ready(
-                alias_table,
-                alias_shutdown,
-                alias_ready_tx,
-            )
-            .await
-        };
-        ("TCP alias manager", result)
-    });
-
     // Optionally start the HTTPS proxy.
     let _tls_watcher = if let (Some(tls_addr), Some((tls, cert_count))) =
         (runtime_config.proxy.tls_bind_addr, tls_reload)
@@ -1376,6 +1358,24 @@ async fn run_gateway_with_cancel(
         None
     };
 
+    let alias_table = Arc::clone(&shared_table);
+    let (alias_ready_tx, alias_ready_rx) = tokio::sync::oneshot::channel();
+    let private = config.is_private();
+    server_tasks.spawn(async move {
+        let result = if private {
+            let _ = alias_ready_tx.send(Ok(()));
+            run_tcp_alias_manager(alias_table, alias_shutdown).await
+        } else {
+            crate::tcp_alias::run_tcp_alias_manager_ready(
+                alias_table,
+                alias_shutdown,
+                alias_ready_tx,
+            )
+            .await
+        };
+        ("TCP alias manager", result)
+    });
+
     // Start consuming signals only after every server task has cloned the
     // shutdown receiver. The Unix handlers were registered before identity
     // publication, so a signal received during startup is buffered here
@@ -1396,8 +1396,10 @@ async fn run_gateway_with_cancel(
         let _ = signal_tx.send(true);
     });
     if !config.is_private() {
-        let ready = match tokio::time::timeout(Duration::from_secs(2), alias_ready_rx).await {
-            Ok(Ok(Ok(()))) => {
+        // Each startup bind may need a bounded broker exchange. Custody owns
+        // the overall readiness deadline, so report the broker's own failure.
+        let ready = match alias_ready_rx.await {
+            Ok(Ok(())) => {
                 let config = runtime_config.clone();
                 tokio::task::spawn_blocking(move || {
                     crate::operator::http_test(&config, Duration::from_secs(2))
@@ -1406,15 +1408,12 @@ async fn run_gateway_with_cancel(
                 .map_err(std::io::Error::other)
                 .and_then(|result| result)
             }
-            Ok(Ok(Err(error))) => Err(std::io::Error::other(format!(
+            Ok(Err(error)) => Err(std::io::Error::other(format!(
                 "TCP alias startup failed: the alias listener reported {error}"
             ))),
-            Ok(Err(error)) => Err(std::io::Error::other(format!(
+            Err(error) => Err(std::io::Error::other(format!(
                 "TCP alias startup failed: the readiness channel closed ({error})"
             ))),
-            Err(_) => Err(std::io::Error::other(
-                "TCP alias startup failed: no readiness report within 2s; run `effigy gateway status` for the recorded diagnosis",
-            )),
         };
         if let Err(error) = ready {
             let _ = shutdown_tx.send(true);
@@ -1428,26 +1427,30 @@ async fn run_gateway_with_cancel(
         // to poll the very HTTP/DNS tasks being tested, including tasks woken
         // into the current worker's non-stealable local queue.
         let test_config = runtime_config.clone();
-        let tested = tokio::task::spawn_blocking(move || {
+        let published = tokio::task::spawn_blocking(move || {
             crate::operator::self_test(&test_config, Duration::from_secs(2))
         })
         .await
         .map_err(std::io::Error::other)
-        .and_then(|result| result);
-        if let Err(error) = tested {
-            let _ = shutdown_tx.send(true);
-            while server_tasks.join_next().await.is_some() {}
-            signal_task.abort();
-            return Err(GatewayError::Io(error));
+        .and_then(|result| result)
+        .map_err(GatewayError::Io)
+        .and_then(|()| {
+            let snapshot = identity::publish_current_gateway(&config.pid_file_path, operator_uid)?;
+            identity::publish_gateway_version(
+                &config.pid_file_path,
+                &effigy_core::build_info::active_version(),
+            )?;
+            Ok(snapshot)
+        });
+        match published {
+            Ok(snapshot) => published_snapshot = Some(snapshot),
+            Err(error) => {
+                let _ = shutdown_tx.send(true);
+                while server_tasks.join_next().await.is_some() {}
+                signal_task.abort();
+                return Err(error);
+            }
         }
-        published_snapshot = Some(identity::publish_current_gateway(
-            &config.pid_file_path,
-            operator_uid,
-        )?);
-        identity::publish_gateway_version(
-            &config.pid_file_path,
-            &effigy_core::build_info::active_version(),
-        )?;
     }
     #[cfg(not(unix))]
     tokio::spawn(async move {

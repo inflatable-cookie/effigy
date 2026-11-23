@@ -2003,9 +2003,11 @@ gone, for every domain, so a deleted worktree keeps neither a domain nor an
 address. There is no inventory probe, no release plan and no reuse quarantine: a
 released address is immediately allocatable, and the gateway answers DNS with a
 one-second TTL. The pool is the 250 addresses `127.1.0.1`-`127.1.0.250`, sized
-for worktree churn; one constant defines the bound, and `gateway setup` installs
-exactly one `lo0` alias per pool address, so the size never needs a second
-administrative step.
+for worktree churn. On macOS the standard gateway asks the bind broker to
+install a pool address as a `lo0` /32 alias before binding its first TCP service
+port. Ports share the alias until the last listener closes. The gateway removes
+its aliases on shutdown, and setup retires the legacy job that installed the
+entire pool.
 
 Host-process status preserves an unreadable journal as `unknown`, with its
 diagnostic alongside the log locator. Stop reports retain request, custody and

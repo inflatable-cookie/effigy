@@ -1,0 +1,1 @@
+On macOS, the gateway now adds loopback aliases only for active TCP service listeners and removes them as listeners stop. Re-run `effigy gateway setup` to retire the legacy boot job, clear its pre-created aliases, and remove Effigy-owned resolver backups that macOS treated as resolver domains.
