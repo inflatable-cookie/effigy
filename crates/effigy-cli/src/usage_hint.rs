@@ -57,7 +57,7 @@ pub fn usage_hint_for(argv: &[String]) -> UsageHint {
     };
     let panel = Panel::of(topic);
     let (words, flags) = split_argv(argv);
-    let failures = collect_failures(&panel.walk(&words), &words);
+    let failures = collect_failures(&panel.walk(&words), &words, !flags.is_empty());
     if failures.is_empty() {
         // Every typed word resolved: the error is a flag or a value, so the
         // answer is the nearest command's own usage lines.
@@ -117,12 +117,46 @@ struct Failure {
     supported: Vec<String>,
 }
 
-fn collect_failures(walks: &[Walk], words: &[String]) -> Vec<Failure> {
+fn collect_failures(walks: &[Walk], words: &[String], flags_present: bool) -> Vec<Failure> {
+    if words.is_empty() {
+        return Vec::new();
+    }
+    if let Some(full) = walks.iter().find(|walk| walk.failure.is_none()) {
+        // Every typed positional word fits one usage line, so no subcommand
+        // word is mistyped: the error is a flag or a missing value. Answer
+        // with the resolved command's own usage lines, except when the final
+        // word only fit as a placeholder value (`container stat` fits
+        // `container <NAME> ...` but `stat` may still mistype `stats`): then
+        // the failures below still get their say.
+        if flags_present || full.literal.last().is_some_and(|last| *last) {
+            return Vec::new();
+        }
+    }
+    // A word some usage line matches as a literal word is already a valid
+    // subcommand there, however badly sibling lines diverge at the same
+    // position (`tasks qa-group` matches `tasks qa-group run ...` while
+    // `tasks qa-groups list ...` diverges at position 1). Failures at such
+    // positions must never blame the valid word, so only genuinely unmatched
+    // positions are evaluated, earliest first. Depth alone cannot decide:
+    // placeholder lines (`container <NAME> ...`) consume further than
+    // literal ones, so the deepest failure for `container exec app` blames
+    // `app` while the real answer is that `exec` is its own command.
+    let mut validated = vec![false; words.len()];
+    for walk in walks {
+        for (index, literal) in walk.literal.iter().enumerate() {
+            if *literal {
+                validated[index] = true;
+            }
+        }
+    }
     let mut failures: Vec<Failure> = Vec::new();
     for walk in walks {
         let Some(position) = walk.failure else {
             continue;
         };
+        if validated[position] {
+            continue;
+        }
         let Some(word) = words.get(position) else {
             continue;
         };
@@ -443,10 +477,14 @@ struct Walk {
     failure: Option<usize>,
     /// Words this line accepts at the failure position.
     supported: Vec<String>,
+    /// Per typed word, whether this line matched it as a literal word
+    /// (as opposed to consuming it as a `<PLACEHOLDER>` value).
+    literal: Vec<bool>,
 }
 
 impl Walk {
     fn of(tokens: &[Token], words: &[String]) -> Self {
+        let mut literal = vec![false; words.len()];
         let mut matched = 0;
         for (index, word) in words.iter().enumerate() {
             // Flags never consume a command word.
@@ -460,6 +498,7 @@ impl Walk {
                 return Self {
                     failure: Some(index),
                     supported: Vec::new(),
+                    literal,
                 };
             };
             match &token.kind {
@@ -469,6 +508,7 @@ impl Walk {
                         return Self {
                             failure: Some(index),
                             supported: Vec::new(),
+                            literal,
                         };
                     }
                     matched += 1;
@@ -478,8 +518,10 @@ impl Walk {
                         return Self {
                             failure: Some(index),
                             supported: vec![expected.clone()],
+                            literal,
                         };
                     }
+                    literal[index] = true;
                     matched += 1;
                 }
             }
@@ -487,6 +529,7 @@ impl Walk {
         Self {
             failure: None,
             supported: Vec::new(),
+            literal,
         }
     }
 }
@@ -622,6 +665,78 @@ mod tests {
             "{hint:?}"
         );
         assert!(hint.did_you_mean.is_none(), "{hint:?}");
+    }
+
+    #[test]
+    fn a_valid_qa_group_run_with_an_unknown_flag_never_blames_the_subcommand() {
+        // Longhorn #112: the refusal blamed `tasks qa-group` instead of the
+        // trailing flag.
+        let hint = hint(&["tasks", "qa-group", "run", "mygroup", "--unknown-flag"]);
+        assert_eq!(hint.command, "effigy tasks qa-group run mygroup");
+        assert!(
+            hint.usage
+                .iter()
+                .any(|line| line.contains("tasks qa-group run")),
+            "{hint:?}"
+        );
+        let text = format!("{hint:?}");
+        assert!(!text.contains("is not a form"), "{hint:?}");
+        assert!(!text.contains("qa-groups"), "{hint:?}");
+    }
+
+    #[test]
+    fn a_json_qa_group_run_with_an_unknown_flag_never_blames_the_subcommand() {
+        let hint = hint(&[
+            "--json",
+            "tasks",
+            "qa-group",
+            "run",
+            "mygroup",
+            "--bad-flag",
+        ]);
+        assert_eq!(hint.command, "effigy tasks qa-group run mygroup");
+        assert!(
+            hint.usage
+                .iter()
+                .any(|line| line.contains("tasks qa-group run")),
+            "{hint:?}"
+        );
+        let text = format!("{hint:?}");
+        assert!(!text.contains("is not a form"), "{hint:?}");
+        assert!(!text.contains("qa-groups"), "{hint:?}");
+    }
+
+    #[test]
+    fn a_trailing_extra_arg_after_qa_group_run_never_blames_the_subcommand() {
+        let hint = hint(&["tasks", "qa-group", "run", "mygroup", "extra"]);
+        assert!(hint.command.contains("tasks qa-group run"), "{hint:?}");
+        let text = format!("{hint:?}");
+        assert!(!text.contains("is not a form"), "{hint:?}");
+        assert!(!text.contains("qa-groups"), "{hint:?}");
+    }
+
+    #[test]
+    fn a_missing_qa_group_selector_keeps_the_run_usage() {
+        let hint = hint(&["tasks", "qa-group", "run"]);
+        assert_eq!(hint.command, "effigy tasks qa-group run");
+        assert!(
+            hint.usage
+                .iter()
+                .any(|line| line.contains("tasks qa-group run")),
+            "{hint:?}"
+        );
+        assert!(hint.did_you_mean.is_none(), "{hint:?}");
+    }
+
+    #[test]
+    fn a_qa_group_typo_still_suggests_the_closest_form() {
+        let hint = hint(&["tasks", "qa-grup", "run", "mygroup"]);
+        assert_eq!(hint.command, "effigy tasks");
+        let did_you_mean = hint.did_you_mean.clone().expect("a did you mean");
+        assert!(
+            did_you_mean.contains("did you mean `qa-group`"),
+            "{did_you_mean}"
+        );
     }
 
     #[test]
