@@ -20,6 +20,9 @@ pub struct MergedLog {
 }
 
 impl MergedLog {
+    #[cfg(test)]
+    const TEST_OWNER: [u8; 32] = [7; 32];
+
     /// Admit the canonical log under a newly admitted host owner. Run
     /// admission proves predecessor settlement and retains the owner gate. A
     /// path holding another writer's bytes is refused, never converted.
@@ -75,7 +78,7 @@ impl MergedLog {
         if path.exists() {
             std::fs::rename(path, path.with_extension("test-legacy"))?;
         }
-        Self::from_file(path, migration::prepare(path, [7; 32], "test")?)
+        Self::from_file(path, migration::prepare(path, Self::TEST_OWNER, "test")?)
     }
 
     /// Read-only canonical provenance and snapshot extent.
@@ -237,7 +240,8 @@ mod tests {
             );
             let retained = std::fs::read(&path).unwrap();
             drop(log);
-            assert!(MergedLog::prepare_test(&path).is_err());
+            // Restart the same writer with its canonical file still in place.
+            assert!(migration::prepare(&path, MergedLog::TEST_OWNER, "restart").is_err());
             assert_eq!(std::fs::read(&path).unwrap(), retained);
         }
         let home = effigy_test_support::short_tempdir("mt-").unwrap();
@@ -257,7 +261,7 @@ mod tests {
             .bytes
             .is_empty());
         drop(log);
-        assert!(MergedLog::prepare_test(&path).is_err());
+        assert!(migration::prepare(&path, MergedLog::TEST_OWNER, "restart").is_err());
         assert_eq!(std::fs::read(&path).unwrap(), torn);
     }
     #[cfg(feature = "fault-injection")]
