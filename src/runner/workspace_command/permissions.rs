@@ -296,6 +296,14 @@ pub(super) fn prepare_workspace_permissions(
     backend: &mut impl WorkspaceAccessBackend,
 ) -> Result<(), PermissionPrepError> {
     let targets = prepared_targets(plan, workspace_home);
+    let declared_named_volumes = declared_named_volume_targets(plan);
+    if targets.is_empty() && declared_named_volumes.is_empty() {
+        return Ok(());
+    }
+    // Runs before any inspection-based check. A detached mountpoint can be
+    // replaced by a symlink, and that symlink must not hide the detach behind a
+    // chown-shaped repair hint.
+    verify_declared_named_volumes(user, &declared_named_volumes, context, &*backend)?;
     if targets.is_empty() {
         return Ok(());
     }
@@ -325,28 +333,6 @@ pub(super) fn prepare_workspace_permissions(
                 format!("refusing to follow symlink `{path}`"),
             ));
         }
-    }
-    // A detached named volume leaves the host directory visible underneath the
-    // declared path. Verify the live mount table before any mkdir, scan or
-    // chown, so Effigy never edits that host tree.
-    let declared_named_volumes = declared_named_volume_paths(plan);
-    let named_volume_paths = targets
-        .iter()
-        .filter(|target| {
-            target.mount_kind == WorkspaceMountKind::NamedVolume
-                && declared_named_volumes.contains(&target.path)
-        })
-        .map(|target| target.path.clone())
-        .collect::<Vec<_>>();
-    if let Some(path) = unmounted_named_volumes(&*backend, &named_volume_paths)?
-        .into_iter()
-        .next()
-    {
-        return Err(detached_named_volume_error(
-            &identity,
-            target_for_probe_path(&targets, &path),
-            context,
-        ));
     }
     for target in targets.iter().filter(|target| {
         target.mount_kind != WorkspaceMountKind::Image
@@ -857,33 +843,55 @@ fn require_batch_len(
     )))
 }
 
-/// Mount points the plan declares as named volumes. Derived paths such as a
-/// home volume's `.cache` are subdirectories of a mount, not mountpoints, so
-/// only these exact declared paths are checked against the mount table.
-fn declared_named_volume_paths(plan: &WorkspaceOwnershipPlan) -> BTreeSet<String> {
+/// Every named volume the plan declares, whether or not permission prep would
+/// otherwise touch it. Derived paths such as a home volume's `.cache` are
+/// subdirectories of a mount, not mountpoints, so they are never checked here.
+fn declared_named_volume_targets(plan: &WorkspaceOwnershipPlan) -> Vec<&WorkspaceOwnershipTarget> {
     plan.targets
         .iter()
         .filter(|target| target.mount_kind == WorkspaceMountKind::NamedVolume)
-        .map(|target| target.path.clone())
         .collect()
 }
 
-/// Returns the paths the live container no longer mounts, in input order.
-fn unmounted_named_volumes(
+/// Returns the declared named volumes the live container no longer mounts, in
+/// plan order.
+fn unmounted_named_volumes<'a>(
     backend: &impl WorkspaceAccessBackend,
-    paths: &[String],
-) -> Result<Vec<String>, PermissionPrepError> {
-    if paths.is_empty() {
+    volumes: &[&'a WorkspaceOwnershipTarget],
+) -> Result<Vec<&'a WorkspaceOwnershipTarget>, PermissionPrepError> {
+    if volumes.is_empty() {
         return Ok(Vec::new());
     }
-    let mounted = backend.verify_named_volume_mounts(paths)?;
+    let paths = volumes
+        .iter()
+        .map(|volume| volume.path.clone())
+        .collect::<Vec<_>>();
+    let mounted = backend.verify_named_volume_mounts(&paths)?;
     require_batch_len("named-volume mount", paths.len(), mounted.len())?;
-    Ok(paths
+    Ok(volumes
         .iter()
         .zip(mounted)
         .filter(|(_, mounted)| !*mounted)
-        .map(|(path, _)| path.clone())
+        .map(|(volume, _)| *volume)
         .collect())
+}
+
+/// Fails before any inspection, mkdir, scan or chown when a declared named
+/// volume is detached. The identity is resolved only to name it in the error.
+fn verify_declared_named_volumes(
+    user: &str,
+    volumes: &[&WorkspaceOwnershipTarget],
+    context: &PermissionPrepContext,
+    backend: &impl WorkspaceAccessBackend,
+) -> Result<(), PermissionPrepError> {
+    let Some(detached) = unmounted_named_volumes(backend, volumes)?
+        .into_iter()
+        .next()
+    else {
+        return Ok(());
+    };
+    let identity = backend.resolve_doctor_identity(user)?;
+    Err(detached_named_volume_error(&identity, detached, context))
 }
 
 fn nested_verify_paths(target: &PreparedTarget) -> Vec<String> {
@@ -923,7 +931,13 @@ fn fail_with_identity(
 ) -> PermissionPrepError {
     let mut message = format!(
         "{reason}\n{}",
-        runtime_identity_line(identity, target, context)
+        runtime_identity_line(
+            identity,
+            &target.path,
+            target.mount_kind,
+            target.source.as_deref(),
+            context
+        )
     );
     message.push('\n');
     message.push_str(&safe_repair_guidance(identity, target, context));
@@ -932,7 +946,9 @@ fn fail_with_identity(
 
 fn runtime_identity_line(
     identity: &ResolvedWorkspaceIdentity,
-    target: &PreparedTarget,
+    path: &str,
+    mount_kind: WorkspaceMountKind,
+    source: Option<&str>,
     context: &PermissionPrepContext,
 ) -> String {
     format!(
@@ -941,12 +957,12 @@ fn runtime_identity_line(
         context.project_name,
         context.container_name,
         context.service,
-        target.path,
+        path,
         identity.user,
         identity.uid,
         identity.gid,
-        mount_kind_label(target.mount_kind),
-        target.source.as_deref().unwrap_or("-"),
+        mount_kind_label(mount_kind),
+        source.unwrap_or("-"),
     )
 }
 
@@ -955,13 +971,19 @@ fn runtime_identity_line(
 /// so this names that recovery and never the safe-repair chown.
 fn detached_named_volume_error(
     identity: &ResolvedWorkspaceIdentity,
-    target: &PreparedTarget,
+    volume: &WorkspaceOwnershipTarget,
     context: &PermissionPrepContext,
 ) -> PermissionPrepError {
     PermissionPrepError::new(format!(
         "declared named-volume mount `{}` is detached from the running container: it is absent from /proc/self/mountinfo, so the container sees the host directory underneath instead of the volume. A host tool likely replaced that directory under a VirtioFS mountpoint. Effigy will not scan or change the host directory.\n{}\nrecover with: effigy container down && effigy container up --detach",
-        target.path,
-        runtime_identity_line(identity, target, context),
+        volume.path,
+        runtime_identity_line(
+            identity,
+            &volume.path,
+            volume.mount_kind,
+            volume.source.as_deref(),
+            context
+        ),
     ))
 }
 
@@ -1166,33 +1188,42 @@ pub(in crate::runner) fn diagnose_workspace_ownership(
                     && is_dependency_tree_path(&target.path))
         })
         .collect::<Vec<_>>();
-    // A detached volume's path is the host directory underneath; probing it
-    // would report host state as container state, so it is reported alone.
-    let named_volume_paths = targets
-        .iter()
-        .filter(|target| target.mount_kind == WorkspaceMountKind::NamedVolume)
-        .map(|target| target.path.clone())
-        .collect::<Vec<_>>();
-    let detached_paths = match unmounted_named_volumes(&*backend, &named_volume_paths) {
-        Ok(paths) => paths,
+    // A detached volume's path is the host directory underneath; probing it, or
+    // anything beneath it, would report host state as container state. Every
+    // declared named volume is checked, not only the probed ones.
+    let detached = match unmounted_named_volumes(&*backend, &declared_named_volume_targets(&plan)) {
+        Ok(volumes) => volumes,
         Err(error) => return unavailable_workspace_diagnosis(policy, Some(identity), error),
     };
-    let detached_samples = detached_paths
+    let detached_samples = detached
         .iter()
-        .map(|path| {
-            format!("{path}\tdetached named volume; recover with effigy container down && effigy container up --detach")
+        .map(|volume| {
+            format!(
+                "{}\tdetached named volume; recover with effigy container down && effigy container up --detach",
+                volume.path
+            )
         })
         .collect::<Vec<_>>();
+    let is_detached = |path: &str| {
+        detached
+            .iter()
+            .any(|volume| path == volume.path || path_is_under(path, &volume.path))
+    };
     let targets = targets
         .into_iter()
-        .filter(|target| !detached_paths.contains(&target.path))
+        .filter(|target| !is_detached(&target.path))
         .collect::<Vec<_>>();
     let mut target_samples = vec![Vec::new(); targets.len()];
     let mut root_paths = targets
         .iter()
         .map(|target| target.path.clone())
         .collect::<Vec<_>>();
-    root_paths.extend(extra_env_targets.iter().cloned());
+    root_paths.extend(
+        extra_env_targets
+            .iter()
+            .filter(|path| !is_detached(path.as_str()))
+            .cloned(),
+    );
     let root_results = match backend.inspect_doctor_paths(&identity, &root_paths) {
         Ok(results) => results,
         Err(error) => {
@@ -3307,6 +3338,91 @@ short line
     }
 
     #[test]
+    fn detached_mountpoint_replaced_by_symlink_reports_the_detach_not_a_chown_repair() {
+        let mut backend = detached_volume_fixture();
+        // A host tool replaced the detached mountpoint with a symlink.
+        backend.add_symlink("/workspace/target", "/etc");
+        let error = prepare_workspace_permissions(
+            "dev",
+            &detached_volume_plan(),
+            None,
+            &context(),
+            &mut backend,
+        )
+        .expect_err("a detached mountpoint must not be followed or repaired");
+
+        assert!(error
+            .message
+            .contains("detached from the running container"));
+        assert!(error
+            .message
+            .contains("recover with: effigy container down && effigy container up --detach"));
+        assert!(!error.message.contains("refusing to follow symlink"));
+        assert!(!error.message.contains("safe repair"));
+        assert!(!error.message.contains("chown -R"));
+        assert_eq!(backend.list_unowned_calls.get(), 0);
+        assert_eq!(backend.bulk_calls, 0);
+        assert!(backend.chown_log.is_empty());
+    }
+
+    #[test]
+    fn detached_shared_volume_outside_prep_scope_still_fails_before_any_mutation() {
+        // A shared named volume that is neither a Rust cache nor a dependency tree
+        // leaves prepared targets empty, but a detach still has to be reported.
+        let shared = WorkspaceOwnershipTarget {
+            path: "/shared/cache".to_owned(),
+            mount_kind: WorkspaceMountKind::NamedVolume,
+            source: Some("vol-shared-cache".to_owned()),
+            repair_authority: WorkspaceRepairAuthority::Forbidden,
+            rust_cache: None,
+            read_only: false,
+        };
+        let plan = WorkspaceOwnershipPlan {
+            targets: vec![shared],
+        };
+        let mut backend = MemoryAccessBackend::new(vec![identity("dev", 501, 20)]);
+        backend.add_dir("/shared/cache", 0, 0, 0o755);
+        backend.add_file("/shared/cache/entry", 0, 0, 0o644);
+        backend.detach("/shared/cache");
+
+        let error = prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend)
+            .expect_err("a detached shared volume must be reported");
+        assert!(error
+            .message
+            .contains("detached from the running container"));
+        assert!(error.message.contains("path=`/shared/cache`"));
+        assert!(error.message.contains("source=`vol-shared-cache`"));
+        assert!(error.message.contains("mount=named-volume"));
+        assert!(error.message.contains("user=`dev` uid=501 gid=20"));
+        assert!(!error.message.contains("chown -R"));
+        assert_eq!(backend.list_unowned_calls.get(), 0);
+        assert_eq!(backend.bulk_calls, 0);
+        assert!(backend.chown_log.is_empty());
+        assert!(backend.mkdir_log.is_empty());
+    }
+
+    #[test]
+    fn mounted_shared_volume_outside_prep_scope_is_left_alone() {
+        let shared = WorkspaceOwnershipTarget {
+            path: "/shared/cache".to_owned(),
+            mount_kind: WorkspaceMountKind::NamedVolume,
+            source: Some("vol-shared-cache".to_owned()),
+            repair_authority: WorkspaceRepairAuthority::Forbidden,
+            rust_cache: None,
+            read_only: false,
+        };
+        let plan = WorkspaceOwnershipPlan {
+            targets: vec![shared],
+        };
+        let mut backend = MemoryAccessBackend::new(vec![identity("dev", 501, 20)]);
+        backend.add_dir("/shared/cache", 0, 0, 0o755);
+        prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend)
+            .expect("a mounted shared volume needs no repair");
+        assert_eq!(backend.owner_of("/shared/cache"), Some((0, 0)));
+        assert!(backend.chown_log.is_empty());
+    }
+
+    #[test]
     fn derived_home_subpaths_are_not_checked_as_mountpoints() {
         // `.cache` under a named-volume home is a directory inside the mount,
         // not a mountpoint, so the mount table must not mark it detached.
@@ -3688,6 +3804,35 @@ volumes:
             .borrow()
             .iter()
             .all(|path| !path.starts_with("/workspace/target")));
+    }
+
+    #[test]
+    fn doctor_does_not_probe_extra_env_paths_beneath_a_detached_volume() {
+        let mut policy = effective_container_policy("web", "demo-web", "workspace", "compose.yml");
+        policy.workspace_user = Some("dev".to_owned());
+        policy.compose_files = Vec::new();
+        policy.managed_volumes = vec![ManagedVolume {
+            name: "demo-target".to_owned(),
+            service: "workspace".to_owned(),
+            persist: false,
+            size_bytes: None,
+            mount_point: None,
+            mount_target: Some("/workspace/target".to_owned()),
+        }];
+        let mut backend = detached_volume_fixture();
+        let extra = vec![
+            "/workspace/target/debug".to_owned(),
+            "/workspace/elsewhere".to_owned(),
+        ];
+        backend.add_dir("/workspace/elsewhere", 501, 20, 0o755);
+        let finding = diagnose_workspace_ownership(&policy, Ok(true), &extra, &mut backend);
+
+        assert_eq!(finding.status, WorkspaceOwnershipProbeStatus::Finding);
+        let inspected = backend.inspect_log.borrow().clone();
+        assert!(!inspected
+            .iter()
+            .any(|path| path.starts_with("/workspace/target")));
+        assert!(inspected.contains(&"/workspace/elsewhere".to_owned()));
     }
 
     #[test]
