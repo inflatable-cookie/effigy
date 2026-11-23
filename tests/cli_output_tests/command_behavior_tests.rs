@@ -6237,7 +6237,10 @@ fn cli_container_idle_linger_reuses_the_stack_and_reaps_after_the_last_run() {
             .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
             .env("EFFIGY_TEST_SERVICE_STATE_FILE", &service_state)
             .env("EFFIGY_TEST_DOWN_REMOVES_SERVICE", "1")
-            .env("EFFIGY_TEST_LOG_FOLLOW_FILE", root.join("log-follow.marker"))
+            .env(
+                "EFFIGY_TEST_LOG_FOLLOW_FILE",
+                root.join("log-follow.marker"),
+            )
             .env("EFFIGY_TEST_OWNED_INSPECT_FILE", &inspect)
             .env("EFFIGY_TEST_OWNED_CHECKOUT", &root)
             .env("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF", "1")
@@ -6324,7 +6327,10 @@ fn cli_container_idle_linger_reuses_the_stack_and_reaps_after_the_last_run() {
     let second_record = read();
     let second_record = second_record.verified().expect("second environment record");
     let second_timer = second_record.engine().expect("refreshed timer");
-    assert!(second_record.active(), "the second task also left a warm stack");
+    assert!(
+        second_record.active(),
+        "the second task also left a warm stack"
+    );
     assert!(
         !String::from_utf8_lossy(&second.stderr).contains("was started for this run"),
         "the second task saw a running stack: {second:?}"
@@ -6355,9 +6361,16 @@ fn cli_container_idle_linger_reuses_the_stack_and_reaps_after_the_last_run() {
     );
     let log = fs::read_to_string(colima_args).expect("fake runtime calls");
     assert_eq!(log.matches("down --remove-orphans").count(), 1, "{log}");
-    let last_exec = log.rfind(" exec ").expect("the tasks ran in the fake container");
-    let down = log.find("down --remove-orphans").expect("the reaper ran down");
-    assert!(last_exec < down, "the stack stayed up across both tasks: {log}");
+    let last_exec = log
+        .rfind(" exec ")
+        .expect("the tasks ran in the fake container");
+    let down = log
+        .find("down --remove-orphans")
+        .expect("the reaper ran down");
+    assert!(
+        last_exec < down,
+        "the stack stayed up across both tasks: {log}"
+    );
 }
 
 #[test]
