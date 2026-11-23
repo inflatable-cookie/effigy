@@ -12,8 +12,10 @@
 //!   fenced idle timer or stop the environment immediately.
 
 use effigy_kernel::gate::{Gate, Wait};
+use effigy_kernel::id::{ResourceId, RunId};
 use effigy_kernel::observe::Observed;
 use effigy_kernel::run::{AttachMode, AttachmentTicket, Attachments, Fence, Run, RunError};
+use serde::{Deserialize, Serialize};
 
 use super::reconcile::{EnvContext, EnvError, EnvRef, EnvRun, Operation};
 use super::record::{EnvRecord, Retention};
@@ -71,15 +73,25 @@ pub fn hold(
             resource: env.resource.clone(),
             generation: record.generation,
         };
+        let holder_id = holder.id();
         match Attachments::attach_updating_engine(holder, &fence, mode, wait, |engine| {
             let Some(record) = engine.as_object_mut() else {
                 return false;
             };
             // A run that attaches and finishes before the old reaper gets
             // the gate must still invalidate that reaper's token.
-            let deadline = record.remove("idle_reap_after_epoch_ms");
-            let token = record.remove("idle_reap_token");
-            deadline.is_some() || token.is_some()
+            if let AttachMode::Exclusive { .. } = mode {
+                // Fence deferred arms even when neither timer field was set.
+                record.insert(
+                    "idle_reap_activity".to_owned(),
+                    serde_json::json!(holder_id),
+                );
+                record.remove("idle_reap_after_epoch_ms");
+                record.remove("idle_reap_token");
+                true
+            } else {
+                false
+            }
         }) {
             Ok(ticket) => {
                 return Ok(Hold {
@@ -122,6 +134,8 @@ impl std::error::Error for HoldError {}
 pub enum Idle {
     /// The held environment had no holders left and was stopped.
     Stopped,
+    /// The due timer still needs a chance to acquire the gate.
+    Busy,
     /// Kept running, with the reason.
     Kept(&'static str),
 }
@@ -131,8 +145,44 @@ pub enum Idle {
 pub enum IdleArm {
     /// The deadline and token were recorded.
     Armed,
+    /// The gate was busy. A retry may arm only the same idle interval.
+    Busy(IdleArmFence),
     /// The current environment could not be armed.
     Skipped(&'static str),
+}
+
+/// The idle interval observed before a release tried to acquire the gate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdleArmFence {
+    environment: ResourceId,
+    activity: Option<RunId>,
+    token: Option<String>,
+}
+
+impl IdleArmFence {
+    fn from_record(record: &EnvRecord) -> Self {
+        let engine = record.engine().expect("idle held environment engine");
+        Self {
+            environment: record.resource.clone(),
+            activity: engine.idle_reap_activity,
+            token: engine.idle_reap_token.clone(),
+        }
+    }
+
+    /// Retry a busy arm only if the environment still belongs to this idle interval.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if holder settlement or the record write fails.
+    pub fn retry(
+        &self,
+        ctx: &EnvContext<'_>,
+        env: &EnvRef,
+        deadline_epoch_ms: u64,
+        token: &str,
+    ) -> Result<IdleArm, EnvError> {
+        arm(ctx, env, deadline_epoch_ms, token, Some(self))
+    }
 }
 
 /// Record the deadline under Gate(Env), leaving the active generation intact.
@@ -146,9 +196,23 @@ pub fn arm_idle_reap(
     deadline_epoch_ms: u64,
     token: &str,
 ) -> Result<IdleArm, EnvError> {
+    arm(ctx, env, deadline_epoch_ms, token, None)
+}
+
+fn arm(
+    ctx: &EnvContext<'_>,
+    env: &EnvRef,
+    deadline_epoch_ms: u64,
+    token: &str,
+    expected: Option<&IdleArmFence>,
+) -> Result<IdleArm, EnvError> {
     let read = || EnvRecord::read(&ctx.observe(), ctx.root, &env.resource);
-    if let Err(reason) = idle_record(read()) {
-        return Ok(IdleArm::Skipped(reason));
+    let current = match idle_record(read()) {
+        Ok(record) => IdleArmFence::from_record(&record),
+        Err(reason) => return Ok(IdleArm::Skipped(reason)),
+    };
+    if expected.is_some_and(|expected| expected != &current) {
+        return Ok(IdleArm::Skipped("idle interval changed"));
     }
     let gate = match Gate::acquire(
         &ctx.cx,
@@ -159,13 +223,16 @@ pub fn arm_idle_reap(
     .map_err(|error| EnvError::from_run(&env.name, error.into()))
     {
         Ok(gate) => gate,
-        Err(EnvError::Busy(_)) => return Ok(IdleArm::Skipped("another transition holds it")),
+        Err(EnvError::Busy(_)) => return Ok(IdleArm::Busy(current)),
         Err(error) => return Err(error),
     };
     let record = match idle_record(read()) {
         Ok(record) => record,
         Err(reason) => return Ok(IdleArm::Skipped(reason)),
     };
+    if IdleArmFence::from_record(&record) != current {
+        return Ok(IdleArm::Skipped("idle interval changed"));
+    }
     let mut engine = record
         .engine()
         .cloned()
@@ -200,7 +267,10 @@ pub fn reap_if_idle(
     env: &EnvRef,
     stop: impl FnOnce(&mut EnvRun<'_>) -> Result<(), EnvError>,
 ) -> Result<Idle, EnvError> {
-    reap(ctx, env, |_| None, stop)
+    match reap(ctx, env, |_| None, stop)? {
+        Idle::Busy => Ok(Idle::Kept("another transition holds it")),
+        outcome => Ok(outcome),
+    }
 }
 
 /// Stop only if this timer still belongs to the idle held environment and
@@ -246,7 +316,7 @@ fn reap(
     }
     let mut run = match EnvRun::begin(ctx, env, Operation::Reap, Wait::FailFast) {
         Ok(run) => run,
-        Err(EnvError::Busy(_)) => return Ok(Idle::Kept("another transition holds it")),
+        Err(EnvError::Busy(_)) => return Ok(Idle::Busy),
         Err(error) => return Err(error),
     };
     run.settle_interrupted_holders()?;

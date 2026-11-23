@@ -94,7 +94,7 @@ coverage limits (052 §7.6).
 | --- | --- | --- |
 | Generation, state | `resources` row | `active` (attachable at the current generation), `stopped`, or neither while a run is in progress |
 | Backend | `resources.backend` | exact engine, context and the policy source that chose it, written by Prepare (§6) |
-| Engine fields | `resources.engine` | `{schema, retention, project, idle_reap_after_epoch_ms?, idle_reap_token?}` |
+| Engine fields | `resources.engine` | `{schema, retention, project, idle_reap_after_epoch_ms?, idle_reap_token?, idle_reap_activity?}` |
 | Desired | `object_refs` | the render this environment points at (#229) |
 | Holders | `attachments` | runs attached to the environment, with liveness from their owner gates |
 
@@ -327,6 +327,9 @@ under `Gate(Env)` without changing the active generation. A new holder clears
 the timer as it attaches. The detached reaper polls the record and, once
 the deadline passes, checks the same token, deadline, and absence of holders
 under `Gate(Env)` before stopping through the normal reap transition.
+When the gate is busy, the detached process retries arming or reaping after
+a short pause. A deferred arm checks for a new attachment, bring-up, or timer
+before writing its original deadline.
 
 `EFFIGY_CONTAINER_IDLE_TIMEOUT_SECS` overrides the default of 300 seconds.
 If unset, Effigy reads `EFFIGY_HOST_CONTAINER_LEASE_TIMEOUT_SECS`. A value of

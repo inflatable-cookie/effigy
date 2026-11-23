@@ -800,10 +800,9 @@ fn idle_timer_arms_without_changing_the_active_generation() {
         Wait::FailFast,
     )
     .unwrap();
-    assert_eq!(
-        arm_idle_reap(&ctx, &stack, 100, "first").unwrap(),
-        IdleArm::Skipped("another transition holds it")
-    );
+    let IdleArm::Busy(deferred) = arm_idle_reap(&ctx, &stack, 100, "first").unwrap() else {
+        panic!("the environment gate is busy");
+    };
     drop(gate);
     let mut task = holder(&ctx, "test", 1);
     hold(&mut task, &ctx, &stack, Wait::FailFast, true).unwrap();
@@ -824,6 +823,10 @@ fn idle_timer_arms_without_changing_the_active_generation() {
     let engine = armed.engine().unwrap();
     assert_eq!(engine.idle_reap_after_epoch_ms, Some(100));
     assert_eq!(engine.idle_reap_token.as_deref(), Some("first"));
+    assert_eq!(
+        deferred.retry(&ctx, &stack, 90, "older").unwrap(),
+        IdleArm::Skipped("idle interval changed")
+    );
 
     down(
         &ctx,
@@ -903,6 +906,50 @@ fn idle_reap_requires_the_current_due_timer_and_no_holders() {
     assert_eq!(persistent.engine().unwrap().idle_reap_token, None);
     assert_eq!(fake.calls(), ["apply", "stop", "apply", "apply"]);
     assert_store_sound(&ctx);
+}
+
+#[test]
+fn a_deferred_arm_is_invalidated_by_an_attachment_even_before_the_new_timer_exists() {
+    let home = home();
+    let root = root(home.path());
+    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    bring_up(
+        &ctx,
+        &stack,
+        &Fake::new(),
+        &closure("one"),
+        Retention::Held,
+        &[],
+    )
+    .unwrap();
+    let gate = Gate::acquire(
+        &ctx.cx,
+        &root,
+        std::slice::from_ref(&stack.resource),
+        Wait::FailFast,
+    )
+    .unwrap();
+    let IdleArm::Busy(deferred) = arm_idle_reap(&ctx, &stack, 100, "first").unwrap() else {
+        panic!("the environment gate is busy");
+    };
+    drop(gate);
+
+    let mut task = holder(&ctx, "newer", 1);
+    hold(&mut task, &ctx, &stack, Wait::FailFast, true).unwrap();
+    task.finish(WorkloadOutcome::Succeeded).unwrap();
+    task.settle(&settlement(&ctx), &mut EnvSettlement).unwrap();
+    let idle = record(&ctx, &stack);
+    assert!(!idle.protected());
+    assert_eq!(idle.engine().unwrap().idle_reap_token, None);
+    assert_eq!(
+        deferred.retry(&ctx, &stack, 100, "first").unwrap(),
+        IdleArm::Skipped("idle interval changed")
+    );
+    assert_eq!(
+        arm_idle_reap(&ctx, &stack, 200, "second").unwrap(),
+        IdleArm::Armed
+    );
 }
 
 #[test]

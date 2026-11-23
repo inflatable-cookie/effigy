@@ -1235,6 +1235,7 @@ impl<'r> EnvRun<'r> {
             .cloned()
             .unwrap_or_else(|| EngineRecord::new(super::record::Retention::Held, project));
         record.clear_idle_reap();
+        record.idle_reap_activity = None;
         self.write_record(&record)?;
         let result = permit(&mut self.run, exempt).and_then(|mut permit| permit.publish_stopped());
         self.kernel(result)?;
@@ -1367,8 +1368,13 @@ impl<'r> EnvRun<'r> {
     /// Read this held activation's plan from its own root and capability.
     pub fn activate(&mut self, holders: &[(RunId, AttachMode)]) -> Result<(), EnvError> {
         if let Some(mut record) = self.engine_record().cloned() {
-            if record.idle_reap_token.is_some() || record.idle_reap_after_epoch_ms.is_some() {
+            let activity = (record.retention == super::record::Retention::Held).then(|| self.id());
+            if record.idle_reap_activity != activity
+                || record.idle_reap_token.is_some()
+                || record.idle_reap_after_epoch_ms.is_some()
+            {
                 record.clear_idle_reap();
+                record.idle_reap_activity = activity;
                 self.write_record(&record)?;
             }
         }

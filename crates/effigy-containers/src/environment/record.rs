@@ -3,7 +3,7 @@
 //! Reading it is pure (R2): no store, gate or file is created.
 
 use effigy_kernel::ctx::ObserveContext;
-use effigy_kernel::id::{Generation, ResourceId};
+use effigy_kernel::id::{Generation, ResourceId, RunId};
 use effigy_kernel::observe::{Observed, UnknownReason};
 use effigy_kernel::root::StateRoot;
 use effigy_kernel::run::{Attachments, Holder};
@@ -46,6 +46,9 @@ pub struct EngineRecord {
     /// Identifies the release that last armed the idle timer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idle_reap_token: Option<String>,
+    /// The last bring-up or warm attachment, which fences an arm waiting for the gate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) idle_reap_activity: Option<RunId>,
 }
 
 impl EngineRecord {
@@ -56,6 +59,7 @@ impl EngineRecord {
             project: project.to_owned(),
             idle_reap_after_epoch_ms: None,
             idle_reap_token: None,
+            idle_reap_activity: None,
         }
     }
 
