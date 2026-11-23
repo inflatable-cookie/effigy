@@ -1928,3 +1928,91 @@ fn a_container_task_keeps_the_canonical_alias_the_scope_network_answers() {
         );
     });
 }
+
+#[test]
+fn host_alias_allows_host_only_task_with_unrelated_staged_container_missing_colima_mount() {
+    with_private_gateway("host-alias-unrelated-staged-mount", || {
+        let primary = primary_checkout("host-alias-unrelated-staged-mount");
+        let checkout = linked_worktree(&primary, "worktree-one");
+        let colima = primary.parent().expect("fixture root").join("colima-home");
+        fs::create_dir_all(colima.join("effigy-release")).expect("colima profile dir");
+        fs::write(
+            colima.join("effigy-release/colima.yaml"),
+            format!(
+                "mounts:\n  - location: {}\n    writable: true\n",
+                checkout.join("nonexistent-release-source").display()
+            ),
+        )
+        .expect("colima config");
+        let _colima_guard = crate::contract_test_support::EnvGuard::set_many(&[(
+            "COLIMA_HOME",
+            Some(colima.display().to_string()),
+        )]);
+
+        fs::create_dir_all(checkout.join("infra/dev/catalog/builder")).expect("catalog dir");
+        fs::write(
+            checkout.join("infra/dev/catalog/builder/service.toml"),
+            "[service]\nname = \"builder\"\n",
+        )
+        .expect("service.toml");
+        fs::write(
+            checkout.join("infra/dev/catalog/builder/compose.fragment.yml"),
+            "services:\n  '{{ service_name }}':\n    image: example.invalid/builder\n    volumes:\n      - '{{ repo_root }}:/workspace:ro'\n",
+        )
+        .expect("compose fragment");
+
+        let host_only_out = checkout.join("host-only.txt");
+        fs::write(
+            checkout.join("effigy.toml"),
+            format!(
+                "{MANIFEST}\n\
+                 [containers.\"linux-release\"]\n\
+                 driver = \"colima\"\n\
+                 profile = \"effigy-release\"\n\
+                 workspace_source = \"staged\"\n\
+                 project_name = \"effigy-artifact-builder-v1\"\n\
+                 primary_service = \"builder\"\n\n\
+                 [containers.\"linux-release\".services.builder]\n\
+                 catalog = \"builder\"\n\n\
+                 [tasks.host-only]\n\
+                 run_in = \"host\"\n\
+                 run = \"sh -lc 'printf ok > \\\"$OUT\\\"'\"\n\
+                 env = {{ OUT = \"{}\" }}\n",
+                host_only_out.display(),
+            ),
+        )
+        .expect("manifest with staged container and host-only task");
+
+        run_task(&checkout, "host-only", &[])
+            .expect("host-only task must run in linked worktree despite absent staged mount");
+        assert_eq!(
+            fs::read_to_string(&host_only_out).expect("host-only output"),
+            "ok"
+        );
+
+        let unpublished = run_task(&checkout, "check", &[])
+            .expect_err("task using declared backing-service alias still refuses when unpublished");
+        assert!(
+            unpublished
+                .to_string()
+                .contains("no route for it is recorded"),
+            "unexpected error for unpublished alias: {unpublished}"
+        );
+
+        let alias = effective_alias(&checkout, "postgres");
+        let database = fake_database("alias-service");
+        publish_alias_route_with_endpoint(
+            &checkout,
+            &alias,
+            Ipv4Addr::LOCALHOST,
+            5432,
+            database.port,
+        );
+        let rendered = rendered_command(&checkout, "check");
+        assert!(
+            rendered.command.contains(&format!("@{alias}:5432/app")),
+            "backing-service alias on unrelated environment still resolves in the linked worktree: {}",
+            rendered.command
+        );
+    });
+}

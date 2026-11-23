@@ -37,6 +37,17 @@ pub fn load_container_policy(
     load_container_policy_with_workspace(repo_root, requested_name, None)
 }
 
+/// Load a single container policy for read-only metadata inspection (host
+/// maps, status, logs) without probing live Colima staging mounts on disk.
+/// Callers that prepare, render, validate, or start a container must use
+/// [`load_container_policy`] or [`load_container_policy_for_creation`].
+pub fn load_container_policy_for_inspection(
+    repo_root: &Path,
+    requested_name: Option<&str>,
+) -> Result<EffectiveContainerPolicy, ContainerPolicyError> {
+    load_policy(repo_root, requested_name, None, false, false, false).map(|(policy, _)| policy)
+}
+
 /// Resolve the pre-migration declaration of one environment whose
 /// `compose_file` `effigy container migrate` is about to rewrite. This is the
 /// only caller that reads the retired key: it renders exactly what the
@@ -45,7 +56,7 @@ pub fn load_container_policy_for_migration(
     repo_root: &Path,
     requested_name: Option<&str>,
 ) -> Result<EffectiveContainerPolicy, ContainerPolicyError> {
-    load_policy(repo_root, requested_name, None, false, true).map(|(policy, _)| policy)
+    load_policy(repo_root, requested_name, None, false, true, true).map(|(policy, _)| policy)
 }
 
 /// Resolve user-global library mounts for the manifest's declared bundle.
@@ -245,6 +256,7 @@ fn load_container_policy_with_workspace_decisions(
         workspace_override,
         record_optional_extra_mount_decisions,
         false,
+        true,
     )
 }
 
@@ -254,6 +266,7 @@ fn load_policy(
     workspace_override: Option<&ManifestWorkspaceConfig>,
     record_optional_extra_mount_decisions: bool,
     translate_retired_compose_file: bool,
+    resolve_staged_workspace_source: bool,
 ) -> Result<(EffectiveContainerPolicy, Vec<WorkspaceExtraMountDecision>), ContainerPolicyError> {
     let canonical_root = repo_root
         .canonicalize()
@@ -299,6 +312,7 @@ fn load_policy(
         library_mounts: &library_mounts,
         record_optional_extra_mount_decisions,
         translate_retired_compose_file,
+        resolve_staged_workspace_source,
     })
 }
 
@@ -320,6 +334,10 @@ pub fn declares_container_registry(repo_root: &Path) -> Result<bool, ContainerPo
     Ok(loaded.manifest.containers.is_some())
 }
 
+/// Load every declared container environment's policy for read-only inventory
+/// and host-alias inspection without probing live Colima staging mounts on
+/// disk. Callers that render, stage, validate, or start a container must use
+/// [`load_container_policy`] or [`load_container_policy_for_creation`].
 pub fn load_all_container_policies(
     repo_root: &Path,
 ) -> Result<Vec<EffectiveContainerPolicy>, ContainerPolicyError> {
@@ -359,6 +377,7 @@ pub fn load_all_container_policies(
                 library_mounts: &library_mounts,
                 record_optional_extra_mount_decisions: false,
                 translate_retired_compose_file: false,
+                resolve_staged_workspace_source: false,
             })
             .map(|(policy, _)| policy)
         })
@@ -491,6 +510,10 @@ struct PolicyBuildContext<'a> {
     /// Only `effigy container migrate` renders the retired `compose_file`
     /// declaration; every ordinary caller refuses it.
     translate_retired_compose_file: bool,
+    /// Read-only inspection callers (host-alias resolution, doctor, status,
+    /// volume inventory) skip live Colima staging-mount probing on disk;
+    /// render/prepare/creation/validation callers resolve and enforce it.
+    resolve_staged_workspace_source: bool,
 }
 
 fn build_effective_policy(
@@ -509,6 +532,7 @@ fn build_effective_policy(
         library_mounts,
         record_optional_extra_mount_decisions,
         translate_retired_compose_file,
+        resolve_staged_workspace_source,
     } = context;
     let translated = if translate_retired_compose_file {
         super::compose_file::translate_for_render(repo_root, name, config)?
@@ -548,6 +572,7 @@ fn build_effective_policy(
             &project_name,
             effective_manifest,
             volume_borrow.as_ref(),
+            resolve_staged_workspace_source,
             &mut draft,
         )?;
     let primary_service = config.primary_service.clone().ok_or_else(|| {

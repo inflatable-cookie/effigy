@@ -2,7 +2,7 @@ use crate::runner::container_command::support::{
     resolve_repo_root_or_invocation_cwd_scope, ContainerRepoScope,
 };
 use crate::runner::container_command::RunnerError;
-use effigy_containers::load_container_policy;
+use effigy_containers::load_container_policy_for_inspection;
 use effigy_runtime::read::{
     run_container_status, run_container_status_all, run_container_status_under_path,
 };
@@ -52,7 +52,7 @@ pub(super) fn annotate_host_process_status(
     output_json: bool,
     rendered: String,
 ) -> String {
-    let Ok(policy) = load_container_policy(repo_root, name) else {
+    let Ok(policy) = load_container_policy_for_inspection(repo_root, name) else {
         return rendered;
     };
     let rows = crate::runner::host_process::host_process_status(repo_root, &policy);

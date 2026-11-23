@@ -483,7 +483,7 @@ fn scoped_environment_policies(
     if !effigy_containers::declares_container_registry(scope_root).map_err(policy_did_not_load)? {
         return Ok(Vec::new());
     }
-    let default = effigy_containers::load_container_policy(scope_root, None).ok();
+    let default = effigy_containers::load_container_policy_for_inspection(scope_root, None).ok();
     let every =
         effigy_containers::load_all_container_policies(scope_root).map_err(policy_did_not_load)?;
     let mut policies = default.clone().into_iter().collect::<Vec<_>>();
@@ -538,4 +538,144 @@ pub(in crate::runner) fn secret_env_slice(
         .iter()
         .map(|(key, value)| (key.as_str(), value))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HostAliasResolver;
+    use crate::contract_test_support::{lock_test, EnvGuard};
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn linked_worktree_fixture(name: &str, manifest: &str) -> (PathBuf, PathBuf) {
+        let root = effigy_test_support::Fixture::process_lifetime(&format!("host-alias-{name}-"))
+            .expect("fixture root");
+        let primary = root.join("primary");
+        let checkout = root.join("worktree-one");
+        let private = primary.join(".git/worktrees/worktree-one");
+        fs::create_dir_all(&private).expect("private git dir");
+        fs::create_dir_all(&checkout).expect("worktree checkout");
+        fs::write(
+            checkout.join(".git"),
+            format!("gitdir: {}\n", private.display()),
+        )
+        .expect("git file");
+        fs::write(private.join("commondir"), "../..\n").expect("commondir");
+
+        fs::create_dir_all(checkout.join("infra/dev/catalog/builder")).expect("catalog dir");
+        fs::write(
+            checkout.join("infra/dev/catalog/builder/service.toml"),
+            "[service]\nname = \"builder\"\n",
+        )
+        .expect("service.toml");
+        fs::write(
+            checkout.join("infra/dev/catalog/builder/compose.fragment.yml"),
+            "services:\n  '{{ service_name }}':\n    image: example.invalid/builder\n    volumes:\n      - '{{ repo_root }}:/workspace:ro'\n",
+        )
+        .expect("compose fragment");
+        fs::write(checkout.join("effigy.toml"), manifest).expect("manifest");
+        effigy_core::worktree_scope::prepare_checkout_token(&checkout).expect("scope token");
+
+        let colima = root.join("colima");
+        fs::create_dir_all(colima.join("effigy-release")).expect("colima profile dir");
+        fs::write(
+            colima.join("effigy-release/colima.yaml"),
+            format!(
+                "mounts:\n  - location: {}\n    writable: true\n",
+                root.join("missing-release-source").display()
+            ),
+        )
+        .expect("colima config");
+        (checkout, colima)
+    }
+
+    #[test]
+    fn host_alias_resolver_allows_linked_worktree_when_unrelated_staged_container_mount_is_absent()
+    {
+        let _lock = lock_test();
+        let (checkout, colima) = linked_worktree_fixture(
+            "unrelated-staged",
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+project_name = "app-dev"
+primary_service = "postgres"
+
+[containers.web.dns]
+base_domain = "acme.test"
+routes = [
+  { domain = "app.acme.test", tls = false, service = "postgres" },
+]
+
+[containers.web.services.postgres]
+catalog = "postgres"
+
+[containers."linux-release"]
+driver = "colima"
+profile = "effigy-release"
+workspace_source = "staged"
+project_name = "effigy-artifact-builder-v1"
+primary_service = "builder"
+
+[containers."linux-release".services.builder]
+catalog = "builder"
+"#,
+        );
+        let _env = EnvGuard::set_many(&[("COLIMA_HOME", Some(colima.display().to_string()))]);
+
+        let resolver = HostAliasResolver::for_checkout(&checkout)
+            .expect("host alias resolution must not fail on absent staged Colima mount")
+            .expect("web backing service aliases still resolve");
+        let hosts = resolver.hosts();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].declared, "postgres.acme.test");
+        assert!(
+            hosts[0].effective.starts_with("postgres.acme-w"),
+            "effective alias must remain worktree-scoped: {:?}",
+            hosts[0]
+        );
+    }
+
+    #[test]
+    fn host_alias_resolver_still_refuses_broken_container_policy_beside_staged_container() {
+        let _lock = lock_test();
+        let (checkout, colima) = linked_worktree_fixture(
+            "broken-beside-staged",
+            r#"
+[containers]
+default = "broken"
+
+[containers."linux-release"]
+driver = "colima"
+profile = "effigy-release"
+workspace_source = "staged"
+project_name = "effigy-artifact-builder-v1"
+primary_service = "builder"
+
+[containers."linux-release".services.builder]
+catalog = "builder"
+
+[containers.broken]
+primary_service = "postgres"
+
+[containers.broken.services.postgres]
+catalog = "no-such-catalog-service"
+"#,
+        );
+        let _env = EnvGuard::set_many(&[("COLIMA_HOME", Some(colima.display().to_string()))]);
+
+        let error = HostAliasResolver::for_checkout(&checkout)
+            .expect_err("broken backing-service policy must still refuse");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("container policy did not load"),
+            "expected policy_did_not_load refusal: {rendered}"
+        );
+        assert!(
+            rendered.contains("no-such-catalog-service"),
+            "expected underlying catalog failure in refusal: {rendered}"
+        );
+    }
 }

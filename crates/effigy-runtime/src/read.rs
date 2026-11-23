@@ -14,8 +14,8 @@ use effigy_containers::{
     },
     health::probe_health_status,
     health::readiness::{inspect_project_health, ServiceHealth},
-    load_container_exec_working_dir, load_container_policy, logs_report, status_report,
-    validate_container_policy,
+    load_container_exec_working_dir, load_container_policy_for_inspection, logs_report,
+    status_report, validate_container_policy,
 };
 use effigy_containers::{
     stats_global_report, status_global_report, ContainerServiceHealth, ContainerStatsAllEntry,
@@ -42,7 +42,7 @@ pub fn run_container_status(
     name: Option<&str>,
     output_json: bool,
 ) -> Result<String, EffigyRuntimeError> {
-    let policy = load_container_policy(repo_root, name)
+    let policy = load_container_policy_for_inspection(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
@@ -181,7 +181,7 @@ pub fn run_container_logs(
         ));
     }
 
-    let policy = load_container_policy(repo_root, name)
+    let policy = load_container_policy_for_inspection(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
