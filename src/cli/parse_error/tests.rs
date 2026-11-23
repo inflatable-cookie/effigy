@@ -90,3 +90,53 @@ fn render_parse_error_names_the_supported_command_for_a_mistyped_one() {
     assert!(rendered.contains("effigy exec"));
     assert!(!rendered.contains("Commands\n"));
 }
+
+#[test]
+fn qa_group_run_unknown_flag_points_at_run_usage_not_a_sibling_form() {
+    // Longhorn #112: `effigy --json tasks qa-group run <group> --bad-flag`
+    // refused with "`effigy tasks qa-group` is not a form: did you mean
+    // `qa-groups`?" instead of naming the flag and the run usage.
+    let args = argv(&["tasks", "qa-group", "run", "mygroup", "--unknown-flag"]);
+    let error = effigy_cli::parse_command(args.clone()).expect_err("unknown flag must refuse");
+    assert!(
+        error.to_string().contains("--unknown-flag"),
+        "unexpected error: {error}"
+    );
+    let hint = usage_hint_for(&args);
+    let details = parse_error_json_details(&hint);
+    let encoded = details.to_string();
+    assert!(!encoded.contains("is not a form"), "{encoded}");
+    assert!(!encoded.contains("qa-groups"), "{encoded}");
+    assert!(
+        details["usage"].as_array().is_some_and(|usage| usage
+            .iter()
+            .filter_map(|line| line.as_str())
+            .any(|line| line.contains("tasks qa-group run"))),
+        "{encoded}"
+    );
+}
+
+#[test]
+fn json_qa_group_run_extra_arg_points_at_run_usage_not_a_sibling_form() {
+    let args = argv(&["--json", "tasks", "qa-group", "run", "mygroup", "extra"]);
+    let error = effigy_cli::parse_command(args.clone()).expect_err("extra argument must refuse");
+    assert!(
+        error.to_string().contains("extra"),
+        "unexpected error: {error}"
+    );
+    let hint = usage_hint_for(&args);
+    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
+    render_parse_error(
+        &mut renderer,
+        Path::new("/tmp/repo"),
+        &error.to_string(),
+        &hint,
+    )
+    .expect("parse error render should succeed");
+    let rendered =
+        String::from_utf8(renderer.into_inner()).expect("rendered parse error should be utf8");
+    assert!(rendered.contains("tasks qa-group run"), "{rendered}");
+    assert!(!rendered.contains("is not a form"), "{rendered}");
+    assert!(!rendered.contains("qa-groups"), "{rendered}");
+    assert!(!rendered.contains("Commands\n"), "{rendered}");
+}
