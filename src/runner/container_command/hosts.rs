@@ -1,6 +1,6 @@
 use effigy_containers::{
     add_managed_listener_routes, build_host_map_including_listeners, hosts_report,
-    load_container_policy, uses_shared_runtime_identity, EffectiveContainerPolicy,
+    load_container_policy_for_inspection, uses_shared_runtime_identity, EffectiveContainerPolicy,
     EffectiveHostMap, HostScopeKind,
 };
 use effigy_core::worktree_scope::{self, ScopeKind};
@@ -15,7 +15,7 @@ pub(super) fn run_container_hosts(
 ) -> Result<String, RunnerError> {
     let context = resolve_active_command_context(repo_override)?;
     let repo_root = context.resolved.resolved_root;
-    let policy = load_container_policy(&repo_root, name)
+    let policy = load_container_policy_for_inspection(&repo_root, name)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let token = worktree_scope::load(&repo_root)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;

@@ -452,6 +452,7 @@ pub(crate) fn resolve_compose_source(
     project_name: &str,
     _effective_manifest: &str,
     volume_borrow: Option<&crate::policy::model::ComposeVolumeBorrow>,
+    resolve_staged_workspace_source: bool,
     draft: &mut crate::policy::render::Draft,
 ) -> Result<ResolvedComposeSource, ContainerPolicyError> {
     // A linked worktree and a clone marked `effigy.runtimeScope = ephemeral`
@@ -540,6 +541,7 @@ pub(crate) fn resolve_compose_source(
         config,
         project_name,
         &mut compose_document,
+        resolve_staged_workspace_source,
     )?;
     // The checkout label, fence and generation name the checkout that owns
     // this environment's journal. A nested catalog directory with no Git
@@ -1336,6 +1338,7 @@ fn apply_workspace_source_policy(
     config: &ManifestContainerConfig,
     project_name: &str,
     compose_document: &mut GeneratedComposeDocument,
+    resolve_staged_workspace_source: bool,
 ) -> Result<(), ContainerPolicyError> {
     let declared = match config.workspace_source.as_deref().map(str::trim) {
         Some("staged") => crate::artifact_source::WorkspaceSource::Staged,
@@ -1346,6 +1349,9 @@ fn apply_workspace_source_policy(
             )))
         }
     };
+    if !resolve_staged_workspace_source {
+        return Ok(());
+    }
     let profile = config
         .profile
         .as_deref()
@@ -1959,6 +1965,7 @@ services:
             &config,
             "project",
             &mut document,
+            true,
         )
         .expect("staged source policy");
         let plan = crate::artifact_source::resolve_stage(
@@ -2020,6 +2027,7 @@ services:
             &config,
             "project",
             &mut document,
+            true,
         )
         .expect("shared source policy");
         let volumes = document.services["builder"]
@@ -2041,6 +2049,7 @@ services:
             &config,
             "project",
             &mut document,
+            true,
         )
         .expect("default source policy");
         let volumes = document.services["builder"]

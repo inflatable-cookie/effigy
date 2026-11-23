@@ -47,8 +47,9 @@ pub use policy::load::{
     declares_container_registry, effective_attach_mode, load_all_container_policies,
     load_container_exec_target, load_container_exec_working_dir, load_container_policy,
     load_container_policy_for_creation, load_container_policy_for_creation_observed,
-    load_container_policy_for_migration, load_container_policy_with_workspace,
-    prepare_container_policy, ContainerExecTarget, CreationPolicyStage,
+    load_container_policy_for_inspection, load_container_policy_for_migration,
+    load_container_policy_with_workspace, prepare_container_policy, ContainerExecTarget,
+    CreationPolicyStage,
 };
 pub use policy::model::{
     ContainerPolicyError, EffectiveAttachMode, EffectiveComposeSource, EffectiveContainerPolicy,

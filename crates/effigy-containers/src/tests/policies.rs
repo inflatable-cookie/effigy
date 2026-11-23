@@ -1817,3 +1817,115 @@ primary_service = "app"
         EffectiveAttachMode::Attached
     );
 }
+
+#[test]
+fn inspection_policy_loads_skip_missing_staged_colima_mount_while_render_loads_refuse() {
+    let _lock = crate::test_env_lock();
+    let root = temp_repo("inspection-staged-mount");
+    let colima = root.join("colima");
+    fs::create_dir_all(colima.join("effigy-release")).expect("profile dir");
+    fs::write(
+        colima.join("effigy-release/colima.yaml"),
+        format!(
+            "mounts:\n  - location: {}\n    writable: true\n",
+            root.join("missing-release-source").display()
+        ),
+    )
+    .expect("colima config");
+    let _env = effigy_test_support::env::ScopedEnv::set_many(&[(
+        "COLIMA_HOME",
+        colima.as_os_str().to_owned(),
+    )]);
+
+    fs::create_dir_all(root.join("infra/dev/catalog/builder")).expect("catalog dir");
+    fs::write(
+        root.join("infra/dev/catalog/builder/service.toml"),
+        "[service]\nname = \"builder\"\n",
+    )
+    .expect("service.toml");
+    fs::write(
+        root.join("infra/dev/catalog/builder/compose.fragment.yml"),
+        "services:\n  '{{ service_name }}':\n    image: example.invalid/builder\n    volumes:\n      - '{{ repo_root }}:/workspace:ro'\n",
+    )
+    .expect("compose fragment");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+project_name = "app-dev"
+primary_service = "postgres"
+
+[containers.web.services.postgres]
+catalog = "postgres"
+
+[containers."linux-release"]
+driver = "colima"
+profile = "effigy-release"
+workspace_source = "staged"
+project_name = "effigy-artifact-builder-v1"
+primary_service = "builder"
+
+[containers."linux-release".services.builder]
+catalog = "builder"
+"#,
+    )
+    .expect("manifest");
+
+    let policies = crate::load_all_container_policies(&root).expect("all policies for inspection");
+    assert_eq!(policies.len(), 2);
+    let release = policies
+        .iter()
+        .find(|policy| policy.name == "linux-release")
+        .expect("linux-release policy");
+    assert_eq!(
+        release.workspace_source,
+        crate::artifact_source::WorkspaceSource::Staged
+    );
+
+    let inspected = crate::load_container_policy_for_inspection(&root, Some("linux-release"))
+        .expect("single inspection policy");
+    assert_eq!(
+        inspected.workspace_source,
+        crate::artifact_source::WorkspaceSource::Staged
+    );
+
+    for render_error in [
+        crate::load_container_policy(&root, Some("linux-release")).unwrap_err(),
+        crate::prepare_container_policy(&root, Some("linux-release")).unwrap_err(),
+        crate::load_container_policy_for_creation(&root, Some("linux-release")).unwrap_err(),
+    ] {
+        assert!(
+            render_error
+                .to_string()
+                .contains("shares no writable host mount"),
+            "render/prepare path must still enforce writable Colima mount: {render_error}"
+        );
+    }
+
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers."linux-release"]
+driver = "colima"
+profile = "effigy-release"
+workspace_source = "bogus"
+project_name = "effigy-artifact-builder-v1"
+primary_service = "builder"
+
+[containers."linux-release".services.builder]
+catalog = "builder"
+"#,
+    )
+    .expect("invalid workspace_source manifest");
+    assert!(
+        crate::load_all_container_policies(&root).is_err(),
+        "inspection path must still reject invalid workspace_source values"
+    );
+    assert!(
+        crate::load_container_policy_for_inspection(&root, Some("linux-release")).is_err(),
+        "single inspection path must still reject invalid workspace_source values"
+    );
+}
