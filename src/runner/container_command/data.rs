@@ -521,15 +521,15 @@ pub(super) fn maybe_confirm_container_data_import(
         return Ok(());
     }
 
-    let mut stdin = io::stdin().lock();
-    let mut stdout = io::stdout().lock();
-    confirm_container_data_import_from_io(
-        &policy.name,
-        volume_name,
-        archive_path,
-        &mut stdin,
-        &mut stdout,
-    )
+    effigy_ui::steps::prompt_terminal_stdio(|stdin, stdout| {
+        confirm_container_data_import_from_io(
+            &policy.name,
+            volume_name,
+            archive_path,
+            stdin,
+            stdout,
+        )
+    })
 }
 
 pub(super) fn maybe_confirm_destructive_container_action(
@@ -548,9 +548,9 @@ pub(super) fn maybe_confirm_destructive_container_action(
         return Ok(());
     }
 
-    let mut stdin = io::stdin().lock();
-    let mut stdout = io::stdout().lock();
-    confirm_destructive_container_action_from_io(description, &mut stdin, &mut stdout)
+    effigy_ui::steps::prompt_terminal_stdio(|stdin, stdout| {
+        confirm_destructive_container_action_from_io(description, stdin, stdout)
+    })
 }
 
 fn ensure_pull_production_prompt_target(

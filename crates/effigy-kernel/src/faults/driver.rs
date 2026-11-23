@@ -168,6 +168,7 @@ pub(super) fn drive_part(scenario: &dyn Scenario, part: usize, parts: usize) {
         ),
     )
     .expect("plan");
+    let terminal = effigy_ui::steps::suspend_terminal();
     let children: Vec<_> = (0..shards)
         .map(|shard| {
             let child = Command::new(std::env::current_exe().expect("test binary"))
@@ -183,7 +184,7 @@ pub(super) fn drive_part(scenario: &dyn Scenario, part: usize, parts: usize) {
                 .env(SHARD, format!("{shard}/{shards}/{part}/{parts}"))
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
-                .stderr(Stdio::inherit())
+                .stderr(terminal.inherit_stdio())
                 .spawn()
                 .expect("shard");
             (shard, child)
@@ -587,6 +588,7 @@ fn observe_everything(home: &Path) {
 fn child(scenario: &dyn Scenario, home: &Path, point: Point, n: usize, fault: Fault) -> bool {
     let progress = aux(home).join("child-progress");
     let _ = std::fs::write(&progress, b"");
+    let _terminal = effigy_ui::steps::suspend_terminal();
     let child = Command::new(std::env::current_exe().expect("test binary"))
         .args([
             CHILD,
@@ -606,7 +608,7 @@ fn child(scenario: &dyn Scenario, home: &Path, point: Point, n: usize, fault: Fa
         )
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
+        .stderr(_terminal.inherit_stdio())
         .spawn()
         .expect("fault child");
     let pid = child.id();

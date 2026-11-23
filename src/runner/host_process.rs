@@ -1107,13 +1107,14 @@ os.execv('/bin/sleep', ['sleep', '60'])
                 );
             }
         }
+        let _terminal = effigy_ui::steps::suspend_terminal();
         let guard = Stop {
             holder: Command::new("/usr/bin/python3")
                 .arg("holder.py")
                 .current_dir(&fixture.checkout)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::null())
-                .stderr(Stdio::inherit())
+                .stderr(_terminal.inherit_stdio())
                 .spawn()
                 .unwrap(),
             checkout: &fixture.checkout,

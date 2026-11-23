@@ -1256,7 +1256,7 @@ fn run_command_stream_with_timeout(
     label: &str,
     timeout: Duration,
 ) -> Result<(), ContainerExecError> {
-    let mut child = spawn_stream_child(repo_root, program, args).map_err(|error| {
+    let (mut child, _terminal) = spawn_stream_child(repo_root, program, args).map_err(|error| {
         ContainerExecError::Launch {
             command: format!("{program} {}", args.join(" ")),
             error,
@@ -1406,18 +1406,19 @@ fn spawn_stream_child(
     repo_root: &Path,
     program: &str,
     args: &[&str],
-) -> Result<std::process::Child, std::io::Error> {
+) -> Result<(std::process::Child, effigy_ui::steps::TerminalGuard), std::io::Error> {
     let resolved_program = resolve_host_cli_program(program);
     let borrowed = args.iter().map(OsString::from).collect::<Vec<_>>();
     let invocation = compose_invocation_args(&resolved_program, &borrowed, &[])
         .map_err(|error| std::io::Error::other(error.to_string()))?;
     let args = invocation.args;
+    let terminal = effigy_ui::steps::suspend_terminal();
     let mut command = Command::new(&resolved_program);
     command
         .current_dir(repo_root)
         .args(&args)
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
+        .stdout(terminal.inherit_stdio())
+        .stderr(terminal.inherit_stdio())
         .stdin(Stdio::null());
     #[cfg(unix)]
     // SAFETY: same contract as `spawn_capture_child`: `pre_exec` runs before
@@ -1429,7 +1430,8 @@ fn spawn_stream_child(
         command
             .pre_exec(|| setpgid(Pid::from_raw(0), Pid::from_raw(0)).map_err(std::io::Error::from));
     }
-    command.spawn()
+    let child = command.spawn()?;
+    Ok((child, terminal))
 }
 
 /// The finite detached runner has not reaped its leader. Keep that PID

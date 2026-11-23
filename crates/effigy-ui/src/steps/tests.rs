@@ -377,13 +377,123 @@ fn a_plain_line_lands_between_finishes_and_json_writes_none() {
 #[test]
 fn a_suspended_terminal_silences_steps_and_restores_them() {
     let (sink, buffer) = silent_spinner_sink();
-    let guard = suspend_terminal_with(&sink);
+    let guard = terminal::suspend_terminal_with(&sink);
     let step = Step::new(sink.clone(), None, "starting web");
     step.succeed("web is healthy");
     drop(guard);
     let after = Step::new(sink, None, "starting web");
     after.succeed("web is healthy");
     assert_eq!(buffer.text(), "✓ web is healthy\n");
+}
+
+#[test]
+fn suspend_terminal_clears_drawn_frames_and_suppresses_concurrent_live_steps_until_dropped() {
+    let (sink, buffer, terminal) = window_sink();
+    let (step, bar) = terminal_step(&sink);
+    bar.tick();
+    assert!(
+        last_frame(&terminal).contains("Starting web stack"),
+        "the spinner drew a frame before suspend_terminal"
+    );
+
+    let guard = terminal::suspend_terminal_with(&sink);
+    assert!(
+        !last_frame(&terminal).contains("Starting web stack"),
+        "suspend_terminal must clear already-drawn frames before hiding: {:?}",
+        last_frame(&terminal)
+    );
+
+    let frames_before = terminal.0.lock().unwrap().1.len();
+    bar.tick();
+    bar.force_draw();
+    let concurrent = Step::new_live(
+        Arc::clone(&sink),
+        None,
+        ProgressSource::waiting_for("a concurrent background probe"),
+    );
+    assert!(
+        concurrent.inner.bar.is_none(),
+        "no new spinner bar may start while terminal is suspended"
+    );
+    concurrent.succeed("background probe finished");
+    assert_eq!(
+        terminal.0.lock().unwrap().1.len(),
+        frames_before,
+        "nothing may draw on the terminal while suspended"
+    );
+    assert!(
+        buffer.text().is_empty(),
+        "no finish line may draw while suspended: {:?}",
+        buffer.text()
+    );
+
+    drop(guard);
+    assert!(
+        last_frame(&terminal).contains("Starting web stack"),
+        "dropping TerminalGuard restores the running spinner"
+    );
+    step.succeed("web is healthy");
+    assert!(buffer.text().contains("web is healthy"));
+}
+
+#[test]
+fn prompt_terminal_suppresses_concurrent_live_steps_even_before_multi_init_and_restores_after_panic(
+) {
+    let (sink, buffer) = sink(StepMode::Spinner);
+    let terminal = FrameTerminal::default();
+    let target_terminal = terminal.clone();
+    *sink.draw_target.lock().unwrap() = Some(Box::new(move || {
+        ProgressDrawTarget::term_like(Box::new(target_terminal.clone()))
+    }));
+    assert!(
+        sink.multi.get().is_none(),
+        "multi must start uninitialized to prove prompt_terminal still blocks concurrent steps"
+    );
+
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        terminal::prompt_terminal_with(&sink, || {
+            assert!(sink.is_suspended());
+            let concurrent = Step::new_live(
+                Arc::clone(&sink),
+                None,
+                ProgressSource::waiting_for("a concurrent step during prompt"),
+            );
+            assert!(
+                concurrent.inner.bar.is_none(),
+                "no concurrent spinner may start while prompt_terminal holds the terminal"
+            );
+            concurrent.succeed("suppressed during prompt");
+            panic!("simulated prompt panic");
+        });
+    }));
+    assert!(panicked.is_err());
+    assert!(
+        !sink.is_suspended(),
+        "TerminalGuard must restore suspension count even across panics"
+    );
+    assert!(
+        buffer.text().is_empty(),
+        "suppressed finish line must not draw during prompt"
+    );
+
+    let after = Step::new_live(
+        Arc::clone(&sink),
+        None,
+        ProgressSource::waiting_for("post-panic step"),
+    );
+    let bar = after
+        .inner
+        .bar
+        .as_ref()
+        .expect("steps resume drawing after prompt_terminal unwinds");
+    bar.disable_steady_tick();
+    bar.force_draw();
+    assert!(
+        last_frame(&terminal).contains("Waiting for post-panic step"),
+        "step drawing works cleanly after panic recovery"
+    );
+    after.succeed("recovered");
+    assert!(buffer.text().contains("✓ recovered\n"));
 }
 
 /// A passphrase prompt under a live spinner clears the spinner line first and
@@ -478,8 +588,7 @@ fn ctrl_c_retires_running_progress_before_shutdown_frames() {
         .any(|frame| frame.contains("running dev")));
 
     // Ctrl+C transfers ownership while the TUI is on screen.
-    let guard = suspend_terminal_with(&sink);
-    sink.multi().set_draw_target(ProgressDrawTarget::hidden());
+    let guard = terminal::suspend_terminal_with(&sink);
     guard.retire_running();
     drop(guard);
     sink.multi()
@@ -702,6 +811,10 @@ fn only_nerdctl_capability_warnings_match_the_ignored_form() {
 fn window_sink() -> (Arc<Sink>, Buffer, FrameTerminal) {
     let (sink, buffer) = sink(StepMode::Spinner);
     let terminal = FrameTerminal::default();
+    let restore_terminal = terminal.clone();
+    *sink.draw_target.lock().unwrap() = Some(Box::new(move || {
+        ProgressDrawTarget::term_like(Box::new(restore_terminal.clone()))
+    }));
     sink.multi()
         .set_draw_target(ProgressDrawTarget::term_like(Box::new(terminal.clone())));
     (sink, buffer, terminal)
@@ -729,11 +842,4 @@ fn last_frame(terminal: &FrameTerminal) -> String {
         .last()
         .cloned()
         .unwrap_or_default()
-}
-
-fn suspend_terminal_with(sink: &Arc<Sink>) -> TerminalGuard {
-    sink.suspended.fetch_add(1, Ordering::SeqCst);
-    TerminalGuard {
-        sink: Arc::clone(sink),
-    }
 }

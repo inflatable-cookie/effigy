@@ -65,16 +65,16 @@ pub(super) fn run_builtin_completion(
                     stdin_is_tty: std::io::stdin().is_terminal(),
                     stdout_is_tty: std::io::stdout().is_terminal(),
                 };
-                let mut stdin = std::io::stdin().lock();
-                let mut stdout = std::io::stdout().lock();
-                let resolved = resolve_completion_request_from_io(
-                    request.output_json,
-                    request.shell,
-                    request.action,
-                    prompt_policy,
-                    &mut stdin,
-                    &mut stdout,
-                )?;
+                let resolved = effigy_ui::steps::prompt_terminal_stdio(|stdin, stdout| {
+                    resolve_completion_request_from_io(
+                        request.output_json,
+                        request.shell,
+                        request.action,
+                        prompt_policy,
+                        stdin,
+                        stdout,
+                    )
+                })?;
 
                 let script = render_completion_script(resolved.shell);
                 match resolved.action {

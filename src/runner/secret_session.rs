@@ -217,9 +217,9 @@ pub(in crate::runner) fn prompt_secret_on_terminal(
             "answer it outside the pane, or {UNLOCK_AT_A_TERMINAL}"
         )));
     }
-    let value = effigy_ui::steps::prompt_terminal(|| rpassword::prompt_password(prompt)).map_err(
-        |error| RunnerError::task_invocation(format!("failed to read secret input: {error}")),
-    )?;
+    let value = effigy_ui::steps::prompt_terminal_password(prompt).map_err(|error| {
+        RunnerError::task_invocation(format!("failed to read secret input: {error}"))
+    })?;
     Ok(SecretValue::new(value))
 }
 

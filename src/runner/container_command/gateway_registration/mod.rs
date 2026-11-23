@@ -822,15 +822,17 @@ pub(in crate::runner) fn list_running_rows_with_colima_repair(
                 effigy_ui::steps::json_output() || std::env::args_os().any(|arg| arg == "--json"),
                 effigy_ui::steps::in_managed_pane(),
                 || {
-                    effigy_ui::steps::prompt_terminal(|| {
-                        eprint!("{detail}\nRestart this profile now? [y/N] ");
-                        io::stderr().flush().map_err(|write_error| {
-                            RunnerError::task_invocation(format!(
-                                "{detail}\nfailed to write restart prompt: {write_error}"
-                            ))
-                        })?;
+                    use std::io::BufRead as _;
+                    effigy_ui::steps::prompt_terminal_stderr(|stdin, stderr| {
+                        write!(stderr, "{detail}\nRestart this profile now? [y/N] ")
+                            .and_then(|()| stderr.flush())
+                            .map_err(|write_error| {
+                                RunnerError::task_invocation(format!(
+                                    "{detail}\nfailed to write restart prompt: {write_error}"
+                                ))
+                            })?;
                         let mut answer = String::new();
-                        io::stdin().read_line(&mut answer).map_err(|read_error| {
+                        stdin.read_line(&mut answer).map_err(|read_error| {
                             RunnerError::task_invocation(format!(
                                 "{detail}\nfailed to read restart choice: {read_error}"
                             ))

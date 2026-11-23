@@ -3,7 +3,7 @@ use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::process::{Command, ExitStatus, Output, Stdio};
+use std::process::{Command, ExitStatus, Output};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -65,9 +65,16 @@ pub fn run_runtime_plan_capture(
         })
 }
 
+/// Keeps any temporary interpolation file and the terminal suspension guard
+/// alive for the full lifetime of an inherited-stdio child process.
+pub struct InheritedChildGuard {
+    _interpolation: Option<InterpolationFile>,
+    _terminal: effigy_ui::steps::TerminalGuard,
+}
+
 pub fn spawn_runtime_plan_inherit(
     plan: &ContainerRuntimeInvocationPlan,
-) -> Result<std::process::Child, EffigyRuntimeError> {
+) -> Result<(std::process::Child, effigy_ui::steps::TerminalGuard), EffigyRuntimeError> {
     spawn_command_inherit_os(
         &plan.repo_root,
         &plan.program.to_string_lossy(),
@@ -75,21 +82,22 @@ pub fn spawn_runtime_plan_inherit(
         &plan.label,
         &[],
     )
-    .map(|(child, _)| child)
+    .map(|(child, guard)| (child, guard._terminal))
 }
 
 pub fn spawn_compose_plan_inherit(
     plan: &ContainerComposeInvocationPlan,
-) -> Result<std::process::Child, EffigyRuntimeError> {
-    spawn_compose_plan_inherit_with_env(plan, &[]).map(|(child, _)| child)
+) -> Result<(std::process::Child, effigy_ui::steps::TerminalGuard), EffigyRuntimeError> {
+    spawn_compose_plan_inherit_with_env(plan, &[]).map(|(child, guard)| (child, guard._terminal))
 }
 
 /// The child and, when a VM-hosted backend needed interpolation, the file it
-/// reads. Keep the file alive until the child has exited and been reaped.
+/// reads plus the terminal suspension guard. Keep the guard alive until the
+/// child has exited and been reaped.
 pub fn spawn_compose_plan_inherit_with_env(
     plan: &ContainerComposeInvocationPlan,
     env: &[(String, OsString)],
-) -> Result<(std::process::Child, Option<InterpolationFile>), EffigyRuntimeError> {
+) -> Result<(std::process::Child, InheritedChildGuard), EffigyRuntimeError> {
     spawn_command_inherit_os(
         &plan.repo_root,
         &plan.program.to_string_lossy(),
@@ -105,7 +113,7 @@ fn spawn_command_inherit_os(
     args: &[OsString],
     label: &str,
     env: &[(String, OsString)],
-) -> Result<(std::process::Child, Option<InterpolationFile>), EffigyRuntimeError> {
+) -> Result<(std::process::Child, InheritedChildGuard), EffigyRuntimeError> {
     let launch = |error: std::io::Error| EffigyRuntimeError::TaskCommandLaunch {
         command: format!("{label} ({program} {})", format_args(args)),
         error,
@@ -120,13 +128,14 @@ fn spawn_command_inherit_os(
         .require_retained_custody_for_interpolation()
         .map_err(launch)?;
     let args = invocation.args;
+    let terminal = effigy_ui::steps::suspend_terminal();
     let mut command = Command::new(program);
     command
         .current_dir(repo_root)
         .args(&args)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
+        .stdin(terminal.inherit_stdio())
+        .stdout(terminal.inherit_stdio())
+        .stderr(terminal.inherit_stdio());
     for (key, value) in env {
         command.env(key, value);
     }
@@ -147,7 +156,13 @@ fn spawn_command_inherit_os(
             command: format!("{label} ({program} {})", format_args(&args)),
             error,
         })?;
-    Ok((child, invocation.interpolation))
+    Ok((
+        child,
+        InheritedChildGuard {
+            _interpolation: invocation.interpolation,
+            _terminal: terminal,
+        },
+    ))
 }
 
 pub fn terminate_inherited_child_graceful(child: &mut std::process::Child) {

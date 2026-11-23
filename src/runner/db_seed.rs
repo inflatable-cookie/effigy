@@ -117,17 +117,13 @@ pub(in crate::runner) fn maybe_prompt_db_seed_inputs(
         return Ok(());
     }
 
-    let mut stdin = io::stdin().lock();
-    let mut stdout = io::stdout().lock();
-    *effective_db_seeds = collect_db_seed_prompts_from_io(
-        repo_root,
-        &targets
-            .iter()
-            .map(|target| target.name.to_string())
-            .collect::<Vec<_>>(),
-        &mut stdin,
-        &mut stdout,
-    )?;
+    let target_names = targets
+        .iter()
+        .map(|target| target.name.to_string())
+        .collect::<Vec<_>>();
+    *effective_db_seeds = effigy_ui::steps::prompt_terminal_stdio(|stdin, stdout| {
+        collect_db_seed_prompts_from_io(repo_root, &target_names, stdin, stdout)
+    })?;
     *prompt_checked = true;
     Ok(())
 }

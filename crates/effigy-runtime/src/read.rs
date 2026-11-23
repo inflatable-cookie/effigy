@@ -243,7 +243,7 @@ pub fn run_container_logs(
         "container logs",
     )?;
     if follow {
-        let mut child = spawn_runtime_plan_inherit(&plan)?;
+        let (mut child, _terminal) = spawn_runtime_plan_inherit(&plan)?;
         let status = child
             .wait()
             .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;

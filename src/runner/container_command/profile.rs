@@ -729,9 +729,10 @@ fn resolve_profile_recreate_disk_gib(
         return Ok(explicit_disk_gib);
     }
 
-    let mut stdin = io::stdin().lock();
-    let mut stdout = io::stdout().lock();
-    prompt_profile_recreate_disk_gib(profile, default_disk_gib, &mut stdin, &mut stdout).map(Some)
+    effigy_ui::steps::prompt_terminal_stdio(|stdin, stdout| {
+        prompt_profile_recreate_disk_gib(profile, default_disk_gib, stdin, stdout)
+    })
+    .map(Some)
 }
 
 fn prompt_profile_recreate_disk_gib<R: BufRead, W: Write>(

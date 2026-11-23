@@ -929,7 +929,6 @@ dependencies = [
  "rcgen",
  "regex",
  "reqwest",
- "rpassword",
  "rusqlite",
  "rustls",
  "semver",
@@ -1311,7 +1310,6 @@ dependencies = [
  "reqwest",
  "rhai",
  "ring",
- "rpassword",
  "semver",
  "serde_json",
  "signal-hook 0.4.4",
@@ -1454,6 +1452,7 @@ dependencies = [
  "anstyle",
  "effigy-core",
  "indicatif",
+ "rpassword",
  "serde_json",
  "tabled",
 ]

@@ -421,6 +421,9 @@ pub(in crate::steps) struct Sink {
     pub(in crate::steps) suspended: AtomicUsize,
     pub(in crate::steps) streaming: AtomicUsize,
     pub(in crate::steps) active: Mutex<Vec<Weak<StepInner>>>,
+    #[cfg(test)]
+    pub(in crate::steps) draw_target:
+        Mutex<Option<Box<dyn Fn() -> ProgressDrawTarget + Send + Sync>>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -456,6 +459,8 @@ impl Sink {
             suspended: AtomicUsize::new(0),
             streaming: AtomicUsize::new(0),
             active: Mutex::new(Vec::new()),
+            #[cfg(test)]
+            draw_target: Mutex::new(None),
         })
     }
 
@@ -477,7 +482,20 @@ impl Sink {
 
     fn multi(&self) -> &MultiProgress {
         self.multi
-            .get_or_init(|| MultiProgress::with_draw_target(ProgressDrawTarget::stderr()))
+            .get_or_init(|| MultiProgress::with_draw_target(self.restore_draw_target()))
+    }
+
+    pub(in crate::steps) fn restore_draw_target(&self) -> ProgressDrawTarget {
+        #[cfg(test)]
+        if let Some(factory) = self
+            .draw_target
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+        {
+            return factory();
+        }
+        ProgressDrawTarget::stderr()
     }
 
     fn style_label(&self, label: &str) -> String {
@@ -655,6 +673,11 @@ pub fn live_step(source: ProgressSource) -> Step {
     Step::new_live(Arc::clone(global_sink()), None, source)
 }
 
+/// Whether step drawing is currently suspended by a [`TerminalGuard`].
+pub fn is_terminal_suspended() -> bool {
+    global_sink().is_suspended()
+}
+
 /// Whether a human terminal can receive a producer's live output.
 /// Nested producers remain eligible while another producer suppresses spinners.
 pub fn streams_output() -> bool {
@@ -685,7 +708,10 @@ mod terminal;
 
 pub use live::{live_output, LiveOutput};
 pub use source::{ProgressFrame, ProgressSource};
-pub use terminal::{prompt_terminal, suspend_terminal, TerminalGuard};
+pub use terminal::{
+    prompt_terminal, prompt_terminal_password, prompt_terminal_stderr, prompt_terminal_stdio,
+    suspend_terminal, TerminalGuard,
+};
 
 pub(in crate::steps) use live::{StreamingGuard, Window};
 

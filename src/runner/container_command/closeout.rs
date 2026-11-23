@@ -34,9 +34,10 @@ pub(in crate::runner) fn maybe_confirm_container_shell_exit_cleanup(
         return Ok(None);
     }
 
-    let mut stdin = io::stdin().lock();
-    let mut stdout = io::stdout().lock();
-    confirm_container_shell_exit_cleanup_from_io(container_name, &mut stdin, &mut stdout).map(Some)
+    effigy_ui::steps::prompt_terminal_stdio(|stdin, stdout| {
+        confirm_container_shell_exit_cleanup_from_io(container_name, stdin, stdout)
+    })
+    .map(Some)
 }
 
 pub(super) fn cleanup_failed_container_up(
