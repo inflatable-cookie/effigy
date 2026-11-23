@@ -1746,29 +1746,13 @@ fn non_runtime_listener_for_port(port: u16) -> Result<Option<String>, RunnerErro
             continue;
         }
         let full_command = pid
-            .and_then(full_process_command)
+            .and_then(effigy_process::process_command_line)
             .unwrap_or_else(|| command.to_owned());
         if !listener_command_looks_runtime_managed(&full_command) {
             return Ok(Some(command.to_owned()));
         }
     }
     Ok(None)
-}
-
-fn full_process_command(pid: u32) -> Option<String> {
-    let output = Command::new("ps")
-        .args(["-p", &pid.to_string(), "-o", "command="])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let rendered = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    if rendered.is_empty() {
-        None
-    } else {
-        Some(rendered)
-    }
 }
 
 fn listener_command_looks_runtime_managed(command: &str) -> bool {
